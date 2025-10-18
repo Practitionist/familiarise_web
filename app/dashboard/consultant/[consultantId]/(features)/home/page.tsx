@@ -84,6 +84,7 @@ export default function HomePage({
         activities={dashboardData.activities}
         approvals={dashboardData.approvals}
         badgeStyles={BADGE_STYLES}
+        consultantId={consultantId}
       />
     </DashboardErrorBoundary>
   );

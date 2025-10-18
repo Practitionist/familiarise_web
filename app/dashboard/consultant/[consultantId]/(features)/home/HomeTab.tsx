@@ -18,6 +18,7 @@ import {
   getGroupStatus,
   getGroupTitle,
   getStartTime,
+  getSlotTimes,
   getTodayAppointments,
   getUpcomingAppointments,
   groupRecurringAppointments,
@@ -37,12 +38,14 @@ interface HomeTabProps {
   activities: IActivity[];
   approvals: IApproval[];
   badgeStyles: BadgeStyleMap; // Accept the data object
+  consultantId: string;
 }
 
 export function HomeTab({
   appointments,
   activities,
   badgeStyles, // Destructure the new prop
+  consultantId,
 }: Readonly<HomeTabProps>) {
   const router = useRouter();
   const client = useStreamVideoClient();
@@ -108,14 +111,37 @@ export function HomeTab({
     })
     .slice(0, 5);
 
-  // Get all upcoming appointments (limit to 10 for performance)
-  const upcomingAppointments = sortAppointmentsByStartTime(
+  // Get all upcoming appointments and group them
+  const allUpcomingAppointments = sortAppointmentsByStartTime(
     getUpcomingAppointments(expandedAppointments),
-  ).slice(0, 10);
+  );
 
-  // Group upcoming appointments
-  const groupedUpcomingAppointments =
-    groupRecurringAppointments(upcomingAppointments);
+  const groupedAll = groupRecurringAppointments(allUpcomingAppointments);
+
+  // Limit slots per group (2 past + 5 upcoming for recurring, all for single)
+  const groupedUpcomingAppointments = Object.entries(groupedAll).reduce((acc, [key, appointments]) => {
+    const now = new Date();
+    const isRecurring = key.startsWith("subscription-") || key.startsWith("class-");
+
+    if (isRecurring) {
+      // Get past slots (completed sessions)
+      const pastSlots = appointments
+        .filter(app => getSlotTimes(app).every(time => new Date(time) < now))
+        .slice(-2); // Last 2 past slots
+
+      // Get upcoming slots (future sessions)
+      const upcomingSlots = appointments
+        .filter(app => getSlotTimes(app).some(time => new Date(time) >= now))
+        .slice(0, 5); // First 5 upcoming slots
+
+      acc[key] = [...pastSlots, ...upcomingSlots];
+    } else {
+      // For single appointments (consultations/webinars), show all
+      acc[key] = appointments;
+    }
+
+    return acc;
+  }, {} as Record<string, TAppointment[]>);
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6">
@@ -213,6 +239,17 @@ export function HomeTab({
                   const firstAppointment = groupAppointments[0];
                   const userName = getConsumeeName(firstAppointment);
 
+                  // Calculate session progress for recurring appointments
+                  const now = new Date();
+                  const totalSessions = groupAppointments.length;
+                  const completedSessions = groupAppointments.filter((app) =>
+                    getSlotTimes(app).every((time) => new Date(time) < now),
+                  ).length;
+                  const remainingSessions = totalSessions - completedSessions;
+                  const progressPercentage = totalSessions > 0
+                    ? (completedSessions / totalSessions) * 100
+                    : 0;
+
                   return (
                     <div
                       key={groupKey}
@@ -220,10 +257,10 @@ export function HomeTab({
                     >
                       {/* Group Header for recurring appointments */}
                       {isRecurring && (
-                        <div className="bg-gray-50 p-3 border-b">
-                          <div className="flex items-center justify-between">
+                        <div className="bg-gray-50 p-4 border-b">
+                          <div className="flex items-center justify-between mb-3">
                             <div className="flex items-center space-x-3">
-                              <Avatar className="w-8 h-8">
+                              <Avatar className="w-10 h-10">
                                 <AvatarImage
                                   alt={userName}
                                   src={getConsumeeImage(firstAppointment)}
@@ -235,12 +272,12 @@ export function HomeTab({
                                     .join("")}
                                 </AvatarFallback>
                               </Avatar>
-                              <div>
+                              <div className="flex-1">
                                 <h3 className="font-semibold text-sm">
                                   {userName}
                                 </h3>
                                 <p className="text-xs text-gray-600">
-                                  {groupTitle}
+                                  {groupTitle.split('(')[0].trim()}
                                 </p>
                               </div>
                             </div>
@@ -250,6 +287,30 @@ export function HomeTab({
                             >
                               {groupStatus}
                             </Badge>
+                          </div>
+
+                          {/* Progress Section */}
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="text-gray-600">
+                                <span className="font-semibold text-green-600">{completedSessions}</span> completed
+                              </span>
+                              <span className="text-gray-600">
+                                <span className="font-semibold text-blue-600">{remainingSessions}</span> remaining
+                              </span>
+                            </div>
+
+                            {/* Progress Bar */}
+                            <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
+                              <div
+                                className="bg-gradient-to-r from-green-500 to-blue-500 h-2 rounded-full transition-all duration-500"
+                                style={{ width: `${progressPercentage}%` }}
+                              />
+                            </div>
+
+                            <div className="text-xs text-center text-gray-500 font-medium">
+                              {completedSessions} of {totalSessions} sessions
+                            </div>
                           </div>
                         </div>
                       )}
@@ -263,7 +324,16 @@ export function HomeTab({
                           return (
                             <li
                               key={appointment.id}
-                              className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 p-3 hover:bg-gray-50"
+                              role="button"
+                              tabIndex={0}
+                              className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 p-3 hover:bg-gray-50 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500 rounded"
+                              onClick={() => router.push(`/dashboard/consultant/${consultantId}/appointments?highlight=${encodeURIComponent(groupKey)}`)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" || e.key === " ") {
+                                  e.preventDefault();
+                                  router.push(`/dashboard/consultant/${consultantId}/appointments?highlight=${encodeURIComponent(groupKey)}`);
+                                }
+                              }}
                             >
                               {!isRecurring && (
                                 <Avatar className="w-8 h-8">
@@ -332,12 +402,12 @@ export function HomeTab({
               )}
             </div>
             {/* View All Link */}
-            {upcomingAppointments.length > 0 && (
+            {Object.keys(groupedUpcomingAppointments).length > 0 && (
               <div className="mt-4 text-center border-t pt-4">
                 <Button
                   variant="link"
                   className="text-blue-600 hover:text-blue-700 font-medium"
-                  onClick={() => router.push("../appointments")}
+                  onClick={() => router.push(`/dashboard/consultant/${consultantId}/appointments`)}
                 >
                   View All Appointments →
                 </Button>

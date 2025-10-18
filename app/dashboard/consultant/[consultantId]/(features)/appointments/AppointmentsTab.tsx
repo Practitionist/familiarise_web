@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
+import { useSearchParams } from "next/navigation";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -20,6 +21,7 @@ import {
   getGroupStatus,
   getGroupTitle,
   getStartTime,
+  getSlotTimes,
   groupRecurringAppointments,
 } from "../../utils/appointmentHelpers";
 import { EventTimingsCalendar } from "./components/EventTimingsCalendar";
@@ -40,13 +42,37 @@ export function AppointmentsTab({
   const router = useRouter();
   const client = useStreamVideoClient();
   const { toast } = useToast();
+  const searchParams = useSearchParams();
   const [selectedAppointment, setSelectedAppointment] =
     useState<TAppointment | null>(null);
   const [groupPagination, setGroupPagination] = useState<
     Map<string, { currentPage: number; showAll: boolean }>
   >(new Map());
+  const [highlightedGroup, setHighlightedGroup] = useState<string | null>(null);
+  const groupRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
   const PAGE_SIZE = 5; // Show 5 items per page
+
+  // Handle highlight from URL parameter
+  useEffect(() => {
+    const highlight = searchParams?.get("highlight");
+    if (highlight) {
+      setHighlightedGroup(highlight);
+
+      // Scroll to highlighted group
+      setTimeout(() => {
+        const element = groupRefs.current.get(highlight);
+        if (element) {
+          element.scrollIntoView({ behavior: "smooth", block: "center" });
+        }
+      }, 100);
+
+      // Remove highlight after 3 seconds
+      setTimeout(() => {
+        setHighlightedGroup(null);
+      }, 3000);
+    }
+  }, [searchParams]);
 
   const getPaginationState = (groupKey: string) => {
     return groupPagination.get(groupKey) || { currentPage: 1, showAll: false };
@@ -155,17 +181,35 @@ export function AppointmentsTab({
             const groupStatus = getGroupStatus(groupAppointments);
             const firstAppointment = groupAppointments[0];
 
+            // Calculate session progress for recurring appointments
+            const now = new Date();
+            const totalSessions = groupAppointments.length;
+            const completedSessions = groupAppointments.filter((app) =>
+              getSlotTimes(app).every((time) => new Date(time) < now),
+            ).length;
+            const remainingSessions = totalSessions - completedSessions;
+            const progressPercentage = totalSessions > 0
+              ? (completedSessions / totalSessions) * 100
+              : 0;
+
             return (
               <div
                 key={groupKey}
-                className="border rounded-lg overflow-hidden shadow-sm"
+                ref={(el) => {
+                  if (el) groupRefs.current.set(groupKey, el);
+                }}
+                className={`border rounded-lg overflow-hidden shadow-sm transition-all duration-300 ${
+                  highlightedGroup === groupKey
+                    ? "ring-4 ring-yellow-400 shadow-xl"
+                    : ""
+                }`}
               >
                 {/* Group Header */}
                 {isRecurring && (
-                  <div className="bg-gray-200 p-3 sm:p-4 border-b border-gray-300">
-                    <div className="flex items-center justify-between">
+                  <div className="bg-gray-50 p-4 border-b border-gray-200">
+                    <div className="flex items-center justify-between mb-3">
                       <div className="flex items-center space-x-3 sm:space-x-4 min-w-0">
-                        <Avatar>
+                        <Avatar className="w-10 h-10">
                           <AvatarImage
                             alt={getConsumeeName(firstAppointment)}
                             src={getConsumeeImage(firstAppointment)}
@@ -178,13 +222,15 @@ export function AppointmentsTab({
                           </AvatarFallback>
                         </Avatar>
                         <div>
-                          <h3 className="font-semibold text-gray-800">
+                          <h3 className="font-semibold text-gray-800 text-sm">
                             {getConsumeeName(firstAppointment)}
                           </h3>
-                          <p className="text-sm text-gray-600">{groupTitle}</p>
+                          <p className="text-xs text-gray-600">
+                            {groupTitle.split('(')[0].trim()}
+                          </p>
                         </div>
 
-                        {/* Management buttons right after user info */}
+                        {/* Management buttons inline with user name */}
                         <div className="flex items-center gap-2 ml-4">
                           {canManageGroupTimings(groupAppointments) && (
                             <Button
@@ -222,13 +268,35 @@ export function AppointmentsTab({
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-2 flex-shrink-0">
-                        <Badge
-                          variant="secondary"
-                          className={getStyleFromBadgeData(groupStatus)}
-                        >
-                          {groupStatus}
-                        </Badge>
+                      <Badge
+                        variant="secondary"
+                        className={`${getStyleFromBadgeData(groupStatus)} flex-shrink-0`}
+                      >
+                        {groupStatus}
+                      </Badge>
+                    </div>
+
+                    {/* Progress Section */}
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-gray-600">
+                          <span className="font-semibold text-green-600">{completedSessions}</span> completed
+                        </span>
+                        <span className="text-gray-600">
+                          <span className="font-semibold text-blue-600">{remainingSessions}</span> remaining
+                        </span>
+                      </div>
+
+                      {/* Progress Bar */}
+                      <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
+                        <div
+                          className="bg-gradient-to-r from-green-500 to-blue-500 h-2 rounded-full transition-all duration-500"
+                          style={{ width: `${progressPercentage}%` }}
+                        />
+                      </div>
+
+                      <div className="text-xs text-center text-gray-500 font-medium">
+                        {completedSessions} of {totalSessions} sessions
                       </div>
                     </div>
                   </div>
