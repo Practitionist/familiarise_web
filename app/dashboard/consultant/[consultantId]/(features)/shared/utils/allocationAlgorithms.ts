@@ -1,5 +1,6 @@
 import { TimeSlot, calculateRequiredSlots } from "./calendarUtils";
 import { AllocationService } from "./allocationService";
+import { all } from "axios";
 
 /**
  * AUTO ALLOCATION ENHANCEMENT SYSTEM
@@ -237,7 +238,7 @@ export class AllocationAlgorithms {
           // STRATEGY: Earliest available slot with best preference scoring
           selectedSlots = this.allocateConsultationSlots(
             filteredSlots,
-            options.durationInHours || 1, // FIXED: Use durationInHours for consultations
+            options.sessionDurationInHours || 1, // FIXED: Use durationInHours for consultations
           );
           strategy = "earliest-available";
           break;
@@ -431,7 +432,7 @@ export class AllocationAlgorithms {
    */
   private static allocateConsultationSlots(
     availableSlots: TimeSlot[],
-    durationHours: number = 1, // Default to 1 hour if not specified
+    durationHours: number, // Default to 1 hour if not specified
   ): TimeSlot[] {
     const requiredSlots = Math.ceil(durationHours / 0.5); // 30-minute intervals
 
@@ -445,12 +446,13 @@ export class AllocationAlgorithms {
       (a, b) => a.startTime.getTime() - b.startTime.getTime(),
     );
 
-    for (let i = 0; i <= sortedSlots.length - requiredSlots; i++) {
+    for (let i = 0; i <= sortedSlots.length - durationHours; i++) {
       const consecutiveSlots = [];
+      const consecutive1HourSlots = []; // for storing original 1-hour slots to validate consecutiveness
       let isConsecutive = true;
 
       // Check if we have enough consecutive slots starting from this position
-      for (let j = 0; j < requiredSlots; j++) {
+      for (let j = 0; j < durationHours; j++) {
         const currentSlot = sortedSlots[i + j];
         if (!currentSlot) {
           isConsecutive = false;
@@ -458,15 +460,46 @@ export class AllocationAlgorithms {
         }
 
         if (j > 0) {
-          const prevSlot = consecutiveSlots[j - 1];
+          const prevSlot = consecutive1HourSlots[j - 1];
           if (currentSlot.startTime.getTime() !== prevSlot.endTime.getTime()) {
             isConsecutive = false;
             break;
           }
         }
 
-        consecutiveSlots.push(currentSlot);
+        consecutive1HourSlots.push(currentSlot);
+
+        console.log("Adding slot:", currentSlot);
+
+        // breaking of 1 hour slots into 2 >> 30 min slots in order to fulfill the required slot duration and validation
+        // 1 hour slots are not supported in the current system
+        const originalStartTime = new Date(currentSlot.startTime);
+        const originalEndTime = new Date(currentSlot.endTime);
+
+        // breakpoint of 1 hour slot into 2 30-minute slots
+        const midPointTime = new Date(originalStartTime.getTime() + 30 * 60000);
+
+        // 1st 30 minute slot (e.g., 10:00 - 10:30)
+        const slotOne = {
+          ...currentSlot, // Copy other properties like isAvailable
+          startTime: originalStartTime,
+          endTime: midPointTime,
+        };
+
+        // 2nd 30 minute slot (e.g., 10:30 - 11:00)
+        const slotTwo = {
+          ...currentSlot,
+          startTime: midPointTime,
+          endTime: originalEndTime,
+        };
+
+        // save both 30-minute slots
+        console.log("Breaking 1hr slot into:", slotOne);
+        console.log("And:", slotTwo);
+
+        consecutiveSlots.push(slotOne, slotTwo);
       }
+      console.log("Is consecutive:", isConsecutive, "Slots found:", consecutiveSlots);
 
       if (isConsecutive && consecutiveSlots.length === requiredSlots) {
         return consecutiveSlots;
@@ -486,7 +519,7 @@ export class AllocationAlgorithms {
     const requiredSlots = Math.ceil(durationHours * 2); // 30-minute intervals
 
     if (requiredSlots === 1) {
-      return this.allocateConsultationSlots(availableSlots);
+      return this.allocateConsultationSlots(availableSlots, durationHours);
     }
 
     // Find consecutive slots
