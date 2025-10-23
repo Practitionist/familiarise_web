@@ -461,9 +461,30 @@ export class SlotAllocationService {
     // each slot exists in the consultant's availability schedule
     const availableSlotsSet = new Set<string>();
 
+    // FIX BUG #3: Calculate dynamic week count based on event type and scheduling period
+    // Previous bug: Hardcoded 8 weeks caused subscription/class allocation to fail
+    // when scheduling period exceeded 8 weeks (e.g., 3-month subscriptions = 12+ weeks)
+    let weeksToGenerate = 8; // Default for consultations/webinars
+    if (
+      (eventType === "subscription" || eventType === "class") &&
+      config.schedulingPeriodStartsAt &&
+      config.schedulingPeriodEndsAt
+    ) {
+      // For subscriptions/classes: calculate actual weeks needed
+      const schedulingWeeks = SlotCalculationService.countWeeks(
+        config.schedulingPeriodStartsAt,
+        config.schedulingPeriodEndsAt,
+      );
+      // Add 1 week buffer to ensure we have enough slots
+      weeksToGenerate = schedulingWeeks + 1;
+      console.log(
+        `[SlotAllocation] ${eventType} requires ${schedulingWeeks} weeks, generating ${weeksToGenerate} weeks of availability`,
+      );
+    }
+
     // For WEEKLY schedules, we need to generate all future occurrences
     if (consultant.scheduleType === ScheduleType.WEEKLY) {
-      // Generate next 8 weeks of occurrences for each weekly slot
+      // Generate weeks based on event type and scheduling period
       for (const slot of availableTimeSlots) {
         // CRITICAL FIX: Get base occurrence once, then create new Date objects for each week
         // Previous bug: Called getNextOccurrence() inside loop, which returned the same Date
@@ -483,7 +504,7 @@ export class SlotAllocationService {
         const thirtyMinutesMs = 30 * 60 * 1000;
         const blocksPerSlot = Math.floor(slotDurationMs / thirtyMinutesMs);
 
-        for (let week = 0; week < 8; week++) {
+        for (let week = 0; week < weeksToGenerate; week++) {
           // Create NEW Date object for each week to avoid mutation bug
           const weekOccurrence = new Date(baseOccurrence);
           weekOccurrence.setDate(weekOccurrence.getDate() + week * 7);
