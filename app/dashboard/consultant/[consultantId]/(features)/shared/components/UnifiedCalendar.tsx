@@ -388,6 +388,9 @@ export function UnifiedCalendar({
     eventId,
     currentDate,
     view,
+    mode,
+    allowedStart,
+    allowedEnd,
   });
 
   // Wrap onAllocationComplete to refetch data before calling parent callback
