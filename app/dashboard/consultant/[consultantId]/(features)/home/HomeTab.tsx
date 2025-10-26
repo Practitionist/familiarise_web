@@ -15,6 +15,8 @@ import {
   getAppointmentTypeAndPlan,
   getConsumeeImage,
   getConsumeeName,
+  getDisplayImage,
+  getDisplayName,
   getGroupStatus,
   getGroupTitle,
   getStartTime,
@@ -127,7 +129,7 @@ export function HomeTab({
             </h2>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 lg:gap-4">
               {todayAppointments.map((appointment) => {
-                const userName = getConsumeeName(appointment);
+                const userName = getDisplayName(appointment);
                 const status = getAppointmentStatus(appointment);
                 const isJoinable = status === "Meeting in 5 min";
                 const joinButtonStyle = isJoinable
@@ -143,7 +145,7 @@ export function HomeTab({
                       <Avatar className="w-10 h-10">
                         <AvatarImage
                           alt={userName}
-                          src={getConsumeeImage(appointment)}
+                          src={getDisplayImage(appointment)}
                         />
                         <AvatarFallback>
                           {userName
@@ -211,7 +213,7 @@ export function HomeTab({
                   const groupTitle = getGroupTitle(groupAppointments);
                   const groupStatus = getGroupStatus(groupAppointments);
                   const firstAppointment = groupAppointments[0];
-                  const userName = getConsumeeName(firstAppointment);
+                  const userName = getDisplayName(firstAppointment);
 
                   return (
                     <div
@@ -226,7 +228,7 @@ export function HomeTab({
                               <Avatar className="w-8 h-8">
                                 <AvatarImage
                                   alt={userName}
-                                  src={getConsumeeImage(firstAppointment)}
+                                  src={getDisplayImage(firstAppointment)}
                                 />
                                 <AvatarFallback>
                                   {userName
@@ -268,11 +270,11 @@ export function HomeTab({
                               {!isRecurring && (
                                 <Avatar className="w-8 h-8">
                                   <AvatarImage
-                                    alt={getConsumeeName(appointment)}
-                                    src={getConsumeeImage(appointment)}
+                                    alt={getDisplayName(appointment)}
+                                    src={getDisplayImage(appointment)}
                                   />
                                   <AvatarFallback>
-                                    {getConsumeeName(appointment)
+                                    {getDisplayName(appointment)
                                       .split(" ")
                                       .map((n: string) => n[0])
                                       .join("")}
@@ -283,7 +285,7 @@ export function HomeTab({
                                 {!isRecurring && (
                                   <>
                                     <h3 className="text-sm font-semibold">
-                                      {getConsumeeName(appointment)}
+                                      {getDisplayName(appointment)}
                                     </h3>
                                     <p className="text-xs text-gray-500">
                                       {getAppointmentTypeAndPlan(appointment)}

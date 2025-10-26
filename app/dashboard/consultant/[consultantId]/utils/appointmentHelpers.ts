@@ -24,6 +24,58 @@ export const getConsumeeName = (appointment: TAppointment): string => {
   }
 };
 
+// Get the consultant name for webinars and classes, consultee name for others
+export const getDisplayName = (appointment: TAppointment): string => {
+  if (!appointment) return "Unknown User";
+
+  switch (appointment.appointmentType) {
+    case "CONSULTATION":
+      return (
+        appointment.consultation?.requestedBy?.user?.name ?? "Unknown User"
+      );
+    case "SUBSCRIPTION":
+      return (
+        appointment.subscription?.requestedBy?.user?.name ?? "Unknown User"
+      );
+    case "WEBINAR":
+      return (
+        appointment.webinar?.webinarPlan?.consultantProfile?.user?.name ?? "Unknown Consultant"
+      );
+    case "CLASS":
+      return (
+        appointment.class?.classPlan?.consultantProfile?.user?.name ?? "Unknown Consultant"
+      );
+    default:
+      return "Unknown User";
+  }
+};
+
+// Get the consultant name based on appointment type
+export const getConsultantName = (appointment: TAppointment): string => {
+  if (!appointment) return "Unknown Consultant";
+
+  switch (appointment.appointmentType) {
+    case "CONSULTATION":
+      return (
+        appointment.consultation?.consultationPlan?.consultantProfile?.user?.name ?? "Unknown Consultant"
+      );
+    case "SUBSCRIPTION":
+      return (
+        appointment.subscription?.subscriptionPlan?.consultantProfile?.user?.name ?? "Unknown Consultant"
+      );
+    case "WEBINAR":
+      return (
+        appointment.webinar?.webinarPlan?.consultantProfile?.user?.name ?? "Unknown Consultant"
+      );
+    case "CLASS":
+      return (
+        appointment.class?.classPlan?.consultantProfile?.user?.name ?? "Unknown Consultant"
+      );
+    default:
+      return "Unknown Consultant";
+  }
+};
+
 // Get the consultee image based on appointment type
 export const getConsumeeImage = (appointment: TAppointment): string => {
   if (!appointment) return "/placeholder.svg";
@@ -42,6 +94,58 @@ export const getConsumeeImage = (appointment: TAppointment): string => {
       return (
         appointment.slotsOfAppointment?.[0]?.user?.[0]?.image ??
         "/placeholder.svg"
+      );
+    default:
+      return "/placeholder.svg";
+  }
+};
+
+// Get the display image for webinars and classes (consultant), consultee for others
+export const getDisplayImage = (appointment: TAppointment): string => {
+  if (!appointment) return "/placeholder.svg";
+
+  switch (appointment.appointmentType) {
+    case "CONSULTATION":
+      return (
+        appointment.consultation?.requestedBy?.user?.image ?? "/placeholder.svg"
+      );
+    case "SUBSCRIPTION":
+      return (
+        appointment.subscription?.requestedBy?.user?.image ?? "/placeholder.svg"
+      );
+    case "WEBINAR":
+      return (
+        appointment.webinar?.webinarPlan?.consultantProfile?.user?.image ?? "/placeholder.svg"
+      );
+    case "CLASS":
+      return (
+        appointment.class?.classPlan?.consultantProfile?.user?.image ?? "/placeholder.svg"
+      );
+    default:
+      return "/placeholder.svg";
+  }
+};
+
+// Get the consultant image based on appointment type
+export const getConsultantImage = (appointment: TAppointment): string => {
+  if (!appointment) return "/placeholder.svg";
+
+  switch (appointment.appointmentType) {
+    case "CONSULTATION":
+      return (
+        appointment.consultation?.consultationPlan?.consultantProfile?.user?.image ?? "/placeholder.svg"
+      );
+    case "SUBSCRIPTION":
+      return (
+        appointment.subscription?.subscriptionPlan?.consultantProfile?.user?.image ?? "/placeholder.svg"
+      );
+    case "WEBINAR":
+      return (
+        appointment.webinar?.webinarPlan?.consultantProfile?.user?.image ?? "/placeholder.svg"
+      );
+    case "CLASS":
+      return (
+        appointment.class?.classPlan?.consultantProfile?.user?.image ?? "/placeholder.svg"
       );
     default:
       return "/placeholder.svg";

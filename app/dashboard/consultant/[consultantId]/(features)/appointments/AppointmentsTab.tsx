@@ -17,6 +17,8 @@ import {
   getAppointmentTypeAndPlan,
   getConsumeeImage,
   getConsumeeName,
+  getDisplayImage,
+  getDisplayName,
   getGroupStatus,
   getGroupTitle,
   getStartTime,
@@ -167,11 +169,11 @@ export function AppointmentsTab({
                       <div className="flex items-center space-x-3 sm:space-x-4 min-w-0">
                         <Avatar>
                           <AvatarImage
-                            alt={getConsumeeName(firstAppointment)}
-                            src={getConsumeeImage(firstAppointment)}
+                            alt={getDisplayName(firstAppointment)}
+                            src={getDisplayImage(firstAppointment)}
                           />
                           <AvatarFallback>
-                            {getConsumeeName(firstAppointment)
+                            {getDisplayName(firstAppointment)
                               .split(" ")
                               .map((n: string) => n[0])
                               .join("")}
@@ -179,7 +181,7 @@ export function AppointmentsTab({
                         </Avatar>
                         <div>
                           <h3 className="font-semibold text-gray-800">
-                            {getConsumeeName(firstAppointment)}
+                            {getDisplayName(firstAppointment)}
                           </h3>
                           <p className="text-sm text-gray-600">{groupTitle}</p>
                         </div>
@@ -284,11 +286,11 @@ export function AppointmentsTab({
                                   {!isRecurring && (
                                     <Avatar className="flex-shrink-0">
                                       <AvatarImage
-                                        alt={getConsumeeName(appointment)}
-                                        src={getConsumeeImage(appointment)}
+                                        alt={getDisplayName(appointment)}
+                                        src={getDisplayImage(appointment)}
                                       />
                                       <AvatarFallback>
-                                        {getConsumeeName(appointment)
+                                        {getDisplayName(appointment)
                                           .split(" ")
                                           .map((n: string) => n[0])
                                           .join("")}
@@ -299,7 +301,7 @@ export function AppointmentsTab({
                                     {!isRecurring && (
                                       <>
                                         <h3 className="font-semibold text-gray-800">
-                                          {getConsumeeName(appointment)}
+                                          {getDisplayName(appointment)}
                                         </h3>
                                         <p className="text-sm text-gray-600">
                                           {getAppointmentTypeAndPlan(

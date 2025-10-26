@@ -15,6 +15,8 @@ import {
   getAppointmentTypeAndPlan,
   getConsumeeImage,
   getConsumeeName,
+  getDisplayImage,
+  getDisplayName,
   getStartTime,
 } from "../../utils/appointmentHelpers";
 import { canManageAppointmentTimings } from "./utils/appointmentTimingHelpers";
@@ -81,7 +83,7 @@ export function PaginatedAppointments({
       {/* Appointments grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {paginatedData.map((appointment) => {
-          const userName = getConsumeeName(appointment);
+          const userName = getDisplayName(appointment);
           const status = getAppointmentStatus(appointment);
           const isJoinable = status === "Meeting in 5 min";
 
@@ -94,7 +96,7 @@ export function PaginatedAppointments({
                 <Avatar className="w-10 h-10">
                   <AvatarImage
                     alt={userName}
-                    src={getConsumeeImage(appointment)}
+                    src={getDisplayImage(appointment)}
                   />
                   <AvatarFallback>
                     {userName
