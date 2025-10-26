@@ -44,6 +44,12 @@ export interface AllocationResult {
   strategy?: string; // ENHANCEMENT: Track which allocation strategy was used
 }
 
+interface PotentialBlock {
+  weekKey: string;
+  slots: TimeSlot[];
+  score: number;
+}
+
 /**
  * AUTO ALLOCATION PREFERENCES - NEW FEATURE
  * ==========================================
@@ -258,9 +264,9 @@ export class AllocationAlgorithms {
           selectedSlots = this.allocateRecurringSlots(
             filteredSlots,
             requiredSlots,
-            options.callsPerWeek || 1,
             options.durationInMonths || 1,
             preferences,
+            options
           );
           strategy = "optimal-distribution";
           break;
@@ -564,17 +570,93 @@ export class AllocationAlgorithms {
   private static allocateRecurringSlots(
     availableSlots: TimeSlot[],
     totalSlots: number,
-    callsPerWeek: number,
     durationInMonths: number,
     preferences: AutoAllocationPreferences,
+    options: AllocationOptions
   ): TimeSlot[] {
-    const futureSlots = availableSlots.sort(
-      (a, b) => a.startTime.getTime() - b.startTime.getTime(),
-    );
+    console.log({
+      totalSlots,
+      durationInMonths,
+      preferences,
+      availableSlots
+    })
+
+    const { callsPerWeek = 1, sessionDurationInHours = 1, startDate, endDate } = options;
+    console.log({ totalSlots, options: { callsPerWeek, sessionDurationInHours, startDate, endDate }, preferences, inputSlotCount: availableSlots.length });
+
+
+    const thirtyMinuteAvailableSlots: TimeSlot[] = availableSlots.flatMap((currentSlot) => {
+      // Ensure we are dealing with Date objects
+      const originalStartTime = new Date(currentSlot.startTime);
+      const originalEndTime = new Date(currentSlot.endTime);
+
+      // Calculate the midpoint time (30 minutes after start)
+      const midPointTime = new Date(originalStartTime.getTime() + 30 * 60 * 1000); // 30 mins * 60 secs/min * 1000 ms/sec
+
+      // Check if the original slot is indeed 1 hour (optional but recommended)
+      const durationMinutes = (originalEndTime.getTime() - originalStartTime.getTime()) / (60 * 1000);
+
+      // no implemented warning for non-1-hour slots yet
+      // if (durationMinutes !== 60) {
+      //   console.warn(`Expected 1-hour slot but got ${durationMinutes} minutes. Slot ID: ${currentSlot.id}`);
+      // }
+
+      // Create the first 30-minute slot (e.g., 14:00 - 14:30)
+      const slotOne: TimeSlot = {
+        ...currentSlot, // Copy other properties like isAvailable, isBooked, id
+        startTime: originalStartTime,
+        endTime: midPointTime,
+        // Optionally add a suffix or flag to indicate it's part of a split
+        // originalSlotId: currentSlot.id,
+        // splitPart: 1,
+      };
+
+      // Create the second 30-minute slot (e.g., 14:30 - 15:00)
+      const slotTwo: TimeSlot = {
+        ...currentSlot,
+        startTime: midPointTime,
+        endTime: originalEndTime,
+        // Optionally add metadata
+        // originalSlotId: currentSlot.id,
+        // splitPart: 2,
+      };
+
+      // Return an array containing the two new 30-minute slots
+      // flatMap will automatically flatten [[s1a, s1b], [s2a, s2b]] into [s1a, s1b, s2a, s2b]
+      return [slotOne, slotTwo];
+    });
+
+    console.log("Transformed availableSlots (30 mins only):", thirtyMinuteAvailableSlots);
+
+    if (!startDate || !endDate) {
+      console.error("Start date and end date are required for recurring allocation.");
+      return []; // Or throw error
+    }
+
+
+    const futureSlots = thirtyMinuteAvailableSlots // <<< Use the 30-min slots
+      .filter( // Filter using dates from options
+        (slot) =>
+          slot.startTime.getTime() >= startDate.getTime() &&
+          slot.startTime.getTime() <= endDate.getTime()
+      )
+      .sort( // Sort the filtered 30-min slots
+        (a, b) => a.startTime.getTime() - b.startTime.getTime()
+      );
+    console.log("Filtered 30min slots in date range:", futureSlots.length); // Update log message
 
     const selectedSlots: TimeSlot[] = [];
     // FIXED: Use actual duration and frequency instead of hardcoded weeks calculation
-    const totalWeeks = durationInMonths; // Use actual months as weeks for allocation purposes
+    const totalWeeks = durationInMonths * 4; // Use actual months as weeks for allocation purposes
+
+    const slotsPerSession = Math.ceil((sessionDurationInHours || 1) / 0.5);
+    if (slotsPerSession <= 0) { /* ... handle error ... */ return []; }
+
+    const totalSessionsRequired = Math.ceil(totalSlots / slotsPerSession);
+    console.log(`INIT: Need ${totalSessionsRequired} sessions total. ${callsPerWeek} session(s)/week. ${slotsPerSession} slot(s)/session.`);
+
+
+    const allPotentialBlocks: PotentialBlock[] = [];
 
     // Group slots by week
     const slotsByWeek = new Map<string, TimeSlot[]>();
@@ -591,33 +673,100 @@ export class AllocationAlgorithms {
     // Sort weeks by date
     const sortedWeeks = Array.from(slotsByWeek.keys()).sort();
 
+    console.log("Slots grouped by week:", { slotsByWeek, sortedWeeks });
+
     // Allocate slots week by week with smart distribution
     let currentWeek = 0;
-    for (const weekKey of sortedWeeks) {
-      if (selectedSlots.length >= totalSlots || currentWeek >= totalWeeks) {
-        break;
+    for (const weekKey of sortedWeeks) { // Find blocks in each week
+      const weekSlots = slotsByWeek.get(weekKey)!;
+      const preferredSlots = this.sortSlotsByPreference(weekSlots);
+      const blocksInWeek = this.findConsecutiveSlotBlocks(preferredSlots, slotsPerSession); // Find ALL blocks
+      console.log(`Gather Week ${weekKey}: Found ${blocksInWeek.length} potential blocks.`);
+      blocksInWeek.forEach(block => { // Score and store each block
+        if (block.length === slotsPerSession) {
+          const firstSlot = block[0];
+          const score = this.getTimeScore(firstSlot.startTime.getHours()) + this.getDayScore(firstSlot.startTime.getDay());
+          allPotentialBlocks.push({ weekKey, slots: block, score });
+        }
+      });
+    }
+    console.log(`Gather: Found ${allPotentialBlocks.length} potential blocks overall.`);
+
+
+    // --- 2. Score and Sort All Blocks Globally ---
+    // allPotentialBlocks.sort((a, b) => { /* ... sort by score desc, then time asc ... */ });
+    // console.log(`Sort: Sorted all potential blocks by score.`);
+
+
+    // --- 3. Select Greedily with Daily Limit ---
+    let sessionsSelectedCount = 0;
+    const sessionsSelectedPerWeek = new Map<string, number>();
+    const selectedDates = new Set<string>(); // <<< Track used dates
+    console.log(`Select: Starting greedy selection. Need ${totalSessionsRequired} sessions.`);
+    for (const potentialBlock of allPotentialBlocks) {
+      if (sessionsSelectedCount >= totalSessionsRequired) {
+        break
+      } // Overall limit
+      const currentWeekCount = sessionsSelectedPerWeek.get(potentialBlock.weekKey) || 0;
+      if (currentWeekCount >= callsPerWeek) { /* ... continue ... */ } // Weekly limit
+
+      // Daily limit check
+      const blockStartDate = potentialBlock.slots[0].startTime;
+      const blockDateString = `${blockStartDate.getFullYear()}-${String(blockStartDate.getMonth() + 1).padStart(2, '0')}-${String(blockStartDate.getDate()).padStart(2, '0')}`;
+      if (selectedDates.has(blockDateString)) {
+        console.log(`Select: Skipping block starting ${blockStartDate}, date ${blockDateString} already used.`);
+        continue; // 
       }
 
-      const weekSlots = slotsByWeek.get(weekKey)!;
-      const slotsNeededThisWeek = Math.min(
-        callsPerWeek,
-        totalSlots - selectedSlots.length,
-      );
+      // Overlap check (optional safety)
+      // const overlaps = /* ... check overlap ... */;
+      // if (overlaps) { /* ... continue ... */ }
 
-      // Sort slots by preference and ensure minimum time between sessions
-      const preferredSlots = this.sortSlotsByPreference(weekSlots);
-      const selectedThisWeek = this.selectSlotsWithSpacing(
-        preferredSlots,
-        slotsNeededThisWeek,
-        preferences.minTimeBetweenSessions || 2, // Default 2 hours minimum
-      );
-
-      selectedSlots.push(...selectedThisWeek);
-      currentWeek++;
+      //
+      console.log(`Select: Selecting block on ${blockDateString} in week ${potentialBlock.weekKey} (Score: ${potentialBlock.score}).`);
+      selectedSlots.push(...potentialBlock.slots);
+      sessionsSelectedCount++;
+      sessionsSelectedPerWeek.set(potentialBlock.weekKey, currentWeekCount + 1);
+      selectedDates.add(blockDateString); 
+      console.log(`Select: Session count ${sessionsSelectedCount}/${totalSessionsRequired}. Week ${potentialBlock.weekKey} count ${currentWeekCount + 1}/${callsPerWeek}. Date ${blockDateString} used.`);
     }
 
+    if (sessionsSelectedCount < totalSessionsRequired) { /* ... log warning ... */ }
+
+    // 
+
+    // Final sort and return
+    selectedSlots.sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
+    console.log("Selected slots for recurring allocation (final):", selectedSlots.length, selectedSlots);
     return selectedSlots;
   }
+
+  // 
+  private static findConsecutiveSlotBlocks(
+    sortedWeekSlots: TimeSlot[],
+    slotsPerBlock: number
+  ): TimeSlot[][] {
+    const foundBlocks: TimeSlot[][] = [];
+    if (!sortedWeekSlots || sortedWeekSlots.length < slotsPerBlock) {
+      return foundBlocks;
+    }
+    for (let i = 0; i <= sortedWeekSlots.length - slotsPerBlock; i++) {
+      const potentialBlock = sortedWeekSlots.slice(i, i + slotsPerBlock);
+      let isConsecutive = true;
+      for (let j = 0; j < potentialBlock.length - 1; j++) {
+        if (potentialBlock[j].endTime.getTime() !== potentialBlock[j + 1].startTime.getTime()) {
+          isConsecutive = false;
+          break;
+        }
+      }
+      if (isConsecutive) {
+        foundBlocks.push(potentialBlock);
+        i += (slotsPerBlock - 1);
+      }
+    }
+    return foundBlocks;
+  }
+
 
   /**
    * Select slots ensuring minimum time between sessions
@@ -736,10 +885,15 @@ export class AllocationAlgorithms {
    * Get the start of the week for a given date
    */
   private static getWeekStart(date: Date): Date {
-    const d = new Date(date);
-    const day = d.getDay();
-    const diff = d.getDate() - day; // Sunday as start of week
-    return new Date(d.setDate(diff));
+    const d = new Date(date); // Create a copy to avoid modifying the original date
+    const day = d.getDay(); // 0 = Sunday, 1 = Monday, etc.
+    const diff = d.getDate() - day; // Calculate the date for Sunday
+
+    // Set the date to Sunday AND set the time to midnight
+    d.setDate(diff);
+    d.setHours(0, 0, 0, 0); // <<< FIX: Zero out the time components
+
+    return d; // Return the Date object representing Sunday at 00:00:00
   }
 
   /**
