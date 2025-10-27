@@ -38,8 +38,13 @@ export const getDisplayName = (appointment: TAppointment): string => {
         appointment.subscription?.requestedBy?.user?.name ?? "Unknown User"
       );
     case "WEBINAR":
+      return (
+        appointment.webinar?.webinarPlan?.consultantProfile?.user?.name ?? "Unknown Consultant"
+      );
     case "CLASS":
-      return getConsultantName(appointment);
+      return (
+        appointment.class?.classPlan?.consultantProfile?.user?.name ?? "Unknown Consultant"
+      );
     default:
       return "Unknown User";
   }
@@ -52,23 +57,19 @@ export const getConsultantName = (appointment: TAppointment): string => {
   switch (appointment.appointmentType) {
     case "CONSULTATION":
       return (
-        appointment.consultation?.consultationPlan?.consultantProfile?.user
-          ?.name ?? "Unknown Consultant"
+        appointment.consultation?.consultationPlan?.consultantProfile?.user?.name ?? "Unknown Consultant"
       );
     case "SUBSCRIPTION":
       return (
-        appointment.subscription?.subscriptionPlan?.consultantProfile?.user
-          ?.name ?? "Unknown Consultant"
+        appointment.subscription?.subscriptionPlan?.consultantProfile?.user?.name ?? "Unknown Consultant"
       );
     case "WEBINAR":
       return (
-        appointment.webinar?.webinarPlan?.consultantProfile?.user?.name ??
-        "Unknown Consultant"
+        appointment.webinar?.webinarPlan?.consultantProfile?.user?.name ?? "Unknown Consultant"
       );
     case "CLASS":
       return (
-        appointment.class?.classPlan?.consultantProfile?.user?.name ??
-        "Unknown Consultant"
+        appointment.class?.classPlan?.consultantProfile?.user?.name ?? "Unknown Consultant"
       );
     default:
       return "Unknown Consultant";
@@ -113,8 +114,13 @@ export const getDisplayImage = (appointment: TAppointment): string => {
         appointment.subscription?.requestedBy?.user?.image ?? "/placeholder.svg"
       );
     case "WEBINAR":
+      return (
+        appointment.webinar?.webinarPlan?.consultantProfile?.user?.image ?? "/placeholder.svg"
+      );
     case "CLASS":
-      return getConsultantImage(appointment);
+      return (
+        appointment.class?.classPlan?.consultantProfile?.user?.image ?? "/placeholder.svg"
+      );
     default:
       return "/placeholder.svg";
   }
@@ -127,23 +133,19 @@ export const getConsultantImage = (appointment: TAppointment): string => {
   switch (appointment.appointmentType) {
     case "CONSULTATION":
       return (
-        appointment.consultation?.consultationPlan?.consultantProfile?.user
-          ?.image ?? "/placeholder.svg"
+        appointment.consultation?.consultationPlan?.consultantProfile?.user?.image ?? "/placeholder.svg"
       );
     case "SUBSCRIPTION":
       return (
-        appointment.subscription?.subscriptionPlan?.consultantProfile?.user
-          ?.image ?? "/placeholder.svg"
+        appointment.subscription?.subscriptionPlan?.consultantProfile?.user?.image ?? "/placeholder.svg"
       );
     case "WEBINAR":
       return (
-        appointment.webinar?.webinarPlan?.consultantProfile?.user?.image ??
-        "/placeholder.svg"
+        appointment.webinar?.webinarPlan?.consultantProfile?.user?.image ?? "/placeholder.svg"
       );
     case "CLASS":
       return (
-        appointment.class?.classPlan?.consultantProfile?.user?.image ??
-        "/placeholder.svg"
+        appointment.class?.classPlan?.consultantProfile?.user?.image ?? "/placeholder.svg"
       );
     default:
       return "/placeholder.svg";
