@@ -15,8 +15,6 @@ import {
   formatAppointmentTime,
   getAppointmentStatus,
   getAppointmentTypeAndPlan,
-  getConsumeeImage,
-  getConsumeeName,
   getDisplayImage,
   getDisplayName,
   getGroupStatus,
