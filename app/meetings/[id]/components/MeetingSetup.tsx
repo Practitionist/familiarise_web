@@ -83,7 +83,7 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
     dataArray: Uint8Array,
     bufferLength: number,
   ) => {
-    analyser.getByteFrequencyData(dataArray);
+    analyser.getByteFrequencyData(dataArray as Uint8Array<ArrayBuffer>);
     // Calculate average volume level
     const average = dataArray.reduce((a, b) => a + b, 0) / bufferLength;
     return Math.min(average / 128, 1); // Normalize to 0-1

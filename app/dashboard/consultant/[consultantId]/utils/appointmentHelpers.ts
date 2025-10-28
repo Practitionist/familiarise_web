@@ -45,26 +45,30 @@ export const getDisplayName = (appointment: TAppointment): string => {
   }
 };
 
-// Get the consultant name based on appointment type
+// Get the consultant name based on appointment type.
 export const getConsultantName = (appointment: TAppointment): string => {
   if (!appointment) return "Unknown Consultant";
 
   switch (appointment.appointmentType) {
     case "CONSULTATION":
       return (
-        appointment.consultation?.consultationPlan?.consultantProfile?.user?.name ?? "Unknown Consultant"
+        appointment.consultation?.consultationPlan?.consultantProfile?.user
+          ?.name ?? "Unknown Consultant"
       );
     case "SUBSCRIPTION":
       return (
-        appointment.subscription?.subscriptionPlan?.consultantProfile?.user?.name ?? "Unknown Consultant"
+        appointment.subscription?.subscriptionPlan?.consultantProfile?.user
+          ?.name ?? "Unknown Consultant"
       );
     case "WEBINAR":
       return (
-        appointment.webinar?.webinarPlan?.consultantProfile?.user?.name ?? "Unknown Consultant"
+        appointment.webinar?.webinarPlan?.consultantProfile?.user?.name ??
+        "Unknown Consultant"
       );
     case "CLASS":
       return (
-        appointment.class?.classPlan?.consultantProfile?.user?.name ?? "Unknown Consultant"
+        appointment.class?.classPlan?.consultantProfile?.user?.name ??
+        "Unknown Consultant"
       );
     default:
       return "Unknown Consultant";
@@ -110,11 +114,13 @@ export const getDisplayImage = (appointment: TAppointment): string => {
       );
     case "WEBINAR":
       return (
-        appointment.webinar?.webinarPlan?.consultantProfile?.user?.image ?? "/placeholder.svg"
+        appointment.webinar?.webinarPlan?.consultantProfile?.user?.image ??
+        "/placeholder.svg"
       );
     case "CLASS":
       return (
-        appointment.class?.classPlan?.consultantProfile?.user?.image ?? "/placeholder.svg"
+        appointment.class?.classPlan?.consultantProfile?.user?.image ??
+        "/placeholder.svg"
       );
     default:
       return "/placeholder.svg";
@@ -128,19 +134,23 @@ export const getConsultantImage = (appointment: TAppointment): string => {
   switch (appointment.appointmentType) {
     case "CONSULTATION":
       return (
-        appointment.consultation?.consultationPlan?.consultantProfile?.user?.image ?? "/placeholder.svg"
+        appointment.consultation?.consultationPlan?.consultantProfile?.user
+          ?.image ?? "/placeholder.svg"
       );
     case "SUBSCRIPTION":
       return (
-        appointment.subscription?.subscriptionPlan?.consultantProfile?.user?.image ?? "/placeholder.svg"
+        appointment.subscription?.subscriptionPlan?.consultantProfile?.user
+          ?.image ?? "/placeholder.svg"
       );
     case "WEBINAR":
       return (
-        appointment.webinar?.webinarPlan?.consultantProfile?.user?.image ?? "/placeholder.svg"
+        appointment.webinar?.webinarPlan?.consultantProfile?.user?.image ??
+        "/placeholder.svg"
       );
     case "CLASS":
       return (
-        appointment.class?.classPlan?.consultantProfile?.user?.image ?? "/placeholder.svg"
+        appointment.class?.classPlan?.consultantProfile?.user?.image ??
+        "/placeholder.svg"
       );
     default:
       return "/placeholder.svg";
@@ -149,7 +159,7 @@ export const getConsultantImage = (appointment: TAppointment): string => {
 
 // Get appointment type and plan
 export const getAppointmentTypeAndPlan = (
-  appointment: TAppointment,
+  appointment: TAppointment
 ): string => {
   if (!appointment?.appointmentType) return "Unknown Type";
 
@@ -223,7 +233,7 @@ export const hasTodaySlots = (appointment: TAppointment): boolean => {
     23,
     59,
     59,
-    999,
+    999
   );
 
   return getSlotTimes(appointment).some((time) => {
@@ -280,7 +290,7 @@ export const getAppointmentStatus = (appointment: TAppointment): string => {
 
 // Sort appointments by start time
 export const sortAppointmentsByStartTime = (
-  appointments: TAppointment[],
+  appointments: TAppointment[]
 ): TAppointment[] => {
   return [...appointments].sort((a, b) => {
     const aTime = getStartTime(a);
@@ -294,7 +304,7 @@ export const sortAppointmentsByStartTime = (
 
 // Filter today's appointments
 export const getTodayAppointments = (
-  appointments: TAppointment[],
+  appointments: TAppointment[]
 ): TAppointment[] => {
   const now = new Date();
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -305,7 +315,7 @@ export const getTodayAppointments = (
     23,
     59,
     59,
-    999,
+    999
   );
 
   // First expand appointments with multiple slots (only for subscriptions and classes)
@@ -347,7 +357,7 @@ export const getTodayAppointments = (
       appointment.subscription
     ) {
       const startDate = new Date(
-        appointment.subscription.schedulingPeriodStartsAt,
+        appointment.subscription.schedulingPeriodStartsAt
       );
       const endDate = new Date(appointment.subscription.schedulingPeriodEndsAt);
       return isToday && now >= startDate && now <= endDate;
@@ -359,7 +369,7 @@ export const getTodayAppointments = (
 
 // Filter upcoming appointments
 export const getUpcomingAppointments = (
-  appointments: TAppointment[],
+  appointments: TAppointment[]
 ): TAppointment[] => {
   const now = new Date();
 
@@ -373,7 +383,7 @@ export const getUpcomingAppointments = (
     ) {
       // Check if all slots are in the past
       const allSlotsCompleted = getSlotTimes(appointment).every(
-        (time) => new Date(time) < now,
+        (time) => new Date(time) < now
       );
       // Only include if not all slots are completed
       return !allSlotsCompleted;
@@ -398,7 +408,7 @@ export const getUpcomingAppointments = (
 
 // Group recurring appointments
 export const groupRecurringAppointments = (
-  appointments: TAppointment[],
+  appointments: TAppointment[]
 ): { [key: string]: TAppointment[] } => {
   const groups: { [key: string]: TAppointment[] } = {};
 
@@ -469,7 +479,7 @@ export const getGroupTitle = (appointments: TAppointment[]): string => {
     // Count completed sessions based on slot times
     const now = new Date();
     const completedSessions = appointments.filter((app) =>
-      getSlotTimes(app).every((time) => new Date(time) < now),
+      getSlotTimes(app).every((time) => new Date(time) < now)
     ).length;
 
     return `${plan} (${completedSessions}/${totalSessions} sessions)`;
@@ -482,7 +492,7 @@ export const getGroupTitle = (appointments: TAppointment[]): string => {
     // Count completed sessions based on slot times, same as subscription
     const now = new Date();
     const completedSessions = appointments.filter((app) =>
-      getSlotTimes(app).every((time) => new Date(time) < now),
+      getSlotTimes(app).every((time) => new Date(time) < now)
     ).length;
 
     return `${plan} (${completedSessions}/${totalSessions} sessions)`;
@@ -501,15 +511,15 @@ export const getGroupStatus = (appointments: TAppointment[]): string => {
   if (type === "SUBSCRIPTION" && firstAppointment.subscription) {
     const now = new Date();
     const startDate = new Date(
-      firstAppointment.subscription.schedulingPeriodStartsAt,
+      firstAppointment.subscription.schedulingPeriodStartsAt
     );
     const endDate = new Date(
-      firstAppointment.subscription.schedulingPeriodEndsAt,
+      firstAppointment.subscription.schedulingPeriodEndsAt
     );
 
     // Check if any sessions are completed
     const hasCompletedSessions = appointments.some((app) =>
-      getSlotTimes(app).every((time) => new Date(time) < now),
+      getSlotTimes(app).every((time) => new Date(time) < now)
     );
 
     if (now > endDate) return "Completed";
@@ -522,12 +532,12 @@ export const getGroupStatus = (appointments: TAppointment[]): string => {
 
     // Check if any sessions are completed, same as subscription
     const hasCompletedSessions = appointments.some((app) =>
-      getSlotTimes(app).every((time) => new Date(time) < now),
+      getSlotTimes(app).every((time) => new Date(time) < now)
     );
 
     // Check if all sessions are completed
     const allSessionsCompleted = appointments.every((app) =>
-      getSlotTimes(app).every((time) => new Date(time) < now),
+      getSlotTimes(app).every((time) => new Date(time) < now)
     );
 
     if (allSessionsCompleted) return "Completed";
