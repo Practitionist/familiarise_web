@@ -38,13 +38,8 @@ export const getDisplayName = (appointment: TAppointment): string => {
         appointment.subscription?.requestedBy?.user?.name ?? "Unknown User"
       );
     case "WEBINAR":
-      return (
-        appointment.webinar?.webinarPlan?.consultantProfile?.user?.name ?? "Unknown Consultant"
-      );
     case "CLASS":
-      return (
-        appointment.class?.classPlan?.consultantProfile?.user?.name ?? "Unknown Consultant"
-      );
+      return getConsultantName(appointment);
     default:
       return "Unknown User";
   }
