@@ -45,7 +45,7 @@ export const getDisplayName = (appointment: TAppointment): string => {
   }
 };
 
-// Get the consultant name based on appointment type
+// Get the consultant name based on appointment type.
 export const getConsultantName = (appointment: TAppointment): string => {
   if (!appointment) return "Unknown Consultant";
 
