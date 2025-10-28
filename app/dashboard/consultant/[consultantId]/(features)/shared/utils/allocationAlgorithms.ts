@@ -572,6 +572,8 @@ export class AllocationAlgorithms {
       (a, b) => a.startTime.getTime() - b.startTime.getTime(),
     );
 
+    console.log({availableSlots,totalSlots,callsPerWeek,durationInMonths,preferences});
+
     const selectedSlots: TimeSlot[] = [];
     // FIXED: Use actual duration and frequency instead of hardcoded weeks calculation
     const totalWeeks = durationInMonths; // Use actual months as weeks for allocation purposes
@@ -590,6 +592,8 @@ export class AllocationAlgorithms {
 
     // Sort weeks by date
     const sortedWeeks = Array.from(slotsByWeek.keys()).sort();
+
+    console.log("Slots grouped by week:", {slotsByWeek,sortedWeeks});
 
     // Allocate slots week by week with smart distribution
     let currentWeek = 0;
@@ -615,6 +619,8 @@ export class AllocationAlgorithms {
       selectedSlots.push(...selectedThisWeek);
       currentWeek++;
     }
+
+    console.log("Selected slots for recurring event:", selectedSlots);
 
     return selectedSlots;
   }
@@ -736,10 +742,15 @@ export class AllocationAlgorithms {
    * Get the start of the week for a given date
    */
   private static getWeekStart(date: Date): Date {
-    const d = new Date(date);
-    const day = d.getDay();
-    const diff = d.getDate() - day; // Sunday as start of week
-    return new Date(d.setDate(diff));
+    const d = new Date(date); // Create a copy to avoid modifying the original date
+    const day = d.getDay(); // 0 = Sunday, 1 = Monday, etc.
+    const diff = d.getDate() - day; // Calculate the date for Sunday
+
+    // Set the date to Sunday AND set the time to midnight
+    d.setDate(diff);
+    d.setHours(0, 0, 0, 0); // <<< FIX: Zero out the time components
+
+    return d; // Return the Date object representing Sunday at 00:00:00
   }
 
   /**
