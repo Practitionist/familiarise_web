@@ -261,6 +261,7 @@ export class AllocationAlgorithms {
             options.callsPerWeek || 1,
             options.durationInMonths || 1,
             preferences,
+            options
           );
           strategy = "optimal-distribution";
           break;
@@ -567,16 +568,31 @@ export class AllocationAlgorithms {
     callsPerWeek: number,
     durationInMonths: number,
     preferences: AutoAllocationPreferences,
+    options: AllocationOptions
   ): TimeSlot[] {
-    const futureSlots = availableSlots.sort(
+    const sortedAvailableSlots = availableSlots.sort(
       (a, b) => a.startTime.getTime() - b.startTime.getTime(),
     );
 
-    console.log({availableSlots,totalSlots,callsPerWeek,durationInMonths,preferences});
+    // checks for startDate and endDate of subscription
+    if (!options.startDate || !options.endDate) {
+      return [];
+    }
+
+    // checks for filtering slots within subscription date range
+    const futureSlots = sortedAvailableSlots.filter(slot => {
+      const startsAfterOrOnBegin = slot.startTime.getTime() >= options.startDate!.getTime();
+      const endsBeforeOrOnEnd = slot.endTime.getTime() <= options.endDate!.getTime();
+      return startsAfterOrOnBegin && endsBeforeOrOnEnd;
+    });
+
+    console.log({ availableSlots, totalSlots, callsPerWeek, durationInMonths, preferences });
+    console.log("Filtered future slots within subscription range:", futureSlots);
+
 
     const selectedSlots: TimeSlot[] = [];
     // FIXED: Use actual duration and frequency instead of hardcoded weeks calculation
-    const totalWeeks = durationInMonths; // Use actual months as weeks for allocation purposes
+    // const totalWeeks = durationInMonths; // Use actual months as weeks for allocation purposes
 
     // Group slots by week
     const slotsByWeek = new Map<string, TimeSlot[]>();
@@ -592,8 +608,9 @@ export class AllocationAlgorithms {
 
     // Sort weeks by date
     const sortedWeeks = Array.from(slotsByWeek.keys()).sort();
+    const totalWeeks = sortedWeeks.length;
 
-    console.log("Slots grouped by week:", {slotsByWeek,sortedWeeks});
+    console.log("Slots grouped by week:", { slotsByWeek, sortedWeeks });
 
     // Allocate slots week by week with smart distribution
     let currentWeek = 0;
@@ -622,7 +639,42 @@ export class AllocationAlgorithms {
 
     console.log("Selected slots for recurring event:", selectedSlots);
 
-    return selectedSlots;
+    // 30 minute slots by breaking down 1 hour slots
+    const finalThirtyMinuteSlots: TimeSlot[] = selectedSlots.flatMap((oneHourSlot) => {
+
+      const originalStartTime = new Date(oneHourSlot.startTime);
+      const originalEndTime = new Date(oneHourSlot.endTime);
+
+      // midpoint time calculation
+      const midPointTime = new Date(originalStartTime.getTime() + 30 * 60 * 1000);
+
+      // Basic duration check (optional, good for safety)
+      const durationMinutes = (originalEndTime.getTime() - originalStartTime.getTime()) / (60 * 1000);
+
+      if (Math.abs(durationMinutes - 60) > 1) {
+        console.warn(`Final Split: Expected 1-hour slot but got ${durationMinutes} minutes. Splitting anyway:`, oneHourSlot);
+      }
+
+      // first 30-minute slot
+      const slotOne: TimeSlot = {
+        ...oneHourSlot,
+        startTime: originalStartTime,
+        endTime: midPointTime,
+      };
+
+      // second 30-minute slot
+      const slotTwo: TimeSlot = {
+        ...oneHourSlot,
+        startTime: midPointTime,
+        endTime: originalEndTime,
+      };
+
+      return [slotOne, slotTwo];
+    });
+
+    console.log("Final transformed 30-minute slots:", finalThirtyMinuteSlots);
+
+    return finalThirtyMinuteSlots;
   }
 
   /**
