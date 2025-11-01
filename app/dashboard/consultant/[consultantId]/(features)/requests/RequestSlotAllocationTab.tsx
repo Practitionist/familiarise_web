@@ -235,6 +235,7 @@ export function RequestSlotAllocationTab({
               endDate: subscription.schedulingPeriodEndsAt
                 ? new Date(subscription.schedulingPeriodEndsAt)
                 : undefined,
+              bookingSource: subscription.bookingSource,
             };
           }),
         );
