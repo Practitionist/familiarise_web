@@ -124,8 +124,7 @@ export default function SubscriptionCheckoutPage({
           planId: planData.data.id,
           slotStartTimeInUTC:
             searchParamsValidation.data.schedulingPeriodStartsAt,
-          slotEndTimeInUTC:
-            searchParamsValidation.data.schedulingPeriodEndsAt,
+          slotEndTimeInUTC: searchParamsValidation.data.schedulingPeriodEndsAt,
           discountCode: searchParamsValidation.data.discountCode,
           paymentGateway: gateway,
         });

@@ -32,7 +32,7 @@ interface SubscriptionPricingToggleProps {
   consultantDetails: any;
   handleSubscriptionBooking: (
     option: PricingOption,
-    schedulingPeriod: { startDate: Date; endDate: Date }
+    schedulingPeriod: { startDate: Date; endDate: Date },
   ) => void;
   timezone: string;
 }
@@ -51,7 +51,9 @@ export default function SubscriptionPricingToggle({
       : "",
   );
   const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const [schedulingStartDate, setSchedulingStartDate] = useState<Date | null>(null);
+  const [schedulingStartDate, setSchedulingStartDate] = useState<Date | null>(
+    null,
+  );
   const [schedulingEndDate, setSchedulingEndDate] = useState<Date | null>(null);
 
   // Get the currently selected subscription option
@@ -73,9 +75,15 @@ export default function SubscriptionPricingToggle({
   }, [selectedOption]);
 
   // Validate scheduling period
-  const validatePeriod = (start: Date | null, end: Date | null): { valid: boolean; message?: string } => {
+  const validatePeriod = (
+    start: Date | null,
+    end: Date | null,
+  ): { valid: boolean; message?: string } => {
     if (!start || !end) {
-      return { valid: false, message: "Please select both start and end dates" };
+      return {
+        valid: false,
+        message: "Please select both start and end dates",
+      };
     }
 
     if (end <= start) {
@@ -116,7 +124,12 @@ export default function SubscriptionPricingToggle({
   };
 
   const handleContinueToCheckout = () => {
-    if (!validation.valid || !schedulingStartDate || !schedulingEndDate || !selectedOption) {
+    if (
+      !validation.valid ||
+      !schedulingStartDate ||
+      !schedulingEndDate ||
+      !selectedOption
+    ) {
       toast({
         title: "Invalid Dates",
         description: validation.message || "Please select valid dates",
@@ -164,96 +177,96 @@ export default function SubscriptionPricingToggle({
       onValueChange={setActiveSubscriptionOption}
       className="w-full space-y-8"
     >
-        <TabsList className="inline-flex p-1 bg-gray-800/30 backdrop-blur-sm rounded-xl border border-gray-700/30 shadow-md">
-          {subscriptionOptions.map((option) => (
-            <TabsTrigger
-              key={option.durationInMonths}
-              value={option.title.toLowerCase().replace(" ", "-")}
-              className={`${
+      <TabsList className="inline-flex p-1 bg-gray-800/30 backdrop-blur-sm rounded-xl border border-gray-700/30 shadow-md">
+        {subscriptionOptions.map((option) => (
+          <TabsTrigger
+            key={option.durationInMonths}
+            value={option.title.toLowerCase().replace(" ", "-")}
+            className={`${
+              activeSubscriptionOption ===
+              option.title.toLowerCase().replace(" ", "-")
+                ? "bg-white text-black shadow-sm"
+                : "text-gray-300 hover:text-white hover:bg-gray-700/30"
+            } px-5 py-2 rounded-lg font-medium transition-all duration-200 ease-out`}
+          >
+            {option.title}
+          </TabsTrigger>
+        ))}
+      </TabsList>
+      <div className="grid grid-cols-1 gap-6">
+        {subscriptionOptions.map((option) => (
+          <motion.div
+            key={option.durationInMonths}
+            initial={{ opacity: 0, y: 20 }}
+            animate={{
+              opacity:
                 activeSubscriptionOption ===
                 option.title.toLowerCase().replace(" ", "-")
-                  ? "bg-white text-black shadow-sm"
-                  : "text-gray-300 hover:text-white hover:bg-gray-700/30"
-              } px-5 py-2 rounded-lg font-medium transition-all duration-200 ease-out`}
-            >
-              {option.title}
-            </TabsTrigger>
-          ))}
-        </TabsList>
-        <div className="grid grid-cols-1 gap-6">
-          {subscriptionOptions.map((option) => (
-            <motion.div
-              key={option.durationInMonths}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{
-                opacity:
-                  activeSubscriptionOption ===
-                  option.title.toLowerCase().replace(" ", "-")
-                    ? 1
-                    : 0,
-                y: 0,
-              }}
-              transition={{ duration: 0.3 }}
-              className={
-                activeSubscriptionOption ===
-                option.title.toLowerCase().replace(" ", "-")
-                  ? "block"
-                  : "hidden"
-              }
-            >
-              <Card className="bg-gray-800/50 border-gray-700 shadow-lg hover:shadow-xl transition-all duration-300 backdrop-blur-sm">
-                <CardHeader>
-                  <CardTitle className="text-2xl font-bold text-white">
-                    {option.title}
-                  </CardTitle>
-                  <CardDescription className="text-gray-300">
-                    {option.description}
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-6">
-                  <div className="text-5xl font-bold text-white">
-                    ${option.price}
-                  </div>
-                  <div className="space-y-2">
-                    <p className="text-white">Includes:</p>
-                    <ul className="space-y-1 pl-4">
-                      {option.features?.map((feature, index) => (
-                        <li
-                          key={`feature-${index}`}
-                          className="text-gray-300 flex items-center"
-                        >
-                          <svg
-                            className="w-4 h-4 mr-2 text-white"
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                            xmlns="http://www.w3.org/2000/svg"
-                          >
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              strokeWidth={2}
-                              d="M5 13l4 4L19 7"
-                            />
-                          </svg>
-                          {feature}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                  <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-                    <DialogTrigger asChild>
-                      <Button
-                        variant="outline"
-                        className="w-full bg-white text-black hover:bg-gray-100 transition-colors duration-300"
-                        onClick={handleChoosePlan}
+                  ? 1
+                  : 0,
+              y: 0,
+            }}
+            transition={{ duration: 0.3 }}
+            className={
+              activeSubscriptionOption ===
+              option.title.toLowerCase().replace(" ", "-")
+                ? "block"
+                : "hidden"
+            }
+          >
+            <Card className="bg-gray-800/50 border-gray-700 shadow-lg hover:shadow-xl transition-all duration-300 backdrop-blur-sm">
+              <CardHeader>
+                <CardTitle className="text-2xl font-bold text-white">
+                  {option.title}
+                </CardTitle>
+                <CardDescription className="text-gray-300">
+                  {option.description}
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="text-5xl font-bold text-white">
+                  ${option.price}
+                </div>
+                <div className="space-y-2">
+                  <p className="text-white">Includes:</p>
+                  <ul className="space-y-1 pl-4">
+                    {option.features?.map((feature, index) => (
+                      <li
+                        key={`feature-${index}`}
+                        className="text-gray-300 flex items-center"
                       >
-                        Choose Plan
-                      </Button>
-                    </DialogTrigger>
-                    <DialogPortal>
-                      <DialogOverlay className="bg-black/30" />
-                      <DialogContent className="sm:max-w-[500px] bg-[#15171B] text-white p-0 border-0 rounded-lg">
+                        <svg
+                          className="w-4 h-4 mr-2 text-white"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                          xmlns="http://www.w3.org/2000/svg"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M5 13l4 4L19 7"
+                          />
+                        </svg>
+                        {feature}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+                <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+                  <DialogTrigger asChild>
+                    <Button
+                      variant="outline"
+                      className="w-full bg-white text-black hover:bg-gray-100 transition-colors duration-300"
+                      onClick={handleChoosePlan}
+                    >
+                      Choose Plan
+                    </Button>
+                  </DialogTrigger>
+                  <DialogPortal>
+                    <DialogOverlay className="bg-black/30" />
+                    <DialogContent className="sm:max-w-[500px] bg-[#15171B] text-white p-0 border-0 rounded-lg">
                       <DialogHeader className="p-6 border-b border-gray-800">
                         <DialogTitle>Select Scheduling Period</DialogTitle>
                         <DialogDescription className="text-gray-400">
@@ -272,9 +285,15 @@ export default function SubscriptionPricingToggle({
                             </label>
                             <input
                               type="date"
-                              value={schedulingStartDate ? format(schedulingStartDate, "yyyy-MM-dd") : ""}
+                              value={
+                                schedulingStartDate
+                                  ? format(schedulingStartDate, "yyyy-MM-dd")
+                                  : ""
+                              }
                               onChange={(e) => {
-                                const date = e.target.value ? new Date(e.target.value) : null;
+                                const date = e.target.value
+                                  ? new Date(e.target.value)
+                                  : null;
                                 setSchedulingStartDate(date);
                               }}
                               min={format(new Date(), "yyyy-MM-dd")}
@@ -293,12 +312,22 @@ export default function SubscriptionPricingToggle({
                             </label>
                             <input
                               type="date"
-                              value={schedulingEndDate ? format(schedulingEndDate, "yyyy-MM-dd") : ""}
+                              value={
+                                schedulingEndDate
+                                  ? format(schedulingEndDate, "yyyy-MM-dd")
+                                  : ""
+                              }
                               onChange={(e) => {
-                                const date = e.target.value ? new Date(e.target.value) : null;
+                                const date = e.target.value
+                                  ? new Date(e.target.value)
+                                  : null;
                                 setSchedulingEndDate(date);
                               }}
-                              min={schedulingStartDate ? format(schedulingStartDate, "yyyy-MM-dd") : format(new Date(), "yyyy-MM-dd")}
+                              min={
+                                schedulingStartDate
+                                  ? format(schedulingStartDate, "yyyy-MM-dd")
+                                  : format(new Date(), "yyyy-MM-dd")
+                              }
                               className="w-full px-6 py-4 bg-gray-800/60 border-2 border-gray-700/50 rounded-xl text-white text-lg font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-all hover:border-gray-600/50 cursor-pointer"
                               style={{
                                 colorScheme: "dark",
@@ -322,8 +351,8 @@ export default function SubscriptionPricingToggle({
                               {Math.round(
                                 differenceInDays(
                                   schedulingEndDate,
-                                  schedulingStartDate
-                                ) / 30
+                                  schedulingStartDate,
+                                ) / 30,
                               )}{" "}
                               month(s)
                             </p>
@@ -362,13 +391,13 @@ export default function SubscriptionPricingToggle({
                         </Button>
                       </div>
                     </DialogContent>
-                    </DialogPortal>
-                  </Dialog>
-                </CardContent>
-              </Card>
-            </motion.div>
-          ))}
-        </div>
-      </Tabs>
+                  </DialogPortal>
+                </Dialog>
+              </CardContent>
+            </Card>
+          </motion.div>
+        ))}
+      </div>
+    </Tabs>
   );
 }

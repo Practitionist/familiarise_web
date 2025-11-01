@@ -211,10 +211,20 @@ export function useCalendarData(
     if (!consultantId) return;
 
     try {
-      // // Use subscription start date for allocation // Use UI date for viewing 
-      const startDate = (mode === "allocate" && allowedStart) ? allowedStart : view === "week" ? startOfWeek(currentDate) : startOfMonth(currentDate);
+      // // Use subscription start date for allocation // Use UI date for viewing
+      const startDate =
+        mode === "allocate" && allowedStart
+          ? allowedStart
+          : view === "week"
+            ? startOfWeek(currentDate)
+            : startOfMonth(currentDate);
       // Use subscription end date for allocation // Use UI date for viewing
-      const endDate = (mode === "allocate" && allowedEnd) ? allowedEnd : view === "week" ? endOfWeek(currentDate) : endOfMonth(currentDate); // --- END OF FIX --- ```
+      const endDate =
+        mode === "allocate" && allowedEnd
+          ? allowedEnd
+          : view === "week"
+            ? endOfWeek(currentDate)
+            : endOfMonth(currentDate); // --- END OF FIX --- ```
 
       const data = await AllocationService.fetchAvailabilitySlots(
         consultantId,
@@ -235,25 +245,25 @@ export function useCalendarData(
       const validatedData = {
         weekly: Array.isArray(data.weekly)
           ? data.weekly.filter((slot: any) => {
-            if (!slot || !slot.slotStartTimeInUTC || !slot.slotEndTimeInUTC) {
-              console.warn(
-                "⚠️ fetchAvailabilitySlots: Filtering out invalid weekly slot",
-              );
-              return false;
-            }
-            return true;
-          })
+              if (!slot || !slot.slotStartTimeInUTC || !slot.slotEndTimeInUTC) {
+                console.warn(
+                  "⚠️ fetchAvailabilitySlots: Filtering out invalid weekly slot",
+                );
+                return false;
+              }
+              return true;
+            })
           : [],
         custom: Array.isArray(data.custom)
           ? data.custom.filter((slot: any) => {
-            if (!slot || !slot.slotStartTimeInUTC || !slot.slotEndTimeInUTC) {
-              console.warn(
-                "⚠️ fetchAvailabilitySlots: Filtering out invalid custom slot",
-              );
-              return false;
-            }
-            return true;
-          })
+              if (!slot || !slot.slotStartTimeInUTC || !slot.slotEndTimeInUTC) {
+                console.warn(
+                  "⚠️ fetchAvailabilitySlots: Filtering out invalid custom slot",
+                );
+                return false;
+              }
+              return true;
+            })
           : [],
       };
 
@@ -276,11 +286,20 @@ export function useCalendarData(
     if (!consultantId) return;
 
     try {
-      // // Use subscription start date for allocation // Use UI date for viewing 
-      const startDate = (mode === "allocate" && allowedStart) ? allowedStart : view === "week" ? startOfWeek(currentDate) : startOfMonth(currentDate);
+      // // Use subscription start date for allocation // Use UI date for viewing
+      const startDate =
+        mode === "allocate" && allowedStart
+          ? allowedStart
+          : view === "week"
+            ? startOfWeek(currentDate)
+            : startOfMonth(currentDate);
       // Use subscription end date for allocation // Use UI date for viewing
-      const endDate = (mode === "allocate" && allowedEnd) ? allowedEnd : view === "week" ? endOfWeek(currentDate) : endOfMonth(currentDate); // --- END OF FIX --- ```
-
+      const endDate =
+        mode === "allocate" && allowedEnd
+          ? allowedEnd
+          : view === "week"
+            ? endOfWeek(currentDate)
+            : endOfMonth(currentDate); // --- END OF FIX --- ```
 
       const data = await AllocationService.fetchAppointments(
         consultantId,
@@ -393,9 +412,9 @@ export function useCalendarData(
           slotsCount: slots.length,
           firstSlot: slots[0]
             ? {
-              startTime: slots[0].startTime.toISOString(),
-              endTime: slots[0].endTime.toISOString(),
-            }
+                startTime: slots[0].startTime.toISOString(),
+                endTime: slots[0].endTime.toISOString(),
+              }
             : null,
         });
         setEventSlots(slots);
@@ -642,9 +661,17 @@ export function useCalendarData(
           setLoading(false);
         });
     }
-  }, [autoLoad, consultantId, eventType, eventId, currentDate, view, mode,
+  }, [
+    autoLoad,
+    consultantId,
+    eventType,
+    eventId,
+    currentDate,
+    view,
+    mode,
     allowedStart,
-    allowedEnd,]);
+    allowedEnd,
+  ]);
 
   // ENHANCEMENT: Individual refetch functions for granular control
   const refetchConsultant = useCallback(async (): Promise<void> => {

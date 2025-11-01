@@ -188,9 +188,8 @@ export function AppointmentsTab({
               getSlotTimes(app).every((time) => new Date(time) < now),
             ).length;
             const remainingSessions = totalSessions - completedSessions;
-            const progressPercentage = totalSessions > 0
-              ? (completedSessions / totalSessions) * 100
-              : 0;
+            const progressPercentage =
+              totalSessions > 0 ? (completedSessions / totalSessions) * 100 : 0;
 
             return (
               <div
@@ -226,7 +225,7 @@ export function AppointmentsTab({
                             {getConsumeeName(firstAppointment)}
                           </h3>
                           <p className="text-xs text-gray-600">
-                            {groupTitle.split('(')[0].trim()}
+                            {groupTitle.split("(")[0].trim()}
                           </p>
                         </div>
 
@@ -280,10 +279,16 @@ export function AppointmentsTab({
                     <div className="space-y-2">
                       <div className="flex items-center justify-between text-xs">
                         <span className="text-gray-600">
-                          <span className="font-semibold text-green-600">{completedSessions}</span> completed
+                          <span className="font-semibold text-green-600">
+                            {completedSessions}
+                          </span>{" "}
+                          completed
                         </span>
                         <span className="text-gray-600">
-                          <span className="font-semibold text-blue-600">{remainingSessions}</span> remaining
+                          <span className="font-semibold text-blue-600">
+                            {remainingSessions}
+                          </span>{" "}
+                          remaining
                         </span>
                       </div>
 

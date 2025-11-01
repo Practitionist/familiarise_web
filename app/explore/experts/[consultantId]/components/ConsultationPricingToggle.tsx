@@ -235,113 +235,113 @@ export default function ConsultationPricingToggle({
       onValueChange={setActiveConsultationOption}
       className="w-full space-y-8"
     >
-        <TabsList className="inline-flex p-1 bg-gray-800/30 backdrop-blur-sm rounded-xl border border-gray-700/30 shadow-md">
-          {consultationOptions.map((option) => (
-            <TabsTrigger
-              key={option.durationInHours}
-              value={option.title.toLowerCase().replace(" ", "-")}
-              className={`${
+      <TabsList className="inline-flex p-1 bg-gray-800/30 backdrop-blur-sm rounded-xl border border-gray-700/30 shadow-md">
+        {consultationOptions.map((option) => (
+          <TabsTrigger
+            key={option.durationInHours}
+            value={option.title.toLowerCase().replace(" ", "-")}
+            className={`${
+              activeConsultationOption ===
+              option.title.toLowerCase().replace(" ", "-")
+                ? "bg-white text-black shadow-sm"
+                : "text-gray-300 hover:text-white hover:bg-gray-700/30"
+            } px-5 py-2 rounded-lg font-medium transition-all duration-200 ease-out`}
+          >
+            {option.title}
+          </TabsTrigger>
+        ))}
+      </TabsList>
+      <div className="grid grid-cols-1 gap-6">
+        {consultationOptions.map((option) => (
+          <motion.div
+            key={option.durationInHours}
+            initial={{ opacity: 0, y: 20 }}
+            animate={{
+              opacity:
                 activeConsultationOption ===
                 option.title.toLowerCase().replace(" ", "-")
-                  ? "bg-white text-black shadow-sm"
-                  : "text-gray-300 hover:text-white hover:bg-gray-700/30"
-              } px-5 py-2 rounded-lg font-medium transition-all duration-200 ease-out`}
-            >
-              {option.title}
-            </TabsTrigger>
-          ))}
-        </TabsList>
-        <div className="grid grid-cols-1 gap-6">
-          {consultationOptions.map((option) => (
-            <motion.div
-              key={option.durationInHours}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{
-                opacity:
-                  activeConsultationOption ===
-                  option.title.toLowerCase().replace(" ", "-")
-                    ? 1
-                    : 0,
-                y: 0,
-              }}
-              transition={{ duration: 0.3 }}
-              className={
-                activeConsultationOption ===
-                option.title.toLowerCase().replace(" ", "-")
-                  ? "block"
-                  : "hidden"
-              }
-            >
-              <Card className="bg-gray-800/50 border-gray-700 shadow-lg hover:shadow-xl transition-all duration-300 backdrop-blur-sm">
-                <CardHeader>
-                  <CardTitle className="text-2xl font-bold text-white">
-                    {option.title}
-                  </CardTitle>
-                  <CardDescription className="text-gray-300">
-                    {option.description}
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-6">
-                  <div className="text-5xl font-bold text-white">
-                    ${option.price}
-                  </div>
-                  {option.features && option.features.length > 0 && (
-                    <div className="space-y-2">
-                      <p className="text-white">Includes:</p>
-                      <ul className="space-y-1 pl-4">
-                        {option.features.map((feature, index) => (
-                          <li
-                            key={`feature-${index}`}
-                            className="text-gray-300 flex items-center"
+                  ? 1
+                  : 0,
+              y: 0,
+            }}
+            transition={{ duration: 0.3 }}
+            className={
+              activeConsultationOption ===
+              option.title.toLowerCase().replace(" ", "-")
+                ? "block"
+                : "hidden"
+            }
+          >
+            <Card className="bg-gray-800/50 border-gray-700 shadow-lg hover:shadow-xl transition-all duration-300 backdrop-blur-sm">
+              <CardHeader>
+                <CardTitle className="text-2xl font-bold text-white">
+                  {option.title}
+                </CardTitle>
+                <CardDescription className="text-gray-300">
+                  {option.description}
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="text-5xl font-bold text-white">
+                  ${option.price}
+                </div>
+                {option.features && option.features.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-white">Includes:</p>
+                    <ul className="space-y-1 pl-4">
+                      {option.features.map((feature, index) => (
+                        <li
+                          key={`feature-${index}`}
+                          className="text-gray-300 flex items-center"
+                        >
+                          <svg
+                            className="w-4 h-4 mr-2 text-white"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                            xmlns="http://www.w3.org/2000/svg"
                           >
-                            <svg
-                              className="w-4 h-4 mr-2 text-white"
-                              fill="none"
-                              stroke="currentColor"
-                              viewBox="0 0 24 24"
-                              xmlns="http://www.w3.org/2000/svg"
-                            >
-                              <path
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                                strokeWidth={2}
-                                d="M5 13l4 4L19 7"
-                              />
-                            </svg>
-                            {feature}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                  <Dialog>
-                    <DialogTrigger asChild>
-                      <Button
-                        variant="outline"
-                        className="w-full bg-white text-black hover:bg-gray-100 transition-colors duration-300"
-                        onClick={handleBookNowClick}
-                      >
-                        Book Now
-                      </Button>
-                    </DialogTrigger>
-                    <DialogPortal>
-                      <DialogOverlay className="bg-black/30" />
-                      <DialogContent className="sm:max-w-[425px] lg:max-w-[700px] bg-[#15171B] text-white p-0 border-0 rounded-lg">
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M5 13l4 4L19 7"
+                            />
+                          </svg>
+                          {feature}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                <Dialog>
+                  <DialogTrigger asChild>
+                    <Button
+                      variant="outline"
+                      className="w-full bg-white text-black hover:bg-gray-100 transition-colors duration-300"
+                      onClick={handleBookNowClick}
+                    >
+                      Book Now
+                    </Button>
+                  </DialogTrigger>
+                  <DialogPortal>
+                    <DialogOverlay className="bg-black/30" />
+                    <DialogContent className="sm:max-w-[425px] lg:max-w-[700px] bg-[#15171B] text-white p-0 border-0 rounded-lg">
                       <DialogHeader className="p-6 border-b border-gray-800">
                         <DialogTitle>
                           Book {option.title} Consultation
                         </DialogTitle>
                         <DialogDescription className="text-gray-400">
-                          Select a date and time for your{" "}
-                          {option.duration} consultation
+                          Select a date and time for your {option.duration}{" "}
+                          consultation
                         </DialogDescription>
                       </DialogHeader>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-6">
                         {/* Calendar Section */}
                         <div>
                           <h3 className="text-lg font-semibold mb-4 flex items-center">
-                            <CalendarIcon className="mr-2 h-5 w-5" />{" "}
-                            Select a Date
+                            <CalendarIcon className="mr-2 h-5 w-5" /> Select a
+                            Date
                           </h3>
                           <div className="calendar-container bg-gray-800/60 p-4 rounded-lg">
                             <div className="flex justify-between items-center mb-4">
@@ -398,8 +398,8 @@ export default function ConsultationPricingToggle({
                         {/* Available Slots Section */}
                         <div>
                           <h3 className="text-lg font-semibold mb-4 flex items-center">
-                            <ClockIcon className="mr-2 h-5 w-5" />{" "}
-                            Available {selectedDuration} hour Slots
+                            <ClockIcon className="mr-2 h-5 w-5" /> Available{" "}
+                            {selectedDuration} hour Slots
                           </h3>
                           {/* Show consultant's preferred slot type */}
                           {consultantDetails?.scheduleType && (
@@ -408,14 +408,12 @@ export default function ConsultationPricingToggle({
                                 This consultant prefers{" "}
                                 <span
                                   className={`px-2 py-1 rounded text-xs font-medium ${
-                                    consultantDetails.scheduleType ===
-                                    "WEEKLY"
+                                    consultantDetails.scheduleType === "WEEKLY"
                                       ? "bg-blue-500/20 text-blue-300"
                                       : "bg-green-500/20 text-green-300"
                                   }`}
                                 >
-                                  {consultantDetails.scheduleType ===
-                                  "WEEKLY"
+                                  {consultantDetails.scheduleType === "WEEKLY"
                                     ? "📅 Weekly"
                                     : "🎯 Custom"}
                                 </span>{" "}
@@ -507,13 +505,13 @@ export default function ConsultationPricingToggle({
                         </Button>
                       </div>
                     </DialogContent>
-                    </DialogPortal>
-                  </Dialog>
-                </CardContent>
-              </Card>
-            </motion.div>
-          ))}
-        </div>
-      </Tabs>
+                  </DialogPortal>
+                </Dialog>
+              </CardContent>
+            </Card>
+          </motion.div>
+        ))}
+      </div>
+    </Tabs>
   );
 }

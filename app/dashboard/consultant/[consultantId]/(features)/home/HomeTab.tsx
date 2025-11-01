@@ -119,29 +119,37 @@ export function HomeTab({
   const groupedAll = groupRecurringAppointments(allUpcomingAppointments);
 
   // Limit slots per group (2 past + 5 upcoming for recurring, all for single)
-  const groupedUpcomingAppointments = Object.entries(groupedAll).reduce((acc, [key, appointments]) => {
-    const now = new Date();
-    const isRecurring = key.startsWith("subscription-") || key.startsWith("class-");
+  const groupedUpcomingAppointments = Object.entries(groupedAll).reduce(
+    (acc, [key, appointments]) => {
+      const now = new Date();
+      const isRecurring =
+        key.startsWith("subscription-") || key.startsWith("class-");
 
-    if (isRecurring) {
-      // Get past slots (completed sessions)
-      const pastSlots = appointments
-        .filter(app => getSlotTimes(app).every(time => new Date(time) < now))
-        .slice(-2); // Last 2 past slots
+      if (isRecurring) {
+        // Get past slots (completed sessions)
+        const pastSlots = appointments
+          .filter((app) =>
+            getSlotTimes(app).every((time) => new Date(time) < now),
+          )
+          .slice(-2); // Last 2 past slots
 
-      // Get upcoming slots (future sessions)
-      const upcomingSlots = appointments
-        .filter(app => getSlotTimes(app).some(time => new Date(time) >= now))
-        .slice(0, 5); // First 5 upcoming slots
+        // Get upcoming slots (future sessions)
+        const upcomingSlots = appointments
+          .filter((app) =>
+            getSlotTimes(app).some((time) => new Date(time) >= now),
+          )
+          .slice(0, 5); // First 5 upcoming slots
 
-      acc[key] = [...pastSlots, ...upcomingSlots];
-    } else {
-      // For single appointments (consultations/webinars), show all
-      acc[key] = appointments;
-    }
+        acc[key] = [...pastSlots, ...upcomingSlots];
+      } else {
+        // For single appointments (consultations/webinars), show all
+        acc[key] = appointments;
+      }
 
-    return acc;
-  }, {} as Record<string, TAppointment[]>);
+      return acc;
+    },
+    {} as Record<string, TAppointment[]>,
+  );
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6">
@@ -246,9 +254,10 @@ export function HomeTab({
                     getSlotTimes(app).every((time) => new Date(time) < now),
                   ).length;
                   const remainingSessions = totalSessions - completedSessions;
-                  const progressPercentage = totalSessions > 0
-                    ? (completedSessions / totalSessions) * 100
-                    : 0;
+                  const progressPercentage =
+                    totalSessions > 0
+                      ? (completedSessions / totalSessions) * 100
+                      : 0;
 
                   return (
                     <div
@@ -277,7 +286,7 @@ export function HomeTab({
                                   {userName}
                                 </h3>
                                 <p className="text-xs text-gray-600">
-                                  {groupTitle.split('(')[0].trim()}
+                                  {groupTitle.split("(")[0].trim()}
                                 </p>
                               </div>
                             </div>
@@ -293,10 +302,16 @@ export function HomeTab({
                           <div className="space-y-2">
                             <div className="flex items-center justify-between text-xs">
                               <span className="text-gray-600">
-                                <span className="font-semibold text-green-600">{completedSessions}</span> completed
+                                <span className="font-semibold text-green-600">
+                                  {completedSessions}
+                                </span>{" "}
+                                completed
                               </span>
                               <span className="text-gray-600">
-                                <span className="font-semibold text-blue-600">{remainingSessions}</span> remaining
+                                <span className="font-semibold text-blue-600">
+                                  {remainingSessions}
+                                </span>{" "}
+                                remaining
                               </span>
                             </div>
 
@@ -327,11 +342,17 @@ export function HomeTab({
                               role="button"
                               tabIndex={0}
                               className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 p-3 hover:bg-gray-50 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500 rounded"
-                              onClick={() => router.push(`/dashboard/consultant/${consultantId}/appointments?highlight=${encodeURIComponent(groupKey)}`)}
+                              onClick={() =>
+                                router.push(
+                                  `/dashboard/consultant/${consultantId}/appointments?highlight=${encodeURIComponent(groupKey)}`,
+                                )
+                              }
                               onKeyDown={(e) => {
                                 if (e.key === "Enter" || e.key === " ") {
                                   e.preventDefault();
-                                  router.push(`/dashboard/consultant/${consultantId}/appointments?highlight=${encodeURIComponent(groupKey)}`);
+                                  router.push(
+                                    `/dashboard/consultant/${consultantId}/appointments?highlight=${encodeURIComponent(groupKey)}`,
+                                  );
                                 }
                               }}
                             >
@@ -407,7 +428,11 @@ export function HomeTab({
                 <Button
                   variant="link"
                   className="text-blue-600 hover:text-blue-700 font-medium"
-                  onClick={() => router.push(`/dashboard/consultant/${consultantId}/appointments`)}
+                  onClick={() =>
+                    router.push(
+                      `/dashboard/consultant/${consultantId}/appointments`,
+                    )
+                  }
                 >
                   View All Appointments →
                 </Button>

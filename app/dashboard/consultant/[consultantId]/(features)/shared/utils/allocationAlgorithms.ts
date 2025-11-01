@@ -261,7 +261,7 @@ export class AllocationAlgorithms {
             options.callsPerWeek || 1,
             options.durationInMonths || 1,
             preferences,
-            options
+            options,
           );
           strategy = "optimal-distribution";
           break;
@@ -500,7 +500,12 @@ export class AllocationAlgorithms {
 
         consecutiveSlots.push(slotOne, slotTwo);
       }
-      console.log("Is consecutive:", isConsecutive, "Slots found:", consecutiveSlots);
+      console.log(
+        "Is consecutive:",
+        isConsecutive,
+        "Slots found:",
+        consecutiveSlots,
+      );
 
       if (isConsecutive && consecutiveSlots.length === requiredSlots) {
         return consecutiveSlots;
@@ -568,7 +573,7 @@ export class AllocationAlgorithms {
     callsPerWeek: number,
     durationInMonths: number,
     preferences: AutoAllocationPreferences,
-    options: AllocationOptions
+    options: AllocationOptions,
   ): TimeSlot[] {
     const sortedAvailableSlots = availableSlots.sort(
       (a, b) => a.startTime.getTime() - b.startTime.getTime(),
@@ -580,15 +585,25 @@ export class AllocationAlgorithms {
     }
 
     // checks for filtering slots within subscription date range
-    const futureSlots = sortedAvailableSlots.filter(slot => {
-      const startsAfterOrOnBegin = slot.startTime.getTime() >= options.startDate!.getTime();
-      const endsBeforeOrOnEnd = slot.endTime.getTime() <= options.endDate!.getTime();
+    const futureSlots = sortedAvailableSlots.filter((slot) => {
+      const startsAfterOrOnBegin =
+        slot.startTime.getTime() >= options.startDate!.getTime();
+      const endsBeforeOrOnEnd =
+        slot.endTime.getTime() <= options.endDate!.getTime();
       return startsAfterOrOnBegin && endsBeforeOrOnEnd;
     });
 
-    console.log({ availableSlots, totalSlots, callsPerWeek, durationInMonths, preferences });
-    console.log("Filtered future slots within subscription range:", futureSlots);
-
+    console.log({
+      availableSlots,
+      totalSlots,
+      callsPerWeek,
+      durationInMonths,
+      preferences,
+    });
+    console.log(
+      "Filtered future slots within subscription range:",
+      futureSlots,
+    );
 
     const selectedSlots: TimeSlot[] = [];
     // FIXED: Use actual duration and frequency instead of hardcoded weeks calculation
@@ -640,37 +655,45 @@ export class AllocationAlgorithms {
     console.log("Selected slots for recurring event:", selectedSlots);
 
     // 30 minute slots by breaking down 1 hour slots
-    const finalThirtyMinuteSlots: TimeSlot[] = selectedSlots.flatMap((oneHourSlot) => {
+    const finalThirtyMinuteSlots: TimeSlot[] = selectedSlots.flatMap(
+      (oneHourSlot) => {
+        const originalStartTime = new Date(oneHourSlot.startTime);
+        const originalEndTime = new Date(oneHourSlot.endTime);
 
-      const originalStartTime = new Date(oneHourSlot.startTime);
-      const originalEndTime = new Date(oneHourSlot.endTime);
+        // midpoint time calculation
+        const midPointTime = new Date(
+          originalStartTime.getTime() + 30 * 60 * 1000,
+        );
 
-      // midpoint time calculation
-      const midPointTime = new Date(originalStartTime.getTime() + 30 * 60 * 1000);
+        // Basic duration check (optional, good for safety)
+        const durationMinutes =
+          (originalEndTime.getTime() - originalStartTime.getTime()) /
+          (60 * 1000);
 
-      // Basic duration check (optional, good for safety)
-      const durationMinutes = (originalEndTime.getTime() - originalStartTime.getTime()) / (60 * 1000);
+        if (Math.abs(durationMinutes - 60) > 1) {
+          console.warn(
+            `Final Split: Expected 1-hour slot but got ${durationMinutes} minutes. Splitting anyway:`,
+            oneHourSlot,
+          );
+        }
 
-      if (Math.abs(durationMinutes - 60) > 1) {
-        console.warn(`Final Split: Expected 1-hour slot but got ${durationMinutes} minutes. Splitting anyway:`, oneHourSlot);
-      }
+        // first 30-minute slot
+        const slotOne: TimeSlot = {
+          ...oneHourSlot,
+          startTime: originalStartTime,
+          endTime: midPointTime,
+        };
 
-      // first 30-minute slot
-      const slotOne: TimeSlot = {
-        ...oneHourSlot,
-        startTime: originalStartTime,
-        endTime: midPointTime,
-      };
+        // second 30-minute slot
+        const slotTwo: TimeSlot = {
+          ...oneHourSlot,
+          startTime: midPointTime,
+          endTime: originalEndTime,
+        };
 
-      // second 30-minute slot
-      const slotTwo: TimeSlot = {
-        ...oneHourSlot,
-        startTime: midPointTime,
-        endTime: originalEndTime,
-      };
-
-      return [slotOne, slotTwo];
-    });
+        return [slotOne, slotTwo];
+      },
+    );
 
     console.log("Final transformed 30-minute slots:", finalThirtyMinuteSlots);
 

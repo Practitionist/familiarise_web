@@ -24,7 +24,7 @@ interface ExpertPricingProps {
   handleConsultationBooking: () => Promise<void>;
   handleSubscriptionBooking: (
     option: PricingOption,
-    schedulingPeriod: { startDate: Date; endDate: Date }
+    schedulingPeriod: { startDate: Date; endDate: Date },
   ) => Promise<void>;
   selectedDate: Date | null;
   setSelectedDate: (date: Date | null) => void;
