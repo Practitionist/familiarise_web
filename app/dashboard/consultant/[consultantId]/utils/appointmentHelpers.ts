@@ -102,6 +102,37 @@ export const getSlotTimes = (appointment: TAppointment): Date[] => {
     .filter((date): date is Date => date !== null);
 };
 
+/**
+ * Calculates session progress metrics for a group of appointments
+ * @param groupAppointments - Array of appointments in the group (e.g., subscription sessions)
+ * @param referenceDate - Optional reference date for comparison (defaults to now)
+ * @returns Session progress metrics including total, completed, remaining sessions and percentage
+ */
+export const calculateSessionProgress = (
+  groupAppointments: TAppointment[],
+  referenceDate: Date = new Date(),
+): {
+  totalSessions: number;
+  completedSessions: number;
+  remainingSessions: number;
+  progressPercentage: number;
+} => {
+  const totalSessions = groupAppointments.length;
+  const completedSessions = groupAppointments.filter((app) =>
+    getSlotTimes(app).every((time) => new Date(time) < referenceDate),
+  ).length;
+  const remainingSessions = totalSessions - completedSessions;
+  const progressPercentage =
+    totalSessions > 0 ? (completedSessions / totalSessions) * 100 : 0;
+
+  return {
+    totalSessions,
+    completedSessions,
+    remainingSessions,
+    progressPercentage,
+  };
+};
+
 // Get first slot time from appointment (for backwards compatibility)
 export const getStartTime = (appointment: TAppointment): Date | null => {
   const times = getSlotTimes(appointment);

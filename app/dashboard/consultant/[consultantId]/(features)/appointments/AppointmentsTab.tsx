@@ -13,6 +13,7 @@ import { ChevronLeft, ChevronRight, Clock, Users } from "lucide-react";
 import { AppointmentsTabProps } from "../../types";
 import { TAppointment } from "@/types/appointment";
 import {
+  calculateSessionProgress,
   formatAppointmentTime,
   getAppointmentStatus,
   getAppointmentTypeAndPlan,
@@ -21,7 +22,6 @@ import {
   getGroupStatus,
   getGroupTitle,
   getStartTime,
-  getSlotTimes,
   groupRecurringAppointments,
 } from "../../utils/appointmentHelpers";
 import { EventTimingsCalendar } from "./components/EventTimingsCalendar";
@@ -182,14 +182,12 @@ export function AppointmentsTab({
             const firstAppointment = groupAppointments[0];
 
             // Calculate session progress for recurring appointments
-            const now = new Date();
-            const totalSessions = groupAppointments.length;
-            const completedSessions = groupAppointments.filter((app) =>
-              getSlotTimes(app).every((time) => new Date(time) < now),
-            ).length;
-            const remainingSessions = totalSessions - completedSessions;
-            const progressPercentage =
-              totalSessions > 0 ? (completedSessions / totalSessions) * 100 : 0;
+            const {
+              totalSessions,
+              completedSessions,
+              remainingSessions,
+              progressPercentage,
+            } = calculateSessionProgress(groupAppointments);
 
             return (
               <div

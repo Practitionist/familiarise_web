@@ -10,6 +10,7 @@ import { useRouter } from "next/navigation";
 import { Suspense } from "react";
 import { ClientActivity } from "../../components/ClientActivity";
 import {
+  calculateSessionProgress,
   formatAppointmentTime,
   getAppointmentStatus,
   getAppointmentTypeAndPlan,
@@ -248,16 +249,12 @@ export function HomeTab({
                   const userName = getConsumeeName(firstAppointment);
 
                   // Calculate session progress for recurring appointments
-                  const now = new Date();
-                  const totalSessions = groupAppointments.length;
-                  const completedSessions = groupAppointments.filter((app) =>
-                    getSlotTimes(app).every((time) => new Date(time) < now),
-                  ).length;
-                  const remainingSessions = totalSessions - completedSessions;
-                  const progressPercentage =
-                    totalSessions > 0
-                      ? (completedSessions / totalSessions) * 100
-                      : 0;
+                  const {
+                    totalSessions,
+                    completedSessions,
+                    remainingSessions,
+                    progressPercentage,
+                  } = calculateSessionProgress(groupAppointments);
 
                   return (
                     <div
