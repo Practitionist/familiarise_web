@@ -4,16 +4,5 @@
       "command": "npx",
       "args": ["-y", "mcp-remote", "https://www.shadcn.io/api/mcp"]
     },
-    "supabase": {
-      "command": "npx",
-      "args": ["-y", "@supabase/mcp-server-supabase@latest"],
-      "env": {
-        "SUPABASE_ACCESS_TOKEN": "sbp_32d697dba183df07c80dfc838273e9ed344c1f0c"
-      }
-    },
-    "chrome-devtools": {
-      "command": "npx",
-      "args": ["-y", "chrome-devtools-mcp@latest"]
-    }
   }
 }

@@ -1,6 +1,16 @@
 import { format } from "date-fns";
 import { TAppointment } from "@/types/appointment";
 
+/**
+ * Type for appointment slot that supports both API response formats
+ * - startsAt: Standard Prisma field from direct queries
+ * - slotStartTimeInUTC: Legacy field from transformed dashboard API responses
+ */
+type AppointmentSlot = {
+  startsAt?: string | Date;
+  slotStartTimeInUTC?: string | Date;
+};
+
 // Get the consultee name based on appointment type
 export const getConsumeeName = (appointment: TAppointment): string => {
   if (!appointment) return "Unknown User";
@@ -86,7 +96,7 @@ export const getSlotTimes = (appointment: TAppointment): Date[] => {
   }
 
   return appointment.slotsOfAppointment
-    .map((slot: any) => {
+    .map((slot: AppointmentSlot) => {
       // Support both field names: startsAt (from API) and slotStartTimeInUTC (from dashboard API transformation)
       const time = slot.startsAt || slot.slotStartTimeInUTC;
       // Handle both Date objects and string timestamps
