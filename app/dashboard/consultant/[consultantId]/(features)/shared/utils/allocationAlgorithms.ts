@@ -451,6 +451,8 @@ export class AllocationAlgorithms {
       (a, b) => a.startTime.getTime() - b.startTime.getTime(),
     );
 
+    let selectedSlots: TimeSlot[] = []; // to store best found slots if exact consecutive not found fo better error handling
+
     for (let i = 0; i <= sortedSlots.length - durationHours; i++) {
       const consecutiveSlots = [];
       const consecutive1HourSlots = []; // for storing original 1-hour slots to validate consecutiveness
@@ -500,12 +502,16 @@ export class AllocationAlgorithms {
         consecutiveSlots.push(slotOne, slotTwo);
       }
 
+      if (consecutiveSlots.length >= selectedSlots.length) {
+        selectedSlots = consecutiveSlots;
+      }
+
       if (isConsecutive && consecutiveSlots.length === requiredSlots) {
         return consecutiveSlots;
       }
     }
 
-    return []; // No consecutive slots found
+    return selectedSlots; // No consecutive slots found
   }
 
   /**
