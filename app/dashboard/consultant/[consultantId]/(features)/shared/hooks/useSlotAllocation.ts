@@ -1909,6 +1909,7 @@ export function useEventSlotAllocation(
           eventId,
           durationInMonths: options.durationInMonths,
           callsPerWeek: options.callsPerWeek,
+          durationInHours: sessionDuration,
           sessionDurationInHours: sessionDuration,
           startDate: options.startDate,
           endDate: options.endDate,
