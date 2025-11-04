@@ -352,11 +352,23 @@ export function formatSlotsForAPI(slots: TimeSlot[]): string[] {
  * - Slots per call: 1 hour ÷ 0.5 hours = 2 slots
  * - Total slots: 78 × 2 = 156 slots
  */
+/**
+ * Calculate required slots for different event types
+ * @param eventType - Type of event (consultation, subscription, webinar, class)
+ * @param durationInMonths - Duration in months (for subscriptions/classes)
+ * @param callsPerWeek - Number of calls per week (for subscriptions/classes)
+ * @param durationInHours - Duration in hours
+ *   - For consultations/webinars: Total event duration
+ *   - For subscriptions/classes: Per-session duration
+ * @param startDate - Start date (for subscriptions/classes)
+ * @param endDate - End date (for subscriptions/classes)
+ * @returns Number of 30-minute slots required
+ */
 export function calculateRequiredSlots(
   eventType: "consultation" | "subscription" | "webinar" | "class",
   durationInMonths?: number,
   callsPerWeek?: number,
-  sessionDurationInHours?: number,
+  durationInHours?: number,
   startDate?: Date,
   endDate?: Date,
 ): number {
@@ -366,18 +378,18 @@ export function calculateRequiredSlots(
 
   switch (eventType) {
     case "consultation":
-      // For consultations, calculate based on session duration
-      if (!sessionDurationInHours || sessionDurationInHours <= 0) {
+      // For consultations, calculate based on total consultation duration
+      if (!durationInHours || durationInHours <= 0) {
         return Math.ceil(1 / 0.5); // Default 1 hour = 2 slots
       }
-      return Math.ceil(sessionDurationInHours / 0.5); // 30-minute intervals
+      return Math.ceil(durationInHours / 0.5); // 30-minute intervals
 
     case "webinar":
-      // For webinars, calculate based on session duration
-      if (!sessionDurationInHours || sessionDurationInHours <= 0) {
+      // For webinars, calculate based on total webinar duration
+      if (!durationInHours || durationInHours <= 0) {
         return Math.ceil(1 / 0.5); // Default 1 hour = 2 slots
       }
-      return Math.ceil(sessionDurationInHours / 0.5); // 30-minute intervals
+      return Math.ceil(durationInHours / 0.5); // 30-minute intervals
 
     case "subscription": {
       if (!startDate || !endDate) {
@@ -386,13 +398,14 @@ export function calculateRequiredSlots(
         );
       }
 
-      if (sessionDurationInHours && sessionDurationInHours <= 0) {
+      if (durationInHours && durationInHours <= 0) {
         throw new Error(
           "Session duration must be a positive number for subscriptions",
         );
       }
 
-      const slotsPerCall = Math.ceil((sessionDurationInHours || 1) / 0.5);
+      // For subscriptions, durationInHours represents per-session duration
+      const slotsPerCall = Math.ceil((durationInHours || 1) / 0.5);
       const totalWeeks = countSundayWeeksInclusive(startDate, endDate);
       const totalCalls = totalWeeks * (callsPerWeek || 1);
       return totalCalls * slotsPerCall;
@@ -410,13 +423,14 @@ export function calculateRequiredSlots(
         throw new Error("Calls per week must be a positive number for classes");
       }
 
-      if (!sessionDurationInHours || sessionDurationInHours <= 0) {
+      if (!durationInHours || durationInHours <= 0) {
         throw new Error(
           "Session duration must be a positive number for classes",
         );
       }
 
-      const slotsPerSession = Math.ceil(sessionDurationInHours / 0.5);
+      // For classes, durationInHours represents per-session duration
+      const slotsPerSession = Math.ceil(durationInHours / 0.5);
       const totalWeeks = countSundayWeeksInclusive(startDate, endDate);
       const totalSessions = totalWeeks * callsPerWeek;
       return totalSessions * slotsPerSession;

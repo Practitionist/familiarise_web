@@ -142,8 +142,7 @@ export class SlotCalculationService {
 
     switch (eventType) {
       case "consultation": {
-        const duration =
-          config.durationInHours || config.sessionDurationInHours;
+        const duration = config.durationInHours;
         if (!duration || duration <= 0) {
           console.warn(
             "⚠️ Consultation duration missing or invalid. Using default: 1 hour",
@@ -154,8 +153,7 @@ export class SlotCalculationService {
       }
 
       case "webinar": {
-        const duration =
-          config.durationInHours || config.sessionDurationInHours;
+        const duration = config.durationInHours;
         if (!duration || duration <= 0) {
           return Math.ceil(1 / 0.5); // Default 1 hour = 2 slots
         }

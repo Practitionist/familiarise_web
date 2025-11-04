@@ -1,6 +1,5 @@
 import { TimeSlot, calculateRequiredSlots } from "./calendarUtils";
 import { AllocationService } from "./allocationService";
-import { all } from "axios";
 
 /**
  * AUTO ALLOCATION ENHANCEMENT SYSTEM
@@ -76,11 +75,12 @@ export class AllocationAlgorithms {
   ): Promise<AllocationResult> {
     try {
       // VALIDATION: Check required slots count
+      // Pass durationInHours for consultations/webinars, sessionDurationInHours for subscriptions/classes
       const requiredSlots = calculateRequiredSlots(
         options.eventType,
         options.durationInMonths,
         options.callsPerWeek,
-        options.sessionDurationInHours,
+        options.durationInHours || options.sessionDurationInHours,
         options.startDate,
         options.endDate,
       );
@@ -198,11 +198,13 @@ export class AllocationAlgorithms {
     preferences: AutoAllocationPreferences = {},
   ): Promise<AllocationResult> {
     try {
+      // Calculate required slots based on event type
+      // Pass durationInHours for consultations/webinars, sessionDurationInHours for subscriptions/classes
       const requiredSlots = calculateRequiredSlots(
         options.eventType,
         options.durationInMonths,
         options.callsPerWeek,
-        options.sessionDurationInHours,
+        options.durationInHours || options.sessionDurationInHours,
         options.startDate,
         options.endDate,
       );
@@ -238,7 +240,7 @@ export class AllocationAlgorithms {
           // STRATEGY: Earliest available slot with best preference scoring
           selectedSlots = this.allocateConsultationSlots(
             filteredSlots,
-            options.sessionDurationInHours || 1, // FIXED: Use durationInHours for consultations
+            options.durationInHours || 1, // FIXED: Use durationInHours for consultations
           );
           strategy = "earliest-available";
           break;
@@ -342,11 +344,13 @@ export class AllocationAlgorithms {
         };
       }
 
+      // Calculate required slots for validation
+      // Pass durationInHours for consultations/webinars, sessionDurationInHours for subscriptions/classes
       const requiredSlots = calculateRequiredSlots(
         options.eventType,
         options.durationInMonths,
         options.callsPerWeek,
-        options.sessionDurationInHours,
+        options.durationInHours || options.sessionDurationInHours,
         options.startDate,
         options.endDate,
       );
@@ -447,6 +451,8 @@ export class AllocationAlgorithms {
       (a, b) => a.startTime.getTime() - b.startTime.getTime(),
     );
 
+    let selectedSlots: TimeSlot[] = []; // to store best found slots if exact consecutive not found fo better error handling
+
     for (let i = 0; i <= sortedSlots.length - durationHours; i++) {
       const consecutiveSlots = [];
       const consecutive1HourSlots = []; // for storing original 1-hour slots to validate consecutiveness
@@ -469,8 +475,6 @@ export class AllocationAlgorithms {
         }
 
         consecutive1HourSlots.push(currentSlot);
-
-        console.log("Adding slot:", currentSlot);
 
         // breaking of 1 hour slots into 2 >> 30 min slots in order to fulfill the required slot duration and validation
         // 1 hour slots are not supported in the current system
@@ -495,24 +499,19 @@ export class AllocationAlgorithms {
         };
 
         // save both 30-minute slots
-        console.log("Breaking 1hr slot into:", slotOne);
-        console.log("And:", slotTwo);
-
         consecutiveSlots.push(slotOne, slotTwo);
       }
-      console.log(
-        "Is consecutive:",
-        isConsecutive,
-        "Slots found:",
-        consecutiveSlots,
-      );
+
+      if (consecutiveSlots.length >= selectedSlots.length) {
+        selectedSlots = consecutiveSlots;
+      }
 
       if (isConsecutive && consecutiveSlots.length === requiredSlots) {
         return consecutiveSlots;
       }
     }
 
-    return []; // No consecutive slots found
+    return selectedSlots; // No consecutive slots found
   }
 
   /**
@@ -593,18 +592,6 @@ export class AllocationAlgorithms {
       return startsAfterOrOnBegin && endsBeforeOrOnEnd;
     });
 
-    console.log({
-      availableSlots,
-      totalSlots,
-      callsPerWeek,
-      durationInMonths,
-      preferences,
-    });
-    console.log(
-      "Filtered future slots within subscription range:",
-      futureSlots,
-    );
-
     const selectedSlots: TimeSlot[] = [];
     // FIXED: Use actual duration and frequency instead of hardcoded weeks calculation
     // const totalWeeks = durationInMonths; // Use actual months as weeks for allocation purposes
@@ -624,8 +611,6 @@ export class AllocationAlgorithms {
     // Sort weeks by date
     const sortedWeeks = Array.from(slotsByWeek.keys()).sort();
     const totalWeeks = sortedWeeks.length;
-
-    console.log("Slots grouped by week:", { slotsByWeek, sortedWeeks });
 
     // Allocate slots week by week with smart distribution
     let currentWeek = 0;
@@ -651,8 +636,6 @@ export class AllocationAlgorithms {
       selectedSlots.push(...selectedThisWeek);
       currentWeek++;
     }
-
-    console.log("Selected slots for recurring event:", selectedSlots);
 
     // 30 minute slots by breaking down 1 hour slots
     const finalThirtyMinuteSlots: TimeSlot[] = selectedSlots.flatMap(
@@ -694,8 +677,6 @@ export class AllocationAlgorithms {
         return [slotOne, slotTwo];
       },
     );
-
-    console.log("Final transformed 30-minute slots:", finalThirtyMinuteSlots);
 
     return finalThirtyMinuteSlots;
   }
