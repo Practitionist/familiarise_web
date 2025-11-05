@@ -1,9 +1,11 @@
 # Consultant Initial Outreach - Version 3
+
 ## Value-Focused Tone | Focus: Economics & ROI
 
 ---
 
 ### Subject Line Options:
+
 1. Stop Losing 20-30% to Platform Fees
 2. Keep More of What You Earn - Free Consulting Platform Launch
 3. Finally: A Consulting Platform That Doesn't Nickel and Dime You
@@ -21,6 +23,7 @@ If you're like most consultants we've talked to, you're losing **20-30% of your 
 **We're building Familiarise to change that.**
 
 Instead of charging per transaction, we're creating a platform where you can:
+
 - Offer 1-on-1 consultations, subscription programs, webinars, and classes
 - Keep your revenue (we're launching free to help us improve)
 - Manage everything from one dashboard
@@ -31,6 +34,7 @@ Instead of charging per transaction, we're creating a platform where you can:
 We're in our launch phase and offering **free access** to consultants who join now. We're upfront about this: we're actively improving our booking algorithm, and you might encounter minor issues. But here's our commitment: every issue you report gets fixed fast, and you get to use the platform at no cost while we perfect it.
 
 **Why this matters for you:**
+
 - No platform fees eating into your earnings
 - Own your client relationships (no locked-in data)
 - Multiple revenue streams in one place
@@ -54,11 +58,13 @@ P.S. - We're not naive. We know we need to earn your trust. That's why we're sta
 ---
 
 ### Personalization Variables:
+
 - `[Consultant Name]` - Recipient's first name
 - `[Your Name]` - Sender's name
 - `[CTA Link]` - Sign-up URL
 
 ### Best For:
+
 - High-earning consultants paying significant platform fees
 - Price-conscious professionals
 - Consultants on multiple platforms (Calendly + payment processor + course platform, etc.)

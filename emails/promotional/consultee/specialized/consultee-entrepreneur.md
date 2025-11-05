@@ -1,9 +1,11 @@
 # Consultee Specialized - Entrepreneurs & Founders
+
 ## Target: Startup founders and early-stage entrepreneurs
 
 ---
 
 ### Subject Line Options:
+
 1. Stop Googling startup advice — ask someone who's built a company
 2. Get expert help for your startup without hiring full-time
 3. On-demand expertise for founders who can't afford full-time hires
@@ -30,26 +32,31 @@ You need expert help. You can't afford $150k+ salaries. You don't have time for 
 We're building a platform where founders like you can access experts across every function your startup needs:
 
 **Need strategic advice?**
+
 - 1-hour consultation with a founder who's raised Series A in your space
 - Monthly mentorship with an experienced CEO
 - Specific guidance on your pitch deck, go-to-market, or fundraising strategy
 
 **Need technical expertise?**
+
 - Talk to a CTO about your tech architecture decisions
 - Get code review from senior engineers
 - Learn which tools and frameworks make sense for your stage
 
 **Need marketing help?**
+
 - Book a growth consultant to audit your funnel
 - Join a webinar on "First 1000 customers for B2B SaaS"
 - Subscribe to ongoing marketing mentorship
 
 **Need financial guidance?**
+
 - Pricing strategy consultation with a pricing expert
 - Financial modeling session with a fractional CFO
 - Unit economics review with someone who understands your business model
 
 **Why this works for founders:**
+
 - Pay for expertise only when you need it (not $10k/month retainers)
 - Get answers in days, not weeks
 - Access multiple experts across different functions
@@ -73,11 +80,13 @@ P.S. - Building a startup is hard enough. Don't make it harder by trying to figu
 ---
 
 ### Personalization Variables:
+
 - `[Consultee Name]` - Recipient's first name
 - `[Your Name]` - Sender's name
 - `[CTA Link]` - Platform URL
 
 ### Best For:
+
 - Pre-seed and seed-stage founders
 - Solo founders and small founding teams
 - Entrepreneurs building side projects

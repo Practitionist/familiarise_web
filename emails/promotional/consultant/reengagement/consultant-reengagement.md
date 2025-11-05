@@ -1,9 +1,11 @@
 # Consultant Re-engagement Email
+
 ## 14-Day Non-Responder | Last Attempt
 
 ---
 
 ### Subject Line Options:
+
 1. Should I stop emailing you about Familiarise?
 2. I'm closing your invitation (unless you want it)
 3. One last thing about Familiarise...
@@ -25,6 +27,7 @@ But before I do, I wanted to share what's happened since I first reached out:
 They're managing consultations, subscription programs, webinars, and classes from one platform instead of juggling Calendly + Stripe + Zoom + course platforms + spreadsheets.
 
 **The feedback has been incredible:**
+
 - "Booked 12 new clients in the first week"
 - "Finally ditched my $79/month tool stack"
 - "My clients love having one place to access everything I offer"
@@ -38,6 +41,7 @@ But if this could actually help you grow your consulting practice, I don't want 
 **Here's what I can offer:**
 
 Reply to this email with "interested" and I'll give you:
+
 - 30-day free trial with zero setup requirements
 - Personal onboarding call (I'll help you set everything up)
 - Direct access to me for any issues or questions
@@ -58,21 +62,25 @@ P.S. - If you know another consultant who might benefit from this, I'd be gratef
 ---
 
 ### Personalization Variables:
+
 - `[Consultant Name]` - Recipient's first name
 - `[PERSONALIZED REASON]` - Specific reason you reached out to them
 - `[Your Name]` - Sender's name
 
 ### Send Timing:
+
 - 14 days after initial email (7 days after last follow-up)
 - Best sent: Tuesday or Wednesday, 10 AM - 2 PM
 
 ### Best For:
+
 - Final attempt at engagement
 - Non-responders after multiple emails
 - Building genuine relationship vs. spam
 - Permission-based marketing approach
 
 ### Follow-up Actions:
+
 - If they reply "interested": immediate personal outreach
 - If they reply "not interested": remove from list, send thank you
 - If no response: remove from active campaign, add to quarterly newsletter list

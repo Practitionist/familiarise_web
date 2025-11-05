@@ -1,9 +1,11 @@
 # Consultant Initial Outreach - Version 2
+
 ## Collaborative Tone | Focus: Building Together
 
 ---
 
 ### Subject Line Options:
+
 1. Help Us Build the Perfect Consulting Platform (Free Access)
 2. We're Building Familiarise For You - Want to Help Shape It?
 3. Consultants Needed: Help Us Create What You've Always Wanted
@@ -21,6 +23,7 @@ Most consulting platforms are built by people who've never run a consulting prac
 **What we're building:**
 
 Familiarise is an all-in-one platform where you can offer:
+
 - 1-on-1 consultations
 - Ongoing subscription mentorship
 - Live webinars
@@ -33,6 +36,7 @@ All with built-in scheduling, payments, and client management.
 We're in launch mode and offering free access to consultants who want to help us build the right solution. We're being honest with you — our booking algorithm is good, but we're refining it based on real consultant feedback. You might hit a snag here or there, but we'll fix it immediately.
 
 **What you get:**
+
 - Free platform access (zero cost, no credit card)
 - Direct influence on what we build next
 - Early adopter benefits when we launch publicly
@@ -55,11 +59,13 @@ P.S. - This isn't a beta test where feedback disappears into the void. You'll se
 ---
 
 ### Personalization Variables:
+
 - `[Consultant Name]` - Recipient's first name
 - `[Your Name]` - Sender's name
 - `[CTA Link]` - Sign-up URL
 
 ### Best For:
+
 - Consultants frustrated with existing platforms
 - Consultants who value transparency
 - Early adopters and tech-savvy professionals

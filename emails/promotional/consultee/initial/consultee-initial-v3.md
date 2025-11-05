@@ -1,9 +1,11 @@
 # Consultee Initial Outreach - Version 3
+
 ## Price-Focused Tone | Focus: Value & Affordability
 
 ---
 
 ### Subject Line Options:
+
 1. Stop Overpaying for Mentorship and Courses
 2. Get Real Expert Help Without the Premium Price Tag
 3. Quality Learning That Doesn't Break the Bank
@@ -38,6 +40,7 @@ Instead of paying $1500 for a course you might not finish, book three 1-hour con
 We're offering **free early access** as we launch. Full transparency: we're still perfecting our booking system, so you might hit minor issues. But here's the deal: you get access to quality experts without the premium markups, and we fix any problems immediately.
 
 **What you save:**
+
 - No locked-in subscriptions for platforms you don't use
 - No paying for hour 40 of a course when you only needed hours 1-5
 - No coordinator fees, platform markups, or agency premiums
@@ -60,11 +63,13 @@ P.S. - We believe learning shouldn't be a luxury. By connecting you directly wit
 ---
 
 ### Personalization Variables:
+
 - `[Consultee Name]` - Recipient's first name
 - `[Your Name]` - Sender's name
 - `[CTA Link]` - Platform URL
 
 ### Best For:
+
 - Budget-conscious learners
 - People burned by expensive courses
 - Students and early-career professionals

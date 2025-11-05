@@ -1,9 +1,11 @@
 # Consultant Specialized - Course Creators
+
 ## Target: Consultants selling online courses on Teachable, Udemy, etc.
 
 ---
 
 ### Subject Line Options:
+
 1. What if your students could actually talk to you?
 2. Beyond pre-recorded courses: Add live interaction to your teaching
 3. Turn your course into a complete learning ecosystem
@@ -41,6 +43,7 @@ Students crave interaction. They'll pay 2-3x more for a course that includes acc
 - $1999: Course + weekly 1-on-1 mentorship for 6 months
 
 **The platform handles:**
+
 - Course content hosting
 - Scheduling for all your live components
 - Payment processing for all tiers
@@ -64,11 +67,13 @@ P.S. - Keep your existing course where it is if you want. Use Familiarise to add
 ---
 
 ### Personalization Variables:
+
 - `[Consultant Name]` - Recipient's first name
 - `[Your Name]` - Sender's name
 - `[CTA Link]` - Sign-up URL
 
 ### Best For:
+
 - Course creators on Teachable, Udemy, Kajabi
 - Consultants with passive course income
 - Educators wanting to add coaching components

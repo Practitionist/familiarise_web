@@ -1,9 +1,11 @@
 # Consultant Follow-Up - Version 1
+
 ## 3-Day Follow-Up | Soft Reminder Tone
 
 ---
 
 ### Subject Line Options:
+
 1. Quick question about Familiarise
 2. Following up on consulting platform opportunity
 3. Did you get a chance to look at Familiarise?
@@ -19,6 +21,7 @@ I sent you an email a few days ago about **Familiarise**, our new platform for c
 I wanted to follow up because we're actively onboarding our first consultants this week, and I'd love to have you as part of our early community.
 
 **Quick recap:**
+
 - All-in-one platform for consultations, subscriptions, webinars, and classes
 - Free access during our launch phase
 - Direct input into what we build next
@@ -40,15 +43,18 @@ P.S. - If now isn't the right time, no worries. Just let me know if you'd like m
 ---
 
 ### Personalization Variables:
+
 - `[Consultant Name]` - Recipient's first name
 - `[Your Name]` - Sender's name
 - `[CTA Link]` - Sign-up URL
 
 ### Send Timing:
+
 - 3 days after initial email
 - Best sent: Tuesday-Thursday, 9-11 AM
 
 ### Best For:
+
 - Non-responders to initial email
 - Consultants who opened but didn't click
 - Gentle nudge without pressure

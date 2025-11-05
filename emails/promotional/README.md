@@ -50,14 +50,17 @@ emails/promotional/
 ### For Consultants:
 
 **Week 1:**
+
 - Day 0: Send initial email (choose v1, v2, or v3 based on audience)
 - Day 3: Send `consultant-followup-v1.md` to non-responders
 - Day 7: Send `consultant-followup-v2.md` to non-responders
 
 **Week 2:**
+
 - Day 14: Send `consultant-reengagement.md` to non-responders
 
 **Specialized Campaigns:**
+
 - Use `consultant-webinar-specialist.md` for webinar hosts
 - Use `consultant-course-creator.md` for course creators
 
@@ -66,14 +69,17 @@ emails/promotional/
 ### For Consultees:
 
 **Week 1:**
+
 - Day 0: Send initial email (choose v1, v2, or v3 based on audience)
 - Day 3: Send `consultee-followup-v1.md` to non-responders
 - Day 7: Send `consultee-followup-v2.md` to non-responders
 
 **Week 2:**
+
 - Day 14: Send `consultee-reengagement.md` to non-responders
 
 **Specialized Campaigns:**
+
 - Use `consultee-career-switcher.md` for career changers
 - Use `consultee-entrepreneur.md` for startup founders
 
@@ -83,19 +89,19 @@ emails/promotional/
 
 ### Consultant Initial Emails:
 
-| Version | Best For | Tone | Key Message |
-|---------|----------|------|-------------|
-| v1 | Professional consultants, established practices | Professional | Complete platform features |
-| v2 | Early adopters, tech-savvy | Collaborative | Build together, transparency |
-| v3 | High earners paying platform fees | Value-focused | Save money, keep revenue |
+| Version | Best For                                        | Tone          | Key Message                  |
+| ------- | ----------------------------------------------- | ------------- | ---------------------------- |
+| v1      | Professional consultants, established practices | Professional  | Complete platform features   |
+| v2      | Early adopters, tech-savvy                      | Collaborative | Build together, transparency |
+| v3      | High earners paying platform fees               | Value-focused | Save money, keep revenue     |
 
 ### Consultee Initial Emails:
 
-| Version | Best For | Tone | Key Message |
-|---------|----------|------|-------------|
-| v1 | Continuous learners, professional development | Benefit-focused | Access to experts |
-| v2 | People on multiple platforms | Educational | Unified learning journey |
-| v3 | Budget-conscious, burned by expensive courses | Price-focused | Affordable expertise |
+| Version | Best For                                      | Tone            | Key Message              |
+| ------- | --------------------------------------------- | --------------- | ------------------------ |
+| v1      | Continuous learners, professional development | Benefit-focused | Access to experts        |
+| v2      | People on multiple platforms                  | Educational     | Unified learning journey |
+| v3      | Budget-conscious, burned by expensive courses | Price-focused   | Affordable expertise     |
 
 ---
 
@@ -114,16 +120,19 @@ Before sending ANY email, replace these variables:
 ## A/B Testing Recommendations
 
 ### Subject Lines:
+
 - Test 2-3 subject lines per email template
 - Run for minimum 100 sends before choosing winner
 - Track: Open rate, click rate, reply rate
 
 ### Email Body:
+
 - Test different CTAs (button text)
 - Test P.S. presence vs. absence
 - Test email length (these are ~300-400 words — test shorter versions)
 
 ### Send Times:
+
 - Test mornings (9-11 AM) vs. afternoons (2-4 PM)
 - Test Tuesday/Wednesday vs. Thursday/Friday
 - Track: Open rate by send time
@@ -145,6 +154,7 @@ For each email template, monitor:
 ## Campaign Management Tips
 
 ### Do's:
+
 - Segment your lists (consultants vs. consultees)
 - Personalize beyond just first name when possible
 - Space emails appropriately (3-7 day gaps)
@@ -152,6 +162,7 @@ For each email template, monitor:
 - Honor unsubscribe requests immediately
 
 ### Don'ts:
+
 - Don't send more than 1 email per week per person
 - Don't use the same email template twice to same person
 - Don't forget to update social proof numbers as you grow
@@ -163,6 +174,7 @@ For each email template, monitor:
 ## Integration with Your Tech Stack
 
 These templates work with:
+
 - **Mailchimp** - Import as templates, use merge tags
 - **SendGrid** - HTML conversion needed
 - **HubSpot** - Import as email templates
@@ -175,6 +187,7 @@ These templates work with:
 ## Legal Compliance
 
 Make sure to:
+
 - Include physical mailing address in footer
 - Add clear unsubscribe link
 - Follow CAN-SPAM Act (US) or GDPR (EU) requirements
@@ -200,6 +213,7 @@ Make sure to:
 ## Questions or Improvements?
 
 As you use these templates:
+
 - Track which emails perform best
 - Note any phrases that get replies
 - Update social proof numbers monthly

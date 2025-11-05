@@ -1,9 +1,11 @@
 # Consultant Initial Outreach - Version 1
+
 ## Professional Tone | Focus: Platform Features
 
 ---
 
 ### Subject Line Options:
+
 1. Launch Your Consulting Practice on Familiarise - Free Early Access
 2. Join Familiarise: The All-in-One Platform for Modern Consultants
 3. Manage Your Entire Consulting Practice in One Place
@@ -19,6 +21,7 @@ I'm reaching out because we're launching **Familiarise** — a comprehensive pla
 **What makes Familiarise different?**
 
 We're building an all-in-one solution for:
+
 - **One-on-one consultations** with smart scheduling
 - **Subscription-based mentorship** programs
 - **Group webinars** with waitlist management
@@ -29,6 +32,7 @@ We're building an all-in-one solution for:
 We're offering **free early access** to consultants who want to help us build the best possible platform. Full transparency: we're in our launch phase, and while our core features work great, we're actively refining our booking algorithm based on real-world usage.
 
 **What's in it for you?**
+
 - Free access to all features (no credit card required)
 - Direct input into product development
 - First-mover advantage when we officially launch
@@ -52,11 +56,13 @@ P.S. - We're committed to making this work for you. If you encounter any quirks 
 ---
 
 ### Personalization Variables:
+
 - `[Consultant Name]` - Recipient's first name
 - `[Your Name]` - Sender's name
 - `[CTA Link]` - Sign-up URL
 
 ### Best For:
+
 - Professional consultants with established practices
 - Consultants looking to diversify revenue streams
 - Multi-service consultants juggling different platforms

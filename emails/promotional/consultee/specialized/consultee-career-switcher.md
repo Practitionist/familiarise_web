@@ -1,9 +1,11 @@
 # Consultee Specialized - Career Switchers
+
 ## Target: Professionals making career transitions
 
 ---
 
 ### Subject Line Options:
+
 1. Making a career switch? Talk to someone who's done it
 2. Stop Googling your career change — talk to an expert
 3. Get personalized career advice from people who've been there
@@ -43,6 +45,7 @@ Familiarise consultant: "Here's exactly how I went from accountant to UX designe
 **The launch offer:** We're giving free early access to our first users. We're actively improving the platform (especially our booking flow), but you'll get direct access to experts at a fraction of what traditional career coaching costs.
 
 **What you get:**
+
 - Real people with real experience in your target field
 - Flexible options: one call, monthly check-ins, or full programs
 - Pricing that doesn't require taking out a loan
@@ -62,11 +65,13 @@ P.S. - Not sure exactly what you want to do yet? Book a consultation with a care
 ---
 
 ### Personalization Variables:
+
 - `[Consultee Name]` - Recipient's first name
 - `[Your Name]` - Sender's name
 - `[CTA Link]` - Platform URL
 
 ### Best For:
+
 - Professionals considering career changes
 - Recent graduates unsure about their path
 - Mid-career professionals feeling stuck

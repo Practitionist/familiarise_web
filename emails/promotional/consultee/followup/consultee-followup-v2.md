@@ -1,9 +1,11 @@
 # Consultee Follow-Up - Version 2
+
 ## 7-Day Follow-Up | FOMO + Value Angle
 
 ---
 
 ### Subject Line Options:
+
 1. This learning opportunity won't last forever
 2. Free access to experts - ending soon
 3. Last chance: Connect with the experts you need
@@ -23,6 +25,7 @@ Last week I told you about **Familiarise** — a platform where you can access c
 We've had **200+ people** sign up in the past week. Experts in business strategy, career coaching, technical skills, creative development, and dozens of other fields are joining daily.
 
 **The early users are loving it:**
+
 - "Found a mentor in 10 minutes who would have cost me $300/hour elsewhere"
 - "Finally, a platform where I can actually talk to someone instead of just watching videos"
 - "The 1-on-1 option is perfect — I don't need a full course, just specific answers"
@@ -32,6 +35,7 @@ We've had **200+ people** sign up in the past week. Experts in business strategy
 We're closing free early access soon to focus on supporting our first users. If you've been thinking about joining, this is your window.
 
 **What you're getting:**
+
 - Direct access to real experts, not just pre-recorded content
 - Flexible options: one session, monthly mentorship, or structured learning
 - Fair pricing without agency markups
@@ -54,15 +58,18 @@ P.S. - Not sure if this is right for you? Just reply with what you're trying to 
 ---
 
 ### Personalization Variables:
+
 - `[Consultee Name]` - Recipient's first name
 - `[Your Name]` - Sender's name
 - `[CTA Link]` - Platform URL
 
 ### Send Timing:
+
 - 7 days after initial email
 - Best sent: Tuesday-Thursday, 11 AM - 3 PM
 
 ### Best For:
+
 - Final push for non-responders
 - Creating urgency without desperation
 - Users who need social proof to act

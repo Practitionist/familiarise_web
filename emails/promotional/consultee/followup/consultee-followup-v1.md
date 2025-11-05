@@ -1,9 +1,11 @@
 # Consultee Follow-Up - Version 1
+
 ## 3-Day Follow-Up | Curiosity-Driven Tone
 
 ---
 
 ### Subject Line Options:
+
 1. Saw you opened my email about Familiarise
 2. Which expert would you want to learn from?
 3. Quick follow-up on connecting with experts
@@ -28,6 +30,7 @@ I'm following up because I'm curious: **What kind of expert would be most valuab
 We're actively onboarding experts across every field, and I want to make sure we're building the platform you'd actually use. Your answer helps me understand what you're looking for.
 
 **Quick reminder about Familiarise:**
+
 - Browse experts across every field imaginable
 - Book what you need: one session, monthly mentorship, webinars, or courses
 - Free early access (we're still improving the platform)
@@ -49,15 +52,18 @@ P.S. - Even if you're just browsing, your feedback on what works (and what doesn
 ---
 
 ### Personalization Variables:
+
 - `[Consultee Name]` - Recipient's first name
 - `[Your Name]` - Sender's name
 - `[CTA Link]` - Platform URL
 
 ### Send Timing:
+
 - 3 days after initial email
 - Best sent: Monday-Wednesday, 9 AM - 12 PM
 
 ### Best For:
+
 - Non-responders to initial email
 - Engaging through questions
 - Building conversation vs. hard sell

@@ -1,9 +1,11 @@
 # Consultee Re-engagement Email
+
 ## 14-Day Non-Responder | Helpful Exit
 
 ---
 
 ### Subject Line Options:
+
 1. I'll stop bothering you (after this one)
 2. My last email about finding the right expert
 3. This didn't resonate — but maybe this will help
@@ -23,18 +25,22 @@ I'm going to stop emailing you about this. But before I do, I wanted to make sur
 **If you're looking for expert help, here are some alternatives:**
 
 If you need **career coaching:**
+
 - Check out [Alternative Platform 1]
 - Or browse coaches on LinkedIn using hashtag #careercoach
 
 If you need **business consulting:**
+
 - [Alternative Platform 2] has solid consultants
 - Local business development centers often have free resources
 
 If you need **technical mentorship:**
+
 - [Alternative Platform 3] is great for developers
 - Open source communities often have mentor programs
 
 If you need **structured courses:**
+
 - [Course Platform] has thousands of options
 - YouTube + free resources can take you surprisingly far
 
@@ -63,6 +69,7 @@ P.S. - If you ever change your mind, we'll be here. And if you know someone who'
 ---
 
 ### Personalization Variables:
+
 - `[Consultee Name]` - Recipient's first name
 - `[Alternative Platform 1/2/3]` - Actual competitor/alternative recommendations
 - `[Course Platform]` - Udemy, Coursera, etc.
@@ -70,22 +77,26 @@ P.S. - If you ever change your mind, we'll be here. And if you know someone who'
 - `[platform link]` - Familiarise URL
 
 ### Send Timing:
+
 - 14 days after initial email (7 days after last follow-up)
 - Best sent: Monday-Wednesday, 9 AM - 1 PM
 
 ### Best For:
+
 - Final goodwill gesture to non-responders
 - Building brand trust through helpfulness
 - Differentiating from spam by offering value even in exit
 - Creating positive association even if they don't convert
 
 ### Follow-up Actions:
+
 - If they reply with interest: re-engage warmly
 - If they ask to be removed: do it immediately and thank them
 - If no response: remove from active campaign, add to monthly newsletter
 - Track which alternatives they click on (helps understand their actual needs)
 
 ### Why This Works:
+
 - Shows you respect their time and inbox
 - Demonstrates genuine care about their success, not just your conversion
 - Creates reciprocity (you gave value = they might remember you later)
