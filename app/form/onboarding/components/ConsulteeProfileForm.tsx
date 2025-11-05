@@ -4,14 +4,19 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ConsulteeProfile, ConsulteeProfileSchema } from "@/schemas/user";
+import { ConsulteeProfile } from "@/schemas/user";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  ConsulteeProfileFormSchema,
+  OnboardingFormData,
+} from "@/utils/onboarding";
+import { z } from "zod";
 import { useThemeClasses } from "../useTheme";
 
 interface Props {
-  onNext: (data: Partial<ConsulteeProfile>) => void;
+  onNext: (data: Partial<OnboardingFormData>) => void;
   onBack: () => void;
-  initialData: Partial<ConsulteeProfile>;
+  initialData: Partial<OnboardingFormData>;
 }
 
 const ConsulteeProfileForm: React.FC<Props> = ({
@@ -23,13 +28,24 @@ const ConsulteeProfileForm: React.FC<Props> = ({
   const {
     register,
     handleSubmit,
-    formState: { errors, isSubmitting },
-  } = useForm<ConsulteeProfile>({
-    resolver: zodResolver(ConsulteeProfileSchema),
-    defaultValues: initialData,
+    formState: { errors },
+  } = useForm<z.infer<typeof ConsulteeProfileFormSchema>>({
+    resolver: zodResolver(ConsulteeProfileFormSchema),
+    mode: "onChange",
+    defaultValues: {
+      education: "",
+      occupation: "",
+      aboutMe: "",
+      preferredCommunicationMethod: "VIDEO",
+      preferredLanguage: "English",
+      specialRequirements: "",
+      interests: [],
+      goals: [],
+      ...initialData,
+    },
   });
 
-  const onSubmit = (data: ConsulteeProfile) => {
+  const onSubmit = (data: z.infer<typeof ConsulteeProfileFormSchema>) => {
     onNext(data);
   };
 
@@ -86,27 +102,66 @@ const ConsulteeProfileForm: React.FC<Props> = ({
           id="aboutMe"
           {...register("aboutMe")}
           className={classes.textarea}
-          placeholder="Tell us about yourself, your interests, and goals..."
+          placeholder="Tell us about yourself"
+          rows={4}
         />
         {errors.aboutMe && (
           <p className={`${colors.error} text-sm`}>{errors.aboutMe.message}</p>
         )}
       </div>
 
-      <div className="flex justify-between gap-4 pt-6">
+      <div className="space-y-3">
+        <Label
+          htmlFor="preferredLanguage"
+          className={`${colors.textPrimary} font-medium`}
+        >
+          Preferred Language
+        </Label>
+        <Input
+          id="preferredLanguage"
+          {...register("preferredLanguage")}
+          className={classes.input}
+          placeholder="Your preferred language"
+        />
+        {errors.preferredLanguage && (
+          <p className={`${colors.error} text-sm`}>
+            {errors.preferredLanguage.message}
+          </p>
+        )}
+      </div>
+
+      <div className="space-y-3">
+        <Label
+          htmlFor="specialRequirements"
+          className={`${colors.textPrimary} font-medium`}
+        >
+          Special Requirements
+        </Label>
+        <Textarea
+          id="specialRequirements"
+          {...register("specialRequirements")}
+          className={classes.textarea}
+          placeholder="Any special requirements or accommodations"
+          rows={3}
+        />
+        {errors.specialRequirements && (
+          <p className={`${colors.error} text-sm`}>
+            {errors.specialRequirements.message}
+          </p>
+        )}
+      </div>
+
+      <div className="flex gap-4">
         <Button
           type="button"
           onClick={onBack}
-          className={`flex-1 h-12 ${classes.secondaryButton}`}
+          variant="outline"
+          className={`${classes.navBack} flex-1`}
         >
-          ← Back
+          Back
         </Button>
-        <Button
-          type="submit"
-          disabled={isSubmitting}
-          className={`flex-1 h-12 ${classes.primaryButton} disabled:opacity-50`}
-        >
-          {isSubmitting ? "Processing..." : "Next Step →"}
+        <Button type="submit" className={`${classes.navNext} flex-1`}>
+          Next
         </Button>
       </div>
     </form>

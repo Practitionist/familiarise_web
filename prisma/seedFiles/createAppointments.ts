@@ -2,6 +2,7 @@ import { faker } from "@faker-js/faker";
 import {
   AppointmentsType,
   ClassStatus,
+  DayOfWeek,
   Platform,
   Prisma,
   RequestStatus,
@@ -17,10 +18,10 @@ const BATCH_SIZE = 10; // Process appointments in smaller batches
 
 // Distribution helpers
 const getAppointmentType = (index: number): AppointmentsType => {
-  // More even distribution
-  if (index < 125) return AppointmentsType.CONSULTATION;
-  if (index < 250) return AppointmentsType.SUBSCRIPTION;
-  if (index < 375) return AppointmentsType.WEBINAR;
+  // More realistic distribution with more subscriptions for testing validation
+  if (index < 100) return AppointmentsType.CONSULTATION;
+  if (index < 300) return AppointmentsType.SUBSCRIPTION; // More subscriptions for testing
+  if (index < 400) return AppointmentsType.WEBINAR;
   return AppointmentsType.CLASS;
 };
 
@@ -80,7 +81,22 @@ const getNumSlots = (appointmentType: AppointmentsType): number => {
     case AppointmentsType.CONSULTATION:
       return 1;
     case AppointmentsType.SUBSCRIPTION:
-      return faker.number.int({ min: 4, max: 12 });
+      // Create realistic subscription slots based on plan types
+      const planType = faker.helpers.arrayElement([
+        "basic",
+        "extended",
+        "comprehensive",
+      ]);
+      switch (planType) {
+        case "basic":
+          return faker.number.int({ min: 4, max: 5 }); // 1 call/week for 1 month
+        case "extended":
+          return faker.number.int({ min: 48, max: 52 }); // 2 calls/week for 6 months
+        case "comprehensive":
+          return faker.number.int({ min: 72, max: 78 }); // 3 calls/week for 6 months
+        default:
+          return faker.number.int({ min: 4, max: 12 });
+      }
     case AppointmentsType.WEBINAR:
       return 1;
     case AppointmentsType.CLASS:
@@ -142,8 +158,8 @@ const createConsultationAppointment = (
         user: {
           connect: [{ id: consultee.id }],
         },
-        slotStartTimeInUTC,
-        slotEndTimeInUTC,
+        startsAt: slotStartTimeInUTC,
+        endsAt: slotEndTimeInUTC,
         isTentative: defaultStatus === RequestStatus.PENDING,
         meetingSession: createMeetingSessionData(isPastAppointment),
       },
@@ -159,7 +175,10 @@ const createConsultationAppointment = (
         requestStatus: defaultStatus,
         requestedAt: new Date(),
         requestNotes: faker.lorem.sentence(),
-        directlyBooked: faker.datatype.boolean(),
+        bookingSource: faker.helpers.arrayElement([
+          "DIRECT_CHECKOUT",
+          "REQUEST_SUBMITTED",
+        ]),
         feedbackFromConsultee: isPastAppointment
           ? faker.lorem.paragraph()
           : null,
@@ -177,50 +196,158 @@ const createConsultationAppointment = (
 const createSubscriptionAppointment = (
   consultee: UserWithProfiles,
   subscriptionPlans: any[],
+  consultantWeeklySlots: any[], // Add consultant's weekly availability
   defaultStatus: RequestStatus,
   isPastAppointment: boolean,
   startDate: Date,
   endDate: Date,
   numSlots: number,
 ): Prisma.AppointmentCreateInput => {
-  // Limit slots to prevent transaction timeout
-  const limitedSlots = Math.min(numSlots, 6);
+  // Select a random subscription plan
+  const selectedPlan = faker.helpers.arrayElement(subscriptionPlans);
+
+  // Calculate realistic number of slots based on SUBSCRIPTION INSTANCE duration (not plan duration)
+  const callsPerWeek = selectedPlan.callsPerWeek;
+  const subscriptionDurationMs = endDate.getTime() - startDate.getTime();
+  const subscriptionWeeks = Math.ceil(
+    subscriptionDurationMs / (7 * 24 * 60 * 60 * 1000),
+  );
+  const maxTotalCalls = Math.min(callsPerWeek * subscriptionWeeks, numSlots);
+
+  // Get consultant's available days of week from their weekly slots
+  const availableDaysSet = new Set(
+    consultantWeeklySlots.map((s) => s.dayOfWeekForStartsAt),
+  );
+  const availableDays = Array.from(availableDaysSet);
+
+  if (availableDays.length === 0) {
+    console.warn(
+      "Consultant has no weekly availability slots. Creating minimal slots.",
+    );
+  }
+
+  // Helper function to convert Date to DayOfWeek enum
+  const getDayOfWeekEnum = (date: Date): DayOfWeek => {
+    const dayMap: Record<number, DayOfWeek> = {
+      0: DayOfWeek.SUNDAY,
+      1: DayOfWeek.MONDAY,
+      2: DayOfWeek.TUESDAY,
+      3: DayOfWeek.WEDNESDAY,
+      4: DayOfWeek.THURSDAY,
+      5: DayOfWeek.FRIDAY,
+      6: DayOfWeek.SATURDAY,
+    };
+    return dayMap[date.getUTCDay()];
+  };
+
+  // Create slots distributed across weeks, respecting consultant's availability
+  const slots = [];
+  let currentDate = new Date(startDate);
+  let slotsCreated = 0;
+
+  // Iterate through the subscription period
+  while (currentDate < endDate && slotsCreated < maxTotalCalls) {
+    const currentDayOfWeek = getDayOfWeekEnum(currentDate);
+
+    // Only create slots on days consultant works
+    if (availableDays.includes(currentDayOfWeek)) {
+      // Find available time slots for this day
+      const daySlotsForConsultant = consultantWeeklySlots.filter(
+        (s) => s.dayOfWeekForStartsAt === currentDayOfWeek,
+      );
+
+      if (daySlotsForConsultant.length > 0) {
+        // Pick a random time from consultant's availability
+        const randomSlot = faker.helpers.arrayElement(daySlotsForConsultant);
+
+        // Create appointment slot at this time
+        const slotStart = new Date(currentDate);
+        slotStart.setUTCHours(
+          randomSlot.availabilityStartsAt.getUTCHours(),
+          randomSlot.availabilityStartsAt.getUTCMinutes(),
+          0,
+          0,
+        );
+
+        const slotEnd = new Date(
+          slotStart.getTime() +
+            selectedPlan.sessionDurationInHours * 60 * 60 * 1000,
+        );
+
+        // Ensure slot is within subscription period
+        if (slotStart >= startDate && slotEnd <= endDate) {
+          slots.push({
+            user: {
+              connect: [{ id: consultee.id }],
+            },
+            startsAt: slotStart,
+            endsAt: slotEnd,
+            isTentative: defaultStatus === RequestStatus.PENDING,
+            meetingSession: createMeetingSessionData(
+              isPastAppointment && slotStart < new Date(),
+            ),
+          });
+          slotsCreated++;
+        }
+      }
+    }
+
+    // Move to next day
+    currentDate.setUTCDate(currentDate.getUTCDate() + 1);
+  }
+
+  // If no slots were created (edge case), create at least one slot
+  if (slots.length === 0 && consultantWeeklySlots.length > 0) {
+    console.warn(
+      "No slots created within subscription period. Creating one slot at start.",
+    );
+    const randomSlot = faker.helpers.arrayElement(consultantWeeklySlots);
+    const slotStart = new Date(startDate);
+    slotStart.setUTCHours(
+      randomSlot.availabilityStartsAt.getUTCHours(),
+      randomSlot.availabilityStartsAt.getUTCMinutes(),
+      0,
+      0,
+    );
+    const slotEnd = new Date(
+      slotStart.getTime() +
+        selectedPlan.sessionDurationInHours * 60 * 60 * 1000,
+    );
+
+    slots.push({
+      user: {
+        connect: [{ id: consultee.id }],
+      },
+      startsAt: slotStart,
+      endsAt: slotEnd,
+      isTentative: defaultStatus === RequestStatus.PENDING,
+      meetingSession: createMeetingSessionData(isPastAppointment),
+    });
+  }
 
   return {
     appointmentType: AppointmentsType.SUBSCRIPTION,
     slotsOfAppointment: {
-      create: Array.from({ length: limitedSlots }, (_, index) => {
-        const slotStart = new Date(
-          startDate.getTime() + index * 7 * 24 * 60 * 60 * 1000,
-        );
-        const slotEnd = new Date(slotStart.getTime() + 60 * 60 * 1000);
-
-        return {
-          user: {
-            connect: [{ id: consultee.id }],
-          },
-          slotStartTimeInUTC: slotStart,
-          slotEndTimeInUTC: slotEnd,
-          isTentative: defaultStatus === RequestStatus.PENDING,
-          meetingSession: createMeetingSessionData(
-            isPastAppointment && index === limitedSlots - 1,
-          ),
-        };
-      }),
+      create: slots,
     },
     subscription: {
       create: {
         subscriptionPlan: {
           connect: {
-            id: faker.helpers.arrayElement(subscriptionPlans).id,
+            id: selectedPlan.id,
           },
         },
         requestedBy: { connect: { id: consultee.consulteeProfile!.id } },
         requestStatus: defaultStatus,
         requestedAt: new Date(),
         requestNotes: faker.lorem.sentence(),
-        startDate,
-        endDate,
+        bookingSource: faker.helpers.arrayElement([
+          "DIRECT_CHECKOUT",
+          "REQUEST_SUBMITTED",
+        ]),
+        schedulingPeriodStartsAt: startDate,
+        schedulingPeriodEndsAt: endDate,
+        schedulingTimezone: "UTC",
         feedbackFromConsultee: isPastAppointment
           ? faker.lorem.paragraph()
           : null,
@@ -253,8 +380,8 @@ const createWebinarAppointment = async (
         user: {
           connect: [{ id: consultee.id }],
         },
-        slotStartTimeInUTC,
-        slotEndTimeInUTC,
+        startsAt: slotStartTimeInUTC,
+        endsAt: slotEndTimeInUTC,
         isTentative: false,
         meetingSession: createMeetingSessionData(isPastAppointment),
       },
@@ -311,14 +438,20 @@ const createClassAppointment = async (
         const slotStart = new Date(
           startDate.getTime() + index * 7 * 24 * 60 * 60 * 1000,
         );
+
+        // Set class sessions to business hours (9 AM - 6 PM) in UTC
+        const businessHours = [9, 10, 11, 14, 15, 16, 17];
+        const businessHour = faker.helpers.arrayElement(businessHours);
+        slotStart.setUTCHours(businessHour, 0, 0, 0);
+
         const slotEnd = new Date(slotStart.getTime() + 60 * 60 * 1000);
 
         return {
           user: {
             connect: [{ id: consultee.id }],
           },
-          slotStartTimeInUTC: slotStart,
-          slotEndTimeInUTC: slotEnd,
+          startsAt: slotStart,
+          endsAt: slotEnd,
           isTentative: false,
           meetingSession: createMeetingSessionData(
             isPastAppointment && index === limitedSlots - 1,
@@ -331,8 +464,9 @@ const createClassAppointment = async (
         classPlan: {
           connect: { id: faker.helpers.arrayElement(classPlans).id },
         },
-        startDate: startDate,
-        endDate: endDate,
+        schedulingPeriodStartsAt: startDate,
+        schedulingPeriodEndsAt: endDate,
+        schedulingTimezone: "UTC",
         status: isPastAppointment
           ? ClassStatus.COMPLETED
           : faker.helpers.arrayElement(Object.values(ClassStatus)),
@@ -371,6 +505,7 @@ async function createAppointmentBatch(
   subscriptionPlans: any[],
   webinarPlans: any[],
   classPlans: any[],
+  weeklySlots: any[],
   startIndex: number,
   batchSize: number,
 ): Promise<number> {
@@ -403,12 +538,62 @@ async function createAppointmentBatch(
       const defaultStatus = getAppointmentStatus(i, isPastAppointment);
       const numSlots = getNumSlots(appointmentType);
 
+      // Extract the consultant ID from the slot to ensure data integrity
+      // This ensures appointments use the correct consultant's plans
+      const slotConsultantId = slotData.slot.consultantProfileId;
+
+      // Filter plans to only include those belonging to the slot's consultant
+      // This prevents appointments from being linked to the wrong consultant's plans
+      const consultantConsultationPlans = consultationPlans.filter(
+        (p) => p.consultantProfileId === slotConsultantId,
+      );
+      const consultantSubscriptionPlans = subscriptionPlans.filter(
+        (p) => p.consultantProfileId === slotConsultantId,
+      );
+      const consultantWebinarPlans = webinarPlans.filter(
+        (p) => p.consultantProfileId === slotConsultantId,
+      );
+      const consultantClassPlans = classPlans.filter(
+        (p) => p.consultantProfileId === slotConsultantId,
+      );
+
+      // Filter weekly slots for this consultant (needed for subscription appointments)
+      const consultantWeeklySlots = weeklySlots.filter(
+        (s) => s.consultantProfileId === slotConsultantId,
+      );
+
+      // Skip if consultant has no plans for this appointment type
+      if (
+        appointmentType === AppointmentsType.CONSULTATION &&
+        consultantConsultationPlans.length === 0
+      ) {
+        continue;
+      }
+      if (
+        appointmentType === AppointmentsType.SUBSCRIPTION &&
+        consultantSubscriptionPlans.length === 0
+      ) {
+        continue;
+      }
+      if (
+        appointmentType === AppointmentsType.WEBINAR &&
+        consultantWebinarPlans.length === 0
+      ) {
+        continue;
+      }
+      if (
+        appointmentType === AppointmentsType.CLASS &&
+        consultantClassPlans.length === 0
+      ) {
+        continue;
+      }
+
       // Extract just the time pattern (hours and minutes) from the slot
       const slotTime = slotData.slot;
-      const startHours = slotTime.slotStartTimeInUTC.getUTCHours();
-      const startMinutes = slotTime.slotStartTimeInUTC.getUTCMinutes();
-      const endHours = slotTime.slotEndTimeInUTC.getUTCHours();
-      const endMinutes = slotTime.slotEndTimeInUTC.getUTCMinutes();
+      const startHours = slotTime.availabilityStartsAt.getUTCHours();
+      const startMinutes = slotTime.availabilityStartsAt.getUTCMinutes();
+      const endHours = slotTime.availabilityEndsAt.getUTCHours();
+      const endMinutes = slotTime.availabilityEndsAt.getUTCMinutes();
 
       // Create new dates using the appointment's actual date
       const actualStartTime = new Date(startDate);
@@ -432,7 +617,7 @@ async function createAppointmentBatch(
         case AppointmentsType.CONSULTATION:
           appointmentData = createConsultationAppointment(
             consultee,
-            consultationPlans,
+            consultantConsultationPlans,
             defaultStatus,
             isPastAppointment,
             actualStartTime,
@@ -443,7 +628,8 @@ async function createAppointmentBatch(
         case AppointmentsType.SUBSCRIPTION:
           appointmentData = createSubscriptionAppointment(
             consultee,
-            subscriptionPlans,
+            consultantSubscriptionPlans,
+            consultantWeeklySlots,
             defaultStatus,
             isPastAppointment,
             startDate,
@@ -455,7 +641,7 @@ async function createAppointmentBatch(
         case AppointmentsType.WEBINAR:
           appointmentData = await createWebinarAppointment(
             consultee,
-            webinarPlans,
+            consultantWebinarPlans,
             consultees,
             isPastAppointment,
             actualStartTime,
@@ -466,7 +652,7 @@ async function createAppointmentBatch(
         case AppointmentsType.CLASS:
           appointmentData = await createClassAppointment(
             consultee,
-            classPlans,
+            consultantClassPlans,
             consultees,
             isPastAppointment,
             startDate,
@@ -540,6 +726,7 @@ export async function createAppointments(consultees: UserWithProfiles[]) {
       subscriptionPlans,
       webinarPlans,
       classPlans,
+      weeklySlots,
       batchStart,
       BATCH_SIZE,
     );

@@ -104,8 +104,8 @@ export const getOrCreateAppointmentMeeting = async (
 
       // 3. Create the Stream call
       const call: Call = client.call("default", streamCallId);
-      const startsAt = slot.slotStartTimeInUTC
-        ? new Date(slot.slotStartTimeInUTC).toISOString()
+      const startsAt = slot.startsAt
+        ? new Date(slot.startsAt).toISOString()
         : new Date().toISOString();
 
       // Determine title and description based on appointment type

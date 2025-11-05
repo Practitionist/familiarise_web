@@ -1070,6 +1070,27 @@ export class PlannerService {
         ),
         // Class specific plan fields
         certificateProvided: classDataForm.certificateProvided ?? false,
+        sessionDurationInHours: (() => {
+          const contents = classDataForm.classContents ?? [];
+          if (Array.isArray(contents) && contents.length > 0) {
+            const valid = contents.filter(
+              (c: any) =>
+                typeof c.hoursAllotted === "number" && c.hoursAllotted > 0,
+            );
+            if (valid.length > 0) {
+              const total = valid.reduce(
+                (sum: number, c: any) => sum + c.hoursAllotted,
+                0,
+              );
+              return total / valid.length;
+            }
+          }
+          if (initialData && this.isClassEvent(initialData)) {
+            // Fallback to existing plan value if present
+            return (initialData.classPlan as any).sessionDurationInHours ?? 1;
+          }
+          return 1;
+        })(),
         durationInMonths:
           typeof classDataForm.durationInMonths === "number"
             ? classDataForm.durationInMonths
@@ -1088,8 +1109,8 @@ export class PlannerService {
         updatedAt: now,
       },
       // Other optional root fields for ClassEvent
-      startDate: undefined, // Let API handle based on logic
-      endDate: undefined, // Let API handle based on logic
+      schedulingPeriodStartsAt: undefined, // Let API handle based on logic
+      schedulingPeriodEndsAt: undefined, // Let API handle based on logic
       status: ClassStatus.SCHEDULED, // Provide default status
       recordingUrls: [],
       feedbackSummary: null,

@@ -26,6 +26,7 @@ export interface OnboardingTheme {
     // Buttons
     primaryGradient: string;
     primaryShadow: string;
+    primaryRing?: string;
     secondaryBg: string;
     secondaryBorder: string;
     secondaryHover: string;
@@ -73,21 +74,22 @@ export const purpleBlueTheme: OnboardingTheme = {
     inputPlaceholder: "placeholder:text-white/50",
 
     primaryGradient: "bg-gradient-to-r from-purple-500 to-blue-500",
+    primaryRing: "ring-purple-400",
     primaryShadow: "shadow-lg shadow-purple-500/25 hover:shadow-purple-500/40",
     secondaryBg: "bg-white/10",
     secondaryBorder: "border-white/20",
     secondaryHover: "hover:bg-white/20 hover:border-white/30",
 
-    textPrimary: "text-white",
-    textSecondary: "text-white/70",
-    textMuted: "text-white/50",
+    textPrimary: "text-white antialiased",
+    textSecondary: "text-white/75 antialiased",
+    textMuted: "text-white/55 antialiased",
 
     error: "text-red-400",
     success: "text-green-400",
     warning: "text-yellow-400",
 
     checkboxChecked:
-      "data-[state=checked]:bg-purple-500 data-[state=checked]:border-purple-500",
+      "data-[state=checked]:bg-purple-500 data-[state=checked]:border-purple-500 data-[state=checked]:text-white",
     linkColor: "text-purple-300",
     linkHover: "hover:text-purple-200",
 
@@ -118,21 +120,22 @@ export const fireRedOrangeTheme: OnboardingTheme = {
     inputPlaceholder: "placeholder:text-white/50",
 
     primaryGradient: "bg-gradient-to-r from-red-500 to-orange-500",
+    primaryRing: "ring-red-400",
     primaryShadow: "shadow-lg shadow-red-500/25 hover:shadow-red-500/40",
     secondaryBg: "bg-white/10",
     secondaryBorder: "border-white/20",
     secondaryHover: "hover:bg-white/20 hover:border-white/30",
 
-    textPrimary: "text-white",
-    textSecondary: "text-white/70",
-    textMuted: "text-white/50",
+    textPrimary: "text-white antialiased",
+    textSecondary: "text-white/75 antialiased",
+    textMuted: "text-white/55 antialiased",
 
     error: "text-red-300",
     success: "text-green-400",
     warning: "text-yellow-400",
 
     checkboxChecked:
-      "data-[state=checked]:bg-red-500 data-[state=checked]:border-red-500",
+      "data-[state=checked]:bg-red-500 data-[state=checked]:border-red-500 data-[state=checked]:text-white",
     linkColor: "text-red-300",
     linkHover: "hover:text-red-200",
 
@@ -163,21 +166,22 @@ export const blueTurquoiseTheme: OnboardingTheme = {
     inputPlaceholder: "placeholder:text-white/50",
 
     primaryGradient: "bg-gradient-to-r from-blue-500 to-cyan-500",
+    primaryRing: "ring-cyan-400",
     primaryShadow: "shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40",
     secondaryBg: "bg-white/10",
     secondaryBorder: "border-white/20",
     secondaryHover: "hover:bg-white/20 hover:border-white/30",
 
-    textPrimary: "text-white",
-    textSecondary: "text-white/70",
-    textMuted: "text-white/50",
+    textPrimary: "text-white antialiased",
+    textSecondary: "text-white/75 antialiased",
+    textMuted: "text-white/55 antialiased",
 
     error: "text-red-400",
     success: "text-emerald-400",
     warning: "text-amber-400",
 
     checkboxChecked:
-      "data-[state=checked]:bg-cyan-500 data-[state=checked]:border-cyan-500",
+      "data-[state=checked]:bg-cyan-500 data-[state=checked]:border-cyan-500 data-[state=checked]:text-white",
     linkColor: "text-cyan-300",
     linkHover: "hover:text-cyan-200",
 
@@ -208,21 +212,22 @@ export const blackSilverTheme: OnboardingTheme = {
     inputPlaceholder: "placeholder:text-white/40",
 
     primaryGradient: "bg-gradient-to-r from-gray-700 to-slate-600",
+    primaryRing: "ring-gray-300",
     primaryShadow: "shadow-lg shadow-black/25 hover:shadow-black/40",
     secondaryBg: "bg-white/5",
     secondaryBorder: "border-white/10",
     secondaryHover: "hover:bg-white/10 hover:border-white/20",
 
-    textPrimary: "text-white",
-    textSecondary: "text-white/70",
-    textMuted: "text-white/40",
+    textPrimary: "text-white antialiased",
+    textSecondary: "text-white/75 antialiased",
+    textMuted: "text-white/50 antialiased",
 
     error: "text-red-400",
     success: "text-green-400",
     warning: "text-yellow-400",
 
     checkboxChecked:
-      "data-[state=checked]:bg-white data-[state=checked]:border-white",
+      "data-[state=checked]:bg-white data-[state=checked]:border-white data-[state=checked]:text-black",
     linkColor: "text-white/80",
     linkHover: "hover:text-white",
 
@@ -254,16 +259,20 @@ export const getTheme = (themeName?: ThemeName): OnboardingTheme => {
 // Helper function to get theme classes for common UI patterns
 export const getThemeClasses = (theme: OnboardingTheme) => ({
   // Common input classes
-  input: `${theme.colors.inputBg} ${theme.colors.inputBorder} ${theme.colors.textPrimary} ${theme.colors.inputPlaceholder} ${theme.colors.inputFocus} backdrop-blur-sm h-12 rounded-lg`,
+  input: `${theme.colors.inputBg} ${theme.colors.inputBorder} ${theme.colors.textPrimary} ${theme.colors.inputPlaceholder} ${theme.colors.inputFocus} backdrop-blur-sm h-12 rounded-lg placeholder:font-normal`,
 
   // Common textarea classes
-  textarea: `${theme.colors.inputBg} ${theme.colors.inputBorder} ${theme.colors.textPrimary} ${theme.colors.inputPlaceholder} ${theme.colors.inputFocus} backdrop-blur-sm rounded-lg min-h-[100px] resize-none`,
+  textarea: `${theme.colors.inputBg} ${theme.colors.inputBorder} ${theme.colors.textPrimary} ${theme.colors.inputPlaceholder} ${theme.colors.inputFocus} backdrop-blur-sm rounded-lg min-h-[100px] resize-none placeholder:font-normal`,
 
   // Primary button classes
-  primaryButton: `${theme.colors.primaryGradient} ${theme.colors.textPrimary} font-semibold rounded-lg ${theme.colors.primaryShadow} transition-all duration-200 border-0`,
+  primaryButton: `${theme.colors.primaryGradient} ${theme.colors.textPrimary} font-medium tracking-tight rounded-lg ${theme.colors.primaryShadow} transition-all duration-200 border-0`,
 
   // Secondary button classes
-  secondaryButton: `${theme.colors.secondaryBg} ${theme.colors.secondaryBorder} ${theme.colors.textPrimary} ${theme.colors.secondaryHover} rounded-lg font-medium transition-all duration-200`,
+  secondaryButton: `${theme.colors.secondaryBg} ${theme.colors.secondaryBorder} ${theme.colors.textPrimary} ${theme.colors.secondaryHover} rounded-lg font-medium tracking-tight transition-all duration-200`,
+
+  // Navigation buttons – slightly different hues so they don't clash with segmented control
+  navBack: `${theme.colors.secondaryBg} ${theme.colors.secondaryBorder} ${theme.colors.textPrimary} hover:bg-white/15`,
+  navNext: `${theme.colors.primaryGradient} ${theme.colors.textPrimary} shadow-md`,
 
   // Checkbox classes
   checkbox: `border-white/30 ${theme.colors.checkboxChecked}`,
@@ -275,6 +284,12 @@ export const getThemeClasses = (theme: OnboardingTheme) => ({
   link: `${theme.colors.linkColor} ${theme.colors.linkHover} underline transition-colors`,
 
   // Dropdown classes
-  dropdown: `${theme.colors.dropdownBg} ${theme.colors.dropdownBorder}`,
-  dropdownItem: `${theme.colors.textPrimary} ${theme.colors.dropdownItemHover}`,
+  dropdown: `${theme.colors.dropdownBg} ${theme.colors.dropdownBorder} text-sm ${theme.colors.textPrimary}`,
+  dropdownItem: `${theme.colors.textPrimary} ${theme.colors.dropdownItemHover} text-sm`,
+
+  // Segmented control (for Weekly/Custom selectors)
+  segmented: `${theme.colors.glassBg} ${theme.colors.glassBorder} flex w-full gap-2 p-2 rounded-xl backdrop-blur-sm`,
+  segment: `flex-1 text-center px-4 py-2 rounded-lg text-sm font-semibold tracking-tight transition-all duration-200 border`,
+  segmentActive: `bg-white/25 text-white shadow-lg ring-2 border-white/30`,
+  segmentInactive: `text-white/75 hover:bg-white/10 border-white/10`,
 });

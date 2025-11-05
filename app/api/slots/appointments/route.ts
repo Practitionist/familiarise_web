@@ -10,6 +10,12 @@ export async function GET(request: NextRequest) {
   const consulteeProfileId = searchParams.get("consulteeProfileId");
   const userId = searchParams.get("userId");
 
+  // Get specific event IDs for filtering
+  const webinarId = searchParams.get("webinarId");
+  const classId = searchParams.get("classId");
+  const consultationId = searchParams.get("consultationId");
+  const subscriptionId = searchParams.get("subscriptionId");
+
   // Get status for each appointment type
   const consultationStatus = searchParams
     .get("consultationStatus")
@@ -95,6 +101,12 @@ export async function GET(request: NextRequest) {
       },
       startDate,
       endDate,
+      {
+        webinarId,
+        classId,
+        consultationId,
+        subscriptionId,
+      },
     );
 
     return NextResponse.json({ data: appointments });
@@ -120,6 +132,12 @@ async function getAppointments(
   },
   startDate?: string | null,
   endDate?: string | null,
+  eventIds?: {
+    webinarId?: string | null;
+    classId?: string | null;
+    consultationId?: string | null;
+    subscriptionId?: string | null;
+  },
 ) {
   const whereClause: Prisma.AppointmentWhereInput = {};
 
@@ -129,8 +147,8 @@ async function getAppointments(
     whereClause.slotsOfAppointment = {
       some: {
         AND: [
-          { slotStartTimeInUTC: { lt: new Date(endDate) } },
-          { slotEndTimeInUTC: { gt: new Date(startDate) } },
+          { startsAt: { lt: new Date(endDate) } },
+          { endsAt: { gt: new Date(startDate) } },
         ],
       },
     };
@@ -210,6 +228,20 @@ async function getAppointments(
     whereClause.appointmentType = type;
   }
 
+  // Filter by specific event IDs
+  if (eventIds?.webinarId) {
+    whereClause.webinar = { id: eventIds.webinarId };
+  }
+  if (eventIds?.classId) {
+    whereClause.class = { id: eventIds.classId };
+  }
+  if (eventIds?.consultationId) {
+    whereClause.consultation = { id: eventIds.consultationId };
+  }
+  if (eventIds?.subscriptionId) {
+    whereClause.subscription = { id: eventIds.subscriptionId };
+  }
+
   const appointments = await prisma.appointment.findMany({
     where: whereClause,
     include: {
@@ -253,8 +285,8 @@ async function getAppointments(
               user: true,
             },
           },
-          startDate: true,
-          endDate: true,
+          schedulingPeriodStartsAt: true,
+          schedulingPeriodEndsAt: true,
           requestStatus: true,
         },
       },
@@ -291,8 +323,8 @@ async function getAppointments(
   return appointments
     .filter((appointment) => appointment.slotsOfAppointment?.length > 0)
     .sort((a, b) => {
-      const aTime = a.slotsOfAppointment[0]?.slotStartTimeInUTC;
-      const bTime = b.slotsOfAppointment[0]?.slotStartTimeInUTC;
+      const aTime = a.slotsOfAppointment[0]?.startsAt;
+      const bTime = b.slotsOfAppointment[0]?.startsAt;
       if (!aTime || !bTime) return 0;
       return new Date(aTime).getTime() - new Date(bTime).getTime();
     });
@@ -316,12 +348,12 @@ export async function POST(request: NextRequest) {
       slotsOfAppointment: {
         create: slotsOfAppointment.createMany.data.map(
           (slot: {
-            slotStartTimeInUTC: string;
-            slotEndTimeInUTC: string;
+            startsAt: string;
+            endsAt: string;
             type?: "WEEKLY" | "CUSTOM";
           }) => ({
-            slotStartTimeInUTC: new Date(slot.slotStartTimeInUTC),
-            slotEndTimeInUTC: new Date(slot.slotEndTimeInUTC),
+            startsAt: new Date(slot.startsAt),
+            endsAt: new Date(slot.endsAt),
             type: slot.type || "WEEKLY", // Default to WEEKLY if not specified
           }),
         ),
@@ -371,8 +403,8 @@ export async function POST(request: NextRequest) {
                 user: true,
               },
             },
-            startDate: true,
-            endDate: true,
+            schedulingPeriodStartsAt: true,
+            schedulingPeriodEndsAt: true,
             requestStatus: true,
           },
         },

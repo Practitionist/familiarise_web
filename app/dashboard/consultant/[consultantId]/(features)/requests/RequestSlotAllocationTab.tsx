@@ -11,10 +11,8 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog";
 import {
   Table,
@@ -25,16 +23,12 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { toast } from "@/components/ui/use-toast";
-import { TAppointment } from "@/types/appointment";
-import { DetailedTimeSlotMeta, TimeSlotMeta } from "@/utils/timeSlotsMeta";
-import { AppointmentsType, RequestStatus, ScheduleType } from "@prisma/client";
+import { AppointmentsType, RequestStatus } from "@prisma/client";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { RequestedSlotsDialog } from "./components/RequestedSlotsDialog";
-import { TimingsCalendar } from "./components/TimingsCalendar";
+import { SafeUnifiedCalendar } from "../shared/components/SafeUnifiedCalendar";
 import {
-  AvailabilityApiResponse,
-  ConsultantApiResponse,
   ConsultationApiResponse,
   RequestedBy,
   SubscriptionApiResponse,
@@ -65,6 +59,11 @@ interface Request {
   allocatedSlots?: string[];
   durationInMonths?: number;
   callsPerWeek?: number;
+  sessionDurationInHours?: number;
+  durationInHours?: number;
+  startDate?: Date;
+  endDate?: Date;
+  bookingSource?: "DIRECT_CHECKOUT" | "REQUEST_SUBMITTED"; // Booking source - direct checkout or request submitted
 }
 
 // interface SlotInterval { ... } // Removed - Now imported
@@ -128,25 +127,12 @@ export function RequestSlotAllocationTab({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [requests, setRequests] = useState<Request[]>([]);
-  const [availableSlots, setAvailableSlots] = useState<TimeSlotMeta[]>([]);
-  const [existingAppointments, setExistingAppointments] = useState<
-    DetailedTimeSlotMeta[]
-  >([]);
   const [selectedRequest, setSelectedRequest] = useState<Request | null>(null);
-  const [selectedSlots, setSelectedSlots] = useState<string[]>([]);
-  const [isAllocating, setIsAllocating] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [requestedSlotsDialogOpen, setRequestedSlotsDialogOpen] =
     useState(false);
   const [selectedRequestForDialog, setSelectedRequestForDialog] =
     useState<Request | null>(null);
-  const [consultantData, setConsultantData] = useState<{
-    scheduleType: ScheduleType;
-    timezone: string;
-  }>({
-    scheduleType: ScheduleType.WEEKLY,
-    timezone: "UTC",
-  });
 
   // Fetch requests, available slots, and existing appointments
   const fetchData = useCallback(async () => {
@@ -154,44 +140,18 @@ export function RequestSlotAllocationTab({
     setError(null);
 
     try {
-      // Fetch data in parallel
-      const [
-        consultationsResult,
-        subscriptionsResult,
-        weeklyAvailabilityResult,
-        customAvailabilityResult,
-        appointmentsResult,
-        consultantResult,
-      ] = await Promise.all([
+      // Fetch data in parallel (only PENDING requests)
+      const [consultationsResult, subscriptionsResult] = await Promise.all([
         fetchDataFromApi<ConsultationApiResponse[]>(
           `/api/events/consultations?consultantProfileId=${consultantId}&status=PENDING`,
         ),
         fetchDataFromApi<SubscriptionApiResponse[]>(
           `/api/events/subscriptions?consultantProfileId=${consultantId}&status=PENDING`,
         ),
-        fetchDataFromApi<AvailabilityApiResponse[]>(
-          `/api/slots/availability/weekly?consultantProfileId=${consultantId}`,
-        ),
-        fetchDataFromApi<AvailabilityApiResponse[]>(
-          `/api/slots/availability/custom?consultantProfileId=${consultantId}`,
-        ),
-        fetchDataFromApi<TAppointment[]>(
-          `/api/slots/appointments?consultantProfileId=${consultantId}&consultationStatus=APPROVED&subscriptionStatus=APPROVED&webinarStatus=APPROVED&classStatus=APPROVED`,
-        ),
-        fetchDataFromApi<ConsultantApiResponse>(
-          `/api/user/consultants/${consultantId}`,
-        ),
       ]);
 
       // Check results for the first error
-      const results = [
-        consultationsResult,
-        subscriptionsResult,
-        weeklyAvailabilityResult,
-        customAvailabilityResult,
-        appointmentsResult,
-        consultantResult,
-      ];
+      const results = [consultationsResult, subscriptionsResult];
 
       for (const result of results) {
         if (!result.ok && result.error) {
@@ -222,10 +182,16 @@ export function RequestSlotAllocationTab({
             requestedAt: consultation.requestedAt,
             requestedTimes:
               consultation.appointment?.slotsOfAppointment?.map(
-                (slot) => slot.slotStartTimeInUTC,
+                (slot) => slot.startsAt,
               ) || [],
             status: consultation.requestStatus,
-            requiredSlots: 1, // Consultations always require 1 slot
+            requiredSlots: Math.ceil(
+              (consultation.consultationPlan?.durationInHours || 1) / 0.5,
+            ), // Convert hours to 30-min slots
+            durationInHours:
+              consultation.consultationPlan?.durationInHours || 1,
+            bookingSource: consultation.bookingSource, // Map bookingSource enum
+            // No scheduling period for consultations (one-time event)
           })),
         );
       }
@@ -237,122 +203,46 @@ export function RequestSlotAllocationTab({
         (type === "all" || type === "subscription")
       ) {
         processedRequests.push(
-          ...subscriptionsResult.data.map((subscription) => ({
-            id: subscription.id,
-            type: AppointmentsType.SUBSCRIPTION,
-            title: subscription.subscriptionPlan?.title || "Untitled Plan",
-            requestedBy: subscription.requestedBy,
-            requestedAt: subscription.requestedAt,
-            requestedTimes:
-              subscription.appointments?.flatMap(
-                (appt) =>
-                  appt.slotsOfAppointment?.map(
-                    (slot) => slot.slotStartTimeInUTC,
-                  ) || [],
-              ) || [],
-            status: subscription.requestStatus,
-            requiredSlots:
-              (subscription.subscriptionPlan?.callsPerWeek ?? 0) *
-                4 *
-                (subscription.subscriptionPlan?.durationInMonths ?? 0) || 0,
-            durationInMonths: subscription.subscriptionPlan?.durationInMonths,
-            callsPerWeek: subscription.subscriptionPlan?.callsPerWeek,
-          })),
+          ...subscriptionsResult.data.map((subscription) => {
+            const sessionDuration =
+              subscription.subscriptionPlan?.sessionDurationInHours || 1;
+            const slotsPerSession = Math.ceil(sessionDuration / 0.5);
+
+            return {
+              id: subscription.id,
+              type: AppointmentsType.SUBSCRIPTION,
+              title: subscription.subscriptionPlan?.title || "Untitled Plan",
+              requestedBy: subscription.requestedBy,
+              requestedAt: subscription.requestedAt,
+              requestedTimes:
+                subscription.appointments?.flatMap(
+                  (appt) =>
+                    appt.slotsOfAppointment?.map((slot) => slot.startsAt) || [],
+                ) || [],
+              status: subscription.requestStatus,
+              requiredSlots:
+                (subscription.subscriptionPlan?.callsPerWeek ?? 0) *
+                  4 *
+                  (subscription.subscriptionPlan?.durationInMonths ?? 0) *
+                  slotsPerSession || 0,
+              durationInMonths: subscription.subscriptionPlan?.durationInMonths,
+              callsPerWeek: subscription.subscriptionPlan?.callsPerWeek,
+              sessionDurationInHours: sessionDuration,
+              // Scheduling period for subscriptions (using correct field names from Prisma schema)
+              startDate: subscription.schedulingPeriodStartsAt
+                ? new Date(subscription.schedulingPeriodStartsAt)
+                : undefined,
+              endDate: subscription.schedulingPeriodEndsAt
+                ? new Date(subscription.schedulingPeriodEndsAt)
+                : undefined,
+              bookingSource: subscription.bookingSource,
+            };
+          }),
         );
-      }
-
-      // Process availability
-      const processedAvailableSlots: TimeSlotMeta[] = [];
-      if (weeklyAvailabilityResult.ok && weeklyAvailabilityResult.data) {
-        processedAvailableSlots.push(
-          ...weeklyAvailabilityResult.data.map((slot) => ({
-            startTime: slot.slotStartTimeInUTC,
-            endTime: slot.slotEndTimeInUTC,
-            // Add other properties if TimeSlotMeta requires them
-          })),
-        );
-      }
-      if (customAvailabilityResult.ok && customAvailabilityResult.data) {
-        processedAvailableSlots.push(
-          ...customAvailabilityResult.data.map((slot) => ({
-            startTime: slot.slotStartTimeInUTC,
-            endTime: slot.slotEndTimeInUTC,
-          })),
-        );
-      }
-
-      // Process appointments
-      const processedExistingAppointments: DetailedTimeSlotMeta[] = [];
-      if (appointmentsResult.ok && appointmentsResult.data) {
-        processedExistingAppointments.push(
-          ...appointmentsResult.data.flatMap((appt: TAppointment) =>
-            (appt.slotsOfAppointment || []).map(
-              (slot): DetailedTimeSlotMeta => {
-                let title = "Booked Slot"; // Default
-                let type =
-                  appt.appointmentType || AppointmentsType.CONSULTATION;
-                let id = appt.id || "unknown-appt-" + slot.id;
-
-                if (
-                  appt.appointmentType === "CONSULTATION" &&
-                  appt.consultation?.consultationPlan?.title
-                ) {
-                  title = `Consultation: ${appt.consultation.consultationPlan.title}`;
-                  if (appt.consultation.requestedBy?.user?.name) {
-                    title += ` with ${appt.consultation.requestedBy.user.name}`;
-                  }
-                } else if (
-                  appt.appointmentType === "SUBSCRIPTION" &&
-                  appt.subscription?.subscriptionPlan?.title
-                ) {
-                  title = `Subscription: ${appt.subscription.subscriptionPlan.title}`;
-                  if (appt.subscription.requestedBy?.user?.name) {
-                    title += ` for ${appt.subscription.requestedBy.user.name}`;
-                  }
-                } else if (
-                  appt.appointmentType === "WEBINAR" &&
-                  appt.webinar?.webinarPlan?.title
-                ) {
-                  title = `Webinar: ${appt.webinar.webinarPlan.title}`;
-                } else if (
-                  appt.appointmentType === "CLASS" &&
-                  appt.class?.classPlan?.name
-                ) {
-                  title = `Class: ${appt.class.classPlan.name}`;
-                }
-
-                return {
-                  startTime: slot.slotStartTimeInUTC,
-                  endTime: slot.slotEndTimeInUTC,
-                  appointmentDetails: {
-                    id: id,
-                    type: type,
-                    title: title,
-                  },
-                };
-              },
-            ),
-          ),
-        );
-      }
-
-      // Process consultant data
-      if (consultantResult.ok && consultantResult.data) {
-        setConsultantData({
-          scheduleType:
-            consultantResult.data.scheduleType || ScheduleType.WEEKLY,
-          timezone: consultantResult.data.user?.currentTimezone || "UTC",
-        });
-      } else {
-        // Handle potential error in fetching consultant data, maybe set defaults or show specific error
-        console.error("Could not fetch consultant schedule/timezone info.");
-        // Keep default or previous state for consultantData
       }
 
       // --- Update State ---
       setRequests(processedRequests);
-      setAvailableSlots(processedAvailableSlots);
-      setExistingAppointments(processedExistingAppointments);
     } catch (err) {
       // This catch block now primarily handles errors during data *processing*
       console.error("Error processing fetched data:", err);
@@ -381,137 +271,9 @@ export function RequestSlotAllocationTab({
     return () => clearInterval(interval);
   }, [fetchData]);
 
-  const handleSlotSelect = (slot: string) => {
-    setSelectedSlots((prevSlots) => {
-      if (prevSlots.includes(slot)) {
-        return prevSlots.filter((s) => s !== slot);
-      } else if (
-        selectedRequest &&
-        prevSlots.length < selectedRequest.requiredSlots
-      ) {
-        return [...prevSlots, slot].sort();
-      }
-      return prevSlots;
-    });
-  };
-
-  const handleManualAllocation = async () => {
-    if (!selectedRequest) return;
-    if (isAllocating) return;
-    if (selectedSlots.length !== selectedRequest.requiredSlots) return;
-
-    setIsAllocating(true);
-    try {
-      const endpoint =
-        selectedRequest.type === AppointmentsType.SUBSCRIPTION
-          ? `/api/events/subscriptions/${selectedRequest.id}/allocate`
-          : `/api/events/consultations/${selectedRequest.id}/allocate`;
-
-      const response = await fetch(endpoint, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          isAuto: false,
-          slots: selectedSlots,
-        }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to allocate slots");
-      }
-
-      // Success handling
-      toast({
-        title: "Success",
-        description: "Slots have been allocated manually",
-        variant: "default",
-      });
-
-      // Close dialog and reset state
-      setDialogOpen(false);
-      setSelectedRequest(null);
-      setSelectedSlots([]);
-
-      // Remove request from list
-      setRequests((prev) => prev.filter((r) => r.id !== selectedRequest.id));
-
-      // Notify parent
-      onUpdate();
-    } catch (error) {
-      toast({
-        title: "Error",
-        description:
-          error instanceof Error ? error.message : "Failed to allocate slots",
-        variant: "destructive",
-      });
-    } finally {
-      setIsAllocating(false);
-    }
-  };
-
-  const handleAutoAllocation = async () => {
-    if (!selectedRequest) return;
-    if (isAllocating) return;
-
-    setIsAllocating(true);
-    try {
-      const endpoint =
-        selectedRequest.type === AppointmentsType.SUBSCRIPTION
-          ? `/api/events/subscriptions/${selectedRequest.id}/allocate`
-          : `/api/events/consultations/${selectedRequest.id}/allocate`;
-
-      const response = await fetch(endpoint, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ isAuto: true }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to allocate slots");
-      }
-
-      // Success handling
-      toast({
-        title: "Success",
-        description: "Slots have been allocated automatically",
-        variant: "default",
-      });
-
-      // Close dialog and reset state
-      setDialogOpen(false);
-      setSelectedRequest(null);
-      setSelectedSlots([]);
-
-      // Remove request from list
-      setRequests((prev) => prev.filter((r) => r.id !== selectedRequest.id));
-
-      // Notify parent
-      onUpdate();
-    } catch (error) {
-      toast({
-        title: "Error",
-        description:
-          error instanceof Error ? error.message : "Failed to allocate slots",
-        variant: "destructive",
-      });
-    } finally {
-      setIsAllocating(false);
-    }
-  };
-
   const handleRequestedAllocation = async (override: boolean) => {
     if (!selectedRequestForDialog) return;
-    if (isAllocating) return;
 
-    setIsAllocating(true);
     try {
       const endpoint =
         selectedRequestForDialog.type === AppointmentsType.SUBSCRIPTION
@@ -561,46 +323,27 @@ export function RequestSlotAllocationTab({
           error instanceof Error ? error.message : "Failed to allocate slots",
         variant: "destructive",
       });
-    } finally {
-      setIsAllocating(false);
     }
   };
 
-  // Check if auto-allocation is possible
-  const canAutoAllocate = () => {
-    if (!selectedRequest) return false;
-    // Filter available slots that do NOT overlap with any existing appointment
-    const trulyAvailableSlots = availableSlots.filter(
-      (availSlot) =>
-        !existingAppointments.some((existingSlot) => {
-          // Compare using startTime/endTime
-          // FIX: Ensure Date objects are compared, handle potential string types
-          const availStart =
-            availSlot.startTime instanceof Date
-              ? availSlot.startTime
-              : new Date(availSlot.startTime);
-          const availEnd =
-            availSlot.endTime instanceof Date
-              ? availSlot.endTime
-              : new Date(availSlot.endTime);
-          const existingStart =
-            existingSlot.startTime instanceof Date
-              ? existingSlot.startTime
-              : new Date(existingSlot.startTime);
-          const existingEnd =
-            existingSlot.endTime instanceof Date
-              ? existingSlot.endTime
-              : new Date(existingSlot.endTime);
-          // Check for overlap: (StartA < EndB) and (StartB < EndA)
-          return availStart < existingEnd && existingStart < availEnd;
-        }),
-    );
-    // Check if the count of non-overlapping available slots is sufficient
-    return trulyAvailableSlots.length >= selectedRequest.requiredSlots;
-  };
+  // Handle allocation complete from UnifiedCalendar
+  const handleAllocationComplete = async () => {
+    toast({
+      title: "Success",
+      description: "Slots have been allocated successfully",
+      variant: "default",
+    });
 
-  // Check if manual allocation quota is met
-  const isQuotaMet = selectedRequest?.requiredSlots === selectedSlots.length;
+    // Close dialog and reset state
+    setDialogOpen(false);
+    setSelectedRequest(null);
+
+    // Remove request from list
+    setRequests((prev) => prev.filter((r) => r.id !== selectedRequest?.id));
+
+    // Notify parent
+    onUpdate();
+  };
 
   if (loading) {
     return (
@@ -668,11 +411,30 @@ export function RequestSlotAllocationTab({
                 <TableCell>
                   {request.requestedTimes &&
                   request.requestedTimes.length > 0 ? (
-                    request.requestedTimes.map((time, index) => (
-                      <div key={time + index} className="text-sm">
-                        {new Date(time).toLocaleString()}
-                      </div>
-                    ))
+                    <div className="space-y-1">
+                      {request.requestedTimes.slice(0, 5).map((time, index) => {
+                        // Validate and parse date string (Bug #5 fix)
+                        const date = new Date(time);
+                        const isValidDate = !isNaN(date.getTime());
+
+                        return (
+                          <div
+                            key={`${request.id}-time-${index}`}
+                            className="text-sm"
+                          >
+                            {isValidDate
+                              ? date.toLocaleString()
+                              : "Invalid date"}
+                          </div>
+                        );
+                      })}
+                      {request.requestedTimes.length > 5 && (
+                        <div className="text-xs text-muted-foreground">
+                          ... and {request.requestedTimes.length - 5} more slot
+                          {request.requestedTimes.length - 5 !== 1 ? "s" : ""}
+                        </div>
+                      )}
+                    </div>
                   ) : (
                     <div className="text-sm text-muted-foreground">
                       Not available
@@ -688,8 +450,10 @@ export function RequestSlotAllocationTab({
                 <TableCell>
                   {request.status === RequestStatus.PENDING && (
                     <>
+                      {/* Hide "Use Requested Times" button for directly booked consultations (Bug #8 fix) */}
                       {request.requestedTimes &&
-                        request.requestedTimes.length > 0 && (
+                        request.requestedTimes.length > 0 &&
+                        request.bookingSource === "REQUEST_SUBMITTED" && (
                           <Button
                             variant="secondary"
                             size="sm"
@@ -698,11 +462,8 @@ export function RequestSlotAllocationTab({
                               setSelectedRequestForDialog(request);
                               setRequestedSlotsDialogOpen(true);
                             }}
-                            disabled={isAllocating}
                           >
-                            {isAllocating
-                              ? "Allocating..."
-                              : "Use Requested Times"}
+                            Use Requested Times
                           </Button>
                         )}
                       <Button
@@ -710,7 +471,6 @@ export function RequestSlotAllocationTab({
                         size="sm"
                         onClick={() => {
                           setSelectedRequest(request);
-                          setSelectedSlots([]);
                           setDialogOpen(true);
                         }}
                       >
@@ -718,12 +478,6 @@ export function RequestSlotAllocationTab({
                       </Button>
                     </>
                   )}
-                  {request.status === RequestStatus.APPROVED &&
-                    request.allocatedSlots && (
-                      <div className="text-sm text-muted-foreground">
-                        {request.allocatedSlots.length} slots allocated
-                      </div>
-                    )}
                 </TableCell>
               </TableRow>
             ))}
@@ -732,28 +486,54 @@ export function RequestSlotAllocationTab({
 
         {/* Single Allocation Dialog - moved outside map loop to prevent multiple dialogs */}
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-          <DialogContent
-            className="max-w-3xl"
-            onInteractOutside={(e) => {
-              // Prevent closing dialog while allocating
-              if (isAllocating) {
-                e.preventDefault();
-              }
-            }}
-          >
+          <DialogContent className="max-w-7xl">
             <DialogHeader>
               <DialogTitle>Allocate Slots</DialogTitle>
-              <DialogDescription>
+              <DialogDescription asChild>
                 {selectedRequest && (
-                  <>
-                    Choose {selectedRequest.requiredSlots} slots for{" "}
-                    {selectedRequest.type.toLowerCase()}
-                  </>
+                  <div className="space-y-1 text-sm text-muted-foreground">
+                    <p>
+                      Choose {selectedRequest.requiredSlots} slots for{" "}
+                      {selectedRequest.type.toLowerCase()}
+                    </p>
+                    {selectedRequest.type === "SUBSCRIPTION" &&
+                      selectedRequest.sessionDurationInHours && (
+                        <p className="text-xs">
+                          Each call is{" "}
+                          {selectedRequest.sessionDurationInHours === 1
+                            ? "1 hour"
+                            : `${selectedRequest.sessionDurationInHours} hours`}{" "}
+                          (
+                          {Math.ceil(
+                            selectedRequest.sessionDurationInHours / 0.5,
+                          )}{" "}
+                          consecutive slots per call)
+                        </p>
+                      )}
+                    {selectedRequest.type === "CONSULTATION" &&
+                      selectedRequest.durationInHours && (
+                        <p className="text-xs">
+                          Consultation is{" "}
+                          {selectedRequest.durationInHours === 1
+                            ? "1 hour"
+                            : `${selectedRequest.durationInHours} hours`}{" "}
+                          ({Math.ceil(selectedRequest.durationInHours / 0.5)}{" "}
+                          consecutive slots)
+                        </p>
+                      )}
+                    {selectedRequest.startDate && selectedRequest.endDate && (
+                      <p className="text-xs text-blue-600">
+                        Scheduling period:{" "}
+                        {selectedRequest.startDate.toLocaleDateString()} -{" "}
+                        {selectedRequest.endDate.toLocaleDateString()}
+                      </p>
+                    )}
+                  </div>
                 )}
               </DialogDescription>
             </DialogHeader>
             {selectedRequest && (
-              <TimingsCalendar
+              <SafeUnifiedCalendar
                 consultantId={consultantId}
                 eventType={
                   selectedRequest.type.toLowerCase() as
@@ -761,12 +541,17 @@ export function RequestSlotAllocationTab({
                     | "subscription"
                 }
                 eventId={selectedRequest.id}
-                onSlotSelect={handleSlotSelect}
-                selectedSlots={selectedSlots}
-                requiredSlots={selectedRequest.requiredSlots}
+                mode="allocate"
+                onAllocationComplete={handleAllocationComplete}
+                showAllocationButtons={true}
                 durationInMonths={
                   selectedRequest.type === "SUBSCRIPTION"
                     ? selectedRequest.durationInMonths
+                    : undefined
+                }
+                durationInHours={
+                  selectedRequest.type === "CONSULTATION"
+                    ? selectedRequest.durationInHours
                     : undefined
                 }
                 callsPerWeek={
@@ -774,29 +559,16 @@ export function RequestSlotAllocationTab({
                     ? selectedRequest.callsPerWeek
                     : undefined
                 }
+                sessionDurationInHours={
+                  selectedRequest.type === "SUBSCRIPTION"
+                    ? selectedRequest.sessionDurationInHours
+                    : undefined
+                }
+                allowedStart={selectedRequest.startDate}
+                allowedEnd={selectedRequest.endDate}
+                className="min-h-[500px]"
               />
             )}
-            <DialogFooter>
-              <Button
-                variant="outline"
-                onClick={() => setDialogOpen(false)}
-                disabled={isAllocating}
-              >
-                Cancel
-              </Button>
-              <Button
-                onClick={handleAutoAllocation}
-                disabled={!canAutoAllocate() || isAllocating}
-              >
-                {isAllocating ? "Allocating..." : "Auto Allocate"}
-              </Button>
-              <Button
-                onClick={handleManualAllocation}
-                disabled={!isQuotaMet || isAllocating}
-              >
-                {isAllocating ? "Allocating..." : "Allocate Manual Slots"}
-              </Button>
-            </DialogFooter>
           </DialogContent>
         </Dialog>
 
@@ -808,6 +580,15 @@ export function RequestSlotAllocationTab({
             selectedRequestForDialog?.type || AppointmentsType.CONSULTATION
           }
           requestedSlots={selectedRequestForDialog?.requestedTimes || []}
+          schedulingPeriod={
+            selectedRequestForDialog?.startDate &&
+            selectedRequestForDialog?.endDate
+              ? {
+                  startDate: selectedRequestForDialog.startDate,
+                  endDate: selectedRequestForDialog.endDate,
+                }
+              : undefined
+          }
           onConfirm={handleRequestedAllocation}
           onCancel={() => {
             setRequestedSlotsDialogOpen(false);

@@ -24,8 +24,8 @@ export async function GET(req: NextRequest) {
           consultantProfileId: consultantProfileId,
         },
         orderBy: [
-          { dayOfWeekforStartTimeInUTC: "asc" },
-          { slotStartTimeInUTC: "asc" },
+          { dayOfWeekForStartsAt: "asc" },
+          { availabilityStartsAt: "asc" },
         ],
         include: {
           consultantProfile: {
@@ -74,18 +74,18 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const {
       consultantProfileId,
-      dayOfWeekforStartTimeInUTC,
-      dayOfWeekforEndTimeInUTC,
-      slotStartTimeInUTC,
-      slotEndTimeInUTC,
+      dayOfWeekForStartsAt,
+      dayOfWeekForEndsAt,
+      availabilityStartsAt,
+      availabilityEndsAt,
     } = body;
 
     if (
       !consultantProfileId ||
-      !dayOfWeekforStartTimeInUTC ||
-      !dayOfWeekforEndTimeInUTC ||
-      !slotStartTimeInUTC ||
-      !slotEndTimeInUTC
+      !dayOfWeekForStartsAt ||
+      !dayOfWeekForEndsAt ||
+      !availabilityStartsAt ||
+      !availabilityEndsAt
     ) {
       return NextResponse.json(
         { error: "Missing required fields" },
@@ -94,8 +94,8 @@ export async function POST(req: NextRequest) {
     }
 
     if (
-      !Object.values(DayOfWeek).includes(dayOfWeekforStartTimeInUTC) ||
-      !Object.values(DayOfWeek).includes(dayOfWeekforEndTimeInUTC)
+      !Object.values(DayOfWeek).includes(dayOfWeekForStartsAt) ||
+      !Object.values(DayOfWeek).includes(dayOfWeekForEndsAt)
     ) {
       return NextResponse.json(
         { error: "Invalid day of week" },
@@ -104,8 +104,8 @@ export async function POST(req: NextRequest) {
     }
 
     if (
-      isNaN(Date.parse(slotStartTimeInUTC)) ||
-      isNaN(Date.parse(slotEndTimeInUTC))
+      isNaN(Date.parse(availabilityStartsAt)) ||
+      isNaN(Date.parse(availabilityEndsAt))
     ) {
       return NextResponse.json(
         { error: "Invalid time format" },
@@ -113,8 +113,8 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const startTime = new Date(slotStartTimeInUTC);
-    const endTime = new Date(slotEndTimeInUTC);
+    const startTime = new Date(availabilityStartsAt);
+    const endTime = new Date(availabilityEndsAt);
 
     if (startTime >= endTime) {
       return NextResponse.json(
@@ -127,19 +127,19 @@ export async function POST(req: NextRequest) {
     const overlappingSlot = await prisma.slotOfAvailabilityWeekly.findFirst({
       where: {
         consultantProfileId,
-        dayOfWeekforStartTimeInUTC,
+        dayOfWeekForStartsAt,
         OR: [
           {
-            slotStartTimeInUTC: { lte: startTime },
-            slotEndTimeInUTC: { gt: startTime },
+            availabilityStartsAt: { lte: startTime },
+            availabilityEndsAt: { gt: startTime },
           },
           {
-            slotStartTimeInUTC: { lt: endTime },
-            slotEndTimeInUTC: { gte: endTime },
+            availabilityStartsAt: { lt: endTime },
+            availabilityEndsAt: { gte: endTime },
           },
           {
-            slotStartTimeInUTC: { gte: startTime },
-            slotEndTimeInUTC: { lte: endTime },
+            availabilityStartsAt: { gte: startTime },
+            availabilityEndsAt: { lte: endTime },
           },
         ],
       },
@@ -155,10 +155,10 @@ export async function POST(req: NextRequest) {
     const newWeeklySlot = await prisma.slotOfAvailabilityWeekly.create({
       data: {
         consultantProfileId,
-        dayOfWeekforStartTimeInUTC,
-        dayOfWeekforEndTimeInUTC,
-        slotStartTimeInUTC: startTime,
-        slotEndTimeInUTC: endTime,
+        dayOfWeekForStartsAt,
+        dayOfWeekForEndsAt,
+        availabilityStartsAt: startTime,
+        availabilityEndsAt: endTime,
       },
       include: {
         consultantProfile: {

@@ -287,7 +287,7 @@ export class PaymentCleanupService {
       const timeSlotGroups = new Map<string, typeof conflictingSlots>();
 
       for (const slot of conflictingSlots) {
-        const timeKey = `${slot.slotStartTimeInUTC.getTime()}-${slot.slotEndTimeInUTC.getTime()}`;
+        const timeKey = `${slot.startsAt.getTime()}-${slot.endsAt.getTime()}`;
         if (!timeSlotGroups.has(timeKey)) {
           timeSlotGroups.set(timeKey, []);
         }

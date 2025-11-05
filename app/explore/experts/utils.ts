@@ -1,5 +1,4 @@
-import useSWR from "swr";
-import useSWRInfinite from "swr/infinite";
+import { useQuery, useInfiniteQuery } from "@tanstack/react-query";
 import { Domain, SubDomain, Tag } from "@prisma/client";
 import { TConsultantProfile } from "@/types/consultant";
 import { SortOption } from "./components/SearchBar";
@@ -22,8 +21,25 @@ export interface MetaData {
   };
 }
 
-// Enhanced SWR fetcher function with error handling
-const fetcher = async (url: string) => {
+export interface ConsultantsByDomain {
+  [domain: string]: TConsultantProfile[];
+}
+
+export function groupConsultantsByDomain(
+  consultants: TConsultantProfile[],
+): ConsultantsByDomain {
+  return consultants.reduce((acc, consultant) => {
+    const domainName = consultant.domain?.name || "Other";
+    if (!acc[domainName]) {
+      acc[domainName] = [];
+    }
+    acc[domainName].push(consultant);
+    return acc;
+  }, {} as ConsultantsByDomain);
+}
+
+// Enhanced React Query fetcher function with error handling for consultants
+const fetchConsultantsData = async (url: string) => {
   const res = await fetch(url);
 
   // If the status code is not in the range 200-299, throw an error
@@ -43,25 +59,20 @@ const fetcher = async (url: string) => {
 };
 
 export function useConsultantsMetadata() {
-  const { data, error, isLoading, mutate } = useSWR<{ data: MetaData }>(
-    "/api/user/consultants/meta",
-    fetcher,
-    {
-      revalidateOnFocus: false,
-      revalidateIfStale: true,
-      dedupingInterval: 60000, // 1 minute
-      errorRetryCount: 3,
-      errorRetryInterval: 5000, // 5 seconds
-      loadingTimeout: 10000, // 10 seconds
-      suspense: false,
-    },
-  );
+  const { data, error, isLoading, refetch } = useQuery<{ data: MetaData }>({
+    queryKey: ["consultants-metadata"],
+    queryFn: () => fetchConsultantsData("/api/user/consultants/meta"),
+    staleTime: 5 * 60 * 1000, // 5 minutes
+    gcTime: 10 * 60 * 1000, // 10 minutes
+    retry: 3,
+    retryDelay: 5000,
+  });
 
   return {
     metadata: data?.data || null,
     isLoading,
     error,
-    refresh: mutate,
+    refresh: refetch,
   };
 }
 
@@ -106,43 +117,44 @@ export function useConsultants({
     ],
   );
 
-  // Generate the key for the first page to use for prefetching
-  const firstPageKey = getKey(0);
-
-  const { data, error, size, setSize, isLoading, isValidating, mutate } =
-    useSWRInfinite(getKey, fetcher, {
-      revalidateFirstPage: false,
-      revalidateOnFocus: false,
-      revalidateAll: false,
-      persistSize: true,
-      dedupingInterval: 30000, // 30 seconds
-      errorRetryCount: 3,
-      errorRetryInterval: 3000, // 3 seconds
-      loadingTimeout: 8000, // 8 seconds
-      suspense: false,
-      parallel: true, // Fetch pages in parallel for faster loading
-    });
+  const {
+    data,
+    error,
+    fetchNextPage,
+    hasNextPage,
+    isLoading,
+    isFetchingNextPage,
+    refetch,
+  } = useInfiniteQuery({
+    queryKey: [
+      "consultants",
+      selectedDomain,
+      selectedSubdomain,
+      selectedTags,
+      experienceYears,
+      searchTerm,
+      sortBy,
+    ],
+    queryFn: ({ pageParam = 0 }) => fetchConsultantsData(getKey(pageParam)),
+    getNextPageParam: (lastPage, pages) => {
+      if (lastPage?.data?.length === CONSULTANTS_PER_PAGE) {
+        return pages.length;
+      }
+      return undefined;
+    },
+    initialPageParam: 0,
+    staleTime: 2 * 60 * 1000, // 2 minutes
+    gcTime: 10 * 60 * 1000, // 10 minutes
+    retry: 3,
+    retryDelay: 3000,
+  });
 
   const consultants: TConsultantProfile[] = data
-    ? data.flatMap((page) => page.data)
+    ? data.pages.flatMap((page) => page.data)
     : [];
-  const hasMore = data
-    ? data[data.length - 1]?.data.length === CONSULTANTS_PER_PAGE
-    : true;
-  const isLoadingMore =
-    isLoading || (size > 0 && data && typeof data[size - 1] === "undefined");
 
-  // Prefetch the next page if we have data and there might be more
-  const prefetchNextPage = useCallback(() => {
-    if (hasMore && !isLoadingMore && data) {
-      // Prefetch the next page
-      const nextPageKey = getKey(size);
-      if (nextPageKey) {
-        // Use the fetcher to preload the data without storing it
-        fetcher(nextPageKey);
-      }
-    }
-  }, [hasMore, isLoadingMore, data, getKey, size]);
+  const hasMore = hasNextPage;
+  const isLoadingMore = isFetchingNextPage;
 
   return {
     consultants,
@@ -150,22 +162,8 @@ export function useConsultants({
     isLoading,
     isLoadingMore,
     hasMore,
-    loadMore: () => setSize(size + 1),
-    refresh: () => mutate(),
-    prefetchNextPage,
-    firstPageKey,
+    loadMore: () => fetchNextPage(),
+    refresh: refetch,
+    firstPageKey: getKey(0),
   };
-}
-
-export function groupConsultantsByDomain(consultants: TConsultantProfile[]) {
-  const grouped = new Map<string, TConsultantProfile[]>();
-
-  consultants.forEach((consultant) => {
-    if (!grouped.has(consultant.domain.id)) {
-      grouped.set(consultant.domain.id, []);
-    }
-    grouped.get(consultant.domain.id)?.push(consultant);
-  });
-
-  return grouped;
 }

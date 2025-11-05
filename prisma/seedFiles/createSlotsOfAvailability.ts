@@ -33,6 +33,35 @@ function validateSlot(startTime: Date, endTime: Date): boolean {
   return true;
 }
 
+/**
+ * Get a reference date that matches the given day of week
+ *
+ * For weekly slots, we need the date component to match the dayOfWeek field
+ * to ensure the availability API can correctly query and match slots.
+ * Uses a fixed reference week (Jan 6-12, 2025) where dates align with day names.
+ *
+ * @param dayOfWeek - The day of week enum value
+ * @returns A Date object set to that day of week in the reference week
+ */
+function getReferenceDateForDayOfWeek(dayOfWeek: DayOfWeek): Date {
+  // Reference week: Jan 6, 2025 (Monday) through Jan 12, 2025 (Sunday)
+  const referenceWeekStart = new Date(Date.UTC(2025, 0, 6, 0, 0, 0, 0)); // Monday, Jan 6, 2025 00:00:00 UTC
+
+  const daysMap: Record<DayOfWeek, number> = {
+    [DayOfWeek.MONDAY]: 0,
+    [DayOfWeek.TUESDAY]: 1,
+    [DayOfWeek.WEDNESDAY]: 2,
+    [DayOfWeek.THURSDAY]: 3,
+    [DayOfWeek.FRIDAY]: 4,
+    [DayOfWeek.SATURDAY]: 5,
+    [DayOfWeek.SUNDAY]: 6,
+  };
+
+  const date = new Date(referenceWeekStart);
+  date.setUTCDate(date.getUTCDate() + daysMap[dayOfWeek]);
+  return date;
+}
+
 function generateSlotTime(
   existingSlots: Array<{ start: number; end: number }>, // start/end now in 30-min intervals from midnight
 ) {
@@ -97,138 +126,149 @@ export async function createSlotsOfAvailability(
       const slotType = consultant.consultantProfile.scheduleType;
 
       if (slotType === ScheduleType.WEEKLY) {
-        // Create weekly slots for each day
-        const daysOfWeek = Object.values(DayOfWeek);
+        // Create weekly slots for each day with business hours focus
+        const weeklySlots = [];
 
-        for (const dayOfWeek of daysOfWeek) {
-          const daySlots = generateDaySlots();
+        // Define business hours (9 AM - 6 PM)
+        const businessHours = [
+          { hour: 9, minute: 0 }, // 9:00 AM
+          { hour: 10, minute: 0 }, // 10:00 AM
+          { hour: 11, minute: 0 }, // 11:00 AM
+          { hour: 14, minute: 0 }, // 2:00 PM
+          { hour: 15, minute: 0 }, // 3:00 PM
+          { hour: 16, minute: 0 }, // 4:00 PM
+          { hour: 17, minute: 0 }, // 5:00 PM
+        ];
 
-          for (const slot of daySlots) {
-            // Convert intervals back to hours and minutes
-            const startHour = Math.floor(slot.start / 2);
-            const startMinute = (slot.start % 2) * 30;
-            const endHour = Math.floor(slot.end / 2);
-            const endMinute = (slot.end % 2) * 30;
+        // Create slots for weekdays (Monday to Friday)
+        const weekdays = [
+          DayOfWeek.MONDAY,
+          DayOfWeek.TUESDAY,
+          DayOfWeek.WEDNESDAY,
+          DayOfWeek.THURSDAY,
+          DayOfWeek.FRIDAY,
+        ];
 
-            // For weekly slots, since they represent recurring time patterns, we have a few options:
-            //
-            // Use a fixed date in the future (like 2025) - Not ideal because:
-            // - The slots might appear too far in the future
-            // - We'd need to handle date rollovers manually
-            //
-            // Use 1970 (Unix epoch) - Not ideal because:
-            // - Some databases/systems might have issues with dates too far in the past
-            // - Could cause confusion with timezone conversions
-            //
-            // Better approach: Use the next occurrence of each day of the week from today. This is more natural because:
-            // - It represents the actual next available slot
-            // - Makes it easier to handle timezone conversions
-            // - Aligns with how recurring events typically work in calendaring systems
-            const today = new Date();
-            const daysUntilNext =
-              (Object.values(DayOfWeek).indexOf(dayOfWeek) +
-                7 -
-                today.getUTCDay()) %
-              7;
-            const nextOccurrence = new Date(today);
-            nextOccurrence.setDate(nextOccurrence.getDate() + daysUntilNext);
+        for (const dayOfWeek of weekdays) {
+          // Select 3-5 time slots per day for business hours
+          const slotsPerDay = faker.number.int({ min: 3, max: 5 });
+          const selectedHours = faker.helpers.arrayElements(
+            businessHours,
+            slotsPerDay,
+          );
 
-            // Create the slot times
-            const startTime = new Date(nextOccurrence);
-            startTime.setUTCHours(startHour, startMinute, 0, 0);
+          for (const timeSlot of selectedHours) {
+            // Use reference date that matches the day of week to ensure date/dayOfWeek consistency
+            const slotStartTime = getReferenceDateForDayOfWeek(dayOfWeek);
+            // Set time in UTC to ensure consistent timezone handling
+            slotStartTime.setUTCHours(timeSlot.hour, timeSlot.minute, 0, 0);
 
-            const endTime = new Date(nextOccurrence);
-            endTime.setUTCHours(endHour, endMinute, 0, 0);
-
-            // Check if this is an overnight slot (end hour < start hour OR same hour but end minute < start minute)
-            if (
-              endHour < startHour ||
-              (endHour === startHour && endMinute < startMinute)
-            ) {
-              endTime.setDate(endTime.getDate() + 1);
-            }
-
-            // Validate the slot before creating it
-            if (!validateSlot(startTime, endTime)) {
-              console.warn(
-                `Skipping invalid weekly slot for consultant ${consultant.consultantProfile.id}, day ${dayOfWeek}`,
-              );
-              continue;
-            }
-
-            await prisma.slotOfAvailabilityWeekly.create({
-              data: {
-                consultantProfileId: consultant.consultantProfile.id,
-                dayOfWeekforStartTimeInUTC: dayOfWeek,
-                slotStartTimeInUTC: startTime,
-                // If slot crosses midnight, end day is next day
-                dayOfWeekforEndTimeInUTC:
-                  endHour < startHour ||
-                  (endHour === startHour && endMinute < startMinute)
-                    ? daysOfWeek[(daysOfWeek.indexOf(dayOfWeek) + 1) % 7]
-                    : dayOfWeek,
-                slotEndTimeInUTC: endTime,
-              },
+            weeklySlots.push({
+              consultantProfileId: consultant.consultantProfile.id,
+              dayOfWeekForStartsAt: dayOfWeek,
+              dayOfWeekForEndsAt: dayOfWeek, // Same day since it's a 1-hour slot
+              availabilityStartsAt: slotStartTime,
+              availabilityEndsAt: new Date(
+                slotStartTime.getTime() + 60 * 60 * 1000,
+              ), // 1 hour duration
             });
           }
         }
+
+        // Add some weekend slots for consultants who work weekends (20% chance)
+        if (faker.number.int({ min: 1, max: 5 }) === 1) {
+          const weekendDays = [DayOfWeek.SATURDAY, DayOfWeek.SUNDAY];
+          for (const dayOfWeek of weekendDays) {
+            const slotsPerDay = faker.number.int({ min: 1, max: 3 });
+            const selectedHours = faker.helpers.arrayElements(
+              businessHours.slice(0, 4),
+              slotsPerDay,
+            ); // Fewer weekend slots
+
+            for (const timeSlot of selectedHours) {
+              // Use reference date that matches the day of week to ensure date/dayOfWeek consistency
+              const slotStartTime = getReferenceDateForDayOfWeek(dayOfWeek);
+              // Set time in UTC to ensure consistent timezone handling
+              slotStartTime.setUTCHours(timeSlot.hour, timeSlot.minute, 0, 0);
+
+              weeklySlots.push({
+                consultantProfileId: consultant.consultantProfile.id,
+                dayOfWeekForStartsAt: dayOfWeek,
+                dayOfWeekForEndsAt: dayOfWeek, // Same day since it's a 1-hour slot
+                availabilityStartsAt: slotStartTime,
+                availabilityEndsAt: new Date(
+                  slotStartTime.getTime() + 60 * 60 * 1000,
+                ), // 1 hour duration
+              });
+            }
+          }
+        }
+
+        await prisma.slotOfAvailabilityWeekly.createMany({
+          data: weeklySlots,
+        });
       } else {
-        // Create custom slots for next 7 days
+        // Create custom slots for the next 3 months
+        const customSlots = [];
         const startDate = new Date();
-        for (let day = 0; day < 7; day++) {
-          const date = new Date(startDate);
-          date.setDate(date.getDate() + day);
+        const endDate = new Date(
+          startDate.getTime() + 90 * 24 * 60 * 60 * 1000,
+        ); // 3 months
 
-          const daySlots = generateDaySlots();
+        // Business hours for custom slots
+        const businessHours = [
+          { hour: 9, minute: 0 },
+          { hour: 10, minute: 0 },
+          { hour: 11, minute: 0 },
+          { hour: 14, minute: 0 },
+          { hour: 15, minute: 0 },
+          { hour: 16, minute: 0 },
+          { hour: 17, minute: 0 },
+        ];
 
-          for (const slot of daySlots) {
-            // Convert intervals back to hours and minutes
-            const startHour = Math.floor(slot.start / 2);
-            const startMinute = (slot.start % 2) * 30;
-            const endHour = Math.floor(slot.end / 2);
-            const endMinute = (slot.end % 2) * 30;
+        // Create 2-4 slots per week for 3 months
+        const totalWeeks = 12;
+        const slotsPerWeek = faker.number.int({ min: 2, max: 4 });
 
-            // Create a date for this specific day
-            const startTime = new Date(date);
-            startTime.setUTCHours(startHour, startMinute, 0, 0);
+        for (let week = 0; week < totalWeeks; week++) {
+          for (let slot = 0; slot < slotsPerWeek; slot++) {
+            const weekStart = new Date(
+              startDate.getTime() + week * 7 * 24 * 60 * 60 * 1000,
+            );
+            const dayOffset = faker.number.int({ min: 0, max: 6 }); // Random day of week
+            const slotDate = new Date(
+              weekStart.getTime() + dayOffset * 24 * 60 * 60 * 1000,
+            );
 
-            const endTime = new Date(date);
-            endTime.setUTCHours(endHour, endMinute, 0, 0);
+            const timeSlot = faker.helpers.arrayElement(businessHours);
+            // Set time in UTC to ensure consistent timezone handling
+            slotDate.setUTCHours(timeSlot.hour, timeSlot.minute, 0, 0);
 
-            // Check if this is an overnight slot (end hour < start hour OR same hour but end minute < start minute)
-            if (
-              endHour < startHour ||
-              (endHour === startHour && endMinute < startMinute)
-            ) {
-              endTime.setDate(endTime.getDate() + 1);
-            }
-
-            // Validate the slot before creating it
-            if (!validateSlot(startTime, endTime)) {
-              console.warn(
-                `Skipping invalid custom slot for consultant ${consultant.consultantProfile.id}, date ${date.toISOString()}`,
-              );
-              continue;
-            }
-
-            await prisma.slotOfAvailabilityCustom.create({
-              data: {
+            if (slotDate > startDate && slotDate < endDate) {
+              customSlots.push({
                 consultantProfileId: consultant.consultantProfile.id,
-                slotStartTimeInUTC: startTime,
-                slotEndTimeInUTC: endTime,
-              },
-            });
+                availabilityStartsAt: slotDate,
+                availabilityEndsAt: new Date(
+                  slotDate.getTime() + 60 * 60 * 1000,
+                ),
+              });
+            }
           }
         }
+
+        await prisma.slotOfAvailabilityCustom.createMany({
+          data: customSlots,
+        });
       }
     } catch (error) {
       console.error(
-        `Failed to create slots of availability for consultant ${consultant.id}:`,
+        `Failed to create slots for consultant ${consultant.id}:`,
         error,
       );
     }
+
     if ((i + 1) % 10 === 0 || i === consultants.length - 1) {
-      console.log(`Created slots of availability for ${i + 1} consultants`);
+      console.log(`Created availability slots for ${i + 1} consultants`);
     }
   }
 }

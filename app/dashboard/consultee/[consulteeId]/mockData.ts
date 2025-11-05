@@ -17,7 +17,7 @@ export const mockEvents: EventWithType[] = [
           phone: null,
           address: null,
           onlineStatus: false,
-          currentTimezone: null,
+          timezone: null,
           onboardingCompleted: false,
           role: "CONSULTANT",
           consultantProfileId: null,
@@ -34,8 +34,8 @@ export const mockEvents: EventWithType[] = [
         slotsOfAppointment: [
           {
             id: "slot-1",
-            slotStartTimeInUTC: new Date("2024-12-30T13:00:00Z"),
-            slotEndTimeInUTC: new Date("2024-12-30T15:00:00Z"),
+            startsAt: new Date("2024-12-30T13:00:00Z"),
+            endsAt: new Date("2024-12-30T15:00:00Z"),
             isTentative: true,
             appointmentId: "appointment-1",
             createdAt: new Date(),
@@ -67,7 +67,7 @@ export const mockEvents: EventWithType[] = [
           phone: null,
           address: null,
           onlineStatus: false,
-          currentTimezone: null,
+          timezone: null,
           onboardingCompleted: false,
           role: "CONSULTANT",
           consultantProfileId: null,
@@ -84,8 +84,8 @@ export const mockEvents: EventWithType[] = [
         slotsOfAppointment: [
           {
             id: "slot-2",
-            slotStartTimeInUTC: new Date("2024-12-18T15:00:00Z"),
-            slotEndTimeInUTC: new Date("2024-12-18T17:00:00Z"),
+            startsAt: new Date("2024-12-18T15:00:00Z"),
+            endsAt: new Date("2024-12-18T17:00:00Z"),
             isTentative: false,
             appointmentId: "appointment-2",
             createdAt: new Date(),
@@ -94,24 +94,24 @@ export const mockEvents: EventWithType[] = [
           },
           {
             id: "slot-3",
-            slotStartTimeInUTC: new Date("2024-12-25T13:00:00Z"),
-            slotEndTimeInUTC: new Date("2024-12-25T16:00:00Z"),
+            startsAt: new Date("2024-12-25T13:00:00Z"),
+            endsAt: new Date("2024-12-25T16:00:00Z"),
             isTentative: false,
             appointmentId: "appointment-2",
             user: [],
           },
           {
             id: "slot-4",
-            slotStartTimeInUTC: new Date("2025-01-01T12:00:00Z"),
-            slotEndTimeInUTC: new Date("2025-01-01T13:00:00Z"),
+            startsAt: new Date("2025-01-01T12:00:00Z"),
+            endsAt: new Date("2025-01-01T13:00:00Z"),
             isTentative: false,
             appointmentId: "appointment-2",
             user: [],
           },
           {
             id: "slot-5",
-            slotStartTimeInUTC: new Date("2025-01-08T13:00:00Z"),
-            slotEndTimeInUTC: new Date("2025-01-08T14:00:00Z"),
+            startsAt: new Date("2025-01-08T13:00:00Z"),
+            endsAt: new Date("2025-01-08T14:00:00Z"),
             isTentative: false,
             appointmentId: "appointment-2",
             user: [],
@@ -137,7 +137,7 @@ export const mockEvents: EventWithType[] = [
           phone: null,
           address: null,
           onlineStatus: false,
-          currentTimezone: null,
+          timezone: null,
           onboardingCompleted: false,
           role: "CONSULTANT",
           consultantProfileId: null,
@@ -201,8 +201,8 @@ export const pastEvent: EventWithType = {
       slotsOfAppointment: [
         {
           id: "past-slot-1",
-          slotStartTimeInUTC: new Date("2024-11-01T10:00:00Z"),
-          slotEndTimeInUTC: new Date("2024-11-01T11:00:00Z"),
+          startsAt: new Date("2024-11-01T10:00:00Z"),
+          endsAt: new Date("2024-11-01T11:00:00Z"),
           isTentative: false,
           appointmentId: "past-appt",
           createdAt: new Date(),
@@ -263,7 +263,7 @@ export const eventWithoutSlots: EventWithType = {
   consultationPlanId: "plan-noslot", // Added
   requestedById: "consultee-noslot", // Added
   requestNotes: null, // Added
-  directlyBooked: false, // Added
+  bookingSource: "REQUEST_SUBMITTED", // Added
   feedbackFromConsultee: null, // Added
   feedbackFromConsultant: null, // Added
   rating: null, // Added

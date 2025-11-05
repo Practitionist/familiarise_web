@@ -16,7 +16,7 @@ import { AboutSection } from "./components/AboutSection";
 import { ClassesAndWebinars } from "./components/ClassesAndWebinars";
 import { ConsultantAvailability } from "./components/ConsultantAvailability";
 import { ConsultantSkeletonLoader } from "./components/ConsultantSkeletonLoader";
-import { ConsultationPricing } from "./components/ConsultationPricing";
+import { ExpertPricing } from "./components/ExpertPricing";
 import { ProfileHeader } from "./components/ProfileHeader";
 import { ReviewsSection } from "./components/ReviewsSection";
 import { useTimezone } from "./hooks/useTimezone";
@@ -48,7 +48,7 @@ export default function ExpertProfile(
   const { toast } = useToast();
 
   // Prioritize browser timezone over user timezone
-  const timezone = browserTimezone || userDetails?.currentTimezone;
+  const timezone = browserTimezone || userDetails?.timezone;
 
   useEffect(() => {
     const fetchData = async () => {
@@ -199,7 +199,15 @@ export default function ExpertProfile(
   }, [selectedSlot, consultantDetails, params.consultantId, toast]);
 
   const handleSubscriptionBooking = useCallback(
-    async (option: { title: string; price: number; duration: string }) => {
+    async (
+      option: {
+        title: string;
+        price: number;
+        duration: string;
+        durationInMonths?: number;
+      },
+      schedulingPeriod: { startDate: Date; endDate: Date },
+    ) => {
       if (!consultantDetails) {
         toast({
           title: "Consultant details not found",
@@ -210,7 +218,7 @@ export default function ExpertProfile(
 
       // Get the active subscription plan
       const activePlan = consultantDetails.subscriptionPlans.find(
-        (plan) => plan.durationInMonths === parseInt(option.duration),
+        (plan) => plan.durationInMonths === option.durationInMonths,
       );
 
       if (!activePlan) {
@@ -218,8 +226,16 @@ export default function ExpertProfile(
         return;
       }
 
-      // Redirect to subscription checkout page
-      window.location.href = `/checkout/plans/subscription/${activePlan.id}`;
+      // Convert dates to UTC ISO strings for the backend
+      const schedulingPeriodStartsAt = schedulingPeriod.startDate.toISOString();
+      const schedulingPeriodEndsAt = schedulingPeriod.endDate.toISOString();
+
+      // Redirect to subscription checkout page with scheduling period
+      const params = new URLSearchParams({
+        schedulingPeriodStartsAt,
+        schedulingPeriodEndsAt,
+      });
+      window.location.href = `/checkout/plans/subscription/${activePlan.id}?${params.toString()}`;
     },
     [consultantDetails, toast],
   );
@@ -316,7 +332,7 @@ export default function ExpertProfile(
         <ReviewsSection reviews={reviews} />
       </div>
 
-      <ConsultationPricing
+      <ExpertPricing
         userDetails={userDetails}
         consultantDetails={consultantDetails}
         handleConsultationBooking={handleConsultationBooking}

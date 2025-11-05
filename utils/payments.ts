@@ -11,6 +11,7 @@ import {
   RequestStatus,
   WebinarStatus,
 } from "@prisma/client";
+import { calculateSubscriptionEndDate } from "@/utils/dateUtils";
 
 // Re-export for backward compatibility
 export const unifiedCheckoutSchema = checkoutSchema;
@@ -61,6 +62,7 @@ export class PaymentIntentManager {
       if (this.activeIntents.size % 100 === 0) {
         this.cleanupTracker();
       }
+
 
       ErrorLogger.info("Payment intent created and tracked", {
         intentId: paymentResponse.id,
@@ -151,6 +153,7 @@ export class PaymentIntentManager {
       }
     }
 
+
     ErrorLogger.info("Bulk payment intent cleanup completed", {
       successful,
       failed,
@@ -167,7 +170,7 @@ export class PaymentIntentManager {
     oldestIntent: number | null;
     gatewayBreakdown: Record<PaymentGateway, number>;
   } {
-    const now = Date.now();
+    const _now = Date.now();
     const gatewayBreakdown: Record<PaymentGateway, number> = {
       STRIPE: 0,
       RAZORPAY: 0,
@@ -398,24 +401,19 @@ export async function validateSlotAvailability(
       isTentative: false, // Use indexed field first
       OR: [
         {
-          // Slot starts during existing booking
-          slotStartTimeInUTC: {
-            gte: slotStart,
-            lt: slotEnd,
-          },
-        },
-        {
-          // Slot ends during existing booking
-          slotEndTimeInUTC: {
-            gt: slotStart,
-            lte: slotEnd,
-          },
-        },
-        {
-          // Slot completely contains existing booking
-          AND: [
-            { slotStartTimeInUTC: { lte: slotStart } },
-            { slotEndTimeInUTC: { gte: slotEnd } },
+          OR: [
+            {
+              AND: [
+                { startsAt: { lte: slotStart } },
+                { endsAt: { gt: slotStart } },
+              ],
+            },
+            {
+              AND: [
+                { startsAt: { lt: slotEnd } },
+                { endsAt: { gte: slotEnd } },
+              ],
+            },
           ],
         },
       ],
@@ -436,14 +434,14 @@ export async function validateSlotAvailability(
             OR: [
               {
                 AND: [
-                  { slotStartTimeInUTC: { lte: slotStart } },
-                  { slotEndTimeInUTC: { gt: slotStart } },
+                  { startsAt: { lte: slotStart } },
+                  { endsAt: { gt: slotStart } },
                 ],
               },
               {
                 AND: [
-                  { slotStartTimeInUTC: { lt: slotEnd } },
-                  { slotEndTimeInUTC: { gte: slotEnd } },
+                  { startsAt: { lt: slotEnd } },
+                  { endsAt: { gte: slotEnd } },
                 ],
               },
             ],
@@ -502,14 +500,14 @@ export async function validateSlotAvailability(
           OR: [
             {
               AND: [
-                { slotStartTimeInUTC: { lte: slotStart } },
-                { slotEndTimeInUTC: { gt: slotStart } },
+                { startsAt: { lte: slotStart } },
+                { endsAt: { gt: slotStart } },
               ],
             },
             {
               AND: [
-                { slotStartTimeInUTC: { lt: slotEnd } },
-                { slotEndTimeInUTC: { gte: slotEnd } },
+                { startsAt: { lt: slotEnd } },
+                { endsAt: { gte: slotEnd } },
               ],
             },
           ],
@@ -587,7 +585,7 @@ export async function handleConsultationCheckout(
         : RequestStatus.PENDING,
       requestedById: consulteeProfileId,
       requestNotes: data.notes,
-      directlyBooked: true,
+      bookingSource: "DIRECT_CHECKOUT",
     },
   });
 
@@ -598,8 +596,8 @@ export async function handleConsultationCheckout(
       consultationId: consultation.id,
       slotsOfAppointment: {
         create: {
-          slotStartTimeInUTC: new Date(data.slotStartTimeInUTC!),
-          slotEndTimeInUTC: new Date(data.slotEndTimeInUTC!),
+          startsAt: new Date(data.slotStartTimeInUTC!),
+          endsAt: new Date(data.slotEndTimeInUTC!),
           isTentative: !skipPayment,
         },
       },
@@ -633,10 +631,12 @@ export async function handleSubscriptionCheckout(
   // Check slot availability
   await validateSlotAvailability(tx, data, consulteeProfileId);
 
-  // Calculate subscription end date
+  // FIXED: Calculate subscription end date with proper month-end handling
   const startDate = new Date();
-  const endDate = new Date(startDate);
-  endDate.setMonth(endDate.getMonth() + plan.durationInMonths);
+  const endDate = calculateSubscriptionEndDate(
+    startDate,
+    plan.durationInMonths,
+  );
 
   // Create subscription
   const subscription = await tx.subscription.create({
@@ -647,8 +647,9 @@ export async function handleSubscriptionCheckout(
         : RequestStatus.PENDING,
       requestedById: consulteeProfileId,
       requestNotes: data.notes,
-      startDate,
-      endDate,
+      bookingSource: "DIRECT_CHECKOUT",
+      schedulingPeriodStartsAt: startDate,
+      schedulingPeriodEndsAt: endDate,
     },
   });
 
@@ -659,8 +660,8 @@ export async function handleSubscriptionCheckout(
       subscriptionId: subscription.id,
       slotsOfAppointment: {
         create: {
-          slotStartTimeInUTC: new Date(data.slotStartTimeInUTC!),
-          slotEndTimeInUTC: new Date(data.slotEndTimeInUTC!),
+          startsAt: new Date(data.slotStartTimeInUTC!),
+          endsAt: new Date(data.slotEndTimeInUTC!),
           isTentative: !skipPayment,
         },
       },
@@ -729,12 +730,9 @@ export async function handleWebinarCheckout(
   await tx.slotOfAppointment.create({
     data: {
       appointmentId: appointment.id,
-      slotStartTimeInUTC:
-        webinar.appointment?.slotsOfAppointment[0]?.slotStartTimeInUTC ||
-        new Date(),
-      slotEndTimeInUTC:
-        webinar.appointment?.slotsOfAppointment[0]?.slotEndTimeInUTC ||
-        new Date(),
+      startsAt:
+        webinar.appointment?.slotsOfAppointment[0]?.startsAt || new Date(),
+      endsAt: webinar.appointment?.slotsOfAppointment[0]?.endsAt || new Date(),
       isTentative: !skipPayment,
       user: {
         connect: { id: userId },
@@ -798,8 +796,8 @@ export async function handleClassCheckout(
       classId: classInstance.id,
       slotsOfAppointment: {
         create: {
-          slotStartTimeInUTC: classInstance.startDate || new Date(),
-          slotEndTimeInUTC: classInstance.endDate || new Date(),
+          startsAt: classInstance.schedulingPeriodStartsAt || new Date(),
+          endsAt: classInstance.schedulingPeriodEndsAt || new Date(),
           isTentative: !skipPayment,
           user: {
             connect: { id: userId },
@@ -816,7 +814,7 @@ export async function handleClassCheckout(
 export async function confirmAppointment(
   tx: any,
   appointmentId: string,
-  appointmentType: string,
+  _appointmentType: string,
 ) {
   // Make slot non-tentative
   await tx.slotOfAppointment.updateMany({
@@ -886,6 +884,7 @@ export async function handleProductionCheckout(
     currency,
     discountCodeId,
   });
+
 
   // Step 2: Create payment intent first (external API call)
   let paymentResponse;
@@ -971,7 +970,7 @@ export async function handleDevelopmentCheckout(
 ) {
   const result = await prisma.$transaction(async (tx) => {
     let appointment;
-    let plan;
+    let _plan;
     let amount = 0;
 
     // Get user profile
@@ -989,7 +988,7 @@ export async function handleDevelopmentCheckout(
     // Handle different appointment types
     switch (validatedData.appointmentType) {
       case "CONSULTATION":
-        ({ appointment, plan, amount } = await handleConsultationCheckout(
+        ({ appointment, plan: _plan, amount } = await handleConsultationCheckout(
           tx,
           validatedData,
           user.consulteeProfile.id,
@@ -998,7 +997,7 @@ export async function handleDevelopmentCheckout(
         break;
 
       case "SUBSCRIPTION":
-        ({ appointment, plan, amount } = await handleSubscriptionCheckout(
+        ({ appointment, plan: _plan, amount } = await handleSubscriptionCheckout(
           tx,
           validatedData,
           user.consulteeProfile.id,
@@ -1007,7 +1006,7 @@ export async function handleDevelopmentCheckout(
         break;
 
       case "WEBINAR":
-        ({ appointment, plan, amount } = await handleWebinarCheckout(
+        ({ appointment, plan: _plan, amount } = await handleWebinarCheckout(
           tx,
           validatedData,
           userId,
@@ -1016,7 +1015,7 @@ export async function handleDevelopmentCheckout(
         break;
 
       case "CLASS":
-        ({ appointment, plan, amount } = await handleClassCheckout(
+        ({ appointment, plan: _plan, amount } = await handleClassCheckout(
           tx,
           validatedData,
           userId,

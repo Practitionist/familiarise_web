@@ -126,8 +126,8 @@ export function EventPlannerForConsultation({
             price: formData.price,
             language: formData.language,
             level: formData.level,
-            prerequisites: formData.prerequisites ?? null,
-            materialProvided: formData.materialProvided ?? null,
+            prerequisites: formData.prerequisites ?? undefined,
+            materialProvided: formData.materialProvided ?? undefined,
             learningOutcomes: formData.learningOutcomes,
             consultantProfileId: consultantId,
             consultantProfile: null,
@@ -239,16 +239,20 @@ export function EventPlannerForConsultation({
           <DialogTitle>
             {initialData ? "Edit" : "Create New"} Consultation Plan
           </DialogTitle>
-          <DialogDescription>
-            {initialData
-              ? "Update the details of your consultation plan."
-              : "Fill in the details to create a new consultation plan."}
-            {activeConsultationsCount > 0 && (
-              <div className="mt-2 text-sm text-blue-600">
-                This plan has {activeConsultationsCount} consultation
-                request(s).
-              </div>
-            )}
+          <DialogDescription asChild>
+            <div className="text-sm text-muted-foreground">
+              <p>
+                {initialData
+                  ? "Update the details of your consultation plan."
+                  : "Fill in the details to create a new consultation plan."}
+              </p>
+              {activeConsultationsCount > 0 && (
+                <div className="mt-2 text-sm text-blue-600">
+                  This plan has {activeConsultationsCount} consultation
+                  request(s).
+                </div>
+              )}
+            </div>
           </DialogDescription>
         </DialogHeader>
         <Form {...form}>

@@ -23,11 +23,11 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { WebinarPlanSchema } from "@/schemas/plans";
-import { zodResolver } from "@hookform/resolvers/zod";
 import { Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
+
 import { PlannerService } from "../services/planner";
 import { WebinarEvent, WebinarPlannerProps } from "../types/event";
 import { TopicsMultiSelect } from "./TopicsMultiSelect";
@@ -45,6 +45,27 @@ const levelOptions = ["Beginner", "Intermediate", "Advanced", "Expert"];
 
 // Define currency options
 const currencyOptions = ["INR", "USD", "EUR", "GBP"]; // Add more as needed
+
+// Create a more specific form schema that aligns with form requirements
+const WebinarFormSchema = z.object({
+  title: z.string().min(1, "Title is required"),
+  description: z.string().min(1, "Description is required"),
+  price: z.number().min(0, "Price must be non-negative"),
+  priceCurrency: z.string().default("INR"),
+  maxParticipants: z.number().min(1, "At least one participant is required"),
+  language: z.string().default("English"),
+  level: z.string().default("Beginner"),
+  prerequisites: z.string().optional().nullable(),
+  materialProvided: z.string().optional().nullable(),
+  learningOutcomes: z
+    .array(z.string())
+    .min(1, "At least one learning outcome is required"),
+  topics: z.array(z.string()).min(1, "At least one topic is required"),
+  consultantProfileId: z.string().optional(),
+  certificateProvided: z.boolean().default(false),
+  durationInHours: z.number().min(0.5, "Duration must be at least 30 minutes"),
+  scheduledAt: z.string().min(1, "Start time is required"),
+});
 
 export function EventPlannerForWebinar({
   isOpen,
@@ -126,21 +147,21 @@ export function EventPlannerForWebinar({
     ) {
       const slot = initialData.appointment.slotsOfAppointment[0];
       console.log(
-        "[EventPlannerForWebinar] Raw slotStartTimeInUTC from initialData:",
-        slot.slotStartTimeInUTC,
+        "[EventPlannerForWebinar] Raw startsAt from initialData:",
+        slot.startsAt,
       );
       console.log("Found existing slot for appointment:", {
         slotId: slot.id,
-        startTime: slot.slotStartTimeInUTC,
-        endTime: slot.slotEndTimeInUTC,
+        startTime: slot.startsAt,
+        endTime: slot.endsAt,
       });
-      return formatDateTimeForInput(slot.slotStartTimeInUTC);
+      return formatDateTimeForInput(slot.startsAt);
     }
     return formatDateTimeForInput();
   };
 
-  const form = useForm<z.infer<typeof WebinarPlanSchema>>({
-    resolver: zodResolver(WebinarPlanSchema),
+  const form = useForm<z.infer<typeof WebinarFormSchema>>({
+    mode: "onChange",
     defaultValues: {
       title: initialData?.webinarPlan?.title ?? "",
       description: initialData?.webinarPlan?.description ?? "",
@@ -162,7 +183,6 @@ export function EventPlannerForWebinar({
       scheduledAt: getInitialScheduledAt(),
       consultantProfileId: consultantId,
     },
-    mode: "onChange", // Validate on change for better UX
   });
 
   // Reset form values when initialData changes

@@ -70,10 +70,8 @@ export async function GET(
         appointmentType: appointment.appointmentType,
         slotsOfAppointment: appointment.slotsOfAppointment.map((slot) => ({
           id: slot.id,
-          slotStartTimeInUTC: new Date(slot.slotStartTimeInUTC),
-          slotEndTimeInUTC: slot.slotEndTimeInUTC
-            ? new Date(slot.slotEndTimeInUTC)
-            : null,
+          slotStartTimeInUTC: new Date(slot.startsAt),
+          slotEndTimeInUTC: slot.endsAt ? new Date(slot.endsAt) : null,
           isTentative: slot.isTentative,
           user: Array.isArray(slot.user)
             ? slot.user.map((u) => ({
@@ -87,7 +85,7 @@ export async function GET(
                 passwordResetToken: u.passwordResetToken || null,
                 passwordResetExpires: u.passwordResetExpires || null,
                 onlineStatus: u.onlineStatus,
-                currentTimezone: u.currentTimezone || null,
+                currentTimezone: u.timezone || null,
                 onboardingCompleted: u.onboardingCompleted,
                 role: u.role,
                 consultantProfileId: u.consultantProfileId,
@@ -135,9 +133,11 @@ export async function GET(
                 },
               },
               startDate: new Date(
-                appointment.subscription.startDate,
+                appointment.subscription.schedulingPeriodStartsAt,
               ).toISOString(),
-              endDate: new Date(appointment.subscription.endDate).toISOString(),
+              endDate: new Date(
+                appointment.subscription.schedulingPeriodEndsAt,
+              ).toISOString(),
             }
           : undefined,
         webinar: appointment.webinar

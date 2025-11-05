@@ -19,7 +19,8 @@ export async function createSubscriptionPlans(consultants: UserWithProfiles[]) {
           {
             consultantProfileId: consultant.consultantProfile.id,
             title: "Basic Subscription",
-            description: faker.lorem.paragraph(),
+            description:
+              "Perfect for beginners. Get 1 call per week for 1 month to establish foundational knowledge and skills.",
             durationInMonths: 1,
             price: faker.number.int({ min: 9900, max: 19900 }), // $99 to $199
             callsPerWeek: 1,
@@ -35,22 +36,20 @@ export async function createSubscriptionPlans(consultants: UserWithProfiles[]) {
             ]),
             level: "Beginner",
             prerequisites: "None",
-            materialProvided: faker.lorem.sentence(),
-            learningOutcomes: faker.helpers.arrayElements(
-              [
-                "Understand basic concepts",
-                "Gain practical skills",
-                "Improve problem-solving abilities",
-              ],
-              { min: 1, max: 3 },
-            ),
+            materialProvided: "Basic learning materials and resources",
+            learningOutcomes: [
+              "Understand basic concepts",
+              "Gain practical skills",
+              "Improve problem-solving abilities",
+            ],
           },
           {
             consultantProfileId: consultant.consultantProfile.id,
-            title: "Standard Subscription",
-            description: faker.lorem.paragraph(),
-            durationInMonths: 3,
-            price: faker.number.int({ min: 24900, max: 49900 }), // $249 to $499
+            title: "Extended Subscription",
+            description:
+              "Comprehensive learning program with 2 calls per week for 6 months. Ideal for intermediate learners seeking deeper expertise.",
+            durationInMonths: 6,
+            price: faker.number.int({ min: 39900, max: 79900 }), // $399 to $799
             callsPerWeek: 2,
             sessionDurationInHours: 1.0,
             videoMeetings: 2,
@@ -63,26 +62,26 @@ export async function createSubscriptionPlans(consultants: UserWithProfiles[]) {
               "Chinese",
             ]),
             level: "Intermediate",
-            prerequisites: faker.lorem.sentence(),
-            materialProvided: faker.lorem.sentence(),
-            learningOutcomes: faker.helpers.arrayElements(
-              [
-                "Master advanced techniques",
-                "Develop strategic thinking",
-                "Enhance decision-making skills",
-              ],
-              { min: 1, max: 3 },
-            ),
+            prerequisites: "Basic understanding of the subject area",
+            materialProvided:
+              "Comprehensive learning materials, templates, and resources",
+            learningOutcomes: [
+              "Master advanced techniques",
+              "Develop strategic thinking",
+              "Enhance decision-making skills",
+              "Build practical expertise",
+            ],
           },
           {
             consultantProfileId: consultant.consultantProfile.id,
-            title: "Premium Subscription",
-            description: faker.lorem.paragraph(),
-            durationInMonths: 6,
-            price: faker.number.int({ min: 39900, max: 79900 }), // $399 to $799
+            title: "Comprehensive Subscription",
+            description:
+              "Intensive program with 3 calls per week for 12 months. Designed for advanced learners and professionals seeking mastery.",
+            durationInMonths: 12,
+            price: faker.number.int({ min: 59900, max: 99900 }), // $599 to $999
             callsPerWeek: 3,
             sessionDurationInHours: 1.0,
-            videoMeetings: 4,
+            videoMeetings: 3,
             emailSupport: PlanEmailSupport.DEDICATED,
             language: faker.helpers.arrayElement([
               "English",
@@ -92,16 +91,16 @@ export async function createSubscriptionPlans(consultants: UserWithProfiles[]) {
               "Chinese",
             ]),
             level: "Advanced",
-            prerequisites: faker.lorem.sentence(),
-            materialProvided: faker.lorem.sentence(),
-            learningOutcomes: faker.helpers.arrayElements(
-              [
-                "Develop expertise in the field",
-                "Create comprehensive strategies",
-                "Implement best practices",
-              ],
-              { min: 1, max: 3 },
-            ),
+            prerequisites: "Intermediate to advanced knowledge in the field",
+            materialProvided:
+              "Premium learning materials, exclusive templates, and personalized resources",
+            learningOutcomes: [
+              "Develop expertise in the field",
+              "Create comprehensive strategies",
+              "Implement best practices",
+              "Achieve mastery level skills",
+              "Build professional portfolio",
+            ],
           },
         ],
       });

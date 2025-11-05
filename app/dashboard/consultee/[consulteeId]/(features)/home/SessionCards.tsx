@@ -13,6 +13,7 @@ import { Badge } from "components/ui/badge";
 import { Button } from "components/ui/button";
 import { Card } from "components/ui/card";
 import { useRouter } from "next/navigation";
+import { getOrCreateAppointmentMeeting } from "@/lib/meeting";
 import {
   EventWithType,
   getConsultantImage,
@@ -39,7 +40,7 @@ export function SlotCard({
   isFirst = false,
 }: Readonly<SlotCardProps>) {
   const now = new Date();
-  const startTime = new Date(slot.slotStartTimeInUTC);
+  const startTime = new Date(slot.startsAt);
   const diffInMinutes = Math.floor(
     (startTime.getTime() - now.getTime()) / 60000,
   );
@@ -63,40 +64,13 @@ export function SlotCard({
         return;
       }
 
-      const meetingId = `appointment-${appointment.id}`;
-
-      const call = client.call("default", meetingId);
-
-      if (!call) {
-        toast({
-          title: "Error",
-          description: "Failed to create call",
-          variant: "destructive",
-        });
-        return;
-      }
-
-      await call.getOrCreate({
-        data: {
-          starts_at: startTime.toISOString(),
-          custom: {
-            title:
-              appointment.webinar?.webinarPlan?.title ??
-              appointment.subscription?.subscriptionPlan?.title ??
-              appointment.consultation?.consultationPlan?.title ??
-              appointment.class?.classPlan?.title ??
-              "Session",
-            description: `${appointment.webinar?.webinarPlan?.title ?? appointment.subscription?.subscriptionPlan?.title ?? appointment.consultation?.consultationPlan?.title ?? appointment.class?.classPlan?.title ?? "Session"} Meeting`,
-            eventId: appointment.id,
-            eventType:
-              appointment.webinar?.webinarPlan?.title ??
-              appointment.subscription?.subscriptionPlan?.title ??
-              appointment.consultation?.consultationPlan?.title ??
-              appointment.class?.classPlan?.title ??
-              "Session",
-          },
-        },
-      });
+      const meetingId = await getOrCreateAppointmentMeeting(
+        client,
+        {
+          ...appointment,
+        } as any,
+        slot,
+      );
 
       router.push(`/meetings/${meetingId}`);
       toast({
@@ -220,10 +194,8 @@ export function SlotCard({
               </p>
               <p>
                 {formatDateTime(
-                  new Date(slot.slotStartTimeInUTC),
-                  slot.slotEndTimeInUTC
-                    ? new Date(slot.slotEndTimeInUTC)
-                    : undefined,
+                  new Date(slot.startsAt),
+                  slot.endsAt ? new Date(slot.endsAt) : undefined,
                 )}
               </p>
             </div>
@@ -342,16 +314,16 @@ export function MonthlyEventCard({
               data-testid="monthly-slot"
             >
               <span className="min-w-[100px]">
-                {new Date(slot.slotStartTimeInUTC).toLocaleString(undefined, {
+                {new Date(slot.startsAt).toLocaleString(undefined, {
                   weekday: "short",
                   day: "numeric",
                   month: "short",
                 })}
               </span>
               <span>
-                {slot.slotEndTimeInUTC
-                  ? `${formatTimeString(new Date(slot.slotStartTimeInUTC))} - ${formatTimeString(new Date(slot.slotEndTimeInUTC))}`
-                  : formatTimeString(new Date(slot.slotStartTimeInUTC))}
+                {slot.endsAt
+                  ? `${formatTimeString(new Date(slot.startsAt))} - ${formatTimeString(new Date(slot.endsAt))}`
+                  : formatTimeString(new Date(slot.startsAt))}
                 {slot.isTentative && (
                   <span className="text-red-500 ml-1">*</span>
                 )}

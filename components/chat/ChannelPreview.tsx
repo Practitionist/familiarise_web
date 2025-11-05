@@ -4,6 +4,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { format } from "date-fns";
 import type { Channel } from "stream-chat";
 import { useChatContext } from "stream-chat-react";
+import { getChannelDisplayInfo } from "./utils/channelUtils";
 
 type ChannelPreviewProps = {
   channel: Channel;
@@ -23,21 +24,20 @@ export const ChannelPreview = ({
   const isActive = activeChannel?.id === channel.id;
   const isDirectMessage = type === "messaging";
 
-  // For direct messages, get the other user's details
-  const otherMember = isDirectMessage
-    ? Object.values(channel.state.members || {}).find(
-        (member: Record<string, unknown>) =>
-          (member.user as any)?.id !== client.userID,
-      )?.user
-    : null;
+  // Get display info using shared utility
+  const displayInfo = isDirectMessage
+    ? getChannelDisplayInfo(channel, client?.userID)
+    : {
+        displayName: channel.data?.name ?? channel.id ?? "",
+        displayImage: channel.data?.image,
+        isGroupDM: false,
+        memberCount: 0,
+        statusText: "",
+        fullGroupName: undefined,
+      };
 
-  const displayName = isDirectMessage
-    ? ((otherMember as any)?.name ?? (otherMember as any)?.id ?? "Unknown User")
-    : (channel.data?.name ?? channel.id ?? "");
-
-  const displayImage = isDirectMessage
-    ? (otherMember as any)?.image
-    : channel.data?.image;
+  const displayName = displayInfo.displayName;
+  const displayImage = displayInfo.displayImage;
 
   const lastMessage = channel.state.messages[channel.state.messages.length - 1];
   const lastMessageText =
@@ -64,15 +64,31 @@ export const ChannelPreview = ({
         }`}
         onClick={handleClick}
       >
-        <Avatar className="h-8 w-8">
-          <AvatarImage src={displayImage as string} />
-          <AvatarFallback className="bg-blue-400 text-white">
-            {displayName.charAt(0)}
-          </AvatarFallback>
-        </Avatar>
+        <div className="relative">
+          <Avatar className="h-8 w-8">
+            <AvatarImage src={displayImage as string} />
+            <AvatarFallback className="bg-blue-400 text-white">
+              {displayName.charAt(0)}
+            </AvatarFallback>
+          </Avatar>
+          {displayInfo.isGroupDM && (
+            <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-blue-500 rounded-full border border-blue-600 flex items-center justify-center">
+              <span className="text-[8px] text-white font-bold">G</span>
+            </div>
+          )}
+        </div>
 
         <div className="flex-1 min-w-0">
-          <div className="font-medium text-sm">{displayName}</div>
+          <div
+            className="font-medium text-sm truncate"
+            title={
+              displayInfo.isGroupDM && displayInfo.fullGroupName
+                ? displayInfo.fullGroupName
+                : displayName
+            }
+          >
+            {displayName}
+          </div>
           <div className="text-xs text-blue-200 truncate">
             {lastMessageText}
           </div>

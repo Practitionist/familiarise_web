@@ -201,10 +201,10 @@ export async function PUT(
         const weeklySlotData: Prisma.SlotOfAvailabilityWeeklyCreateManyInput[] =
           slotsOfAvailabilityWeekly.map((slot) => ({
             consultantProfileId: id,
-            dayOfWeekforStartTimeInUTC: slot.dayOfWeekforStartTimeInUTC,
-            dayOfWeekforEndTimeInUTC: slot.dayOfWeekforEndTimeInUTC,
-            slotStartTimeInUTC: new Date(slot.slotStartTimeInUTC),
-            slotEndTimeInUTC: new Date(slot.slotEndTimeInUTC),
+            dayOfWeekForStartsAt: slot.dayOfWeekforStartTimeInUTC,
+            dayOfWeekForEndsAt: slot.dayOfWeekforEndTimeInUTC,
+            availabilityStartsAt: new Date(slot.slotStartTimeInUTC),
+            availabilityEndsAt: new Date(slot.slotEndTimeInUTC),
           }));
 
         await prisma.slotOfAvailabilityWeekly.createMany({
@@ -225,8 +225,8 @@ export async function PUT(
         const customSlotData: Prisma.SlotOfAvailabilityCustomCreateManyInput[] =
           slotsOfAvailabilityCustom.map((slot) => ({
             consultantProfileId: id,
-            slotStartTimeInUTC: new Date(slot.slotStartTimeInUTC),
-            slotEndTimeInUTC: new Date(slot.slotEndTimeInUTC),
+            availabilityStartsAt: new Date(slot.slotStartTimeInUTC),
+            availabilityEndsAt: new Date(slot.slotEndTimeInUTC),
           }));
 
         await prisma.slotOfAvailabilityCustom.createMany({

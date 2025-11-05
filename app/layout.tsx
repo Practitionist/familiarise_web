@@ -4,7 +4,6 @@ import Navbar from "@/components/Navbar";
 import { Toaster } from "@/components/ui/toaster";
 import NextAuthProvider from "@/providers/NextAuthSessionProvider";
 import ReactQueryProvider from "@/providers/ReactQueryProvider";
-import StreamVideoProvider from "@/providers/StreamClientProvider";
 import type { Metadata } from "next";
 import { getServerSession } from "next-auth";
 import { Inter } from "next/font/google";
@@ -34,13 +33,7 @@ export default async function RootLayout({
             <Toaster />
             <AnnouncementBar />
             <Navbar />
-            {session?.user?.id && session.user.id !== "" ? (
-              <StreamVideoProvider userId={session.user.id}>
-                {children}
-              </StreamVideoProvider>
-            ) : (
-              children
-            )}
+            {children}
             <Footer />
           </NextAuthProvider>
         </ReactQueryProvider>

@@ -1,4 +1,4 @@
-import { AppointmentsType, RequestStatus, ScheduleType } from "@prisma/client";
+import { RequestStatus, ScheduleType } from "@prisma/client";
 
 // --- API Response Type Definitions ---
 export interface UserInfo {
@@ -14,6 +14,7 @@ export interface RequestedBy {
 
 export interface ConsultationPlanInfo {
   title?: string;
+  durationInHours?: number;
 }
 
 export interface SubscriptionPlanInfo {
@@ -25,8 +26,8 @@ export interface SubscriptionPlanInfo {
 
 export interface AppointmentSlot {
   id: string;
-  slotStartTimeInUTC: string;
-  slotEndTimeInUTC: string;
+  startsAt: string;
+  endsAt: string;
 }
 
 export interface AppointmentInfo {
@@ -41,6 +42,7 @@ export interface ConsultationApiResponse {
   requestedAt: string;
   appointment?: AppointmentInfo;
   requestStatus: RequestStatus;
+  bookingSource?: "DIRECT_CHECKOUT" | "REQUEST_SUBMITTED"; // Booking source enum
 }
 
 export interface SubscriptionApiResponse {
@@ -50,6 +52,10 @@ export interface SubscriptionApiResponse {
   requestedAt: string;
   appointments?: AppointmentInfo[];
   requestStatus: RequestStatus;
+  bookingSource?: "DIRECT_CHECKOUT" | "REQUEST_SUBMITTED"; // Booking source enum
+  // Correct field names from Prisma Subscription model
+  schedulingPeriodStartsAt?: string;
+  schedulingPeriodEndsAt?: string;
 }
 
 export interface AvailabilityApiResponse extends AppointmentSlot {}
@@ -64,6 +70,6 @@ export interface ConsultantApiResponse {
 // Interface used within the component
 export interface SlotInterval {
   id: string;
-  slotStartTimeInUTC: string;
-  slotEndTimeInUTC: string;
+  startsAt: string;
+  endsAt: string;
 }

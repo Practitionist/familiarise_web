@@ -205,8 +205,8 @@ export async function POST(request: NextRequest) {
                       appointmentType: "WEBINAR",
                       slotsOfAppointment: {
                         create: {
-                          slotStartTimeInUTC: startTime, // Use calculated startTime
-                          slotEndTimeInUTC: endTime, // Use calculated endTime
+                          startsAt: startTime, // Use calculated startTime
+                          endsAt: endTime, // Use calculated endTime
                           isTentative: false,
                         },
                       },
@@ -236,9 +236,9 @@ export async function POST(request: NextRequest) {
 
         console.log("Created webinar instance:", {
           id: webinar.id,
-          planId: webinar.webinarPlan.id,
+          planId: webinar.webinarPlanId,
           appointmentId: webinar.appointment?.id,
-          hasSlots: webinar.appointment?.slotsOfAppointment?.length ?? 0 > 0,
+          hasSlots: (webinar.appointment?.slotsOfAppointment?.length ?? 0) > 0,
         });
 
         return { webinarPlan, webinar };
@@ -431,7 +431,7 @@ export async function PATCH(request: NextRequest) {
     ) {
       // Handle case where only duration changes, recalculate end time based on existing start time
       const existingSlot = webinarToUpdate.appointment.slotsOfAppointment[0];
-      startTime = existingSlot.slotStartTimeInUTC; // Keep existing start time
+      startTime = existingSlot.startsAt; // Keep existing start time
       endTime = new Date(startTime);
       endTime.setHours(startTime.getHours() + durationInHours);
       console.log(
@@ -600,8 +600,8 @@ export async function PATCH(request: NextRequest) {
 
                 console.log("Updating existing slot:", {
                   slotId: slot.id,
-                  oldStartTime: slot.slotStartTimeInUTC,
-                  oldEndTime: slot.slotEndTimeInUTC,
+                  oldStartTime: slot.startsAt,
+                  oldEndTime: slot.endsAt,
                   newStartTime: startTime,
                   newEndTime: endTime,
                 });
@@ -609,8 +609,8 @@ export async function PATCH(request: NextRequest) {
                 await tx.slotOfAppointment.update({
                   where: { id: slot.id },
                   data: {
-                    slotStartTimeInUTC: startTime,
-                    slotEndTimeInUTC: endTime,
+                    startsAt: startTime,
+                    endsAt: endTime,
                   },
                 });
               } else {
@@ -624,8 +624,8 @@ export async function PATCH(request: NextRequest) {
                 await tx.slotOfAppointment.create({
                   data: {
                     appointmentId: appointment.id,
-                    slotStartTimeInUTC: startTime,
-                    slotEndTimeInUTC: endTime,
+                    startsAt: startTime,
+                    endsAt: endTime,
                     isTentative: false,
                   },
                 });
@@ -640,8 +640,8 @@ export async function PATCH(request: NextRequest) {
                   appointmentType: "WEBINAR",
                   slotsOfAppointment: {
                     create: {
-                      slotStartTimeInUTC: startTime,
-                      slotEndTimeInUTC: endTime,
+                      startsAt: startTime,
+                      endsAt: endTime,
                       isTentative: false,
                     },
                   },

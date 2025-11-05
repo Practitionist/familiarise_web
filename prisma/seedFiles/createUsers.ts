@@ -216,7 +216,7 @@ async function createConsultantProfileData() {
   return {
     rating: faker.number.float({ min: 1, max: 5, multipleOf: 0.1 }),
     specialization: sanitizeString(faker.person.jobArea()),
-    experience: faker.number.float({ min: 0.5, max: 20, multipleOf: 0.5 }),
+    experience: faker.number.float({ min: 0.5, max: 25, multipleOf: 0.5 }),
     description: sanitizeString(faker.lorem.paragraph()),
     domain: { connect: { id: domain.id } },
     subDomains: {
@@ -255,7 +255,7 @@ export async function createUsers(): Promise<UserWithProfiles[]> {
           phone: sanitizePhone(faker.phone.number()),
           address: sanitizeString(faker.location.streetAddress()),
           onlineStatus: faker.datatype.boolean(),
-          currentTimezone: sanitizeString(faker.location.timeZone()),
+          timezone: sanitizeString(faker.location.timeZone()),
           onboardingCompleted: faker.datatype.boolean(),
           role: userRole,
           cookiePreferences: {

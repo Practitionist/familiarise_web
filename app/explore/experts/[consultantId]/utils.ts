@@ -30,25 +30,25 @@ export function normalizeUTCTime(time: string | Date): string {
 
 // Normalize weekly slot to ensure all times are strings
 export function normalizeWeeklySlot(slot: TWeeklySlot): TWeeklySlot & {
-  slotStartTimeInUTC: string;
-  slotEndTimeInUTC: string;
+  availabilityStartsAt: string;
+  availabilityEndsAt: string;
 } {
   return {
     ...slot,
-    slotStartTimeInUTC: normalizeUTCTime(slot.slotStartTimeInUTC),
-    slotEndTimeInUTC: normalizeUTCTime(slot.slotEndTimeInUTC),
+    availabilityStartsAt: normalizeUTCTime(slot.availabilityStartsAt),
+    availabilityEndsAt: normalizeUTCTime(slot.availabilityEndsAt),
   };
 }
 
 // Normalize custom slot to ensure all times are strings
 export function normalizeCustomSlot(slot: TCustomSlot): TCustomSlot & {
-  slotStartTimeInUTC: string;
-  slotEndTimeInUTC: string;
+  availabilityStartsAt: string;
+  availabilityEndsAt: string;
 } {
   return {
     ...slot,
-    slotStartTimeInUTC: normalizeUTCTime(slot.slotStartTimeInUTC),
-    slotEndTimeInUTC: normalizeUTCTime(slot.slotEndTimeInUTC),
+    availabilityStartsAt: normalizeUTCTime(slot.availabilityStartsAt),
+    availabilityEndsAt: normalizeUTCTime(slot.availabilityEndsAt),
   };
 }
 

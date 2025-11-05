@@ -6,20 +6,24 @@ export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const consultantId = searchParams.get("consultantId");
+    const includeClasses = searchParams.get("include")?.includes("classes");
     const page = parseInt(searchParams.get("page") || "1");
     const limit = parseInt(searchParams.get("limit") || "10");
     const skip = (page - 1) * limit;
 
     const where = consultantId ? { consultantProfileId: consultantId } : {};
 
+    const includeOptions = {
+      consultantProfile: true,
+      topics: true,
+      classContents: true,
+      ...(includeClasses && { classes: true }),
+    };
+
     const [classPlans, total] = await Promise.all([
       prisma.classPlan.findMany({
         where,
-        include: {
-          consultantProfile: true,
-          topics: true,
-          classContents: true,
-        },
+        include: includeOptions,
         skip,
         take: limit,
       }),
@@ -56,6 +60,7 @@ export async function POST(request: NextRequest) {
       durationInMonths,
       price,
       callsPerWeek,
+      sessionDurationInHours,
       videoMeetings,
       emailSupport,
       maxParticipants,
@@ -87,6 +92,7 @@ export async function POST(request: NextRequest) {
       durationInMonths <= 0 ||
       price <= 0 ||
       callsPerWeek < 0 ||
+      (sessionDurationInHours && sessionDurationInHours <= 0) ||
       videoMeetings < 0 ||
       maxParticipants <= 0
     ) {
@@ -110,6 +116,7 @@ export async function POST(request: NextRequest) {
         durationInMonths,
         price,
         callsPerWeek,
+        sessionDurationInHours: sessionDurationInHours || 1,
         videoMeetings,
         emailSupport,
         maxParticipants,

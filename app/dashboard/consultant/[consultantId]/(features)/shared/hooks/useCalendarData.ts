@@ -28,6 +28,9 @@ export interface UseCalendarDataOptions {
   autoLoad?: boolean;
   view: "week" | "month";
   currentDate: Date;
+  mode: "view" | "select" | "allocate";
+  allowedStart?: Date;
+  allowedEnd?: Date;
 }
 
 export interface TimeSlot {
@@ -41,9 +44,16 @@ export interface Appointment {
   id: string;
   appointmentType: string;
   slotsOfAppointment?: {
-    slotStartTimeInUTC: string;
-    slotEndTimeInUTC: string;
+    startsAt: string;
+    endsAt: string;
+    // Legacy field names for backwards compatibility
+    slotStartTimeInUTC?: string;
+    slotEndTimeInUTC?: string;
   }[];
+  consultation?: any;
+  subscription?: any;
+  webinar?: any;
+  class?: any;
 }
 
 export interface ConsultantData {
@@ -137,6 +147,9 @@ export function useCalendarData(
     autoLoad = true,
     view,
     currentDate,
+    mode,
+    allowedStart,
+    allowedEnd,
   } = options;
   const { toast } = useToast();
 
@@ -198,17 +211,63 @@ export function useCalendarData(
     if (!consultantId) return;
 
     try {
+      // // Use subscription start date for allocation // Use UI date for viewing
       const startDate =
-        view === "week" ? startOfWeek(currentDate) : startOfMonth(currentDate);
+        mode === "allocate" && allowedStart
+          ? allowedStart
+          : view === "week"
+            ? startOfWeek(currentDate)
+            : startOfMonth(currentDate);
+      // Use subscription end date for allocation // Use UI date for viewing
       const endDate =
-        view === "week" ? endOfWeek(currentDate) : endOfMonth(currentDate);
+        mode === "allocate" && allowedEnd
+          ? allowedEnd
+          : view === "week"
+            ? endOfWeek(currentDate)
+            : endOfMonth(currentDate); // --- END OF FIX --- ```
 
       const data = await AllocationService.fetchAvailabilitySlots(
         consultantId,
         startDate,
         endDate,
       );
-      setRawAvailabilitySlots(data);
+
+      // Defensive: Validate data structure before using
+      if (!data || typeof data !== "object") {
+        console.warn(
+          "⚠️ fetchAvailabilitySlots: Invalid data structure returned",
+        );
+        setRawAvailabilitySlots({ weekly: [], custom: [] });
+        return;
+      }
+
+      // Defensive: Ensure arrays exist and are valid
+      const validatedData = {
+        weekly: Array.isArray(data.weekly)
+          ? data.weekly.filter((slot: any) => {
+              if (!slot || !slot.slotStartTimeInUTC || !slot.slotEndTimeInUTC) {
+                console.warn(
+                  "⚠️ fetchAvailabilitySlots: Filtering out invalid weekly slot",
+                );
+                return false;
+              }
+              return true;
+            })
+          : [],
+        custom: Array.isArray(data.custom)
+          ? data.custom.filter((slot: any) => {
+              if (!slot || !slot.slotStartTimeInUTC || !slot.slotEndTimeInUTC) {
+                console.warn(
+                  "⚠️ fetchAvailabilitySlots: Filtering out invalid custom slot",
+                );
+                return false;
+              }
+              return true;
+            })
+          : [],
+      };
+
+      setRawAvailabilitySlots(validatedData);
     } catch (error) {
       console.error("Error fetching availability slots:", error);
       const errorMessage =
@@ -227,17 +286,68 @@ export function useCalendarData(
     if (!consultantId) return;
 
     try {
+      // // Use subscription start date for allocation // Use UI date for viewing
       const startDate =
-        view === "week" ? startOfWeek(currentDate) : startOfMonth(currentDate);
+        mode === "allocate" && allowedStart
+          ? allowedStart
+          : view === "week"
+            ? startOfWeek(currentDate)
+            : startOfMonth(currentDate);
+      // Use subscription end date for allocation // Use UI date for viewing
       const endDate =
-        view === "week" ? endOfWeek(currentDate) : endOfMonth(currentDate);
+        mode === "allocate" && allowedEnd
+          ? allowedEnd
+          : view === "week"
+            ? endOfWeek(currentDate)
+            : endOfMonth(currentDate); // --- END OF FIX --- ```
 
       const data = await AllocationService.fetchAppointments(
         consultantId,
         startDate,
         endDate,
       );
-      setExistingAppointments(data);
+
+      // Defensive: Validate data is an array before using
+      if (!Array.isArray(data)) {
+        console.warn("⚠️ fetchExistingAppointments: Data is not an array");
+        setExistingAppointments([]);
+        return;
+      }
+
+      // Defensive: Filter out invalid appointments
+      const validatedAppointments = data.filter((appt: any) => {
+        if (!appt || !appt.id) {
+          console.warn(
+            "⚠️ fetchExistingAppointments: Filtering out appointment without id",
+          );
+          return false;
+        }
+
+        // If appointment has slots, validate them
+        if (appt.slotsOfAppointment && Array.isArray(appt.slotsOfAppointment)) {
+          appt.slotsOfAppointment = appt.slotsOfAppointment.filter(
+            (slot: any) => {
+              // FIX: Check for BOTH new field names (startsAt/endsAt) AND old field names (slotStartTimeInUTC/slotEndTimeInUTC)
+              const hasNewFields = slot && slot.startsAt && slot.endsAt;
+              const hasOldFields =
+                slot && slot.slotStartTimeInUTC && slot.slotEndTimeInUTC;
+
+              if (!hasNewFields && !hasOldFields) {
+                console.warn(
+                  `⚠️ fetchExistingAppointments: Filtering out invalid slot in appointment ${appt.id}`,
+                  { slot },
+                );
+                return false;
+              }
+              return true;
+            },
+          );
+        }
+
+        return true;
+      });
+
+      setExistingAppointments(validatedAppointments);
     } catch (error) {
       console.error("Error fetching appointments:", error);
       const errorMessage =
@@ -252,11 +362,10 @@ export function useCalendarData(
   }, [consultantId, toast, view, currentDate]);
 
   const fetchEventSlots = useCallback(async (): Promise<void> => {
-    if (
-      !eventType ||
-      !eventId ||
-      (eventType !== "webinar" && eventType !== "class")
-    ) {
+    // Fetch event slots for ALL event types (subscription, consultation, webinar, class)
+    // This allows the calendar to show "This Event" (black) instead of "Booked" (gray)
+    // for slots belonging to the current event being viewed
+    if (!eventType || !eventId) {
       setEventSlots([]);
       return;
     }
@@ -264,11 +373,19 @@ export function useCalendarData(
     try {
       const data = await AllocationService.fetchEventSlots(eventType, eventId);
 
+      console.log("[useCalendarData] fetchEventSlots response:", {
+        eventType,
+        eventId,
+        dataLength: data?.length,
+        firstAppointment: data?.[0],
+      });
+
       if (data && data.length > 0 && data[0].slotsOfAppointment?.length > 0) {
         const slots: TimeSlot[] = data[0].slotsOfAppointment.flatMap(
           (slot: any): TimeSlot[] => {
-            const start = new Date(slot.slotStartTimeInUTC);
-            const end = new Date(slot.slotEndTimeInUTC);
+            // FIX: Use correct field names from API (startsAt/endsAt)
+            const start = new Date(slot.startsAt || slot.slotStartTimeInUTC);
+            const end = new Date(slot.endsAt || slot.slotEndTimeInUTC);
             const durationMinutes =
               (end.getTime() - start.getTime()) / (1000 * 60);
             const numIntervals = Math.round(durationMinutes / 30);
@@ -291,8 +408,20 @@ export function useCalendarData(
             return intervalSlots;
           },
         );
+        console.log("[useCalendarData] Setting eventSlots:", {
+          slotsCount: slots.length,
+          firstSlot: slots[0]
+            ? {
+                startTime: slots[0].startTime.toISOString(),
+                endTime: slots[0].endTime.toISOString(),
+              }
+            : null,
+        });
         setEventSlots(slots);
       } else {
+        console.log(
+          "[useCalendarData] No event slots found, setting empty array",
+        );
         setEventSlots([]);
       }
     } catch (error) {
@@ -300,6 +429,49 @@ export function useCalendarData(
       setEventSlots([]);
     }
   }, [eventType, eventId]);
+
+  /**
+   * Helper function to extract appointment plan title
+   */
+  const extractAppointmentTitle = (appointment: any): string => {
+    if (!appointment) return "Unknown";
+
+    switch (appointment.appointmentType) {
+      case "CONSULTATION":
+        return (
+          appointment.consultation?.consultationPlan?.title || "Consultation"
+        );
+      case "SUBSCRIPTION":
+        return (
+          appointment.subscription?.subscriptionPlan?.title || "Subscription"
+        );
+      case "WEBINAR":
+        return appointment.webinar?.webinarPlan?.title || "Webinar";
+      case "CLASS":
+        return appointment.class?.classPlan?.title || "Class";
+      default:
+        return appointment.appointmentType || "Unknown";
+    }
+  };
+
+  /**
+   * Helper function to extract appointment participant name
+   */
+  const extractAppointmentParticipant = (appointment: any): string => {
+    if (!appointment) return "";
+
+    switch (appointment.appointmentType) {
+      case "CONSULTATION":
+        return appointment.consultation?.requestedBy?.user?.name || "";
+      case "SUBSCRIPTION":
+        return appointment.subscription?.requestedBy?.user?.name || "";
+      case "WEBINAR":
+      case "CLASS":
+        return appointment.slotsOfAppointment?.[0]?.user?.[0]?.name || "";
+      default:
+        return "";
+    }
+  };
 
   /**
    * CRITICAL FUNCTION - SLOT STATUS CALCULATION REFACTOR
@@ -321,15 +493,17 @@ export function useCalendarData(
       interval: { hour: number; minute: number },
       date: Date,
     ): SlotStatusResult => {
-      // STEP 1: Calculate the 30-minute interval boundaries
+      // STEP 1: Calculate the 30-minute interval boundaries in local time
       const localIntervalStartDate = new Date(date);
       localIntervalStartDate.setHours(interval.hour, interval.minute, 0, 0);
       const localIntervalEndDate = new Date(localIntervalStartDate);
       localIntervalEndDate.setMinutes(localIntervalStartDate.getMinutes() + 30);
 
-      // STEP 2: Convert to UTC for server data comparison - FIXED timezone handling
-      const intervalStartUTC = new Date(localIntervalStartDate.toISOString());
-      const intervalEndUTC = new Date(localIntervalEndDate.toISOString());
+      // STEP 2: Get UTC times for comparison with server data
+      // The Date objects are already in the correct time - just use them directly
+      // toISOString() will convert them to UTC format correctly
+      const intervalStartUTC = localIntervalStartDate;
+      const intervalEndUTC = localIntervalEndDate;
 
       // STEP 3: Find overlapping slots from raw availability data
       // KEY CHANGE: Use server-calculated booking status instead of manual calculation
@@ -348,18 +522,39 @@ export function useCalendarData(
       const overlappingAppointments = existingAppointments.flatMap(
         (appointment) =>
           appointment.slotsOfAppointment
-            ?.filter((slot) => {
-              const slotStart = new Date(slot.slotStartTimeInUTC);
-              const slotEnd = new Date(slot.slotEndTimeInUTC);
+            ?.filter((slt: any) => {
+              // FIX: Use correct field names from API (startsAt/endsAt, not slotStartTimeInUTC/slotEndTimeInUTC)
+              const slotStart = new Date(
+                slt.startsAt || slt.slotStartTimeInUTC,
+              );
+              const slotEnd = new Date(slt.endsAt || slt.slotEndTimeInUTC);
               return intervalStartUTC < slotEnd && slotStart < intervalEndUTC;
             })
-            .map((slot) => ({
+            .map((_slot) => ({
               id: appointment.id,
               type: appointment.appointmentType,
-              title: appointment.appointmentType,
-              with: "", // Add if available in data
+              title: extractAppointmentTitle(appointment),
+              with: extractAppointmentParticipant(appointment),
             })) || [],
       );
+
+      // DEBUG: Log when booked slots have no overlapping appointments (tooltip won't show)
+      if (
+        overlappingSlots.length > 0 &&
+        overlappingSlots[0].bookingStatus === "fully-booked" &&
+        overlappingAppointments.length === 0
+      ) {
+        console.warn(
+          "[getSlotStatusForInterval] Booked slot with no overlapping appointments - tooltip won't show:",
+          {
+            interval: `${interval.hour}:${interval.minute}`,
+            date: date.toDateString(),
+            existingAppointmentsCount: existingAppointments.length,
+            firstAppointmentSlots:
+              existingAppointments[0]?.slotsOfAppointment?.length,
+          },
+        );
+      }
 
       // STEP 5: Determine booking status using SERVER-CALCULATED data
       // FIXED: Use server bookingStatus instead of manual calculation
@@ -375,6 +570,13 @@ export function useCalendarData(
         isAvailable = bookingStatus === "available";
         isBookedForDisplay = bookingStatus === "fully-booked";
         isPartiallyBooked = bookingStatus === "partially-booked";
+      }
+
+      // CRITICAL FIX: Ensure existing appointments are visible even if no availability slot exists
+      // If any appointment overlaps this interval, mark it as booked for display
+      if (!isBookedForDisplay && overlappingAppointments.length > 0) {
+        isBookedForDisplay = true;
+        isAvailable = false;
       }
 
       // STEP 6: Check if interval is in the past - FIXED: Proper timezone handling
@@ -459,7 +661,17 @@ export function useCalendarData(
           setLoading(false);
         });
     }
-  }, [autoLoad, consultantId, eventType, eventId, currentDate, view]);
+  }, [
+    autoLoad,
+    consultantId,
+    eventType,
+    eventId,
+    currentDate,
+    view,
+    mode,
+    allowedStart,
+    allowedEnd,
+  ]);
 
   // ENHANCEMENT: Individual refetch functions for granular control
   const refetchConsultant = useCallback(async (): Promise<void> => {
