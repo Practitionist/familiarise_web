@@ -1,9 +1,5 @@
 {
   "mcpServers": {
-    "shadcn": {
-      "command": "npx",
-      "args": ["-y", "mcp-remote", "https://www.shadcn.io/api/mcp"]
-    },
     "chrome-devtools": {
       "command": "npx",
       "args": ["-y", "chrome-devtools-mcp@latest"]
@@ -12,11 +8,8 @@
       "command": "npx",
       "args": ["-y", "@supabase/mcp-server-supabase@latest"],
       "env": {
-        "SUPABASE_ACCESS_TOKEN": "<SUPABASE_ACCESS_TOKEN_PLACEHOLDER>"
+        "SUPABASE_ACCESS_TOKEN": "<SUPABASE_ACCESS_TOKEN>"
       }
-    },
-    "stripe": {
-      "url": "https://mcp.stripe.com"
     },
     "rzp-mcp-server": {
       "command": "npx",
@@ -24,8 +17,15 @@
         "mcp-remote",
         "https://mcp.razorpay.com/mcp",
         "--header",
-        "Authorization: Basic <RZP_BASIC_AUTH_PLACEHOLDER>"
+        "Authorization: Basic <RZP_MCP_SERVER_BASIC_AUTH_TOKEN>"
       ]
+    },
+    "stripe": {
+      "command": "npx",
+      "args": ["-y", "@stripe/mcp", "--tools=all"],
+      "env": {
+        "STRIPE_SECRET_KEY": "<STRIPE_SECRET_KEY>"
+      }
     }
   }
 }
