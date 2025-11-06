@@ -189,7 +189,7 @@ export default function CheckoutSuccessPage() {
           </Button>
 
           <Button
-            onClick={() => router.push("/dashboard/appointments")}
+            onClick={() => router.push("/dashboard")}
             className="flex items-center gap-2"
           >
             View Appointments

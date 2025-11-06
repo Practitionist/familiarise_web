@@ -53,7 +53,7 @@ export type CheckoutWebinarPlanData = WebinarPlan & {
       | (Appointment & {
           slotsOfAppointment: SlotOfAppointment[];
         })
-      | null; // appointment can be null for a webinar instance
+      | null;
   })[];
   topics: PrismaTopic[];
   type: "webinar";
@@ -136,9 +136,29 @@ export default function WebinarCheckoutPage({
       } catch (error) {
         console.error("Checkout error:", error);
         if (error instanceof Error) {
+          // Provide more informative error messages based on the error type
+          let errorTitle = "Unable to Complete Registration";
+          let errorDescription = error.message;
+
+          if (error.message.includes("Invalid webinar parameters")) {
+            errorTitle = "Registration Link Error";
+            errorDescription =
+              "The registration information is incomplete. Please go back to the webinar page and click 'Register Now' again to ensure all required information is included.";
+          } else if (error.message.includes("Webinar plan not found")) {
+            errorTitle = "Webinar Not Found";
+            errorDescription =
+              "This webinar could not be found or may no longer be available. Please go back and select a different webinar, or contact support if you believe this is an error.";
+          } else if (error.message.includes("network") || error.message.includes("fetch")) {
+            errorTitle = "Connection Error";
+            errorDescription =
+              "Unable to connect to the server. Please check your internet connection and try again.";
+          } else {
+            errorDescription = `${error.message}. Please try again or contact support if the problem persists.`;
+          }
+
           toast({
-            title: "Checkout Failed",
-            description: error.message,
+            title: errorTitle,
+            description: errorDescription,
             variant: "destructive",
           });
         }
@@ -172,7 +192,6 @@ export default function WebinarCheckoutPage({
         const data = await response.json();
 
         if (!data.data?.consultantProfile?.user) {
-          // Adjusted path for direct WebinarPlan data
           throw new Error("Consultant details not found");
         }
 
@@ -227,12 +246,9 @@ export default function WebinarCheckoutPage({
   const planDetails = planData?.data;
   const consultantDetails = planDetails?.consultantProfile;
   const userDetails = consultantDetails?.user;
-  // For checkout, we might not need 'nextSession' as prominently, or it might be derived differently.
-  // Let's assume the planDetails itself is the primary subject for checkout.
-  // const nextSession = planDetails?.webinars?.[0]?.appointment?.slotsOfAppointment?.[0];
+  const nextSession = planDetails?.webinars?.[0]?.appointment?.slotsOfAppointment?.[0];
 
   if (!planData || !planDetails || !consultantDetails || !userDetails) {
-    // nextSession might not be strictly required for checkout page display
     return (
       <div className="flex items-center justify-center h-screen">
         <p>Essential webinar data is missing. Please try again later.</p>
@@ -241,202 +257,281 @@ export default function WebinarCheckoutPage({
   }
 
   return (
-    <div className="min-h-screen bg-gray-100 py-12 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-3xl mx-auto">
-        <Card className="shadow-lg">
-          <CardHeader className="bg-gray-50 p-6">
-            <CardTitle className="text-2xl font-bold text-gray-800 flex items-center">
-              <CreditCardIcon className="mr-3 h-8 w-8 text-blue-600" />
-              Checkout
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="p-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
-              <div>
-                <h2 className="text-xl font-semibold text-gray-700 mb-3">
-                  {planDetails.title}
-                </h2>
-                <div className="flex items-center mb-4">
-                  <Avatar className="h-12 w-12 mr-3">
-                    <AvatarImage
-                      src={userDetails.image ?? undefined}
-                      alt={userDetails.name ?? "Consultant"}
-                    />
-                    <AvatarFallback>
-                      {userDetails.name
-                        ?.split(" ")
-                        .map((n) => n[0])
-                        .join("")}
-                    </AvatarFallback>
-                  </Avatar>
-                  <div>
-                    <p className="font-medium text-gray-800">
-                      {userDetails.name}
-                    </p>
-                    <p className="text-sm text-gray-500">{userDetails.email}</p>
-                  </div>
-                </div>
-                <p className="text-gray-600 text-sm mb-4">
-                  {planDetails.description}
-                </p>
-              </div>
-              <div>
-                <h3 className="text-lg font-semibold text-gray-700 mb-3">
-                  Order Summary
-                </h3>
-                <div className="space-y-2 text-sm text-gray-600">
-                  <div className="flex justify-between">
-                    <span>Original Price:</span>
-                    <span>₹{planDetails.price}</span>
-                  </div>
-                  {/* Discount logic can be added here if applicable */}
-                  <Separator className="my-2" />
-                  <div className="flex justify-between font-bold text-lg text-gray-800">
-                    <span>Total:</span>
-                    <span>₹{planDetails.price}</span>
-                  </div>
-                </div>
-                <div className="mt-6">
-                  <label
-                    htmlFor="discountCode"
-                    className="block text-sm font-medium text-gray-700 mb-1"
-                  >
-                    Discount Code (Optional)
-                  </label>
-                  <Input
-                    id="discountCode"
-                    name="discountCode"
-                    type="text"
-                    placeholder="Enter discount code"
-                    className="w-full"
-                    defaultValue={
-                      resolvedSearchParams.discountCode as string | undefined
-                    }
-                  />
-                </div>
-              </div>
-            </div>
-
-            <Separator className="my-8" />
-
+    <>
+      <div className="flex flex-col gap-8 border-r bg-muted/40 p-8">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <Avatar className="w-12 h-12 border">
+              <AvatarImage
+                src={userDetails?.image || "/placeholder-user.jpg"}
+                alt={userDetails?.name || "Consultant"}
+              />
+              <AvatarFallback>
+                {userDetails?.name ? userDetails.name.charAt(0) : "C"}
+              </AvatarFallback>
+            </Avatar>
             <div>
-              <h3 className="text-xl font-semibold text-gray-700 mb-6 text-center">
-                Select Payment Method
-              </h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-                {[
-                  {
-                    name: "Stripe",
-                    description: "International payments in USD",
-                    gateway: "STRIPE" as const,
-                    isActive: true,
-                  },
-                  {
-                    name: "Razorpay",
-                    description: "Indian payments in INR",
-                    gateway: "RAZORPAY" as const,
-                    isActive: true,
-                  },
-                  {
-                    name: "Lemon Squeezy",
-                    description: "Global payments in USD (Coming Soon)",
-                    gateway: "LEMON_SQUEEZY" as const,
-                    isActive: false,
-                  },
-                  {
-                    name: "Xflow",
-                    description: "Secure payments in USD (Coming Soon)",
-                    gateway: "XFLOW" as const,
-                    isActive: false,
-                  },
-                ].map((gateway) => (
-                  <Card
-                    key={gateway.gateway}
-                    className="p-4 hover:shadow-md transition-shadow cursor-pointer"
-                  >
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-sm font-medium flex items-center gap-2">
-                        <CreditCardIcon className="h-4 w-4" />
-                        {gateway.name}
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className="pt-0">
-                      <p className="text-xs text-gray-600 mb-4">
-                        {gateway.description}
-                      </p>
-                      <div className="flex justify-center gap-2">
-                        {gateway.isActive ? (
-                          <>
-                            {gateway.gateway === "STRIPE" ? (
-                              <StripeCheckout
-                                checkoutData={createCheckoutData({
-                                  appointmentType: "WEBINAR",
-                                  planId: planDetails.id,
-                                  eventId: planDetails.webinars[0].id,
-                                  paymentGateway: "STRIPE",
-                                  discountCode: Array.isArray(
-                                    resolvedSearchParams.discountCode,
-                                  )
-                                    ? resolvedSearchParams.discountCode[0]
-                                    : resolvedSearchParams.discountCode,
-                                })}
-                                onPaymentSuccess={stripeHandlers.onPaymentSuccess}
-                                onPaymentError={stripeHandlers.onPaymentError}
-                              />
-                            ) : gateway.gateway === "RAZORPAY" ? (
-                              <RazorpayCheckout
-                                checkoutData={createCheckoutData({
-                                  appointmentType: "WEBINAR",
-                                  planId: planDetails.id,
-                                  eventId: planDetails.webinars[0].id,
-                                  paymentGateway: "RAZORPAY",
-                                  discountCode: Array.isArray(
-                                    resolvedSearchParams.discountCode,
-                                  )
-                                    ? resolvedSearchParams.discountCode[0]
-                                    : resolvedSearchParams.discountCode,
-                                })}
-                                onPaymentSuccess={razorpayHandlers.onPaymentSuccess}
-                                onPaymentError={razorpayHandlers.onPaymentError}
-                              />
-                            ) : null}
-                            <Button
-                              variant="secondary"
-                              onClick={() => handleCheckout(gateway.gateway, true)}
-                              disabled={isCheckoutProcessing}
-                            >
-                              {isCheckoutProcessing &&
-                              processingGateway === `${gateway.gateway}-mock` ? (
-                                <>
-                                  <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-current mr-2"></div>
-                                  Processing...
-                                </>
-                              ) : (
-                                `Mock Pay (${gateway.name})`
-                              )}
-                            </Button>
-                          </>
-                        ) : (
-                          <Button variant="outline" disabled>
-                            Coming Soon
-                          </Button>
-                        )}
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
+              <div className="font-semibold">
+                {userDetails?.name || "Consultant Name"}
+              </div>
+              <div className="text-sm text-muted-foreground">
+                {consultantDetails?.specialization || "Consultant"}
               </div>
             </div>
-
-            <div className="mt-10 text-center">
-              <p className="text-xs text-gray-500">
-                By clicking a payment method, you agree to our Terms of Service
-                and Privacy Policy.
-              </p>
+          </div>
+          <div className="text-right">
+            <div className="font-semibold">Webinar</div>
+            <div className="text-sm text-muted-foreground">
+              {planDetails?.title || "Online Session"}
+            </div>
+          </div>
+        </div>
+        <Separator className="bg-gray-300" />
+        <div className="grid gap-2">
+          <div className="font-semibold">Webinar Details</div>
+          <div className="grid gap-2">
+            {nextSession && (
+              <>
+                <div className="flex items-center justify-between">
+                  <div className="text-muted-foreground">Date</div>
+                  <div>
+                    {new Date(nextSession.startsAt).toLocaleDateString(undefined, {
+                      weekday: "long",
+                      year: "numeric",
+                      month: "long",
+                      day: "numeric",
+                    })}
+                  </div>
+                </div>
+                <div className="flex items-center justify-between">
+                  <div className="text-muted-foreground">Time</div>
+                  <div>
+                    {new Date(nextSession.startsAt).toLocaleTimeString()} -{" "}
+                    {new Date(nextSession.endsAt).toLocaleTimeString()}{" "}
+                    ({Intl.DateTimeFormat().resolvedOptions().timeZone})
+                  </div>
+                </div>
+              </>
+            )}
+            <div className="flex items-center justify-between">
+              <div className="text-muted-foreground">Duration</div>
+              <div>{planDetails?.durationInHours || 1} hours</div>
+            </div>
+            <div className="flex items-center justify-between">
+              <div className="text-muted-foreground">Max Participants</div>
+              <div>{planDetails?.maxParticipants || "Unlimited"}</div>
+            </div>
+            <div className="flex items-center justify-between">
+              <div className="text-muted-foreground">Language</div>
+              <div>{planDetails?.language || "English"}</div>
+            </div>
+            <div className="flex items-center justify-between">
+              <div className="text-muted-foreground">Level</div>
+              <div>{planDetails?.level || "All Levels"}</div>
+            </div>
+            <div className="flex items-center justify-between">
+              <div className="text-muted-foreground">Prerequisites</div>
+              <div>{planDetails?.prerequisites || "None"}</div>
+            </div>
+            <div className="flex items-center justify-between">
+              <div className="text-muted-foreground">Material Provided</div>
+              <div>{planDetails?.materialProvided || "None"}</div>
+            </div>
+          </div>
+        </div>
+        <Separator className="bg-gray-300" />
+        <div className="grid gap-4">
+          <div className="font-semibold">Discount Codes</div>
+          <div className="flex items-center gap-2">
+            <Input
+              type="text"
+              placeholder="Enter discount code"
+              className="flex-1"
+            />
+            <Button variant="outline">Apply</Button>
+          </div>
+          <div className="grid gap-2">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="font-medium">WEBINAR10</div>
+                <div className="text-sm text-muted-foreground">
+                  Get 10% off your webinar registration
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="text-muted-foreground">10% off</div>
+                <Button variant="outline" size="sm">
+                  Apply
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div className="flex flex-col gap-8 p-6">
+        <Card>
+          <CardHeader>
+            <CardTitle>Webinar Pricing</CardTitle>
+          </CardHeader>
+          <CardContent className="grid gap-4">
+            <div className="grid gap-2">
+              <div className="flex items-center justify-between">
+                <div>Registration Fee</div>
+                <div>${planDetails?.price || 0}</div>
+              </div>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center">
+                  <span className="font-semibold">Includes</span>
+                </div>
+                <div className="font-semibold">
+                  <ul className="list-disc">
+                    <li>Live webinar access</li>
+                    <li>Q&A session</li>
+                    <li>Recording access</li>
+                    <li>Certificate of attendance</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+            <Separator className="bg-gray-300" />
+            <div className="grid gap-2">
+              <div className="flex items-center justify-between">
+                <div>Subtotal</div>
+                <div>${planDetails?.price || 0}</div>
+              </div>
+              <div className="flex items-center justify-between">
+                <div>Tax (10%)</div>
+                <div>${((planDetails?.price || 0) * 0.1).toFixed(2)}</div>
+              </div>
+              <div className="flex items-center justify-between">
+                <div>Discount (10%)</div>
+                <div>
+                  -$
+                  {((planDetails?.price || 0) * 0.1).toFixed(2)}
+                </div>
+              </div>
+              <Separator className="bg-gray-300" />
+              <div className="flex items-center justify-between font-semibold">
+                <div>Net Amount</div>
+                <div>${((planDetails?.price || 0) * 1).toFixed(2)}</div>
+              </div>
             </div>
           </CardContent>
         </Card>
+        <div className="grid gap-4">
+          <div className="grid gap-2">
+            <div className="font-semibold">Payment</div>
+            <div className="text-muted-foreground">
+              Select your preferred payment method
+            </div>
+          </div>
+          {/* Payment Gateway Cards */}
+          {[
+            {
+              name: "Stripe",
+              description: "International payments in USD",
+              gateway: "STRIPE" as const,
+              isActive: true,
+            },
+            {
+              name: "Razorpay",
+              description: "Indian payments in INR",
+              gateway: "RAZORPAY" as const,
+              isActive: true,
+            },
+            {
+              name: "Lemon Squeezy",
+              description: "Global payments in USD (Coming Soon)",
+              gateway: "LEMON_SQUEEZY" as const,
+              isActive: false,
+            },
+            {
+              name: "Xflow",
+              description: "Secure payments in USD (Coming Soon)",
+              gateway: "XFLOW" as const,
+              isActive: false,
+            },
+          ].map((gateway) => (
+            <Card key={gateway.name}>
+              <CardHeader>
+                <CardTitle>{gateway.name}</CardTitle>
+              </CardHeader>
+              <CardContent className="grid gap-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-4">
+                    <CreditCardIcon className="w-8 h-8" />
+                    <div>
+                      <div className="font-semibold">Credit/Debit Card</div>
+                      <div className="text-sm text-muted-foreground">
+                        {gateway.description}
+                      </div>
+                    </div>
+                  </div>
+                  {gateway.isActive ? (
+                    <div className="flex gap-2">
+                      {/* Real Payment Button */}
+                      {gateway.gateway === "RAZORPAY" ? (
+                        <RazorpayCheckout
+                          checkoutData={createCheckoutData({
+                            appointmentType: "WEBINAR",
+                            planId: planDetails.id,
+                            eventId: planDetails.webinars[0]?.id,
+                            paymentGateway: "RAZORPAY",
+                            discountCode: Array.isArray(
+                              resolvedSearchParams.discountCode,
+                            )
+                              ? resolvedSearchParams.discountCode[0]
+                              : resolvedSearchParams.discountCode,
+                          })}
+                          onPaymentSuccess={razorpayHandlers.onPaymentSuccess}
+                          onPaymentError={razorpayHandlers.onPaymentError}
+                        />
+                      ) : gateway.gateway === "STRIPE" ? (
+                        <StripeCheckout
+                          checkoutData={createCheckoutData({
+                            appointmentType: "WEBINAR",
+                            planId: planDetails.id,
+                            eventId: planDetails.webinars[0]?.id,
+                            paymentGateway: "STRIPE",
+                            discountCode: Array.isArray(
+                              resolvedSearchParams.discountCode,
+                            )
+                              ? resolvedSearchParams.discountCode[0]
+                              : resolvedSearchParams.discountCode,
+                          })}
+                          onPaymentSuccess={stripeHandlers.onPaymentSuccess}
+                          onPaymentError={stripeHandlers.onPaymentError}
+                        />
+                      ) : null}
+                      {/* Mock Payment Button */}
+                      <Button
+                        variant="secondary"
+                        onClick={() => handleCheckout(gateway.gateway, true)}
+                        disabled={isCheckoutProcessing}
+                      >
+                        {isCheckoutProcessing &&
+                        processingGateway ===
+                          `${gateway.gateway}-mock` ? (
+                          <>
+                            <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-current mr-2"></div>
+                            Processing...
+                          </>
+                        ) : (
+                          `Mock Pay (${gateway.name})`
+                        )}
+                      </Button>
+                    </div>
+                  ) : (
+                    <Button variant="outline" disabled>
+                      Coming Soon
+                    </Button>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
       </div>
-    </div>
+    </>
   );
 }

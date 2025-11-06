@@ -182,8 +182,15 @@ export default function ConsultationCheckoutPage({
           consultationSearchParamsSchema.safeParse(resolvedSearchParams);
         if (!searchParamsValidation.success) {
           const issues = searchParamsValidation.error.issues;
-          const missingFields = issues.map((issue) => issue.path[0]).join(", ");
-          throw new Error(`Invalid booking parameters: ${missingFields}`);
+          const missingFields = issues
+            .map((issue) => {
+              const fieldName = issue.path[0] || "unknown field";
+              return `${fieldName}: ${issue.message}`;
+            })
+            .join(", ");
+          throw new Error(
+            `Missing required booking information: ${missingFields}. Please select a time slot before proceeding.`,
+          );
         }
 
         // Create validated checkout data
@@ -235,7 +242,7 @@ export default function ConsultationCheckoutPage({
 
           // Redirect after a short delay
           setTimeout(() => {
-            window.location.href = "/dashboard/consultee";
+            window.location.href = "/dashboard";
           }, 2000);
         } else {
           // Production mode - payment initiated success
@@ -304,8 +311,15 @@ export default function ConsultationCheckoutPage({
           consultationSearchParamsSchema.safeParse(resolvedSearchParams);
         if (!searchParamsValidation.success) {
           const issues = searchParamsValidation.error.issues;
-          const errorMessage = issues.map((issue) => issue.message).join(", ");
-          throw new Error(`Validation failed: ${errorMessage}`);
+          const missingFields = issues
+            .map((issue) => {
+              const fieldName = issue.path[0] || "unknown field";
+              return `${fieldName}: ${issue.message}`;
+            })
+            .join(", ");
+          throw new Error(
+            `Missing required booking information: ${missingFields}. Please select a time slot from the consultant's availability page before proceeding to checkout.`,
+          );
         }
 
         const endpoint = `/api/plans/consultations/${resolvedParams.planId}`;
@@ -634,7 +648,7 @@ export default function ConsultationCheckoutPage({
                               title: "Payment Successful",
                               description: `Payment ID: ${response.razorpay_payment_id}`,
                             });
-                            window.location.href = "/dashboard/consultee";
+                            window.location.href = "/dashboard";
                           }}
                           onPaymentError={(error: { description: string }) => {
                             toast({
@@ -688,7 +702,7 @@ export default function ConsultationCheckoutPage({
                                 response.message ||
                                 "Payment completed successfully",
                             });
-                            window.location.href = "/dashboard/consultee";
+                            window.location.href = "/dashboard";
                           }}
                           onPaymentError={(error: any) => {
                             toast({

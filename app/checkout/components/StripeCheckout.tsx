@@ -30,10 +30,10 @@ export default function StripeCheckout({
     try {
       if (!stripePromise) {
         const errorMsg = !stripeKey
-          ? "Stripe publishable key (NEXT_PUBLIC_STRIPE_KEY) is not configured"
-          : "Stripe failed to initialize";
+          ? "The Stripe payment system is not properly configured on this website. This is a technical issue on our end. Please contact support for assistance, or try a different payment method."
+          : "The Stripe payment system failed to start. Please refresh the page and try again, or contact support if the problem persists.";
         toast({
-          title: "Configuration Error",
+          title: "Payment System Configuration Error",
           description: errorMsg,
           variant: "destructive",
         });
@@ -45,9 +45,9 @@ export default function StripeCheckout({
 
       if (!stripe) {
         toast({
-          title: "Error",
+          title: "Payment System Not Loading",
           description:
-            "Stripe failed to load. Please check your internet connection or disable ad blockers.",
+            "The Stripe payment system couldn't load. This may be due to a slow connection or ad blocker. Please check your internet connection, disable any ad blockers, and try again.",
           variant: "destructive",
         });
         onPaymentError({ message: "Stripe failed to load" });

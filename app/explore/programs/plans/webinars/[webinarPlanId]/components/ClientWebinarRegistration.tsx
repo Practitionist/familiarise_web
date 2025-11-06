@@ -42,7 +42,7 @@ export function ClientWebinarRegistration({
     }
     // Ensure we only redirect to checkout if the session is upcoming
     if (sessionStatus === "Upcoming") {
-      window.location.href = `/checkout/events/webinar/${webinarPlanId}`;
+      window.location.href = `/checkout/plans/webinar/${webinarPlanId}`;
     }
   };
 

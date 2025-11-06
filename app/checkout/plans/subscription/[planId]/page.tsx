@@ -166,7 +166,7 @@ export default function SubscriptionCheckoutPage({
 
             // Redirect after a short delay
             setTimeout(() => {
-              window.location.href = "/dashboard/consultee";
+              window.location.href = "/dashboard";
             }, 2000);
           } else {
             // Production mode - payment initiated success

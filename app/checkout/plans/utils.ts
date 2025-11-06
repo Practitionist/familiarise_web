@@ -23,28 +23,28 @@ export function createHandleApiError(
 
     const errorMessages = {
       PAYMENT_CONFIG_ERROR: {
-        title: "Payment System Error",
-        description: "Payment system unavailable. Please contact support.",
+        title: "Payment System Unavailable",
+        description: "We're unable to connect to the payment system right now. This is a temporary issue on our end. Please try again in a few minutes, or contact support if the problem persists.",
       },
       PAYMENT_PROCESSING_ERROR: {
-        title: "Payment Error",
-        description: "Payment processing error. Please try again later.",
+        title: "Payment Could Not Be Processed",
+        description: "Your payment couldn't be completed. This could be due to insufficient funds, an invalid card, or a temporary bank issue. Please check your payment details and try again, or use a different payment method.",
       },
       DATABASE_ERROR: {
-        title: "System Error",
-        description: "System error. Please try again.",
+        title: "Unable to Save Your Booking",
+        description: "We encountered an issue while saving your information. Your payment has not been processed. Please refresh the page and try again. If this continues, contact support.",
       },
       NOT_FOUND_ERROR: {
-        title: "Not Found",
-        description: errorMessage,
+        title: "Booking Information Not Found",
+        description: errorMessage || "The item you're trying to book could not be found. It may have been removed or is no longer available. Please go back and select a different option.",
       },
       AVAILABILITY_ERROR: {
-        title: "Booking Unavailable",
-        description: errorMessage,
+        title: "No Longer Available",
+        description: errorMessage || "This booking is no longer available. Someone else may have just booked it, or the schedule has changed. Please go back and select a different time slot or option.",
       },
       UNKNOWN_ERROR: {
-        title: "Operation Failed",
-        description: errorMessage,
+        title: "Something Went Wrong",
+        description: errorMessage || "An unexpected error occurred while processing your request. Please try again. If the problem continues, take a screenshot of this message and contact support.",
       },
     };
 
@@ -123,7 +123,7 @@ export function createHandleCheckoutSuccess(
 
       // Redirect after a short delay
       setTimeout(() => {
-        window.location.href = "/dashboard/consultee";
+        window.location.href = "/dashboard";
       }, 2000);
     } else {
       // Production mode - payment initiated success
@@ -237,14 +237,26 @@ export function createStripeCheckoutHandlers(
     onPaymentSuccess: (response: any) => {
       toast({
         title: "Payment Successful",
-        description: "Redirecting to success page...",
+        description: "Your payment has been confirmed! Redirecting to your confirmation page...",
       });
       window.location.href = "/checkout/checkout-success";
     },
     onPaymentError: (error: any) => {
+      const errorMessage = error.message || error.code || "An unexpected error occurred";
+      const userFriendlyMessage =
+        errorMessage.includes("card") || errorMessage.includes("payment_method")
+          ? "Your card was declined. Please check your card details or try a different payment method."
+          : errorMessage.includes("insufficient")
+          ? "Your card has insufficient funds. Please use a different card or payment method."
+          : errorMessage.includes("expired")
+          ? "Your card has expired. Please use a different card."
+          : errorMessage.includes("network")
+          ? "Connection error. Please check your internet connection and try again."
+          : `Payment failed: ${errorMessage}. Please try again or contact your bank if the problem persists.`;
+
       toast({
         title: "Payment Failed",
-        description: error.message || "An unknown error occurred",
+        description: userFriendlyMessage,
         variant: "destructive",
       });
     },
@@ -259,14 +271,28 @@ export function createRazorpayCheckoutHandlers(
     onPaymentSuccess: (response: { razorpay_payment_id: string }) => {
       toast({
         title: "Payment Successful",
-        description: `Payment ID: ${response.razorpay_payment_id}`,
+        description: `Your payment has been confirmed! Payment ID: ${response.razorpay_payment_id}. Redirecting to your dashboard...`,
       });
-      window.location.href = "/dashboard/consultee";
+      window.location.href = "/dashboard";
     },
-    onPaymentError: (error: { description: string }) => {
+    onPaymentError: (error: { description: string; code?: string; reason?: string }) => {
+      const errorDescription = error.description || error.reason || "An unexpected error occurred";
+      const userFriendlyMessage =
+        errorDescription.includes("payment failed") || errorDescription.includes("declined")
+          ? "Your payment was declined by the bank. Please check your payment details or try a different payment method."
+          : errorDescription.includes("cancelled") || errorDescription.includes("canceled")
+          ? "Payment was cancelled. You can try again when you're ready."
+          : errorDescription.includes("insufficient")
+          ? "Insufficient funds in your account. Please use a different payment method."
+          : errorDescription.includes("timeout") || errorDescription.includes("network")
+          ? "Payment timed out due to a connection issue. Please check your internet and try again."
+          : errorDescription.includes("invalid")
+          ? "Invalid payment details. Please check your information and try again."
+          : `${errorDescription}. Please try again or contact your bank for assistance.`;
+
       toast({
         title: "Payment Failed",
-        description: error.description || "An unknown error occurred",
+        description: userFriendlyMessage,
         variant: "destructive",
       });
     },
