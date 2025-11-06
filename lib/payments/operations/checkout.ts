@@ -3,7 +3,9 @@
  * Handles the complete checkout flow for all appointment types
  */
 
+import prisma from "@/lib/prisma";
 import { CheckoutInput, checkoutSchema } from "@/schemas/checkout";
+import { calculateSubscriptionEndDate } from "@/utils/dateUtils";
 import {
   AppointmentsType,
   ClassStatus,
@@ -13,11 +15,7 @@ import {
   RequestStatus,
   WebinarStatus,
 } from "@prisma/client";
-import { calculateSubscriptionEndDate } from "@/utils/dateUtils";
-import { createPaymentIntent, cancelPaymentIntent } from "../index";
-import { isMockPaymentId } from "./mock";
-import { withPaymentTransaction, createPaymentRecord } from "../core/transactions";
-import prisma from "@/lib/prisma";
+import { cancelPaymentIntent, createPaymentIntent } from "../index";
 
 // Re-export for backward compatibility
 export const unifiedCheckoutSchema = checkoutSchema;
@@ -162,7 +160,7 @@ export async function calculateAmountAndValidate(
         amount = plan.price;
         break;
 
-      case "WEBINAR":
+      case "WEBINAR": {
         if (!validatedData.eventId) {
           throw new Error("Event ID is required for webinar");
         }
@@ -192,8 +190,9 @@ export async function calculateAmountAndValidate(
 
         amount = plan.price;
         break;
+      }
 
-      case "CLASS":
+      case "CLASS": {
         if (!validatedData.eventId) {
           throw new Error("Event ID is required for class");
         }
@@ -226,6 +225,7 @@ export async function calculateAmountAndValidate(
 
         amount = plan.price;
         break;
+      }
 
       default:
         throw new Error("Invalid appointment type");
@@ -594,22 +594,27 @@ export async function handleWebinarCheckout(
         appointmentType: AppointmentsType.WEBINAR,
         webinarId: webinar.id,
       },
+      include: {
+        slotsOfAppointment: true,
+      },
     });
   }
 
-  // Add user to webinar
-  await tx.slotOfAppointment.create({
-    data: {
-      appointmentId: appointment.id,
-      startsAt:
-        webinar.appointment?.slotsOfAppointment[0]?.startsAt || new Date(),
-      endsAt: webinar.appointment?.slotsOfAppointment[0]?.endsAt || new Date(),
-      isTentative: !skipPayment,
-      user: {
-        connect: { id: userId },
+  // Add user to webinar (appointment is guaranteed to exist here)
+  if (appointment) {
+    await tx.slotOfAppointment.create({
+      data: {
+        appointmentId: appointment.id,
+        startsAt:
+          webinar.appointment?.slotsOfAppointment[0]?.startsAt || new Date(),
+        endsAt: webinar.appointment?.slotsOfAppointment[0]?.endsAt || new Date(),
+        isTentative: !skipPayment,
+        user: {
+          connect: { id: userId },
+        },
       },
-    },
-  });
+    });
+  }
 
   return { appointment, plan, amount: plan.price };
 }
@@ -753,7 +758,7 @@ export async function confirmAppointment(
  * 4. Return payment intent for client to complete
  * 5. Appointment will be created via webhook after payment success
  */
-export async function handleProductionCheckout(
+export async function handleCheckout(
   validatedData: CheckoutInput,
   userId: string,
   isMockPayment: boolean = false,
@@ -838,117 +843,3 @@ export async function handleProductionCheckout(
   }
 }
 
-/**
- * Development checkout flow (skip payment entirely)
- * Creates appointment immediately with SUCCEEDED payment status
- *
- * @deprecated Use handleProductionCheckout with isMockPayment=true instead
- */
-export async function handleDevelopmentCheckout(
-  validatedData: CheckoutInput,
-  userId: string,
-) {
-  const result = await prisma.$transaction(async (tx) => {
-    let appointment;
-    let plan;
-    let amount = 0;
-
-    // Get user profile
-    const user = await tx.user.findUnique({
-      where: { id: userId },
-      include: {
-        consulteeProfile: true,
-      },
-    });
-
-    if (!user?.consulteeProfile) {
-      throw new Error("User profile not found");
-    }
-
-    // Handle different appointment types
-    switch (validatedData.appointmentType) {
-      case "CONSULTATION":
-        ({ appointment, plan, amount } = await handleConsultationCheckout(
-          tx,
-          validatedData,
-          user.consulteeProfile.id,
-          true, // skipPayment = true
-        ));
-        break;
-
-      case "SUBSCRIPTION":
-        ({ appointment, plan, amount } = await handleSubscriptionCheckout(
-          tx,
-          validatedData,
-          user.consulteeProfile.id,
-          true,
-        ));
-        break;
-
-      case "WEBINAR":
-        ({ appointment, plan, amount } = await handleWebinarCheckout(
-          tx,
-          validatedData,
-          userId,
-          true,
-        ));
-        break;
-
-      case "CLASS":
-        ({ appointment, plan, amount } = await handleClassCheckout(
-          tx,
-          validatedData,
-          userId,
-          true,
-        ));
-        break;
-
-      default:
-        throw new Error("Invalid appointment type");
-    }
-
-    // Apply discount
-    let discountCodeId = null;
-    if (validatedData.discountCode) {
-      const discount = await tx.discountCode.findUnique({
-        where: { code: validatedData.discountCode },
-      });
-
-      if (discount) {
-        discountCodeId = discount.id;
-        amount =
-          discount.discountType === "PERCENTAGE"
-            ? amount * (1 - discount.discountValue / 100)
-            : Math.max(0, amount - discount.discountValue);
-      }
-    }
-
-    // Create successful payment record
-    await tx.payment.create({
-      data: {
-        amount,
-        currency: validatedData.paymentGateway === "RAZORPAY" ? "INR" : "USD",
-        paymentMethod: "SKIPPED",
-        paymentIntent: `skip_${Date.now()}_${Math.random().toString(36).substring(7)}`,
-        paymentGateway: validatedData.paymentGateway,
-        paymentStatus: PaymentStatus.SUCCEEDED,
-        isMockPayment: true,
-        userId: userId,
-        appointmentId: appointment.id,
-        discountCodeId,
-      },
-    });
-
-    // Confirm appointment
-    await confirmAppointment(tx, appointment.id, validatedData.appointmentType);
-
-    return {
-      success: true,
-      message: "Appointment booked successfully (payment skipped)",
-      appointmentId: appointment.id,
-      skipPayment: true,
-    };
-  });
-
-  return result;
-}

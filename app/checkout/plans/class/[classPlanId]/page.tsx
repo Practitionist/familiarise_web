@@ -8,13 +8,10 @@ import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
 import { fetchReviews } from "@/lib/user";
 import {
-  CheckoutInput,
-  checkoutResponseSchema,
   classSearchParamsSchema,
-  createCheckoutData,
+  createCheckoutData
 } from "@/schemas/checkout";
 import { PaymentGateway } from "@prisma/client";
-import { loadStripe } from "@stripe/stripe-js";
 import { CreditCard as CreditCardIcon } from "lucide-react";
 import { use, useCallback, useEffect, useState } from "react";
 import RazorpayCheckout from "../../../components/RazorpayCheckout";
@@ -22,25 +19,24 @@ import StripeCheckout from "../../../components/StripeCheckout";
 import {
   createHandleApiError,
   createHandleCheckoutSuccess,
-  handleProductionCheckout,
-  paymentGateways,
-  createStripeCheckoutHandlers,
   createRazorpayCheckoutHandlers,
+  createStripeCheckoutHandlers,
+  handleUnifiedCheckout,
 } from "../../utils";
 
 import type {
+  Appointment,
+  ClassContent,
   ClassPlan,
   ConsultantProfile,
-  User,
-  Domain,
-  SubDomain,
-  Tag as PrismaTag,
-  ClassContent,
-  Topic as PrismaTopic,
-  Class as PrismaClass,
-  Appointment,
-  SlotOfAppointment,
   ConsultantReview,
+  Domain,
+  Class as PrismaClass,
+  Tag as PrismaTag,
+  Topic as PrismaTopic,
+  SlotOfAppointment,
+  SubDomain,
+  User,
 } from "@prisma/client";
 
 // Define a type for the fetched ClassPlan data, similar to ClassPlanDetailsData but tailored for checkout if needed
@@ -130,8 +126,8 @@ export default function ClassCheckoutPage({
           paymentGateway: gateway,
         });
 
-        // Handle production checkout flow using the utility
-        await handleProductionCheckout(
+        // Handle unified checkout flow using the utility
+        await handleUnifiedCheckout(
           checkoutData,
           gateway,
           handleApiError,

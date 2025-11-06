@@ -136,8 +136,8 @@ export function createHandleCheckoutSuccess(
   };
 }
 
-// Production workflow - payment gateway processing
-export async function handleProductionCheckout(
+// Unified workflow - payment gateway processing with mock payment support
+export async function handleUnifiedCheckout(
   checkoutData: CheckoutInput,
   gateway: PaymentGateway,
   handleApiError: (errorData: any) => void,

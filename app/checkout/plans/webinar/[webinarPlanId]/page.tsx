@@ -8,13 +8,10 @@ import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
 import { fetchReviews } from "@/lib/user";
 import {
-  CheckoutInput,
-  checkoutResponseSchema,
-  webinarSearchParamsSchema,
   createCheckoutData,
+  webinarSearchParamsSchema
 } from "@/schemas/checkout";
 import { PaymentGateway } from "@prisma/client";
-import { loadStripe } from "@stripe/stripe-js";
 import { CreditCard as CreditCardIcon } from "lucide-react";
 import { use, useCallback, useEffect, useState } from "react";
 import RazorpayCheckout from "../../../components/RazorpayCheckout";
@@ -22,24 +19,23 @@ import StripeCheckout from "../../../components/StripeCheckout";
 import {
   createHandleApiError,
   createHandleCheckoutSuccess,
-  handleProductionCheckout,
-  paymentGateways,
-  createStripeCheckoutHandlers,
   createRazorpayCheckoutHandlers,
+  createStripeCheckoutHandlers,
+  handleUnifiedCheckout,
 } from "../../utils";
 
 import type {
-  WebinarPlan,
+  Appointment,
   ConsultantProfile,
-  User,
+  ConsultantReview,
   Domain,
-  SubDomain,
   Tag as PrismaTag,
   Topic as PrismaTopic,
   Webinar as PrismaWebinar,
-  Appointment,
   SlotOfAppointment,
-  ConsultantReview,
+  SubDomain,
+  User,
+  WebinarPlan,
 } from "@prisma/client";
 
 // Define a type for the fetched WebinarPlan data
@@ -129,8 +125,8 @@ export default function WebinarCheckoutPage({
           paymentGateway: gateway,
         });
 
-        // Handle production checkout flow using the utility
-        await handleProductionCheckout(
+        // Handle unified checkout flow using the utility
+        await handleUnifiedCheckout(
           checkoutData,
           gateway,
           handleApiError,
