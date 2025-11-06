@@ -509,6 +509,15 @@ export async function handleSubscriptionCheckout(
     plan.durationInMonths,
   );
 
+  // Calculate total sessions for the subscription
+  const totalWeeks = Math.ceil(plan.durationInMonths * 4.33);
+  const totalSessions = totalWeeks * plan.callsPerWeek;
+
+  // Get first session timing
+  const firstSessionStart = new Date(data.slotStartTimeInUTC!);
+  const firstSessionEnd = new Date(data.slotEndTimeInUTC!);
+  const sessionDurationMs = firstSessionEnd.getTime() - firstSessionStart.getTime();
+
   // Create subscription
   const subscription = await tx.subscription.create({
     data: {
@@ -524,22 +533,39 @@ export async function handleSubscriptionCheckout(
     },
   });
 
-  // Create appointment
-  const appointment = await tx.appointment.create({
-    data: {
-      appointmentType: AppointmentsType.SUBSCRIPTION,
-      subscriptionId: subscription.id,
-      slotsOfAppointment: {
-        create: {
-          startsAt: new Date(data.slotStartTimeInUTC!),
-          endsAt: new Date(data.slotEndTimeInUTC!),
-          isTentative: !skipPayment,
+  // Create appointments for ALL recurring sessions
+  const appointments = [];
+  for (let i = 0; i < totalSessions; i++) {
+    // Calculate session date based on frequency
+    const sessionStart = new Date(firstSessionStart);
+    const weekOffset = Math.floor(i / plan.callsPerWeek);
+    sessionStart.setDate(sessionStart.getDate() + weekOffset * 7);
+
+    const sessionEnd = new Date(sessionStart.getTime() + sessionDurationMs);
+
+    const appointment = await tx.appointment.create({
+      data: {
+        appointmentType: AppointmentsType.SUBSCRIPTION,
+        subscriptionId: subscription.id,
+        slotsOfAppointment: {
+          create: {
+            startsAt: sessionStart,
+            endsAt: sessionEnd,
+            isTentative: !skipPayment,
+          },
         },
       },
-    },
-  });
+    });
+    appointments.push(appointment);
+  }
 
-  return { appointment, plan, amount: plan.price };
+  // Return the first appointment for compatibility
+  return {
+    appointment: appointments[0],
+    plan,
+    amount: plan.price,
+    totalAppointmentsCreated: appointments.length
+  };
 }
 
 export async function handleWebinarCheckout(
@@ -632,7 +658,11 @@ export async function handleClassCheckout(
       waitlist: true,
       appointments: {
         include: {
-          slotsOfAppointment: true,
+          slotsOfAppointment: {
+            include: {
+              user: true,
+            },
+          },
         },
       },
     },
@@ -643,11 +673,17 @@ export async function handleClassCheckout(
   }
 
   const plan = classInstance.classPlan;
-  const currentParticipants = classInstance.appointments.reduce(
-    (total: number, apt: { slotsOfAppointment: unknown[] }) =>
-      total + apt.slotsOfAppointment.length,
-    0,
-  );
+
+  // Count unique participants (not slots) - one user = one participant
+  const uniqueUserIds = new Set<string>();
+  for (const apt of classInstance.appointments) {
+    for (const slot of apt.slotsOfAppointment) {
+      if (slot.user && Array.isArray(slot.user)) {
+        slot.user.forEach((u: { id: string }) => uniqueUserIds.add(u.id));
+      }
+    }
+  }
+  const currentParticipants = uniqueUserIds.size;
 
   // Check if max participants reached
   if (currentParticipants >= plan.maxParticipants) {
@@ -666,25 +702,43 @@ export async function handleClassCheckout(
     }
   }
 
-  // Create appointment
-  const appointment = await tx.appointment.create({
-    data: {
-      appointmentType: AppointmentsType.CLASS,
-      classId: classInstance.id,
-      slotsOfAppointment: {
-        create: {
-          startsAt: classInstance.schedulingPeriodStartsAt || new Date(),
-          endsAt: classInstance.schedulingPeriodEndsAt || new Date(),
-          isTentative: !skipPayment,
-          user: {
-            connect: { id: userId },
-          },
+  // Check if user is already enrolled
+  if (uniqueUserIds.has(userId)) {
+    throw new Error("You are already enrolled in this class");
+  }
+
+  // Create SlotOfAppointment for the user for ALL class appointments (sessions)
+  const createdSlots = [];
+  for (const appointment of classInstance.appointments) {
+    // Get timing from the first existing slot or use appointment times
+    const existingSlot = appointment.slotsOfAppointment[0];
+
+    const slot = await tx.slotOfAppointment.create({
+      data: {
+        appointmentId: appointment.id,
+        startsAt: existingSlot?.startsAt || appointment.slotsOfAppointment[0]?.startsAt || new Date(),
+        endsAt: existingSlot?.endsAt || appointment.slotsOfAppointment[0]?.endsAt || new Date(),
+        isTentative: !skipPayment,
+        user: {
+          connect: { id: userId },
         },
       },
-    },
-  });
+    });
+    createdSlots.push(slot);
+  }
 
-  return { appointment, plan, amount: plan.price };
+  // Return the first appointment for compatibility
+  const firstAppointment = classInstance.appointments[0];
+  if (!firstAppointment) {
+    throw new Error("No class sessions found");
+  }
+
+  return {
+    appointment: firstAppointment,
+    plan,
+    amount: plan.price,
+    slotsCreated: createdSlots.length
+  };
 }
 
 // ============================================================================

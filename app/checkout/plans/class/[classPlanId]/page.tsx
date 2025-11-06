@@ -8,7 +8,7 @@ import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
 import { fetchReviews } from "@/lib/user";
 import {
-  classSearchParamsSchema,
+  searchParamsSchema,
   createCheckoutData
 } from "@/schemas/checkout";
 import { PaymentGateway } from "@prisma/client";
@@ -101,7 +101,7 @@ export default function ClassCheckoutPage({
         setProcessingGateway(`${gateway}-${isMockPayment ? "mock" : "real"}`);
 
         const searchParamsValidation =
-          classSearchParamsSchema.safeParse(resolvedSearchParams);
+          searchParamsSchema.safeParse(resolvedSearchParams);
         if (!searchParamsValidation.success) {
           throw new Error("Invalid class parameters");
         }
@@ -110,10 +110,21 @@ export default function ClassCheckoutPage({
           throw new Error("Class plan not found");
         }
 
+        // Find the first SCHEDULED or IN_PROGRESS class instance
+        const availableClass = planData.data.classes?.find(
+          (c) => c.status === "SCHEDULED" || c.status === "IN_PROGRESS"
+        );
+
+        if (!availableClass?.id) {
+          throw new Error("No available class sessions. All sessions may be full, cancelled, or completed.");
+        }
+
+        const firstClassId = availableClass.id;
+
         const checkoutData = createCheckoutData({
           appointmentType: "CLASS",
           planId: planData.data.id,
-          eventId: resolvedParams.classPlanId,
+          eventId: firstClassId,
           discountCode: searchParamsValidation.data.discountCode,
           paymentGateway: gateway,
         });
@@ -306,11 +317,11 @@ export default function ClassCheckoutPage({
             )}
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Duration</div>
-              <div>{planDetails?.durationInWeeks || 4} weeks</div>
+              <div>{planDetails?.durationInMonths ? `${Math.ceil(planDetails.durationInMonths * 4.33)} weeks` : '4 weeks'}</div>
             </div>
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Sessions per Week</div>
-              <div>{planDetails?.sessionsPerWeek || 2}</div>
+              <div>{planDetails?.callsPerWeek || 2}</div>
             </div>
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Max Participants</div>
@@ -380,8 +391,8 @@ export default function ClassCheckoutPage({
                 </div>
                 <div className="font-semibold">
                   <ul className="list-disc">
-                    <li>{planDetails?.durationInWeeks || 4} weeks of classes</li>
-                    <li>{planDetails?.sessionsPerWeek || 2} sessions per week</li>
+                    <li>{planDetails?.durationInMonths ? `${Math.ceil(planDetails.durationInMonths * 4.33)} weeks` : '4 weeks'} of classes</li>
+                    <li>{planDetails?.callsPerWeek || 2} sessions per week</li>
                     <li>Course materials</li>
                     <li>Certificate of completion</li>
                   </ul>
