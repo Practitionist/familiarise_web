@@ -3,13 +3,14 @@
  * Handles refund creation, retrieval, and listing
  */
 
-import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
 import authOptions from "@/app/api/auth/[...nextauth]/options";
-import { createRefund, getRefund, listRefunds } from "@/lib/payments";
-import { withPaymentTransaction, createRefundRecord } from "@/lib/payments/core/transactions";
-import { z } from "zod";
+import { createRefund, listRefunds } from "@/lib/payments";
+import { createRefundRecord, withPaymentTransaction } from "@/lib/payments/core/transactions";
 import prisma from "@/lib/prisma";
+import { Prisma } from "@prisma/client";
+import { getServerSession } from "next-auth";
+import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 
 // ============================================================================
 // Validation Schemas
@@ -118,7 +119,7 @@ export async function POST(req: NextRequest) {
         status: refundResult.status,
         refundId: refundResult.refundId,
         paymentGateway: payment.paymentGateway,
-        metadata: refundResult.metadata,
+        metadata: refundResult.metadata as Prisma.InputJsonValue,
         payment: {
           connect: { id: payment.id },
         },

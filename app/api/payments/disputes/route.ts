@@ -4,13 +4,14 @@
  * Note: Disputes are primarily created via webhooks when payment gateways notify us
  */
 
-import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
 import authOptions from "@/app/api/auth/[...nextauth]/options";
-import { getDispute, submitDisputeEvidence, listDisputes } from "@/lib/payments";
-import { withPaymentTransaction, updateDisputeStatus } from "@/lib/payments/core/transactions";
-import { z } from "zod";
+import { listDisputes, submitDisputeEvidence } from "@/lib/payments";
+import { updateDisputeStatus, withPaymentTransaction } from "@/lib/payments/core/transactions";
 import prisma from "@/lib/prisma";
+import { Prisma } from "@prisma/client";
+import { getServerSession } from "next-auth";
+import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 
 // ============================================================================
 // Validation Schemas
@@ -219,7 +220,7 @@ export async function POST(req: NextRequest) {
         tx,
         dispute.disputeId,
         disputeResult.status,
-        disputeResult.evidence,
+        disputeResult.evidence as Prisma.InputJsonValue,
       );
 
       return disputeResult;
