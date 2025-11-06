@@ -172,6 +172,7 @@ export const checkoutSuccessResponseSchema = z.object({
   checkoutUrl: z.string().optional(),
   message: z.string().optional(),
   skipPayment: z.boolean().optional(),
+  isMockPayment: z.boolean().optional(), // Mock payment flag
   // Production flow fields
   paymentIntent: z
     .object({

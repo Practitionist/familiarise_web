@@ -2,7 +2,7 @@ import { checkoutSchema } from "@/schemas/checkout";
 import {
   handleDevelopmentCheckout,
   handleProductionCheckout,
-} from "@/utils/payments";
+} from "@/lib/payments/operations/checkout";
 import { getServerSession } from "next-auth";
 import { NextRequest, NextResponse } from "next/server";
 import authOptions from "../auth/[...nextauth]/options";
@@ -18,22 +18,26 @@ export async function POST(req: NextRequest) {
     // Validate request body
     const body = await req.json();
     const validatedData = checkoutSchema.parse(body);
+    const isMockPayment = body.isMockPayment === true;
 
-    // Check if payment should be skipped (for development/testing)
+    // Check if payment should be skipped (legacy dev mode)
     const skipPayment = process.env.SKIP_PAYMENT === "true";
 
     if (skipPayment) {
-      // DEVELOPMENT FLOW: Create appointment first, then skip payment
+      // LEGACY DEVELOPMENT FLOW: Create appointment first, skip payment entirely
+      // @deprecated Use mock payments instead
       const result = await handleDevelopmentCheckout(
         validatedData,
         session.user.id,
       );
       return NextResponse.json(result);
     } else {
-      // PRODUCTION FLOW: Create payment first, then appointment ONLY after payment succeeds
+      // PRODUCTION FLOW: Create payment first, then appointment via webhook
+      // Supports both real and mock payments
       const result = await handleProductionCheckout(
         validatedData,
         session.user.id,
+        isMockPayment,
       );
       return NextResponse.json(result);
     }

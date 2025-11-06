@@ -63,13 +63,14 @@ export function createHandleApiError(
 // Common API request logic for checkout
 export async function makeCheckoutRequest(
   checkoutData: CheckoutInput,
+  isMockPayment: boolean = false,
 ): Promise<Response> {
   return fetch("/api/checkout", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify(checkoutData),
+    body: JSON.stringify({ ...checkoutData, isMockPayment }),
   });
 }
 
@@ -78,25 +79,29 @@ export function createHandleCheckoutSuccess(
   toast: ReturnType<typeof useToast>["toast"],
   appointmentType: "CONSULTATION" | "WEBINAR" | "CLASS" | "SUBSCRIPTION",
 ) {
-  return (data: any, isDevMode: boolean = false) => {
+  return (data: any, isDevMode: boolean = false, isMockPayment: boolean = false) => {
     const typeMessages = {
       CONSULTATION: {
         dev: "Your consultation has been confirmed. Check your dashboard for details.",
+        mock: "Mock payment processed. Your consultation has been confirmed. Check your dashboard for details.",
         prod: "Redirecting to secure payment gateway. Complete your payment to confirm the consultation.",
         successTitle: "✅ Consultation Booked Successfully!",
       },
       WEBINAR: {
         dev: "You're registered for the webinar. Check your dashboard for details.",
+        mock: "Mock payment processed. Your webinar has been confirmed. Check your dashboard for details.",
         prod: "Redirecting to secure payment gateway. Complete your payment to confirm the registration.",
-        successTitle: "✅ Webinar Registration Successful!",
+        successTitle: "✅ Webinar Booked Successfully!",
       },
       CLASS: {
         dev: "You're registered for the class. Check your dashboard for details.",
+        mock: "Mock payment processed. Your class has been confirmed. Check your dashboard for details.",
         prod: "Redirecting to secure payment gateway. Complete your payment to confirm the registration.",
-        successTitle: "✅ Class Registration Successful!",
+        successTitle: "✅ Class Booked Successfully!",
       },
       SUBSCRIPTION: {
         dev: "Your subscription has been activated. Check your dashboard for details.",
+        mock: "Mock payment processed. Your subscription has been activated. Check your dashboard for details.",
         prod: "Redirecting to secure payment gateway. Complete your payment to activate the subscription.",
         successTitle: "✅ Subscription Activated Successfully!",
       },
@@ -104,13 +109,15 @@ export function createHandleCheckoutSuccess(
 
     const messages = typeMessages[appointmentType];
 
-    if (isDevMode) {
-      // Development mode - direct booking success
+    if (isDevMode || isMockPayment) {
+      // Development mode or mock payment - direct booking success
       toast({
         title: messages.successTitle,
-        description: data.skipPayment
-          ? messages.dev
-          : `Payment processed successfully. ${messages.dev}`,
+        description: isMockPayment
+          ? messages.mock
+          : data.skipPayment
+            ? messages.dev
+            : `Payment processed successfully. ${messages.dev}`,
         variant: "default",
       });
 
@@ -134,9 +141,10 @@ export async function handleProductionCheckout(
   checkoutData: CheckoutInput,
   gateway: PaymentGateway,
   handleApiError: (errorData: any) => void,
-  handleCheckoutSuccess: (data: any, isDevMode?: boolean) => void,
+  handleCheckoutSuccess: (data: any, isDevMode?: boolean, isMockPayment?: boolean) => void,
+  isMockPayment: boolean = false,
 ): Promise<void> {
-  const response = await makeCheckoutRequest(checkoutData);
+  const response = await makeCheckoutRequest(checkoutData, isMockPayment);
 
   if (!response.ok) {
     const errorData = await response.json();
@@ -156,36 +164,42 @@ export async function handleProductionCheckout(
   const data = validationResult.data;
 
   if (data.success) {
-    // Show success toast before redirecting
-    handleCheckoutSuccess(data, false);
+    // Check if this is a mock payment or skip payment scenario
+    if (data.skipPayment || isMockPayment) {
+      // Mock payment or dev mode - direct success
+      handleCheckoutSuccess(data, data.skipPayment, isMockPayment);
+    } else {
+      // Show success toast before redirecting
+      handleCheckoutSuccess(data, false, false);
 
-    // Small delay to let user see the toast before redirect
-    setTimeout(async () => {
-      // Handle gateway-specific responses
-      switch (gateway) {
-        case "STRIPE":
-          const stripeInstance = await loadStripe(
-            process.env.NEXT_PUBLIC_STRIPE_KEY!,
-          );
-          if (!stripeInstance) {
-            throw new Error("Failed to load Stripe");
-          }
-          await stripeInstance.confirmPayment({
-            clientSecret: data.clientSecret!,
-            confirmParams: {
-              return_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout/checkout-success`,
-            },
-          });
-          break;
+      // Small delay to let user see the toast before redirect
+      setTimeout(async () => {
+        // Handle gateway-specific responses
+        switch (gateway) {
+          case "STRIPE":
+            const stripeInstance = await loadStripe(
+              process.env.NEXT_PUBLIC_STRIPE_KEY!,
+            );
+            if (!stripeInstance) {
+              throw new Error("Failed to load Stripe");
+            }
+            await stripeInstance.confirmPayment({
+              clientSecret: data.clientSecret!,
+              confirmParams: {
+                return_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout/checkout-success`,
+              },
+            });
+            break;
 
-        case "LEMON_SQUEEZY":
-        case "XFLOW":
-          if (data.checkoutUrl) {
-            window.location.href = data.checkoutUrl;
-          }
-          break;
-      }
-    }, 1000);
+          case "LEMON_SQUEEZY":
+          case "XFLOW":
+            if (data.checkoutUrl) {
+              window.location.href = data.checkoutUrl;
+            }
+            break;
+        }
+      }, 1000);
+    }
   } else {
     handleApiError({ error: data.error, errorType: data.errorType });
   }

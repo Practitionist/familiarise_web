@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   handlePaymentFailure,
   handlePaymentSuccess,
+  handleRefundCreated,
+  handleDisputeCreated,
+  handleDisputeUpdated,
   verifyWebhookSignature,
 } from "../utils";
 import {
@@ -59,6 +62,74 @@ export async function POST(req: NextRequest) {
         const failedEvent = razorpayPaymentFailedEventSchema.parse(event);
         await handlePaymentFailure(failedEvent.payload.payment.entity.order_id);
         break;
+
+      // Refund events
+      case "refund.created":
+      case "refund.processed": {
+        const refundEvent = event.payload.refund.entity;
+        await handleRefundCreated(
+          refundEvent.id,
+          refundEvent.payment_id,
+          refundEvent.amount,
+          refundEvent.currency || "INR",
+          refundEvent.status,
+          "RAZORPAY",
+        );
+        break;
+      }
+
+      case "refund.failed": {
+        const failedRefundEvent = event.payload.refund.entity;
+        await handleRefundCreated(
+          failedRefundEvent.id,
+          failedRefundEvent.payment_id,
+          failedRefundEvent.amount,
+          failedRefundEvent.currency || "INR",
+          "failed",
+          "RAZORPAY",
+        );
+        break;
+      }
+
+      // Dispute events
+      case "payment.dispute.created": {
+        const disputeCreatedEvent = event.payload.dispute.entity;
+        await handleDisputeCreated(
+          disputeCreatedEvent.id,
+          disputeCreatedEvent.payment_id,
+          disputeCreatedEvent.amount,
+          disputeCreatedEvent.currency || "INR",
+          disputeCreatedEvent.reason_description ||
+            disputeCreatedEvent.reason_code,
+          disputeCreatedEvent.status,
+          disputeCreatedEvent.respond_by || null,
+          disputeCreatedEvent.deduct_at_onset === false,
+          "RAZORPAY",
+        );
+        break;
+      }
+
+      case "payment.dispute.won": {
+        const disputeWonEvent = event.payload.dispute.entity;
+        await handleDisputeUpdated(disputeWonEvent.id, "won", null);
+        break;
+      }
+
+      case "payment.dispute.lost": {
+        const disputeLostEvent = event.payload.dispute.entity;
+        await handleDisputeUpdated(disputeLostEvent.id, "lost", null);
+        break;
+      }
+
+      case "payment.dispute.closed": {
+        const disputeClosedEvent = event.payload.dispute.entity;
+        await handleDisputeUpdated(
+          disputeClosedEvent.id,
+          disputeClosedEvent.status,
+          null,
+        );
+        break;
+      }
 
       default:
         console.log(`📄 Unhandled Razorpay event type: ${eventType}`);

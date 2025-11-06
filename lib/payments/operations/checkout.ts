@@ -1,5 +1,8 @@
-import { createPaymentIntent } from "@/lib/payment";
-import prisma from "@/lib/prisma";
+/**
+ * Checkout Operations
+ * Handles the complete checkout flow for all appointment types
+ */
+
 import { CheckoutInput, checkoutSchema } from "@/schemas/checkout";
 import {
   AppointmentsType,
@@ -11,15 +14,28 @@ import {
   WebinarStatus,
 } from "@prisma/client";
 import { calculateSubscriptionEndDate } from "@/utils/dateUtils";
+import { createPaymentIntent, cancelPaymentIntent } from "../index";
+import { isMockPaymentId } from "./mock";
+import { withPaymentTransaction, createPaymentRecord } from "../core/transactions";
+import prisma from "@/lib/prisma";
 
 // Re-export for backward compatibility
 export const unifiedCheckoutSchema = checkoutSchema;
 export type { CheckoutInput };
 
-// Payment intent management with proper cleanup
+// ============================================================================
+// Payment Intent Manager
+// ============================================================================
+
+/**
+ * Manages payment intent creation and cleanup with proper error handling
+ */
 export class PaymentIntentManager {
   private static activeIntents = new Map<string, string>(); // intentId -> userId
 
+  /**
+   * Create payment intent with automatic cleanup tracking
+   */
   static async createWithCleanup(params: {
     amount: number;
     currency: string;
@@ -29,41 +45,42 @@ export class PaymentIntentManager {
       [key: string]: string;
     };
     paymentGateway: PaymentGateway;
+    isMockPayment?: boolean;
   }) {
     try {
       const paymentResponse = await createPaymentIntent(params);
 
       // Track the intent for potential cleanup
-      this.activeIntents.set(paymentResponse.id, params.metadata.userId);
+      this.activeIntents.set(paymentResponse.id, params.metadata.userId || "unknown");
 
       return paymentResponse;
     } catch (error) {
+      console.error("Payment intent creation failed:", error);
       throw new Error(
         "Failed to create payment intent. Please try again later.",
       );
     }
   }
 
+  /**
+   * Cancel a payment intent and clean up tracking
+   */
   static async cancelIntent(
     intentId: string,
     reason: string = "Database operation failed",
   ) {
     try {
-      // TODO: Implement gateway-specific cancellation
-      // For now, we'll import the payment library and cancel
-      const { cancelPaymentIntent } = await import("@/lib/payment");
-
-      if (typeof cancelPaymentIntent === "function") {
-        await cancelPaymentIntent(intentId, reason);
-      }
-
-      // Remove from tracking
+      await cancelPaymentIntent(intentId, reason);
       this.activeIntents.delete(intentId);
     } catch (error) {
-      // Don't throw here - this is cleanup, shouldn't break the main flow
+      console.error(`Failed to cancel payment intent ${intentId}:`, error);
+      // Don't throw - cleanup should be best-effort
     }
   }
 
+  /**
+   * Cleanup tracked payment intent
+   */
   static async cleanup(intentId: string, reason: string) {
     if (this.activeIntents.has(intentId)) {
       await this.cancelIntent(intentId, reason);
@@ -71,7 +88,14 @@ export class PaymentIntentManager {
   }
 }
 
-// Shared amount calculation and validation
+// ============================================================================
+// Amount Calculation and Validation
+// ============================================================================
+
+/**
+ * Calculate final amount with discount and validate plan availability
+ * Does NOT create any appointment records - only validates
+ */
 export async function calculateAmountAndValidate(
   validatedData: CheckoutInput,
   userId: string,
@@ -99,9 +123,7 @@ export async function calculateAmountAndValidate(
           where: { id: validatedData.planId },
           include: {
             consultantProfile: {
-              include: {
-                user: true,
-              },
+              include: { user: true },
             },
           },
         });
@@ -123,9 +145,7 @@ export async function calculateAmountAndValidate(
           where: { id: validatedData.planId },
           include: {
             consultantProfile: {
-              include: {
-                user: true,
-              },
+              include: { user: true },
             },
           },
         });
@@ -195,7 +215,8 @@ export async function calculateAmountAndValidate(
 
         plan = classInstance.classPlan;
         const currentClassParticipants = classInstance.appointments.reduce(
-          (total: number, apt: any) => total + apt.slotsOfAppointment.length,
+          (total: number, apt: { slotsOfAppointment: unknown[] }) =>
+            total + apt.slotsOfAppointment.length,
           0,
         );
 
@@ -233,9 +254,19 @@ export async function calculateAmountAndValidate(
   });
 }
 
-// Shared slot availability validation
+// ============================================================================
+// Slot Availability Validation
+// ============================================================================
+
+/**
+ * Validate slot availability with protection against race conditions
+ * Checks for:
+ * 1. Confirmed overlapping bookings
+ * 2. Duplicate tentative bookings by same user
+ * 3. Excessive tentative bookings (rate limiting)
+ */
 export async function validateSlotAvailability(
-  tx: any,
+  tx: Prisma.TransactionClient,
   data: CheckoutInput,
   userId?: string,
 ) {
@@ -244,7 +275,7 @@ export async function validateSlotAvailability(
   const slotStart = new Date(data.slotStartTimeInUTC);
   const slotEnd = new Date(data.slotEndTimeInUTC);
 
-  // 1. Check for confirmed overlapping appointments (existing logic)
+  // 1. Check for confirmed overlapping appointments
   const existingBooking = await tx.slotOfAppointment.findFirst({
     where: {
       AND: [
@@ -273,7 +304,7 @@ export async function validateSlotAvailability(
     throw new Error("Time slot is already booked");
   }
 
-  // 2. Check for duplicate tentative bookings by the same user (NEW)
+  // 2. Check for duplicate tentative bookings by the same user
   if (userId) {
     const recentAttempt = await tx.slotOfAppointment.findFirst({
       where: {
@@ -324,13 +355,6 @@ export async function validateSlotAvailability(
           },
         ],
       },
-      include: {
-        appointment: {
-          include: {
-            payment: true,
-          },
-        },
-      },
     });
 
     if (recentAttempt) {
@@ -340,7 +364,7 @@ export async function validateSlotAvailability(
     }
   }
 
-  // 3. Check for excessive tentative bookings in general (rate limiting)
+  // 3. Check for excessive tentative bookings (rate limiting)
   const tentativeCount = await tx.slotOfAppointment.count({
     where: {
       AND: [
@@ -369,15 +393,15 @@ export async function validateSlotAvailability(
                   { paymentStatus: "PENDING" },
                   {
                     OR: [
-                      { expiresAt: { gt: new Date() } }, // Not yet expired
+                      { expiresAt: { gt: new Date() } },
                       {
                         AND: [
-                          { expiresAt: null }, // No expiration set
+                          { expiresAt: null },
                           {
                             createdAt: {
                               gte: new Date(Date.now() - 30 * 60 * 1000),
                             },
-                          }, // Within 30 min
+                          },
                         ],
                       },
                     ],
@@ -391,7 +415,7 @@ export async function validateSlotAvailability(
     },
   });
 
-  // Allow max 3 pending attempts for the same slot (prevents spam)
+  // Allow max 3 pending attempts for the same slot
   if (tentativeCount >= 3) {
     throw new Error(
       "This time slot is temporarily unavailable due to high demand. Please try again later.",
@@ -399,7 +423,10 @@ export async function validateSlotAvailability(
   }
 }
 
-// Shared appointment creation functions
+// ============================================================================
+// Appointment Creation Handlers (Type-Specific)
+// ============================================================================
+
 export async function handleConsultationCheckout(
   tx: Prisma.TransactionClient,
   data: CheckoutInput,
@@ -410,9 +437,7 @@ export async function handleConsultationCheckout(
     where: { id: data.planId },
     include: {
       consultantProfile: {
-        include: {
-          user: true,
-        },
+        include: { user: true },
       },
     },
   });
@@ -421,7 +446,7 @@ export async function handleConsultationCheckout(
     throw new Error("Consultation plan not found");
   }
 
-  // Check slot availability
+  // Validate slot availability
   await validateSlotAvailability(tx, data, consulteeProfileId);
 
   // Create consultation
@@ -456,7 +481,7 @@ export async function handleConsultationCheckout(
 }
 
 export async function handleSubscriptionCheckout(
-  tx: any,
+  tx: Prisma.TransactionClient,
   data: CheckoutInput,
   consulteeProfileId: string,
   skipPayment: boolean,
@@ -465,9 +490,7 @@ export async function handleSubscriptionCheckout(
     where: { id: data.planId },
     include: {
       consultantProfile: {
-        include: {
-          user: true,
-        },
+        include: { user: true },
       },
     },
   });
@@ -476,10 +499,10 @@ export async function handleSubscriptionCheckout(
     throw new Error("Subscription plan not found");
   }
 
-  // Check slot availability
+  // Validate slot availability
   await validateSlotAvailability(tx, data, consulteeProfileId);
 
-  // FIXED: Calculate subscription end date with proper month-end handling
+  // Calculate subscription dates
   const startDate = new Date();
   const endDate = calculateSubscriptionEndDate(
     startDate,
@@ -520,7 +543,7 @@ export async function handleSubscriptionCheckout(
 }
 
 export async function handleWebinarCheckout(
-  tx: any,
+  tx: Prisma.TransactionClient,
   data: CheckoutInput,
   userId: string,
   skipPayment: boolean,
@@ -563,7 +586,7 @@ export async function handleWebinarCheckout(
     }
   }
 
-  // Create appointment (reuse existing one or create new)
+  // Create or reuse appointment
   let appointment = webinar.appointment;
   if (!appointment) {
     appointment = await tx.appointment.create({
@@ -592,7 +615,7 @@ export async function handleWebinarCheckout(
 }
 
 export async function handleClassCheckout(
-  tx: any,
+  tx: Prisma.TransactionClient,
   data: CheckoutInput,
   userId: string,
   skipPayment: boolean,
@@ -616,7 +639,8 @@ export async function handleClassCheckout(
 
   const plan = classInstance.classPlan;
   const currentParticipants = classInstance.appointments.reduce(
-    (total: number, apt: any) => total + apt.slotsOfAppointment.length,
+    (total: number, apt: { slotsOfAppointment: unknown[] }) =>
+      total + apt.slotsOfAppointment.length,
     0,
   );
 
@@ -637,7 +661,7 @@ export async function handleClassCheckout(
     }
   }
 
-  // Create appointment for class
+  // Create appointment
   const appointment = await tx.appointment.create({
     data: {
       appointmentType: AppointmentsType.CLASS,
@@ -658,11 +682,17 @@ export async function handleClassCheckout(
   return { appointment, plan, amount: plan.price };
 }
 
-// Shared appointment confirmation
+// ============================================================================
+// Appointment Confirmation
+// ============================================================================
+
+/**
+ * Confirm appointment by making slots non-tentative and updating status
+ */
 export async function confirmAppointment(
-  tx: any,
+  tx: Prisma.TransactionClient,
   appointmentId: string,
-  appointmentType: string,
+  _appointmentType: string,
 ) {
   // Make slot non-tentative
   await tx.slotOfAppointment.updateMany({
@@ -710,25 +740,36 @@ export async function confirmAppointment(
   }
 }
 
-// Production checkout flow with proper cleanup
+// ============================================================================
+// Main Checkout Flows
+// ============================================================================
+
+/**
+ * Production checkout flow (real payments)
+ * Steps:
+ * 1. Validate data and calculate amount
+ * 2. Create payment intent with gateway
+ * 3. Create payment record with PENDING status
+ * 4. Return payment intent for client to complete
+ * 5. Appointment will be created via webhook after payment success
+ */
 export async function handleProductionCheckout(
   validatedData: CheckoutInput,
   userId: string,
+  isMockPayment: boolean = false,
 ) {
-  // Step 1: Calculate amount and validate data (without creating appointment)
-  const { amount, currency, discountCodeId } = await calculateAmountAndValidate(
-    validatedData,
-    userId,
-  );
+  // Step 1: Calculate amount and validate
+  const { amount, currency, discountCodeId } =
+    await calculateAmountAndValidate(validatedData, userId);
 
-  // Step 2: Create payment intent first (external API call)
+  // Step 2: Create payment intent
   let paymentResponse;
   try {
     paymentResponse = await PaymentIntentManager.createWithCleanup({
       amount,
       currency,
       metadata: {
-        appointmentId: "pending", // Will be created after payment
+        appointmentId: "pending",
         appointmentType: validatedData.appointmentType,
         userId: userId,
         planId: validatedData.planId,
@@ -743,13 +784,14 @@ export async function handleProductionCheckout(
         ...(validatedData.eventId && { eventId: validatedData.eventId }),
       },
       paymentGateway: validatedData.paymentGateway,
+      isMockPayment,
     });
   } catch (paymentError) {
     console.error("Payment intent creation failed:", paymentError);
     throw new Error("Failed to create payment intent. Please try again later.");
   }
 
-  // Step 3: Create ONLY payment record (no appointment yet)
+  // Step 3: Create payment record
   try {
     await prisma.payment.create({
       data: {
@@ -758,29 +800,35 @@ export async function handleProductionCheckout(
         paymentMethod: "CARD",
         paymentIntent: paymentResponse.id,
         paymentGateway: validatedData.paymentGateway,
-        paymentStatus: PaymentStatus.PENDING,
+        paymentStatus: isMockPayment ? PaymentStatus.SUCCEEDED : PaymentStatus.PENDING,
+        isMockPayment,
         userId: userId,
-        appointmentId: null, // No appointment created yet
+        appointmentId: null, // Created after payment success
         discountCodeId,
-        expiresAt: new Date(Date.now() + 30 * 60 * 1000), // 30 minutes from now
+        expiresAt: new Date(Date.now() + 30 * 60 * 1000), // 30 minutes
       },
     });
 
-    console.log(
-      `💳 Payment intent created: ${paymentResponse.id} - Waiting for payment completion`,
-    );
+    const logMessage = isMockPayment
+      ? `🎭 Mock payment created: ${paymentResponse.id} - Bypassing gateway`
+      : `💳 Payment intent created: ${paymentResponse.id} - Waiting for payment`;
+
+    console.log(logMessage);
 
     return {
       success: true,
       paymentIntent: paymentResponse,
-      message: "Payment intent created. Complete payment to book appointment.",
+      message: isMockPayment
+        ? "Mock payment created successfully"
+        : "Payment intent created. Complete payment to book appointment.",
       amount,
       currency,
+      isMockPayment,
     };
   } catch (dbError) {
     console.error("Failed to create payment record:", dbError);
 
-    // CRITICAL: Cancel the payment intent since DB operation failed
+    // CRITICAL: Cancel payment intent since DB operation failed
     await PaymentIntentManager.cleanup(
       paymentResponse.id,
       "Database operation failed - preventing orphaned payment intent",
@@ -790,7 +838,12 @@ export async function handleProductionCheckout(
   }
 }
 
-// Development checkout flow
+/**
+ * Development checkout flow (skip payment entirely)
+ * Creates appointment immediately with SUCCEEDED payment status
+ *
+ * @deprecated Use handleProductionCheckout with isMockPayment=true instead
+ */
 export async function handleDevelopmentCheckout(
   validatedData: CheckoutInput,
   userId: string,
@@ -819,7 +872,7 @@ export async function handleDevelopmentCheckout(
           tx,
           validatedData,
           user.consulteeProfile.id,
-          true, // skipPayment = true for dev
+          true, // skipPayment = true
         ));
         break;
 
@@ -828,7 +881,7 @@ export async function handleDevelopmentCheckout(
           tx,
           validatedData,
           user.consulteeProfile.id,
-          true, // skipPayment = true for dev
+          true,
         ));
         break;
 
@@ -837,7 +890,7 @@ export async function handleDevelopmentCheckout(
           tx,
           validatedData,
           userId,
-          true, // skipPayment = true for dev
+          true,
         ));
         break;
 
@@ -846,7 +899,7 @@ export async function handleDevelopmentCheckout(
           tx,
           validatedData,
           userId,
-          true, // skipPayment = true for dev
+          true,
         ));
         break;
 
@@ -854,7 +907,7 @@ export async function handleDevelopmentCheckout(
         throw new Error("Invalid appointment type");
     }
 
-    // Apply discount if provided
+    // Apply discount
     let discountCodeId = null;
     if (validatedData.discountCode) {
       const discount = await tx.discountCode.findUnique({
@@ -870,7 +923,7 @@ export async function handleDevelopmentCheckout(
       }
     }
 
-    // Create successful payment record for skipped payment
+    // Create successful payment record
     await tx.payment.create({
       data: {
         amount,
@@ -879,13 +932,14 @@ export async function handleDevelopmentCheckout(
         paymentIntent: `skip_${Date.now()}_${Math.random().toString(36).substring(7)}`,
         paymentGateway: validatedData.paymentGateway,
         paymentStatus: PaymentStatus.SUCCEEDED,
+        isMockPayment: true,
         userId: userId,
         appointmentId: appointment.id,
         discountCodeId,
       },
     });
 
-    // Immediately confirm the appointment
+    // Confirm appointment
     await confirmAppointment(tx, appointment.id, validatedData.appointmentType);
 
     return {

@@ -6,11 +6,12 @@ import { checkoutSchema, CheckoutInput } from "@/schemas/checkout";
 import {
   handleDevelopmentCheckout,
   handleProductionCheckout,
-} from "@/utils/payments";
+} from "@/lib/payments/operations/checkout";
 
-// Schema and types are now imported from utils/payments.ts
-
-export async function checkoutAction(data: CheckoutInput) {
+export async function checkoutAction(
+  data: CheckoutInput,
+  isMockPayment: boolean = false,
+) {
   try {
     // Check authentication
     const session = await getServerSession(authOptions);
@@ -21,15 +22,21 @@ export async function checkoutAction(data: CheckoutInput) {
     // Validate input
     const validatedData = checkoutSchema.parse(data);
 
-    // Check if payment should be skipped
+    // Check if payment should be skipped (legacy dev mode)
     const skipPayment = process.env.SKIP_PAYMENT === "true";
 
     if (skipPayment) {
-      // DEVELOPMENT FLOW: Create appointment first, then skip payment
+      // LEGACY DEVELOPMENT FLOW: Create appointment first, skip payment entirely
+      // @deprecated Use mock payments instead
       return await handleDevelopmentCheckout(validatedData, session.user.id);
     } else {
-      // PRODUCTION FLOW: Create payment first, then appointment
-      return await handleProductionCheckout(validatedData, session.user.id);
+      // PRODUCTION FLOW: Create payment first, then appointment via webhook
+      // Supports both real and mock payments
+      return await handleProductionCheckout(
+        validatedData,
+        session.user.id,
+        isMockPayment,
+      );
     }
   } catch (error) {
     console.error("Checkout error:", error);

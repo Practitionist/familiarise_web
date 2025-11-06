@@ -99,7 +99,7 @@ export default function ClassCheckoutPage({
   const razorpayHandlers = createRazorpayCheckoutHandlers(toast);
 
   const handleCheckout = useCallback(
-    async (gateway: PaymentGateway) => {
+    async (gateway: PaymentGateway, isMockPayment: boolean = false) => {
       // Prevent double-clicks and multiple simultaneous requests
       if (isCheckoutProcessing) {
         return;
@@ -108,7 +108,7 @@ export default function ClassCheckoutPage({
       try {
         // Set loading state
         setIsCheckoutProcessing(true);
-        setProcessingGateway(gateway);
+        setProcessingGateway(`${gateway}-${isMockPayment ? "mock" : "real"}`);
 
         // Validate search params using the shared schema
         const searchParamsValidation =
@@ -136,6 +136,7 @@ export default function ClassCheckoutPage({
           gateway,
           handleApiError,
           handleCheckoutSuccess,
+          isMockPayment,
         );
       } catch (error) {
         console.error("Checkout error:", error);
@@ -331,7 +332,32 @@ export default function ClassCheckoutPage({
                 Select Payment Method
               </h3>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-                {paymentGateways.map((gateway) => (
+                {[
+                  {
+                    name: "Stripe",
+                    description: "International payments in USD",
+                    gateway: "STRIPE" as const,
+                    isActive: true,
+                  },
+                  {
+                    name: "Razorpay",
+                    description: "Indian payments in INR",
+                    gateway: "RAZORPAY" as const,
+                    isActive: true,
+                  },
+                  {
+                    name: "Lemon Squeezy",
+                    description: "Global payments in USD (Coming Soon)",
+                    gateway: "LEMON_SQUEEZY" as const,
+                    isActive: false,
+                  },
+                  {
+                    name: "Xflow",
+                    description: "Secure payments in USD (Coming Soon)",
+                    gateway: "XFLOW" as const,
+                    isActive: false,
+                  },
+                ].map((gateway) => (
                   <Card
                     key={gateway.gateway}
                     className="p-4 hover:shadow-md transition-shadow cursor-pointer"
@@ -346,54 +372,61 @@ export default function ClassCheckoutPage({
                       <p className="text-xs text-gray-600 mb-4">
                         {gateway.description}
                       </p>
-                      <div className="flex justify-center">
-                        {gateway.gateway === "STRIPE" ? (
-                          <StripeCheckout
-                            checkoutData={createCheckoutData({
-                              appointmentType: "CLASS",
-                              planId: planDetails.id,
-                              eventId: planDetails.classes[0].id,
-                              paymentGateway: "STRIPE",
-                              discountCode: Array.isArray(
-                                resolvedSearchParams.discountCode,
-                              )
-                                ? resolvedSearchParams.discountCode[0]
-                                : resolvedSearchParams.discountCode,
-                            })}
-                            onPaymentSuccess={stripeHandlers.onPaymentSuccess}
-                            onPaymentError={stripeHandlers.onPaymentError}
-                          />
-                        ) : gateway.gateway === "RAZORPAY" ? (
-                          <RazorpayCheckout
-                            checkoutData={createCheckoutData({
-                              appointmentType: "CLASS",
-                              planId: planDetails.id,
-                              eventId: planDetails.classes[0].id,
-                              paymentGateway: "RAZORPAY",
-                              discountCode: Array.isArray(
-                                resolvedSearchParams.discountCode,
-                              )
-                                ? resolvedSearchParams.discountCode[0]
-                                : resolvedSearchParams.discountCode,
-                            })}
-                            onPaymentSuccess={razorpayHandlers.onPaymentSuccess}
-                            onPaymentError={razorpayHandlers.onPaymentError}
-                          />
+                      <div className="flex justify-center gap-2">
+                        {gateway.isActive ? (
+                          <>
+                            {gateway.gateway === "STRIPE" ? (
+                              <StripeCheckout
+                                checkoutData={createCheckoutData({
+                                  appointmentType: "CLASS",
+                                  planId: planDetails.id,
+                                  eventId: planDetails.classes[0].id,
+                                  paymentGateway: "STRIPE",
+                                  discountCode: Array.isArray(
+                                    resolvedSearchParams.discountCode,
+                                  )
+                                    ? resolvedSearchParams.discountCode[0]
+                                    : resolvedSearchParams.discountCode,
+                                })}
+                                onPaymentSuccess={stripeHandlers.onPaymentSuccess}
+                                onPaymentError={stripeHandlers.onPaymentError}
+                              />
+                            ) : gateway.gateway === "RAZORPAY" ? (
+                              <RazorpayCheckout
+                                checkoutData={createCheckoutData({
+                                  appointmentType: "CLASS",
+                                  planId: planDetails.id,
+                                  eventId: planDetails.classes[0].id,
+                                  paymentGateway: "RAZORPAY",
+                                  discountCode: Array.isArray(
+                                    resolvedSearchParams.discountCode,
+                                  )
+                                    ? resolvedSearchParams.discountCode[0]
+                                    : resolvedSearchParams.discountCode,
+                                })}
+                                onPaymentSuccess={razorpayHandlers.onPaymentSuccess}
+                                onPaymentError={razorpayHandlers.onPaymentError}
+                              />
+                            ) : null}
+                            <Button
+                              variant="secondary"
+                              onClick={() => handleCheckout(gateway.gateway, true)}
+                              disabled={isCheckoutProcessing}
+                            >
+                              {isCheckoutProcessing &&
+                              processingGateway === `${gateway.gateway}-mock` ? (
+                                <>
+                                  <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-current mr-2"></div>
+                                  Processing...
+                                </>
+                              ) : (
+                                `Mock Pay (${gateway.name})`
+                              )}
+                            </Button>
+                          </>
                         ) : (
-                          <Button
-                            variant="outline"
-                            onClick={() => handleCheckout(gateway.gateway)}
-                            disabled={isCheckoutProcessing}
-                          >
-                            {isCheckoutProcessing &&
-                            processingGateway === gateway.gateway ? (
-                              <>
-                                <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-current mr-2"></div>
-                                Processing...
-                              </>
-                            ) : (
-                              `Pay with ${gateway.name}`
-                            )}
+                          <Button variant="outline" disabled>
+                            Coming Soon
                           </Button>
                         )}
                       </div>
