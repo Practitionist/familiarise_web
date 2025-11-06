@@ -75,12 +75,38 @@ const Footer: React.FC = () => {
         <div className="flex flex-col w-1/5">
           <h2 className="mb-2 text-lg font-bold">Overview</h2>
           <ul className="list-none p-0 mb-5 space-y-1">
-            <li>About</li>
+            <li>
+              <Link href="/about" className="hover:underline">
+                About
+              </Link>
+            </li>
             <li>Career</li>
             <li>Press</li>
-            <li>Contact</li>
-            <li>Term of Service</li>
-            <li>Privacy Policy</li>
+            <li>
+              <Link href="/contactus" className="hover:underline">
+                Contact
+              </Link>
+            </li>
+            <li>
+              <Link href="/pricing" className="hover:underline">
+                Pricing
+              </Link>
+            </li>
+            <li>
+              <Link href="/terms" className="hover:underline">
+                Terms of Service
+              </Link>
+            </li>
+            <li>
+              <Link href="/privacy" className="hover:underline">
+                Privacy Policy
+              </Link>
+            </li>
+            <li>
+              <Link href="/refund" className="hover:underline">
+                Refund Policy
+              </Link>
+            </li>
             <li>Global Sitemap</li>
             <li>Local Sitemap</li>
           </ul>
@@ -116,11 +142,14 @@ const Footer: React.FC = () => {
           © Familiarise. All rights reserved.
         </p>
         <nav className="sm:ml-auto flex gap-4 sm:gap-6">
-          <Link className="text-xs hover:underline underline-offset-4" href="#">
+          <Link className="text-xs hover:underline underline-offset-4" href="/terms">
             Terms of Service
           </Link>
-          <Link className="text-xs hover:underline underline-offset-4" href="#">
+          <Link className="text-xs hover:underline underline-offset-4" href="/privacy">
             Privacy
+          </Link>
+          <Link className="text-xs hover:underline underline-offset-4" href="/refund">
+            Refund Policy
           </Link>
         </nav>
       </div>
