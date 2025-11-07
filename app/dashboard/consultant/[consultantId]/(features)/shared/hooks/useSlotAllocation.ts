@@ -816,10 +816,11 @@ function validateClassSessionDistributionByCount(
     if (!slotsByDate.has(key)) slotsByDate.set(key, []);
     slotsByDate.get(key)!.push(slot);
   }
-  slotsByDate.forEach((daySlots) => {
+  // FIXED: Use for...of instead of forEach so return works correctly
+  for (const [, daySlots] of slotsByDate) {
     const { sessions } = countSessionsForDay(daySlots, slotsPerSession);
     if (sessions > maxSessions) return false;
-  });
+  }
   return true;
 }
 
@@ -844,13 +845,14 @@ function validateWeeklySessionsDistribution(
     if (!byDay.has(dayKey)) byDay.set(dayKey, []);
     byDay.get(dayKey)!.push(slot);
   }
-  weeks.forEach((byDay) => {
+  // FIXED: Use for...of instead of forEach so return works correctly
+  for (const [, byDay] of weeks) {
     let weekSessions = 0;
-    byDay.forEach((daySlots) => {
+    for (const [, daySlots] of byDay) {
       weekSessions += countSessionsForDay(daySlots, slotsPerSession).sessions;
-    });
+    }
     if (weekSessions > callsPerWeek) return false;
-  });
+  }
   return true;
 }
 
@@ -1039,7 +1041,7 @@ function validateSubscriptionSlots(
   // Create array of weeks with confirmed calls
   const weekCalls = new Map<
     string,
-    { confirmed: boolean; totalSlots: number }
+    { completeCallsCount: number; totalSlots: number }
   >();
 
   // Process each day to determine confirmed calls
@@ -1047,7 +1049,7 @@ function validateSubscriptionSlots(
     const weekString = getWeekString(daySlots[0].startTime);
 
     if (!weekCalls.has(weekString)) {
-      weekCalls.set(weekString, { confirmed: false, totalSlots: 0 });
+      weekCalls.set(weekString, { completeCallsCount: 0, totalSlots: 0 });
     }
 
     const weekData = weekCalls.get(weekString)!;
@@ -1055,7 +1057,7 @@ function validateSubscriptionSlots(
 
     // A call is confirmed if it has the exact number of slots and they are consecutive
     if (isCompleteCall(daySlots, slotsPerCall)) {
-      weekData.confirmed = true;
+      weekData.completeCallsCount++;
     }
   });
 
@@ -1083,10 +1085,10 @@ function validateSubscriptionSlots(
     }
   });
 
-  // FIXED: Validate weekly calls using only complete calls
+  // FIXED: Validate weekly calls using actual count of complete calls
   weekCalls.forEach((weekData, weekString) => {
-    // Only count complete calls, not potential calls
-    const completeCalls = weekData.confirmed ? 1 : 0;
+    // Count all complete calls in this week (supports multiple calls per week)
+    const completeCalls = weekData.completeCallsCount;
     const partialSlots = weekData.totalSlots % slotsPerCall;
 
     // If there are partial slots, it means incomplete calls
@@ -1095,18 +1097,18 @@ function validateSubscriptionSlots(
       incompleteCallWarning = `Week of ${weekDate.toLocaleDateString()} has incomplete call. Need ${slotsPerCall - partialSlots} more consecutive slots.`;
     }
 
-    // Check if this week exceeds the call limit (only count complete calls)
+    // Check if this week exceeds the call limit (now correctly counts multiple calls)
     if (completeCalls > callsPerWeek) {
       const weekDate = new Date(weekString);
       weeklyCallsValid = false;
-      weeklyCallsError = `Week of ${weekDate.toLocaleDateString()} has too many complete calls. Maximum ${callsPerWeek} calls per week allowed.`;
+      weeklyCallsError = `Week of ${weekDate.toLocaleDateString()} has ${completeCalls} complete calls. Maximum ${callsPerWeek} calls per week allowed.`;
       return;
     }
   });
 
-  // FIXED: Validate total calls using only complete calls
+  // FIXED: Validate total calls using actual count across all weeks
   const totalConfirmedCalls = Array.from(weekCalls.values()).reduce(
-    (sum, week) => sum + (week.confirmed ? 1 : 0),
+    (sum, week) => sum + week.completeCallsCount,
     0,
   );
 
