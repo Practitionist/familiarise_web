@@ -817,7 +817,7 @@ function validateClassSessionDistributionByCount(
     slotsByDate.get(key)!.push(slot);
   }
   // FIXED: Use for...of instead of forEach so return works correctly
-  for (const [, daySlots] of slotsByDate) {
+  for (const [, daySlots] of Array.from(slotsByDate)) {
     const { sessions } = countSessionsForDay(daySlots, slotsPerSession);
     if (sessions > maxSessions) return false;
   }
@@ -846,9 +846,9 @@ function validateWeeklySessionsDistribution(
     byDay.get(dayKey)!.push(slot);
   }
   // FIXED: Use for...of instead of forEach so return works correctly
-  for (const [, byDay] of weeks) {
+  for (const [, byDay] of Array.from(weeks)) {
     let weekSessions = 0;
-    for (const [, daySlots] of byDay) {
+    for (const [, daySlots] of Array.from(byDay)) {
       weekSessions += countSessionsForDay(daySlots, slotsPerSession).sessions;
     }
     if (weekSessions > callsPerWeek) return false;
