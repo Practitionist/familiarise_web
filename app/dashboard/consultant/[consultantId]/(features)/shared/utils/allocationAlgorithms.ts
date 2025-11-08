@@ -1,4 +1,8 @@
-import { TimeSlot, calculateRequiredSlots } from "./calendarUtils";
+import {
+  TimeSlot,
+  calculateRequiredSlots,
+  countSundayWeeksInclusive,
+} from "./calendarUtils";
 import { AllocationService } from "./allocationService";
 
 /**
@@ -453,13 +457,15 @@ export class AllocationAlgorithms {
 
     let selectedSlots: TimeSlot[] = []; // to store best found slots if exact consecutive not found fo better error handling
 
-    for (let i = 0; i <= sortedSlots.length - durationHours; i++) {
+    // FIXED: Use Math.ceil(durationHours) to handle non-integer durations (e.g., 1.5 hours)
+    const oneHourSlotsNeeded = Math.ceil(durationHours);
+    for (let i = 0; i <= sortedSlots.length - oneHourSlotsNeeded; i++) {
       const consecutiveSlots = [];
       const consecutive1HourSlots = []; // for storing original 1-hour slots to validate consecutiveness
       let isConsecutive = true;
 
-      // Check if we have enough consecutive slots starting from this position
-      for (let j = 0; j < durationHours; j++) {
+      // Check if we have enough consecutive 1-hour slots starting from this position
+      for (let j = 0; j < oneHourSlotsNeeded; j++) {
         const currentSlot = sortedSlots[i + j];
         if (!currentSlot) {
           isConsecutive = false;
@@ -610,7 +616,11 @@ export class AllocationAlgorithms {
 
     // Sort weeks by date
     const sortedWeeks = Array.from(slotsByWeek.keys()).sort();
-    const totalWeeks = sortedWeeks.length;
+    // FIXED: Calculate weeks based on subscription duration, not available slots
+    const totalWeeks = countSundayWeeksInclusive(
+      options.startDate,
+      options.endDate,
+    );
 
     // Allocate slots week by week with smart distribution
     let currentWeek = 0;
