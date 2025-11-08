@@ -605,7 +605,6 @@ export class PlannerService {
             learningOutcomes: classData.classPlan.learningOutcomes,
             emailSupport: classData.classPlan.emailSupport,
             callsPerWeek: classData.classPlan.callsPerWeek,
-            videoMeetings: classData.classPlan.videoMeetings,
             classContents: classData.classPlan.classContents, // Send updated contents if provided
             consultantProfileId: consultantId, // Keep for now, API might require it
             // API expects 'topics' (containing IDs) for Class PATCH
@@ -1098,10 +1097,6 @@ export class PlannerService {
         callsPerWeek:
           typeof classDataForm.callsPerWeek === "number"
             ? classDataForm.callsPerWeek
-            : 1,
-        videoMeetings:
-          typeof classDataForm.videoMeetings === "number"
-            ? classDataForm.videoMeetings
             : 1,
         emailSupport: classDataForm.emailSupport ?? "GENERAL",
         // Timestamps

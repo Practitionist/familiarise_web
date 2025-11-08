@@ -88,8 +88,6 @@ export function convertTAppointmentToIAppointment(
             sessionDurationInHours:
               tAppointment.subscription.subscriptionPlan
                 .sessionDurationInHours || 1,
-            videoMeetings:
-              tAppointment.subscription.subscriptionPlan.videoMeetings || 1,
             emailSupport:
               tAppointment.subscription.subscriptionPlan.emailSupport ||
               "GENERAL",
@@ -168,7 +166,6 @@ export function convertTAppointmentToIAppointment(
               tAppointment.class.classPlan.certificateProvided || false,
             durationInMonths: tAppointment.class.classPlan.durationInMonths,
             callsPerWeek: tAppointment.class.classPlan.callsPerWeek || 1,
-            videoMeetings: tAppointment.class.classPlan.videoMeetings || 1,
             emailSupport:
               tAppointment.class.classPlan.emailSupport || "GENERAL",
             maxParticipants: tAppointment.class.classPlan.maxParticipants || 1,

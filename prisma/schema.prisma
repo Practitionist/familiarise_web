@@ -415,7 +415,6 @@ model SubscriptionPlan {
   price                  Int
   callsPerWeek           Int              @default(1)
   sessionDurationInHours Float            @default(1.0) // Duration of each session in hours
-  videoMeetings          Int              @default(1)
   emailSupport           PlanEmailSupport @default(GENERAL)
   language               String           @default("English")
   level                  String           @default("Beginner")
@@ -533,7 +532,6 @@ model ClassPlan {
   durationInMonths       Int              @default(1) // Duration in months
   callsPerWeek           Int              @default(1)
   sessionDurationInHours Float            @default(1.0) // Duration of each session in hours
-  videoMeetings          Int              @default(1)
   emailSupport           PlanEmailSupport @default(GENERAL)
   maxParticipants        Int              @default(1)
   language               String?          @default("English")

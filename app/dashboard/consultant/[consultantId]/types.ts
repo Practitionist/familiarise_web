@@ -58,7 +58,6 @@ export interface ISubscriptionPlan extends IBasePlan {
   price: number;
   callsPerWeek: number;
   sessionDurationInHours: number;
-  videoMeetings: number;
   emailSupport: "GENERAL" | "PRIORITY" | "DEDICATED";
   language: string;
   level: string;
@@ -88,7 +87,6 @@ export interface IClassPlan extends IBasePlan {
   certificateProvided: boolean;
   durationInMonths: number;
   callsPerWeek: number;
-  videoMeetings: number;
   emailSupport: "GENERAL" | "PRIORITY" | "DEDICATED";
   maxParticipants: number;
   language: string | null;

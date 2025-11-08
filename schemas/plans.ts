@@ -87,7 +87,6 @@ export const SubscriptionPlanSchema = z.object({
   durationInMonths: z.number(),
   price: z.number(),
   callsPerWeek: z.number(),
-  videoMeetings: z.number(),
   emailSupport: z.enum(["GENERAL", "PRIORITY", "DEDICATED"]),
   language: z.string(),
   level: z.string(),
@@ -304,7 +303,6 @@ export const ClassPlanSchema = BaseEventPlanSchema.extend({
   durationInMonths: z.number().min(0.25, "Duration must be at least 1 week"),
   certificateProvided: z.boolean().default(false),
   callsPerWeek: z.number().min(0, "Calls per week must be non-negative"),
-  videoMeetings: z.number().min(0, "Video meetings must be non-negative"),
   emailSupport: z.enum(["GENERAL", "PRIORITY", "DEDICATED"]).default("GENERAL"),
   classContents: z
     .array(ClassContentSchema)

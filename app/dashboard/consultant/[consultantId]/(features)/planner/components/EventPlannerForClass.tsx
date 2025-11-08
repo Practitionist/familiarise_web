@@ -96,7 +96,6 @@ export function EventPlannerForClass({
             ) || [],
           certificateProvided: initialData.classPlan.certificateProvided,
           callsPerWeek: initialData.classPlan.callsPerWeek,
-          videoMeetings: initialData.classPlan.videoMeetings,
           emailSupport: initialData.classPlan.emailSupport,
           consultantProfileId: initialData.classPlan.consultantProfileId,
           classContents: initialData.classPlan.classContents ?? [],
@@ -117,7 +116,6 @@ export function EventPlannerForClass({
           topics: [],
           certificateProvided: false,
           callsPerWeek: 1,
-          videoMeetings: 1,
           emailSupport: "GENERAL" as const,
           classContents: [],
           planType: "class",
@@ -147,7 +145,6 @@ export function EventPlannerForClass({
           ) || [],
         certificateProvided: initialData.classPlan.certificateProvided,
         callsPerWeek: initialData.classPlan.callsPerWeek,
-        videoMeetings: initialData.classPlan.videoMeetings,
         emailSupport: initialData.classPlan.emailSupport,
         consultantProfileId: initialData.classPlan.consultantProfileId,
         classContents: initialData.classPlan.classContents ?? [],
@@ -266,7 +263,6 @@ export function EventPlannerForClass({
             sessionDurationInHours:
               initialData?.classPlan?.sessionDurationInHours ?? 1,
             callsPerWeek: formData.callsPerWeek,
-            videoMeetings: formData.videoMeetings,
             emailSupport: formData.emailSupport,
             classContents: (formData.classContents ?? []).map((content) => ({
               ...content,
@@ -707,29 +703,6 @@ export function EventPlannerForClass({
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Calls Per Week</FormLabel>
-                    <FormControl>
-                      <Input
-                        type="number"
-                        {...field}
-                        onChange={(e) => {
-                          const value = e.target.value;
-                          field.onChange(
-                            value === "" ? 0 : Number.parseInt(value, 10),
-                          );
-                        }}
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-
-              <FormField
-                control={form.control}
-                name="videoMeetings"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Video Meetings</FormLabel>
                     <FormControl>
                       <Input
                         type="number"

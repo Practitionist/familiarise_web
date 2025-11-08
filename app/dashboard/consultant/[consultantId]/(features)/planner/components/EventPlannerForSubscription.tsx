@@ -66,7 +66,6 @@ export function EventPlannerForSubscription({
           durationInMonths: initialData.subscriptionPlan.durationInMonths,
           price: initialData.subscriptionPlan.price,
           callsPerWeek: initialData.subscriptionPlan.callsPerWeek,
-          videoMeetings: initialData.subscriptionPlan.videoMeetings,
           emailSupport: initialData.subscriptionPlan.emailSupport,
           language: initialData.subscriptionPlan.language ?? "English",
           level: initialData.subscriptionPlan.level ?? "Beginner",
@@ -80,7 +79,6 @@ export function EventPlannerForSubscription({
           durationInMonths: 1,
           price: 0,
           callsPerWeek: 1,
-          videoMeetings: 1,
           emailSupport: "GENERAL" as const,
           language: "English",
           level: "Beginner",
@@ -100,7 +98,6 @@ export function EventPlannerForSubscription({
         durationInMonths: initialData.subscriptionPlan.durationInMonths,
         price: initialData.subscriptionPlan.price,
         callsPerWeek: initialData.subscriptionPlan.callsPerWeek,
-        videoMeetings: initialData.subscriptionPlan.videoMeetings,
         emailSupport: initialData.subscriptionPlan.emailSupport,
         language: initialData.subscriptionPlan.language ?? "English",
         level: initialData.subscriptionPlan.level ?? "Beginner",
@@ -134,7 +131,6 @@ export function EventPlannerForSubscription({
             durationInMonths: formData.durationInMonths,
             price: formData.price,
             callsPerWeek: formData.callsPerWeek,
-            videoMeetings: formData.videoMeetings,
             emailSupport: formData.emailSupport,
             language: formData.language,
             level: formData.level,
@@ -360,30 +356,6 @@ export function EventPlannerForSubscription({
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Calls Per Week</FormLabel>
-                    <FormControl>
-                      <Input
-                        type="number"
-                        min="0"
-                        {...field}
-                        onChange={(e) => {
-                          const value = e.target.value;
-                          field.onChange(
-                            value === "" ? 0 : Number.parseInt(value, 10),
-                          );
-                        }}
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-
-              <FormField
-                control={form.control}
-                name="videoMeetings"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Video Meetings</FormLabel>
                     <FormControl>
                       <Input
                         type="number"
