@@ -33,6 +33,7 @@ import {
   RequestedBy,
   SubscriptionApiResponse,
 } from "./types";
+import { countSundayWeeksInclusive } from "../shared/utils/calendarUtils";
 
 // --- API Response Type Definitions ---
 // interface UserInfo { ... } // Removed
@@ -220,11 +221,29 @@ export function RequestSlotAllocationTab({
                     appt.slotsOfAppointment?.map((slot) => slot.startsAt) || [],
                 ) || [],
               status: subscription.requestStatus,
-              requiredSlots:
-                (subscription.subscriptionPlan?.callsPerWeek ?? 0) *
-                  4 *
-                  (subscription.subscriptionPlan?.durationInMonths ?? 0) *
-                  slotsPerSession || 0,
+              // FIXED: Use accurate week counting instead of hardcoded * 4
+              requiredSlots: (() => {
+                const startDate = subscription.schedulingPeriodStartsAt
+                  ? new Date(subscription.schedulingPeriodStartsAt)
+                  : undefined;
+                const endDate = subscription.schedulingPeriodEndsAt
+                  ? new Date(subscription.schedulingPeriodEndsAt)
+                  : undefined;
+                const callsPerWeek =
+                  subscription.subscriptionPlan?.callsPerWeek ?? 0;
+
+                if (startDate && endDate) {
+                  const weeks = countSundayWeeksInclusive(startDate, endDate);
+                  return weeks * callsPerWeek * slotsPerSession;
+                }
+                // Fallback to month-based calculation if dates not set
+                return (
+                  callsPerWeek *
+                    4 *
+                    (subscription.subscriptionPlan?.durationInMonths ?? 0) *
+                    slotsPerSession || 0
+                );
+              })(),
               durationInMonths: subscription.subscriptionPlan?.durationInMonths,
               callsPerWeek: subscription.subscriptionPlan?.callsPerWeek,
               sessionDurationInHours: sessionDuration,
