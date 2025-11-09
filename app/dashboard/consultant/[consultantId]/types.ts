@@ -86,7 +86,7 @@ export interface IClassPlan extends IBasePlan {
   priceCurrency: string;
   certificateProvided: boolean;
   durationInMonths: number;
-  callsPerWeek: number;
+  meetingsPerWeek: number;
   emailSupport: "GENERAL" | "PRIORITY" | "DEDICATED";
   maxParticipants: number;
   language: string | null;

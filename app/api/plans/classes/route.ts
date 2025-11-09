@@ -59,9 +59,8 @@ export async function POST(request: NextRequest) {
       description,
       durationInMonths,
       price,
-      callsPerWeek,
+      meetingsPerWeek,
       sessionDurationInHours,
-      videoMeetings,
       emailSupport,
       maxParticipants,
       language,
@@ -91,9 +90,8 @@ export async function POST(request: NextRequest) {
     if (
       durationInMonths <= 0 ||
       price <= 0 ||
-      callsPerWeek < 0 ||
+      meetingsPerWeek < 0 ||
       (sessionDurationInHours && sessionDurationInHours <= 0) ||
-      videoMeetings < 0 ||
       maxParticipants <= 0
     ) {
       return NextResponse.json(
@@ -115,9 +113,8 @@ export async function POST(request: NextRequest) {
         description,
         durationInMonths,
         price,
-        callsPerWeek,
+        meetingsPerWeek,
         sessionDurationInHours: sessionDurationInHours || 1,
-        videoMeetings,
         emailSupport,
         maxParticipants,
         language,

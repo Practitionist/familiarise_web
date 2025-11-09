@@ -165,7 +165,7 @@ export function convertTAppointmentToIAppointment(
             certificateProvided:
               tAppointment.class.classPlan.certificateProvided || false,
             durationInMonths: tAppointment.class.classPlan.durationInMonths,
-            callsPerWeek: tAppointment.class.classPlan.callsPerWeek || 1,
+            meetingsPerWeek: tAppointment.class.classPlan.meetingsPerWeek || 1,
             emailSupport:
               tAppointment.class.classPlan.emailSupport || "GENERAL",
             maxParticipants: tAppointment.class.classPlan.maxParticipants || 1,

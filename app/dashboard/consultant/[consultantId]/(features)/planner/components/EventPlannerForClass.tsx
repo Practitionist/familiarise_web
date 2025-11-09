@@ -95,7 +95,7 @@ export function EventPlannerForClass({
               typeof topic === "string" ? topic : topic.name,
             ) || [],
           certificateProvided: initialData.classPlan.certificateProvided,
-          callsPerWeek: initialData.classPlan.callsPerWeek,
+          meetingsPerWeek: initialData.classPlan.meetingsPerWeek,
           emailSupport: initialData.classPlan.emailSupport,
           consultantProfileId: initialData.classPlan.consultantProfileId,
           classContents: initialData.classPlan.classContents ?? [],
@@ -115,7 +115,7 @@ export function EventPlannerForClass({
           learningOutcomes: [],
           topics: [],
           certificateProvided: false,
-          callsPerWeek: 1,
+          meetingsPerWeek: 1,
           emailSupport: "GENERAL" as const,
           classContents: [],
           planType: "class",
@@ -144,7 +144,7 @@ export function EventPlannerForClass({
             typeof topic === "string" ? topic : topic.name,
           ) || [],
         certificateProvided: initialData.classPlan.certificateProvided,
-        callsPerWeek: initialData.classPlan.callsPerWeek,
+        meetingsPerWeek: initialData.classPlan.meetingsPerWeek,
         emailSupport: initialData.classPlan.emailSupport,
         consultantProfileId: initialData.classPlan.consultantProfileId,
         classContents: initialData.classPlan.classContents ?? [],
@@ -262,7 +262,7 @@ export function EventPlannerForClass({
             certificateProvided: formData.certificateProvided,
             sessionDurationInHours:
               initialData?.classPlan?.sessionDurationInHours ?? 1,
-            callsPerWeek: formData.callsPerWeek,
+            meetingsPerWeek: formData.meetingsPerWeek,
             emailSupport: formData.emailSupport,
             classContents: (formData.classContents ?? []).map((content) => ({
               ...content,
@@ -699,10 +699,10 @@ export function EventPlannerForClass({
             <div className="grid grid-cols-2 gap-4">
               <FormField
                 control={form.control}
-                name="callsPerWeek"
+                name="meetingsPerWeek"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Calls Per Week</FormLabel>
+                    <FormLabel>Meetings Per Week</FormLabel>
                     <FormControl>
                       <Input
                         type="number"

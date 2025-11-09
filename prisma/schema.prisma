@@ -530,7 +530,7 @@ model ClassPlan {
   priceCurrency          String           @default("INR")
   certificateProvided    Boolean          @default(false)
   durationInMonths       Int              @default(1) // Duration in months
-  callsPerWeek           Int              @default(1)
+  meetingsPerWeek        Int              @default(1)
   sessionDurationInHours Float            @default(1.0) // Duration of each session in hours
   emailSupport           PlanEmailSupport @default(GENERAL)
   maxParticipants        Int              @default(1)
