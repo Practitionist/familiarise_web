@@ -187,7 +187,9 @@ export const formatAppointmentTime = (utcTime: string): string => {
 // Get appointment status
 export const getAppointmentStatus = (appointment: TAppointment): string => {
   const startTime = getStartTime(appointment);
-  if (!startTime) return "Unknown";
+
+  // Handle appointments with no slots
+  if (!startTime) return "Not Scheduled";
 
   const now = new Date();
 
@@ -381,6 +383,59 @@ export const groupRecurringAppointments = (
   });
 
   return groups;
+};
+
+/**
+ * Groups appointments by their type (CONSULTATION, SUBSCRIPTION, WEBINAR, CLASS)
+ * and sorts them chronologically within each group
+ * @param appointments - Array of appointments to group
+ * @returns Object with appointment types as keys and sorted appointment arrays as values
+ */
+export const groupAppointmentsByType = (
+  appointments: TAppointment[],
+): { [key: string]: TAppointment[] } => {
+  const groups: { [key: string]: TAppointment[] } = {
+    CONSULTATION: [],
+    SUBSCRIPTION: [],
+    WEBINAR: [],
+    CLASS: [],
+  };
+
+  // Group appointments by their type
+  appointments.forEach((appointment) => {
+    if (appointment.appointmentType && groups[appointment.appointmentType]) {
+      groups[appointment.appointmentType].push(appointment);
+    }
+  });
+
+  // Sort each group chronologically
+  Object.keys(groups).forEach((type) => {
+    groups[type] = sortAppointmentsByStartTime(groups[type]);
+  });
+
+  // Remove empty groups
+  Object.keys(groups).forEach((type) => {
+    if (groups[type].length === 0) {
+      delete groups[type];
+    }
+  });
+
+  return groups;
+};
+
+/**
+ * Gets a human-readable display name for an appointment type
+ * @param type - The AppointmentsType enum value
+ * @returns Formatted display name
+ */
+export const getAppointmentTypeDisplayName = (type: string): string => {
+  const typeMap: { [key: string]: string } = {
+    CONSULTATION: "Consultations",
+    SUBSCRIPTION: "Subscriptions",
+    WEBINAR: "Webinars",
+    CLASS: "Classes",
+  };
+  return typeMap[type] || type;
 };
 
 // Get group title

@@ -23,6 +23,8 @@ import {
   getGroupTitle,
   getStartTime,
   groupRecurringAppointments,
+  groupAppointmentsByType,
+  getAppointmentTypeDisplayName,
 } from "../../utils/appointmentHelpers";
 import { EventTimingsCalendar } from "./components/EventTimingsCalendar";
 import {
@@ -163,44 +165,94 @@ export function AppointmentsTab({
       });
     }
   };
-  // Group appointments by subscription/class
-  const groupedAppointments = groupRecurringAppointments(appointments || []);
+  // Group appointments by type (CONSULTATION, SUBSCRIPTION, WEBINAR, CLASS)
+  const appointmentsByType = groupAppointmentsByType(appointments || []);
+
+  // Further group recurring appointments (subscriptions/classes) within each type
+  const groupedAppointments = Object.entries(appointmentsByType).reduce(
+    (acc, [type, typeAppointments]) => {
+      // For SUBSCRIPTION and CLASS types, further group by recurring sessions
+      if (type === "SUBSCRIPTION" || type === "CLASS") {
+        const recurringGroups = groupRecurringAppointments(typeAppointments);
+        Object.entries(recurringGroups).forEach(([key, appointments]) => {
+          acc[`${type}-${key}`] = appointments;
+        });
+      } else {
+        // For CONSULTATION and WEBINAR, each appointment is its own group
+        typeAppointments.forEach((appointment) => {
+          acc[`${type}-${appointment.id}`] = [appointment];
+        });
+      }
+      return acc;
+    },
+    {} as { [key: string]: TAppointment[] },
+  );
+
+  // Sort groups by appointment type order
+  const typeOrder = ["CONSULTATION", "SUBSCRIPTION", "WEBINAR", "CLASS"];
+  const sortedGroupedAppointments = Object.entries(groupedAppointments).sort(
+    ([keyA], [keyB]) => {
+      const typeA = keyA.split("-")[0];
+      const typeB = keyB.split("-")[0];
+      return typeOrder.indexOf(typeA) - typeOrder.indexOf(typeB);
+    },
+  );
 
   return (
     <div className="bg-white p-4 sm:p-6 rounded-lg shadow">
       <h2 className="text-xl font-semibold mb-4 text-gray-800">
         All Appointments
       </h2>
-      <div className="space-y-4 sm:space-y-6">
-        {Object.entries(groupedAppointments).map(
-          ([groupKey, groupAppointments]) => {
-            const isRecurring =
-              groupKey.startsWith("subscription-") ||
-              groupKey.startsWith("class-");
-            const groupTitle = getGroupTitle(groupAppointments);
-            const groupStatus = getGroupStatus(groupAppointments);
-            const firstAppointment = groupAppointments[0];
+      <div className="space-y-6">
+        {(() => {
+          let currentType: string | null = null;
 
-            // Calculate session progress for recurring appointments
-            const {
-              totalSessions,
-              completedSessions,
-              remainingSessions,
-              progressPercentage,
-            } = calculateSessionProgress(groupAppointments);
+          return sortedGroupedAppointments.map(
+            ([groupKey, groupAppointments]) => {
+              const groupType = groupKey.split("-")[0];
+              const isNewTypeSection = currentType !== groupType;
 
-            return (
-              <div
-                key={groupKey}
-                ref={(el) => {
-                  if (el) groupRefs.current.set(groupKey, el);
-                }}
-                className={`border rounded-lg overflow-hidden shadow-sm transition-all duration-300 ${
-                  highlightedGroup === groupKey
-                    ? "ring-4 ring-yellow-400 shadow-xl"
-                    : ""
-                }`}
-              >
+              if (isNewTypeSection) {
+                currentType = groupType;
+              }
+
+              const isRecurring =
+                groupKey.startsWith("SUBSCRIPTION-subscription-") ||
+                groupKey.startsWith("CLASS-class-");
+              const groupTitle = getGroupTitle(groupAppointments);
+              const groupStatus = getGroupStatus(groupAppointments);
+              const firstAppointment = groupAppointments[0];
+
+              // Calculate session progress for recurring appointments
+              const {
+                totalSessions,
+                completedSessions,
+                remainingSessions,
+                progressPercentage,
+              } = calculateSessionProgress(groupAppointments);
+
+              return (
+                <div key={groupKey}>
+                  {/* Type Section Header */}
+                  {isNewTypeSection && (
+                    <div className="mb-4 pt-6 first:pt-0">
+                      <h3 className="text-lg font-semibold text-gray-900 border-b-2 border-gray-300 pb-2">
+                        {getAppointmentTypeDisplayName(groupType)}
+                      </h3>
+                    </div>
+                  )}
+
+                  {/* Existing appointment group card */}
+                  <div
+                    ref={(el) => {
+                      if (el) groupRefs.current.set(groupKey, el);
+                    }}
+                    className={`border rounded-lg overflow-hidden shadow-sm transition-all duration-300 ${
+                      highlightedGroup === groupKey
+                        ? "ring-4 ring-yellow-400 shadow-xl"
+                        : ""
+                    }`}
+                  >
                 {/* Group Header */}
                 {isRecurring && (
                   <div className="bg-gray-50 p-4 border-b border-gray-200">
@@ -384,11 +436,15 @@ export function AppointmentsTab({
                                       {(() => {
                                         const startTime =
                                           getStartTime(appointment);
-                                        return startTime
-                                          ? formatAppointmentTime(
-                                              startTime.toISOString(),
-                                            )
-                                          : "Time not set";
+                                        return startTime ? (
+                                          formatAppointmentTime(
+                                            startTime.toISOString(),
+                                          )
+                                        ) : (
+                                          <span className="text-orange-600 font-medium">
+                                            Not Scheduled
+                                          </span>
+                                        );
                                       })()}
                                     </div>
                                   </div>
@@ -445,27 +501,28 @@ export function AppointmentsTab({
                                   >
                                     {status}
                                   </Badge>
-                                  {status !== "Completed" && (
-                                    <Button
-                                      variant="default"
-                                      size="sm"
-                                      className={`${joinButtonStyle} h-8 px-4 text-xs`}
-                                      disabled={
-                                        process.env.NODE_ENV === "production"
-                                          ? !isJoinable
-                                          : false
-                                      }
-                                      onClick={() =>
-                                        handleJoinMeeting(appointment)
-                                      }
-                                    >
-                                      {process.env.NODE_ENV === "production"
-                                        ? isJoinable
-                                          ? "Join meet"
-                                          : "Not available"
-                                        : "Join (Dev)"}
-                                    </Button>
-                                  )}
+                                  {status !== "Completed" &&
+                                    status !== "Not Scheduled" && (
+                                      <Button
+                                        variant="default"
+                                        size="sm"
+                                        className={`${joinButtonStyle} h-8 px-4 text-xs`}
+                                        disabled={
+                                          process.env.NODE_ENV === "production"
+                                            ? !isJoinable
+                                            : false
+                                        }
+                                        onClick={() =>
+                                          handleJoinMeeting(appointment)
+                                        }
+                                      >
+                                        {process.env.NODE_ENV === "production"
+                                          ? isJoinable
+                                            ? "Join meet"
+                                            : "Not available"
+                                          : "Join (Dev)"}
+                                      </Button>
+                                    )}
                                 </div>
                               </div>
                             </li>
@@ -529,10 +586,12 @@ export function AppointmentsTab({
                     );
                   })()}
                 </ul>
-              </div>
-            );
-          },
-        )}
+                  </div>
+                </div>
+              );
+            },
+          );
+        })()}
         {!Object.keys(groupedAppointments).length && (
           <div className="flex flex-col items-center justify-center min-h-[400px] p-8 bg-gray-50 rounded-lg">
             <div className="w-16 h-16 mb-4 text-gray-400">
