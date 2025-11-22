@@ -99,16 +99,16 @@ export const checkoutSchema = z
   .refine(
     (data) => {
       // For consultation and subscription, require slot availability ID
-      if (["CONSULTATION", "SUBSCRIPTION"].includes(data.appointmentType)) {
+      if (data.appointmentType === "CONSULTATION") {
         return (
-          data.slotOfAvailabilityWeeklyId || data.slotOfAvailabilityCustomId
+          !!data.slotOfAvailabilityWeeklyId || !!data.slotOfAvailabilityCustomId
         );
       }
       return true;
     },
     {
       message:
-        "Consultation and subscription appointments require slot availability ID",
+        "Consultation appointments require slot availability ID",
       path: ["slotOfAvailabilityWeeklyId"],
     },
   )
