@@ -79,36 +79,57 @@ export const checkoutSchema = z
     slotEndTimeInUTC: z.string().datetime().optional(),
     slotOfAvailabilityWeeklyId: z.string().optional(),
     slotOfAvailabilityCustomId: z.string().optional(),
+    schedulingPeriodStartsAt: z.string().datetime().optional(),
+    schedulingPeriodEndsAt: z.string().datetime().optional(),
     discountCode: z.string().optional(),
     paymentGateway: paymentGatewaySchema,
     notes: z.string().optional(),
   })
   .refine(
     (data) => {
-      // For consultation and subscription, require slot timing
-      if (["CONSULTATION", "SUBSCRIPTION"].includes(data.appointmentType)) {
+      // For consultation, always require slot timing
+      if (data.appointmentType === "CONSULTATION") {
         return data.slotStartTimeInUTC && data.slotEndTimeInUTC;
       }
-      return true;
-    },
-    {
-      message: "Consultation and subscription appointments require slot timing",
-      path: ["slotStartTimeInUTC"],
-    },
-  )
-  .refine(
-    (data) => {
-      // For consultation and subscription, require slot availability ID
-      if (["CONSULTATION", "SUBSCRIPTION"].includes(data.appointmentType)) {
-        return (
-          data.slotOfAvailabilityWeeklyId || data.slotOfAvailabilityCustomId
-        );
+      // For subscription, require either slot timing OR scheduling period
+      if (data.appointmentType === "SUBSCRIPTION") {
+        const hasSlotData = data.slotStartTimeInUTC && data.slotEndTimeInUTC;
+        const hasSchedulingPeriod =
+          data.schedulingPeriodStartsAt && data.schedulingPeriodEndsAt;
+        return hasSlotData || hasSchedulingPeriod;
       }
       return true;
     },
     {
       message:
-        "Consultation and subscription appointments require slot availability ID",
+        "Consultation requires slot timing. Subscription requires either slot timing or scheduling period.",
+      path: ["slotStartTimeInUTC"],
+    },
+  )
+  .refine(
+    (data) => {
+      // For consultation, always require slot availability ID
+      if (data.appointmentType === "CONSULTATION") {
+        return (
+          data.slotOfAvailabilityWeeklyId || data.slotOfAvailabilityCustomId
+        );
+      }
+      // For subscription with slot data, require slot availability ID
+      if (data.appointmentType === "SUBSCRIPTION") {
+        const hasSlotData = data.slotStartTimeInUTC && data.slotEndTimeInUTC;
+        if (hasSlotData) {
+          return (
+            data.slotOfAvailabilityWeeklyId || data.slotOfAvailabilityCustomId
+          );
+        }
+        // For subscription with scheduling period, don't require slot availability ID
+        return true;
+      }
+      return true;
+    },
+    {
+      message:
+        "Consultation and subscription with slots require slot availability ID",
       path: ["slotOfAvailabilityWeeklyId"],
     },
   )
@@ -245,6 +266,8 @@ export const createCheckoutData = (params: {
   slotEndTimeInUTC?: string;
   slotOfAvailabilityWeeklyId?: string;
   slotOfAvailabilityCustomId?: string;
+  schedulingPeriodStartsAt?: string;
+  schedulingPeriodEndsAt?: string;
   discountCode?: string;
   notes?: string;
 }): CheckoutInput => {
@@ -257,6 +280,8 @@ export const createCheckoutData = (params: {
     slotEndTimeInUTC: params.slotEndTimeInUTC,
     slotOfAvailabilityWeeklyId: params.slotOfAvailabilityWeeklyId,
     slotOfAvailabilityCustomId: params.slotOfAvailabilityCustomId,
+    schedulingPeriodStartsAt: params.schedulingPeriodStartsAt,
+    schedulingPeriodEndsAt: params.schedulingPeriodEndsAt,
     discountCode: params.discountCode,
     notes: params.notes,
   };

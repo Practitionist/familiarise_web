@@ -499,73 +499,105 @@ export async function handleSubscriptionCheckout(
     throw new Error("Subscription plan not found");
   }
 
-  // Validate slot availability
-  await validateSlotAvailability(tx, data, consulteeProfileId);
+  // Determine if this is a scheduling period request or direct slot booking
+  const isSchedulingPeriodRequest =
+    data.schedulingPeriodStartsAt && data.schedulingPeriodEndsAt;
 
-  // Calculate subscription dates
-  const startDate = new Date();
-  const endDate = calculateSubscriptionEndDate(
-    startDate,
-    plan.durationInMonths,
-  );
+  if (isSchedulingPeriodRequest) {
+    // Scheduling Period Request: Create subscription request only, no appointments
+    const startDate = new Date(data.schedulingPeriodStartsAt!);
+    const endDate = new Date(data.schedulingPeriodEndsAt!);
 
-  // Calculate total sessions for the subscription
-  const totalWeeks = Math.ceil(plan.durationInMonths * 4.33);
-  const totalSessions = totalWeeks * plan.callsPerWeek;
-
-  // Get first session timing
-  const firstSessionStart = new Date(data.slotStartTimeInUTC!);
-  const firstSessionEnd = new Date(data.slotEndTimeInUTC!);
-  const sessionDurationMs = firstSessionEnd.getTime() - firstSessionStart.getTime();
-
-  // Create subscription
-  const subscription = await tx.subscription.create({
-    data: {
-      subscriptionPlanId: plan.id,
-      requestStatus: skipPayment
-        ? RequestStatus.APPROVED
-        : RequestStatus.PENDING,
-      requestedById: consulteeProfileId,
-      requestNotes: data.notes,
-      bookingSource: "DIRECT_CHECKOUT",
-      schedulingPeriodStartsAt: startDate,
-      schedulingPeriodEndsAt: endDate,
-    },
-  });
-
-  // Create appointments for ALL recurring sessions
-  const appointments = [];
-  for (let i = 0; i < totalSessions; i++) {
-    // Calculate session date based on frequency
-    const sessionStart = new Date(firstSessionStart);
-    const weekOffset = Math.floor(i / plan.callsPerWeek);
-    sessionStart.setDate(sessionStart.getDate() + weekOffset * 7);
-
-    const sessionEnd = new Date(sessionStart.getTime() + sessionDurationMs);
-
-    const appointment = await tx.appointment.create({
+    const subscription = await tx.subscription.create({
       data: {
-        appointmentType: AppointmentsType.SUBSCRIPTION,
-        subscriptionId: subscription.id,
-        slotsOfAppointment: {
-          create: {
-            startsAt: sessionStart,
-            endsAt: sessionEnd,
-            isTentative: !skipPayment,
-          },
-        },
+        subscriptionPlanId: plan.id,
+        requestStatus: RequestStatus.PENDING, // Always PENDING for scheduling period requests
+        requestedById: consulteeProfileId,
+        requestNotes: data.notes,
+        bookingSource: "DIRECT_CHECKOUT",
+        schedulingPeriodStartsAt: startDate,
+        schedulingPeriodEndsAt: endDate,
       },
     });
-    appointments.push(appointment);
-  }
 
-  // Return the first appointment for compatibility
-  return {
-    appointment: appointments[0],
-    plan,
-    amount: plan.price,
-    totalAppointmentsCreated: appointments.length
-  };
+    // Return subscription info without appointments
+    return {
+      subscription,
+      plan,
+      amount: plan.price,
+      isSchedulingPeriodRequest: true,
+    };
+  } else {
+    // Direct Slot Booking: Create subscription with appointments (future feature)
+    // Validate slot availability
+    await validateSlotAvailability(tx, data, consulteeProfileId);
+
+    // Calculate subscription dates
+    const startDate = new Date();
+    const endDate = calculateSubscriptionEndDate(
+      startDate,
+      plan.durationInMonths,
+    );
+
+    // Calculate total sessions for the subscription
+    const totalWeeks = Math.ceil(plan.durationInMonths * 4.33);
+    const totalSessions = totalWeeks * plan.callsPerWeek;
+
+    // Get first session timing
+    const firstSessionStart = new Date(data.slotStartTimeInUTC!);
+    const firstSessionEnd = new Date(data.slotEndTimeInUTC!);
+    const sessionDurationMs =
+      firstSessionEnd.getTime() - firstSessionStart.getTime();
+
+    // Create subscription
+    const subscription = await tx.subscription.create({
+      data: {
+        subscriptionPlanId: plan.id,
+        requestStatus: skipPayment
+          ? RequestStatus.APPROVED
+          : RequestStatus.PENDING,
+        requestedById: consulteeProfileId,
+        requestNotes: data.notes,
+        bookingSource: "DIRECT_CHECKOUT",
+        schedulingPeriodStartsAt: startDate,
+        schedulingPeriodEndsAt: endDate,
+      },
+    });
+
+    // Create appointments for ALL recurring sessions
+    const appointments = [];
+    for (let i = 0; i < totalSessions; i++) {
+      // Calculate session date based on frequency
+      const sessionStart = new Date(firstSessionStart);
+      const weekOffset = Math.floor(i / plan.callsPerWeek);
+      sessionStart.setDate(sessionStart.getDate() + weekOffset * 7);
+
+      const sessionEnd = new Date(sessionStart.getTime() + sessionDurationMs);
+
+      const appointment = await tx.appointment.create({
+        data: {
+          appointmentType: AppointmentsType.SUBSCRIPTION,
+          subscriptionId: subscription.id,
+          slotsOfAppointment: {
+            create: {
+              startsAt: sessionStart,
+              endsAt: sessionEnd,
+              isTentative: !skipPayment,
+            },
+          },
+        },
+      });
+      appointments.push(appointment);
+    }
+
+    // Return the first appointment for compatibility
+    return {
+      appointment: appointments[0],
+      plan,
+      amount: plan.price,
+      totalAppointmentsCreated: appointments.length,
+    };
+  }
 }
 
 export async function handleWebinarCheckout(
@@ -838,6 +870,9 @@ export async function handleCheckout(
           validatedData.slotOfAvailabilityWeeklyId || "",
         slotOfAvailabilityCustomId:
           validatedData.slotOfAvailabilityCustomId || "",
+        schedulingPeriodStartsAt:
+          validatedData.schedulingPeriodStartsAt || "",
+        schedulingPeriodEndsAt: validatedData.schedulingPeriodEndsAt || "",
         discountCode: validatedData.discountCode || "",
         notes: validatedData.notes || "",
         ...(validatedData.eventId && { eventId: validatedData.eventId }),
