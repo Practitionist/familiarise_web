@@ -911,7 +911,7 @@ export async function handleCheckout(
 
     // Step 4: For mock payments, create appointments immediately (direct booking)
     if (isMockPayment) {
-      const { handlePaymentSuccess } = await import("@/app/api/webhooks/utils");
+      const { handlePaymentSuccess } = await import("@/lib/payments/webhooks/handlers");
       await handlePaymentSuccess(paymentResponse.id, {
         appointmentType: validatedData.appointmentType,
         planId: validatedData.planId,

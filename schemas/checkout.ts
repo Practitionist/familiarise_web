@@ -85,95 +85,109 @@ export const checkoutSchema = z
     paymentGateway: paymentGatewaySchema,
     notes: z.string().optional(),
   })
-  .refine(
-    (data) => {
-      // For consultation, always require slot timing
-      if (data.appointmentType === "CONSULTATION") {
-        return data.slotStartTimeInUTC && data.slotEndTimeInUTC;
+  .superRefine((data, ctx) => {
+    // === CONSULTATION validation ===
+    if (data.appointmentType === "CONSULTATION") {
+      // Require slot timing
+      if (!data.slotStartTimeInUTC || !data.slotEndTimeInUTC) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Consultation requires slot start and end times",
+          path: ["slotStartTimeInUTC"],
+        });
       }
-      // For subscription, require either slot timing OR scheduling period
-      if (data.appointmentType === "SUBSCRIPTION") {
-        const hasSlotData = data.slotStartTimeInUTC && data.slotEndTimeInUTC;
-        const hasSchedulingPeriod =
-          data.schedulingPeriodStartsAt && data.schedulingPeriodEndsAt;
-        return hasSlotData || hasSchedulingPeriod;
+
+      // Require slot availability ID
+      if (
+        !data.slotOfAvailabilityWeeklyId &&
+        !data.slotOfAvailabilityCustomId
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Consultation requires slot availability ID",
+          path: ["slotOfAvailabilityWeeklyId"],
+        });
       }
-      return true;
-    },
-    {
-      message:
-        "Consultation requires slot timing. Subscription requires either slot timing or scheduling period.",
-      path: ["slotStartTimeInUTC"],
-    },
-  )
-  .refine(
-    (data) => {
-      // For consultation, always require slot availability ID
-      if (data.appointmentType === "CONSULTATION") {
-        return (
-          data.slotOfAvailabilityWeeklyId || data.slotOfAvailabilityCustomId
-        );
+    }
+
+    // === SUBSCRIPTION validation ===
+    if (data.appointmentType === "SUBSCRIPTION") {
+      const hasSlotData = data.slotStartTimeInUTC && data.slotEndTimeInUTC;
+      const hasSchedulingPeriod =
+        data.schedulingPeriodStartsAt && data.schedulingPeriodEndsAt;
+
+      // Require EITHER slot data OR scheduling period
+      if (!hasSlotData && !hasSchedulingPeriod) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message:
+            "Subscription requires either slot timing or scheduling period",
+          path: ["slotStartTimeInUTC"],
+        });
       }
-      // For subscription with slot data, require slot availability ID
-      if (data.appointmentType === "SUBSCRIPTION") {
-        const hasSlotData = data.slotStartTimeInUTC && data.slotEndTimeInUTC;
-        if (hasSlotData) {
-          return (
-            data.slotOfAvailabilityWeeklyId || data.slotOfAvailabilityCustomId
-          );
-        }
-        // For subscription with scheduling period, don't require slot availability ID
-        return true;
+
+      // If slot data provided, require availability ID
+      if (
+        hasSlotData &&
+        !data.slotOfAvailabilityWeeklyId &&
+        !data.slotOfAvailabilityCustomId
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Subscription with slots requires slot availability ID",
+          path: ["slotOfAvailabilityWeeklyId"],
+        });
       }
-      return true;
-    },
-    {
-      message:
-        "Consultation and subscription with slots require slot availability ID",
-      path: ["slotOfAvailabilityWeeklyId"],
-    },
-  )
-  .refine(
-    (data) => {
-      // For webinar and class, require event ID
-      if (["WEBINAR", "CLASS"].includes(data.appointmentType)) {
-        return data.eventId;
+    }
+
+    // === WEBINAR and CLASS validation ===
+    if (["WEBINAR", "CLASS"].includes(data.appointmentType)) {
+      if (!data.eventId) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `${data.appointmentType.toLowerCase()} requires event ID`,
+          path: ["eventId"],
+        });
       }
-      return true;
-    },
-    {
-      message: "Webinar and class appointments require event ID",
-      path: ["eventId"],
-    },
-  )
-  .refine(
-    (data) => {
-      // Ensure only one slot availability ID is provided
-      if (data.slotOfAvailabilityWeeklyId && data.slotOfAvailabilityCustomId) {
-        return false;
+    }
+
+    // === Cross-field validation ===
+
+    // Ensure only one type of slot availability ID
+    if (data.slotOfAvailabilityWeeklyId && data.slotOfAvailabilityCustomId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Cannot provide both weekly and custom slot availability IDs",
+        path: ["slotOfAvailabilityCustomId"],
+      });
+    }
+
+    // Validate slot timing order if both provided
+    if (data.slotStartTimeInUTC && data.slotEndTimeInUTC) {
+      const startTime = new Date(data.slotStartTimeInUTC);
+      const endTime = new Date(data.slotEndTimeInUTC);
+      if (startTime >= endTime) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Start time must be before end time",
+          path: ["slotEndTimeInUTC"],
+        });
       }
-      return true;
-    },
-    {
-      message: "Cannot provide both weekly and custom slot availability IDs",
-      path: ["slotOfAvailabilityCustomId"],
-    },
-  )
-  .refine(
-    (data) => {
-      // Validate slot timing if provided
-      if (data.slotStartTimeInUTC && data.slotEndTimeInUTC) {
-        return (
-          new Date(data.slotStartTimeInUTC) < new Date(data.slotEndTimeInUTC)
-        );
+    }
+
+    // Validate scheduling period order if both provided
+    if (data.schedulingPeriodStartsAt && data.schedulingPeriodEndsAt) {
+      const startDate = new Date(data.schedulingPeriodStartsAt);
+      const endDate = new Date(data.schedulingPeriodEndsAt);
+      if (startDate >= endDate) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Scheduling period start must be before end",
+          path: ["schedulingPeriodEndsAt"],
+        });
       }
-      return true;
-    },
-    {
-      message: "Start time must be before end time",
-      path: ["slotEndTimeInUTC"],
-    },
-  );
+    }
+  });
 
 // Payment intent metadata schema
 export const paymentMetadataSchema = z
