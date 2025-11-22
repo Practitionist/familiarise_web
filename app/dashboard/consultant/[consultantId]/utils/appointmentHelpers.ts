@@ -413,13 +413,7 @@ export const groupAppointmentsByType = (
     groups[type] = sortAppointmentsByStartTime(groups[type]);
   });
 
-  // Remove empty groups
-  Object.keys(groups).forEach((type) => {
-    if (groups[type].length === 0) {
-      delete groups[type];
-    }
-  });
-
+  // Keep empty groups to show all sections even when no appointments exist
   return groups;
 };
 

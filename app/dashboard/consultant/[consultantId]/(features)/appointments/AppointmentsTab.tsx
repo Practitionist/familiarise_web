@@ -171,6 +171,12 @@ export function AppointmentsTab({
   // Further group recurring appointments (subscriptions/classes) within each type
   const groupedAppointments = Object.entries(appointmentsByType).reduce(
     (acc, [type, typeAppointments]) => {
+      // If this type has no appointments, create an empty group to show the section
+      if (typeAppointments.length === 0) {
+        acc[`${type}-empty`] = [];
+        return acc;
+      }
+
       // For SUBSCRIPTION and CLASS types, further group by recurring sessions
       if (type === "SUBSCRIPTION" || type === "CLASS") {
         const recurringGroups = groupRecurringAppointments(typeAppointments);
@@ -242,17 +248,25 @@ export function AppointmentsTab({
                     </div>
                   )}
 
-                  {/* Existing appointment group card */}
-                  <div
-                    ref={(el) => {
-                      if (el) groupRefs.current.set(groupKey, el);
-                    }}
-                    className={`border rounded-lg overflow-hidden shadow-sm transition-all duration-300 ${
-                      highlightedGroup === groupKey
-                        ? "ring-4 ring-yellow-400 shadow-xl"
-                        : ""
-                    }`}
-                  >
+                  {/* Empty state for type with no appointments */}
+                  {groupAppointments.length === 0 ? (
+                    <div className="border rounded-lg p-8 bg-gray-50 text-center">
+                      <p className="text-gray-500 text-sm">
+                        No {getAppointmentTypeDisplayName(groupType).toLowerCase()} scheduled
+                      </p>
+                    </div>
+                  ) : (
+                    /* Existing appointment group card */
+                    <div
+                      ref={(el) => {
+                        if (el) groupRefs.current.set(groupKey, el);
+                      }}
+                      className={`border rounded-lg overflow-hidden shadow-sm transition-all duration-300 ${
+                        highlightedGroup === groupKey
+                          ? "ring-4 ring-yellow-400 shadow-xl"
+                          : ""
+                      }`}
+                    >
                 {/* Group Header */}
                 {isRecurring && (
                   <div className="bg-gray-50 p-4 border-b border-gray-200">
@@ -586,7 +600,8 @@ export function AppointmentsTab({
                     );
                   })()}
                 </ul>
-                  </div>
+                    </div>
+                  )}
                 </div>
               );
             },
