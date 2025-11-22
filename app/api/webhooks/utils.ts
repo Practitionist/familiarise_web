@@ -223,11 +223,22 @@ async function createSubscription(tx: Prisma.TransactionClient, data: any) {
   });
   if (!plan) throw new Error("Subscription plan not found");
 
-  const startDate = new Date();
-  const endDate = calculateSubscriptionEndDate(
-    startDate,
-    plan.durationInMonths,
-  );
+  // Check if this is a scheduling period request (no slots) or direct slot booking
+  const isSchedulingPeriodRequest =
+    data.schedulingPeriodStartsAt && data.schedulingPeriodEndsAt;
+
+  let startDate: Date;
+  let endDate: Date;
+
+  if (isSchedulingPeriodRequest) {
+    // Use provided scheduling period dates
+    startDate = new Date(data.schedulingPeriodStartsAt);
+    endDate = new Date(data.schedulingPeriodEndsAt);
+  } else {
+    // Calculate subscription period from current date
+    startDate = new Date();
+    endDate = calculateSubscriptionEndDate(startDate, plan.durationInMonths);
+  }
 
   const subscription = await tx.subscription.create({
     data: {
@@ -241,22 +252,38 @@ async function createSubscription(tx: Prisma.TransactionClient, data: any) {
     },
   });
 
-  return await tx.appointment.create({
-    data: {
-      appointmentType: AppointmentsType.SUBSCRIPTION,
-      subscriptionId: subscription.id,
-      slotsOfAppointment: {
-        create: {
-          startsAt: new Date(data.slotStartTimeInUTC),
-          endsAt: new Date(data.slotEndTimeInUTC),
-          isTentative: false,
+  // For scheduling period requests, create a placeholder appointment without slots
+  // Slots will be allocated manually by consultant via Requests tab
+  if (isSchedulingPeriodRequest) {
+    return await tx.appointment.create({
+      data: {
+        appointmentType: AppointmentsType.SUBSCRIPTION,
+        subscriptionId: subscription.id,
+        // No slots created - consultant will allocate them later
+      },
+      include: {
+        slotsOfAppointment: true,
+      },
+    });
+  } else {
+    // Direct slot booking: create appointment with slots
+    return await tx.appointment.create({
+      data: {
+        appointmentType: AppointmentsType.SUBSCRIPTION,
+        subscriptionId: subscription.id,
+        slotsOfAppointment: {
+          create: {
+            startsAt: new Date(data.slotStartTimeInUTC),
+            endsAt: new Date(data.slotEndTimeInUTC),
+            isTentative: false,
+          },
         },
       },
-    },
-    include: {
-      slotsOfAppointment: true,
-    },
-  });
+      include: {
+        slotsOfAppointment: true,
+      },
+    });
+  }
 }
 
 async function createWebinar(tx: Prisma.TransactionClient, data: any) {

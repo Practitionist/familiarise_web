@@ -909,11 +909,28 @@ export async function handleCheckout(
 
     console.log(logMessage);
 
+    // Step 4: For mock payments, create appointments immediately (direct booking)
+    if (isMockPayment) {
+      const { handlePaymentSuccess } = await import("@/app/api/webhooks/utils");
+      await handlePaymentSuccess(paymentResponse.id, {
+        appointmentType: validatedData.appointmentType,
+        planId: validatedData.planId,
+        slotStartTimeInUTC: validatedData.slotStartTimeInUTC || "",
+        slotEndTimeInUTC: validatedData.slotEndTimeInUTC || "",
+        schedulingPeriodStartsAt: validatedData.schedulingPeriodStartsAt || "",
+        schedulingPeriodEndsAt: validatedData.schedulingPeriodEndsAt || "",
+        notes: validatedData.notes || "",
+        ...(validatedData.eventId && { eventId: validatedData.eventId }),
+      });
+
+      console.log(`✅ Mock payment appointment created successfully for ${validatedData.appointmentType}`);
+    }
+
     return {
       success: true,
       paymentIntent: paymentResponse,
       message: isMockPayment
-        ? "Mock payment created successfully"
+        ? "Mock payment completed and appointment created successfully"
         : "Payment intent created. Complete payment to book appointment.",
       amount,
       currency,
