@@ -14,6 +14,54 @@ import {
 import { calculateSubscriptionEndDate } from "@/utils/dateUtils";
 
 // ============================================================================
+// Type Definitions
+// ============================================================================
+
+/**
+ * Payment type with user and consultee profile included
+ * Matches the Prisma query includes used in handlePaymentSuccess
+ */
+type PaymentWithUser = Prisma.PaymentGetPayload<{
+  include: {
+    user: {
+      include: { consulteeProfile: true };
+    };
+  };
+}>;
+
+/**
+ * Data required to create a consultation appointment
+ */
+interface ConsultationData {
+  planId: string;
+  slotStartTimeInUTC: string;
+  slotEndTimeInUTC: string;
+  notes?: string;
+  consulteeProfileId: string;
+}
+
+/**
+ * Data required to create a subscription appointment
+ */
+interface SubscriptionData {
+  planId: string;
+  slotStartTimeInUTC?: string;
+  slotEndTimeInUTC?: string;
+  schedulingPeriodStartsAt?: string;
+  schedulingPeriodEndsAt?: string;
+  notes?: string;
+  consulteeProfileId: string;
+}
+
+/**
+ * Data required to create webinar/class appointments
+ */
+interface EventData {
+  eventId: string;
+  userId: string;
+}
+
+// ============================================================================
 // Payment Success/Failure Handlers
 // ============================================================================
 
@@ -24,7 +72,7 @@ import { calculateSubscriptionEndDate } from "@/utils/dateUtils";
 export async function handlePaymentSuccess(
   paymentIntentId: string,
   metadata: Record<string, string>,
-) {
+): Promise<void> {
   return await prisma.$transaction(async (tx) => {
     const payment = await tx.payment.findUnique({
       where: { paymentIntent: paymentIntentId },
@@ -106,7 +154,7 @@ export async function handlePaymentFailure(paymentIntentId: string) {
 async function createAppointmentFromWebhook(
   tx: Prisma.TransactionClient,
   metadata: Record<string, string>,
-  payment: any,
+  payment: PaymentWithUser,
 ) {
   const {
     appointmentType,
@@ -171,7 +219,10 @@ async function createAppointmentFromWebhook(
 // Appointment Type-Specific Creation Functions
 // ============================================================================
 
-async function createConsultation(tx: Prisma.TransactionClient, data: any) {
+async function createConsultation(
+  tx: Prisma.TransactionClient,
+  data: ConsultationData,
+) {
   const consultation = await tx.consultation.create({
     data: {
       consultationPlanId: data.planId,
@@ -200,7 +251,10 @@ async function createConsultation(tx: Prisma.TransactionClient, data: any) {
   });
 }
 
-async function createSubscription(tx: Prisma.TransactionClient, data: any) {
+async function createSubscription(
+  tx: Prisma.TransactionClient,
+  data: SubscriptionData,
+) {
   const plan = await tx.subscriptionPlan.findUnique({
     where: { id: data.planId },
   });
@@ -214,9 +268,9 @@ async function createSubscription(tx: Prisma.TransactionClient, data: any) {
   let endDate: Date;
 
   if (isSchedulingPeriodRequest) {
-    // Use provided scheduling period dates
-    startDate = new Date(data.schedulingPeriodStartsAt);
-    endDate = new Date(data.schedulingPeriodEndsAt);
+    // Use provided scheduling period dates (safe to assert since checked above)
+    startDate = new Date(data.schedulingPeriodStartsAt!);
+    endDate = new Date(data.schedulingPeriodEndsAt!);
   } else {
     // Calculate subscription period from current date
     startDate = new Date();
@@ -261,7 +315,10 @@ async function createSubscription(tx: Prisma.TransactionClient, data: any) {
   });
 }
 
-async function createWebinar(tx: Prisma.TransactionClient, data: any) {
+async function createWebinar(
+  tx: Prisma.TransactionClient,
+  data: EventData,
+) {
   const webinar = await tx.webinar.findUnique({
     where: { id: data.eventId },
     include: { appointment: { include: { slotsOfAppointment: true } } },
@@ -302,7 +359,10 @@ async function createWebinar(tx: Prisma.TransactionClient, data: any) {
   return createdAppointment;
 }
 
-async function createClass(tx: Prisma.TransactionClient, data: any) {
+async function createClass(
+  tx: Prisma.TransactionClient,
+  data: EventData,
+) {
   const classInstance = await tx.class.findUnique({
     where: { id: data.eventId },
     include: { classPlan: true },
