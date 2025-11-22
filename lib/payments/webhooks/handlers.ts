@@ -290,7 +290,7 @@ async function createSubscription(
   });
 
   // Build appointment data conditionally based on scheduling approach
-  const appointmentData: any = {
+  const appointmentData: Prisma.AppointmentUncheckedCreateInput = {
     appointmentType: AppointmentsType.SUBSCRIPTION,
     subscriptionId: subscription.id,
   };
