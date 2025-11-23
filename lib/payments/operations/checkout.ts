@@ -55,7 +55,7 @@ type SubscriptionCheckoutResult = {
 function buildPaymentMetadata(
   data: CheckoutInput,
   userId: string,
-): { appointmentId: string; appointmentType: string; [key: string]: string } {
+): { appointmentId: string; appointmentType: string;[key: string]: string } {
   return {
     appointmentId: "pending",
     appointmentType: data.appointmentType,
@@ -862,7 +862,7 @@ export async function handleCheckout(
         paymentMethod: "CARD",
         paymentIntent: paymentResponse.id,
         paymentGateway: validatedData.paymentGateway,
-        paymentStatus: isMockPayment ? PaymentStatus.SUCCEEDED : PaymentStatus.PENDING,
+        paymentStatus: PaymentStatus.PENDING,
         isMockPayment,
         userId: userId,
         appointmentId: null, // Created after payment success
