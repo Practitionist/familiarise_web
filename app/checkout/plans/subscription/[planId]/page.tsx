@@ -125,9 +125,10 @@ export default function SubscriptionCheckoutPage({
         const checkoutData = createCheckoutData({
           appointmentType: "SUBSCRIPTION",
           planId: planData.data.id,
-          slotStartTimeInUTC:
+          schedulingPeriodStartsAt:
             searchParamsValidation.data.schedulingPeriodStartsAt,
-          slotEndTimeInUTC: searchParamsValidation.data.schedulingPeriodEndsAt,
+          schedulingPeriodEndsAt:
+            searchParamsValidation.data.schedulingPeriodEndsAt,
           discountCode: searchParamsValidation.data.discountCode,
           paymentGateway: gateway,
         });

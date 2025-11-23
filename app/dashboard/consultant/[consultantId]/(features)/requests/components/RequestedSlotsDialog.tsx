@@ -434,20 +434,24 @@ export function RequestedSlotsDialog({
             Cancel
           </Button>
 
-          {!hasConflicts &&
-            !hasOutsidePeriod &&
-            !loading &&
-            validationResult && (
-              <Button
-                variant={hasOutsideSlots ? "destructive" : "default"}
-                onClick={() => onConfirm(hasOutsideSlots)}
-                disabled={loading}
-              >
-                {hasOutsideSlots
-                  ? "Override and Allocate"
-                  : "Allocate Requested Times"}
-              </Button>
-            )}
+          <Button
+            variant={hasOutsideSlots ? "destructive" : "default"}
+            onClick={() => onConfirm(hasOutsideSlots)}
+            disabled={loading || hasConflicts || hasOutsidePeriod}
+            title={
+              hasConflicts
+                ? `Cannot allocate: ${conflicts.length} slot(s) have conflicts with existing appointments`
+                : hasOutsidePeriod
+                ? `Cannot allocate: ${outsidePeriod.length} slot(s) are outside the subscription scheduling period`
+                : hasOutsideSlots
+                ? `Warning: ${outsideAvailability.length} slot(s) are outside your regular availability. Click to override and allocate.`
+                : "Allocate all requested time slots"
+            }
+          >
+            {hasOutsideSlots
+              ? "Override and Allocate"
+              : "Allocate Requested Times"}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

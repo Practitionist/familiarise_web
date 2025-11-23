@@ -16,10 +16,62 @@ import {
   WebinarStatus,
 } from "@prisma/client";
 import { cancelPaymentIntent, createPaymentIntent } from "../index";
+import { handlePaymentSuccess } from "@/lib/payments/webhooks/handlers";
 
 // Re-export for backward compatibility
 export const unifiedCheckoutSchema = checkoutSchema;
 export type { CheckoutInput };
+
+// ============================================================================
+// Type Definitions
+// ============================================================================
+
+/**
+ * Unified return type for subscription checkout
+ * Simplified - no appointments created during checkout
+ * Consultant allocates all slots via Requests tab
+ */
+type SubscriptionCheckoutResult = {
+  plan: Prisma.SubscriptionPlanGetPayload<{
+    include: {
+      consultantProfile: {
+        include: { user: true };
+      };
+    };
+  }>;
+  amount: number;
+  subscription: Prisma.SubscriptionGetPayload<Record<string, never>>;
+  isSchedulingPeriodRequest: boolean;
+};
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+/**
+ * Build payment metadata for both payment intents and webhook handlers
+ * Ensures consistency between payment creation and mock payment flows
+ */
+function buildPaymentMetadata(
+  data: CheckoutInput,
+  userId: string,
+): { appointmentId: string; appointmentType: string;[key: string]: string } {
+  return {
+    appointmentId: "pending",
+    appointmentType: data.appointmentType,
+    userId: userId,
+    planId: data.planId,
+    slotStartTimeInUTC: data.slotStartTimeInUTC || "",
+    slotEndTimeInUTC: data.slotEndTimeInUTC || "",
+    slotOfAvailabilityWeeklyId: data.slotOfAvailabilityWeeklyId || "",
+    slotOfAvailabilityCustomId: data.slotOfAvailabilityCustomId || "",
+    schedulingPeriodStartsAt: data.schedulingPeriodStartsAt || "",
+    schedulingPeriodEndsAt: data.schedulingPeriodEndsAt || "",
+    discountCode: data.discountCode || "",
+    notes: data.notes || "",
+    ...(data.eventId && { eventId: data.eventId }),
+  };
+}
 
 // ============================================================================
 // Payment Intent Manager
@@ -485,7 +537,7 @@ export async function handleSubscriptionCheckout(
   data: CheckoutInput,
   consulteeProfileId: string,
   skipPayment: boolean,
-) {
+): Promise<SubscriptionCheckoutResult> {
   const plan = await tx.subscriptionPlan.findUnique({
     where: { id: data.planId },
     include: {
@@ -499,32 +551,23 @@ export async function handleSubscriptionCheckout(
     throw new Error("Subscription plan not found");
   }
 
-  // Validate slot availability
-  await validateSlotAvailability(tx, data, consulteeProfileId);
+  // Determine if this is a scheduling period request or direct slot booking
+  const isSchedulingPeriodRequest =
+    data.schedulingPeriodStartsAt && data.schedulingPeriodEndsAt;
 
-  // Calculate subscription dates
-  const startDate = new Date();
-  const endDate = calculateSubscriptionEndDate(
-    startDate,
-    plan.durationInMonths,
-  );
+  // Calculate subscription dates based on booking type
+  const startDate = isSchedulingPeriodRequest
+    ? new Date(data.schedulingPeriodStartsAt!)
+    : new Date();
+  const endDate = isSchedulingPeriodRequest
+    ? new Date(data.schedulingPeriodEndsAt!)
+    : calculateSubscriptionEndDate(startDate, plan.durationInMonths);
 
-  // Calculate total sessions for the subscription
-  const totalWeeks = Math.ceil(plan.durationInMonths * 4.33);
-  const totalSessions = totalWeeks * plan.callsPerWeek;
-
-  // Get first session timing
-  const firstSessionStart = new Date(data.slotStartTimeInUTC!);
-  const firstSessionEnd = new Date(data.slotEndTimeInUTC!);
-  const sessionDurationMs = firstSessionEnd.getTime() - firstSessionStart.getTime();
-
-  // Create subscription
+  // Create subscription only - consultant will allocate slots via Requests tab
   const subscription = await tx.subscription.create({
     data: {
       subscriptionPlanId: plan.id,
-      requestStatus: skipPayment
-        ? RequestStatus.APPROVED
-        : RequestStatus.PENDING,
+      requestStatus: skipPayment ? RequestStatus.APPROVED : RequestStatus.PENDING,
       requestedById: consulteeProfileId,
       requestNotes: data.notes,
       bookingSource: "DIRECT_CHECKOUT",
@@ -533,38 +576,12 @@ export async function handleSubscriptionCheckout(
     },
   });
 
-  // Create appointments for ALL recurring sessions
-  const appointments = [];
-  for (let i = 0; i < totalSessions; i++) {
-    // Calculate session date based on frequency
-    const sessionStart = new Date(firstSessionStart);
-    const weekOffset = Math.floor(i / plan.callsPerWeek);
-    sessionStart.setDate(sessionStart.getDate() + weekOffset * 7);
-
-    const sessionEnd = new Date(sessionStart.getTime() + sessionDurationMs);
-
-    const appointment = await tx.appointment.create({
-      data: {
-        appointmentType: AppointmentsType.SUBSCRIPTION,
-        subscriptionId: subscription.id,
-        slotsOfAppointment: {
-          create: {
-            startsAt: sessionStart,
-            endsAt: sessionEnd,
-            isTentative: !skipPayment,
-          },
-        },
-      },
-    });
-    appointments.push(appointment);
-  }
-
-  // Return the first appointment for compatibility
+  // Return subscription only - no appointments created during checkout
   return {
-    appointment: appointments[0],
+    subscription,
     plan,
     amount: plan.price,
-    totalAppointmentsCreated: appointments.length
+    isSchedulingPeriodRequest: !!isSchedulingPeriodRequest,
   };
 }
 
@@ -827,21 +844,7 @@ export async function handleCheckout(
     paymentResponse = await PaymentIntentManager.createWithCleanup({
       amount,
       currency,
-      metadata: {
-        appointmentId: "pending",
-        appointmentType: validatedData.appointmentType,
-        userId: userId,
-        planId: validatedData.planId,
-        slotStartTimeInUTC: validatedData.slotStartTimeInUTC || "",
-        slotEndTimeInUTC: validatedData.slotEndTimeInUTC || "",
-        slotOfAvailabilityWeeklyId:
-          validatedData.slotOfAvailabilityWeeklyId || "",
-        slotOfAvailabilityCustomId:
-          validatedData.slotOfAvailabilityCustomId || "",
-        discountCode: validatedData.discountCode || "",
-        notes: validatedData.notes || "",
-        ...(validatedData.eventId && { eventId: validatedData.eventId }),
-      },
+      metadata: buildPaymentMetadata(validatedData, userId),
       paymentGateway: validatedData.paymentGateway,
       isMockPayment,
     });
@@ -859,7 +862,7 @@ export async function handleCheckout(
         paymentMethod: "CARD",
         paymentIntent: paymentResponse.id,
         paymentGateway: validatedData.paymentGateway,
-        paymentStatus: isMockPayment ? PaymentStatus.SUCCEEDED : PaymentStatus.PENDING,
+        paymentStatus: PaymentStatus.PENDING,
         isMockPayment,
         userId: userId,
         appointmentId: null, // Created after payment success
@@ -874,11 +877,21 @@ export async function handleCheckout(
 
     console.log(logMessage);
 
+    // Step 4: For mock payments, create appointments immediately (direct booking)
+    if (isMockPayment) {
+      await handlePaymentSuccess(
+        paymentResponse.id,
+        buildPaymentMetadata(validatedData, userId),
+      );
+
+      console.log(`✅ Mock payment appointment created successfully for ${validatedData.appointmentType}`);
+    }
+
     return {
       success: true,
       paymentIntent: paymentResponse,
       message: isMockPayment
-        ? "Mock payment created successfully"
+        ? "Mock payment completed and appointment created successfully"
         : "Payment intent created. Complete payment to book appointment.",
       amount,
       currency,
