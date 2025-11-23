@@ -126,11 +126,11 @@ export async function GET() {
 
     return NextResponse.json({
       totalPayments,
-      totalPaymentsValue: `$${(paymentsAggregation._sum.amount || 0) / 100}`,
+      totalPaymentsValue: paymentsAggregation._sum.amount || 0,
       pendingPayments,
-      pendingPaymentsValue: `$${(pendingPaymentsAggregation._sum.amount || 0) / 100}`,
+      pendingPaymentsValue: pendingPaymentsAggregation._sum.amount || 0,
       totalRefunds,
-      totalRefundsValue: `$${(refundsAggregation._sum.amount || 0) / 100}`,
+      totalRefundsValue: refundsAggregation._sum.amount || 0,
       activeDisputes,
       totalDisputes,
       recentPayments,

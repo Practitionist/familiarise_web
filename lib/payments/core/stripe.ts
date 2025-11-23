@@ -186,9 +186,15 @@ export async function createStripeRefund({
   }
 
   try {
+    // Fetch the payment intent to get the currency
+    const paymentIntent = await stripeClient.paymentIntents.retrieve(
+      paymentIntentId,
+    );
+    const currency = paymentIntent.currency;
+
     const refund = await stripeClient.refunds.create({
       payment_intent: paymentIntentId,
-      amount: amount ? toSmallestUnit(amount, "USD") : undefined, // TODO: Get currency from payment
+      amount: amount ? toSmallestUnit(amount, currency) : undefined,
       reason: mapRefundReason(reason),
       metadata,
     });

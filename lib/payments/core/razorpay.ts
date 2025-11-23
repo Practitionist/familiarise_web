@@ -217,9 +217,10 @@ export async function getRazorpayRefund(
 
 /**
  * List all refunds for a payment
+ * Note: This function receives an orderId, not a paymentId
  */
 export async function listRazorpayRefunds(
-  paymentId: string,
+  orderId: string,
   limit: number = 10,
 ): Promise<RefundResult[]> {
   if (!razorpayClient) {
@@ -231,18 +232,22 @@ export async function listRazorpayRefunds(
   }
 
   try {
-    // Razorpay doesn't have a direct endpoint to list refunds by payment
-    // We need to fetch all refunds and filter manually
-    const refundsResponse = await razorpayClient.refunds.all({
-      count: 100, // Fetch more to filter
-    });
+    // First, get the payment ID from the order ID
+    const payments = await razorpayClient.orders.fetchPayments(orderId);
+    if (payments.count === 0) {
+      return []; // No payments for this order, so no refunds
+    }
+    const paymentId = payments.items[0].id;
 
-    // Filter refunds by payment ID
-    const filteredRefunds = refundsResponse.items
-      .filter((refund) => (refund as { payment_id?: string }).payment_id === paymentId)
-      .slice(0, limit);
+    // Fetch refunds for the specific payment using the SDK method
+    const refundsResponse = await razorpayClient.payments.fetchMultipleRefund(
+      paymentId,
+      {
+        count: limit,
+      },
+    );
 
-    return filteredRefunds.map((refund) => ({
+    return refundsResponse.items.map((refund) => ({
       refundId: refund.id,
       amount: fromSmallestUnit(
         Number(refund.amount),

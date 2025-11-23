@@ -2,6 +2,7 @@ import prisma from "../../../lib/prisma";
 import { Prisma } from "@prisma/client";
 import crypto from "crypto";
 import { stripeClient } from "@/lib/payments/core/stripe";
+import { razorpayClient } from "@/lib/payments/core/razorpay";
 
 // Re-export payment handlers from lib (architectural fix)
 export {
@@ -169,14 +170,23 @@ export async function handleDisputeCreated(
         console.error("Failed to retrieve charge:", error);
       }
     } else {
-      // For Razorpay, charge ID is the payment ID
-      payment = await tx.payment.findFirst({
-        where: {
-          paymentIntent: {
-            contains: chargeId,
-          },
-        },
-      });
+      // For Razorpay, chargeId is the payment_id. We need to fetch the payment
+      // from Razorpay to get the order_id, which is stored as our paymentIntent.
+      if (razorpayClient) {
+        try {
+          const rzpPayment = await razorpayClient.payments.fetch(chargeId);
+          if (rzpPayment.order_id) {
+            payment = await tx.payment.findUnique({
+              where: { paymentIntent: rzpPayment.order_id },
+            });
+          }
+        } catch (error) {
+          console.error(
+            `Failed to fetch Razorpay payment ${chargeId} to link dispute:`,
+            error,
+          );
+        }
+      }
     }
 
     if (!payment) {
