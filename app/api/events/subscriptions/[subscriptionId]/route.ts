@@ -1,7 +1,12 @@
 import prisma from "@/lib/prisma";
-import { AppointmentsType, Prisma, RequestStatus } from "@prisma/client";
+import { AppointmentsType, PaymentGateway, PaymentStatus, Prisma, RequestStatus } from "@prisma/client";
 import { addMonths, addWeeks, setHours, setMinutes } from "date-fns";
 import { NextRequest, NextResponse } from "next/server";
+import { createApprovalPaymentIntent } from "@/lib/payments/operations/approval-payment";
+import {
+  lockSubscriptionApproval,
+  unlockApproval,
+} from "@/utils/appointmentlock";
 
 export async function GET(
   request: Request,
@@ -303,18 +308,31 @@ export async function PATCH(
       existingSubscription.subscriptionPlan.durationInMonths,
     );
 
+    // LAYER 1: Distributed lock (only for APPROVED status changes)
+    let lock;
+    if (status === RequestStatus.APPROVED) {
+      try {
+        lock = await lockSubscriptionApproval(subscriptionId, 30000); // 30-second TTL
+      } catch (error) {
+        return NextResponse.json(
+          {
+            error:
+              error instanceof Error
+                ? error.message
+                : "Failed to acquire lock",
+          },
+          { status: 409 }, // Conflict - another approval in progress
+        );
+      }
+    }
+
     try {
-      // Wrap everything in a transaction
+      // LAYER 2: Serializable transaction with idempotency checks
       const result = await prisma.$transaction(
         async (tx) => {
-          // Update subscription status and dates
-          const subscription = await tx.subscription.update({
+          // Fetch current state inside transaction
+          const currentSubscription = await tx.subscription.findUnique({
             where: { id: subscriptionId },
-            data: {
-              requestStatus: status,
-              schedulingPeriodStartsAt: startDate,
-              schedulingPeriodEndsAt: endDate,
-            },
             include: {
               subscriptionPlan: {
                 include: {
@@ -342,26 +360,170 @@ export async function PATCH(
             },
           });
 
-          // If approved, create appointments
-          if (status === RequestStatus.APPROVED) {
-            await createAppointmentsForSubscription(subscription, tx);
+          if (!currentSubscription) {
+            throw new Error("Subscription not found");
           }
 
-          return subscription;
+          // IDEMPOTENCY: Check if already in target state or processing
+          if (status === RequestStatus.APPROVED) {
+            if (
+              currentSubscription.requestStatus ===
+              RequestStatus.APPROVED_PENDING_PAYMENT
+            ) {
+              // Already processing, return existing state
+              return {
+                data: currentSubscription,
+                message: "Approval already in progress",
+                duplicate: true,
+              };
+            }
+
+            if (currentSubscription.requestStatus === RequestStatus.APPROVED) {
+              return {
+                data: currentSubscription,
+                message: "Already approved",
+                duplicate: true,
+              };
+            }
+          }
+
+          // Update subscription status
+          const subscription = await tx.subscription.update({
+        where: { id: subscriptionId },
+        data: {
+          requestStatus: status,
+        },
+        include: {
+          subscriptionPlan: {
+            include: {
+              consultantProfile: {
+                include: {
+                  user: true,
+                },
+              },
+            },
+          },
+          requestedBy: {
+            include: {
+              user: true,
+            },
+          },
+          appointments: {
+            include: {
+              slotsOfAppointment: {
+                include: {
+                  user: true,
+                },
+              },
+            },
+          },
+        },
+      });
+
+          // If approved, check if payment exists
+          if (status === RequestStatus.APPROVED) {
+            const hasPayment = await checkSubscriptionPayment(subscription.id);
+
+            if (hasPayment) {
+              // Payment already exists - proceed with appointment creation
+              // Update scheduling dates
+              await tx.subscription.update({
+                where: { id: subscriptionId },
+                data: {
+                  schedulingPeriodStartsAt: startDate,
+                  schedulingPeriodEndsAt: endDate,
+                },
+              });
+
+              await createAppointmentsForSubscription(subscription, tx);
+              return { data: subscription, duplicate: false };
+            } else {
+              // No payment - generate payment link
+              const paymentResult = await generatePaymentLinkForSubscription(subscription);
+
+              // Update status to APPROVED_PENDING_PAYMENT
+              const updatedSubscription = await tx.subscription.update({
+                where: { id: subscriptionId },
+                data: {
+                  requestStatus: RequestStatus.APPROVED_PENDING_PAYMENT,
+                  requestNotes: subscription.requestNotes
+                    ? `${subscription.requestNotes}\n\n[System] Payment link generated: ${paymentResult.checkoutUrl}`
+                    : `[System] Payment link generated: ${paymentResult.checkoutUrl}`,
+                },
+                include: {
+                  subscriptionPlan: {
+                    include: {
+                      consultantProfile: {
+                        include: {
+                          user: true,
+                        },
+                      },
+                    },
+                  },
+                  requestedBy: {
+                    include: {
+                      user: true,
+                    },
+                  },
+                  appointments: {
+                    include: {
+                      slotsOfAppointment: {
+                        include: {
+                          user: true,
+                        },
+                      },
+                    },
+                  },
+                },
+              });
+
+              // TODO: Send email/notification to user with payment link
+              console.log(
+                `📧 Payment link generated for subscription ${subscription.id}: ${paymentResult.checkoutUrl}`,
+              );
+
+              return {
+                data: updatedSubscription,
+                message: "Subscription approved. Payment link sent to user.",
+                paymentUrl: paymentResult.checkoutUrl,
+                requiresPayment: true,
+                paymentAmount: paymentResult.amount,
+                paymentCurrency: paymentResult.currency,
+                duplicate: false,
+              };
+            }
+          }
+
+          return { data: subscription, duplicate: false };
         },
         {
-          maxWait: 10000, // 10s max wait time
-          timeout: 30000, // 30s timeout
+          isolationLevel: Prisma.TransactionIsolationLevel.Serializable, // LAYER 2: Highest isolation
+          maxWait: 10000, // 10 seconds
+          timeout: 30000, // 30 seconds
         },
       );
 
-      return NextResponse.json({ data: result });
+      // If duplicate, return early
+      if (result.duplicate) {
+        return NextResponse.json({
+          data: result.data,
+          message: result.message,
+        });
+      }
+
+      // Return success response
+      return NextResponse.json(result);
     } catch (error) {
       console.error(
         "Transaction error:",
         error instanceof Error ? error.message : "Unknown error",
       );
       throw error;
+    } finally {
+      // LAYER 1: Always release lock
+      if (lock) {
+        await unlockApproval(lock);
+      }
     }
   } catch (error) {
     console.error(
@@ -373,6 +535,48 @@ export async function PATCH(
       { status: 500 },
     );
   }
+}
+
+/**
+ * Check if payment exists for this subscription
+ */
+async function checkSubscriptionPayment(subscriptionId: string): Promise<boolean> {
+  const subscription = await prisma.subscription.findUnique({
+    where: { id: subscriptionId },
+    include: {
+      appointments: {
+        include: {
+          payment: {
+            where: {
+              paymentStatus: {
+                in: [PaymentStatus.SUCCEEDED, PaymentStatus.PENDING],
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+
+  return (subscription?.appointments?.some(apt => (apt.payment?.length ?? 0) > 0)) ?? false;
+}
+
+/**
+ * Generate payment link for approved subscription
+ */
+async function generatePaymentLinkForSubscription(subscription: any) {
+  const { subscriptionPlan, requestedBy } = subscription;
+
+  return await createApprovalPaymentIntent({
+    userId: requestedBy.user.id,
+    appointmentType: "SUBSCRIPTION",
+    subscriptionId: subscription.id,
+    planId: subscriptionPlan.id,
+    paymentGateway: PaymentGateway.STRIPE, // Default to Stripe, could be made configurable
+    schedulingPeriodStartsAt: subscription.schedulingPeriodStartsAt?.toISOString(),
+    schedulingPeriodEndsAt: subscription.schedulingPeriodEndsAt?.toISOString(),
+    notes: subscription.requestNotes,
+  });
 }
 
 async function createAppointmentsForSubscription(subscription: any, tx: any) {

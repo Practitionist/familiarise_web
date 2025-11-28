@@ -1,7 +1,18 @@
 import prisma from "@/lib/prisma";
-import { AppointmentsType, Prisma, RequestStatus } from "@prisma/client";
+import {
+  AppointmentsType,
+  PaymentGateway,
+  PaymentStatus,
+  Prisma,
+  RequestStatus,
+} from "@prisma/client";
 import { addHours } from "date-fns";
 import { NextRequest, NextResponse } from "next/server";
+import { createApprovalPaymentIntent } from "@/lib/payments/operations/approval-payment";
+import {
+  lockConsultationApproval,
+  unlockApproval,
+} from "@/utils/appointmentlock";
 
 export async function GET(
   request: Request,
@@ -296,9 +307,87 @@ export async function PATCH(
       );
     }
 
+    // LAYER 1: Distributed lock (only for APPROVED status changes)
+    let lock;
+    if (status === RequestStatus.APPROVED) {
+      try {
+        lock = await lockConsultationApproval(consultationId, 30000); // 30-second TTL
+      } catch (error) {
+        return NextResponse.json(
+          {
+            error:
+              error instanceof Error
+                ? error.message
+                : "Failed to acquire lock",
+          },
+          { status: 409 }, // Conflict - another approval in progress
+        );
+      }
+    }
+
     try {
-      // Update consultation status
-      const consultation = await prisma.consultation.update({
+      // LAYER 2: Serializable transaction with idempotency checks
+      const result = await prisma.$transaction(
+        async (tx) => {
+          // Fetch current state inside transaction
+          const currentConsultation = await tx.consultation.findUnique({
+            where: { id: consultationId },
+            include: {
+              consultationPlan: {
+                include: {
+                  consultantProfile: {
+                    include: {
+                      user: true,
+                    },
+                  },
+                },
+              },
+              requestedBy: {
+                include: {
+                  user: true,
+                },
+              },
+              appointment: {
+                include: {
+                  slotsOfAppointment: {
+                    include: {
+                      user: true,
+                    },
+                  },
+                },
+              },
+            },
+          });
+
+          if (!currentConsultation) {
+            throw new Error("Consultation not found");
+          }
+
+          // IDEMPOTENCY: Check if already in target state or processing
+          if (status === RequestStatus.APPROVED) {
+            if (
+              currentConsultation.requestStatus ===
+              RequestStatus.APPROVED_PENDING_PAYMENT
+            ) {
+              // Already processing, return existing state
+              return {
+                data: currentConsultation,
+                message: "Approval already in progress",
+                duplicate: true,
+              };
+            }
+
+            if (currentConsultation.requestStatus === RequestStatus.APPROVED) {
+              return {
+                data: currentConsultation,
+                message: "Already approved",
+                duplicate: true,
+              };
+            }
+          }
+
+          // Update consultation status
+          const consultation = await tx.consultation.update({
         where: { id: consultationId },
         data: {
           requestStatus: status,
@@ -330,18 +419,101 @@ export async function PATCH(
         },
       });
 
-      // If approved, create an appointment
-      if (status === RequestStatus.APPROVED) {
-        await createAppointmentForConsultation(consultation);
+          // If approved, check if payment exists
+          if (status === RequestStatus.APPROVED) {
+            const hasPayment = await checkConsultationPayment(consultation.id);
+
+            if (hasPayment) {
+              // Payment already exists - proceed with appointment creation
+              await createAppointmentForConsultation(consultation);
+              return { data: consultation, duplicate: false };
+            } else {
+              // No payment - generate payment link
+              const paymentResult = await generatePaymentLink(consultation);
+
+              // Update status to APPROVED_PENDING_PAYMENT
+              const updatedConsultation = await tx.consultation.update({
+                where: { id: consultationId },
+                data: {
+                  requestStatus: RequestStatus.APPROVED_PENDING_PAYMENT,
+                  requestNotes: consultation.requestNotes
+                    ? `${consultation.requestNotes}\n\n[System] Payment link generated: ${paymentResult.checkoutUrl}`
+                    : `[System] Payment link generated: ${paymentResult.checkoutUrl}`,
+                },
+                include: {
+                  consultationPlan: {
+                    include: {
+                      consultantProfile: {
+                        include: {
+                          user: true,
+                        },
+                      },
+                    },
+                  },
+                  requestedBy: {
+                    include: {
+                      user: true,
+                    },
+                  },
+                  appointment: {
+                    include: {
+                      slotsOfAppointment: {
+                        include: {
+                          user: true,
+                        },
+                      },
+                    },
+                  },
+                },
+              });
+
+              // TODO: Send email/notification to user with payment link
+              console.log(
+                `📧 Payment link generated for consultation ${consultation.id}: ${paymentResult.checkoutUrl}`,
+              );
+
+              return {
+                data: updatedConsultation,
+                message: "Consultation approved. Payment link sent to user.",
+                paymentUrl: paymentResult.checkoutUrl,
+                requiresPayment: true,
+                paymentAmount: paymentResult.amount,
+                paymentCurrency: paymentResult.currency,
+                duplicate: false,
+              };
+            }
+          }
+
+          return { data: consultation, duplicate: false };
+        },
+        {
+          isolationLevel: Prisma.TransactionIsolationLevel.Serializable, // LAYER 2: Highest isolation
+          maxWait: 10000, // 10 seconds
+          timeout: 30000, // 30 seconds
+        },
+      );
+
+      // If duplicate, return early
+      if (result.duplicate) {
+        return NextResponse.json({
+          data: result.data,
+          message: result.message,
+        });
       }
 
-      return NextResponse.json({ data: consultation });
+      // Return success response
+      return NextResponse.json(result);
     } catch (error) {
       console.error(
         "Transaction error:",
         error instanceof Error ? error.message : "Unknown error",
       );
       throw error;
+    } finally {
+      // LAYER 1: Always release lock
+      if (lock) {
+        await unlockApproval(lock);
+      }
     }
   } catch (error) {
     console.error(
@@ -353,6 +525,53 @@ export async function PATCH(
       { status: 500 },
     );
   }
+}
+
+/**
+ * Check if payment exists for this consultation
+ */
+async function checkConsultationPayment(consultationId: string): Promise<boolean> {
+  const consultation = await prisma.consultation.findUnique({
+    where: { id: consultationId },
+    include: {
+      appointment: {
+        include: {
+          payment: {
+            where: {
+              paymentStatus: {
+                in: [PaymentStatus.SUCCEEDED, PaymentStatus.PENDING],
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+
+  return (consultation?.appointment?.payment?.length ?? 0) > 0;
+}
+
+/**
+ * Generate payment link for approved consultation
+ */
+async function generatePaymentLink(consultation: any) {
+  const { consultationPlan, requestedBy, appointment } = consultation;
+
+  // Extract slot times if appointment/slots exist
+  const slot = appointment?.slotsOfAppointment?.[0];
+  const slotStartTimeInUTC = slot?.startsAt?.toISOString();
+  const slotEndTimeInUTC = slot?.endsAt?.toISOString();
+
+  return await createApprovalPaymentIntent({
+    userId: requestedBy.user.id,
+    appointmentType: "CONSULTATION",
+    consultationId: consultation.id,
+    planId: consultationPlan.id,
+    paymentGateway: PaymentGateway.STRIPE, // Default to Stripe, could be made configurable
+    slotStartTimeInUTC,
+    slotEndTimeInUTC,
+    notes: consultation.requestNotes,
+  });
 }
 
 async function createAppointmentForConsultation(consultation: any) {

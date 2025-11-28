@@ -12,6 +12,8 @@ import {
   RequestStatus,
 } from "@prisma/client";
 import { calculateSubscriptionEndDate } from "@/utils/dateUtils";
+import { validateWebhookMetadata } from "@/schemas/webhooks/metadata";
+import { ZodError } from "zod";
 
 // ============================================================================
 // Type Definitions
@@ -87,6 +89,41 @@ export async function handlePaymentSuccess(
 
     if (payment.paymentStatus === PaymentStatus.SUCCEEDED) {
       console.log(`Payment ${paymentIntentId} has already been processed.`);
+      return;
+    }
+
+    // VALIDATION: Check metadata before processing
+    try {
+      validateWebhookMetadata(metadata);
+    } catch (validationError) {
+      const errorMessage =
+        validationError instanceof ZodError
+          ? validationError.errors.map((e) => `${e.path.join(".")}: ${e.message}`).join("; ")
+          : validationError instanceof Error
+            ? validationError.message
+            : String(validationError);
+
+      console.error(
+        `❌ Metadata validation failed for payment ${paymentIntentId}:`,
+        errorMessage,
+      );
+
+      // Mark payment as succeeded but flag for manual review
+      await tx.payment.update({
+        where: { id: payment.id },
+        data: {
+          paymentStatus: PaymentStatus.SUCCEEDED,
+          // Store error in description for manual recovery
+          description: `Metadata validation failed: ${errorMessage}. Manual recovery required via admin panel.`,
+        },
+      });
+
+      // Alert for monitoring
+      console.error(
+        `⚠️ ALERT: Payment ${payment.id} succeeded but appointment creation blocked due to invalid metadata. User: ${payment.userId}`,
+      );
+
+      // Exit early - appointment not created, requires manual intervention
       return;
     }
 
@@ -421,16 +458,48 @@ async function confirmExistingAppointment(
   });
 
   if (appointment?.consultation) {
-    await tx.consultation.update({
+    const consultation = await tx.consultation.findUnique({
       where: { id: appointment.consultation.id },
-      data: { requestStatus: RequestStatus.APPROVED },
     });
+
+    // If status is APPROVED_PENDING_PAYMENT, confirm the appointment
+    if (consultation?.requestStatus === RequestStatus.APPROVED_PENDING_PAYMENT) {
+      await tx.consultation.update({
+        where: { id: appointment.consultation.id },
+        data: { requestStatus: RequestStatus.APPROVED },
+      });
+      console.log(
+        `✅ Consultation ${consultation.id} payment completed - moving from APPROVED_PENDING_PAYMENT to APPROVED`,
+      );
+    } else if (consultation?.requestStatus !== RequestStatus.APPROVED) {
+      // Only update if not already approved
+      await tx.consultation.update({
+        where: { id: appointment.consultation.id },
+        data: { requestStatus: RequestStatus.APPROVED },
+      });
+    }
   }
   if (appointment?.subscription) {
-    await tx.subscription.update({
+    const subscription = await tx.subscription.findUnique({
       where: { id: appointment.subscription.id },
-      data: { requestStatus: RequestStatus.APPROVED },
     });
+
+    // If status is APPROVED_PENDING_PAYMENT, confirm the appointment
+    if (subscription?.requestStatus === RequestStatus.APPROVED_PENDING_PAYMENT) {
+      await tx.subscription.update({
+        where: { id: appointment.subscription.id },
+        data: { requestStatus: RequestStatus.APPROVED },
+      });
+      console.log(
+        `✅ Subscription ${subscription.id} payment completed - moving from APPROVED_PENDING_PAYMENT to APPROVED`,
+      );
+    } else if (subscription?.requestStatus !== RequestStatus.APPROVED) {
+      // Only update if not already approved
+      await tx.subscription.update({
+        where: { id: appointment.subscription.id },
+        data: { requestStatus: RequestStatus.APPROVED },
+      });
+    }
   }
   if (appointment?.webinar) {
     await tx.webinar.update({

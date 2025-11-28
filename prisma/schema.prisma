@@ -460,6 +460,7 @@ model Subscription {
 enum RequestStatus {
   PENDING
   APPROVED
+  APPROVED_PENDING_PAYMENT // Approved by consultant but awaiting payment
   SCHEDULED
   REJECTED
   CANCELLED
