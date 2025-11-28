@@ -13,6 +13,7 @@ import {
   lockConsultationApproval,
   unlockApproval,
 } from "@/utils/appointmentlock";
+import { sendPaymentLinkEmail } from "@/lib/email";
 
 export async function GET(
   request: Request,
@@ -467,9 +468,22 @@ export async function PATCH(
                 },
               });
 
-              // TODO: Send email/notification to user with payment link
+              // Send payment link email to user
+              await sendPaymentLinkEmail({
+                email: updatedConsultation.requestedBy.user.email || "",
+                name: updatedConsultation.requestedBy.user.name || "User",
+                consultantName:
+                  updatedConsultation.consultationPlan.consultantProfile.user
+                    .name || "Consultant",
+                appointmentType: "consultation",
+                amount: paymentResult.amount,
+                currency: paymentResult.currency,
+                paymentUrl: paymentResult.checkoutUrl,
+                expiresAt: new Date(Date.now() + 48 * 60 * 60 * 1000),
+              });
+
               console.log(
-                `📧 Payment link generated for consultation ${consultation.id}: ${paymentResult.checkoutUrl}`,
+                `📧 Payment link email sent for consultation ${consultation.id}`,
               );
 
               return {

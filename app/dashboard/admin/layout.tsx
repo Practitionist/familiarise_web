@@ -13,6 +13,7 @@ import { UserRole } from "@prisma/client";
 const NAV_ITEMS = [
   { name: "Overview", path: "home", icon: "📊" },
   { name: "Payments", path: "payments", icon: "💳" },
+  { name: "Approval Payments", path: "approval-payments", icon: "⏳" },
   { name: "Refunds", path: "refunds", icon: "↩️" },
   { name: "Disputes", path: "disputes", icon: "⚠️" },
   { name: "Analytics", path: "analytics", icon: "📈" },

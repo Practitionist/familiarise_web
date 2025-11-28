@@ -14,6 +14,10 @@ import {
 import { calculateSubscriptionEndDate } from "@/utils/dateUtils";
 import { validateWebhookMetadata } from "@/schemas/webhooks/metadata";
 import { ZodError } from "zod";
+import {
+  sendPaymentSuccessEmail,
+  sendPaymentFailedEmail,
+} from "@/lib/email";
 
 // ============================================================================
 // Type Definitions
@@ -147,6 +151,14 @@ export async function handlePaymentSuccess(
 
     await confirmExistingAppointment(tx, appointment.id);
 
+    // Send payment success email
+    await sendPaymentSuccessNotification(
+      tx,
+      payment,
+      appointment.id,
+      metadata.appointmentType,
+    );
+
     console.log(
       `✅ Payment ${paymentIntentId} processed successfully. Appointment ID: ${appointment.id}`,
     );
@@ -178,6 +190,13 @@ export async function handlePaymentFailure(paymentIntentId: string) {
     if (payment.appointment) {
       await cleanupFailedPaymentAppointment(tx, payment.appointment.id);
     }
+
+    // Send payment failure email
+    await sendPaymentFailureNotification(tx, payment);
+
+    console.log(
+      `📧 Payment failure notification sent for payment ${paymentIntentId}`,
+    );
   });
 }
 
@@ -560,5 +579,216 @@ async function cleanupFailedPaymentAppointment(
         await tx.appointment.delete({ where: { id: appointmentId } });
       }
     }
+  }
+}
+
+// ============================================================================
+// Email Notification Helpers
+// ============================================================================
+
+/**
+ * Send payment success email notification
+ */
+async function sendPaymentSuccessNotification(
+  tx: Prisma.TransactionClient,
+  payment: PaymentWithUser,
+  appointmentId: string,
+  appointmentType: string,
+) {
+  try {
+    const appointment = await tx.appointment.findUnique({
+      where: { id: appointmentId },
+      include: {
+        consultation: {
+          include: {
+            consultationPlan: {
+              include: {
+                consultantProfile: {
+                  include: {
+                    user: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+        subscription: {
+          include: {
+            subscriptionPlan: {
+              include: {
+                consultantProfile: {
+                  include: {
+                    user: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!appointment) {
+      console.error(
+        `Cannot send payment success email: appointment ${appointmentId} not found`,
+      );
+      return;
+    }
+
+    let consultantName = "Consultant";
+    let amount = payment.amount;
+    let currency = payment.currency;
+
+    // Get consultant name based on appointment type
+    if (appointment.consultation?.consultationPlan?.consultantProfile?.user) {
+      consultantName =
+        appointment.consultation.consultationPlan.consultantProfile.user.name ||
+        "Consultant";
+    } else if (appointment.subscription?.subscriptionPlan?.consultantProfile?.user) {
+      consultantName =
+        appointment.subscription.subscriptionPlan.consultantProfile.user.name ||
+        "Consultant";
+    }
+
+    // Send email
+    await sendPaymentSuccessEmail({
+      email: payment.user.email || "",
+      name: payment.user.name || "User",
+      consultantName,
+      appointmentType:
+        appointmentType === "CONSULTATION" ? "consultation" : "subscription",
+      amount,
+      currency,
+      dashboardUrl: `${process.env.NEXT_PUBLIC_APP_URL}/dashboard`,
+    });
+
+    console.log(
+      `📧 Payment success email sent to ${payment.user.email} for ${appointmentType}`,
+    );
+  } catch (error) {
+    // Don't throw - email failures shouldn't block payment processing
+    console.error("Failed to send payment success email:", error);
+  }
+}
+
+/**
+ * Send payment failure email notification
+ */
+async function sendPaymentFailureNotification(
+  tx: Prisma.TransactionClient,
+  payment: Prisma.PaymentGetPayload<{
+    include: {
+      user: true;
+      appointment: {
+        include: {
+          consultation: {
+            include: {
+              consultationPlan: {
+                include: {
+                  consultantProfile: {
+                    include: {
+                      user: true;
+                    };
+                  };
+                };
+              };
+            };
+          };
+          subscription: {
+            include: {
+              subscriptionPlan: {
+                include: {
+                  consultantProfile: {
+                    include: {
+                      user: true;
+                    };
+                  };
+                };
+              };
+            };
+          };
+        };
+      };
+    };
+  }>,
+) {
+  try {
+    const appointment = await tx.appointment.findUnique({
+      where: { id: payment.appointmentId || "" },
+      include: {
+        consultation: {
+          include: {
+            consultationPlan: {
+              include: {
+                consultantProfile: {
+                  include: {
+                    user: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+        subscription: {
+          include: {
+            subscriptionPlan: {
+              include: {
+                consultantProfile: {
+                  include: {
+                    user: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!appointment) {
+      console.error(
+        `Cannot send payment failure email: appointment not found for payment ${payment.id}`,
+      );
+      return;
+    }
+
+    let consultantName = "Consultant";
+    let appointmentType: "consultation" | "subscription" = "consultation";
+    let retryUrl = `${process.env.NEXT_PUBLIC_APP_URL}/dashboard`;
+
+    // Get consultant name and appointment type
+    if (appointment.consultation?.consultationPlan?.consultantProfile?.user) {
+      consultantName =
+        appointment.consultation.consultationPlan.consultantProfile.user.name ||
+        "Consultant";
+      appointmentType = "consultation";
+      retryUrl = `${process.env.NEXT_PUBLIC_APP_URL}/consultations/${appointment.consultation.id}/payment`;
+    } else if (appointment.subscription?.subscriptionPlan?.consultantProfile?.user) {
+      consultantName =
+        appointment.subscription.subscriptionPlan.consultantProfile.user.name ||
+        "Consultant";
+      appointmentType = "subscription";
+      retryUrl = `${process.env.NEXT_PUBLIC_APP_URL}/subscriptions/${appointment.subscription.id}/payment`;
+    }
+
+    // Send email
+    await sendPaymentFailedEmail({
+      email: payment.user.email || "",
+      name: payment.user.name || "User",
+      consultantName,
+      appointmentType,
+      amount: payment.amount,
+      currency: payment.currency,
+      retryUrl,
+      failureReason: payment.description || "Payment could not be processed",
+      expiresAt: new Date(Date.now() + 48 * 60 * 60 * 1000), // 48 hours from now
+    });
+
+    console.log(
+      `📧 Payment failure email sent to ${payment.user.email} for ${appointmentType}`,
+    );
+  } catch (error) {
+    // Don't throw - email failures shouldn't block payment processing
+    console.error("Failed to send payment failure email:", error);
   }
 }

@@ -7,6 +7,7 @@ import {
   lockSubscriptionApproval,
   unlockApproval,
 } from "@/utils/appointmentlock";
+import { sendPaymentLinkEmail } from "@/lib/email";
 
 export async function GET(
   request: Request,
@@ -477,9 +478,22 @@ export async function PATCH(
                 },
               });
 
-              // TODO: Send email/notification to user with payment link
+              // Send payment link email to user
+              await sendPaymentLinkEmail({
+                email: updatedSubscription.requestedBy.user.email || "",
+                name: updatedSubscription.requestedBy.user.name || "User",
+                consultantName:
+                  updatedSubscription.subscriptionPlan.consultantProfile.user
+                    .name || "Consultant",
+                appointmentType: "subscription",
+                amount: paymentResult.amount,
+                currency: paymentResult.currency,
+                paymentUrl: paymentResult.checkoutUrl,
+                expiresAt: new Date(Date.now() + 48 * 60 * 60 * 1000),
+              });
+
               console.log(
-                `📧 Payment link generated for subscription ${subscription.id}: ${paymentResult.checkoutUrl}`,
+                `📧 Payment link email sent for subscription ${subscription.id}`,
               );
 
               return {
