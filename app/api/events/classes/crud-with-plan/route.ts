@@ -155,11 +155,14 @@ export async function POST(request: NextRequest) {
           schedulingPeriodStartsAt: start, // Will be undefined if not provided
           schedulingPeriodEndsAt: end, // Will be undefined if start is not provided
           classPlan: { connect: { id: classPlan.id } },
-          // Create initial appointments for the first month
+          // Create appointments for the full duration
           appointments: {
             // Only create appointments if startDate is defined
             create: start
-              ? Array.from({ length: callsPerWeek * 4 }).map((_, index) => {
+              ? Array.from({
+                  // Calculate total sessions based on duration
+                  length: Math.ceil(durationInMonths * 4.33) * callsPerWeek,
+                }).map((_, index) => {
                   const appointmentDate = new Date(start!);
                   appointmentDate.setDate(
                     appointmentDate.getDate() +

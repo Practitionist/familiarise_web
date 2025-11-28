@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   handlePaymentFailure,
   handlePaymentSuccess,
+  handleRefundCreated,
+  handleDisputeCreated,
+  handleDisputeUpdated,
   verifyWebhookSignature,
 } from "../utils";
 import {
@@ -34,7 +37,8 @@ export async function POST(req: NextRequest) {
     });
 
     switch (eventType) {
-      case "payment_intent.succeeded":
+      // Payment events
+      case "payment_intent.succeeded": {
         const succeededEvent =
           stripePaymentIntentSucceededEventSchema.parse(event);
         await handlePaymentSuccess(
@@ -42,11 +46,68 @@ export async function POST(req: NextRequest) {
           succeededEvent.data.object.metadata || {},
         );
         break;
+      }
 
-      case "payment_intent.payment_failed":
+      case "payment_intent.payment_failed": {
         const failedEvent = stripePaymentIntentFailedEventSchema.parse(event);
         await handlePaymentFailure(failedEvent.data.object.id);
         break;
+      }
+
+      // Refund events
+      case "charge.refunded": {
+        const refundEvent = event.data.object;
+        // Stripe includes refunds array in the charge object
+        if (refundEvent.refunds && refundEvent.refunds.data.length > 0) {
+          const latestRefund = refundEvent.refunds.data[0];
+          await handleRefundCreated(
+            latestRefund.id,
+            refundEvent.payment_intent || refundEvent.id,
+            latestRefund.amount,
+            latestRefund.currency.toUpperCase(),
+            latestRefund.status,
+            "STRIPE",
+          );
+        }
+        break;
+      }
+
+      // Dispute events
+      case "charge.dispute.created": {
+        const disputeCreatedEvent = event.data.object;
+        await handleDisputeCreated(
+          disputeCreatedEvent.id,
+          disputeCreatedEvent.charge,
+          disputeCreatedEvent.amount,
+          disputeCreatedEvent.currency.toUpperCase(),
+          disputeCreatedEvent.reason,
+          disputeCreatedEvent.status,
+          disputeCreatedEvent.evidence_details?.due_by || null,
+          disputeCreatedEvent.is_charge_refundable,
+          "STRIPE",
+        );
+        break;
+      }
+
+      case "charge.dispute.updated": {
+        const disputeUpdatedEvent = event.data.object;
+        await handleDisputeUpdated(
+          disputeUpdatedEvent.id,
+          disputeUpdatedEvent.status,
+          disputeUpdatedEvent.evidence || null,
+        );
+        break;
+      }
+
+      case "charge.dispute.closed": {
+        const disputeClosedEvent = event.data.object;
+        await handleDisputeUpdated(
+          disputeClosedEvent.id,
+          disputeClosedEvent.status,
+          null,
+        );
+        break;
+      }
 
       default:
         console.log(`📄 Unhandled Stripe event type: ${eventType}`);

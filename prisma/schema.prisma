@@ -776,6 +776,7 @@ model Payment {
   paymentGateway PaymentGateway
   paymentStatus  PaymentStatus
   expiresAt      DateTime? // For tracking payment intent expiration
+  isMockPayment  Boolean        @default(false) // For development: mock payments skip gateway calls
 
   user           User          @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   userId         String
@@ -784,10 +785,14 @@ model Payment {
   discountCode   DiscountCode? @relation(fields: [discountCodeId], references: [id], onUpdate: Cascade, onDelete: SetNull)
   discountCodeId String?
 
+  refunds  Refund[]  // Refunds associated with this payment
+  disputes Dispute[] // Disputes associated with this payment
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([expiresAt, paymentStatus])
+  @@index([isMockPayment])
 }
 
 enum PaymentGateway {
@@ -802,6 +807,69 @@ enum PaymentStatus {
   PENDING
   SUCCEEDED
   FAILED
+}
+
+model Refund {
+  id             String         @id @default(uuid())
+  amount         Int            // Amount refunded in smallest currency unit (e.g., cents for USD)
+  currency       String
+  reason         String?        // Reason for refund
+  status         RefundStatus
+  refundId       String         @unique // Gateway-specific refund ID (Stripe/Razorpay)
+  paymentGateway PaymentGateway
+  metadata       Json?          // Additional gateway-specific metadata
+
+  payment   Payment @relation(fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  paymentId String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([paymentId])
+  @@index([status])
+  @@index([refundId])
+}
+
+enum RefundStatus {
+  PENDING    // Refund initiated but not yet processed
+  SUCCEEDED  // Refund completed successfully
+  FAILED     // Refund failed
+  CANCELLED  // Refund cancelled
+}
+
+model Dispute {
+  id             String         @id @default(uuid())
+  amount         Int            // Disputed amount in smallest currency unit
+  currency       String
+  reason         String         // Dispute reason from gateway
+  status         DisputeStatus
+  disputeId      String         @unique // Gateway-specific dispute ID
+  paymentGateway PaymentGateway
+  evidence       Json?          // Evidence submitted to gateway
+  dueBy          DateTime?      // Deadline to respond to dispute
+  isChargeRefundable Boolean    @default(true)
+
+  payment   Payment @relation(fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  paymentId String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([paymentId])
+  @@index([status])
+  @@index([disputeId])
+  @@index([dueBy])
+}
+
+enum DisputeStatus {
+  WARNING_NEEDS_RESPONSE   // Early fraud warning, needs response
+  WARNING_UNDER_REVIEW     // Early fraud warning under review
+  WARNING_CLOSED           // Early fraud warning closed
+  NEEDS_RESPONSE           // Dispute filed, needs evidence
+  UNDER_REVIEW             // Evidence submitted, under review
+  CHARGE_REFUNDED          // Charge was refunded
+  WON                      // Dispute won
+  LOST                     // Dispute lost
 }
 
 model DiscountCode {

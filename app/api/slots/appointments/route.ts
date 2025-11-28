@@ -143,15 +143,27 @@ async function getAppointments(
 
   // Date range filtering for appointments. This is the primary filter.
   // It looks for appointments where any of its slots overlap with the given date range.
+  // Also includes appointments with no slots (they'll be shown but sorted to the end)
   if (startDate && endDate) {
-    whereClause.slotsOfAppointment = {
-      some: {
-        AND: [
-          { startsAt: { lt: new Date(endDate) } },
-          { endsAt: { gt: new Date(startDate) } },
-        ],
+    whereClause.OR = [
+      // Appointments with slots overlapping the date range
+      {
+        slotsOfAppointment: {
+          some: {
+            AND: [
+              { startsAt: { lt: new Date(endDate) } },
+              { endsAt: { gt: new Date(startDate) } },
+            ],
+          },
+        },
       },
-    };
+      // OR appointments with no slots at all
+      {
+        slotsOfAppointment: {
+          none: {},
+        },
+      },
+    ];
   }
 
   const userFilterClauses: Prisma.AppointmentWhereInput[] = [];
@@ -320,14 +332,18 @@ async function getAppointments(
   });
 
   // Sort appointments by slot start time
-  return appointments
-    .filter((appointment) => appointment.slotsOfAppointment?.length > 0)
-    .sort((a, b) => {
-      const aTime = a.slotsOfAppointment[0]?.startsAt;
-      const bTime = b.slotsOfAppointment[0]?.startsAt;
-      if (!aTime || !bTime) return 0;
-      return new Date(aTime).getTime() - new Date(bTime).getTime();
-    });
+  // Include appointments with 0 slots (push them to the end)
+  return appointments.sort((a, b) => {
+    const aTime = a.slotsOfAppointment?.[0]?.startsAt;
+    const bTime = b.slotsOfAppointment?.[0]?.startsAt;
+
+    // Appointments without slots go to the end
+    if (!aTime && !bTime) return 0;
+    if (!aTime) return 1;
+    if (!bTime) return -1;
+
+    return new Date(aTime).getTime() - new Date(bTime).getTime();
+  });
 }
 
 export async function POST(request: NextRequest) {
