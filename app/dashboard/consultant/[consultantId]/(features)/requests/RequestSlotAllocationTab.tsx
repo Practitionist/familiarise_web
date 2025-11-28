@@ -454,6 +454,18 @@ export function RequestSlotAllocationTab({
                         </div>
                       )}
                     </div>
+                  ) : request.type === AppointmentsType.SUBSCRIPTION &&
+                    request.startDate &&
+                    request.endDate ? (
+                    <div className="text-sm">
+                      <div className="font-medium text-blue-600">
+                        Scheduling Period
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        {request.startDate.toLocaleDateString()} -{" "}
+                        {request.endDate.toLocaleDateString()}
+                      </div>
+                    </div>
                   ) : (
                     <div className="text-sm text-muted-foreground">
                       Not available

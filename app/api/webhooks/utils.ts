@@ -1,14 +1,14 @@
 import prisma from "../../../lib/prisma";
-import {
-  AppointmentsType,
-  PaymentStatus,
-  Prisma,
-  RequestStatus,
-} from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import crypto from "crypto";
-import { stripeClient } from "../../../lib/payment";
-import Stripe from "stripe";
-import { calculateSubscriptionEndDate } from "@/utils/dateUtils";
+import { stripeClient } from "@/lib/payments/core/stripe";
+import { razorpayClient } from "@/lib/payments/core/razorpay";
+
+// Re-export payment handlers from lib (architectural fix)
+export {
+  handlePaymentSuccess,
+  handlePaymentFailure,
+} from "@/lib/payments/webhooks/handlers";
 
 // Generic webhook verification
 export async function verifyWebhookSignature(
@@ -52,374 +52,237 @@ export async function verifyWebhookSignature(
   }
 }
 
-// Shared payment success handler
-export async function handlePaymentSuccess(
+// ============================================================================
+// Refund Webhook Handlers
+// ============================================================================
+
+/**
+ * Handle refund created/processed event
+ */
+export async function handleRefundCreated(
+  refundId: string,
   paymentIntentId: string,
-  metadata: Record<string, string>,
+  amount: number,
+  currency: string,
+  status: string,
+  gateway: "STRIPE" | "RAZORPAY",
 ) {
   return await prisma.$transaction(async (tx) => {
+    // Find the payment
     const payment = await tx.payment.findUnique({
       where: { paymentIntent: paymentIntentId },
-      include: { user: { include: { consulteeProfile: true } } },
     });
 
     if (!payment) {
-      throw new Error(
-        `Payment record not found for intent: ${paymentIntentId}`,
-      );
-    }
-
-    if (payment.paymentStatus === PaymentStatus.SUCCEEDED) {
-      console.log(`Payment ${paymentIntentId} has already been processed.`);
+      console.warn(`Payment not found for refund: ${refundId}`);
       return;
     }
 
-    await tx.payment.update({
-      where: { id: payment.id },
-      data: { paymentStatus: PaymentStatus.SUCCEEDED },
+    // Check if refund already exists
+    const existingRefund = await tx.refund.findUnique({
+      where: { refundId },
     });
 
-    let appointment;
-    if (payment.appointmentId) {
-      appointment = await tx.appointment.findUnique({
-        where: { id: payment.appointmentId },
-      });
-    } else {
-      appointment = await createAppointmentFromWebhook(tx, metadata, payment);
-    }
-
-    if (!appointment) {
-      throw new Error("Failed to create or find appointment");
-    }
-
-    await confirmExistingAppointment(tx, appointment.id);
-
-    console.log(
-      `✅ Payment ${paymentIntentId} processed successfully. Appointment ID: ${appointment.id}`,
-    );
-  });
-}
-
-// Shared payment failure handler
-export async function handlePaymentFailure(paymentIntentId: string) {
-  return await prisma.$transaction(async (tx) => {
-    const payment = await tx.payment.findUnique({
-      where: { paymentIntent: paymentIntentId },
-      include: { appointment: true },
-    });
-
-    if (!payment) {
-      console.warn(
-        `Payment record not found for failed intent: ${paymentIntentId}`,
-      );
+    if (existingRefund) {
+      // Update status if changed
+      if (existingRefund.status !== status) {
+        await tx.refund.update({
+          where: { refundId },
+          data: {
+            status: mapRefundStatus(status),
+            updatedAt: new Date(),
+          },
+        });
+        console.log(`✅ Refund ${refundId} status updated to ${status}`);
+      }
       return;
     }
 
-    await tx.payment.update({
-      where: { id: payment.id },
-      data: { paymentStatus: PaymentStatus.FAILED },
-    });
-
-    if (payment.appointment) {
-      await cleanupFailedPaymentAppointment(tx, payment.appointment.id);
-    }
-  });
-}
-
-// Appointment creation logic
-async function createAppointmentFromWebhook(
-  tx: Prisma.TransactionClient,
-  metadata: Record<string, string>,
-  payment: any,
-) {
-  const {
-    appointmentType,
-    planId,
-    eventId,
-    slotStartTimeInUTC,
-    slotEndTimeInUTC,
-    notes,
-  } = metadata;
-
-  if (!payment.user.consulteeProfile) {
-    throw new Error("User profile not found for payment");
-  }
-
-  const consulteeProfileId = payment.user.consulteeProfile.id;
-  const userId = payment.user.id;
-
-  let appointment;
-
-  switch (appointmentType) {
-    case AppointmentsType.CONSULTATION:
-      appointment = await createConsultation(tx, {
-        planId,
-        slotStartTimeInUTC,
-        slotEndTimeInUTC,
-        notes,
-        consulteeProfileId,
-      });
-      break;
-    case AppointmentsType.SUBSCRIPTION:
-      appointment = await createSubscription(tx, {
-        planId,
-        slotStartTimeInUTC,
-        slotEndTimeInUTC,
-        notes,
-        consulteeProfileId,
-      });
-      break;
-    case AppointmentsType.WEBINAR:
-      appointment = await createWebinar(tx, { eventId, userId });
-      break;
-    case AppointmentsType.CLASS:
-      appointment = await createClass(tx, { eventId, userId });
-      break;
-    default:
-      throw new Error(`Unsupported appointment type: ${appointmentType}`);
-  }
-
-  await tx.payment.update({
-    where: { id: payment.id },
-    data: { appointmentId: appointment.id },
-  });
-
-  return appointment;
-}
-
-// Specific appointment creation functions
-async function createConsultation(tx: Prisma.TransactionClient, data: any) {
-  const consultation = await tx.consultation.create({
-    data: {
-      consultationPlanId: data.planId,
-      requestStatus: RequestStatus.PENDING,
-      requestedById: data.consulteeProfileId,
-      requestNotes: data.notes,
-      bookingSource: "DIRECT_CHECKOUT",
-    },
-  });
-
-  return await tx.appointment.create({
-    data: {
-      appointmentType: AppointmentsType.CONSULTATION,
-      consultationId: consultation.id,
-      slotsOfAppointment: {
-        create: {
-          startsAt: new Date(data.slotStartTimeInUTC),
-          endsAt: new Date(data.slotEndTimeInUTC),
-          isTentative: false,
-        },
-      },
-    },
-    include: {
-      slotsOfAppointment: true,
-    },
-  });
-}
-
-async function createSubscription(tx: Prisma.TransactionClient, data: any) {
-  const plan = await tx.subscriptionPlan.findUnique({
-    where: { id: data.planId },
-  });
-  if (!plan) throw new Error("Subscription plan not found");
-
-  const startDate = new Date();
-  const endDate = calculateSubscriptionEndDate(
-    startDate,
-    plan.durationInMonths,
-  );
-
-  const subscription = await tx.subscription.create({
-    data: {
-      subscriptionPlanId: data.planId,
-      requestStatus: RequestStatus.PENDING,
-      requestedById: data.consulteeProfileId,
-      requestNotes: data.notes,
-      bookingSource: "DIRECT_CHECKOUT",
-      schedulingPeriodStartsAt: startDate,
-      schedulingPeriodEndsAt: endDate,
-    },
-  });
-
-  return await tx.appointment.create({
-    data: {
-      appointmentType: AppointmentsType.SUBSCRIPTION,
-      subscriptionId: subscription.id,
-      slotsOfAppointment: {
-        create: {
-          startsAt: new Date(data.slotStartTimeInUTC),
-          endsAt: new Date(data.slotEndTimeInUTC),
-          isTentative: false,
-        },
-      },
-    },
-    include: {
-      slotsOfAppointment: true,
-    },
-  });
-}
-
-async function createWebinar(tx: Prisma.TransactionClient, data: any) {
-  const webinar = await tx.webinar.findUnique({
-    where: { id: data.eventId },
-    include: { appointment: { include: { slotsOfAppointment: true } } },
-  });
-  if (!webinar) throw new Error("Webinar not found");
-
-  let appointment = webinar.appointment;
-  if (!appointment) {
-    appointment = await tx.appointment.create({
+    // Create new refund record
+    await tx.refund.create({
       data: {
-        appointmentType: AppointmentsType.WEBINAR,
-        webinarId: webinar.id,
-      },
-      include: {
-        slotsOfAppointment: true,
+        amount,
+        currency,
+        status: mapRefundStatus(status),
+        refundId,
+        paymentGateway: gateway,
+        paymentId: payment.id,
       },
     });
-  }
 
-  await tx.slotOfAppointment.create({
-    data: {
-      appointmentId: appointment.id,
-      startsAt:
-        webinar.appointment?.slotsOfAppointment[0]?.startsAt || new Date(),
-      endsAt: webinar.appointment?.slotsOfAppointment[0]?.endsAt || new Date(),
-      isTentative: false,
-      user: { connect: { id: data.userId } },
-    },
+    console.log(`✅ Refund ${refundId} created for payment ${payment.id}`);
   });
-
-  const createdAppointment = await tx.appointment.findUnique({
-    where: { id: appointment.id },
-    include: { slotsOfAppointment: true },
-  });
-  if (!createdAppointment) {
-    throw new Error("Failed to fetch created appointment");
-  }
-  return createdAppointment;
 }
 
-async function createClass(tx: Prisma.TransactionClient, data: any) {
-  const classInstance = await tx.class.findUnique({
-    where: { id: data.eventId },
-    include: { classPlan: true },
-  });
-  if (!classInstance) throw new Error("Class not found");
-
-  const appointment = await tx.appointment.create({
-    data: {
-      appointmentType: AppointmentsType.CLASS,
-      classId: classInstance.id,
-      slotsOfAppointment: {
-        create: {
-          startsAt: classInstance.schedulingPeriodStartsAt || new Date(),
-          endsAt: classInstance.schedulingPeriodEndsAt || new Date(),
-          isTentative: false,
-          user: { connect: { id: data.userId } },
-        },
-      },
-    },
-  });
-
-  const createdAppointment = await tx.appointment.findUnique({
-    where: { id: appointment.id },
-    include: { slotsOfAppointment: true },
-  });
-  if (!createdAppointment) {
-    throw new Error("Failed to fetch created appointment");
+function mapRefundStatus(status: string): "PENDING" | "SUCCEEDED" | "FAILED" | "CANCELLED" {
+  switch (status.toLowerCase()) {
+    case "succeeded":
+    case "processed":
+      return "SUCCEEDED";
+    case "pending":
+      return "PENDING";
+    case "failed":
+      return "FAILED";
+    case "canceled":
+    case "cancelled":
+      return "CANCELLED";
+    default:
+      return "PENDING";
   }
-  return createdAppointment;
 }
 
-// Appointment confirmation
-async function confirmExistingAppointment(
-  tx: Prisma.TransactionClient,
-  appointmentId: string,
+// ============================================================================
+// Dispute Webhook Handlers
+// ============================================================================
+
+/**
+ * Handle dispute created event
+ */
+export async function handleDisputeCreated(
+  disputeId: string,
+  chargeId: string,
+  amount: number,
+  currency: string,
+  reason: string,
+  status: string,
+  dueBy: number | null,
+  isChargeRefundable: boolean,
+  gateway: "STRIPE" | "RAZORPAY",
 ) {
-  await tx.slotOfAppointment.updateMany({
-    where: { appointmentId },
-    data: { isTentative: false },
-  });
-
-  const appointment = await tx.appointment.findUnique({
-    where: { id: appointmentId },
-    include: {
-      consultation: true,
-      subscription: true,
-      webinar: true,
-      class: true,
-    },
-  });
-
-  if (appointment?.consultation) {
-    await tx.consultation.update({
-      where: { id: appointment.consultation.id },
-      data: { requestStatus: RequestStatus.APPROVED },
-    });
-  }
-  if (appointment?.subscription) {
-    await tx.subscription.update({
-      where: { id: appointment.subscription.id },
-      data: { requestStatus: RequestStatus.APPROVED },
-    });
-  }
-  if (appointment?.webinar) {
-    await tx.webinar.update({
-      where: { id: appointment.webinar.id },
-      data: { status: "SCHEDULED" },
-    });
-  }
-  if (appointment?.class) {
-    await tx.class.update({
-      where: { id: appointment.class.id },
-      data: { status: "SCHEDULED" },
-    });
-  }
-}
-
-// Cleanup for failed payments
-async function cleanupFailedPaymentAppointment(
-  tx: Prisma.TransactionClient,
-  appointmentId: string,
-) {
-  const appointment = await tx.appointment.findUnique({
-    where: { id: appointmentId },
-    include: {
-      slotsOfAppointment: true,
-      consultation: true,
-      subscription: true,
-    },
-  });
-
-  if (!appointment) return;
-
-  const tentativeSlots = appointment.slotsOfAppointment.filter(
-    (slot) => slot.isTentative,
-  );
-
-  if (tentativeSlots.length > 0) {
-    await tx.slotOfAppointment.deleteMany({
-      where: { appointmentId, isTentative: true },
-    });
-
-    if (appointment.consultation || appointment.subscription) {
-      const remainingSlots = await tx.slotOfAppointment.count({
-        where: { appointmentId },
-      });
-      if (remainingSlots === 0) {
-        if (appointment.consultation) {
-          await tx.consultation.delete({
-            where: { id: appointment.consultation.id },
+  return await prisma.$transaction(async (tx) => {
+    // Find payment by charge ID or payment intent
+    // For Stripe, we need to get the payment intent from the charge
+    let payment;
+    if (gateway === "STRIPE" && stripeClient) {
+      try {
+        const charge = await stripeClient.charges.retrieve(chargeId);
+        if (charge.payment_intent) {
+          payment = await tx.payment.findUnique({
+            where: {
+              paymentIntent:
+                typeof charge.payment_intent === "string"
+                  ? charge.payment_intent
+                  : charge.payment_intent.id,
+            },
           });
         }
-        if (appointment.subscription) {
-          await tx.subscription.delete({
-            where: { id: appointment.subscription.id },
-          });
+      } catch (error) {
+        console.error("Failed to retrieve charge:", error);
+      }
+    } else {
+      // For Razorpay, chargeId is the payment_id. We need to fetch the payment
+      // from Razorpay to get the order_id, which is stored as our paymentIntent.
+      if (razorpayClient) {
+        try {
+          const rzpPayment = await razorpayClient.payments.fetch(chargeId);
+          if (rzpPayment.order_id) {
+            payment = await tx.payment.findUnique({
+              where: { paymentIntent: rzpPayment.order_id },
+            });
+          }
+        } catch (error) {
+          console.error(
+            `Failed to fetch Razorpay payment ${chargeId} to link dispute:`,
+            error,
+          );
         }
-        await tx.appointment.delete({ where: { id: appointmentId } });
       }
     }
+
+    if (!payment) {
+      console.warn(`Payment not found for dispute: ${disputeId}`);
+      return;
+    }
+
+    // Check if dispute already exists
+    const existingDispute = await tx.dispute.findUnique({
+      where: { disputeId },
+    });
+
+    if (existingDispute) {
+      console.log(`Dispute ${disputeId} already exists`);
+      return;
+    }
+
+    // Create dispute record
+    await tx.dispute.create({
+      data: {
+        amount,
+        currency,
+        reason,
+        status: mapDisputeStatus(status),
+        disputeId,
+        paymentGateway: gateway,
+        dueBy: dueBy ? new Date(dueBy * 1000) : null,
+        isChargeRefundable,
+        paymentId: payment.id,
+      },
+    });
+
+    console.log(`✅ Dispute ${disputeId} created for payment ${payment.id}`);
+  });
+}
+
+/**
+ * Handle dispute updated event (status change, evidence submitted, etc.)
+ */
+export async function handleDisputeUpdated(
+  disputeId: string,
+  status: string,
+  evidence: Record<string, unknown> | null,
+) {
+  return await prisma.$transaction(async (tx) => {
+    const dispute = await tx.dispute.findUnique({
+      where: { disputeId },
+    });
+
+    if (!dispute) {
+      console.warn(`Dispute not found: ${disputeId}`);
+      return;
+    }
+
+    await tx.dispute.update({
+      where: { disputeId },
+      data: {
+        status: mapDisputeStatus(status),
+        ...(evidence && { evidence: evidence as Prisma.InputJsonValue }),
+        updatedAt: new Date(),
+      },
+    });
+
+    console.log(`✅ Dispute ${disputeId} updated to status ${status}`);
+  });
+}
+
+function mapDisputeStatus(
+  status: string,
+):
+  | "WARNING_NEEDS_RESPONSE"
+  | "WARNING_UNDER_REVIEW"
+  | "WARNING_CLOSED"
+  | "NEEDS_RESPONSE"
+  | "UNDER_REVIEW"
+  | "CHARGE_REFUNDED"
+  | "WON"
+  | "LOST" {
+  switch (status.toLowerCase()) {
+    case "warning_needs_response":
+      return "WARNING_NEEDS_RESPONSE";
+    case "warning_under_review":
+      return "WARNING_UNDER_REVIEW";
+    case "warning_closed":
+      return "WARNING_CLOSED";
+    case "needs_response":
+      return "NEEDS_RESPONSE";
+    case "under_review":
+      return "UNDER_REVIEW";
+    case "charge_refunded":
+      return "CHARGE_REFUNDED";
+    case "won":
+      return "WON";
+    case "lost":
+      return "LOST";
+    default:
+      return "NEEDS_RESPONSE";
   }
 }

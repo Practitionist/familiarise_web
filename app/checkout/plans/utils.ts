@@ -23,28 +23,28 @@ export function createHandleApiError(
 
     const errorMessages = {
       PAYMENT_CONFIG_ERROR: {
-        title: "Payment System Error",
-        description: "Payment system unavailable. Please contact support.",
+        title: "Payment System Unavailable",
+        description: "We're unable to connect to the payment system right now. This is a temporary issue on our end. Please try again in a few minutes, or contact support if the problem persists.",
       },
       PAYMENT_PROCESSING_ERROR: {
-        title: "Payment Error",
-        description: "Payment processing error. Please try again later.",
+        title: "Payment Could Not Be Processed",
+        description: "Your payment couldn't be completed. This could be due to insufficient funds, an invalid card, or a temporary bank issue. Please check your payment details and try again, or use a different payment method.",
       },
       DATABASE_ERROR: {
-        title: "System Error",
-        description: "System error. Please try again.",
+        title: "Unable to Save Your Booking",
+        description: "We encountered an issue while saving your information. Your payment has not been processed. Please refresh the page and try again. If this continues, contact support.",
       },
       NOT_FOUND_ERROR: {
-        title: "Not Found",
-        description: errorMessage,
+        title: "Booking Information Not Found",
+        description: errorMessage || "The item you're trying to book could not be found. It may have been removed or is no longer available. Please go back and select a different option.",
       },
       AVAILABILITY_ERROR: {
-        title: "Booking Unavailable",
-        description: errorMessage,
+        title: "No Longer Available",
+        description: errorMessage || "This booking is no longer available. Someone else may have just booked it, or the schedule has changed. Please go back and select a different time slot or option.",
       },
       UNKNOWN_ERROR: {
-        title: "Operation Failed",
-        description: errorMessage,
+        title: "Something Went Wrong",
+        description: errorMessage || "An unexpected error occurred while processing your request. Please try again. If the problem continues, take a screenshot of this message and contact support.",
       },
     };
 
@@ -63,13 +63,14 @@ export function createHandleApiError(
 // Common API request logic for checkout
 export async function makeCheckoutRequest(
   checkoutData: CheckoutInput,
+  isMockPayment: boolean = false,
 ): Promise<Response> {
   return fetch("/api/checkout", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify(checkoutData),
+    body: JSON.stringify({ ...checkoutData, isMockPayment }),
   });
 }
 
@@ -78,25 +79,29 @@ export function createHandleCheckoutSuccess(
   toast: ReturnType<typeof useToast>["toast"],
   appointmentType: "CONSULTATION" | "WEBINAR" | "CLASS" | "SUBSCRIPTION",
 ) {
-  return (data: any, isDevMode: boolean = false) => {
+  return (data: any, isDevMode: boolean = false, isMockPayment: boolean = false) => {
     const typeMessages = {
       CONSULTATION: {
         dev: "Your consultation has been confirmed. Check your dashboard for details.",
+        mock: "Mock payment processed. Your consultation has been confirmed. Check your dashboard for details.",
         prod: "Redirecting to secure payment gateway. Complete your payment to confirm the consultation.",
         successTitle: "✅ Consultation Booked Successfully!",
       },
       WEBINAR: {
         dev: "You're registered for the webinar. Check your dashboard for details.",
+        mock: "Mock payment processed. Your webinar has been confirmed. Check your dashboard for details.",
         prod: "Redirecting to secure payment gateway. Complete your payment to confirm the registration.",
-        successTitle: "✅ Webinar Registration Successful!",
+        successTitle: "✅ Webinar Booked Successfully!",
       },
       CLASS: {
         dev: "You're registered for the class. Check your dashboard for details.",
+        mock: "Mock payment processed. Your class has been confirmed. Check your dashboard for details.",
         prod: "Redirecting to secure payment gateway. Complete your payment to confirm the registration.",
-        successTitle: "✅ Class Registration Successful!",
+        successTitle: "✅ Class Booked Successfully!",
       },
       SUBSCRIPTION: {
         dev: "Your subscription has been activated. Check your dashboard for details.",
+        mock: "Mock payment processed. Your subscription has been activated. Check your dashboard for details.",
         prod: "Redirecting to secure payment gateway. Complete your payment to activate the subscription.",
         successTitle: "✅ Subscription Activated Successfully!",
       },
@@ -104,19 +109,21 @@ export function createHandleCheckoutSuccess(
 
     const messages = typeMessages[appointmentType];
 
-    if (isDevMode) {
-      // Development mode - direct booking success
+    if (isDevMode || isMockPayment) {
+      // Development mode or mock payment - direct booking success
       toast({
         title: messages.successTitle,
-        description: data.skipPayment
-          ? messages.dev
-          : `Payment processed successfully. ${messages.dev}`,
+        description: isMockPayment
+          ? messages.mock
+          : data.skipPayment
+            ? messages.dev
+            : `Payment processed successfully. ${messages.dev}`,
         variant: "default",
       });
 
       // Redirect after a short delay
       setTimeout(() => {
-        window.location.href = "/dashboard/consultee";
+        window.location.href = "/dashboard";
       }, 2000);
     } else {
       // Production mode - payment initiated success
@@ -129,14 +136,15 @@ export function createHandleCheckoutSuccess(
   };
 }
 
-// Production workflow - payment gateway processing
-export async function handleProductionCheckout(
+// Unified workflow - payment gateway processing with mock payment support
+export async function handleUnifiedCheckout(
   checkoutData: CheckoutInput,
   gateway: PaymentGateway,
   handleApiError: (errorData: any) => void,
-  handleCheckoutSuccess: (data: any, isDevMode?: boolean) => void,
+  handleCheckoutSuccess: (data: any, isDevMode?: boolean, isMockPayment?: boolean) => void,
+  isMockPayment: boolean = false,
 ): Promise<void> {
-  const response = await makeCheckoutRequest(checkoutData);
+  const response = await makeCheckoutRequest(checkoutData, isMockPayment);
 
   if (!response.ok) {
     const errorData = await response.json();
@@ -156,36 +164,42 @@ export async function handleProductionCheckout(
   const data = validationResult.data;
 
   if (data.success) {
-    // Show success toast before redirecting
-    handleCheckoutSuccess(data, false);
+    // Check if this is a mock payment or skip payment scenario
+    if (data.skipPayment || isMockPayment) {
+      // Mock payment or dev mode - direct success
+      handleCheckoutSuccess(data, data.skipPayment, isMockPayment);
+    } else {
+      // Show success toast before redirecting
+      handleCheckoutSuccess(data, false, false);
 
-    // Small delay to let user see the toast before redirect
-    setTimeout(async () => {
-      // Handle gateway-specific responses
-      switch (gateway) {
-        case "STRIPE":
-          const stripeInstance = await loadStripe(
-            process.env.NEXT_PUBLIC_STRIPE_KEY!,
-          );
-          if (!stripeInstance) {
-            throw new Error("Failed to load Stripe");
-          }
-          await stripeInstance.confirmPayment({
-            clientSecret: data.clientSecret!,
-            confirmParams: {
-              return_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout/checkout-success`,
-            },
-          });
-          break;
+      // Small delay to let user see the toast before redirect
+      setTimeout(async () => {
+        // Handle gateway-specific responses
+        switch (gateway) {
+          case "STRIPE":
+            const stripeInstance = await loadStripe(
+              process.env.NEXT_PUBLIC_STRIPE_KEY!,
+            );
+            if (!stripeInstance) {
+              throw new Error("Failed to load Stripe");
+            }
+            await stripeInstance.confirmPayment({
+              clientSecret: data.clientSecret!,
+              confirmParams: {
+                return_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout/checkout-success`,
+              },
+            });
+            break;
 
-        case "LEMON_SQUEEZY":
-        case "XFLOW":
-          if (data.checkoutUrl) {
-            window.location.href = data.checkoutUrl;
-          }
-          break;
-      }
-    }, 1000);
+          case "LEMON_SQUEEZY":
+          case "XFLOW":
+            if (data.checkoutUrl) {
+              window.location.href = data.checkoutUrl;
+            }
+            break;
+        }
+      }, 1000);
+    }
   } else {
     handleApiError({ error: data.error, errorType: data.errorType });
   }
@@ -223,14 +237,26 @@ export function createStripeCheckoutHandlers(
     onPaymentSuccess: (response: any) => {
       toast({
         title: "Payment Successful",
-        description: "Redirecting to success page...",
+        description: "Your payment has been confirmed! Redirecting to your confirmation page...",
       });
       window.location.href = "/checkout/checkout-success";
     },
     onPaymentError: (error: any) => {
+      const errorMessage = error.message || error.code || "An unexpected error occurred";
+      const userFriendlyMessage =
+        errorMessage.includes("card") || errorMessage.includes("payment_method")
+          ? "Your card was declined. Please check your card details or try a different payment method."
+          : errorMessage.includes("insufficient")
+          ? "Your card has insufficient funds. Please use a different card or payment method."
+          : errorMessage.includes("expired")
+          ? "Your card has expired. Please use a different card."
+          : errorMessage.includes("network")
+          ? "Connection error. Please check your internet connection and try again."
+          : `Payment failed: ${errorMessage}. Please try again or contact your bank if the problem persists.`;
+
       toast({
         title: "Payment Failed",
-        description: error.message || "An unknown error occurred",
+        description: userFriendlyMessage,
         variant: "destructive",
       });
     },
@@ -245,14 +271,28 @@ export function createRazorpayCheckoutHandlers(
     onPaymentSuccess: (response: { razorpay_payment_id: string }) => {
       toast({
         title: "Payment Successful",
-        description: `Payment ID: ${response.razorpay_payment_id}`,
+        description: `Your payment has been confirmed! Payment ID: ${response.razorpay_payment_id}. Redirecting to your dashboard...`,
       });
-      window.location.href = "/dashboard/consultee";
+      window.location.href = "/dashboard";
     },
-    onPaymentError: (error: { description: string }) => {
+    onPaymentError: (error: { description: string; code?: string; reason?: string }) => {
+      const errorDescription = error.description || error.reason || "An unexpected error occurred";
+      const userFriendlyMessage =
+        errorDescription.includes("payment failed") || errorDescription.includes("declined")
+          ? "Your payment was declined by the bank. Please check your payment details or try a different payment method."
+          : errorDescription.includes("cancelled") || errorDescription.includes("canceled")
+          ? "Payment was cancelled. You can try again when you're ready."
+          : errorDescription.includes("insufficient")
+          ? "Insufficient funds in your account. Please use a different payment method."
+          : errorDescription.includes("timeout") || errorDescription.includes("network")
+          ? "Payment timed out due to a connection issue. Please check your internet and try again."
+          : errorDescription.includes("invalid")
+          ? "Invalid payment details. Please check your information and try again."
+          : `${errorDescription}. Please try again or contact your bank for assistance.`;
+
       toast({
         title: "Payment Failed",
-        description: error.description || "An unknown error occurred",
+        description: userFriendlyMessage,
         variant: "destructive",
       });
     },

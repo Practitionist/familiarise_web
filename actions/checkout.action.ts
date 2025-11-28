@@ -1,16 +1,14 @@
 "use server";
 
-import { getServerSession } from "next-auth";
 import authOptions from "@/app/api/auth/[...nextauth]/options";
-import { checkoutSchema, CheckoutInput } from "@/schemas/checkout";
-import {
-  handleDevelopmentCheckout,
-  handleProductionCheckout,
-} from "@/utils/payments";
+import { handleCheckout } from "@/lib/payments/operations/checkout";
+import { CheckoutInput, checkoutSchema } from "@/schemas/checkout";
+import { getServerSession } from "next-auth";
 
-// Schema and types are now imported from utils/payments.ts
-
-export async function checkoutAction(data: CheckoutInput) {
+export async function checkoutAction(
+  data: CheckoutInput,
+  isMockPayment: boolean = false,
+) {
   try {
     // Check authentication
     const session = await getServerSession(authOptions);
@@ -21,16 +19,9 @@ export async function checkoutAction(data: CheckoutInput) {
     // Validate input
     const validatedData = checkoutSchema.parse(data);
 
-    // Check if payment should be skipped
-    const skipPayment = process.env.SKIP_PAYMENT === "true";
-
-    if (skipPayment) {
-      // DEVELOPMENT FLOW: Create appointment first, then skip payment
-      return await handleDevelopmentCheckout(validatedData, session.user.id);
-    } else {
-      // PRODUCTION FLOW: Create payment first, then appointment
-      return await handleProductionCheckout(validatedData, session.user.id);
-    }
+    // Unified checkout flow: Create payment first, then appointment via webhook
+    // Supports both real and mock payments via isMockPayment flag
+    return await handleCheckout(validatedData, session.user.id, isMockPayment);
   } catch (error) {
     console.error("Checkout error:", error);
     return {

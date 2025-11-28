@@ -75,18 +75,21 @@ export default function SubscriptionCheckoutPage({
   const razorpayHandlers = createRazorpayCheckoutHandlers(toast);
 
   // Common API request logic
-  const makeCheckoutRequest = async (checkoutData: CheckoutInput) => {
+  const makeCheckoutRequest = async (
+    checkoutData: CheckoutInput,
+    isMockPayment: boolean = false,
+  ) => {
     return fetch("/api/checkout", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(checkoutData),
+      body: JSON.stringify({ ...checkoutData, isMockPayment }),
     });
   };
 
   const handleCheckout = useCallback(
-    async (gateway: PaymentGateway) => {
+    async (gateway: PaymentGateway, isMockPayment: boolean = false) => {
       // Prevent double-clicks and multiple simultaneous requests
       if (isCheckoutProcessing) {
         return;
@@ -95,7 +98,7 @@ export default function SubscriptionCheckoutPage({
       try {
         // Set loading state
         setIsCheckoutProcessing(true);
-        setProcessingGateway(gateway);
+        setProcessingGateway(`${gateway}-${isMockPayment ? "mock" : "real"}`);
 
         // Validate search params using the shared schema
         const searchParamsValidation =
@@ -122,15 +125,16 @@ export default function SubscriptionCheckoutPage({
         const checkoutData = createCheckoutData({
           appointmentType: "SUBSCRIPTION",
           planId: planData.data.id,
-          slotStartTimeInUTC:
+          schedulingPeriodStartsAt:
             searchParamsValidation.data.schedulingPeriodStartsAt,
-          slotEndTimeInUTC: searchParamsValidation.data.schedulingPeriodEndsAt,
+          schedulingPeriodEndsAt:
+            searchParamsValidation.data.schedulingPeriodEndsAt,
           discountCode: searchParamsValidation.data.discountCode,
           paymentGateway: gateway,
         });
 
         // Make API call - backend decides dev vs prod flow
-        const response = await makeCheckoutRequest(checkoutData);
+        const response = await makeCheckoutRequest(checkoutData, isMockPayment);
 
         if (!response.ok) {
           const errorData = await response.json();
@@ -151,18 +155,19 @@ export default function SubscriptionCheckoutPage({
 
         // Handle response based on what backend returns
         if (data.success) {
-          if (data.skipPayment) {
-            // Development mode - direct subscription success
+          if (data.skipPayment || data.isMockPayment) {
+            // Development mode or mock payment - direct subscription success
             toast({
               title: "✅ Subscription Activated Successfully!",
-              description:
-                "Your subscription is now active. Check your dashboard for details.",
+              description: data.isMockPayment
+                ? "Mock payment processed. Your subscription is now active. Check your dashboard for details."
+                : "Your subscription is now active. Check your dashboard for details.",
               variant: "default",
             });
 
             // Redirect after a short delay
             setTimeout(() => {
-              window.location.href = "/dashboard/consultee";
+              window.location.href = "/dashboard";
             }, 2000);
           } else {
             // Production mode - payment initiated success
@@ -464,10 +469,36 @@ export default function SubscriptionCheckoutPage({
             </div>
           </div>
           {/* Payment Gateway Cards */}
-          {paymentGateways.map((gateway) => (
+          {/* Priority Gateways: Stripe and Razorpay with Real + Mock Payment */}
+          {[
+            {
+              name: "Stripe",
+              description: "International payments in USD",
+              gateway: "STRIPE" as const,
+              isActive: true,
+            },
+            {
+              name: "Razorpay",
+              description: "Indian payments in INR",
+              gateway: "RAZORPAY" as const,
+              isActive: true,
+            },
+            {
+              name: "Lemon Squeezy",
+              description: "Global payments in USD (Coming Soon)",
+              gateway: "LEMON_SQUEEZY" as const,
+              isActive: false,
+            },
+            {
+              name: "Xflow",
+              description: "Secure payments in USD (Coming Soon)",
+              gateway: "XFLOW" as const,
+              isActive: false,
+            },
+          ].map((gateway) => (
             <Card
               key={gateway.gateway}
-              className="p-4 hover:shadow-md transition-shadow cursor-pointer"
+              className="p-4 hover:shadow-md transition-shadow"
             >
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm font-medium flex items-center gap-2">
@@ -479,52 +510,62 @@ export default function SubscriptionCheckoutPage({
                 <p className="text-xs text-gray-600 mb-4">
                   {gateway.description}
                 </p>
-                <div className="flex justify-center">
-                  {gateway.gateway === "STRIPE" ? (
-                    <StripeCheckout
-                      checkoutData={createCheckoutData({
-                        appointmentType: "SUBSCRIPTION",
-                        planId: planData?.data?.id || "",
-                        paymentGateway: "STRIPE",
-                        discountCode: Array.isArray(
-                          resolvedSearchParams.discountCode,
-                        )
-                          ? resolvedSearchParams.discountCode[0]
-                          : resolvedSearchParams.discountCode,
-                      })}
-                      onPaymentSuccess={stripeHandlers.onPaymentSuccess}
-                      onPaymentError={stripeHandlers.onPaymentError}
-                    />
-                  ) : gateway.gateway === "RAZORPAY" ? (
-                    <RazorpayCheckout
-                      checkoutData={createCheckoutData({
-                        appointmentType: "SUBSCRIPTION",
-                        planId: planData?.data?.id || "",
-                        paymentGateway: "RAZORPAY",
-                        discountCode: Array.isArray(
-                          resolvedSearchParams.discountCode,
-                        )
-                          ? resolvedSearchParams.discountCode[0]
-                          : resolvedSearchParams.discountCode,
-                      })}
-                      onPaymentSuccess={razorpayHandlers.onPaymentSuccess}
-                      onPaymentError={razorpayHandlers.onPaymentError}
-                    />
+                <div className="flex justify-center gap-2">
+                  {gateway.isActive ? (
+                    <>
+                      {/* Real Payment Button */}
+                      {gateway.gateway === "STRIPE" ? (
+                        <StripeCheckout
+                          checkoutData={createCheckoutData({
+                            appointmentType: "SUBSCRIPTION",
+                            planId: planData?.data?.id || "",
+                            paymentGateway: "STRIPE",
+                            discountCode: Array.isArray(
+                              resolvedSearchParams.discountCode,
+                            )
+                              ? resolvedSearchParams.discountCode[0]
+                              : resolvedSearchParams.discountCode,
+                          })}
+                          onPaymentSuccess={stripeHandlers.onPaymentSuccess}
+                          onPaymentError={stripeHandlers.onPaymentError}
+                        />
+                      ) : gateway.gateway === "RAZORPAY" ? (
+                        <RazorpayCheckout
+                          checkoutData={createCheckoutData({
+                            appointmentType: "SUBSCRIPTION",
+                            planId: planData?.data?.id || "",
+                            paymentGateway: "RAZORPAY",
+                            discountCode: Array.isArray(
+                              resolvedSearchParams.discountCode,
+                            )
+                              ? resolvedSearchParams.discountCode[0]
+                              : resolvedSearchParams.discountCode,
+                          })}
+                          onPaymentSuccess={razorpayHandlers.onPaymentSuccess}
+                          onPaymentError={razorpayHandlers.onPaymentError}
+                        />
+                      ) : null}
+                      {/* Mock Payment Button */}
+                      <Button
+                        variant="secondary"
+                        onClick={() => handleCheckout(gateway.gateway, true)}
+                        disabled={isCheckoutProcessing}
+                      >
+                        {isCheckoutProcessing &&
+                        processingGateway === `${gateway.gateway}-mock` ? (
+                          <>
+                            <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-current mr-2"></div>
+                            Processing...
+                          </>
+                        ) : (
+                          `Mock Pay (${gateway.name})`
+                        )}
+                      </Button>
+                    </>
                   ) : (
-                    <Button
-                      variant="outline"
-                      onClick={() => handleCheckout(gateway.gateway)}
-                      disabled={isCheckoutProcessing}
-                    >
-                      {isCheckoutProcessing &&
-                      processingGateway === gateway.gateway ? (
-                        <>
-                          <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-current mr-2"></div>
-                          Processing...
-                        </>
-                      ) : (
-                        `Pay with ${gateway.name}`
-                      )}
+                    <Button variant="outline" disabled>
+                      {/* TODO: Implement {gateway.name} integration */}
+                      Coming Soon
                     </Button>
                   )}
                 </div>

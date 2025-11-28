@@ -232,10 +232,12 @@ export const BADGE_STYLES: BadgeStyleMap = {
   Completed: "bg-gray-400 text-white",
   "Meeting in 5 min": "bg-red-500 text-white",
   "Meeting in 2 hours": "bg-blue-500 text-white",
+  Today: "bg-blue-600 text-white",
   Tomorrow: "bg-purple-500 text-white",
   "In week": "bg-green-500 text-white",
   "In month": "bg-yellow-500 text-white",
   "In year": "bg-orange-500 text-white",
+  "Not Scheduled": "bg-orange-600 text-white",
   default: "bg-gray-500 text-white",
 };
 
