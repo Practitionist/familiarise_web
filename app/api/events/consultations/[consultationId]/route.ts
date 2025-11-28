@@ -15,6 +15,37 @@ import {
 } from "@/utils/appointmentlock";
 import { sendPaymentLinkEmail } from "@/lib/email";
 
+/**
+ * Type for consultation with all related details needed for payment processing
+ */
+type ConsultationWithDetails = Prisma.ConsultationGetPayload<{
+  include: {
+    consultationPlan: {
+      include: {
+        consultantProfile: {
+          include: {
+            user: true;
+          };
+        };
+      };
+    };
+    requestedBy: {
+      include: {
+        user: true;
+      };
+    };
+    appointment: {
+      include: {
+        slotsOfAppointment: {
+          include: {
+            user: true;
+          };
+        };
+      };
+    };
+  };
+}>;
+
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ consultationId: string }> },
@@ -568,7 +599,7 @@ async function checkConsultationPayment(consultationId: string): Promise<boolean
 /**
  * Generate payment link for approved consultation
  */
-async function generatePaymentLink(consultation: any) {
+async function generatePaymentLink(consultation: ConsultationWithDetails) {
   const { consultationPlan, requestedBy, appointment } = consultation;
 
   // Extract slot times if appointment/slots exist
@@ -584,11 +615,13 @@ async function generatePaymentLink(consultation: any) {
     paymentGateway: PaymentGateway.STRIPE, // Default to Stripe, could be made configurable
     slotStartTimeInUTC,
     slotEndTimeInUTC,
-    notes: consultation.requestNotes,
+    notes: consultation.requestNotes ?? undefined,
   });
 }
 
-async function createAppointmentForConsultation(consultation: any) {
+async function createAppointmentForConsultation(
+  consultation: ConsultationWithDetails,
+) {
   const { consultationPlan, requestedBy } = consultation;
 
   if (!consultationPlan?.durationInHours) {

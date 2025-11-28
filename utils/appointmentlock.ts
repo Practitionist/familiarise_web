@@ -36,9 +36,11 @@ export async function lockAppointment(
   }
 }
 
-export async function unlockAppointment(lock: any) {
+export async function unlockAppointment(
+  lock: Awaited<ReturnType<typeof lockAppointment>>,
+) {
   try {
-    await lock.release();
+    await redlock.release(lock);
   } catch (error) {
     console.error("Failed to release lock:", error);
     throw new Error("Failed to unlock appointment");
@@ -124,9 +126,11 @@ export async function lockSubscriptionApproval(
  * Release an approval lock
  * @param lock - The lock instance to release
  */
-export async function unlockApproval(lock: any) {
+export async function unlockApproval(
+  lock: Awaited<ReturnType<typeof lockConsultationApproval>>,
+) {
   try {
-    await lock.release();
+    await redlock.release(lock);
   } catch (error) {
     console.error("Failed to release approval lock:", error);
     // Don't throw - lock will expire anyway based on TTL

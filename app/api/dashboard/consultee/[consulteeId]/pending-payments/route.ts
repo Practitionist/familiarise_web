@@ -51,7 +51,7 @@ export async function GET(
             payment: {
               where: {
                 paymentStatus: {
-                  in: ["PENDING", "PROCESSING"],
+                  in: ["PENDING"],
                 },
               },
               orderBy: {
@@ -92,7 +92,7 @@ export async function GET(
             payment: {
               where: {
                 paymentStatus: {
-                  in: ["PENDING", "PROCESSING"],
+                  in: ["PENDING"],
                 },
               },
               orderBy: {
@@ -126,8 +126,8 @@ export async function GET(
           consultantName:
             consultation.consultationPlan?.consultantProfile?.user?.name ||
             "Consultant",
-          amount: consultation.consultationPlan?.amount || 0,
-          currency: consultation.consultationPlan?.currency || "USD",
+          amount: consultation.consultationPlan?.price || 0,
+          currency: consultation.consultationPlan?.priceCurrency || "INR",
           // Extract payment URL from requestNotes (it's appended there in the approval endpoint)
           paymentUrl: extractPaymentUrl(consultation.requestNotes || ""),
           approvedAt: consultation.updatedAt.toISOString(),
@@ -150,8 +150,8 @@ export async function GET(
           consultantName:
             subscription.subscriptionPlan?.consultantProfile?.user?.name ||
             "Consultant",
-          amount: subscription.subscriptionPlan?.amount || 0,
-          currency: subscription.subscriptionPlan?.currency || "USD",
+          amount: subscription.subscriptionPlan?.price || 0,
+          currency: subscription.subscriptionPlan?.priceCurrency || "INR",
           // Extract payment URL from requestNotes (it's appended there in the approval endpoint)
           paymentUrl: extractPaymentUrl(subscription.requestNotes || ""),
           approvedAt: subscription.updatedAt.toISOString(),

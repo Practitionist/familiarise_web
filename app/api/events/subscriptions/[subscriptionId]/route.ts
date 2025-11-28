@@ -9,6 +9,37 @@ import {
 } from "@/utils/appointmentlock";
 import { sendPaymentLinkEmail } from "@/lib/email";
 
+/**
+ * Type for subscription with all related details needed for payment processing
+ */
+type SubscriptionWithDetails = Prisma.SubscriptionGetPayload<{
+  include: {
+    subscriptionPlan: {
+      include: {
+        consultantProfile: {
+          include: {
+            user: true;
+          };
+        };
+      };
+    };
+    requestedBy: {
+      include: {
+        user: true;
+      };
+    };
+    appointments: {
+      include: {
+        slotsOfAppointment: {
+          include: {
+            user: true;
+          };
+        };
+      };
+    };
+  };
+}>;
+
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ subscriptionId: string }> },
@@ -578,7 +609,9 @@ async function checkSubscriptionPayment(subscriptionId: string): Promise<boolean
 /**
  * Generate payment link for approved subscription
  */
-async function generatePaymentLinkForSubscription(subscription: any) {
+async function generatePaymentLinkForSubscription(
+  subscription: SubscriptionWithDetails,
+) {
   const { subscriptionPlan, requestedBy } = subscription;
 
   return await createApprovalPaymentIntent({
@@ -589,11 +622,14 @@ async function generatePaymentLinkForSubscription(subscription: any) {
     paymentGateway: PaymentGateway.STRIPE, // Default to Stripe, could be made configurable
     schedulingPeriodStartsAt: subscription.schedulingPeriodStartsAt?.toISOString(),
     schedulingPeriodEndsAt: subscription.schedulingPeriodEndsAt?.toISOString(),
-    notes: subscription.requestNotes,
+    notes: subscription.requestNotes ?? undefined,
   });
 }
 
-async function createAppointmentsForSubscription(subscription: any, tx: any) {
+async function createAppointmentsForSubscription(
+  subscription: SubscriptionWithDetails,
+  tx: Prisma.TransactionClient,
+) {
   const { subscriptionPlan, requestedBy } = subscription;
 
   if (!subscriptionPlan?.durationInMonths || !subscriptionPlan?.callsPerWeek) {
@@ -612,9 +648,9 @@ async function createAppointmentsForSubscription(subscription: any, tx: any) {
     throw new Error("Missing user information");
   }
 
-  const startDate = subscription.startDate || new Date();
+  const startDate = subscription.schedulingPeriodStartsAt || new Date();
   const endDate =
-    subscription.endDate ||
+    subscription.schedulingPeriodEndsAt ||
     addMonths(startDate, subscriptionPlan.durationInMonths);
   const appointments = [];
 

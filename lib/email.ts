@@ -234,7 +234,10 @@ export async function sendPaymentLinkEmail({
       html,
     });
 
-    console.log("Payment link email sent successfully:", data?.id);
+    console.log(
+      "Payment link email sent successfully:",
+      data.data?.id ?? "unknown",
+    );
     return { success: true, data };
   } catch (error) {
     console.error("Failed to send payment link email:", error);
@@ -305,7 +308,10 @@ export async function sendPaymentSuccessEmail({
       html,
     });
 
-    console.log("Payment success email sent successfully:", data?.id);
+    console.log(
+      "Payment success email sent successfully:",
+      data.data?.id ?? "unknown",
+    );
     return { success: true, data };
   } catch (error) {
     console.error("Failed to send payment success email:", error);
@@ -379,7 +385,10 @@ export async function sendPaymentFailedEmail({
       html,
     });
 
-    console.log("Payment failed email sent successfully:", data?.id);
+    console.log(
+      "Payment failed email sent successfully:",
+      data.data?.id ?? "unknown",
+    );
     return { success: true, data };
   } catch (error) {
     console.error("Failed to send payment failed email:", error);

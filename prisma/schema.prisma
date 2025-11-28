@@ -371,6 +371,7 @@ model ConsultationPlan {
   description      String?  @db.Text
   durationInHours  Float    @default(1)
   price            Int
+  priceCurrency    String   @default("INR")
   language         String   @default("English")
   level            String   @default("Beginner")
   prerequisites    String?  @default("None")
@@ -413,6 +414,7 @@ model SubscriptionPlan {
   description            String?          @db.Text
   durationInMonths       Int              @default(1)
   price                  Int
+  priceCurrency          String           @default("INR")
   callsPerWeek           Int              @default(1)
   sessionDurationInHours Float            @default(1.0) // Duration of each session in hours
   videoMeetings          Int              @default(1)

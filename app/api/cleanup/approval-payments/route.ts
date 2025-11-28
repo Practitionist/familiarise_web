@@ -19,10 +19,68 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { PaymentStatus, RequestStatus } from "@prisma/client";
+import { PaymentStatus, Prisma, RequestStatus } from "@prisma/client";
 
 // Expiration time: 48 hours
 const EXPIRATION_HOURS = 48;
+
+/**
+ * Revert consultation or subscription status from APPROVED_PENDING_PAYMENT to PENDING
+ * Used when payment link expires after 48 hours
+ */
+async function revertApprovalStatus(
+  tx: Prisma.TransactionClient,
+  entityType: "consultation" | "subscription",
+  entityId: string,
+  currentStatus: string,
+): Promise<boolean> {
+  if (currentStatus !== "APPROVED_PENDING_PAYMENT") {
+    return false; // Nothing to revert
+  }
+
+  const systemNote =
+    "[System] Payment expired after 48 hours. Status reverted to PENDING.";
+
+  if (entityType === "consultation") {
+    const consultation = await tx.consultation.findUnique({
+      where: { id: entityId },
+    });
+
+    if (!consultation) return false;
+
+    await tx.consultation.update({
+      where: { id: entityId },
+      data: {
+        requestStatus: RequestStatus.PENDING,
+        requestNotes: consultation.requestNotes
+          ? `${consultation.requestNotes}\n\n${systemNote}`
+          : systemNote,
+      },
+    });
+
+    console.log(`✅ Reverted consultation ${entityId} to PENDING`);
+    return true;
+  } else {
+    const subscription = await tx.subscription.findUnique({
+      where: { id: entityId },
+    });
+
+    if (!subscription) return false;
+
+    await tx.subscription.update({
+      where: { id: entityId },
+      data: {
+        requestStatus: RequestStatus.PENDING,
+        requestNotes: subscription.requestNotes
+          ? `${subscription.requestNotes}\n\n${systemNote}`
+          : systemNote,
+      },
+    });
+
+    console.log(`✅ Reverted subscription ${entityId} to PENDING`);
+    return true;
+  }
+}
 
 export async function GET(req: NextRequest) {
   try {
@@ -73,46 +131,24 @@ export async function GET(req: NextRequest) {
         await prisma.$transaction(async (tx) => {
           // Revert consultation status
           if (payment.appointment?.consultation) {
-            const consultation = await tx.consultation.findUnique({
-              where: { id: payment.appointment.consultation.id },
-            });
-
-            if (consultation?.requestStatus === "APPROVED_PENDING_PAYMENT") {
-              await tx.consultation.update({
-                where: { id: payment.appointment.consultation.id },
-                data: {
-                  requestStatus: RequestStatus.PENDING,
-                  requestNotes: consultation.requestNotes
-                    ? `${consultation.requestNotes}\n\n[System] Payment expired after 48 hours. Status reverted to PENDING.`
-                    : "[System] Payment expired after 48 hours. Status reverted to PENDING.",
-                },
-              });
-
-              consultationsReverted++;
-              console.log(`✅ Reverted consultation ${consultation.id} to PENDING`);
-            }
+            const reverted = await revertApprovalStatus(
+              tx,
+              "consultation",
+              payment.appointment.consultation.id,
+              payment.appointment.consultation.requestStatus,
+            );
+            if (reverted) consultationsReverted++;
           }
 
           // Revert subscription status
           if (payment.appointment?.subscription) {
-            const subscription = await tx.subscription.findUnique({
-              where: { id: payment.appointment.subscription.id },
-            });
-
-            if (subscription?.requestStatus === "APPROVED_PENDING_PAYMENT") {
-              await tx.subscription.update({
-                where: { id: payment.appointment.subscription.id },
-                data: {
-                  requestStatus: RequestStatus.PENDING,
-                  requestNotes: subscription.requestNotes
-                    ? `${subscription.requestNotes}\n\n[System] Payment expired after 48 hours. Status reverted to PENDING.`
-                    : "[System] Payment expired after 48 hours. Status reverted to PENDING.",
-                },
-              });
-
-              subscriptionsReverted++;
-              console.log(`✅ Reverted subscription ${subscription.id} to PENDING`);
-            }
+            const reverted = await revertApprovalStatus(
+              tx,
+              "subscription",
+              payment.appointment.subscription.id,
+              payment.appointment.subscription.requestStatus,
+            );
+            if (reverted) subscriptionsReverted++;
           }
 
           // Mark payment as FAILED (expired)

@@ -172,7 +172,39 @@ export async function handlePaymentFailure(paymentIntentId: string) {
   return await prisma.$transaction(async (tx) => {
     const payment = await tx.payment.findUnique({
       where: { paymentIntent: paymentIntentId },
-      include: { appointment: true },
+      include: {
+        user: true,
+        appointment: {
+          include: {
+            consultation: {
+              include: {
+                consultationPlan: {
+                  include: {
+                    consultantProfile: {
+                      include: {
+                        user: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            subscription: {
+              include: {
+                subscriptionPlan: {
+                  include: {
+                    consultantProfile: {
+                      include: {
+                        user: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
     });
 
     if (!payment) {
@@ -455,6 +487,68 @@ async function createClass(
 // ============================================================================
 
 /**
+ * Confirm consultation or subscription status after successful payment
+ * Transitions APPROVED_PENDING_PAYMENT → APPROVED
+ */
+async function confirmApprovalStatus(
+  tx: Prisma.TransactionClient,
+  entityType: "consultation" | "subscription",
+  entityId: string,
+): Promise<void> {
+  if (entityType === "consultation") {
+    const consultation = await tx.consultation.findUnique({
+      where: { id: entityId },
+    });
+
+    if (!consultation) {
+      throw new Error(`Consultation ${entityId} not found`);
+    }
+
+    // If status is APPROVED_PENDING_PAYMENT, confirm the appointment
+    if (consultation.requestStatus === RequestStatus.APPROVED_PENDING_PAYMENT) {
+      await tx.consultation.update({
+        where: { id: entityId },
+        data: { requestStatus: RequestStatus.APPROVED },
+      });
+      console.log(
+        `✅ Consultation ${entityId} payment completed - moving from APPROVED_PENDING_PAYMENT to APPROVED`,
+      );
+    } else if (consultation.requestStatus !== RequestStatus.APPROVED) {
+      // Only update if not already approved
+      await tx.consultation.update({
+        where: { id: entityId },
+        data: { requestStatus: RequestStatus.APPROVED },
+      });
+    }
+  } else {
+    const subscription = await tx.subscription.findUnique({
+      where: { id: entityId },
+    });
+
+    if (!subscription) {
+      throw new Error(`Subscription ${entityId} not found`);
+    }
+
+    // If status is APPROVED_PENDING_PAYMENT, confirm the appointment
+    if (subscription.requestStatus === RequestStatus.APPROVED_PENDING_PAYMENT) {
+      await tx.subscription.update({
+        where: { id: entityId },
+        data: { requestStatus: RequestStatus.APPROVED },
+      });
+      console.log(
+        `✅ Subscription ${entityId} payment completed - moving from APPROVED_PENDING_PAYMENT to APPROVED`,
+      );
+    } else if (subscription.requestStatus !== RequestStatus.APPROVED) {
+      // Only update if not already approved
+      await tx.subscription.update({
+        where: { id: entityId },
+        data: { requestStatus: RequestStatus.APPROVED },
+      });
+    }
+  }
+}
+
+/**
  * Confirm appointment by making slots non-tentative and updating status
  */
 async function confirmExistingAppointment(
@@ -476,49 +570,13 @@ async function confirmExistingAppointment(
     },
   });
 
+  // Use helper for consultation and subscription
   if (appointment?.consultation) {
-    const consultation = await tx.consultation.findUnique({
-      where: { id: appointment.consultation.id },
-    });
-
-    // If status is APPROVED_PENDING_PAYMENT, confirm the appointment
-    if (consultation?.requestStatus === RequestStatus.APPROVED_PENDING_PAYMENT) {
-      await tx.consultation.update({
-        where: { id: appointment.consultation.id },
-        data: { requestStatus: RequestStatus.APPROVED },
-      });
-      console.log(
-        `✅ Consultation ${consultation.id} payment completed - moving from APPROVED_PENDING_PAYMENT to APPROVED`,
-      );
-    } else if (consultation?.requestStatus !== RequestStatus.APPROVED) {
-      // Only update if not already approved
-      await tx.consultation.update({
-        where: { id: appointment.consultation.id },
-        data: { requestStatus: RequestStatus.APPROVED },
-      });
-    }
+    await confirmApprovalStatus(tx, "consultation", appointment.consultation.id);
   }
-  if (appointment?.subscription) {
-    const subscription = await tx.subscription.findUnique({
-      where: { id: appointment.subscription.id },
-    });
 
-    // If status is APPROVED_PENDING_PAYMENT, confirm the appointment
-    if (subscription?.requestStatus === RequestStatus.APPROVED_PENDING_PAYMENT) {
-      await tx.subscription.update({
-        where: { id: appointment.subscription.id },
-        data: { requestStatus: RequestStatus.APPROVED },
-      });
-      console.log(
-        `✅ Subscription ${subscription.id} payment completed - moving from APPROVED_PENDING_PAYMENT to APPROVED`,
-      );
-    } else if (subscription?.requestStatus !== RequestStatus.APPROVED) {
-      // Only update if not already approved
-      await tx.subscription.update({
-        where: { id: appointment.subscription.id },
-        data: { requestStatus: RequestStatus.APPROVED },
-      });
-    }
+  if (appointment?.subscription) {
+    await confirmApprovalStatus(tx, "subscription", appointment.subscription.id);
   }
   if (appointment?.webinar) {
     await tx.webinar.update({

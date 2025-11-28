@@ -117,14 +117,19 @@ async function calculateAmount(params: CreateApprovalPaymentParams): Promise<{
   if (params.appointmentType === "CONSULTATION") {
     const plan = await prisma.consultationPlan.findUnique({
       where: { id: params.planId },
+      select: {
+        title: true,
+        price: true,
+        priceCurrency: true,
+      },
     });
 
     if (!plan) {
       throw new Error("Consultation plan not found");
     }
 
-    // Currency based on gateway (Razorpay = INR, Stripe = USD)
-    const currency = params.paymentGateway === PaymentGateway.RAZORPAY ? "INR" : "USD";
+    // Use plan currency instead of deriving from gateway
+    const currency = plan.priceCurrency || "INR";
 
     return {
       amount: plan.price,
@@ -135,13 +140,19 @@ async function calculateAmount(params: CreateApprovalPaymentParams): Promise<{
     // SUBSCRIPTION
     const plan = await prisma.subscriptionPlan.findUnique({
       where: { id: params.planId },
+      select: {
+        title: true,
+        price: true,
+        priceCurrency: true,
+      },
     });
 
     if (!plan) {
       throw new Error("Subscription plan not found");
     }
 
-    const currency = params.paymentGateway === PaymentGateway.RAZORPAY ? "INR" : "USD";
+    // Use plan currency instead of deriving from gateway
+    const currency = plan.priceCurrency || "INR";
 
     return {
       amount: plan.price,

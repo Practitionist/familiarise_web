@@ -299,8 +299,19 @@ export async function calculateAmountAndValidate(
       }
     }
 
-    const currency =
-      validatedData.paymentGateway === "RAZORPAY" ? "INR" : "USD";
+    // Extract currency from plan based on appointment type
+    let currency = "INR"; // Default fallback
+
+    switch (validatedData.appointmentType) {
+      case "CONSULTATION":
+      case "SUBSCRIPTION":
+      case "WEBINAR":
+      case "CLASS":
+        currency = (plan as { priceCurrency?: string })?.priceCurrency || "INR";
+        break;
+      default:
+        currency = validatedData.paymentGateway === "RAZORPAY" ? "INR" : "USD";
+    }
 
     return { amount, currency, discountCodeId };
   });
