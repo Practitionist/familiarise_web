@@ -1,3 +1,4 @@
+```typescript
 import z from "zod";
 
 // Base Razorpay entity schemas
@@ -29,7 +30,7 @@ const razorpayPaymentEntitySchema = z.object({
   amount: z.number(),
   currency: z.string(),
   status: z.enum([
-    "created", "authorized", "captured", "refunded", 
+    "created", "authorized", "captured", "refunded",
     "failed", "disputed", "partially_refunded"
   ]),
   order_id: z.string().optional(),
@@ -209,30 +210,30 @@ export const razorpayWebhookSchema = z.object({
     "payment.failed",
     "payment.captured",
     "payment.dispute.created",
-    
+
     // Order events
     "order.paid",
-    
+
     // Refund events
     "refund.created",
     "refund.failed",
     "refund.processed",
-    
+
     // Dispute events
     "payment.dispute.created",
     "payment.dispute.won",
     "payment.dispute.lost",
     "payment.dispute.closed",
-    
+
     // Settlement events
     "settlement.processed",
     "settlement.failed",
-    
+
     // Invoice events
     "invoice.paid",
     "invoice.partially_paid",
     "invoice.payment_failed",
-    
+
     // Subscription events
     "subscription.activated",
     "subscription.charged",
@@ -243,7 +244,7 @@ export const razorpayWebhookSchema = z.object({
     "subscription.halted",
     "subscription.resumed",
     "subscription.paused",
-    
+
     // Virtual Account events
     "virtual_account.created",
     "virtual_account.credited",
@@ -320,3 +321,4 @@ export function validateRazorpayWebhook(data: unknown): {
     };
   }
 }
+```

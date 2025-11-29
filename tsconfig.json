@@ -2,7 +2,7 @@
   "compilerOptions": {
     "target": "es5",
     "lib": ["dom", "dom.iterable", "esnext"],
-    "types": ["jest", "node", "cypress", "@testing-library/cypress"],
+    "types": ["jest", "node"],
     "allowJs": true,
     "skipLibCheck": true,
     "strict": true,
@@ -32,14 +32,9 @@
     "**/*.ts",
     "**/*.tsx",
     ".next/types/**/*.ts",
-    "cypress/**/*.ts",
     "tests/**/*.ts"
   ],
   "exclude": [
-    "./cypress.config.ts",
-    //other exclusions that may help https://github.com/cypress-io/cypress/issues/22059#issuecomment-1428298264
-    "node_modules",
-    "cypress",
-    "**/*.cy.tsx"
+    "node_modules"
   ]
 }

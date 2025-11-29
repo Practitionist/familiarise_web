@@ -2,7 +2,6 @@ import globals from "globals";
 import pluginJs from "@eslint/js";
 import tseslint from "typescript-eslint";
 import pluginReact from "eslint-plugin-react";
-import pluginCypress from "eslint-plugin-cypress";
 import pluginJest from "eslint-plugin-jest";
 import pluginUnusedImports from "eslint-plugin-unused-imports";
 
@@ -35,28 +34,6 @@ export default [
     },
     rules: {
       ...pluginJest.configs.recommended.rules,
-    },
-  },
-
-  // Cypress test files configuration
-  {
-    files: ["cypress/**/*.{js,ts,jsx,tsx}"],
-    languageOptions: {
-      globals: {
-        ...globals.browser,
-        cy: true,
-        Cypress: true,
-        describe: true,
-        it: true,
-        expect: true,
-        beforeEach: true,
-        afterEach: true,
-        before: true,
-        after: true,
-      },
-    },
-    plugins: {
-      cypress: pluginCypress,
     },
   },
 
