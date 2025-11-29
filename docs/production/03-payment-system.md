@@ -357,29 +357,44 @@ const totalRefunded = payment.refunds
   .filter((r) => r.status === "SUCCEEDED" || r.status === "PENDING")
   .reduce((sum, r) => sum + r.amount, 0);
 
-// Add mutex for refund processing
-const REFUND_LOCKS = new Map<string, Promise<void>>();
+// Use Redis distributed lock for serverless environments
+// Local Map-based locks DON'T work in serverless - each instance has its own memory!
+import { Redis } from "@upstash/redis";
+
+const redis = Redis.fromEnv();
+
+async function acquireLock(key: string, ttlSeconds: number = 30): Promise<boolean> {
+  // SET with NX (only if not exists) and EX (expiry)
+  const result = await redis.set(key, "locked", { nx: true, ex: ttlSeconds });
+  return result === "OK";
+}
+
+async function releaseLock(key: string): Promise<void> {
+  await redis.del(key);
+}
 
 async function processRefundWithLock(paymentId: string, amount: number) {
-  // Wait for any existing refund operation on this payment
-  const existingLock = REFUND_LOCKS.get(paymentId);
-  if (existingLock) {
-    await existingLock;
+  const lockKey = `refund:lock:${paymentId}`;
+  const maxRetries = 5;
+  const retryDelayMs = 200;
+
+  // Try to acquire lock with retries
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    const acquired = await acquireLock(lockKey);
+
+    if (acquired) {
+      try {
+        return await createRefund(paymentId, amount);
+      } finally {
+        await releaseLock(lockKey);
+      }
+    }
+
+    // Wait before retrying
+    await new Promise((resolve) => setTimeout(resolve, retryDelayMs * (attempt + 1)));
   }
 
-  // Create new lock
-  let releaseLock: () => void;
-  const lock = new Promise<void>((resolve) => {
-    releaseLock = resolve;
-  });
-  REFUND_LOCKS.set(paymentId, lock);
-
-  try {
-    return await createRefund(paymentId, amount);
-  } finally {
-    releaseLock!();
-    REFUND_LOCKS.delete(paymentId);
-  }
+  throw new Error("Could not acquire lock for refund processing. Please try again.");
 }
 ```
 
