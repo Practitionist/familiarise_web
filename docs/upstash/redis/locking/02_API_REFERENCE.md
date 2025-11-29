@@ -1,0 +1,932 @@
+# API Reference
+
+> Complete API documentation for Upstash Redis distributed locking system
+
+---
+
+## Table of Contents
+
+1. [API Overview](#api-overview)
+2. [Approval Lock API](#approval-lock-api)
+   - [lockConsultationApproval](#lockconsultationapproval)
+   - [lockSubscriptionApproval](#locksubscriptionapproval)
+   - [unlockApproval](#unlockapproval)
+3. [Legacy Lock API](#legacy-lock-api)
+   - [lockAppointment](#lockappointment)
+   - [unlockAppointment](#unlockappointment)
+   - [isAppointmentLocked](#isappointmentlocked)
+4. [Rate Limiting API](#rate-limiting-api)
+   - [checkRateLimit](#checkratelimit)
+5. [Types & Interfaces](#types--interfaces)
+   - [ApprovalLock](#approvallock-interface)
+   - [LockRetryConfig](#lockretryconfig-interface)
+6. [Configuration Reference](#configuration-reference)
+7. [Best Practices](#best-practices)
+
+---
+
+## API Overview
+
+### Import Paths
+
+```typescript
+// Approval locks (primary API)
+import {
+  lockConsultationApproval,
+  lockSubscriptionApproval,
+  unlockApproval,
+  ApprovalLock,
+  LockRetryConfig,
+} from "@/utils/appointmentlock";
+
+// Legacy locks (appointment booking)
+import {
+  lockAppointment,
+  unlockAppointment,
+  isAppointmentLocked,
+} from "@/utils/appointmentlock";
+
+// Rate limiting
+import { checkRateLimit } from "@/lib/redis";
+```
+
+### Quick Reference
+
+| Function | Purpose | Default TTL | Returns |
+|----------|---------|-------------|---------|
+| `lockConsultationApproval` | Lock consultation approval | 30s | `ApprovalLock` |
+| `lockSubscriptionApproval` | Lock subscription approval | 30s | `ApprovalLock` |
+| `unlockApproval` | Release any approval lock | N/A | `void` |
+| `lockAppointment` | Lock appointment (legacy) | 5min | `ApprovalLock` |
+| `unlockAppointment` | Release appointment lock | N/A | `void` |
+| `isAppointmentLocked` | Check appointment lock status | N/A | `boolean` |
+| `checkRateLimit` | Check rate limit status | 10s | `boolean` |
+
+---
+
+## Approval Lock API
+
+### lockConsultationApproval()
+
+Acquires a distributed lock for preventing concurrent consultation approval attempts.
+
+#### Signature
+
+```typescript
+async function lockConsultationApproval(
+  consultationId: string,
+  ttl: number = 30000
+): Promise<ApprovalLock>
+```
+
+#### Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `consultationId` | `string` | Yes | - | Unique consultation identifier (e.g., `"clx123abc"`) |
+| `ttl` | `number` | No | `30000` | Time-to-live in milliseconds (30 seconds default) |
+
+#### Returns
+
+`Promise<ApprovalLock>` - Lock object containing:
+- `key`: Redis key (`"consultation-approval:clx123"`)
+- `value`: UUID for ownership verification
+- `ttl`: Effective TTL with drift protection (29700ms)
+- `acquiredAt`: Timestamp when lock was acquired
+- `client`: Upstash Redis client reference
+
+#### Throws
+
+- `Error`: "Another approval is in progress for this consultation. Please try again."
+  - Thrown after 10 retry attempts (~3-4 seconds)
+  - Indicates another process holds the lock
+
+#### Usage Examples
+
+##### Example 1: Basic Consultation Approval
+
+```typescript
+import { lockConsultationApproval, unlockApproval } from "@/utils/appointmentlock";
+import { NextResponse } from "next/server";
+
+export async function PATCH(
+  request: Request,
+  { params }: { params: { consultationId: string } }
+) {
+  const { consultationId } = params;
+  const { status } = await request.json();
+
+  if (status !== "APPROVED") {
+    // No lock needed for other statuses
+    return NextResponse.json({ success: true });
+  }
+
+  let lock;
+  try {
+    // ✅ Acquire lock with 30-second default TTL
+    lock = await lockConsultationApproval(consultationId);
+
+    // Protected critical section
+    const payment = await createApprovalPaymentIntent(consultationId);
+    await sendPaymentLinkEmail(payment);
+    await updateConsultationStatus(consultationId, "APPROVED");
+
+    return NextResponse.json({ success: true, payment });
+  } catch (error) {
+    // Lock acquisition failed
+    return NextResponse.json(
+      { error: "Another approval is in progress. Please try again." },
+      { status: 409 } // Conflict status code
+    );
+  } finally {
+    // ✅ Always release lock (never throws)
+    if (lock) {
+      await unlockApproval(lock);
+    }
+  }
+}
+```
+
+**Expected Log Output**:
+```json
+{"event":"lock_acquired","key":"consultation-approval:clx123","attempts":1,"duration_ms":78,"ttl":29700,"timestamp":"2025-11-29T12:34:56.789Z"}
+{"event":"lock_released","key":"consultation-approval:clx123","held_duration_ms":5058,"timestamp":"2025-11-29T12:35:01.847Z"}
+```
+
+##### Example 2: Custom TTL for Long Operations
+
+```typescript
+// For operations taking 15-20 seconds, use 25-second TTL
+lock = await lockConsultationApproval(consultationId, 25000);
+
+// For operations taking 45-50 seconds, use 60-second TTL
+lock = await lockConsultationApproval(consultationId, 60000);
+```
+
+**TTL Selection Rules**:
+- TTL ≥ max expected operation duration
+- Include 15-20% buffer for retries
+- Shorter TTL = less contention, but riskier
+- Longer TTL = safer, but blocks concurrent requests longer
+
+##### Example 3: Error Handling with Retry
+
+```typescript
+async function approveWithRetry(consultationId: string, maxAttempts = 3) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    let lock;
+    try {
+      lock = await lockConsultationApproval(consultationId);
+      await performApproval(consultationId);
+      return { success: true };
+    } catch (error) {
+      if (attempt === maxAttempts) {
+        // Final attempt failed
+        return {
+          error: "Approval failed after multiple attempts",
+          retryAfter: 5,
+        };
+      }
+      // Wait before retry
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    } finally {
+      if (lock) await unlockApproval(lock);
+    }
+  }
+}
+```
+
+---
+
+### lockSubscriptionApproval()
+
+Acquires a distributed lock for preventing concurrent subscription approval attempts. Identical to `lockConsultationApproval()` but for subscriptions.
+
+#### Signature
+
+```typescript
+async function lockSubscriptionApproval(
+  subscriptionId: string,
+  ttl: number = 30000
+): Promise<ApprovalLock>
+```
+
+#### Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `subscriptionId` | `string` | Yes | - | Unique subscription identifier |
+| `ttl` | `number` | No | `30000` | Time-to-live in milliseconds |
+
+#### Usage Example
+
+```typescript
+import { lockSubscriptionApproval, unlockApproval } from "@/utils/appointmentlock";
+
+export async function approveSubscription(subscriptionId: string) {
+  let lock;
+  try {
+    lock = await lockSubscriptionApproval(subscriptionId, 30000);
+
+    // Protected: create subscription payment
+    const payment = await createSubscriptionPaymentIntent(subscriptionId);
+    await sendSubscriptionEmail(payment);
+
+    return { success: true, payment };
+  } catch (error) {
+    return { error: "Another approval in progress", status: 409 };
+  } finally {
+    if (lock) await unlockApproval(lock);
+  }
+}
+```
+
+---
+
+### unlockApproval()
+
+Safely releases an approval lock with ownership verification. **Never throws** - safe for `finally` blocks.
+
+#### Signature
+
+```typescript
+async function unlockApproval(lock: ApprovalLock): Promise<void>
+```
+
+#### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `lock` | `ApprovalLock` | Yes | Lock object returned from `lockConsultationApproval` or `lockSubscriptionApproval` |
+
+#### Behavior
+
+1. Checks if current lock value matches UUID (ownership verification)
+2. If match: deletes lock and logs `lock_released`
+3. If no match: logs `lock_already_released` (lock expired or released by another process)
+4. If error: logs `lock_release_error` but **does not throw**
+
+#### Usage Examples
+
+##### ✅ Correct Usage
+
+```typescript
+let lock;
+try {
+  lock = await lockConsultationApproval(consultationId);
+  // Critical section
+} finally {
+  // ✅ Always in finally block
+  if (lock) {
+    await unlockApproval(lock);
+  }
+}
+```
+
+##### ❌ Incorrect Usage
+
+```typescript
+// ❌ DON'T: Release outside finally block
+let lock = await lockConsultationApproval(consultationId);
+try {
+  // Critical section
+  await unlockApproval(lock); // ❌ Exception prevents this
+} catch (error) {
+  // Lock never released!
+}
+
+// ❌ DON'T: Forget to check if lock exists
+try {
+  lock = await lockConsultationApproval(consultationId);
+} finally {
+  await unlockApproval(lock); // ❌ TypeError if lock is undefined
+}
+```
+
+##### Multiple Releases are Safe
+
+```typescript
+// Multiple releases are idempotent (no error)
+await unlockApproval(lock);
+await unlockApproval(lock); // ✅ Safe, logs "lock_already_released"
+```
+
+---
+
+## Legacy Lock API
+
+### lockAppointment()
+
+Acquires a distributed lock for appointment booking. **Legacy API** - use approval locks for new code.
+
+#### Signature
+
+```typescript
+async function lockAppointment(
+  appointmentId: string,
+  ttl: number = 300000
+): Promise<ApprovalLock>
+```
+
+#### Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `appointmentId` | `string` | Yes | - | Unique appointment identifier |
+| `ttl` | `number` | No | `300000` | Time-to-live in milliseconds (5 minutes default) |
+
+#### Usage Example
+
+```typescript
+import { lockAppointment, unlockAppointment } from "@/utils/appointmentlock";
+
+async function bookAppointmentSlot(appointmentId: string, slotId: string) {
+  let lock;
+  try {
+    // 5-minute TTL for complex time slot allocation
+    lock = await lockAppointment(appointmentId, 300000);
+
+    // Complex allocation logic
+    await checkSlotAvailability(slotId);
+    await allocateTimeSlot(appointmentId, slotId);
+    await sendConfirmationEmail(appointmentId);
+
+    return { success: true };
+  } catch (error) {
+    throw new Error("Failed to lock appointment");
+  } finally {
+    if (lock) await unlockAppointment(lock);
+  }
+}
+```
+
+**Why 5 minutes?** Appointment booking involves complex time slot calculations, conflict resolution, and multi-step database updates.
+
+---
+
+### unlockAppointment()
+
+Releases an appointment lock. Identical to `unlockApproval()` - kept for API consistency.
+
+#### Signature
+
+```typescript
+async function unlockAppointment(lock: ApprovalLock): Promise<void>
+```
+
+---
+
+### isAppointmentLocked()
+
+Checks if an appointment is currently locked without acquiring the lock.
+
+#### Signature
+
+```typescript
+async function isAppointmentLocked(
+  appointmentId: string
+): Promise<boolean>
+```
+
+#### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `appointmentId` | `string` | Yes | Unique appointment identifier |
+
+#### Returns
+
+- `true`: Appointment is currently locked
+- `false`: Appointment is not locked (available)
+
+#### Usage Examples
+
+##### Example 1: Pre-flight Check
+
+```typescript
+import { isAppointmentLocked, lockAppointment } from "@/utils/appointmentlock";
+
+async function canBookAppointment(appointmentId: string): Promise<boolean> {
+  // Quick check before attempting acquisition
+  const isLocked = await isAppointmentLocked(appointmentId);
+  if (isLocked) {
+    console.log("Appointment is busy, skipping lock attempt");
+    return false;
+  }
+
+  // Proceed with lock acquisition
+  let lock;
+  try {
+    lock = await lockAppointment(appointmentId);
+    // Perform booking...
+    return true;
+  } catch (error) {
+    return false;
+  } finally {
+    if (lock) await unlockAppointment(lock);
+  }
+}
+```
+
+##### Example 2: Polling for Availability
+
+```typescript
+async function waitForAppointmentAvailability(
+  appointmentId: string,
+  timeoutMs: number = 30000
+): Promise<boolean> {
+  const startTime = Date.now();
+  const pollInterval = 1000; // Check every second
+
+  while (Date.now() - startTime < timeoutMs) {
+    const isLocked = await isAppointmentLocked(appointmentId);
+    if (!isLocked) {
+      return true; // Available now
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollInterval));
+  }
+
+  return false; // Timeout - still locked
+}
+```
+
+##### Example 3: UI Status Display
+
+```typescript
+// Display lock status in UI
+async function getAppointmentStatus(appointmentId: string) {
+  const isLocked = await isAppointmentLocked(appointmentId);
+  return {
+    appointmentId,
+    status: isLocked ? "in_progress" : "available",
+    canBook: !isLocked,
+  };
+}
+```
+
+---
+
+## Rate Limiting API
+
+### checkRateLimit()
+
+Checks if an identifier is within rate limits using sliding window algorithm.
+
+#### Signature
+
+```typescript
+async function checkRateLimit(identifier: string): Promise<boolean>
+```
+
+#### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `identifier` | `string` | Yes | Unique identifier (user ID, IP address, API key, etc.) |
+
+#### Returns
+
+- `true`: Request allowed (within limits)
+- `false`: Request denied (rate limited)
+
+#### Configuration
+
+- **Limit**: 5 requests per 10 seconds
+- **Algorithm**: Sliding window (precise, no burst allowance)
+- **Scope**: Per identifier (not global)
+
+#### Usage Examples
+
+##### Example 1: User-based Rate Limiting
+
+```typescript
+import { checkRateLimit } from "@/lib/redis";
+
+export async function POST(request: Request) {
+  const userId = await getUserId(request);
+
+  // Check: max 5 approval requests per 10 seconds per user
+  const allowed = await checkRateLimit(`user:${userId}:approval`);
+
+  if (!allowed) {
+    return Response.json(
+      {
+        error: "Too many approval requests. Please try again in 10 seconds.",
+        retryAfter: 10,
+      },
+      {
+        status: 429, // Too Many Requests
+        headers: { "Retry-After": "10" },
+      }
+    );
+  }
+
+  // Process approval...
+  return Response.json({ success: true });
+}
+```
+
+##### Example 2: IP-based Rate Limiting
+
+```typescript
+import { checkRateLimit } from "@/lib/redis";
+
+export async function middleware(request: Request) {
+  const ip = request.headers.get("x-forwarded-for") || "unknown";
+
+  // Protect public endpoints from IP-based abuse
+  const allowed = await checkRateLimit(`ip:${ip}:public-api`);
+
+  if (!allowed) {
+    return new Response("Rate limit exceeded", {
+      status: 429,
+      headers: {
+        "Retry-After": "10",
+        "X-RateLimit-Limit": "5",
+        "X-RateLimit-Window": "10s",
+      },
+    });
+  }
+
+  return next();
+}
+```
+
+##### Example 3: Endpoint-specific Limiting
+
+```typescript
+import { checkRateLimit } from "@/lib/redis";
+
+// Different limits for different endpoints
+const RATE_LIMITS = {
+  "/api/approval": { limit: 5, window: 10 },
+  "/api/search": { limit: 20, window: 10 },
+  "/api/webhooks": { limit: 100, window: 10 },
+};
+
+export async function checkEndpointRateLimit(
+  endpoint: string,
+  userId: string
+): Promise<boolean> {
+  const identifier = `endpoint:${endpoint}:user:${userId}`;
+  return await checkRateLimit(identifier);
+}
+```
+
+##### Example 4: Rate Limit with Response Headers
+
+```typescript
+import { checkRateLimit } from "@/lib/redis";
+
+export async function POST(request: Request) {
+  const userId = await getUserId(request);
+  const allowed = await checkRateLimit(`user:${userId}:api`);
+
+  const headers = {
+    "X-RateLimit-Limit": "5",
+    "X-RateLimit-Window": "10s",
+    "X-RateLimit-Remaining": allowed ? "4" : "0",
+  };
+
+  if (!allowed) {
+    return Response.json(
+      { error: "Rate limit exceeded" },
+      { status: 429, headers: { ...headers, "Retry-After": "10" } }
+    );
+  }
+
+  return Response.json({ success: true }, { headers });
+}
+```
+
+---
+
+## Types & Interfaces
+
+### ApprovalLock Interface
+
+```typescript
+export interface ApprovalLock {
+  key: string;        // Redis key for the lock
+  value: string;      // UUID for ownership verification
+  ttl: number;        // Effective TTL in milliseconds
+  acquiredAt: number; // Unix timestamp when acquired
+  client: Redis;      // Upstash Redis client reference
+}
+```
+
+#### Properties
+
+| Property | Type | Description | Example |
+|----------|------|-------------|---------|
+| `key` | `string` | Redis key following naming convention | `"consultation-approval:clx123"` |
+| `value` | `string` | Cryptographically random UUID for safe release | `"a3f2b8c1-4d5e-6f7g-8h9i-0j1k2l3m4n5o"` |
+| `ttl` | `number` | Effective TTL with clock drift protection (ms) | `29700` (30000ms - 1% drift) |
+| `acquiredAt` | `number` | Unix timestamp in milliseconds | `1701259896789` |
+| `client` | `Redis` | Upstash Redis client for release operations | `Redis { ... }` |
+
+#### Usage
+
+```typescript
+// Lock object returned from acquisition functions
+const lock: ApprovalLock = await lockConsultationApproval("clx123");
+
+console.log(lock.key);         // "consultation-approval:clx123"
+console.log(lock.value);       // "a3f2b8c1-..."
+console.log(lock.ttl);         // 29700
+console.log(lock.acquiredAt);  // 1701259896789
+
+// Used for safe release
+await unlockApproval(lock);
+```
+
+---
+
+### LockRetryConfig Interface
+
+```typescript
+export interface LockRetryConfig {
+  retryCount: number;           // Number of retry attempts
+  retryDelay: number;           // Base delay in milliseconds
+  retryJitter: number;          // Random jitter in milliseconds
+  exponentialBackoff: boolean;  // Use exponential backoff
+  driftFactor: number;          // Clock drift factor
+}
+```
+
+#### Properties
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `retryCount` | `number` | `10` | Number of retry attempts (total attempts = retryCount + 1) |
+| `retryDelay` | `number` | `200` | Base delay in milliseconds between retries |
+| `retryJitter` | `number` | `200` | Random jitter (0-200ms) added to each retry |
+| `exponentialBackoff` | `boolean` | `true` | Use exponential backoff (2^attempt) |
+| `driftFactor` | `number` | `0.01` | TTL reduction factor (1% safety margin) |
+
+#### Retry Delay Calculation
+
+```typescript
+// Formula for retry delay
+const delay = exponentialBackoff
+  ? retryDelay * Math.pow(2, attempt) + Math.random() * retryJitter
+  : retryDelay + Math.random() * retryJitter;
+```
+
+#### Retry Delay Examples
+
+| Attempt | Base Delay (exponential) | Jitter (0-200ms) | Total Range |
+|---------|--------------------------|------------------|-------------|
+| 0 | 200ms × 2^0 = 200ms | 0-200ms | 200-400ms |
+| 1 | 200ms × 2^1 = 400ms | 0-200ms | 400-600ms |
+| 2 | 200ms × 2^2 = 800ms | 0-200ms | 800-1000ms |
+| 3 | 200ms × 2^3 = 1600ms | 0-200ms | 1600-1800ms |
+| 4 | 200ms × 2^4 = 3200ms | 0-200ms | 3200-3400ms |
+| 5 | 200ms × 2^5 = 6400ms | 0-200ms | 6400-6600ms |
+
+**Total Time (10 retries)**: ~30-35 seconds
+
+---
+
+## Configuration Reference
+
+### Environment Variables
+
+```bash
+# .env.local
+UPSTASH_REDIS_REST_URL="https://[region]-[name]-[id].upstash.io"
+UPSTASH_REDIS_REST_TOKEN="AXmxASQgY..."
+```
+
+#### Setup Instructions
+
+1. **Create Upstash Account**: Visit [upstash.com](https://upstash.com)
+2. **Create Redis Database**: Dashboard → Create Database → Select region
+3. **Copy Credentials**:
+   - Click on your database
+   - Go to "REST API" tab
+   - Copy `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`
+4. **Add to Project**: Paste into `.env.local` file
+
+#### Validation
+
+The application validates environment variables at startup:
+
+```typescript
+// lib/redis.ts
+if (!process.env.UPSTASH_REDIS_REST_URL || !process.env.UPSTASH_REDIS_REST_TOKEN) {
+  throw new Error("UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN must be set");
+}
+```
+
+---
+
+### Lock Key Naming Convention
+
+```
+Format: {resource-type}-{operation}:{resource-id}
+```
+
+#### Examples
+
+```
+consultation-approval:clx123abc     # Consultation approval lock
+subscription-approval:clx456def     # Subscription approval lock
+appointment-lock:clx789ghi          # Appointment booking lock
+```
+
+#### Key Namespace Tree
+
+```
+Redis Namespace
+├── consultation-approval:*
+│   ├── consultation-approval:clx123
+│   └── consultation-approval:clx456
+├── subscription-approval:*
+│   ├── subscription-approval:sub123
+│   └── subscription-approval:sub456
+└── appointment-lock:*
+    ├── appointment-lock:apt123
+    └── appointment-lock:apt456
+```
+
+---
+
+### TTL Defaults
+
+| Lock Type | Default TTL | Effective TTL (after drift) | Use Case |
+|-----------|-------------|----------------------------|----------|
+| Consultation Approval | 30 seconds | 29.7 seconds | Fast payment link generation |
+| Subscription Approval | 30 seconds | 29.7 seconds | Fast subscription processing |
+| Appointment Lock | 5 minutes | 4.95 minutes | Complex time slot allocation |
+
+#### TTL Selection Guidelines
+
+1. **Measure your operation duration** (average + P99)
+2. **Add 15-20% buffer** for retries and network variability
+3. **Round up** to nearest 5 or 10 seconds
+4. **Consider clock drift** (1% reduction applied automatically)
+
+**Examples**:
+- Operation takes 8-12s → Use 15s TTL
+- Operation takes 20-25s → Use 30s TTL (default)
+- Operation takes 45-50s → Use 60s TTL
+
+---
+
+### Clock Drift Protection
+
+```typescript
+// Automatic TTL adjustment
+const requestedTTL = 30000;  // 30 seconds
+const driftFactor = 0.01;    // 1% safety margin
+const effectiveTTL = Math.floor(requestedTTL * (1 - driftFactor));
+// effectiveTTL = 29700ms (29.7 seconds)
+```
+
+**Why?** Prevents lock expiration race conditions in distributed systems with unsynchronized clocks.
+
+---
+
+## Best Practices
+
+### ✅ DO
+
+#### 1. Always Use try-finally Pattern
+
+```typescript
+let lock;
+try {
+  lock = await lockConsultationApproval(consultationId);
+  // Critical section
+} finally {
+  if (lock) await unlockApproval(lock);
+}
+```
+
+#### 2. Set TTL ≥ Operation Duration
+
+```typescript
+// Measure your operation
+const startTime = Date.now();
+await performApproval();
+const duration = Date.now() - startTime;
+console.log(`Operation took ${duration}ms`);
+
+// Add 20% buffer
+const safeTTL = Math.ceil(duration * 1.2);
+lock = await lockConsultationApproval(consultationId, safeTTL);
+```
+
+#### 3. Log Lock Operations
+
+```typescript
+// Structured logs are automatic
+lock = await lockConsultationApproval(consultationId);
+// Logs: {"event":"lock_acquired","duration_ms":78,...}
+```
+
+#### 4. Handle 409 Conflict Gracefully
+
+```typescript
+try {
+  lock = await lockConsultationApproval(consultationId);
+} catch (error) {
+  return Response.json(
+    {
+      error: "Another approval in progress",
+      message: "Please try again in a few seconds",
+      retryAfter: 3,
+    },
+    { status: 409 }
+  );
+}
+```
+
+#### 5. Use Specific Identifiers for Rate Limiting
+
+```typescript
+// ✅ Good: Specific identifiers
+await checkRateLimit(`user:${userId}:approval`);
+await checkRateLimit(`ip:${ip}:public-api`);
+await checkRateLimit(`endpoint:/api/webhooks:user:${userId}`);
+
+// ❌ Bad: Generic identifiers
+await checkRateLimit(userId);           // Unclear scope
+await checkRateLimit("rate-limit");     // Shares limit across all users
+```
+
+---
+
+### ❌ DON'T
+
+#### 1. Don't Acquire Locks Without finally
+
+```typescript
+// ❌ BAD: Exception prevents unlock
+lock = await lockConsultationApproval(consultationId);
+await performApproval(); // Throws exception
+await unlockApproval(lock); // Never executed!
+```
+
+#### 2. Don't Ignore Lock Acquisition Failures
+
+```typescript
+// ❌ BAD: Silently proceed without lock
+let lock;
+try {
+  lock = await lockConsultationApproval(consultationId);
+} catch (error) {
+  console.error(error); // Just log?
+}
+// Proceeds without lock protection! Race condition!
+```
+
+#### 3. Don't Use Locks for Long-Running Operations (>5 minutes)
+
+```typescript
+// ❌ BAD: 30-minute TTL
+lock = await lockConsultationApproval(consultationId, 30 * 60 * 1000);
+// Blocks all concurrent requests for 30 minutes!
+
+// ✅ GOOD: Redesign as async job
+await queueApprovalJob(consultationId);
+// Process asynchronously, no lock needed
+```
+
+#### 4. Don't Manually Delete Locks
+
+```typescript
+// ❌ BAD: Direct Redis manipulation
+await redis.del(`consultation-approval:${consultationId}`);
+// Bypasses ownership verification!
+
+// ✅ GOOD: Use unlockApproval
+await unlockApproval(lock);
+// Verifies ownership before deleting
+```
+
+#### 5. Don't Assume Immediate Availability After Release
+
+```typescript
+// ❌ BAD: Assumes immediate availability
+await unlockApproval(lock1);
+lock2 = await lockConsultationApproval(consultationId); // Might fail due to network delay!
+
+// ✅ GOOD: Use existing lock or retry
+await performSecondOperation(); // Use lock1
+await unlockApproval(lock1); // Then release
+```
+
+---
+
+## Related Documentation
+
+- **[README](./00_README.md)**: Quick start guide and overview
+- **[Migration Guide](./01_MIGRATION_GUIDE.md)**: Migrating from Redlock to Upstash
+- **[Upstash Redis Docs](https://upstash.com/docs/redis)**: Official Upstash documentation
+- **[Redis SET Command](https://redis.io/commands/set/)**: Understanding SET NX PX
+
+---
+
+**Questions?** See [Migration Guide](./01_MIGRATION_GUIDE.md) for architecture details and troubleshooting.
