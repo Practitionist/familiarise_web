@@ -1,80 +1,72 @@
-import { Redis } from "ioredis";
 import { Ratelimit } from "@upstash/ratelimit";
-import { Redis as UpstashRedis } from "@upstash/redis";
+import { Redis } from "@upstash/redis";
+import crypto from "crypto";
 
-let redis: Redis | null = null;
-let upstashRedis: UpstashRedis | null = null;
-let ratelimit: Ratelimit | null = null;
-
-// Initialize Redis client based on environment
+// Validate environment variables
 if (
-  process.env.UPSTASH_REDIS_REST_URL &&
-  process.env.UPSTASH_REDIS_REST_TOKEN
+  !process.env.UPSTASH_REDIS_REST_URL ||
+  !process.env.UPSTASH_REDIS_REST_TOKEN
 ) {
-  // Use Upstash Redis
-  upstashRedis = new UpstashRedis({
-    url: process.env.UPSTASH_REDIS_REST_URL,
-    token: process.env.UPSTASH_REDIS_REST_TOKEN,
-  });
-
-  // Create rate limiter - 5 requests per 10 seconds
-  ratelimit = new Ratelimit({
-    redis: upstashRedis,
-    limiter: Ratelimit.slidingWindow(5, "10 s"),
-  });
-} else {
-  // Use normal Redis
-  redis = new Redis(process.env.REDIS_URL || "redis://localhost:6379");
+  throw new Error(
+    "UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN must be set",
+  );
 }
 
-// Rate limiting function
+// Initialize Upstash Redis client
+const redis = new Redis({
+  url: process.env.UPSTASH_REDIS_REST_URL,
+  token: process.env.UPSTASH_REDIS_REST_TOKEN,
+});
+
+// Create rate limiter - 5 requests per 10 seconds
+const ratelimit = new Ratelimit({
+  redis: redis,
+  limiter: Ratelimit.slidingWindow(5, "10 s"),
+});
+
+// ============================================================================
+// Rate Limiting
+// ============================================================================
+
+/**
+ * Check if an identifier is within rate limits
+ * @param identifier - The identifier to check (e.g., user ID, IP address)
+ * @returns True if within limits, false if rate limited
+ */
 export async function checkRateLimit(identifier: string): Promise<boolean> {
-  if (ratelimit) {
-    // Using Upstash rate limiter
-    const result = await ratelimit.limit(identifier);
-    return result.success;
-  } else if (redis) {
-    // Simple rate limiting with normal Redis
-    const key = `ratelimit:${identifier}`;
-    const limit = 5; // requests
-    const window = 10; // seconds
-
-    const current = await redis.incr(key);
-    if (current === 1) {
-      await redis.expire(key, window);
-    }
-
-    return current <= limit;
-  }
-  return true; // No rate limiting if Redis is not configured
+  const result = await ratelimit.limit(identifier);
+  return result.success;
 }
 
-// Distributed locking
+// ============================================================================
+// Simple Lock/Unlock (for rate limiting and simple use cases)
+// ============================================================================
+
+/**
+ * Acquire a simple lock
+ * @param key - The lock key
+ * @param ttl - Time to live in milliseconds
+ * @returns Lock token if acquired, null if already locked
+ */
 export async function acquireLock(
-  lockKey: string,
-  ttl: number = 30000,
-): Promise<boolean> {
-  if (upstashRedis) {
-    // Using Upstash Redis
-    return (
-      (await upstashRedis.set(lockKey, "locked", {
-        nx: true,
-        px: ttl,
-      })) === "OK"
-    );
-  } else if (redis) {
-    // Using normal Redis
-    return (await redis.set(lockKey, "locked", "PX", ttl, "NX")) === "OK";
-  }
-  return true; // No locking if Redis is not configured
+  key: string,
+  ttl: number,
+): Promise<string | null> {
+  const token = crypto.randomUUID();
+  const result = await redis.set(key, token, { nx: true, px: ttl });
+  return result === "OK" ? token : null;
 }
 
-export async function releaseLock(lockKey: string): Promise<void> {
-  if (upstashRedis) {
-    await upstashRedis.del(lockKey);
-  } else if (redis) {
-    await redis.del(lockKey);
+/**
+ * Release a simple lock
+ * @param key - The lock key
+ * @param token - The lock token (for safe release)
+ */
+export async function releaseLock(key: string, token: string): Promise<void> {
+  const current = await redis.get(key);
+  if (current === token) {
+    await redis.del(key);
   }
 }
 
-export default redis || upstashRedis;
+export default redis;
