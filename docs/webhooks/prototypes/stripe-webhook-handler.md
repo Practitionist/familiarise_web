@@ -1,3 +1,4 @@
+```typescript
 // api/webhooks/stripe.ts
 
 import { NextRequest, NextResponse } from "next/server";
@@ -554,3 +555,4 @@ async function cleanupFailedPaymentAppointment(
     where: { id: appointmentId },
   });
 }
+```
