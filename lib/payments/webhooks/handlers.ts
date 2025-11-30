@@ -72,7 +72,19 @@ interface EventData {
 // ============================================================================
 
 /**
- * Handle successful payment - creates or confirms appointments
+ * Handle successful payment - confirms or creates appointments
+ *
+ * TWO FLOWS SUPPORTED:
+ * 1. NEW FLOW (Race Condition Fix): Appointment created during checkout (tentative)
+ *    - payment.appointmentId exists
+ *    - Just confirm appointment by setting isTentative = false
+ *    - This prevents race conditions by making validation see tentative bookings
+ *
+ * 2. LEGACY FLOW: Appointment NOT created during checkout
+ *    - payment.appointmentId is null
+ *    - Create appointment from webhook metadata
+ *    - Used for backwards compatibility and older payment flows
+ *
  * Used by both webhook handlers and mock payment flows
  */
 export async function handlePaymentSuccess(
@@ -138,17 +150,41 @@ export async function handlePaymentSuccess(
 
     let appointment;
     if (payment.appointmentId) {
+      // NEW FLOW: Appointment already created during checkout (tentative)
+      // Just confirm it by setting isTentative = false
       appointment = await tx.appointment.findUnique({
         where: { id: payment.appointmentId },
       });
+
+      console.log(
+        JSON.stringify({
+          event: "webhook_confirming_existing_appointment",
+          paymentIntent: paymentIntentId,
+          appointmentId: payment.appointmentId,
+          timestamp: new Date().toISOString(),
+        }),
+      );
     } else {
+      // LEGACY FLOW: Appointment not created during checkout
+      // Create it now from webhook metadata
       appointment = await createAppointmentFromWebhook(tx, metadata, payment);
+
+      console.log(
+        JSON.stringify({
+          event: "webhook_creating_new_appointment",
+          paymentIntent: paymentIntentId,
+          appointmentId: appointment.id,
+          appointmentType: metadata.appointmentType,
+          timestamp: new Date().toISOString(),
+        }),
+      );
     }
 
     if (!appointment) {
       throw new Error("Failed to create or find appointment");
     }
 
+    // Confirm appointment: set isTentative = false and update status to APPROVED
     await confirmExistingAppointment(tx, appointment.id);
 
     // Send payment success email

@@ -320,7 +320,12 @@ export async function calculateAmountAndValidate(
         currency = validatedData.paymentGateway === "RAZORPAY" ? "INR" : "USD";
     }
 
-    return { amount, currency, discountCodeId };
+    return {
+      amount,
+      currency,
+      discountCodeId,
+      consulteeProfileId: user.consulteeProfile.id
+    };
   });
 }
 
@@ -1094,7 +1099,7 @@ export async function handleCheckout(
 
   try {
     // STEP 1: Calculate amount and fetch plan data (OUTSIDE LOCK - just pricing)
-    const { amount, currency, discountCodeId } =
+    const { amount, currency, discountCodeId, consulteeProfileId } =
       await calculateAmountAndValidate(validatedData, userId);
 
     // Get plan data for consultant ID (needed for lock acquisition)
@@ -1138,41 +1143,100 @@ export async function handleCheckout(
       throw new Error("Failed to create payment intent. Please try again later.");
     }
 
-    // STEP 5: Create payment record (INSIDE LOCK)
+    // STEP 5: Create tentative appointment + payment record (INSIDE LOCK)
+    // This prevents race conditions by making validation see tentative bookings
     try {
-      await prisma.payment.create({
-        data: {
-          amount,
-          currency,
-          paymentMethod: "CARD",
-          paymentIntent: paymentResponse.id,
-          paymentGateway: validatedData.paymentGateway,
-          paymentStatus: PaymentStatus.PENDING,
-          isMockPayment,
-          userId: userId,
-          appointmentId: null, // Created after payment success
-          discountCodeId,
-          expiresAt: new Date(Date.now() + 30 * 60 * 1000), // 30 minutes
-        },
+      const result = await prisma.$transaction(async (tx) => {
+        let createdAppointment;
+
+        // Create appointment based on type (with isTentative flag)
+        switch (validatedData.appointmentType) {
+          case "CONSULTATION": {
+            const consultationResult = await handleConsultationCheckout(
+              tx,
+              validatedData,
+              consulteeProfileId,
+              isMockPayment, // skipPayment = isMockPayment
+            );
+            createdAppointment = consultationResult.appointment;
+            break;
+          }
+
+          case "SUBSCRIPTION": {
+            const subscriptionResult = await handleSubscriptionCheckout(
+              tx,
+              validatedData,
+              consulteeProfileId,
+              isMockPayment,
+            );
+            // Subscription doesn't create appointment during checkout
+            // Payment will be linked to subscription via webhook
+            createdAppointment = null;
+            break;
+          }
+
+          case "WEBINAR": {
+            const webinarResult = await handleWebinarCheckout(
+              tx,
+              validatedData,
+              userId,
+              isMockPayment,
+            );
+            createdAppointment = webinarResult.appointment;
+            break;
+          }
+
+          case "CLASS": {
+            const classResult = await handleClassCheckout(
+              tx,
+              validatedData,
+              userId,
+              isMockPayment,
+            );
+            // Class creates slots across multiple appointments
+            // Use first appointment for payment linkage
+            createdAppointment = classResult.appointment || null;
+            break;
+          }
+
+          default:
+            throw new Error(`Unsupported appointment type: ${validatedData.appointmentType}`);
+        }
+
+        // Create payment record linked to appointment (if created)
+        await tx.payment.create({
+          data: {
+            amount,
+            currency,
+            paymentMethod: "CARD",
+            paymentIntent: paymentResponse.id,
+            paymentGateway: validatedData.paymentGateway,
+            paymentStatus: PaymentStatus.PENDING,
+            isMockPayment,
+            userId: userId,
+            appointmentId: createdAppointment?.id || null,
+            discountCodeId,
+            expiresAt: new Date(Date.now() + 30 * 60 * 1000), // 30 minutes
+          },
+        });
+
+        return { appointmentId: createdAppointment?.id };
       });
 
       const logMessage = isMockPayment
-        ? `🎭 Mock payment created: ${paymentResponse.id} - Bypassing gateway`
-        : `💳 Payment intent created: ${paymentResponse.id} - Waiting for payment`;
+        ? `🎭 Mock payment + tentative appointment created: ${paymentResponse.id}`
+        : `💳 Payment intent + tentative appointment created: ${paymentResponse.id} - Waiting for payment confirmation`;
 
       console.log(logMessage);
-
-      // STEP 6: For mock payments, create appointments immediately (direct booking)
-      if (isMockPayment) {
-        await handlePaymentSuccess(
-          paymentResponse.id,
-          buildPaymentMetadata(validatedData, userId),
-        );
-
-        console.log(
-          `✅ Mock payment appointment created successfully for ${validatedData.appointmentType}`,
-        );
-      }
+      console.log(
+        JSON.stringify({
+          event: "checkout_appointment_created",
+          appointmentType: validatedData.appointmentType,
+          appointmentId: result.appointmentId,
+          isMockPayment,
+          timestamp: new Date().toISOString(),
+        }),
+      );
 
       return {
         success: true,
