@@ -122,6 +122,41 @@ export async function performRedisOperation() {
 
 > **Note**: For API rate limiting, use **Arcjet** instead. See the Arcjet documentation for setup.
 
+#### Example 3: Lock Extension for Long Operations
+
+For operations that may exceed the initial TTL, use lock extension:
+
+```typescript
+import {
+  lockSlotBooking,
+  unlockSlotBooking,
+  extendLock,
+} from "@/utils/appointmentlock";
+
+export async function processLongOperation(consultantId: string, slotTime: string) {
+  const lock = await lockSlotBooking(consultantId, slotTime, 60000); // 60s TTL
+
+  // Set up heartbeat to extend lock every 20 seconds
+  const heartbeat = setInterval(async () => {
+    const extended = await extendLock(lock, 30000); // Extend by 30s
+    if (!extended) {
+      console.warn("Lock extension failed - lost ownership");
+      clearInterval(heartbeat);
+    }
+  }, 20000);
+
+  try {
+    // Long-running operation (may take > 60s)
+    await performComplexDatabaseOperation();
+    await callExternalPaymentAPI();
+    await sendNotifications();
+  } finally {
+    clearInterval(heartbeat);
+    await unlockSlotBooking(lock);
+  }
+}
+```
+
 ---
 
 ## Key Concepts
@@ -130,18 +165,62 @@ export async function performRedisOperation() {
 
 | Lock Type | Default TTL | Use Case |
 |-----------|-------------|----------|
-| **Consultation Approval** | 30 seconds | Fast payment link generation |
-| **Subscription Approval** | 30 seconds | Fast subscription processing |
-| **Appointment Lock** (legacy) | 5 minutes | Complex time slot allocation |
-| **Rate Limiting** | 10 seconds | API abuse protection |
+| **Slot Booking** | 60 seconds | Prevent double-booking consultations |
+| **Consultation Approval** | 60 seconds | Payment link generation |
+| **Subscription Approval** | 60 seconds | Subscription processing |
+| **Event Checkout** | 60 seconds | Webinar/class checkout |
+| **Event Slot (Semaphore)** | 5 minutes | Multi-participant events |
 
 ### Core Features
 
 1. **SET NX PX**: Atomic Redis operation (set-if-not-exists with TTL)
 2. **UUID Ownership**: Each lock has unique ID for safe release verification
-3. **Exponential Backoff**: Smart retry strategy (10 attempts, 200ms base delay)
-4. **Clock Drift Protection**: 1% TTL safety margin prevents timing bugs
-5. **Structured Logging**: Every operation logged as JSON for monitoring
+3. **Atomic Release**: Lua script ensures only owner can release (prevents race conditions)
+4. **Exponential Backoff**: Smart retry strategy (10 attempts, 200ms base delay)
+5. **Lock Extension**: Heartbeat pattern for long-running operations
+6. **Semaphore Pattern**: Parallel checkout for multi-participant events
+7. **Structured Logging**: Every operation logged as JSON for monitoring
+
+### Circuit Breaker Pattern
+
+The circuit breaker protects against Redis failures:
+
+```typescript
+import { withCircuitBreaker, getCircuitBreakerStatus } from "@/lib/redis";
+
+// Check circuit status (for health endpoints)
+const status = getCircuitBreakerStatus();
+// { state: "CLOSED", failures: 0, lastFailure: null }
+
+// Wrap Redis operations with circuit breaker
+const result = await withCircuitBreaker(
+  async () => await redis.get("key"),
+  () => null // Fallback if circuit is open
+);
+```
+
+**Circuit States:**
+- **CLOSED**: Normal operation (all requests go through)
+- **OPEN**: Redis failing (fail fast, return fallback)
+- **HALF_OPEN**: Testing recovery (limited requests)
+
+#### ⚠️ Circuit Breaker Limitation: In-Memory State
+
+The circuit breaker state is stored **in-memory per instance**. In a multi-instance deployment (e.g., multiple Vercel serverless functions), each instance maintains its own circuit state.
+
+**Implications:**
+- Instance A may have circuit OPEN while Instance B has circuit CLOSED
+- Failures in one instance don't immediately affect others
+- This is acceptable for most use cases (localized failure detection)
+
+**For distributed circuit breaker state** (if needed in the future):
+```typescript
+// Option 1: Store state in Redis itself (with short TTL)
+// Option 2: Use a distributed service like Redis Sentinel
+// Option 3: Use Upstash's built-in rate limiting with circuit breaker
+```
+
+See [Future Improvements](#future-improvements) for more details.
 
 ### Lock Lifecycle
 
