@@ -14,8 +14,10 @@ A lightweight, REST API-based locking system that prevents concurrent operations
 ### When to use it?
 - **Payment Approval Workflows**: Ensure only one approval creates a payment link
 - **Subscription Processing**: Prevent duplicate subscription charges
-- **Appointment Booking**: Avoid double-booking time slots (legacy)
-- **Rate Limiting**: Protect APIs from abuse (5 requests / 10 seconds)
+- **Appointment Booking**: Avoid double-booking time slots
+- **Circuit Breaking**: Protect against Redis failures with graceful degradation
+
+> **Note**: API rate limiting is handled by **Arcjet** at the route level, not by this module.
 
 ### Why Upstash?
 - ✅ **Serverless-Native**: REST API works everywhere (Vercel Edge, Lambda, etc.)
@@ -91,33 +93,34 @@ export async function approveConsultation(consultationId: string) {
 {"event":"lock_released","key":"consultation-approval:clx123","held_duration_ms":5058,"timestamp":"2025-11-29T12:35:01.847Z"}
 ```
 
-#### Example 2: Rate Limiting
+#### Example 2: Circuit Breaker
 
-Protect your API endpoints from abuse:
+Protect your application when Redis is unavailable:
 
 ```typescript
-import { checkRateLimit } from "@/lib/redis";
+import { withCircuitBreaker, checkRedisHealth } from "@/lib/redis";
 
-export async function POST(request: Request) {
-  const userId = await getUserId(request);
+// Health check endpoint
+export async function GET() {
+  const redisHealthy = await checkRedisHealth();
+  return Response.json({
+    redis: redisHealthy ? "healthy" : "unhealthy",
+  });
+}
 
-  // Check rate limit: 5 requests per 10 seconds
-  const allowed = await checkRateLimit(`user:${userId}:approval`);
-
-  if (!allowed) {
-    return Response.json(
-      { error: "Too many requests. Please try again in 10 seconds." },
-      {
-        status: 429,
-        headers: { "Retry-After": "10" },
-      }
-    );
-  }
-
-  // Process request...
-  return Response.json({ success: true });
+// Using circuit breaker for Redis operations
+export async function performRedisOperation() {
+  return withCircuitBreaker(
+    async () => {
+      // Your Redis operation here
+      return await redis.get("some-key");
+    },
+    () => null // Fallback value if circuit is open
+  );
 }
 ```
+
+> **Note**: For API rate limiting, use **Arcjet** instead. See the Arcjet documentation for setup.
 
 ---
 

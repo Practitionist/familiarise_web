@@ -1,4 +1,15 @@
-import { Ratelimit } from "@upstash/ratelimit";
+/**
+ * Upstash Redis Client
+ *
+ * This module provides:
+ * - Redis client for distributed locking (used by appointmentlock.ts)
+ * - Circuit breaker pattern to handle Redis failures gracefully
+ * - Simple lock/unlock utilities
+ *
+ * NOTE: API rate limiting is handled by Arcjet at the route level.
+ * This module focuses on Redis operations for distributed state management.
+ */
+
 import { Redis } from "@upstash/redis";
 import crypto from "crypto";
 
@@ -18,14 +29,8 @@ const redis = new Redis({
   token: process.env.UPSTASH_REDIS_REST_TOKEN,
 });
 
-// Create rate limiter - 5 requests per 10 seconds
-const ratelimit = new Ratelimit({
-  redis: redis,
-  limiter: Ratelimit.slidingWindow(5, "10 s"),
-});
-
 // ============================================================================
-// Circuit Breaker Pattern - FIX Issue #12
+// Circuit Breaker Pattern
 // Prevents cascading failures when Redis is unavailable
 // ============================================================================
 
@@ -204,26 +209,7 @@ export function resetCircuitBreaker(): void {
 }
 
 // ============================================================================
-// Rate Limiting
-// ============================================================================
-
-/**
- * Check if an identifier is within rate limits
- * @param identifier - The identifier to check (e.g., user ID, IP address)
- * @returns True if within limits, false if rate limited
- */
-export async function checkRateLimit(identifier: string): Promise<boolean> {
-  return withCircuitBreaker(
-    async () => {
-      const result = await ratelimit.limit(identifier);
-      return result.success;
-    },
-    () => true, // Allow requests if Redis is down (fail open for rate limiting)
-  );
-}
-
-// ============================================================================
-// Simple Lock/Unlock (for rate limiting and simple use cases)
+// Simple Lock/Unlock (for distributed locking)
 // ============================================================================
 
 /**
@@ -243,7 +229,7 @@ export async function acquireLock(
 
 /**
  * Release a simple lock (atomic version using Lua script)
- * FIX: Uses atomic check-and-delete to prevent releasing another client's lock
+ * Uses atomic check-and-delete to prevent releasing another client's lock
  * @param key - The lock key
  * @param token - The lock token (for safe release)
  */
