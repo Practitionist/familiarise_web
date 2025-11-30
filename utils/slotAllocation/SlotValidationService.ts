@@ -31,12 +31,16 @@ export class SlotValidationService {
    *
    * USE CASE: Re-validation inside distributed lock after acquisition
    * This ensures the slot is still available before creating the booking.
+   *
+   * FIX Issue #11: Added slotDurationMinutes parameter for configurable slot duration
+   * @param slotDurationMinutes - Duration of each slot in minutes (default: 30)
    */
   async checkSlotAvailability(
     slots: Date[],
     consultantUserId: string,
+    slotDurationMinutes: number = 30,
   ): Promise<ValidationResult> {
-    return await this.validateNoConflicts(slots, consultantUserId);
+    return await this.validateNoConflicts(slots, consultantUserId, slotDurationMinutes);
   }
 
   /**
@@ -57,9 +61,16 @@ export class SlotValidationService {
     const scheduleCheck = this.validateMatchesSchedule(slots, consultant);
     if (!scheduleCheck.isValid) return scheduleCheck;
 
+    // FIX Issue #11: Pass slot duration from config for conflict checking
+    // Calculate slot duration in minutes from hours (default to 30 minutes)
+    const slotDurationMinutes = config.sessionDurationInHours
+      ? Math.round(config.sessionDurationInHours * 60 / slots.length)
+      : 30;
+
     const conflictCheck = await this.validateNoConflicts(
       slots,
       consultant.userId,
+      slotDurationMinutes,
     );
     if (!conflictCheck.isValid) return conflictCheck;
 
@@ -158,15 +169,21 @@ export class SlotValidationService {
    * - slotEndTimeInUTC > slot: Existing slot ends after proposed starts
    * - Together: Detects ANY time period overlap
    */
+  /**
+   * FIX Issue #11: Slot duration is now configurable
+   * Default remains 30 minutes for backwards compatibility
+   * @param slotDurationMinutes - Duration of each slot in minutes (default: 30)
+   */
   private async validateNoConflicts(
     slots: Date[],
     consultantUserId: string,
+    slotDurationMinutes: number = 30,
   ): Promise<ValidationResult> {
     const errors: string[] = [];
 
     for (const slot of slots) {
-      // Calculate the end time of the proposed slot (30-minute slots)
-      const slotEnd = new Date(slot.getTime() + 30 * 60 * 1000);
+      // Calculate the end time of the proposed slot using configurable duration
+      const slotEnd = new Date(slot.getTime() + slotDurationMinutes * 60 * 1000);
 
       const existingAppointment = await this.prismaClient.appointment.findFirst(
         {

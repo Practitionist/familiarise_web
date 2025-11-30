@@ -25,6 +25,185 @@ const ratelimit = new Ratelimit({
 });
 
 // ============================================================================
+// Circuit Breaker Pattern - FIX Issue #12
+// Prevents cascading failures when Redis is unavailable
+// ============================================================================
+
+interface CircuitBreakerState {
+  failures: number;
+  lastFailure: number;
+  state: "CLOSED" | "OPEN" | "HALF_OPEN";
+  halfOpenSuccesses: number;
+}
+
+const circuitBreaker: CircuitBreakerState = {
+  failures: 0,
+  lastFailure: 0,
+  state: "CLOSED",
+  halfOpenSuccesses: 0,
+};
+
+const CIRCUIT_CONFIG = {
+  failureThreshold: 5, // Open after 5 consecutive failures
+  resetTimeout: 30000, // Try again after 30 seconds
+  halfOpenSuccessThreshold: 3, // Close after 3 successful half-open requests
+};
+
+/**
+ * Execute Redis operation with circuit breaker protection
+ *
+ * Circuit Breaker States:
+ * - CLOSED: Normal operation, all requests go through
+ * - OPEN: Redis is failing, fail fast without attempting
+ * - HALF_OPEN: Testing if Redis is back, limited requests
+ *
+ * @param operation - The Redis operation to execute
+ * @param fallback - Optional fallback value if circuit is open
+ * @returns Result of operation or fallback
+ */
+export async function withCircuitBreaker<T>(
+  operation: () => Promise<T>,
+  fallback?: () => T,
+): Promise<T> {
+  // Check circuit state
+  if (circuitBreaker.state === "OPEN") {
+    const timeSinceFailure = Date.now() - circuitBreaker.lastFailure;
+
+    if (timeSinceFailure > CIRCUIT_CONFIG.resetTimeout) {
+      // Transition to HALF_OPEN for testing
+      circuitBreaker.state = "HALF_OPEN";
+      circuitBreaker.halfOpenSuccesses = 0;
+      console.log(
+        JSON.stringify({
+          event: "circuit_breaker_half_open",
+          timestamp: new Date().toISOString(),
+        }),
+      );
+    } else {
+      // Circuit is still open, fail fast
+      console.warn(
+        JSON.stringify({
+          event: "circuit_breaker_rejected",
+          remaining_ms: CIRCUIT_CONFIG.resetTimeout - timeSinceFailure,
+          timestamp: new Date().toISOString(),
+        }),
+      );
+
+      if (fallback) return fallback();
+      throw new Error("Redis circuit breaker is OPEN - service unavailable");
+    }
+  }
+
+  try {
+    const result = await operation();
+
+    // Success handling based on state
+    if (circuitBreaker.state === "HALF_OPEN") {
+      circuitBreaker.halfOpenSuccesses++;
+
+      if (
+        circuitBreaker.halfOpenSuccesses >=
+        CIRCUIT_CONFIG.halfOpenSuccessThreshold
+      ) {
+        // Enough successes, close the circuit
+        circuitBreaker.state = "CLOSED";
+        circuitBreaker.failures = 0;
+        circuitBreaker.halfOpenSuccesses = 0;
+        console.log(
+          JSON.stringify({
+            event: "circuit_breaker_closed",
+            reason: "successful_half_open_tests",
+            timestamp: new Date().toISOString(),
+          }),
+        );
+      }
+    } else if (circuitBreaker.state === "CLOSED" && circuitBreaker.failures > 0) {
+      // Reset failure count on success
+      circuitBreaker.failures = 0;
+    }
+
+    return result;
+  } catch (error) {
+    // Failure handling
+    circuitBreaker.failures++;
+    circuitBreaker.lastFailure = Date.now();
+
+    if (circuitBreaker.state === "HALF_OPEN") {
+      // Failed during half-open, back to open
+      circuitBreaker.state = "OPEN";
+      circuitBreaker.halfOpenSuccesses = 0;
+      console.error(
+        JSON.stringify({
+          event: "circuit_breaker_reopened",
+          reason: "half_open_failure",
+          timestamp: new Date().toISOString(),
+        }),
+      );
+    } else if (circuitBreaker.failures >= CIRCUIT_CONFIG.failureThreshold) {
+      // Too many failures, open the circuit
+      circuitBreaker.state = "OPEN";
+      console.error(
+        JSON.stringify({
+          event: "circuit_breaker_opened",
+          failures: circuitBreaker.failures,
+          timestamp: new Date().toISOString(),
+        }),
+      );
+    }
+
+    if (fallback) return fallback();
+    throw error;
+  }
+}
+
+/**
+ * Check Redis health (for monitoring and health endpoints)
+ * @returns True if Redis is healthy, false otherwise
+ */
+export async function checkRedisHealth(): Promise<boolean> {
+  try {
+    const result = await redis.ping();
+    return result === "PONG";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Get circuit breaker status (for monitoring dashboards)
+ * @returns Current circuit breaker state
+ */
+export function getCircuitBreakerStatus(): {
+  state: string;
+  failures: number;
+  lastFailure: number | null;
+} {
+  return {
+    state: circuitBreaker.state,
+    failures: circuitBreaker.failures,
+    lastFailure:
+      circuitBreaker.lastFailure > 0 ? circuitBreaker.lastFailure : null,
+  };
+}
+
+/**
+ * Manually reset circuit breaker (for admin operations)
+ */
+export function resetCircuitBreaker(): void {
+  circuitBreaker.state = "CLOSED";
+  circuitBreaker.failures = 0;
+  circuitBreaker.lastFailure = 0;
+  circuitBreaker.halfOpenSuccesses = 0;
+  console.log(
+    JSON.stringify({
+      event: "circuit_breaker_reset",
+      reason: "manual_reset",
+      timestamp: new Date().toISOString(),
+    }),
+  );
+}
+
+// ============================================================================
 // Rate Limiting
 // ============================================================================
 
@@ -34,8 +213,13 @@ const ratelimit = new Ratelimit({
  * @returns True if within limits, false if rate limited
  */
 export async function checkRateLimit(identifier: string): Promise<boolean> {
-  const result = await ratelimit.limit(identifier);
-  return result.success;
+  return withCircuitBreaker(
+    async () => {
+      const result = await ratelimit.limit(identifier);
+      return result.success;
+    },
+    () => true, // Allow requests if Redis is down (fail open for rate limiting)
+  );
 }
 
 // ============================================================================
@@ -58,15 +242,22 @@ export async function acquireLock(
 }
 
 /**
- * Release a simple lock
+ * Release a simple lock (atomic version using Lua script)
+ * FIX: Uses atomic check-and-delete to prevent releasing another client's lock
  * @param key - The lock key
  * @param token - The lock token (for safe release)
  */
 export async function releaseLock(key: string, token: string): Promise<void> {
-  const current = await redis.get(key);
-  if (current === token) {
-    await redis.del(key);
-  }
+  // Atomic release using Lua script
+  const script = `
+    if redis.call("get", KEYS[1]) == ARGV[1] then
+      return redis.call("del", KEYS[1])
+    else
+      return 0
+    end
+  `;
+
+  await redis.eval(script, [key], [token]);
 }
 
 export default redis;

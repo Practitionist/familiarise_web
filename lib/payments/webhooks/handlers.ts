@@ -124,19 +124,53 @@ export async function handlePaymentSuccess(
         errorMessage,
       );
 
-      // Mark payment as succeeded but flag for manual review
+      // FIX Issue #8: Enhanced alerting for metadata validation failures
+      // This is a CRITICAL condition - customer charged but no appointment created!
       await tx.payment.update({
         where: { id: payment.id },
         data: {
           paymentStatus: PaymentStatus.SUCCEEDED,
-          // Store error in description for manual recovery
-          description: `Metadata validation failed: ${errorMessage}. Manual recovery required via admin panel.`,
+          // Store error in description for manual recovery - prefixed for easy searching
+          description: `REQUIRES_MANUAL_RECOVERY: Metadata validation failed: ${errorMessage}. Customer charged but appointment NOT created.`,
         },
       });
 
-      // Alert for monitoring
+      // CRITICAL ALERT - Log in structured format for monitoring systems
+      // This should trigger PagerDuty/Slack alerts via log monitoring
       console.error(
-        `⚠️ ALERT: Payment ${payment.id} succeeded but appointment creation blocked due to invalid metadata. User: ${payment.userId}`,
+        JSON.stringify({
+          event: "CRITICAL_PAYMENT_WITHOUT_APPOINTMENT",
+          alert_priority: "P1",
+          payment_id: payment.id,
+          payment_intent: paymentIntentId,
+          user_id: payment.userId,
+          user_email: payment.user.email,
+          amount: payment.amount,
+          currency: payment.currency,
+          error: errorMessage,
+          action_required: "IMMEDIATE: Manual appointment creation or full refund required",
+          dashboard_url: `${process.env.NEXT_PUBLIC_APP_URL}/admin/payments/${payment.id}`,
+          timestamp: new Date().toISOString(),
+        }),
+      );
+
+      // Also log in human-readable format for direct log viewing
+      console.error(
+        `
+================================================================================
+                    CRITICAL ALERT: PAYMENT WITHOUT APPOINTMENT
+================================================================================
+Payment ID:      ${payment.id}
+Payment Intent:  ${paymentIntentId}
+User ID:         ${payment.userId}
+User Email:      ${payment.user.email || 'N/A'}
+Amount:          ${payment.currency} ${payment.amount / 100}
+Error:           ${errorMessage}
+
+ACTION REQUIRED: Customer was charged but appointment was NOT created!
+                 Either create appointment manually or issue full refund.
+================================================================================
+        `,
       );
 
       // Exit early - appointment not created, requires manual intervention

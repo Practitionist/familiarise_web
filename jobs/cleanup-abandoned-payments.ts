@@ -133,9 +133,11 @@ async function cleanupAbandonedPayments(): Promise<CleanupResult> {
                       { expiresAt: null }, // No expiration set (legacy)
                       {
                         createdAt: {
-                          lt: new Date(Date.now() - 30 * 60 * 1000),
+                          // FIX Issue #6: Increased from 30 to 35 minutes buffer
+                          // Prevents race condition at payment expiration boundary
+                          lt: new Date(Date.now() - 35 * 60 * 1000),
                         },
-                      }, // 30 min fallback
+                      }, // 35 min fallback (5 min buffer over 30 min expiry)
                     ],
                   },
                 ],
@@ -170,6 +172,34 @@ async function cleanupAbandonedPayments(): Promise<CleanupResult> {
     for (const appointment of abandonedAppointments) {
       try {
         await prisma.$transaction(async (tx) => {
+          // FIX Issue #10: Re-check payment status before cleanup
+          // Prevents race condition where payment webhook fires during cleanup processing
+          let shouldSkip = false;
+          for (const payment of appointment.payment) {
+            const freshPayment = await tx.payment.findUnique({
+              where: { id: payment.id },
+            });
+
+            if (freshPayment?.paymentStatus === PaymentStatus.SUCCEEDED) {
+              console.log(
+                JSON.stringify({
+                  event: "cleanup_skipped_payment_succeeded",
+                  paymentId: payment.id,
+                  appointmentId: appointment.id,
+                  reason: "Payment completed during cleanup processing",
+                  timestamp: new Date().toISOString(),
+                }),
+              );
+              shouldSkip = true;
+              break;
+            }
+          }
+
+          if (shouldSkip) {
+            // Skip this appointment - payment completed while we were processing
+            return;
+          }
+
           // Cancel payment intents
           for (const payment of appointment.payment) {
             try {
