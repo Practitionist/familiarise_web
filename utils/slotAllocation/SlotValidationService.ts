@@ -230,11 +230,30 @@ export class SlotValidationService {
                 },
               },
             },
+            payment: true, // Need payment data to check expiry
           },
         },
       );
 
       if (existingAppointment) {
+        // FIX: Check if consultation is APPROVED_PENDING_PAYMENT with expired payment
+        // If payment expired, slot is actually free (orphaned payment bug fix)
+        if (
+          existingAppointment.consultation?.requestStatus ===
+          RequestStatus.APPROVED_PENDING_PAYMENT
+        ) {
+          const payment = existingAppointment.payment?.[0];
+          if (payment?.expiresAt) {
+            const now = new Date();
+            const paymentExpired = new Date(payment.expiresAt) < now;
+            if (paymentExpired) {
+              // Payment expired - slot is actually available, skip this conflict
+              continue;
+            }
+          }
+        }
+
+        // Slot is genuinely booked - add error
         let conflictDetails = `${slot.toLocaleString()}`;
         if (existingAppointment.consultation) {
           conflictDetails += ` (conflicts with consultation for ${existingAppointment.consultation.requestedBy?.user?.name || "unknown"})`;
