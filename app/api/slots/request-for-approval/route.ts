@@ -3,6 +3,7 @@ import prisma from "@/lib/prisma";
 import { getServerSession } from "next-auth";
 import authOptions from "@/app/api/auth/[...nextauth]/options";
 import { RequestStatus } from "@prisma/client";
+import { lockSlotBooking, unlockSlotBooking } from "@/utils/appointmentlock";
 
 export async function POST(req: NextRequest) {
   try {
@@ -113,62 +114,137 @@ export async function POST(req: NextRequest) {
       `Request for approval - Slot: ${startTime.toISOString()} to ${endTime.toISOString()}. ` +
       `Availability slot: ${slotOfAvailabilityWeeklyId ? `Weekly ID: ${slotOfAvailabilityWeeklyId}` : `Custom ID: ${slotOfAvailabilityCustomId}`}`;
 
-    // Create the consultation with pending status
-    const consultation = await prisma.consultation.create({
-      data: {
-        consultationPlanId: consultationPlanId,
-        requestedById: consulteeProfile.id,
-        requestStatus: RequestStatus.PENDING,
-        requestNotes: requestNotes,
-        appointment: {
-          create: {
-            appointmentType: "CONSULTATION",
-            slotsOfAppointment: {
-              create: {
-                startsAt: startTime,
-                endsAt: endTime,
-                isTentative: true, // Mark as tentative since it's pending approval
-                user: {
-                  connect: [
-                    { id: session.user.id }, // Consultee
-                    { id: consultationPlan.consultantProfile.user.id }, // Consultant
-                  ],
+    // DISTRIBUTED LOCK: Prevent double-booking at slot level
+    let lock;
+
+    try {
+      // ACQUIRE LOCK for this specific slot
+      lock = await lockSlotBooking(
+        consultantProfileId,
+        slotStartTimeInUTC,
+        15000,
+      );
+
+      console.log(
+        JSON.stringify({
+          event: "slot_booking_lock_acquired",
+          consultant: consultantProfileId,
+          slot: slotStartTimeInUTC,
+          user: session.user.id,
+          timestamp: new Date().toISOString(),
+        }),
+      );
+
+      // CRITICAL SECTION: Create consultation (protected by lock)
+      const consultation = await prisma.consultation.create({
+        data: {
+          consultationPlanId: consultationPlanId,
+          requestedById: consulteeProfile.id,
+          requestStatus: RequestStatus.PENDING,
+          requestNotes: requestNotes,
+          appointment: {
+            create: {
+              appointmentType: "CONSULTATION",
+              slotsOfAppointment: {
+                create: {
+                  startsAt: startTime,
+                  endsAt: endTime,
+                  isTentative: true, // Mark as tentative since it's pending approval
+                  user: {
+                    connect: [
+                      { id: session.user.id }, // Consultee
+                      { id: consultationPlan.consultantProfile.user.id }, // Consultant
+                    ],
+                  },
                 },
               },
             },
           },
         },
-      },
-      include: {
-        consultationPlan: {
-          include: {
-            consultantProfile: {
-              include: {
-                user: true,
+        include: {
+          consultationPlan: {
+            include: {
+              consultantProfile: {
+                include: {
+                  user: true,
+                },
               },
             },
           },
-        },
-        requestedBy: {
-          include: {
-            user: true,
+          requestedBy: {
+            include: {
+              user: true,
+            },
+          },
+          appointment: {
+            include: {
+              slotsOfAppointment: true,
+            },
           },
         },
-        appointment: {
-          include: {
-            slotsOfAppointment: true,
-          },
-        },
-      },
-    });
+      });
 
-    return NextResponse.json(
-      {
-        message: "Request for approval submitted successfully",
-        data: consultation,
-      },
-      { status: 201 },
-    );
+      console.log(
+        JSON.stringify({
+          event: "slot_booking_success",
+          consultationId: consultation.id,
+          consultant: consultantProfileId,
+          slot: slotStartTimeInUTC,
+          user: session.user.id,
+          timestamp: new Date().toISOString(),
+        }),
+      );
+
+      return NextResponse.json(
+        {
+          message: "Request for approval submitted successfully",
+          data: consultation,
+        },
+        { status: 201 },
+      );
+    } catch (lockError) {
+      console.error(
+        JSON.stringify({
+          event: "slot_booking_error",
+          consultant: consultantProfileId,
+          slot: slotStartTimeInUTC,
+          user: session.user.id,
+          error:
+            lockError instanceof Error ? lockError.message : "Unknown error",
+          timestamp: new Date().toISOString(),
+        }),
+      );
+
+      // Check if error is lock acquisition failure
+      if (
+        lockError instanceof Error &&
+        lockError.message.includes("currently being booked")
+      ) {
+        return NextResponse.json(
+          {
+            error: lockError.message,
+            retryAfter: 15,
+          },
+          { status: 409 }, // 409 Conflict
+        );
+      }
+
+      throw lockError; // Re-throw other errors for general error handler
+    } finally {
+      // ALWAYS release lock (even on error)
+      if (lock) {
+        await unlockSlotBooking(lock);
+        console.log(
+          JSON.stringify({
+            event: "slot_booking_lock_released",
+            consultant: consultantProfileId,
+            slot: slotStartTimeInUTC,
+            user: session.user.id,
+            timestamp: new Date().toISOString(),
+          }),
+        );
+      }
+    }
   } catch (error) {
     console.error("Error creating approval request:", error);
     return NextResponse.json(

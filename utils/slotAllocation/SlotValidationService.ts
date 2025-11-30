@@ -161,7 +161,21 @@ export class SlotValidationService {
               {
                 OR: [
                   { subscription: { requestStatus: RequestStatus.APPROVED } },
-                  { consultation: { requestStatus: RequestStatus.APPROVED } },
+                  // FIX: Check ALL consultation booking states (not just APPROVED)
+                  // PENDING = User submitted, awaiting consultant approval (tentative)
+                  // APPROVED = Consultant approved (if no payment required)
+                  // APPROVED_PENDING_PAYMENT = Consultant approved, awaiting payment
+                  {
+                    consultation: {
+                      requestStatus: {
+                        in: [
+                          RequestStatus.PENDING,
+                          RequestStatus.APPROVED,
+                          RequestStatus.APPROVED_PENDING_PAYMENT,
+                        ],
+                      },
+                    },
+                  },
                   { webinar: { status: "SCHEDULED" } },
                   { class: { status: "SCHEDULED" } },
                 ],

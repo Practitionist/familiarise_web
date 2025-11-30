@@ -238,6 +238,40 @@ export async function unlockApproval(lock: ApprovalLock): Promise<void> {
 }
 
 // ============================================================================
+// Public API - Slot Booking Locks
+// ============================================================================
+
+/**
+ * Lock a specific time slot to prevent double-booking during consultation creation
+ * @param consultantProfileId - The consultant's profile ID
+ * @param slotStartTimeInUTC - The slot start time in ISO format
+ * @param ttl - Time to live in milliseconds (default 15 seconds)
+ * @returns Lock instance (must be released with unlockSlotBooking)
+ */
+export async function lockSlotBooking(
+  consultantProfileId: string,
+  slotStartTimeInUTC: string,
+  ttl: number = 15000,
+): Promise<ApprovalLock> {
+  const key = `slot-booking:${consultantProfileId}:${slotStartTimeInUTC}`;
+  try {
+    return await acquireLockWithRetry(key, ttl);
+  } catch (error) {
+    throw new Error(
+      "This time slot is currently being booked by another user. Please try again in a few seconds.",
+    );
+  }
+}
+
+/**
+ * Release a slot booking lock
+ * @param lock - The lock instance to release
+ */
+export async function unlockSlotBooking(lock: ApprovalLock): Promise<void> {
+  await releaseLock(lock);
+}
+
+// ============================================================================
 // Legacy Functions - Appointment Locks
 // ============================================================================
 
