@@ -17,6 +17,13 @@ import {
 } from "@prisma/client";
 import { cancelPaymentIntent, createPaymentIntent } from "../index";
 import { handlePaymentSuccess } from "@/lib/payments/webhooks/handlers";
+import {
+  lockSlotBooking,
+  unlockSlotBooking,
+  lockEventCheckout,
+  unlockEventCheckout,
+  ApprovalLock,
+} from "@/utils/appointmentlock";
 
 // Re-export for backward compatibility
 export const unifiedCheckoutSchema = checkoutSchema;
@@ -487,6 +494,242 @@ export async function validateSlotAvailability(
 }
 
 // ============================================================================
+// Checkout Lock Management
+// ============================================================================
+
+/**
+ * Get plan data needed for lock acquisition
+ * Returns consultant profile info for slot-based locking
+ */
+async function getPlanDataForLock(
+  data: CheckoutInput,
+): Promise<{ consultantProfile?: { userId: string } }> {
+  // For CONSULTATION and SUBSCRIPTION, we need consultant ID for slot locking
+  if (data.appointmentType === "CONSULTATION") {
+    const plan = await prisma.consultationPlan.findUnique({
+      where: { id: data.planId },
+      select: {
+        consultantProfile: {
+          select: { userId: true },
+        },
+      },
+    });
+    if (!plan) throw new Error("Consultation plan not found");
+    return plan;
+  }
+
+  if (data.appointmentType === "SUBSCRIPTION") {
+    const plan = await prisma.subscriptionPlan.findUnique({
+      where: { id: data.planId },
+      select: {
+        consultantProfile: {
+          select: { userId: true },
+        },
+      },
+    });
+    if (!plan) throw new Error("Subscription plan not found");
+    return plan;
+  }
+
+  // For WEBINAR/CLASS, we don't need consultant ID (event-based locking)
+  return {};
+}
+
+/**
+ * Acquire appropriate lock based on checkout type
+ * Returns lock or null if no locking needed
+ */
+async function acquireCheckoutLock(
+  data: CheckoutInput,
+  planData: { consultantProfile?: { userId: string } },
+): Promise<ApprovalLock | null> {
+  const appointmentType = data.appointmentType;
+
+  // Strategy A: Slot-based locking (CONSULTATION + direct SUBSCRIPTION)
+  if (data.slotStartTimeInUTC && data.slotEndTimeInUTC) {
+    // Get consultant user ID from plan
+    let consultantUserId: string;
+
+    if (appointmentType === "CONSULTATION" || appointmentType === "SUBSCRIPTION") {
+      consultantUserId = planData.consultantProfile!.userId;
+    } else {
+      // For WEBINAR/CLASS with slots (shouldn't happen but handle gracefully)
+      throw new Error("Invalid checkout configuration: slot-based checkout for event type");
+    }
+
+    console.log(
+      JSON.stringify({
+        event: "checkout_lock_acquiring",
+        type: "slot-based",
+        appointmentType,
+        consultantUserId,
+        slot: data.slotStartTimeInUTC,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+
+    return await lockSlotBooking(consultantUserId, data.slotStartTimeInUTC, 30000);
+  }
+
+  // Strategy B: Event-based locking (WEBINAR, CLASS, scheduling-period SUBSCRIPTION)
+  if (appointmentType === "WEBINAR" || appointmentType === "CLASS") {
+    if (!data.eventId) {
+      throw new Error(`${appointmentType} checkout requires event ID`);
+    }
+
+    console.log(
+      JSON.stringify({
+        event: "checkout_lock_acquiring",
+        type: "event-based",
+        appointmentType,
+        eventId: data.eventId,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+
+    return await lockEventCheckout(appointmentType, data.eventId, 30000);
+  }
+
+  // Scheduling period SUBSCRIPTION (no slots during checkout)
+  if (appointmentType === "SUBSCRIPTION" && data.schedulingPeriodStartsAt) {
+    console.log(
+      JSON.stringify({
+        event: "checkout_lock_acquiring",
+        type: "event-based",
+        appointmentType: "SUBSCRIPTION",
+        planId: data.planId,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+
+    return await lockEventCheckout(appointmentType, data.planId, 30000);
+  }
+
+  // Should not reach here if validation is correct
+  console.warn(
+    JSON.stringify({
+      event: "checkout_no_lock_needed",
+      appointmentType,
+      data,
+      timestamp: new Date().toISOString(),
+    }),
+  );
+
+  return null;
+}
+
+/**
+ * Release checkout lock safely (for finally blocks)
+ */
+async function releaseCheckoutLock(
+  lock: ApprovalLock | null,
+  lockType: string,
+): Promise<void> {
+  if (!lock) return;
+
+  if (lockType === "slot-based") {
+    await unlockSlotBooking(lock);
+  } else {
+    await unlockEventCheckout(lock);
+  }
+
+  console.log(
+    JSON.stringify({
+      event: "checkout_lock_released",
+      lockType,
+      timestamp: new Date().toISOString(),
+    }),
+  );
+}
+
+/**
+ * Re-validate availability inside the lock
+ * Critical for preventing TOCTOU race conditions
+ */
+async function revalidateInsideLock(
+  data: CheckoutInput,
+  userId: string,
+): Promise<void> {
+  // Re-run the same validation as calculateAmountAndValidate
+  // but this time we're inside the lock, so it's safe
+  await prisma.$transaction(async (tx) => {
+    const user = await tx.user.findUnique({
+      where: { id: userId },
+      include: { consulteeProfile: true },
+    });
+
+    if (!user?.consulteeProfile) {
+      throw new Error("User profile not found");
+    }
+
+    // Re-validate slot availability based on appointment type
+    switch (data.appointmentType) {
+      case "CONSULTATION":
+      case "SUBSCRIPTION":
+        // Only validate if there are slots
+        if (data.slotStartTimeInUTC && data.slotEndTimeInUTC) {
+          await validateSlotAvailability(tx, data, user.consulteeProfile.id);
+        }
+        break;
+
+      case "WEBINAR": {
+        if (!data.eventId) throw new Error("Event ID is required for webinar");
+
+        const webinar = await tx.webinar.findUnique({
+          where: { id: data.eventId },
+          include: {
+            webinarPlan: true,
+            appointment: {
+              include: { slotsOfAppointment: true },
+            },
+          },
+        });
+
+        if (!webinar) throw new Error("Webinar not found");
+
+        const currentParticipants =
+          webinar.appointment?.slotsOfAppointment?.length || 0;
+
+        if (currentParticipants >= webinar.webinarPlan.maxParticipants) {
+          throw new Error("Webinar is full");
+        }
+        break;
+      }
+
+      case "CLASS": {
+        if (!data.eventId) throw new Error("Event ID is required for class");
+
+        const classInstance = await tx.class.findUnique({
+          where: { id: data.eventId },
+          include: {
+            classPlan: true,
+            appointments: {
+              include: { slotsOfAppointment: true },
+            },
+          },
+        });
+
+        if (!classInstance) throw new Error("Class not found");
+
+        const currentParticipants = classInstance.appointments.reduce(
+          (total: number, apt: { slotsOfAppointment: unknown[] }) =>
+            total + apt.slotsOfAppointment.length,
+          0,
+        );
+
+        if (currentParticipants >= classInstance.classPlan.maxParticipants) {
+          throw new Error("Class is full");
+        }
+        break;
+      }
+
+      default:
+        throw new Error("Invalid appointment type");
+    }
+  });
+}
+
+// ============================================================================
 // Appointment Creation Handlers (Type-Specific)
 // ============================================================================
 
@@ -845,79 +1088,133 @@ export async function handleCheckout(
   userId: string,
   isMockPayment: boolean = false,
 ) {
-  // Step 1: Calculate amount and validate
-  const { amount, currency, discountCodeId } =
-    await calculateAmountAndValidate(validatedData, userId);
+  let lock: ApprovalLock | null = null;
+  let lockType = "";
+  let paymentResponse: any = null;
 
-  // Step 2: Create payment intent
-  let paymentResponse;
   try {
-    paymentResponse = await PaymentIntentManager.createWithCleanup({
-      amount,
-      currency,
-      metadata: buildPaymentMetadata(validatedData, userId),
-      paymentGateway: validatedData.paymentGateway,
-      isMockPayment,
-    });
-  } catch (paymentError) {
-    console.error("Payment intent creation failed:", paymentError);
-    throw new Error("Failed to create payment intent. Please try again later.");
-  }
+    // STEP 1: Calculate amount and fetch plan data (OUTSIDE LOCK - just pricing)
+    const { amount, currency, discountCodeId } =
+      await calculateAmountAndValidate(validatedData, userId);
 
-  // Step 3: Create payment record
-  try {
-    await prisma.payment.create({
-      data: {
-        amount,
-        currency,
-        paymentMethod: "CARD",
-        paymentIntent: paymentResponse.id,
-        paymentGateway: validatedData.paymentGateway,
-        paymentStatus: PaymentStatus.PENDING,
-        isMockPayment,
-        userId: userId,
-        appointmentId: null, // Created after payment success
-        discountCodeId,
-        expiresAt: new Date(Date.now() + 30 * 60 * 1000), // 30 minutes
-      },
-    });
+    // Get plan data for consultant ID (needed for lock acquisition)
+    const planData = await getPlanDataForLock(validatedData);
 
-    const logMessage = isMockPayment
-      ? `🎭 Mock payment created: ${paymentResponse.id} - Bypassing gateway`
-      : `💳 Payment intent created: ${paymentResponse.id} - Waiting for payment`;
+    // STEP 2: ACQUIRE DISTRIBUTED LOCK (prevents race conditions)
+    lock = await acquireCheckoutLock(validatedData, planData);
+    lockType = validatedData.slotStartTimeInUTC ? "slot-based" : "event-based";
 
-    console.log(logMessage);
-
-    // Step 4: For mock payments, create appointments immediately (direct booking)
-    if (isMockPayment) {
-      await handlePaymentSuccess(
-        paymentResponse.id,
-        buildPaymentMetadata(validatedData, userId),
-      );
-
-      console.log(`✅ Mock payment appointment created successfully for ${validatedData.appointmentType}`);
-    }
-
-    return {
-      success: true,
-      paymentIntent: paymentResponse,
-      message: isMockPayment
-        ? "Mock payment completed and appointment created successfully"
-        : "Payment intent created. Complete payment to book appointment.",
-      amount,
-      currency,
-      isMockPayment,
-    };
-  } catch (dbError) {
-    console.error("Failed to create payment record:", dbError);
-
-    // CRITICAL: Cancel payment intent since DB operation failed
-    await PaymentIntentManager.cleanup(
-      paymentResponse.id,
-      "Database operation failed - preventing orphaned payment intent",
+    console.log(
+      JSON.stringify({
+        event: "checkout_lock_acquired",
+        lockType,
+        appointmentType: validatedData.appointmentType,
+        timestamp: new Date().toISOString(),
+      }),
     );
 
-    throw new Error("Failed to record payment information. Please try again.");
+    // STEP 3: RE-VALIDATE INSIDE LOCK (critical for preventing TOCTOU race conditions)
+    await revalidateInsideLock(validatedData, userId);
+
+    console.log(
+      JSON.stringify({
+        event: "checkout_revalidation_passed",
+        appointmentType: validatedData.appointmentType,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+
+    // STEP 4: Create payment intent (INSIDE LOCK)
+    try {
+      paymentResponse = await PaymentIntentManager.createWithCleanup({
+        amount,
+        currency,
+        metadata: buildPaymentMetadata(validatedData, userId),
+        paymentGateway: validatedData.paymentGateway,
+        isMockPayment,
+      });
+    } catch (paymentError) {
+      console.error("Payment intent creation failed:", paymentError);
+      throw new Error("Failed to create payment intent. Please try again later.");
+    }
+
+    // STEP 5: Create payment record (INSIDE LOCK)
+    try {
+      await prisma.payment.create({
+        data: {
+          amount,
+          currency,
+          paymentMethod: "CARD",
+          paymentIntent: paymentResponse.id,
+          paymentGateway: validatedData.paymentGateway,
+          paymentStatus: PaymentStatus.PENDING,
+          isMockPayment,
+          userId: userId,
+          appointmentId: null, // Created after payment success
+          discountCodeId,
+          expiresAt: new Date(Date.now() + 30 * 60 * 1000), // 30 minutes
+        },
+      });
+
+      const logMessage = isMockPayment
+        ? `🎭 Mock payment created: ${paymentResponse.id} - Bypassing gateway`
+        : `💳 Payment intent created: ${paymentResponse.id} - Waiting for payment`;
+
+      console.log(logMessage);
+
+      // STEP 6: For mock payments, create appointments immediately (direct booking)
+      if (isMockPayment) {
+        await handlePaymentSuccess(
+          paymentResponse.id,
+          buildPaymentMetadata(validatedData, userId),
+        );
+
+        console.log(
+          `✅ Mock payment appointment created successfully for ${validatedData.appointmentType}`,
+        );
+      }
+
+      return {
+        success: true,
+        paymentIntent: paymentResponse,
+        message: isMockPayment
+          ? "Mock payment completed and appointment created successfully"
+          : "Payment intent created. Complete payment to book appointment.",
+        amount,
+        currency,
+        isMockPayment,
+      };
+    } catch (dbError) {
+      console.error("Failed to create payment record:", dbError);
+
+      // CRITICAL: Cancel payment intent since DB operation failed
+      if (paymentResponse) {
+        await PaymentIntentManager.cleanup(
+          paymentResponse.id,
+          "Database operation failed - preventing orphaned payment intent",
+        );
+      }
+
+      throw new Error("Failed to record payment information. Please try again.");
+    }
+  } catch (error) {
+    // Enhanced error handling with lock-specific errors
+    if (error instanceof Error) {
+      if (
+        error.message.includes("currently checking out") ||
+        error.message.includes("currently being booked")
+      ) {
+        throw new Error(
+          "Another user is currently booking this slot. Please wait a few seconds and try again.",
+        );
+      }
+    }
+    throw error;
+  } finally {
+    // ALWAYS RELEASE LOCK (even on error)
+    if (lock) {
+      await releaseCheckoutLock(lock, lockType);
+    }
   }
 }
 

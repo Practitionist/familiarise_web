@@ -271,6 +271,41 @@ export async function unlockSlotBooking(lock: ApprovalLock): Promise<void> {
 }
 
 // ============================================================================
+// Public API - Event Checkout Locks
+// ============================================================================
+
+/**
+ * Lock event checkout to prevent concurrent booking attempts
+ * Used for webinars, classes, and subscription scheduling periods
+ * @param appointmentType - Type of appointment (WEBINAR, CLASS, SUBSCRIPTION)
+ * @param eventOrPlanId - Event ID or plan ID to lock
+ * @param ttl - Time to live in milliseconds (default 30 seconds)
+ * @returns Lock instance (must be released with unlockEventCheckout)
+ */
+export async function lockEventCheckout(
+  appointmentType: string,
+  eventOrPlanId: string,
+  ttl: number = 30000,
+): Promise<ApprovalLock> {
+  const key = `event-checkout:${appointmentType}:${eventOrPlanId}`;
+  try {
+    return await acquireLockWithRetry(key, ttl);
+  } catch (error) {
+    throw new Error(
+      `Another user is currently checking out this ${appointmentType.toLowerCase()}. Please try again in a few seconds.`,
+    );
+  }
+}
+
+/**
+ * Release an event checkout lock
+ * @param lock - The lock instance to release
+ */
+export async function unlockEventCheckout(lock: ApprovalLock): Promise<void> {
+  await releaseLock(lock);
+}
+
+// ============================================================================
 // Legacy Functions - Appointment Locks
 // ============================================================================
 
