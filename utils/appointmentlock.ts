@@ -1,6 +1,7 @@
 import { Redis } from "@upstash/redis";
 import redisClient from "../lib/redis";
 import crypto from "crypto";
+import { SlotLockError } from "./errors/SlotLockError";
 
 // ============================================================================
 // Type Definitions
@@ -257,9 +258,7 @@ export async function lockSlotBooking(
   try {
     return await acquireLockWithRetry(key, ttl);
   } catch (error) {
-    throw new Error(
-      "This time slot is currently being booked by another user. Please try again in a few seconds.",
-    );
+    throw new SlotLockError(consultantProfileId, slotStartTimeInUTC, 15);
   }
 }
 

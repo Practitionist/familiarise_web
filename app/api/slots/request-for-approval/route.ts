@@ -4,6 +4,8 @@ import { getServerSession } from "next-auth";
 import authOptions from "@/app/api/auth/[...nextauth]/options";
 import { RequestStatus } from "@prisma/client";
 import { lockSlotBooking, unlockSlotBooking } from "@/utils/appointmentlock";
+import { SlotLockError } from "@/utils/errors/SlotLockError";
+import { SlotValidationService } from "@/utils/slotAllocation/SlotValidationService";
 
 export async function POST(req: NextRequest) {
   try {
@@ -135,7 +137,46 @@ export async function POST(req: NextRequest) {
         }),
       );
 
-      // CRITICAL SECTION: Create consultation (protected by lock)
+      // RE-VALIDATE inside lock: Ensure slot is still available
+      // This is the critical missing piece - prevents double-booking even after lock
+      const validationService = new SlotValidationService(prisma);
+      const validation = await validationService.checkSlotAvailability(
+        [startTime],
+        consultationPlan.consultantProfile.user.id,
+      );
+
+      if (!validation.isValid) {
+        console.log(
+          JSON.stringify({
+            event: "slot_booking_validation_failed",
+            consultant: consultantProfileId,
+            slot: slotStartTimeInUTC,
+            user: session.user.id,
+            errors: validation.errors,
+            timestamp: new Date().toISOString(),
+          }),
+        );
+
+        return NextResponse.json(
+          {
+            error: "Slot no longer available",
+            details: validation.errors,
+          },
+          { status: 409 },
+        );
+      }
+
+      console.log(
+        JSON.stringify({
+          event: "slot_booking_validation_passed",
+          consultant: consultantProfileId,
+          slot: slotStartTimeInUTC,
+          user: session.user.id,
+          timestamp: new Date().toISOString(),
+        }),
+      );
+
+      // CRITICAL SECTION: Create consultation (protected by lock AND validated)
       const consultation = await prisma.consultation.create({
         data: {
           consultationPlanId: consultationPlanId,
@@ -215,15 +256,12 @@ export async function POST(req: NextRequest) {
         }),
       );
 
-      // Check if error is lock acquisition failure
-      if (
-        lockError instanceof Error &&
-        lockError.message.includes("currently being booked")
-      ) {
+      // Check if error is lock acquisition failure (type-safe)
+      if (lockError instanceof SlotLockError) {
         return NextResponse.json(
           {
             error: lockError.message,
-            retryAfter: 15,
+            retryAfter: lockError.retryAfterSeconds,
           },
           { status: 409 }, // 409 Conflict
         );

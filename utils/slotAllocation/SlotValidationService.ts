@@ -26,6 +26,20 @@ export class SlotValidationService {
   ) {}
 
   /**
+   * Simple slot availability check (used for lock validation)
+   * Only checks for conflicts - no schedule or future validation
+   *
+   * USE CASE: Re-validation inside distributed lock after acquisition
+   * This ensures the slot is still available before creating the booking.
+   */
+  async checkSlotAvailability(
+    slots: Date[],
+    consultantUserId: string,
+  ): Promise<ValidationResult> {
+    return await this.validateNoConflicts(slots, consultantUserId);
+  }
+
+  /**
    * Main validation entry point
    * Routes to appropriate validator based on event type
    */
