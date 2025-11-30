@@ -34,6 +34,8 @@
     "scripts:update-postman": "npx ts-node scripts/typescript/update-postman-collection.ts",
     "scripts:cleanup-abandoned-payments": "npx ts-node scripts/cleanup-abandoned-payments.ts",
     "scripts:delete-dependabot-prs": "npx ts-node scripts/delete-dependabot-prs.ts",
+    "test:race": "npx tsx tests/typescript/race-conditions/master-runner.ts",
+    "test:race:parallel": "npx tsx tests/typescript/race-conditions/master-runner.ts parallel",
     "scripts:stream-sync": "npx ts-node -P tsconfig.scripts.json jobs/stream-sync.ts",
     "scripts:sync-env-github": "npx ts-node -P tsconfig.scripts.json scripts/update-env-github-actions.ts",
     "start": "next start",
