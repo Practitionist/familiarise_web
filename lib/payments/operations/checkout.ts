@@ -35,8 +35,8 @@ export type { CheckoutInput };
 
 /**
  * Unified return type for subscription checkout
- * Simplified - no appointments created during checkout
- * Consultant allocates all slots via Requests tab
+ * Creates placeholder appointment for payment linkage
+ * Consultant allocates specific slots later via Requests tab
  */
 type SubscriptionCheckoutResult = {
   plan: Prisma.SubscriptionPlanGetPayload<{
@@ -49,6 +49,7 @@ type SubscriptionCheckoutResult = {
   amount: number;
   subscription: Prisma.SubscriptionGetPayload<Record<string, never>>;
   isSchedulingPeriodRequest: boolean;
+  appointment: Prisma.AppointmentGetPayload<Record<string, never>>;
 };
 
 // ============================================================================
@@ -822,7 +823,37 @@ export async function handleSubscriptionCheckout(
     ? new Date(data.schedulingPeriodEndsAt!)
     : calculateSubscriptionEndDate(startDate, plan.durationInMonths);
 
-  // Create subscription only - consultant will allocate slots via Requests tab
+  // Check for existing pending/approved subscriptions with overlapping periods
+  // This prevents same user from double-buying the same plan
+  const existingSubscription = await tx.subscription.findFirst({
+    where: {
+      subscriptionPlanId: plan.id,
+      requestedById: consulteeProfileId,
+      requestStatus: {
+        in: [
+          RequestStatus.PENDING,
+          RequestStatus.APPROVED,
+          RequestStatus.APPROVED_PENDING_PAYMENT,
+        ],
+      },
+      OR: [
+        {
+          AND: [
+            { schedulingPeriodStartsAt: { lte: endDate } },
+            { schedulingPeriodEndsAt: { gte: startDate } },
+          ],
+        },
+      ],
+    },
+  });
+
+  if (existingSubscription) {
+    throw new Error(
+      "You already have a pending or active subscription for this plan with overlapping dates.",
+    );
+  }
+
+  // Create subscription - consultant will allocate slots via Requests tab
   const subscription = await tx.subscription.create({
     data: {
       subscriptionPlanId: plan.id,
@@ -835,12 +866,22 @@ export async function handleSubscriptionCheckout(
     },
   });
 
-  // Return subscription only - no appointments created during checkout
+  // Create placeholder appointment for payment linkage
+  // This ensures webhook uses NEW FLOW (confirm) not LEGACY FLOW (create duplicate)
+  const appointment = await tx.appointment.create({
+    data: {
+      appointmentType: AppointmentsType.SUBSCRIPTION,
+      subscriptionId: subscription.id,
+      // No slots created - consultant allocates later via Requests tab
+    },
+  });
+
   return {
     subscription,
     plan,
     amount: plan.price,
     isSchedulingPeriodRequest: !!isSchedulingPeriodRequest,
+    appointment,
   };
 }
 
@@ -1169,9 +1210,9 @@ export async function handleCheckout(
               consulteeProfileId,
               isMockPayment,
             );
-            // Subscription doesn't create appointment during checkout
-            // Payment will be linked to subscription via webhook
-            createdAppointment = null;
+            // Use placeholder appointment for payment linkage
+            // This ensures webhook uses NEW FLOW (confirm) not LEGACY FLOW (create duplicate)
+            createdAppointment = subscriptionResult.appointment;
             break;
           }
 
