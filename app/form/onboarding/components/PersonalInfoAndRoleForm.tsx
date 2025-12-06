@@ -4,26 +4,58 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { PersonalInfoAndRole } from "@/schemas/user";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { PersonalInfoAndRoleFormSchema } from "@/utils/onboarding";
 import { useSession } from "next-auth/react";
 import { z } from "zod";
-import { useThemeClasses } from "../useTheme";
+import { UserRole, Gender } from "@prisma/client";
+
+type FormData = z.infer<typeof PersonalInfoAndRoleFormSchema>;
 
 interface Props {
-  onNext: (data: PersonalInfoAndRole) => void;
-  initialData: Partial<PersonalInfoAndRole>;
+  onNext: (data: FormData) => void;
+  initialData: Partial<FormData>;
 }
+
+const ROLE_DESCRIPTIONS: Record<string, { title: string; description: string }> = {
+  CONSULTANT: {
+    title: "Consultant",
+    description: "Share your expertise and mentor others",
+  },
+  CONSULTEE: {
+    title: "Consultee",
+    description: "Learn from experienced professionals",
+  },
+  STAFF: {
+    title: "Staff",
+    description: "Manage platform operations",
+  },
+};
+
+const GENDER_OPTIONS = [
+  { value: "MALE", label: "Male" },
+  { value: "FEMALE", label: "Female" },
+  { value: "NON_BINARY", label: "Non-binary" },
+  { value: "PREFER_NOT_TO_SAY", label: "Prefer not to say" },
+];
 
 const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
   const { data: session } = useSession();
-  const { classes, colors } = useThemeClasses();
+
   const {
     register,
     handleSubmit,
     control,
+    watch,
     formState: { errors },
-  } = useForm<z.infer<typeof PersonalInfoAndRoleFormSchema>>({
+  } = useForm<FormData>({
     resolver: zodResolver(PersonalInfoAndRoleFormSchema),
     mode: "onChange",
     defaultValues: {
@@ -31,115 +63,253 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
       email: session?.user?.email || "",
       onlineStatus: false,
       onboardingCompleted: false,
-      role: "CONSULTEE",
+      role: "CONSULTEE" as UserRole,
+      gender: null,
+      city: "",
+      country: "",
+      linkedinUrl: "",
+      bio: "",
       ...initialData,
     },
   });
 
-  const onSubmit = (data: z.infer<typeof PersonalInfoAndRoleFormSchema>) => {
-    // Ensure email from session is used
+  const selectedRole = watch("role");
+  const bioLength = watch("bio")?.length || 0;
+
+  const onSubmit = (data: FormData) => {
     const submissionData = {
       ...data,
       email: session?.user?.email || "",
     };
-    onNext(submissionData as PersonalInfoAndRole);
+    onNext(submissionData);
   };
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="w-full space-y-6">
-      <div className="space-y-3">
-        <Label htmlFor="name" className={`${colors.textPrimary} font-medium`}>
-          Full Name
-        </Label>
-        <Input
-          id="name"
-          {...register("name")}
-          className={classes.input}
-          placeholder="Enter your full name"
-        />
-        {errors.name && (
-          <p className={`${colors.error} text-sm`}>{errors.name.message}</p>
-        )}
+    <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+      {/* Basic Information Section */}
+      <div className="space-y-4">
+        <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
+          Basic Information
+        </h3>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="space-y-2">
+            <Label htmlFor="name">
+              Full Name <span className="text-destructive">*</span>
+            </Label>
+            <Input
+              id="name"
+              {...register("name")}
+              placeholder="Enter your full name"
+            />
+            {errors.name && (
+              <p className="text-sm text-destructive">{errors.name.message}</p>
+            )}
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="email">Email</Label>
+            <Input
+              id="email"
+              type="email"
+              value={session?.user?.email || ""}
+              disabled
+              className="bg-muted"
+            />
+            <p className="text-xs text-muted-foreground">
+              Email cannot be changed
+            </p>
+          </div>
+        </div>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="space-y-2">
+            <Label htmlFor="phone">Phone Number</Label>
+            <Input
+              id="phone"
+              {...register("phone")}
+              placeholder="+1 (555) 000-0000"
+            />
+            {errors.phone && (
+              <p className="text-sm text-destructive">{errors.phone.message}</p>
+            )}
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="gender">Gender</Label>
+            <Controller
+              name="gender"
+              control={control}
+              render={({ field }) => (
+                <Select
+                  value={field.value || undefined}
+                  onValueChange={(value) => field.onChange(value as Gender)}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select gender" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {GENDER_OPTIONS.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            />
+          </div>
+        </div>
       </div>
 
-      <div className="space-y-3">
-        <Label htmlFor="email" className={`${colors.textPrimary} font-medium`}>
-          Email
-        </Label>
-        <Input
-          id="email"
-          type="email"
-          value={session?.user?.email || ""}
-          disabled
-          className={`${classes.input} opacity-70`}
-        />
+      {/* Location Section */}
+      <div className="space-y-4">
+        <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
+          Location
+        </h3>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="space-y-2">
+            <Label htmlFor="city">City</Label>
+            <Input
+              id="city"
+              {...register("city")}
+              placeholder="e.g., San Francisco"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="country">Country</Label>
+            <Input
+              id="country"
+              {...register("country")}
+              placeholder="e.g., United States"
+            />
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="address">Full Address (Optional)</Label>
+          <Input
+            id="address"
+            {...register("address")}
+            placeholder="Street address, apt, city, state, zip"
+          />
+        </div>
       </div>
 
-      <div className="space-y-3">
-        <Label htmlFor="phone" className={`${colors.textPrimary} font-medium`}>
-          Phone
-        </Label>
-        <Input
-          id="phone"
-          {...register("phone")}
-          className={classes.input}
-          placeholder="Enter your phone number"
-        />
-        {errors.phone && (
-          <p className={`${colors.error} text-sm`}>{errors.phone.message}</p>
-        )}
+      {/* Profile Section */}
+      <div className="space-y-4">
+        <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
+          Your Profile
+        </h3>
+
+        <div className="space-y-2">
+          <Label htmlFor="bio">
+            Short Bio <span className="text-muted-foreground">(Optional)</span>
+          </Label>
+          <Textarea
+            id="bio"
+            {...register("bio")}
+            placeholder="Tell us a bit about yourself in one or two sentences..."
+            className="resize-none"
+            rows={2}
+          />
+          <div className="flex justify-between text-xs text-muted-foreground">
+            <span>A brief tagline that appears on your profile</span>
+            <span className={bioLength > 160 ? "text-destructive" : ""}>
+              {bioLength}/160
+            </span>
+          </div>
+          {errors.bio && (
+            <p className="text-sm text-destructive">{errors.bio.message}</p>
+          )}
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="linkedinUrl">
+            LinkedIn Profile <span className="text-muted-foreground">(Optional)</span>
+          </Label>
+          <Input
+            id="linkedinUrl"
+            {...register("linkedinUrl")}
+            placeholder="https://linkedin.com/in/yourprofile"
+          />
+          {errors.linkedinUrl && (
+            <p className="text-sm text-destructive">
+              {errors.linkedinUrl.message}
+            </p>
+          )}
+        </div>
       </div>
 
-      <div className="space-y-3">
-        <Label
-          htmlFor="address"
-          className={`${colors.textPrimary} font-medium`}
-        >
-          Address
-        </Label>
-        <Input
-          id="address"
-          {...register("address")}
-          className={classes.input}
-          placeholder="Enter your address"
-        />
-        {errors.address && (
-          <p className={`${colors.error} text-sm`}>{errors.address.message}</p>
-        )}
-      </div>
+      {/* Role Selection */}
+      <div className="space-y-4">
+        <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
+          I want to join as a... <span className="text-destructive">*</span>
+        </h3>
 
-      <div className="space-y-3">
-        <Label className={`${colors.textPrimary} font-medium`}>Role</Label>
         <Controller
           name="role"
           control={control}
           render={({ field }) => (
-            <div className="flex flex-col space-y-2">
-              {["CONSULTANT", "CONSULTEE", "STAFF"].map((role) => (
-                <Button
+            <div className="grid gap-3 sm:grid-cols-3">
+              {Object.entries(ROLE_DESCRIPTIONS).map(([role, info]) => (
+                <button
                   key={role}
                   type="button"
-                  onClick={() => field.onChange(role)}
-                  variant={field.value === role ? "default" : "outline"}
-                  className={
+                  onClick={() => field.onChange(role as UserRole)}
+                  className={`p-4 rounded-lg border-2 text-left transition-all ${
                     field.value === role
-                      ? classes.primaryButton
-                      : classes.secondaryButton
-                  }
+                      ? "border-primary bg-primary/5 ring-2 ring-primary/20"
+                      : "border-border hover:border-primary/50 hover:bg-muted/50"
+                  }`}
                 >
-                  {role.charAt(0).toUpperCase() + role.slice(1).toLowerCase()}
-                </Button>
+                  <div className="font-medium">{info.title}</div>
+                  <div className="text-sm text-muted-foreground mt-1">
+                    {info.description}
+                  </div>
+                </button>
               ))}
             </div>
           )}
         />
         {errors.role && (
-          <p className={`${colors.error} text-sm`}>{errors.role.message}</p>
+          <p className="text-sm text-destructive">{errors.role.message}</p>
         )}
       </div>
 
-      <Button type="submit" className={`${classes.primaryButton} w-full`}>
-        Next
+      {/* Role-specific info */}
+      {selectedRole && (
+        <div className="bg-muted/50 rounded-lg p-4 text-sm">
+          <p className="text-muted-foreground">
+            {selectedRole === "CONSULTANT" && (
+              <>
+                As a <strong>Consultant</strong>, you'll be able to create
+                consultation plans, set your availability, and connect with
+                consultees who need your expertise.
+              </>
+            )}
+            {selectedRole === "CONSULTEE" && (
+              <>
+                As a <strong>Consultee</strong>, you'll be able to browse
+                consultants, book sessions, and get personalized guidance from
+                experts in your field.
+              </>
+            )}
+            {selectedRole === "STAFF" && (
+              <>
+                As a <strong>Staff</strong> member, you'll help manage platform
+                operations, support users, and ensure smooth experiences for
+                everyone.
+              </>
+            )}
+          </p>
+        </div>
+      )}
+
+      <Button type="submit" className="w-full" size="lg">
+        Continue
       </Button>
     </form>
   );

@@ -3,7 +3,6 @@ import { Button } from "@/components/ui/button";
 import { StaffProfile, PersonalInfoAndRole } from "@/schemas/user";
 import { useFormContext } from "react-hook-form";
 import TermsAndPrivacyAgreement from "./TermsAndPrivacyAgreement";
-import { useThemeClasses } from "../useTheme";
 
 interface Props {
   onNext: (data: any) => void;
@@ -22,7 +21,6 @@ const StaffAgreementForm: React.FC<Props> = ({
   onBack,
   initialData,
 }) => {
-  const { classes, colors } = useThemeClasses();
   const {
     setValue,
     watch,
@@ -53,35 +51,44 @@ const StaffAgreementForm: React.FC<Props> = ({
   };
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="w-full space-y-6">
-      <TermsAndPrivacyAgreement
-        onTermsChange={handleTermsChange}
-        onPrivacyChange={handlePrivacyChange}
-        termsChecked={termsAccepted || false}
-        privacyChecked={privacyAccepted || false}
-      />
+    <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+      <div className="space-y-4">
+        <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
+          Terms and Conditions
+        </h3>
+        <p className="text-sm text-muted-foreground">
+          Please review and accept our terms to continue
+        </p>
+        <TermsAndPrivacyAgreement
+          onTermsChange={handleTermsChange}
+          onPrivacyChange={handlePrivacyChange}
+          termsChecked={termsAccepted || false}
+          privacyChecked={privacyAccepted || false}
+        />
+      </div>
+
       {(errors.termsAccepted || errors.privacyAccepted) && (
-        <p
-          className={`${colors.error} text-sm ${colors.glassBg} ${colors.glassBorder} rounded-lg p-3`}
-        >
+        <p className="text-sm text-destructive bg-destructive/10 rounded-lg p-3">
           Please accept both the Terms of Service and Privacy Policy to
           continue.
         </p>
       )}
-      <div className="flex justify-between gap-4 pt-6">
+
+      <div className="flex gap-4 pt-4">
         <Button
           type="button"
           onClick={onBack}
-          className={`flex-1 h-12 ${classes.secondaryButton}`}
+          variant="outline"
+          className="flex-1"
         >
-          ← Back
+          Back
         </Button>
         <Button
           type="submit"
           disabled={!termsAccepted || !privacyAccepted}
-          className={`flex-1 h-12 ${classes.primaryButton} disabled:opacity-50 disabled:cursor-not-allowed`}
+          className="flex-1"
         >
-          Next Step →
+          Continue
         </Button>
       </div>
     </form>

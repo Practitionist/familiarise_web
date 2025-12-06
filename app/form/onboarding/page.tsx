@@ -1,4 +1,5 @@
 "use client";
+
 import { updateOnboardingInformationAction } from "@/actions/forms/onboarding.action";
 import {
   OnboardingFormData,
@@ -7,11 +8,11 @@ import {
 } from "@/utils/onboarding";
 import { Progress } from "@/components/ui/progress";
 import { useToast } from "@/hooks/use-toast";
-// Types are now imported from utils/onboarding
 import { signOut, useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import React, { useState } from "react";
 import { FormProvider, useForm } from "react-hook-form";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import ConsultantAgreementForm from "./components/ConsultantAgreementForm";
 import ConsultantPreferredScheduleForm from "./components/ConsultantPreferredScheduleForm";
 import ConsultantProfileForm from "./components/ConsultantProfileForm";
@@ -25,11 +26,32 @@ import StaffAgreementForm from "./components/StaffAgreementForm";
 import StaffProfileForm from "./components/StaffProfileForm";
 import StaffResponsibilitiesForm from "./components/StaffResponsibilitiesForm";
 import StaffReviewForm from "./components/StaffReviewForm";
-import { ThemeName } from "./themes";
-import { getOccasionTheme } from "./themeUtils";
-import { useThemeClasses } from "./useTheme";
 
-// OnboardingFormData is now imported from utils/onboarding
+// Step labels for progress indicator
+const STEP_LABELS = {
+  CONSULTANT: [
+    "Personal Info",
+    "Professional Profile",
+    "Availability",
+    "Agreement",
+    "Review",
+  ],
+  CONSULTEE: [
+    "Personal Info",
+    "Profile",
+    "Preferences",
+    "Agreement",
+    "Review",
+  ],
+  STAFF: [
+    "Personal Info",
+    "Role Details",
+    "Responsibilities",
+    "Agreement",
+    "Review",
+  ],
+  ADMIN: ["Personal Info", "Admin Setup", "Review"],
+};
 
 const MultiStepForm: React.FC = () => {
   const { data: session, update: updateSession } = useSession();
@@ -39,10 +61,6 @@ const MultiStepForm: React.FC = () => {
   } as OnboardingFormData);
   const router = useRouter();
   const { toast } = useToast();
-
-  // Theme configuration - auto-detects festivals or use default ShadCN style
-  const currentTheme: ThemeName = getOccasionTheme(); // Auto-detect or default to ShadCN theme
-  const { theme, classes, colors } = useThemeClasses(currentTheme);
 
   const methods = useForm<OnboardingFormData>({
     mode: "onChange",
@@ -92,70 +110,51 @@ const MultiStepForm: React.FC = () => {
     try {
       const id = session?.user?.id;
       if (!id) {
-        throw new Error("User ID not found in session");
+        toast({
+          title: "Session Expired",
+          description: "Please sign in again to continue.",
+          variant: "destructive",
+        });
+        signOut();
+        return;
       }
 
       // Validate the form data
       const validationResult = OnboardingFormDataSchema.safeParse(finalData);
       if (!validationResult.success) {
         const errors = validationResult.error.errors;
-        const errorsByField = errors.reduce(
-          (acc, error) => {
-            const field = error.path.join(".");
-            acc[field] = error.message;
-            return acc;
-          },
-          {} as Record<string, string>,
-        );
-
-        // Create user-friendly error message
-        const criticalErrors = errors.filter((e) =>
-          [
-            "name",
-            "email",
-            "role",
-            "description",
-            "qualifications",
-            "specialization",
-          ].includes(e.path[0] as string),
-        );
-
-        const errorMessage =
-          criticalErrors.length > 0
-            ? `Please complete required fields: ${criticalErrors.map((e) => e.path.join(" > ")).join(", ")}`
-            : `Form validation errors: ${errors.map((e) => `${e.path.join(".")}: ${e.message}`).join(", ")}`;
+        const fieldErrors = errors.map((e) => e.path.join(" > ")).join(", ");
 
         toast({
           title: "Please Complete Required Fields",
-          description: errorMessage,
+          description: `Missing or invalid: ${fieldErrors}`,
           variant: "destructive",
         });
 
-        console.warn("Form validation errors:", errorsByField);
+        console.warn("Form validation errors:", errors);
         return;
       }
 
       // Transform the data for server submission
       const requestBody = transformOnboardingFormToServerData(
-        validationResult.data,
+        validationResult.data
       );
 
       toast({
-        title: "Updating Onboarding Information",
-        description: "Please wait...",
-        variant: "default",
+        title: "Saving Your Profile",
+        description: "Please wait while we set up your account...",
       });
 
       const result = await updateOnboardingInformationAction(id, requestBody);
 
       if (!result.success || !result.user) {
         const errorMessage =
-          result.error ?? "Failed to update onboarding information";
+          result.error ?? "Failed to save your profile. Please try again.";
 
         if (errorMessage.includes("User not found")) {
           toast({
-            title: "User Not Found",
-            description: "Please sign out and sign in again.",
+            title: "Account Not Found",
+            description: "Your session has expired. Please sign in again.",
             variant: "destructive",
           });
           signOut();
@@ -163,7 +162,7 @@ const MultiStepForm: React.FC = () => {
         }
 
         toast({
-          title: "Error",
+          title: "Unable to Save Profile",
           description: errorMessage,
           variant: "destructive",
         });
@@ -171,10 +170,8 @@ const MultiStepForm: React.FC = () => {
       }
 
       toast({
-        title: "Onboarding Completed",
-        description:
-          "Your onboarding information has been updated successfully.",
-        variant: "default",
+        title: "Welcome to Familiarise!",
+        description: "Your profile has been created successfully.",
       });
 
       await updateSession({
@@ -189,8 +186,11 @@ const MultiStepForm: React.FC = () => {
         },
       });
 
+      // Redirect based on role
       if (finalData.role === "CONSULTANT" && result.user.consultantProfileId) {
-        router.push(`/dashboard/consultant/${result.user.consultantProfileId}`);
+        router.push(
+          `/dashboard/consultant/${result.user.consultantProfileId}`
+        );
       } else if (
         finalData.role === "CONSULTEE" &&
         result.user.consulteeProfileId
@@ -198,28 +198,19 @@ const MultiStepForm: React.FC = () => {
         router.push(`/dashboard/consultee/${result.user.consulteeProfileId}`);
       } else if (finalData.role === "STAFF" && result.user.staffProfileId) {
         router.push(`/dashboard/staff/${result.user.staffProfileId}`);
+      } else if (finalData.role === "ADMIN") {
+        router.push("/dashboard/admin/home");
       } else {
         router.push("/dashboard");
       }
     } catch (error: unknown) {
-      console.error("Error updating onboarding information:", error);
-      if (error instanceof Error) {
-        if (error.message === "User ID not found in session") {
-          toast({
-            title: "User ID Not Found",
-            description: "Please sign out and sign in again.",
-            variant: "destructive",
-          });
-          signOut();
-          return;
-        }
-      }
+      console.error("Error during onboarding:", error);
       toast({
-        title: "Something went wrong. Please try again later.",
+        title: "Something Went Wrong",
         description:
           error instanceof Error
             ? error.message
-            : "An error occurred while updating onboarding information",
+            : "An unexpected error occurred. Please try again.",
         variant: "destructive",
       });
     }
@@ -364,93 +355,110 @@ const MultiStepForm: React.FC = () => {
     }
   };
 
-  // There are 5 total steps for CONSULTANT/CONSULTEE/STAFF flows when including review in step 4
-  const totalSteps = 5;
+  // Get step labels based on role
+  const currentRole = formData.role || "CONSULTEE";
+  const stepLabels =
+    STEP_LABELS[currentRole as keyof typeof STEP_LABELS] ||
+    STEP_LABELS.CONSULTEE;
+  const totalSteps = stepLabels.length;
   const progressValue = Math.min(
     100,
-    Math.max(0, ((step + 1) / totalSteps) * 100),
+    Math.max(0, ((step + 1) / totalSteps) * 100)
   );
 
   return (
     <FormProvider {...methods}>
-      <div className="relative flex flex-col items-center justify-center min-h-screen overflow-hidden">
-        {/* Background with gradient and animated blobs */}
-        <div className={`absolute inset-0 ${colors.backgroundGradient}`}>
-          <div
-            className={`absolute -top-40 -right-40 w-80 h-80 ${colors.blob1} rounded-full opacity-30 animate-blob`}
-          ></div>
-          <div
-            className={`absolute -bottom-40 -left-40 w-80 h-80 ${colors.blob2} rounded-full opacity-30 animate-blob animation-delay-2000`}
-          ></div>
-          <div
-            className={`absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-60 h-60 ${colors.blob3} rounded-full opacity-20 animate-blob animation-delay-4000`}
-          ></div>
-        </div>
-
-        {/* Content */}
-        <div className="relative z-10 flex flex-col items-center w-full max-w-7xl px-6">
-          <Header />
-          <div
-            className={`glassmorphism rounded-2xl p-8 w-full max-w-5xl ${colors.glassBorder} shadow-2xl`}
-          >
-            <Progress
-              value={progressValue}
-              className={`w-full mb-8 h-2 ${colors.glassBg}`}
-            />
-            <WelcomeMessage />
-            {renderFormStep()}
+      <div className="min-h-screen bg-gradient-to-b from-gray-50 to-gray-100 dark:from-gray-900 dark:to-gray-950">
+        {/* Header */}
+        <header className="border-b bg-white/80 dark:bg-gray-900/80 backdrop-blur-sm sticky top-0 z-50">
+          <div className="container mx-auto px-4 py-4 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
+                <svg
+                  className="w-5 h-5 text-primary-foreground"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M13 10V3L4 14h7v7l9-11h-7z"
+                  />
+                </svg>
+              </div>
+              <span className="text-xl font-semibold">Familiarise</span>
+            </div>
+            <div className="text-sm text-muted-foreground">
+              Step {step + 1} of {totalSteps}
+            </div>
           </div>
-        </div>
+        </header>
+
+        {/* Main Content */}
+        <main className="container mx-auto px-4 py-8 max-w-3xl">
+          {/* Progress Section */}
+          <div className="mb-8">
+            <div className="flex justify-between mb-2">
+              {stepLabels.map((label, index) => (
+                <div
+                  key={label}
+                  className={`text-xs font-medium transition-colors ${
+                    index <= step
+                      ? "text-primary"
+                      : "text-muted-foreground"
+                  }`}
+                >
+                  {index === step ? label : ""}
+                </div>
+              ))}
+            </div>
+            <Progress value={progressValue} className="h-2" />
+            <div className="flex justify-between mt-2">
+              {stepLabels.map((label, index) => (
+                <div
+                  key={`dot-${label}`}
+                  className={`w-3 h-3 rounded-full transition-colors ${
+                    index < step
+                      ? "bg-primary"
+                      : index === step
+                        ? "bg-primary ring-4 ring-primary/20"
+                        : "bg-muted"
+                  }`}
+                />
+              ))}
+            </div>
+          </div>
+
+          {/* Form Card */}
+          <Card className="shadow-lg">
+            <CardHeader className="text-center pb-2">
+              <CardTitle className="text-2xl">
+                {step === 0
+                  ? "Welcome! Let's get started"
+                  : stepLabels[step]}
+              </CardTitle>
+              <p className="text-muted-foreground text-sm mt-1">
+                {step === 0
+                  ? "Tell us a bit about yourself. You can always update this later."
+                  : "Complete the information below to continue."}
+              </p>
+            </CardHeader>
+            <CardContent className="pt-6">{renderFormStep()}</CardContent>
+          </Card>
+
+          {/* Help Text */}
+          <p className="text-center text-sm text-muted-foreground mt-6">
+            Need help?{" "}
+            <a href="/support" className="text-primary hover:underline">
+              Contact support
+            </a>
+          </p>
+        </main>
       </div>
     </FormProvider>
   );
 };
-
-const Header: React.FC = () => {
-  const { colors } = useThemeClasses();
-  return (
-    <header className="flex items-center space-x-3 mb-8">
-      <div className={`p-2 rounded-xl ${colors.primaryGradient} shadow-lg`}>
-        <LogInIcon className={`w-8 h-8 ${colors.textPrimary}`} />
-      </div>
-      <h1 className={`text-3xl font-bold ${colors.textPrimary}`}>
-        Familiarise
-      </h1>
-    </header>
-  );
-};
-
-const WelcomeMessage: React.FC = () => {
-  const { colors } = useThemeClasses();
-  return (
-    <div className="text-center mb-8">
-      <h2 className={`text-2xl font-bold ${colors.textPrimary} mb-2`}>
-        Welcome! First things first...
-      </h2>
-      <p className={colors.textSecondary}>You can always change them later.</p>
-    </div>
-  );
-};
-
-function LogInIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
-  return (
-    <svg
-      {...props}
-      xmlns="http://www.w3.org/2000/svg"
-      width="24"
-      height="24"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" />
-      <polyline points="10 17 15 12 10 7" />
-      <line x1="15" x2="3" y1="12" y2="12" />
-    </svg>
-  );
-}
 
 export default MultiStepForm;

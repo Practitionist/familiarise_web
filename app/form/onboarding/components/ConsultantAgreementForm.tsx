@@ -1,7 +1,6 @@
 import React, { useState } from "react";
 import { Button } from "@/components/ui/button";
 import TermsAndPrivacyAgreement from "./TermsAndPrivacyAgreement";
-import { useThemeClasses } from "../useTheme";
 
 interface Props {
   onNext: (
@@ -16,7 +15,6 @@ const ConsultantAgreementForm: React.FC<Props> = ({
   onBack,
   initialData,
 }) => {
-  const { classes } = useThemeClasses();
   const [termsChecked, setTermsChecked] = useState(
     initialData.termsAccepted || false,
   );
@@ -28,35 +26,46 @@ const ConsultantAgreementForm: React.FC<Props> = ({
     e.preventDefault();
     if (termsChecked && privacyChecked) {
       onNext({ termsAccepted: true, privacyAccepted: true });
-    } else {
-      alert(
-        "Please accept both the Terms of Service and Privacy Policy to continue.",
-      );
     }
   };
 
   return (
-    <form onSubmit={handleSubmit} className="w-full space-y-6">
-      <TermsAndPrivacyAgreement
-        onTermsChange={setTermsChecked}
-        onPrivacyChange={setPrivacyChecked}
-        termsChecked={termsChecked}
-        privacyChecked={privacyChecked}
-      />
-      <div className="flex justify-between gap-4 pt-6">
+    <form onSubmit={handleSubmit} className="space-y-6">
+      <div className="space-y-4">
+        <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
+          Terms and Conditions
+        </h3>
+        <p className="text-sm text-muted-foreground">
+          Please review and accept our terms to continue
+        </p>
+        <TermsAndPrivacyAgreement
+          onTermsChange={setTermsChecked}
+          onPrivacyChange={setPrivacyChecked}
+          termsChecked={termsChecked}
+          privacyChecked={privacyChecked}
+        />
+        {(!termsChecked || !privacyChecked) && (
+          <p className="text-sm text-muted-foreground">
+            You must accept both agreements to continue.
+          </p>
+        )}
+      </div>
+
+      <div className="flex gap-4 pt-4">
         <Button
           type="button"
           onClick={onBack}
-          className={`flex-1 h-12 ${classes.navBack}`}
+          variant="outline"
+          className="flex-1"
         >
-          ← Back
+          Back
         </Button>
         <Button
           type="submit"
           disabled={!termsChecked || !privacyChecked}
-          className={`flex-1 h-12 ${classes.navNext} disabled:opacity-50 disabled:cursor-not-allowed`}
+          className="flex-1"
         >
-          Next Step →
+          Continue
         </Button>
       </div>
     </form>

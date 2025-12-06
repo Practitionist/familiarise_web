@@ -14,10 +14,8 @@ import {
   ConsulteePreferences,
   PersonalInfoAndRole,
 } from "@/schemas/user";
-import { zodResolver } from "@hookform/resolvers/zod";
 import React from "react";
 import { useForm, Controller } from "react-hook-form";
-import { useThemeClasses } from "../useTheme";
 
 type OnboardingFormData = PersonalInfoAndRole &
   Partial<ConsulteeProfile> &
@@ -38,12 +36,17 @@ interface Props {
   initialData: Partial<OnboardingFormData>;
 }
 
+const COMMUNICATION_OPTIONS = [
+  { value: "VIDEO", label: "Video Call" },
+  { value: "AUDIO", label: "Audio Call" },
+  { value: "IN_PERSON", label: "In Person" },
+];
+
 const ConsulteePreferencesForm: React.FC<Props> = ({
   onNext,
   onBack,
   initialData,
 }) => {
-  const { classes, colors } = useThemeClasses();
   const {
     register,
     handleSubmit,
@@ -82,137 +85,133 @@ const ConsulteePreferencesForm: React.FC<Props> = ({
   };
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="w-full space-y-6">
-      <div className="space-y-3">
-        <Label
-          htmlFor="preferredCommunicationMethod"
-          className={`${colors.textPrimary} font-medium`}
-        >
-          Preferred Communication Method
-        </Label>
-        <Controller
-          name="preferredCommunicationMethod"
-          control={control}
-          defaultValue="VIDEO"
-          render={({ field }) => (
-            <Select
-              onValueChange={field.onChange}
-              value={field.value || "VIDEO"}
-            >
-              <SelectTrigger
-                className={`${colors.inputBg} ${colors.inputBorder} ${colors.textPrimary} h-12 rounded-lg ${colors.inputFocus}`}
-              >
-                <SelectValue
-                  placeholder="Select communication method"
-                  className={colors.textSecondary}
-                />
-              </SelectTrigger>
-              <SelectContent className={classes.dropdown}>
-                <SelectItem value="VIDEO" className={classes.dropdownItem}>
-                  📹 Video
-                </SelectItem>
-                <SelectItem value="AUDIO" className={classes.dropdownItem}>
-                  🎙️ Audio
-                </SelectItem>
-                <SelectItem value="IN_PERSON" className={classes.dropdownItem}>
-                  👥 In Person
-                </SelectItem>
-              </SelectContent>
-            </Select>
+    <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+      {/* Communication Preferences */}
+      <div className="space-y-4">
+        <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
+          Communication Preferences
+        </h3>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="space-y-2">
+            <Label htmlFor="preferredCommunicationMethod">
+              Preferred Communication Method
+            </Label>
+            <Controller
+              name="preferredCommunicationMethod"
+              control={control}
+              defaultValue="VIDEO"
+              render={({ field }) => (
+                <Select
+                  onValueChange={field.onChange}
+                  value={field.value || "VIDEO"}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select communication method" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {COMMUNICATION_OPTIONS.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            />
+            {errors.preferredCommunicationMethod && (
+              <p className="text-sm text-destructive">
+                {errors.preferredCommunicationMethod.message}
+              </p>
+            )}
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="preferredLanguage">Preferred Language</Label>
+            <Input
+              id="preferredLanguage"
+              {...register("preferredLanguage")}
+              placeholder="e.g., English, Spanish, French"
+            />
+            {errors.preferredLanguage && (
+              <p className="text-sm text-destructive">
+                {errors.preferredLanguage.message}
+              </p>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Interests & Goals */}
+      <div className="space-y-4">
+        <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
+          Interests & Goals
+        </h3>
+
+        <div className="space-y-2">
+          <Label htmlFor="interests">
+            Areas of Interest{" "}
+            <span className="text-muted-foreground">(comma-separated)</span>
+          </Label>
+          <Input
+            id="interests"
+            {...register("interests")}
+            placeholder="e.g., Career Growth, Leadership, Technology"
+          />
+          {errors.interests && (
+            <p className="text-sm text-destructive">
+              {errors.interests.message}
+            </p>
           )}
-        />
-        {errors.preferredCommunicationMethod && (
-          <p className={`${colors.error} text-sm`}>
-            {errors.preferredCommunicationMethod.message}
-          </p>
-        )}
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="goals">
+            Your Goals{" "}
+            <span className="text-muted-foreground">(comma-separated)</span>
+          </Label>
+          <Textarea
+            id="goals"
+            {...register("goals")}
+            placeholder="e.g., Improve leadership skills, Learn new technologies, Career transition"
+            rows={3}
+          />
+          {errors.goals && (
+            <p className="text-sm text-destructive">{errors.goals.message}</p>
+          )}
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="specialRequirements">
+            Special Requirements{" "}
+            <span className="text-muted-foreground">(Optional)</span>
+          </Label>
+          <Textarea
+            id="specialRequirements"
+            {...register("specialRequirements")}
+            placeholder="Any accessibility needs or special accommodations..."
+            rows={2}
+          />
+          {errors.specialRequirements && (
+            <p className="text-sm text-destructive">
+              {errors.specialRequirements.message}
+            </p>
+          )}
+        </div>
       </div>
 
-      <div className="space-y-3">
-        <Label
-          htmlFor="preferredLanguage"
-          className={`${colors.textPrimary} font-medium`}
-        >
-          Preferred Language
-        </Label>
-        <Input
-          id="preferredLanguage"
-          {...register("preferredLanguage")}
-          className={classes.input}
-          placeholder="e.g., English, Spanish, French"
-        />
-        {errors.preferredLanguage && (
-          <p className={`${colors.error} text-sm`}>
-            {errors.preferredLanguage.message}
-          </p>
-        )}
-      </div>
-
-      <div className="space-y-3">
-        <Label
-          htmlFor="specialRequirements"
-          className={`${colors.textPrimary} font-medium`}
-        >
-          Special Requirements (Optional)
-        </Label>
-        <Textarea
-          id="specialRequirements"
-          {...register("specialRequirements")}
-          className={classes.textarea}
-          placeholder="Any accessibility needs or special accommodations..."
-        />
-        {errors.specialRequirements && (
-          <p className={`${colors.error} text-sm`}>
-            {errors.specialRequirements.message}
-          </p>
-        )}
-      </div>
-
-      <div className="space-y-3">
-        <Label
-          htmlFor="interests"
-          className={`${colors.textPrimary} font-medium`}
-        >
-          Interests (comma-separated)
-        </Label>
-        <Input
-          id="interests"
-          {...register("interests")}
-          placeholder="e.g., Career Growth, Leadership, Technology"
-          className={classes.input}
-        />
-        {errors.interests && (
-          <p className={`${colors.error} text-sm`}>
-            {errors.interests.message}
-          </p>
-        )}
-      </div>
-
-      <div className="space-y-3">
-        <Label htmlFor="goals" className={`${colors.textPrimary} font-medium`}>
-          Goals (comma-separated)
-        </Label>
-        <Textarea
-          id="goals"
-          {...register("goals")}
-          placeholder="e.g., Improve leadership skills, Learn new technologies"
-          className={classes.textarea}
-        />
-        {errors.goals && (
-          <p className={`${colors.error} text-sm`}>{errors.goals.message}</p>
-        )}
-      </div>
-
-      <div className="flex justify-between gap-4 pt-6">
+      {/* Navigation */}
+      <div className="flex gap-4 pt-4">
         <Button
           type="button"
           onClick={onBack}
-          className={`flex-1 h-12 ${classes.navBack}`}
+          variant="outline"
+          className="flex-1"
         >
-          ← Back
+          Back
         </Button>
-        <Button type="submit" className={`flex-1 h-12 ${classes.navNext}`}>
-          Next Step →
+        <Button type="submit" className="flex-1">
+          Continue
         </Button>
       </div>
     </form>
