@@ -11,12 +11,14 @@
 
 ## Executive Summary
 
-During a comprehensive validation of all payment workflows for the 4 appointment types (Consultation, Subscription, Webinar, Class), **3 critical bugs** and **1 high-priority issue** were identified. These bugs can result in:
+During a comprehensive validation of all payment workflows for the 4 appointment types (Consultation, Subscription, Webinar, Class), **3 critical bugs**, **3 high-priority issues**, and **2 medium-priority issues** were identified. These bugs can result in:
 
 - Users receiving paid services without paying
 - Duplicate database records causing data corruption
 - Partial service delivery (only 1 of N sessions accessible)
 - Race conditions under high load
+- Incorrect slot times for webinars
+- Development/testing data inconsistencies
 
 | # | Severity | Issue | Affected Types |
 |---|----------|-------|----------------|
@@ -24,6 +26,10 @@ During a comprehensive validation of all payment workflows for the 4 appointment
 | 2 | 🔴 Critical | Duplicate subscription creation | Subscription |
 | 3 | 🔴 Critical | Only first session confirmed | Class |
 | 4 | 🟠 High | Lock TTL mismatch (30s vs 60s) | All types |
+| 5 | 🟠 High | Webinar slot timing defaults to now | Webinar |
+| 6 | 🟠 High | Mock payment status never updated | All (dev) |
+| 7 | 🟡 Medium | Approval flow no duplicate check | Consultation, Subscription |
+| 8 | 🟡 Medium | Failure handler lacks idempotency | All types |
 
 ---
 
@@ -566,6 +572,10 @@ return await lockEventCheckout(appointmentType, data.planId, 60000);
 | P0 | #2 Duplicate subscriptions | Medium | Data corruption |
 | P0 | #3 Class partial confirmation | Low | Service not delivered |
 | P1 | #4 Lock TTL mismatch | Low | Race conditions |
+| P1 | #5 Webinar slot timing | Low | Incorrect slot times |
+| P1 | #6 Mock payment status | Low | Data inconsistency |
+| P2 | #7 Approval flow no dedup | Low | Duplicate payments |
+| P2 | #8 Failure handler idempotency | Very Low | Minor cleanup issues |
 
 ### Recommended Implementation Order
 
@@ -573,6 +583,355 @@ return await lockEventCheckout(appointmentType, data.planId, 60000);
 2. **Issue #3** (30 min) - Simple fix with Option B
 3. **Issue #1** (1 hour) - Requires careful testing with concurrent users
 4. **Issue #2** (2 hours) - Requires schema change and migration
+5. **Issue #5** (30 min) - Add scheduled time to Webinar model
+6. **Issue #6** (15 min) - Update mock payment status in checkout
+7. **Issue #7** (15 min) - Add check before creating approval payment
+8. **Issue #8** (5 min) - Add idempotency check to failure handler
+
+---
+
+## Issue #5: Webinar Slot Timing Defaults to Current Time
+
+### Situation
+
+When the first user books a webinar, the slot creation code falls back to `new Date()` for start/end times because there are no existing slots to copy from. The Webinar model lacks scheduled time fields.
+
+**Code Locations**:
+- Checkout: `lib/payments/operations/checkout.ts:910-912`
+- Webhook: `lib/payments/webhooks/handlers.ts:502-504`
+
+### How It Happens
+
+**Step 1: First webinar booking**
+```typescript
+// checkout.ts:910-912
+await tx.slotOfAppointment.create({
+  data: {
+    startsAt: webinar.appointment?.slotsOfAppointment[0]?.startsAt || new Date(), // ⚠️ No existing slots!
+    endsAt: webinar.appointment?.slotsOfAppointment[0]?.endsAt || new Date(),     // ⚠️ Defaults to NOW
+    // ...
+  },
+});
+```
+
+**Database Schema Issue**:
+```prisma
+model Webinar {
+  id              String        @id @default(cuid())
+  status          WebinarStatus @default(SCHEDULED)
+  // ❌ NO scheduledStartAt field!
+  // ❌ NO scheduledEndAt field!
+  webinarPlanId   String
+  appointment     Appointment?
+}
+
+// Compare to Class which HAS these fields:
+model Class {
+  schedulingPeriodStartsAt DateTime?  // ✅ Has time fields
+  schedulingPeriodEndsAt   DateTime?  // ✅ Has time fields
+}
+```
+
+### Impact
+
+| Impact | Description |
+|--------|-------------|
+| **Wrong Slot Times** | First booking has start/end = checkout timestamp |
+| **Calendar Issues** | Webinar appears at wrong time in user calendar |
+| **Notifications** | Reminders sent for incorrect times |
+| **Analytics** | Duration calculations will be wrong (0 or negative) |
+
+### Root Cause
+
+The Webinar model was designed assuming an appointment with slots would be created BEFORE users book. But the checkout flow creates the appointment on first booking, with no scheduled time to reference.
+
+### Fix
+
+**Option A: Add scheduled time fields to Webinar model (Recommended)**
+
+```prisma
+model Webinar {
+  id                       String        @id @default(cuid())
+  scheduledStartAt         DateTime      @db.Timestamptz()  // NEW
+  scheduledEndAt           DateTime      @db.Timestamptz()  // NEW
+  status                   WebinarStatus @default(SCHEDULED)
+  // ...
+}
+```
+
+```typescript
+// In checkout.ts
+await tx.slotOfAppointment.create({
+  data: {
+    startsAt: webinar.scheduledStartAt,  // Use webinar's scheduled time
+    endsAt: webinar.scheduledEndAt,
+    // ...
+  },
+});
+```
+
+**Option B: Require webinar appointment creation before bookings**
+
+Consultants must create the webinar with scheduled time before users can book.
+
+### Testing Checklist
+
+- [ ] First webinar booking uses correct scheduled time
+- [ ] Subsequent bookings use same time as first
+- [ ] Calendar invites show correct time
+- [ ] Migration updates existing webinars with placeholder times
+
+---
+
+## Issue #6: Mock Payment Status Never Updated
+
+### Situation
+
+Mock payments (used in development) create payment records with `PENDING` status. Unlike real payments, no webhook is called to update the status to `SUCCEEDED`, leaving mock payments in PENDING state forever.
+
+**Code Location**: `lib/payments/operations/checkout.ts:1214`
+
+### How It Happens
+
+**Real Payment Flow**:
+```
+1. Checkout creates payment with status = PENDING
+2. User pays via Stripe/Razorpay
+3. Webhook calls handlePaymentSuccess()
+4. Status updated to SUCCEEDED
+```
+
+**Mock Payment Flow**:
+```
+1. Checkout creates payment with status = PENDING
+2. Mock payment intent returns immediately with status = "succeeded"
+3. NO webhook is called ❌
+4. Database status stays PENDING forever ❌
+```
+
+```typescript
+// checkout.ts:1207-1221
+await tx.payment.create({
+  data: {
+    // ...
+    paymentStatus: PaymentStatus.PENDING,  // Same for mock AND real payments
+    isMockPayment,
+    // ...
+  },
+});
+// No code to update status for mock payments!
+```
+
+### Impact
+
+| Impact | Description |
+|--------|-------------|
+| **Data Inconsistency** | Appointment confirmed but payment shows PENDING |
+| **Cleanup Job Issues** | May try to clean up "abandoned" mock payments |
+| **Reporting** | Revenue reports don't count mock payments |
+| **Testing Confusion** | Developers see PENDING status, think something's wrong |
+
+### Root Cause
+
+The mock payment system was designed to skip the payment gateway, but forgot to also skip the webhook step that updates payment status.
+
+### Fix
+
+```typescript
+// In checkout.ts, after creating payment for mock flow
+if (isMockPayment) {
+  // Update payment status directly for mock payments
+  await tx.payment.update({
+    where: { paymentIntent: paymentResponse.id },
+    data: { paymentStatus: PaymentStatus.SUCCEEDED },
+  });
+}
+```
+
+**Alternative**: Call `handlePaymentSuccess` for mock payments after checkout:
+```typescript
+if (isMockPayment) {
+  await handlePaymentSuccess(
+    paymentResponse.id,
+    buildPaymentMetadata(validatedData, userId),
+  );
+}
+```
+
+### Testing Checklist
+
+- [ ] Mock payment has SUCCEEDED status after checkout
+- [ ] Mock payment not picked up by cleanup job
+- [ ] Email notification sent for mock payments (if desired)
+
+---
+
+## Issue #7: Approval Flow Missing Duplicate Payment Prevention
+
+### Situation
+
+The `createApprovalPaymentIntent` function in the approval flow doesn't check for existing payments before creating a new payment link. A `checkExistingPayment` function exists but is never called.
+
+**Code Location**: `lib/payments/operations/approval-payment.ts:55-103`
+
+### How It Happens
+
+```typescript
+// approval-payment.ts:55-103
+export async function createApprovalPaymentIntent(
+  params: CreateApprovalPaymentParams,
+): Promise<ApprovalPaymentResult> {
+  // Validate params...
+
+  // ❌ NO check for existing payment!
+  // checkExistingPayment() function exists (line 214) but is never called
+
+  const paymentResponse = await createPaymentIntent({...});
+  await prisma.payment.create({...});  // Creates new payment every time
+
+  return {...};
+}
+
+// This function exists but is NEVER USED:
+export async function checkExistingPayment(params: {...}): Promise<boolean> {
+  // Checks for existing PENDING or SUCCEEDED payments
+}
+```
+
+**Scenario**:
+1. Consultant clicks "Approve" on consultation
+2. System creates Payment A with payment link
+3. Consultant clicks "Approve" again (double-click, page reload, etc.)
+4. System creates Payment B with different payment link
+5. User receives two payment links
+6. If user pays both, they're charged twice!
+
+### Impact
+
+| Impact | Description |
+|--------|-------------|
+| **Double Charges** | User could pay twice if they receive multiple links |
+| **Orphaned Payments** | One payment succeeds, others become orphaned |
+| **User Confusion** | Multiple payment emails for same consultation |
+
+### Root Cause
+
+The `checkExistingPayment` function was written but never integrated into `createApprovalPaymentIntent`.
+
+### Fix
+
+```typescript
+export async function createApprovalPaymentIntent(
+  params: CreateApprovalPaymentParams,
+): Promise<ApprovalPaymentResult> {
+  // Check for existing payment first
+  const hasExistingPayment = await checkExistingPayment({
+    consultationId: params.consultationId,
+    subscriptionId: params.subscriptionId,
+  });
+
+  if (hasExistingPayment) {
+    throw new Error("A payment link has already been generated for this request");
+  }
+
+  // Rest of function...
+}
+```
+
+### Testing Checklist
+
+- [ ] Double-clicking "Approve" doesn't create duplicate payments
+- [ ] Page refresh after approval doesn't create duplicate
+- [ ] Error message shown when duplicate attempted
+
+---
+
+## Issue #8: Payment Failure Handler Lacks Idempotency Check
+
+### Situation
+
+The `handlePaymentFailure` function doesn't check if a payment has already been marked as failed before processing. While mostly harmless, this could cause duplicate cleanup attempts.
+
+**Code Location**: `lib/payments/webhooks/handlers.ts:241-303`
+
+### How It Happens
+
+```typescript
+// handlers.ts:241-303
+export async function handlePaymentFailure(paymentIntentId: string) {
+  return await prisma.$transaction(async (tx) => {
+    const payment = await tx.payment.findUnique({...});
+
+    if (!payment) {
+      console.warn(`Payment record not found...`);
+      return;  // Early return for missing payment
+    }
+
+    // ❌ NO check for already-failed payment!
+    // Unlike handlePaymentSuccess which checks:
+    // if (payment.paymentStatus === PaymentStatus.SUCCEEDED) return;
+
+    await tx.payment.update({
+      where: { id: payment.id },
+      data: { paymentStatus: PaymentStatus.FAILED },  // Updates even if already FAILED
+    });
+
+    if (payment.appointment) {
+      await cleanupFailedPaymentAppointment(tx, payment.appointment.id);  // Cleanup runs again
+    }
+  });
+}
+```
+
+**Comparison with Success Handler**:
+```typescript
+// handlers.ts:106-108 - Success handler HAS idempotency check
+if (payment.paymentStatus === PaymentStatus.SUCCEEDED) {
+  console.log(`Payment ${paymentIntentId} has already been processed.`);
+  return;  // ✅ Early return
+}
+```
+
+### Impact
+
+| Impact | Description |
+|--------|-------------|
+| **Minor** | Duplicate cleanup attempts (mostly no-op) |
+| **Logs** | Unnecessary log entries for already-failed payments |
+| **Performance** | Extra database queries on duplicate webhooks |
+
+### Root Cause
+
+Oversight - success handler was given idempotency check but failure handler wasn't.
+
+### Fix
+
+```typescript
+export async function handlePaymentFailure(paymentIntentId: string) {
+  return await prisma.$transaction(async (tx) => {
+    const payment = await tx.payment.findUnique({...});
+
+    if (!payment) {
+      console.warn(`Payment record not found...`);
+      return;
+    }
+
+    // ADD: Idempotency check
+    if (payment.paymentStatus === PaymentStatus.FAILED) {
+      console.log(`Payment ${paymentIntentId} has already been marked as failed.`);
+      return;
+    }
+
+    // Rest of function...
+  });
+}
+```
+
+### Testing Checklist
+
+- [ ] Duplicate failure webhooks don't cause errors
+- [ ] Second failure webhook logs "already failed" message
+- [ ] No duplicate cleanup operations
 
 ---
 
@@ -606,7 +965,7 @@ AND SUM(CASE WHEN s.is_tentative = false THEN 1 ELSE 0 END) > 0;
 
 ### Find Unpaid Confirmed Webinar Slots (Issue #1)
 ```sql
-SELECT w.id as webinar_id, w.title, s.id as slot_id, u.email,
+SELECT w.id as webinar_id, s.id as slot_id, u.email,
   p.payment_status, s.is_tentative
 FROM "Webinar" w
 JOIN "Appointment" a ON a.webinar_id = w.id
@@ -616,6 +975,41 @@ JOIN "User" u ON u.id = su."B"
 LEFT JOIN "Payment" p ON p.user_id = u.id AND p.appointment_id = a.id
 WHERE s.is_tentative = false
 AND (p.payment_status IS NULL OR p.payment_status != 'SUCCEEDED');
+```
+
+### Find Webinars with Wrong Slot Times (Issue #5)
+```sql
+-- Find slots where start time is suspiciously close to creation time (likely defaulted to new Date())
+SELECT w.id as webinar_id, s.id as slot_id,
+  s.starts_at, s.ends_at, s.created_at,
+  EXTRACT(EPOCH FROM (s.starts_at - s.created_at)) as seconds_diff
+FROM "Webinar" w
+JOIN "Appointment" a ON a.webinar_id = w.id
+JOIN "SlotOfAppointment" s ON s.appointment_id = a.id
+WHERE ABS(EXTRACT(EPOCH FROM (s.starts_at - s.created_at))) < 60;  -- Within 60 seconds
+```
+
+### Find Mock Payments Still Pending (Issue #6)
+```sql
+SELECT p.id, p.payment_intent, p.payment_status, p.is_mock_payment,
+  p.created_at, a.id as appointment_id
+FROM "Payment" p
+LEFT JOIN "Appointment" a ON a.id = p.appointment_id
+WHERE p.is_mock_payment = true
+AND p.payment_status = 'PENDING';
+```
+
+### Find Duplicate Approval Payments (Issue #7)
+```sql
+-- Consultations with multiple pending/succeeded payments
+SELECT c.id as consultation_id, COUNT(p.id) as payment_count,
+  array_agg(p.payment_status) as statuses
+FROM "Consultation" c
+JOIN "Appointment" a ON a.consultation_id = c.id
+JOIN "Payment" p ON p.appointment_id = a.id
+WHERE p.payment_status IN ('PENDING', 'SUCCEEDED')
+GROUP BY c.id
+HAVING COUNT(p.id) > 1;
 ```
 
 ---
