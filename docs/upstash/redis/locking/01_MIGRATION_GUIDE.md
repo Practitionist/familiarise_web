@@ -485,8 +485,7 @@ const DEFAULT_RETRY_CONFIG = {
 ```json
 {
   "dependencies": {
-    "@upstash/redis": "^1.35.3",
-    "@upstash/ratelimit": "^2.0.0"
+    "@upstash/redis": "^1.35.3"
   }
 }
 ```
@@ -494,10 +493,12 @@ const DEFAULT_RETRY_CONFIG = {
 **Migration**:
 ```bash
 npm uninstall redlock ioredis @types/ioredis
-npm install @upstash/redis @upstash/ratelimit
+npm install @upstash/redis
 ```
 
 **Impact**: 11 fewer packages, smaller bundle size
+
+> **Note**: API rate limiting is now handled by **Arcjet** at the route level, not by Upstash Ratelimit.
 
 ---
 
