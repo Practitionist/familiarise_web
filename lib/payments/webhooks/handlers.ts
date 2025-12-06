@@ -501,6 +501,11 @@ async function createWebinar(
   });
   if (!webinar) throw new Error("Webinar not found");
 
+  // FIX Issue #5: Validate webinar is scheduled before allowing booking
+  if (!webinar.appointment?.slotsOfAppointment?.[0]) {
+    throw new Error("Webinar has not been scheduled. Cannot create booking.");
+  }
+
   let appointment = webinar.appointment;
   if (!appointment) {
     appointment = await tx.appointment.create({

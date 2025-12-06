@@ -931,6 +931,14 @@ export async function handleWebinarCheckout(
     }
   }
 
+  // FIX Issue #5: Validate webinar is scheduled before allowing booking
+  // Prevents slot timing from defaulting to new Date()
+  if (!webinar.appointment?.slotsOfAppointment?.[0]) {
+    throw new Error(
+      "This webinar has not been scheduled yet. Please wait for the consultant to set a date and time."
+    );
+  }
+
   // Create or reuse appointment
   let appointment = webinar.appointment;
   if (!appointment) {
