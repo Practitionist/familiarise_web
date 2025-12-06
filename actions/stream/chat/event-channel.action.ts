@@ -1,6 +1,6 @@
 "use server";
 
-import { StreamChat } from "stream-chat";
+import { StreamChat, ChannelSort } from "stream-chat";
 import prisma from "@/lib/prisma";
 import { upsertUserToStream } from "./user.action";
 
@@ -219,7 +219,7 @@ export const getUserEventChannels = async (userId: string) => {
     };
 
     // Sort by last_message_at in descending order
-    const sort = { last_message_at: -1 } as any;
+    const sort: ChannelSort = { last_message_at: -1 };
 
     const channels = await client.queryChannels(filter, sort, {
       watch: true,

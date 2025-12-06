@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
+import authOptions from "@/app/api/auth/[...nextauth]/options";
 import { StreamChat } from "stream-chat";
 import prisma from "@/lib/prisma";
 import type {
@@ -13,6 +15,15 @@ const apiSecret = process.env.STREAM_API_SECRET;
 
 export async function GET(req: NextRequest) {
   try {
+    // Verify authentication
+    const session = await getServerSession(authOptions);
+    if (!session?.user?.id) {
+      return NextResponse.json(
+        { success: false, error: "Authentication required" },
+        { status: 401 }
+      );
+    }
+
     if (!apiKey || !apiSecret) {
       return NextResponse.json(
         { success: false, error: "Stream API keys not configured" },
@@ -30,6 +41,19 @@ export async function GET(req: NextRequest) {
       return NextResponse.json(
         { success: false, error: "userId is required" },
         { status: 400 },
+      );
+    }
+
+    // Authorization: Users can only view their own debug data
+    // Admin and Staff can view anyone's data
+    const isAdminOrStaff =
+      session.user.role === "ADMIN" || session.user.role === "STAFF";
+    const isOwnData = session.user.id === userId;
+
+    if (!isOwnData && !isAdminOrStaff) {
+      return NextResponse.json(
+        { success: false, error: "You can only view your own debug data" },
+        { status: 403 }
       );
     }
 

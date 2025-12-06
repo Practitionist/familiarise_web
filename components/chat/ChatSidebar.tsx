@@ -452,13 +452,13 @@ export const ChatSidebar = () => {
           if (event.channel.type === "team") {
             setTeamChannels((prev) =>
               prev.map((ch) =>
-                ch.cid === event.channel?.id ? updatedChannel : ch,
+                ch.cid === event.channel?.cid ? updatedChannel : ch,
               ),
             );
           } else if (event.channel.type === "messaging") {
             setDirectMessages((prev) =>
               prev.map((ch) =>
-                ch.cid === event.channel?.id ? updatedChannel : ch,
+                ch.cid === event.channel?.cid ? updatedChannel : ch,
               ),
             );
           }
