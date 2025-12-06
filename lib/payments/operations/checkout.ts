@@ -35,8 +35,8 @@ export type { CheckoutInput };
 
 /**
  * Unified return type for subscription checkout
- * Simplified - no appointments created during checkout
- * Consultant allocates all slots via Requests tab
+ * FIX Issue #2: Now includes appointment for symmetry with other checkout handlers
+ * Consultant allocates slots later via Requests tab
  */
 type SubscriptionCheckoutResult = {
   plan: Prisma.SubscriptionPlanGetPayload<{
@@ -48,6 +48,7 @@ type SubscriptionCheckoutResult = {
   }>;
   amount: number;
   subscription: Prisma.SubscriptionGetPayload<Record<string, never>>;
+  appointment: Prisma.AppointmentGetPayload<Record<string, never>>;
   isSchedulingPeriodRequest: boolean;
 };
 
@@ -573,7 +574,7 @@ async function acquireCheckoutLock(
       }),
     );
 
-    return await lockSlotBooking(consultantUserId, data.slotStartTimeInUTC, 30000);
+    return await lockSlotBooking(consultantUserId, data.slotStartTimeInUTC);
   }
 
   // Strategy B: Event-based locking (WEBINAR, CLASS, scheduling-period SUBSCRIPTION)
@@ -592,7 +593,7 @@ async function acquireCheckoutLock(
       }),
     );
 
-    return await lockEventCheckout(appointmentType, data.eventId, 30000);
+    return await lockEventCheckout(appointmentType, data.eventId);
   }
 
   // Scheduling period SUBSCRIPTION (no slots during checkout)
@@ -607,7 +608,7 @@ async function acquireCheckoutLock(
       }),
     );
 
-    return await lockEventCheckout(appointmentType, data.planId, 30000);
+    return await lockEventCheckout(appointmentType, data.planId);
   }
 
   // Should not reach here if validation is correct
@@ -822,7 +823,7 @@ export async function handleSubscriptionCheckout(
     ? new Date(data.schedulingPeriodEndsAt!)
     : calculateSubscriptionEndDate(startDate, plan.durationInMonths);
 
-  // Create subscription only - consultant will allocate slots via Requests tab
+  // Create subscription - consultant will allocate slots via Requests tab
   const subscription = await tx.subscription.create({
     data: {
       subscriptionPlanId: plan.id,
@@ -835,8 +836,18 @@ export async function handleSubscriptionCheckout(
     },
   });
 
-  // Return subscription only - no appointments created during checkout
+  // FIX Issue #2: Create container appointment for subscription
+  // This ensures payment has appointmentId, preventing duplicate subscription creation
+  // in webhook's LEGACY FLOW. Makes this handler symmetrical with others.
+  const appointment = await tx.appointment.create({
+    data: {
+      appointmentType: AppointmentsType.SUBSCRIPTION,
+      subscriptionId: subscription.id,
+    },
+  });
+
   return {
+    appointment,
     subscription,
     plan,
     amount: plan.price,
@@ -1169,9 +1180,7 @@ export async function handleCheckout(
               consulteeProfileId,
               isMockPayment,
             );
-            // Subscription doesn't create appointment during checkout
-            // Payment will be linked to subscription via webhook
-            createdAppointment = null;
+            createdAppointment = subscriptionResult.appointment;
             break;
           }
 
