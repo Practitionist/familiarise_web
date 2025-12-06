@@ -986,11 +986,15 @@ export async function handleWebinarCheckout(
     );
   }
 
-  // BUG-A: Validate webinar hasn't already occurred (15 min buffer before start)
-  const scheduledStart = webinar.appointment.slotsOfAppointment[0].startsAt;
-  const bufferMs = 15 * 60 * 1000; // 15 minutes before start
-  if (new Date(scheduledStart).getTime() - bufferMs < Date.now()) {
-    throw new Error("This webinar is starting soon or has already occurred.");
+  // Allow late joiners: SCHEDULED and IN_PROGRESS webinars can accept new registrations
+  // TODO: (Optional) Add configurable buffer time before webinar ends if needed in future
+  //       e.g., block registration 5 minutes before scheduled end time
+  const blockedStatuses = ["COMPLETED", "CANCELLED"] as const;
+  if (blockedStatuses.includes(webinar.status as (typeof blockedStatuses)[number])) {
+    const message = webinar.status === "COMPLETED"
+      ? "This webinar has already ended."
+      : "This webinar has been cancelled.";
+    throw new Error(message);
   }
 
   // Create or reuse appointment
