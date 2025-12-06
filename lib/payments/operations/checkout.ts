@@ -1247,7 +1247,7 @@ export async function handleCheckout(
         }
 
         // Create payment record linked to appointment (if created)
-        await tx.payment.create({
+        const payment = await tx.payment.create({
           data: {
             amount,
             currency,
@@ -1262,6 +1262,14 @@ export async function handleCheckout(
             expiresAt: new Date(Date.now() + 30 * 60 * 1000), // 30 minutes
           },
         });
+
+        // FIX Issue #6: Update mock payment status directly (no webhook for mock payments)
+        if (isMockPayment) {
+          await tx.payment.update({
+            where: { id: payment.id },
+            data: { paymentStatus: PaymentStatus.SUCCEEDED },
+          });
+        }
 
         return { appointmentId: createdAppointment?.id };
       });

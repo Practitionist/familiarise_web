@@ -285,6 +285,12 @@ export async function handlePaymentFailure(paymentIntentId: string) {
       return;
     }
 
+    // FIX Issue #8: Idempotency check - prevent duplicate processing
+    if (payment.paymentStatus === PaymentStatus.FAILED) {
+      console.log(`Payment ${paymentIntentId} has already been marked as failed.`);
+      return;
+    }
+
     await tx.payment.update({
       where: { id: payment.id },
       data: { paymentStatus: PaymentStatus.FAILED },

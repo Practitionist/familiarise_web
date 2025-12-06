@@ -63,6 +63,16 @@ export async function createApprovalPaymentIntent(
     throw new Error("subscriptionId required for SUBSCRIPTION appointment type");
   }
 
+  // FIX Issue #7: Check for existing payment to prevent duplicates
+  const hasExistingPayment = await checkExistingPayment({
+    consultationId: params.consultationId,
+    subscriptionId: params.subscriptionId,
+  });
+
+  if (hasExistingPayment) {
+    throw new Error("A payment link has already been generated for this request");
+  }
+
   // Get plan and calculate amount
   const { amount, currency, plan } = await calculateAmount(params);
 
