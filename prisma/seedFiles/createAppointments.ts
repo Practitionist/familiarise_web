@@ -242,7 +242,7 @@ const createSubscriptionAppointment = (
 
   // Create slots distributed across weeks, respecting consultant's availability
   const slots = [];
-  let currentDate = new Date(startDate);
+  const currentDate = new Date(startDate);
   let slotsCreated = 0;
 
   // Iterate through the subscription period
