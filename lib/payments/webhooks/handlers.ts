@@ -622,7 +622,10 @@ async function confirmApprovalStatus(
       throw new Error(`Subscription ${entityId} not found`);
     }
 
-    // If status is APPROVED_PENDING_PAYMENT, confirm the appointment
+    // For subscriptions: Only transition APPROVED_PENDING_PAYMENT → APPROVED
+    // Do NOT change PENDING → APPROVED here!
+    // Subscription stays PENDING until consultant allocates slots via Requests tab
+    // SlotAllocationService.allocate() will set status to APPROVED when slots are allocated
     if (subscription.requestStatus === RequestStatus.APPROVED_PENDING_PAYMENT) {
       await tx.subscription.update({
         where: { id: entityId },
@@ -631,12 +634,10 @@ async function confirmApprovalStatus(
       console.log(
         `✅ Subscription ${entityId} payment completed - moving from APPROVED_PENDING_PAYMENT to APPROVED`,
       );
-    } else if (subscription.requestStatus !== RequestStatus.APPROVED) {
-      // Only update if not already approved
-      await tx.subscription.update({
-        where: { id: entityId },
-        data: { requestStatus: RequestStatus.APPROVED },
-      });
+    } else {
+      console.log(
+        `ℹ️ Subscription ${entityId} payment received - keeping status as ${subscription.requestStatus} (consultant will allocate slots)`,
+      );
     }
   }
 }
