@@ -1,5 +1,5 @@
 import prisma from "@/lib/prisma";
-import { Prisma, ScheduleType } from "@prisma/client";
+import { Prisma, ScheduleType, SessionType } from "@prisma/client";
 import { getServerSession } from "next-auth";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
@@ -55,6 +55,16 @@ const updateConsultantSchema = z
     tagIds: z.array(uuidSchema),
     slotsOfAvailabilityWeekly: z.array(weeklySlotSchema).optional(),
     slotsOfAvailabilityCustom: z.array(customSlotSchema).optional(),
+    // New fields
+    headline: z.string().max(120).optional(),
+    websiteUrl: z.string().url().optional().or(z.literal("")),
+    twitterUrl: z.string().url().optional().or(z.literal("")),
+    githubUrl: z.string().url().optional().or(z.literal("")),
+    videoIntroUrl: z.string().url().optional().or(z.literal("")),
+    languages: z.array(z.string()).optional(),
+    toolsAndTechnologies: z.array(z.string()).optional(),
+    mentoringStyle: z.string().optional(),
+    sessionTypes: z.array(z.nativeEnum(SessionType)).optional(),
   })
   .refine(
     (data) => {
@@ -109,6 +119,9 @@ export async function GET(
         subscriptionPlans: true,
         webinarPlans: true,
         classPlans: true,
+        workExperiences: true,
+        certifications: true,
+        education: true,
       },
     });
 
@@ -166,6 +179,16 @@ export async function PUT(
       tagIds,
       slotsOfAvailabilityWeekly,
       slotsOfAvailabilityCustom,
+      // New fields
+      headline,
+      websiteUrl,
+      twitterUrl,
+      githubUrl,
+      videoIntroUrl,
+      languages,
+      toolsAndTechnologies,
+      mentoringStyle,
+      sessionTypes,
     } = data;
 
     // Update consultant profile
@@ -186,6 +209,16 @@ export async function PUT(
         tags: {
           set: tagIds.map((id: string) => ({ id })),
         },
+        // New fields
+        headline: headline ?? null,
+        websiteUrl: websiteUrl || null,
+        twitterUrl: twitterUrl || null,
+        githubUrl: githubUrl || null,
+        videoIntroUrl: videoIntroUrl || null,
+        languages: languages ?? [],
+        toolsAndTechnologies: toolsAndTechnologies ?? [],
+        mentoringStyle: mentoringStyle ?? null,
+        sessionTypes: sessionTypes ?? [],
       },
     });
 
@@ -249,6 +282,9 @@ export async function PUT(
         subscriptionPlans: true,
         webinarPlans: true,
         classPlans: true,
+        workExperiences: true,
+        certifications: true,
+        education: true,
       },
     });
 

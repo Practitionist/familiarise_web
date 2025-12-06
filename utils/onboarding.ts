@@ -542,6 +542,13 @@ export function transformOnboardingFormToServerData(
     onlineStatus: formData.onlineStatus || false,
     onboardingCompleted: true, // Set to true when completing onboarding
     role: formData.role,
+    // New user fields
+    dateOfBirth: formData.dateOfBirth,
+    gender: formData.gender,
+    city: formData.city,
+    country: formData.country,
+    linkedinUrl: formData.linkedinUrl,
+    bio: formData.bio,
   };
 
   switch (formData.role) {
@@ -589,6 +596,16 @@ export function transformOnboardingFormToServerData(
                   })),
                 }
               : undefined,
+            // New consultant fields
+            headline: formData.headline,
+            websiteUrl: formData.websiteUrl,
+            twitterUrl: formData.twitterUrl,
+            githubUrl: formData.githubUrl,
+            videoIntroUrl: formData.videoIntroUrl,
+            languages: formData.languages ?? [],
+            toolsAndTechnologies: formData.toolsAndTechnologies ?? [],
+            mentoringStyle: formData.mentoringStyle,
+            sessionTypes: formData.sessionTypes ?? [],
           },
         },
         consulteeProfile: undefined,
@@ -611,6 +628,13 @@ export function transformOnboardingFormToServerData(
             specialRequirements: formData.specialRequirements,
             interests: formData.interests,
             goals: formData.goals,
+            // New consultee fields
+            careerStage: formData.careerStage,
+            currentCompany: formData.currentCompany,
+            industry: formData.industry,
+            skillsToDevelop: formData.skillsToDevelop ?? [],
+            linkedinUrl: formData.linkedinUrl,
+            budgetPreference: formData.budgetPreference,
           },
         },
         staffProfile: undefined,
@@ -628,6 +652,12 @@ export function transformOnboardingFormToServerData(
             position: formData.position,
             permissions: formData.permissions,
             responsibilities: formData.responsibilities,
+            // New staff fields
+            employeeId: formData.employeeId,
+            hireDate: formData.hireDate,
+            reportsTo: formData.reportsTo,
+            skills: formData.skills ?? [],
+            workSchedule: formData.workSchedule,
           },
         },
       };
@@ -639,6 +669,17 @@ export function transformOnboardingFormToServerData(
         consultantProfile: undefined,
         consulteeProfile: undefined,
         staffProfile: undefined,
+        // Admin profile is optional during onboarding
+        ...(formData.adminLevel && {
+          adminProfile: {
+            create: {
+              adminLevel: formData.adminLevel,
+              accessScope: formData.accessScope,
+              assignedRegions: formData.assignedRegions ?? [],
+              notes: formData.adminNotes,
+            },
+          },
+        }),
       };
 
     default:
@@ -749,6 +790,16 @@ function transformConsultantProfile(
           create: profile.customSlots,
         }
       : undefined,
+    // New fields
+    headline: profile.headline,
+    websiteUrl: profile.websiteUrl,
+    twitterUrl: profile.twitterUrl,
+    githubUrl: profile.githubUrl,
+    videoIntroUrl: profile.videoIntroUrl,
+    languages: profile.languages ?? [],
+    toolsAndTechnologies: profile.toolsAndTechnologies ?? [],
+    mentoringStyle: profile.mentoringStyle,
+    sessionTypes: profile.sessionTypes ?? [],
   };
 }
 
@@ -764,6 +815,13 @@ function transformConsulteeProfile(
     specialRequirements: profile.specialRequirements,
     interests: profile.interests,
     goals: profile.goals,
+    // New fields
+    careerStage: profile.careerStage,
+    currentCompany: profile.currentCompany,
+    industry: profile.industry,
+    skillsToDevelop: profile.skillsToDevelop ?? [],
+    linkedinUrl: profile.linkedinUrl,
+    budgetPreference: profile.budgetPreference,
   };
 }
 
@@ -775,6 +833,12 @@ function transformStaffProfile(
     position: profile.position,
     permissions: profile.permissions,
     responsibilities: profile.responsibilities,
+    // New fields
+    employeeId: profile.employeeId,
+    hireDate: profile.hireDate,
+    reportsTo: profile.reportsTo,
+    skills: profile.skills ?? [],
+    workSchedule: profile.workSchedule,
   };
 }
 
@@ -886,6 +950,16 @@ async function updateConsultantProfileAndRelations(
       tags: profileData.tags?.connect
         ? { connect: profileData.tags.connect }
         : undefined,
+      // New fields
+      headline: profileData.headline ?? null,
+      websiteUrl: profileData.websiteUrl || null,
+      twitterUrl: profileData.twitterUrl || null,
+      githubUrl: profileData.githubUrl || null,
+      videoIntroUrl: profileData.videoIntroUrl || null,
+      languages: profileData.languages ?? [],
+      toolsAndTechnologies: profileData.toolsAndTechnologies ?? [],
+      mentoringStyle: profileData.mentoringStyle ?? null,
+      sessionTypes: profileData.sessionTypes ?? [],
     },
     update: {
       description: profileData.description ?? "",
@@ -900,6 +974,16 @@ async function updateConsultantProfileAndRelations(
       tags: profileData.tags?.connect
         ? { set: profileData.tags.connect }
         : { set: [] },
+      // New fields
+      headline: profileData.headline ?? null,
+      websiteUrl: profileData.websiteUrl || null,
+      twitterUrl: profileData.twitterUrl || null,
+      githubUrl: profileData.githubUrl || null,
+      videoIntroUrl: profileData.videoIntroUrl || null,
+      languages: profileData.languages ?? [],
+      toolsAndTechnologies: profileData.toolsAndTechnologies ?? [],
+      mentoringStyle: profileData.mentoringStyle ?? null,
+      sessionTypes: profileData.sessionTypes ?? [],
     },
   });
 
@@ -983,6 +1067,13 @@ async function updateConsulteeProfileAndRelations(
       specialRequirements: profileData.specialRequirements ?? "",
       interests: interests,
       goals: goals,
+      // New fields
+      careerStage: profileData.careerStage ?? null,
+      currentCompany: profileData.currentCompany ?? null,
+      industry: profileData.industry ?? null,
+      skillsToDevelop: profileData.skillsToDevelop ?? [],
+      linkedinUrl: profileData.linkedinUrl || null,
+      budgetPreference: profileData.budgetPreference ?? null,
     },
     update: {
       education: profileData.education ?? "",
@@ -993,6 +1084,13 @@ async function updateConsulteeProfileAndRelations(
       specialRequirements: profileData.specialRequirements ?? "",
       interests: interests,
       goals: goals,
+      // New fields
+      careerStage: profileData.careerStage ?? null,
+      currentCompany: profileData.currentCompany ?? null,
+      industry: profileData.industry ?? null,
+      skillsToDevelop: profileData.skillsToDevelop ?? [],
+      linkedinUrl: profileData.linkedinUrl || null,
+      budgetPreference: profileData.budgetPreference ?? null,
     },
   });
   return { consulteeProfileId: consulteeProfile.id };
@@ -1011,15 +1109,51 @@ async function updateStaffProfileAndRelations(
       position: profileData.position ?? "",
       permissions: profileData.permissions ?? {},
       responsibilities: profileData.responsibilities ?? {},
+      // New fields
+      employeeId: profileData.employeeId ?? null,
+      hireDate: profileData.hireDate ?? null,
+      reportsTo: profileData.reportsTo ?? null,
+      skills: profileData.skills ?? [],
+      workSchedule: profileData.workSchedule ?? null,
     },
     update: {
       department: profileData.department ?? "",
       position: profileData.position ?? "",
       permissions: profileData.permissions ?? {},
       responsibilities: profileData.responsibilities ?? {},
+      // New fields
+      employeeId: profileData.employeeId ?? null,
+      hireDate: profileData.hireDate ?? null,
+      reportsTo: profileData.reportsTo ?? null,
+      skills: profileData.skills ?? [],
+      workSchedule: profileData.workSchedule ?? null,
     },
   });
   return { staffProfileId: staffProfile.id };
+}
+
+async function updateAdminProfileAndRelations(
+  userId: string,
+  profileData: AdminProfileCreateData,
+  tx: Prisma.TransactionClient,
+) {
+  const adminProfile = await tx.adminProfile.upsert({
+    where: { userId: userId },
+    create: {
+      userId: userId,
+      adminLevel: profileData.adminLevel,
+      accessScope: profileData.accessScope ?? null,
+      assignedRegions: profileData.assignedRegions ?? [],
+      notes: profileData.notes ?? null,
+    },
+    update: {
+      adminLevel: profileData.adminLevel,
+      accessScope: profileData.accessScope ?? null,
+      assignedRegions: profileData.assignedRegions ?? [],
+      notes: profileData.notes ?? null,
+    },
+  });
+  return { adminProfileId: adminProfile.id };
 }
 
 async function updateUserProfileAndGetFkData(
@@ -1030,6 +1164,7 @@ async function updateUserProfileAndGetFkData(
   consultantProfileId?: string;
   consulteeProfileId?: string;
   staffProfileId?: string;
+  adminProfileId?: string;
 }> {
   switch (validatedBody.role) {
     case UserRole.CONSULTANT:
@@ -1051,6 +1186,14 @@ async function updateUserProfileAndGetFkData(
         tx,
       );
     case UserRole.ADMIN:
+      // Admin profiles are optional during onboarding (can be set by super admin later)
+      if ((validatedBody as any).adminProfile?.create) {
+        return updateAdminProfileAndRelations(
+          userId,
+          (validatedBody as any).adminProfile.create,
+          tx,
+        );
+      }
       return {};
     default:
       throw new Error(
@@ -1095,9 +1238,18 @@ export async function processOnboardingData(
         role: validatedBody.role,
         onboardingCompleted: true,
         timezone: validatedBody.timezone,
+        // New user fields
+        dateOfBirth: validatedBody.dateOfBirth ?? null,
+        gender: validatedBody.gender ?? null,
+        city: validatedBody.city ?? null,
+        country: validatedBody.country ?? null,
+        linkedinUrl: validatedBody.linkedinUrl || null,
+        bio: validatedBody.bio ?? null,
+        // Reset profile IDs (will be set by profileFkData)
         consultantProfileId: null,
         consulteeProfileId: null,
         staffProfileId: null,
+        adminProfileId: null,
       };
 
       const profileFkData = await updateUserProfileAndGetFkData(
@@ -1122,10 +1274,18 @@ export async function processOnboardingData(
               domain: true,
               subDomains: true,
               tags: true,
+              workExperiences: true,
+              certifications: true,
+              education: true,
             },
           },
-          consulteeProfile: true,
+          consulteeProfile: {
+            include: {
+              educationHistory: true,
+            },
+          },
           staffProfile: true,
+          adminProfile: true,
         },
       });
     });
