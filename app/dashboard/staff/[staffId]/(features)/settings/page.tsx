@@ -183,6 +183,11 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
           staffProfile: {
             department: staffData.staffProfile?.department,
             position: staffData.staffProfile?.position,
+            employeeId: staffData.staffProfile?.employeeId,
+            hireDate: staffData.staffProfile?.hireDate,
+            reportsTo: staffData.staffProfile?.reportsTo,
+            skills: staffData.staffProfile?.skills,
+            workSchedule: staffData.staffProfile?.workSchedule,
             // TODO: Handle responsibilities/permissions update if editable
           },
         } as any; // Type assertion needed for partial nested update
@@ -462,6 +467,72 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
                     placeholder="e.g., Software Engineer, Manager"
                     value={staffData.staffProfile?.position ?? ""}
                     onChange={handleProfileInputChange}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="employeeId">Employee ID</Label>
+                  <Input
+                    id="employeeId"
+                    name="employeeId"
+                    placeholder="e.g., EMP-001"
+                    value={staffData.staffProfile?.employeeId ?? ""}
+                    onChange={handleProfileInputChange}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="reportsTo">Reports To</Label>
+                  <Input
+                    id="reportsTo"
+                    name="reportsTo"
+                    placeholder="Manager's name or ID"
+                    value={staffData.staffProfile?.reportsTo ?? ""}
+                    onChange={handleProfileInputChange}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="hireDate">Hire Date</Label>
+                  <Input
+                    id="hireDate"
+                    name="hireDate"
+                    type="date"
+                    value={staffData.staffProfile?.hireDate
+                      ? new Date(staffData.staffProfile.hireDate).toISOString().split("T")[0]
+                      : ""}
+                    onChange={handleProfileInputChange}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="workSchedule">Work Schedule</Label>
+                  <Input
+                    id="workSchedule"
+                    name="workSchedule"
+                    placeholder="e.g., Mon-Fri 9AM-5PM"
+                    value={staffData.staffProfile?.workSchedule ?? ""}
+                    onChange={handleProfileInputChange}
+                  />
+                </div>
+                <div className="space-y-2 md:col-span-2">
+                  <Label htmlFor="skills">Skills</Label>
+                  <Input
+                    id="skills"
+                    placeholder="e.g., Communication, Leadership (comma-separated)"
+                    value={(staffData.staffProfile?.skills as string[] ?? []).join(", ")}
+                    onChange={(e) => {
+                      const skills = e.target.value
+                        .split(",")
+                        .map((s) => s.trim())
+                        .filter(Boolean);
+                      setStaffData((prev) => {
+                        if (!prev || !prev.staffProfile) return prev;
+                        return {
+                          ...prev,
+                          staffProfile: {
+                            ...prev.staffProfile,
+                            skills: skills,
+                          },
+                        };
+                      });
+                    }}
                   />
                 </div>
                 {/* Displaying Responsibilities/Permissions as read-only */}
