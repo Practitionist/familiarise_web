@@ -49,11 +49,12 @@ function MessageContainer({
 
 // Fetch admin user data
 async function fetchAdminData(userId: string) {
-  const response = await fetch(`/api/users/${userId}`);
+  const response = await fetch(`/api/user/${userId}`);
   if (!response.ok) {
     throw new Error("Failed to fetch admin data");
   }
-  return response.json();
+  const result = await response.json();
+  return result.data; // API returns { data: user }
 }
 
 // Main layout component

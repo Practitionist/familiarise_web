@@ -5,6 +5,11 @@ import {
   UserRole,
   DayOfWeek,
   Prisma,
+  Gender,
+  CareerStage,
+  AdminLevel,
+  BudgetPreference,
+  SessionType,
 } from "@prisma/client";
 import { isValidTimeRange } from "@/utils/timeSlotValidation";
 import { experienceValidation } from "@/schemas/shared";
@@ -39,8 +44,6 @@ export const ConsultantProfileRelatedTagsInputSchema = z.object({
 
 export const BaseConsultantProfileCreateInputSchema = z.object({
   description: z.string().optional(),
-  qualifications: z.string().optional(),
-  specialization: z.string().optional(),
   experience: experienceValidation,
   scheduleType: z.nativeEnum(ScheduleType).default(ScheduleType.WEEKLY),
   domain: z.object({ connect: z.object({ id: z.string() }) }),
@@ -52,6 +55,19 @@ export const BaseConsultantProfileCreateInputSchema = z.object({
   slotsOfAvailabilityCustom: z
     .object({ create: z.array(SlotCustomCreateInputSchema).optional() })
     .optional(),
+  // New fields
+  headline: z.string().max(120).optional(),
+  websiteUrl: z.string().url().optional().or(z.literal("")),
+  twitterUrl: z.string().url().optional().or(z.literal("")),
+  githubUrl: z.string().url().optional().or(z.literal("")),
+  videoIntroUrl: z.string().url().optional().or(z.literal("")),
+  languages: z.array(z.string()).default([]),
+  toolsAndTechnologies: z.array(z.string()).default([]),
+  mentoringStyle: z.string().optional(),
+  sessionTypes: z.array(z.nativeEnum(SessionType)).default([]),
+  // Deprecated fields (kept for backward compatibility)
+  qualifications: z.string().optional(),
+  specialization: z.string().optional(),
 });
 
 export const ConsultantProfileCreateObjectSchema = z.object({
@@ -59,16 +75,24 @@ export const ConsultantProfileCreateObjectSchema = z.object({
 });
 
 export const BaseConsulteeProfileCreateInputSchema = z.object({
-  education: z.string().optional(),
   occupation: z.string().optional(),
   aboutMe: z.string().optional(),
   preferredCommunicationMethod: z
     .nativeEnum(ConsultationMode)
     .default(ConsultationMode.VIDEO),
   preferredLanguage: z.string().optional(),
+  goals: z.union([z.array(z.string()), z.string()]).optional(),
+  // New fields
+  careerStage: z.nativeEnum(CareerStage).optional().nullable(),
+  currentCompany: z.string().optional(),
+  industry: z.string().optional(),
+  skillsToDevelop: z.array(z.string()).default([]),
+  linkedinUrl: z.string().url().optional().or(z.literal("")),
+  budgetPreference: z.nativeEnum(BudgetPreference).optional().nullable(),
+  // Deprecated fields (kept for backward compatibility)
+  education: z.string().optional(),
   specialRequirements: z.string().optional(),
   interests: z.union([z.array(z.string()), z.string()]).optional(),
-  goals: z.union([z.array(z.string()), z.string()]).optional(),
 });
 
 export const ConsulteeProfileCreateObjectSchema = z.object({
@@ -80,10 +104,28 @@ export const BaseStaffProfileCreateInputSchema = z.object({
   position: z.string().optional(),
   permissions: z.any().optional(),
   responsibilities: z.any().optional(),
+  // New fields
+  employeeId: z.string().optional(),
+  hireDate: z.coerce.date().optional().nullable(),
+  reportsTo: z.string().optional(),
+  skills: z.array(z.string()).default([]),
+  workSchedule: z.string().optional(),
 });
 
 export const StaffProfileCreateObjectSchema = z.object({
   create: BaseStaffProfileCreateInputSchema,
+});
+
+// NEW: Admin Profile Schema
+export const BaseAdminProfileCreateInputSchema = z.object({
+  adminLevel: z.nativeEnum(AdminLevel),
+  accessScope: z.any().optional().nullable(),
+  assignedRegions: z.array(z.string()).default([]),
+  notes: z.string().optional(),
+});
+
+export const AdminProfileCreateObjectSchema = z.object({
+  create: BaseAdminProfileCreateInputSchema,
 });
 
 export const OnboardingBaseSchema = z.object({
@@ -94,6 +136,13 @@ export const OnboardingBaseSchema = z.object({
   timezone: z.string().optional(),
   onlineStatus: z.boolean().optional().default(false),
   onboardingCompleted: z.boolean().optional().default(false),
+  // New user fields
+  dateOfBirth: z.coerce.date().optional().nullable(),
+  gender: z.nativeEnum(Gender).optional().nullable(),
+  city: z.string().optional(),
+  country: z.string().optional(),
+  linkedinUrl: z.string().url().optional().or(z.literal("")),
+  bio: z.string().max(160).optional(),
 });
 
 export const OnboardingDataSchema = z.discriminatedUnion("role", [
@@ -120,14 +169,13 @@ export const OnboardingDataSchema = z.discriminatedUnion("role", [
     consultantProfile: z.undefined().optional(),
     consulteeProfile: z.undefined().optional(),
     staffProfile: z.undefined().optional(),
+    adminProfile: AdminProfileCreateObjectSchema.optional(),
   }),
 ]);
 
 // Frontend-compatible schemas (flatter structure)
 export const FrontendConsultantProfileSchema = z.object({
   description: z.string().optional(),
-  qualifications: z.string().optional(),
-  specialization: z.string().optional(),
   experience: z
     .number()
     .min(0, "Experience must be at least 0 years")
@@ -158,19 +206,40 @@ export const FrontendConsultantProfileSchema = z.object({
     .optional(),
   weeklySlots: z.array(SlotWeeklyCreateInputSchema).optional(),
   customSlots: z.array(SlotCustomCreateInputSchema).optional(),
+  // New fields
+  headline: z.string().max(120).optional(),
+  websiteUrl: z.string().url().optional().or(z.literal("")),
+  twitterUrl: z.string().url().optional().or(z.literal("")),
+  githubUrl: z.string().url().optional().or(z.literal("")),
+  videoIntroUrl: z.string().url().optional().or(z.literal("")),
+  languages: z.array(z.string()).default([]),
+  toolsAndTechnologies: z.array(z.string()).default([]),
+  mentoringStyle: z.string().optional(),
+  sessionTypes: z.array(z.nativeEnum(SessionType)).default([]),
+  // Deprecated fields (kept for backward compatibility)
+  qualifications: z.string().optional(),
+  specialization: z.string().optional(),
 });
 
 export const FrontendConsulteeProfileSchema = z.object({
-  education: z.string().optional(),
   occupation: z.string().optional(),
   aboutMe: z.string().optional(),
   preferredCommunicationMethod: z
     .nativeEnum(ConsultationMode)
     .default(ConsultationMode.VIDEO),
   preferredLanguage: z.string().optional(),
+  goals: z.array(z.string()).optional(),
+  // New fields
+  careerStage: z.nativeEnum(CareerStage).optional().nullable(),
+  currentCompany: z.string().optional(),
+  industry: z.string().optional(),
+  skillsToDevelop: z.array(z.string()).default([]),
+  linkedinUrl: z.string().url().optional().or(z.literal("")),
+  budgetPreference: z.nativeEnum(BudgetPreference).optional().nullable(),
+  // Deprecated fields (kept for backward compatibility)
+  education: z.string().optional(),
   specialRequirements: z.string().optional(),
   interests: z.array(z.string()).optional(),
-  goals: z.array(z.string()).optional(),
 });
 
 export const FrontendStaffProfileSchema = z.object({
@@ -178,6 +247,20 @@ export const FrontendStaffProfileSchema = z.object({
   position: z.string().optional(),
   permissions: z.record(z.boolean()).optional(),
   responsibilities: z.record(z.boolean()).optional(),
+  // New fields
+  employeeId: z.string().optional(),
+  hireDate: z.coerce.date().optional().nullable(),
+  reportsTo: z.string().optional(),
+  skills: z.array(z.string()).default([]),
+  workSchedule: z.string().optional(),
+});
+
+// NEW: Frontend Admin Profile Schema
+export const FrontendAdminProfileSchema = z.object({
+  adminLevel: z.nativeEnum(AdminLevel),
+  accessScope: z.any().optional().nullable(),
+  assignedRegions: z.array(z.string()).default([]),
+  notes: z.string().optional(),
 });
 
 export const FrontendOnboardingBaseSchema = z.object({
@@ -189,6 +272,13 @@ export const FrontendOnboardingBaseSchema = z.object({
   onlineStatus: z.boolean().default(false),
   onboardingCompleted: z.boolean().default(false),
   role: z.nativeEnum(UserRole),
+  // New user fields
+  dateOfBirth: z.coerce.date().optional().nullable(),
+  gender: z.nativeEnum(Gender).optional().nullable(),
+  city: z.string().optional(),
+  country: z.string().optional(),
+  linkedinUrl: z.string().url().optional().or(z.literal("")),
+  bio: z.string().max(160).optional(),
 });
 
 // #endregion
@@ -205,6 +295,9 @@ export type ConsulteeProfileCreateData = z.infer<
 export type StaffProfileCreateData = z.infer<
   typeof BaseStaffProfileCreateInputSchema
 >;
+export type AdminProfileCreateData = z.infer<
+  typeof BaseAdminProfileCreateInputSchema
+>;
 
 export type FrontendConsultantProfile = z.infer<
   typeof FrontendConsultantProfileSchema
@@ -213,6 +306,7 @@ export type FrontendConsulteeProfile = z.infer<
   typeof FrontendConsulteeProfileSchema
 >;
 export type FrontendStaffProfile = z.infer<typeof FrontendStaffProfileSchema>;
+export type FrontendAdminProfile = z.infer<typeof FrontendAdminProfileSchema>;
 export type FrontendOnboardingBase = z.infer<
   typeof FrontendOnboardingBaseSchema
 >;
@@ -221,6 +315,7 @@ export type FrontendOnboardingData = FrontendOnboardingBase & {
   consultantProfile?: FrontendConsultantProfile;
   consulteeProfile?: FrontendConsulteeProfile;
   staffProfile?: FrontendStaffProfile;
+  adminProfile?: FrontendAdminProfile;
 };
 
 // #endregion
@@ -235,12 +330,17 @@ export const PersonalInfoAndRoleFormSchema = z.object({
   role: z.nativeEnum(UserRole),
   onlineStatus: z.boolean().optional(),
   onboardingCompleted: z.boolean().optional(),
+  // New user fields
+  dateOfBirth: z.coerce.date().optional().nullable(),
+  gender: z.nativeEnum(Gender).optional().nullable(),
+  city: z.string().optional(),
+  country: z.string().optional(),
+  linkedinUrl: z.string().url().optional().or(z.literal("")),
+  bio: z.string().max(160).optional(),
 });
 
 export const ConsultantProfileFormSchema = z.object({
   description: z.string().min(1, "Description is required"),
-  qualifications: z.string().min(1, "Qualifications are required"),
-  specialization: z.string().min(1, "Specialization is required"),
   experience: experienceValidation,
   scheduleType: z.nativeEnum(ScheduleType).default(ScheduleType.WEEKLY),
   domain: z.object({
@@ -267,17 +367,38 @@ export const ConsultantProfileFormSchema = z.object({
     .optional(),
   weeklySlots: z.array(SlotWeeklyCreateInputSchema).optional(),
   customSlots: z.array(SlotCustomCreateInputSchema).optional(),
+  // New fields
+  headline: z.string().max(120).optional(),
+  websiteUrl: z.string().url().optional().or(z.literal("")),
+  twitterUrl: z.string().url().optional().or(z.literal("")),
+  githubUrl: z.string().url().optional().or(z.literal("")),
+  videoIntroUrl: z.string().url().optional().or(z.literal("")),
+  languages: z.array(z.string()).default([]),
+  toolsAndTechnologies: z.array(z.string()).default([]),
+  mentoringStyle: z.string().optional(),
+  sessionTypes: z.array(z.nativeEnum(SessionType)).default([]),
+  // Deprecated fields (kept for backward compatibility)
+  qualifications: z.string().optional(),
+  specialization: z.string().optional(),
 });
 
 export const ConsulteeProfileFormSchema = z.object({
-  education: z.string().min(1, "Education is required"),
   occupation: z.string().min(1, "Occupation is required"),
   aboutMe: z.string().min(1, "About me is required"),
   preferredCommunicationMethod: z.nativeEnum(ConsultationMode),
   preferredLanguage: z.string().optional(),
+  goals: z.array(z.string()).optional(),
+  // New fields
+  careerStage: z.nativeEnum(CareerStage).optional().nullable(),
+  currentCompany: z.string().optional(),
+  industry: z.string().optional(),
+  skillsToDevelop: z.array(z.string()).default([]),
+  linkedinUrl: z.string().url().optional().or(z.literal("")),
+  budgetPreference: z.nativeEnum(BudgetPreference).optional().nullable(),
+  // Deprecated fields (kept for backward compatibility)
+  education: z.string().optional(),
   specialRequirements: z.string().optional(),
   interests: z.array(z.string()).optional(),
-  goals: z.array(z.string()).optional(),
 });
 
 export const StaffProfileFormSchema = z.object({
@@ -285,6 +406,20 @@ export const StaffProfileFormSchema = z.object({
   position: z.string().min(1, "Position is required"),
   permissions: z.record(z.boolean()).optional(),
   responsibilities: z.record(z.string()).optional(),
+  // New fields
+  employeeId: z.string().optional(),
+  hireDate: z.coerce.date().optional().nullable(),
+  reportsTo: z.string().optional(),
+  skills: z.array(z.string()).default([]),
+  workSchedule: z.string().optional(),
+});
+
+// NEW: Admin Profile Form Schema
+export const AdminProfileFormSchema = z.object({
+  adminLevel: z.nativeEnum(AdminLevel),
+  accessScope: z.any().optional().nullable(),
+  assignedRegions: z.array(z.string()).default([]),
+  notes: z.string().optional(),
 });
 
 export const PreferredScheduleFormSchema = z.object({
@@ -304,10 +439,9 @@ export const OnboardingFormDataSchema = PersonalInfoAndRoleFormSchema.extend({
   preferredCommunicationMethod: z
     .nativeEnum(ConsultationMode)
     .default(ConsultationMode.VIDEO),
+
   // Consultant fields
   description: z.string().optional(),
-  qualifications: z.string().optional(),
-  specialization: z.string().optional(),
   experience: experienceValidation.optional(),
   domain: z
     .object({
@@ -336,21 +470,53 @@ export const OnboardingFormDataSchema = PersonalInfoAndRoleFormSchema.extend({
   scheduleType: z.nativeEnum(ScheduleType).optional(),
   weeklySlots: z.array(SlotWeeklyCreateInputSchema).optional(),
   customSlots: z.array(SlotCustomCreateInputSchema).optional(),
+  // New consultant fields
+  headline: z.string().max(120).optional(),
+  websiteUrl: z.string().url().optional().or(z.literal("")),
+  twitterUrl: z.string().url().optional().or(z.literal("")),
+  githubUrl: z.string().url().optional().or(z.literal("")),
+  videoIntroUrl: z.string().url().optional().or(z.literal("")),
+  languages: z.array(z.string()).optional(),
+  toolsAndTechnologies: z.array(z.string()).optional(),
+  mentoringStyle: z.string().optional(),
+  sessionTypes: z.array(z.nativeEnum(SessionType)).optional(),
+  // Deprecated consultant fields
+  qualifications: z.string().optional(),
+  specialization: z.string().optional(),
 
   // Consultee fields
-  education: z.string().optional(),
   occupation: z.string().optional(),
   aboutMe: z.string().optional(),
   preferredLanguage: z.string().optional(),
+  goals: z.array(z.string()).optional(),
+  // New consultee fields
+  careerStage: z.nativeEnum(CareerStage).optional().nullable(),
+  currentCompany: z.string().optional(),
+  industry: z.string().optional(),
+  skillsToDevelop: z.array(z.string()).optional(),
+  budgetPreference: z.nativeEnum(BudgetPreference).optional().nullable(),
+  // Deprecated consultee fields
+  education: z.string().optional(),
   specialRequirements: z.string().optional(),
   interests: z.array(z.string()).optional(),
-  goals: z.array(z.string()).optional(),
 
   // Staff fields
   department: z.string().optional(),
   position: z.string().optional(),
   permissions: z.record(z.boolean()).optional(),
   responsibilities: z.record(z.boolean()).optional(),
+  // New staff fields
+  employeeId: z.string().optional(),
+  hireDate: z.coerce.date().optional().nullable(),
+  reportsTo: z.string().optional(),
+  skills: z.array(z.string()).optional(),
+  workSchedule: z.string().optional(),
+
+  // Admin fields (NEW)
+  adminLevel: z.nativeEnum(AdminLevel).optional(),
+  accessScope: z.any().optional().nullable(),
+  assignedRegions: z.array(z.string()).optional(),
+  adminNotes: z.string().optional(),
 
   // Agreement fields
   termsAccepted: z.boolean().optional(),
