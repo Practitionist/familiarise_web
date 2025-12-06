@@ -8,15 +8,12 @@ import { CheckoutInput, checkoutSchema } from "@/schemas/checkout";
 import { calculateSubscriptionEndDate } from "@/utils/dateUtils";
 import {
   AppointmentsType,
-  ClassStatus,
   PaymentGateway,
   PaymentStatus,
   Prisma,
   RequestStatus,
-  WebinarStatus,
 } from "@prisma/client";
 import { cancelPaymentIntent, createPaymentIntent } from "../index";
-import { handlePaymentSuccess } from "@/lib/payments/webhooks/handlers";
 import {
   lockSlotBooking,
   unlockSlotBooking,
@@ -24,6 +21,10 @@ import {
   unlockEventCheckout,
   ApprovalLock,
 } from "@/utils/appointmentlock";
+import {
+  countUniqueParticipants,
+  isUserEnrolled,
+} from "@/lib/payments/utils/participants";
 
 // Re-export for backward compatibility
 export const unifiedCheckoutSchema = checkoutSchema;
@@ -650,6 +651,49 @@ async function releaseCheckoutLock(
 }
 
 /**
+ * BUG-E: Verify plan still exists inside lock
+ * Prevents race condition where plan is deleted between initial validation and checkout
+ */
+async function verifyPlanExistsInsideLock(
+  tx: Prisma.TransactionClient,
+  appointmentType: string,
+  planId: string,
+): Promise<void> {
+  let planExists = false;
+
+  switch (appointmentType) {
+    case "CONSULTATION":
+      planExists = !!(await tx.consultationPlan.findUnique({
+        where: { id: planId },
+        select: { id: true },
+      }));
+      break;
+    case "SUBSCRIPTION":
+      planExists = !!(await tx.subscriptionPlan.findUnique({
+        where: { id: planId },
+        select: { id: true },
+      }));
+      break;
+    case "WEBINAR":
+      planExists = !!(await tx.webinarPlan.findUnique({
+        where: { id: planId },
+        select: { id: true },
+      }));
+      break;
+    case "CLASS":
+      planExists = !!(await tx.classPlan.findUnique({
+        where: { id: planId },
+        select: { id: true },
+      }));
+      break;
+  }
+
+  if (!planExists) {
+    throw new Error("This plan is no longer available. Please refresh and try again.");
+  }
+}
+
+/**
  * Re-validate availability inside the lock
  * Critical for preventing TOCTOU race conditions
  */
@@ -668,6 +712,9 @@ async function revalidateInsideLock(
     if (!user?.consulteeProfile) {
       throw new Error("User profile not found");
     }
+
+    // BUG-E: Re-validate plan still exists (could be deleted between initial validation and lock)
+    await verifyPlanExistsInsideLock(tx, data.appointmentType, data.planId);
 
     // Re-validate slot availability based on appointment type
     switch (data.appointmentType) {
@@ -939,6 +986,13 @@ export async function handleWebinarCheckout(
     );
   }
 
+  // BUG-A: Validate webinar hasn't already occurred (15 min buffer before start)
+  const scheduledStart = webinar.appointment.slotsOfAppointment[0].startsAt;
+  const bufferMs = 15 * 60 * 1000; // 15 minutes before start
+  if (new Date(scheduledStart).getTime() - bufferMs < Date.now()) {
+    throw new Error("This webinar is starting soon or has already occurred.");
+  }
+
   // Create or reuse appointment
   let appointment = webinar.appointment;
   if (!appointment) {
@@ -1001,16 +1055,8 @@ export async function handleClassCheckout(
 
   const plan = classInstance.classPlan;
 
-  // Count unique participants (not slots) - one user = one participant
-  const uniqueUserIds = new Set<string>();
-  for (const apt of classInstance.appointments) {
-    for (const slot of apt.slotsOfAppointment) {
-      if (slot.user && Array.isArray(slot.user)) {
-        slot.user.forEach((u: { id: string }) => uniqueUserIds.add(u.id));
-      }
-    }
-  }
-  const currentParticipants = uniqueUserIds.size;
+  // OPT-2: Use extracted utility for participant counting
+  const currentParticipants = countUniqueParticipants(classInstance.appointments);
 
   // Check if max participants reached
   if (currentParticipants >= plan.maxParticipants) {
@@ -1029,8 +1075,8 @@ export async function handleClassCheckout(
     }
   }
 
-  // Check if user is already enrolled
-  if (uniqueUserIds.has(userId)) {
+  // Check if user is already enrolled - OPT-2: Use extracted utility
+  if (isUserEnrolled(classInstance.appointments, userId)) {
     throw new Error("You are already enrolled in this class");
   }
 
@@ -1069,64 +1115,6 @@ export async function handleClassCheckout(
 }
 
 // ============================================================================
-// Appointment Confirmation
-// ============================================================================
-
-/**
- * Confirm appointment by making slots non-tentative and updating status
- */
-export async function confirmAppointment(
-  tx: Prisma.TransactionClient,
-  appointmentId: string,
-  _appointmentType: string,
-) {
-  // Make slot non-tentative
-  await tx.slotOfAppointment.updateMany({
-    where: { appointmentId },
-    data: { isTentative: false },
-  });
-
-  // Update specific appointment type status
-  const appointment = await tx.appointment.findUnique({
-    where: { id: appointmentId },
-    include: {
-      consultation: true,
-      subscription: true,
-      webinar: true,
-      class: true,
-    },
-  });
-
-  if (appointment?.consultation) {
-    await tx.consultation.update({
-      where: { id: appointment.consultation.id },
-      data: { requestStatus: RequestStatus.APPROVED },
-    });
-  }
-
-  if (appointment?.subscription) {
-    await tx.subscription.update({
-      where: { id: appointment.subscription.id },
-      data: { requestStatus: RequestStatus.APPROVED },
-    });
-  }
-
-  if (appointment?.webinar) {
-    await tx.webinar.update({
-      where: { id: appointment.webinar.id },
-      data: { status: WebinarStatus.SCHEDULED },
-    });
-  }
-
-  if (appointment?.class) {
-    await tx.class.update({
-      where: { id: appointment.class.id },
-      data: { status: ClassStatus.SCHEDULED },
-    });
-  }
-}
-
-// ============================================================================
 // Main Checkout Flows
 // ============================================================================
 
@@ -1146,7 +1134,8 @@ export async function handleCheckout(
 ) {
   let lock: ApprovalLock | null = null;
   let lockType = "";
-  let paymentResponse: any = null;
+  // TYPE-1: Properly typed payment response instead of any
+  let paymentResponse: { id: string; client_secret: string | null } | null = null;
 
   try {
     // STEP 1: Calculate amount and fetch plan data (OUTSIDE LOCK - just pricing)
@@ -1255,12 +1244,13 @@ export async function handleCheckout(
         }
 
         // Create payment record linked to appointment (if created)
+        // paymentResponse is guaranteed to be set at this point (we'd have thrown in the try-catch above)
         const payment = await tx.payment.create({
           data: {
             amount,
             currency,
             paymentMethod: "CARD",
-            paymentIntent: paymentResponse.id,
+            paymentIntent: paymentResponse!.id,
             paymentGateway: validatedData.paymentGateway,
             paymentStatus: PaymentStatus.PENDING,
             isMockPayment,

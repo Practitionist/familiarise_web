@@ -5,7 +5,6 @@
 
 import authOptions from "@/app/api/auth/[...nextauth]/options";
 import { createRefund, listRefunds } from "@/lib/payments";
-import { createRefundRecord, withPaymentTransaction } from "@/lib/payments/core/transactions";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { getServerSession } from "next-auth";
@@ -55,55 +54,45 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const { paymentId, amount, reason } = createRefundSchema.parse(body);
 
-    // Get payment details
-    const payment = await prisma.payment.findUnique({
-      where: { id: paymentId },
-      include: {
-        user: { select: { id: true, email: true, name: true } },
-        appointment: true,
-        refunds: true,
-      },
-    });
+    // BUG-B FIX: Move ALL validation inside transaction to prevent race conditions
+    // Previously, refund amount was calculated outside the transaction, allowing
+    // concurrent requests to both pass validation and exceed the payment amount
+    const result = await prisma.$transaction(async (tx) => {
+      // Get payment details INSIDE transaction (with implicit row lock)
+      const payment = await tx.payment.findUnique({
+        where: { id: paymentId },
+        include: {
+          user: { select: { id: true, email: true, name: true } },
+          appointment: true,
+          refunds: true,
+        },
+      });
 
-    if (!payment) {
-      return NextResponse.json(
-        { error: "Payment not found" },
-        { status: 404 },
-      );
-    }
+      if (!payment) {
+        throw new Error("Payment not found");
+      }
 
-    // Check if payment can be refunded
-    if (payment.paymentStatus !== "SUCCEEDED") {
-      return NextResponse.json(
-        { error: "Only successful payments can be refunded" },
-        { status: 400 },
-      );
-    }
+      // Check if payment can be refunded
+      if (payment.paymentStatus !== "SUCCEEDED") {
+        throw new Error("Only successful payments can be refunded");
+      }
 
-    // Check if already fully refunded
-    const totalRefunded = payment.refunds
-      .filter((r) => r.status === "SUCCEEDED")
-      .reduce((sum, r) => sum + r.amount, 0);
+      // Calculate total refunded INSIDE transaction
+      const totalRefunded = payment.refunds
+        .filter((r) => r.status === "SUCCEEDED")
+        .reduce((sum, r) => sum + r.amount, 0);
 
-    if (totalRefunded >= payment.amount) {
-      return NextResponse.json(
-        { error: "Payment has already been fully refunded" },
-        { status: 400 },
-      );
-    }
+      if (totalRefunded >= payment.amount) {
+        throw new Error("Payment has already been fully refunded");
+      }
 
-    // Calculate refund amount
-    const refundAmount = amount || payment.amount - totalRefunded;
+      // Calculate refund amount INSIDE transaction
+      const refundAmount = amount || payment.amount - totalRefunded;
 
-    if (refundAmount > payment.amount - totalRefunded) {
-      return NextResponse.json(
-        { error: "Refund amount exceeds available balance" },
-        { status: 400 },
-      );
-    }
+      if (refundAmount > payment.amount - totalRefunded) {
+        throw new Error("Refund amount exceeds available balance");
+      }
 
-    // Create refund with transaction safety
-    const result = await withPaymentTransaction(async (tx) => {
       // Create refund via payment gateway
       const refundResult = await createRefund({
         paymentIntentId: payment.paymentIntent,
@@ -111,21 +100,21 @@ export async function POST(req: NextRequest) {
         reason,
       });
 
-      // Store refund in database
-      const refundRecord = await createRefundRecord(tx, {
-        amount: refundAmount,
-        currency: payment.currency,
-        reason,
-        status: refundResult.status,
-        refundId: refundResult.refundId,
-        paymentGateway: payment.paymentGateway,
-        metadata: refundResult.metadata as Prisma.InputJsonValue,
-        payment: {
-          connect: { id: payment.id },
+      // Store refund in database INSIDE transaction
+      const refundRecord = await tx.refund.create({
+        data: {
+          amount: refundAmount,
+          currency: payment.currency,
+          reason,
+          status: refundResult.status,
+          refundId: refundResult.refundId,
+          paymentGateway: payment.paymentGateway,
+          metadata: refundResult.metadata as Prisma.InputJsonValue,
+          paymentId: payment.id,
         },
       });
 
-      return { refundResult, refundRecord };
+      return { payment, refundResult, refundRecord };
     });
 
     return NextResponse.json({
@@ -136,7 +125,7 @@ export async function POST(req: NextRequest) {
         amount: result.refundResult.amount,
         currency: result.refundResult.currency,
         status: result.refundResult.status,
-        paymentId: payment.id,
+        paymentId: result.payment.id,
       },
       message: "Refund created successfully",
     });

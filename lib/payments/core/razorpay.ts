@@ -71,6 +71,15 @@ export async function createRazorpayOrder({
     );
   }
 
+  // BUG-C: Validate amount is positive before creating payment order
+  if (amount <= 0) {
+    throw new PaymentError(
+      "Payment amount must be greater than zero",
+      "INVALID_AMOUNT",
+      "RAZORPAY",
+    );
+  }
+
   try {
     const order = await razorpayClient.orders.create({
       amount: toSmallestUnit(amount, currency),
