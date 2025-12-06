@@ -346,6 +346,17 @@ async function createAppointmentFromWebhook(
       });
       break;
     case AppointmentsType.SUBSCRIPTION:
+      // LEGACY FLOW WARNING: This should only happen for old payments
+      // New subscriptions create placeholder appointment during checkout
+      console.warn(
+        JSON.stringify({
+          event: "legacy_subscription_creation",
+          warning: "Creating subscription via webhook - expected only for old payments",
+          paymentId: payment.id,
+          planId,
+          timestamp: new Date().toISOString(),
+        }),
+      );
       appointment = await createSubscription(tx, {
         planId,
         slotStartTimeInUTC,

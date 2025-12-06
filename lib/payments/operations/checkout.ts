@@ -35,8 +35,9 @@ export type { CheckoutInput };
 
 /**
  * Unified return type for subscription checkout
- * FIX Issue #2: Now includes appointment for symmetry with other checkout handlers
- * Consultant allocates slots later via Requests tab
+ * FIX Issue #2: Creates placeholder appointment for payment linkage
+ * This ensures webhook uses NEW FLOW (confirm) not LEGACY FLOW (create duplicate)
+ * Consultant allocates specific slots later via Requests tab
  */
 type SubscriptionCheckoutResult = {
   plan: Prisma.SubscriptionPlanGetPayload<{
@@ -823,6 +824,36 @@ export async function handleSubscriptionCheckout(
     ? new Date(data.schedulingPeriodEndsAt!)
     : calculateSubscriptionEndDate(startDate, plan.durationInMonths);
 
+  // Check for existing pending/approved subscriptions with overlapping periods
+  // This prevents same user from double-buying the same plan
+  const existingSubscription = await tx.subscription.findFirst({
+    where: {
+      subscriptionPlanId: plan.id,
+      requestedById: consulteeProfileId,
+      requestStatus: {
+        in: [
+          RequestStatus.PENDING,
+          RequestStatus.APPROVED,
+          RequestStatus.APPROVED_PENDING_PAYMENT,
+        ],
+      },
+      OR: [
+        {
+          AND: [
+            { schedulingPeriodStartsAt: { lte: endDate } },
+            { schedulingPeriodEndsAt: { gte: startDate } },
+          ],
+        },
+      ],
+    },
+  });
+
+  if (existingSubscription) {
+    throw new Error(
+      "You already have a pending or active subscription for this plan with overlapping dates.",
+    );
+  }
+
   // Create subscription - consultant will allocate slots via Requests tab
   const subscription = await tx.subscription.create({
     data: {
@@ -836,13 +867,14 @@ export async function handleSubscriptionCheckout(
     },
   });
 
-  // FIX Issue #2: Create container appointment for subscription
-  // This ensures payment has appointmentId, preventing duplicate subscription creation
-  // in webhook's LEGACY FLOW. Makes this handler symmetrical with others.
+  // FIX Issue #2: Create placeholder appointment for payment linkage
+  // This ensures webhook uses NEW FLOW (confirm) not LEGACY FLOW (create duplicate)
+  // Makes this handler symmetrical with others - consultant allocates slots later
   const appointment = await tx.appointment.create({
     data: {
       appointmentType: AppointmentsType.SUBSCRIPTION,
       subscriptionId: subscription.id,
+      // No slots created - consultant allocates later via Requests tab
     },
   });
 
@@ -1180,6 +1212,8 @@ export async function handleCheckout(
               consulteeProfileId,
               isMockPayment,
             );
+            // Use placeholder appointment for payment linkage
+            // This ensures webhook uses NEW FLOW (confirm) not LEGACY FLOW (create duplicate)
             createdAppointment = subscriptionResult.appointment;
             break;
           }
