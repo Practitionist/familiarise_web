@@ -16,7 +16,6 @@
     "lint": "next lint",
     "lint:fix": "eslint --fix .",
     "migrate": "prisma migrate dev --name init",
-    "postinstall": "prisma generate",
     "prisma": "prisma",
     "scripts:analyze": "npm run build:analyze && ts-node -P tsconfig.scripts.json scripts/analyze-bundle.ts",
     "scripts:cleanup-empty-folders": "npx ts-node scripts/cleanup-empty-folders.ts",
