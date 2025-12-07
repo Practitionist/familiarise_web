@@ -1,3 +1,4 @@
+```typescript
 import crypto from "crypto";
 import { NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
@@ -29,7 +30,7 @@ async function withTimeout<T>(
 ): Promise<T> {
   return Promise.race([
     operation,
-    new Promise<never>((_, reject) => 
+    new Promise<never>((_, reject) =>
       setTimeout(() => reject(new Error(errorMessage)), timeoutMs)
     )
   ]);
@@ -46,7 +47,7 @@ function verifyRazorpayWebhookSignature(
     return validateWebhookSignature(body, signature, secret);
   } catch (error) {
     console.warn("[Razorpay] Built-in verification failed, falling back to manual HMAC:", error);
-    
+
     // Fallback to manual HMAC verification
     try {
       const shasum = crypto.createHmac("sha256", secret);
@@ -82,8 +83,8 @@ export async function verifyAndParseWebhook(
         return { isValid: true, gateway: "STRIPE", event };
       } catch (error) {
         console.error("[Stripe Webhook] Verification failed:", error);
-        return { 
-          isValid: false, 
+        return {
+          isValid: false,
           gateway: "STRIPE",
           error: error instanceof Error ? error.message : "Unknown verification error"
         };
@@ -107,8 +108,8 @@ export async function verifyAndParseWebhook(
 
         if (!isSignatureValid) {
           console.error("[Razorpay Webhook] Signature verification failed");
-          return { 
-            isValid: false, 
+          return {
+            isValid: false,
             gateway: "RAZORPAY",
             error: "Invalid webhook signature"
           };
@@ -139,10 +140,10 @@ export async function verifyAndParseWebhook(
         }
 
         console.log(`[Razorpay Webhook] Successfully verified event: ${validation.event?.event}`);
-        return { 
-          isValid: true, 
-          gateway: "RAZORPAY", 
-          event: validation.event 
+        return {
+          isValid: true,
+          gateway: "RAZORPAY",
+          event: validation.event
         };
 
       } catch (error) {
@@ -152,7 +153,7 @@ export async function verifyAndParseWebhook(
           gateway: "RAZORPAY",
           error: error instanceof Error ? error.message : "Unknown verification error"
         };
-              }
+            }
       }
 
     // Lemon Squeezy webhook verification
@@ -171,8 +172,8 @@ export async function verifyAndParseWebhook(
           };
         } else {
           console.error("[Lemon Squeezy Webhook] Verification failed.");
-          return { 
-            isValid: false, 
+          return {
+            isValid: false,
             gateway: "LEMON_SQUEEZY",
             error: "Invalid webhook signature"
           };
@@ -199,8 +200,8 @@ export async function verifyAndParseWebhook(
           return { isValid: true, gateway: "XFLOW", event: JSON.parse(body) };
         } else {
           console.error("[Xflow Webhook] Verification failed.");
-          return { 
-            isValid: false, 
+          return {
+            isValid: false,
             gateway: "XFLOW",
             error: "Invalid webhook signature"
           };
@@ -385,7 +386,7 @@ export async function processWebhookEvent(event: StandardizedEvent) {
 
 async function processEventInternal(event: StandardizedEvent) {
   console.log(`[Webhook] Processing event: ${event.eventType} for payment: ${event.paymentIntentId}`);
-  
+
   switch (event.eventType) {
     case "payment.succeeded":
       await handleSuccessfulPayment(event.paymentIntentId, event.metadata);
@@ -749,7 +750,7 @@ async function handleAuthorizedPayment(
     // Update payment status to authorized (waiting for capture)
     await tx.payment.update({
       where: { id: payment.id },
-      data: { 
+      data: {
         paymentStatus: PaymentStatus.PENDING, // Authorized but not captured
       },
     });
@@ -777,7 +778,7 @@ async function handleDisputedPayment(
     // Update payment status to disputed
     await tx.payment.update({
       where: { id: payment.id },
-      data: { 
+      data: {
         paymentStatus: PaymentStatus.FAILED,
       },
     });
@@ -820,7 +821,8 @@ async function handleSettlementProcessed(
   // Settlement processing is usually for informational purposes
   // You might want to update financial records or send notifications
   console.log(`Settlement processed. Settlement ID: ${settlementId}, Amount: ${amount}`);
-  
+
   // Optional: Store settlement information in database
   // This would require a settlements table in your schema
 }
+```

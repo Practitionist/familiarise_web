@@ -207,8 +207,6 @@ updates:
         patterns:
           - "@testing-library/*"
           - "jest*"
-          - "cypress"
-          - "start-server-and-test"
         update-types:
           - "minor"
           - "patch"

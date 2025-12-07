@@ -13,11 +13,6 @@ update-postman-collection.js
 # Cline
 .clinerules
 
-# Cypress
-cypress/logs
-cypress/screenshots
-cypress/videos
-
 # Prisma
 migrations/
 
