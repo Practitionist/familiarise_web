@@ -475,14 +475,19 @@ export async function PATCH(
               return { data: subscription, duplicate: false };
             } else {
               // No payment - generate payment link
-              const paymentResult =
-                await generatePaymentLinkForSubscription(subscription);
+              const paymentResult = await generatePaymentLinkForSubscription(
+                subscription,
+                startDate,
+                endDate,
+              );
 
               // Update status to APPROVED_PENDING_PAYMENT
               const updatedSubscription = await tx.subscription.update({
                 where: { id: subscriptionId },
                 data: {
                   requestStatus: RequestStatus.APPROVED_PENDING_PAYMENT,
+                  schedulingPeriodStartsAt: startDate,
+                  schedulingPeriodEndsAt: endDate,
                   requestNotes: subscription.requestNotes
                     ? `${subscription.requestNotes}\n\n[System] Payment link generated: ${paymentResult.checkoutUrl}`
                     : `[System] Payment link generated: ${paymentResult.checkoutUrl}`,
@@ -621,6 +626,8 @@ async function checkSubscriptionPayment(
  */
 async function generatePaymentLinkForSubscription(
   subscription: SubscriptionWithDetails,
+  schedulingPeriodStartsAt: Date,
+  schedulingPeriodEndsAt: Date,
 ) {
   const { subscriptionPlan, requestedBy } = subscription;
 
@@ -630,9 +637,8 @@ async function generatePaymentLinkForSubscription(
     subscriptionId: subscription.id,
     planId: subscriptionPlan.id,
     paymentGateway: PaymentGateway.STRIPE, // Default to Stripe, could be made configurable
-    schedulingPeriodStartsAt:
-      subscription.schedulingPeriodStartsAt?.toISOString(),
-    schedulingPeriodEndsAt: subscription.schedulingPeriodEndsAt?.toISOString(),
+    schedulingPeriodStartsAt: schedulingPeriodStartsAt.toISOString(),
+    schedulingPeriodEndsAt: schedulingPeriodEndsAt.toISOString(),
     notes: subscription.requestNotes ?? undefined,
   });
 }
