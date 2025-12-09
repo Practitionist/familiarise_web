@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { cleanupAbandonedPayments } from "@/jobs/cleanup-abandoned-payments";
+import {
+  cleanupAbandonedPayments,
+  cleanupExpiredApprovalPendingPayments,
+  disconnectDatabase,
+} from "@/scripts/cleanup-abandoned-payments.js";
 
 export async function POST(req: NextRequest) {
   try {
@@ -16,10 +20,16 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Use the centralized cleanup job
-    const result = await cleanupAbandonedPayments();
+    // Run both cleanup tasks
+    const paymentResult = await cleanupAbandonedPayments();
+    const consultationResult = await cleanupExpiredApprovalPendingPayments();
+    await disconnectDatabase();
 
-    return NextResponse.json(result);
+    return NextResponse.json({
+      paymentCleanup: paymentResult,
+      consultationCleanup: consultationResult,
+      overallSuccess: paymentResult.success && consultationResult.success,
+    });
   } catch (error) {
     console.error("Cleanup API route failed:", error);
     return NextResponse.json(

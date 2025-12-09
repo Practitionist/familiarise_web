@@ -1,33 +1,55 @@
 #!/usr/bin/env node
 
 /**
- * Abandoned Payment Cleanup Script (Local Version)
+ * Abandoned Payment Cleanup Script
  *
- * This script cleans up abandoned payments and appointments
+ * Core library for cleaning up abandoned payments and appointments
  * that have exceeded their timeout periods.
  *
- * Usage:
- * - npm run scripts:cleanup-abandoned-payments
- * - node scripts/cleanup-abandoned-payments.ts
+ * This module exports functions that can be used by:
+ * - Local development: `npm run scripts:cleanup-abandoned-payments`
+ * - GitHub Actions: `jobs/cleanup-abandoned-payments.ts`
+ * - API routes: Can import and call functions directly
+ *
+ * Contains race condition fixes:
+ * - Issue #6: 35 min buffer (5 min over 30 min expiry) for legacy payments
+ * - Issue #10: Re-check payment status before cleanup to handle webhooks
  */
 
-import { PrismaClient, PaymentStatus, PaymentGateway } from "@prisma/client";
+import {
+  PrismaClient,
+  PaymentStatus,
+  PaymentGateway,
+  RequestStatus,
+} from "@prisma/client";
+import Stripe from "stripe";
+import { cancelRazorpayOrder } from "../lib/payments/core/razorpay.js";
 
 const prisma = new PrismaClient();
 
 /**
+ * Result structure for cleanup operations
+ */
+export interface CleanupResult {
+  success: boolean;
+  cleanedCount: number;
+  errorCount: number;
+  totalProcessed: number;
+  errors: string[];
+}
+
+/**
  * Cancel payment intent with the appropriate payment gateway
  */
-async function cancelPaymentIntent(
+export async function cancelPaymentIntent(
   paymentIntent: string,
   gateway: PaymentGateway,
 ): Promise<void> {
   try {
     switch (gateway) {
-      case "STRIPE":
-        // Stripe cancellation logic
+      case PaymentGateway.STRIPE:
         if (process.env.STRIPE_SECRET_KEY) {
-          const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
+          const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
           await stripe.paymentIntents.cancel(paymentIntent);
           console.log(`✅ Cancelled Stripe payment intent: ${paymentIntent}`);
         } else {
@@ -35,23 +57,11 @@ async function cancelPaymentIntent(
         }
         break;
 
-      case "RAZORPAY":
-        // Razorpay cancellation logic
-        if (process.env.RAZORPAY_KEY_SECRET) {
-          const Razorpay = require("razorpay");
-          const razorpay = new Razorpay({
-            key_id: process.env.RAZORPAY_KEY_ID,
-            key_secret: process.env.RAZORPAY_KEY_SECRET,
-          });
-          await razorpay.payments.cancel(paymentIntent);
-          console.log(`✅ Cancelled Razorpay payment: ${paymentIntent}`);
-        } else {
-          console.warn("⚠️ RAZORPAY credentials not configured");
-        }
+      case PaymentGateway.RAZORPAY:
+        await cancelRazorpayOrder(paymentIntent);
         break;
 
-      case "LEMON_SQUEEZY":
-        // Lemon Squeezy cancellation logic
+      case PaymentGateway.LEMON_SQUEEZY:
         if (process.env.LEMON_SQUEEZY_API_KEY) {
           const response = await fetch(
             `https://api.lemonsqueezy.com/v1/payments/${paymentIntent}`,
@@ -73,10 +83,9 @@ async function cancelPaymentIntent(
         }
         break;
 
-      case "XFLOW":
-        // Xflow cancellation logic
+      case PaymentGateway.XFLOW:
         if (process.env.XFLOW_SECRET_KEY) {
-          // Add Xflow cancellation logic here
+          // Add Xflow cancellation logic here when available
           console.log(`✅ Cancelled Xflow payment: ${paymentIntent}`);
         } else {
           console.warn("⚠️ XFLOW_SECRET_KEY not configured");
@@ -98,10 +107,24 @@ async function cancelPaymentIntent(
 }
 
 /**
- * Main cleanup function
+ * Clean up abandoned payments and appointments
+ *
+ * Finds appointments with:
+ * - Pending payments that have expired (or legacy payments older than 35 min)
+ * - Tentative slots that need to be released
+ *
+ * @returns CleanupResult with counts and error details
  */
-async function cleanupAbandonedPayments() {
+export async function cleanupAbandonedPayments(): Promise<CleanupResult> {
   console.log("🧹 Starting abandoned payment cleanup...");
+
+  const result: CleanupResult = {
+    success: false,
+    cleanedCount: 0,
+    errorCount: 0,
+    totalProcessed: 0,
+    errors: [],
+  };
 
   try {
     // Find abandoned appointments with pending payments
@@ -110,7 +133,7 @@ async function cleanupAbandonedPayments() {
         payment: {
           some: {
             AND: [
-              { paymentStatus: "PENDING" },
+              { paymentStatus: PaymentStatus.PENDING },
               {
                 OR: [
                   { expiresAt: { lt: new Date() } }, // Explicitly expired
@@ -119,9 +142,11 @@ async function cleanupAbandonedPayments() {
                       { expiresAt: null }, // No expiration set (legacy)
                       {
                         createdAt: {
-                          lt: new Date(Date.now() - 30 * 60 * 1000),
+                          // FIX Issue #6: 35 min buffer (5 min over 30 min expiry)
+                          // Prevents race condition at payment expiration boundary
+                          lt: new Date(Date.now() - 35 * 60 * 1000),
                         },
-                      }, // 30 min fallback
+                      },
                     ],
                   },
                 ],
@@ -137,7 +162,7 @@ async function cleanupAbandonedPayments() {
       },
       include: {
         payment: {
-          where: { paymentStatus: "PENDING" },
+          where: { paymentStatus: PaymentStatus.PENDING },
         },
         consultation: true,
         subscription: true,
@@ -147,17 +172,42 @@ async function cleanupAbandonedPayments() {
       },
     });
 
+    result.totalProcessed = abandonedAppointments.length;
     console.log(
       `📊 Found ${abandonedAppointments.length} abandoned appointments to clean up`,
     );
-
-    let cleanedCount = 0;
-    let errorCount = 0;
 
     // Process each abandoned appointment
     for (const appointment of abandonedAppointments) {
       try {
         await prisma.$transaction(async (tx) => {
+          // FIX Issue #10: Re-check payment status before cleanup
+          // Prevents race condition where payment webhook fires during cleanup
+          let shouldSkip = false;
+          for (const payment of appointment.payment) {
+            const freshPayment = await tx.payment.findUnique({
+              where: { id: payment.id },
+            });
+
+            if (freshPayment?.paymentStatus === PaymentStatus.SUCCEEDED) {
+              console.log(
+                JSON.stringify({
+                  event: "cleanup_skipped_payment_succeeded",
+                  paymentId: payment.id,
+                  appointmentId: appointment.id,
+                  reason: "Payment completed during cleanup processing",
+                  timestamp: new Date().toISOString(),
+                }),
+              );
+              shouldSkip = true;
+              break;
+            }
+          }
+
+          if (shouldSkip) {
+            return;
+          }
+
           // Cancel payment intents
           for (const payment of appointment.payment) {
             try {
@@ -166,7 +216,7 @@ async function cleanupAbandonedPayments() {
                 payment.paymentGateway,
               );
 
-              // Update payment status
+              // Update payment status to FAILED
               await tx.payment.update({
                 where: { id: payment.id },
                 data: { paymentStatus: PaymentStatus.FAILED },
@@ -179,6 +229,9 @@ async function cleanupAbandonedPayments() {
               console.warn(
                 `⚠️ Failed to cancel payment intent ${payment.paymentIntent}:`,
                 errorMessage,
+              );
+              result.errors.push(
+                `Payment cancellation failed for ${payment.paymentIntent}: ${errorMessage}`,
               );
               // Continue cleanup even if payment cancellation fails
             }
@@ -243,53 +296,271 @@ async function cleanupAbandonedPayments() {
           }
         });
 
-        cleanedCount++;
+        result.cleanedCount++;
         console.log(
           `✅ Successfully cleaned up appointment: ${appointment.id}`,
         );
       } catch (error) {
-        errorCount++;
+        result.errorCount++;
         const errorMessage =
           error instanceof Error ? error.message : "Unknown error";
         console.error(
           `❌ Failed to clean up appointment ${appointment.id}:`,
           errorMessage,
         );
+        result.errors.push(
+          `Appointment cleanup failed for ${appointment.id}: ${errorMessage}`,
+        );
       }
     }
 
+    // Determine overall success
+    result.success = result.errorCount === 0;
+
     // Summary
     console.log(`\n📈 Cleanup Summary:`);
-    console.log(`   ✅ Successfully cleaned: ${cleanedCount} appointments`);
-    console.log(`   ❌ Failed to clean: ${errorCount} appointments`);
     console.log(
-      `   📊 Total processed: ${abandonedAppointments.length} appointments`,
+      `   ✅ Successfully cleaned: ${result.cleanedCount} appointments`,
+    );
+    console.log(`   ❌ Failed to clean: ${result.errorCount} appointments`);
+    console.log(`   📊 Total processed: ${result.totalProcessed} appointments`);
+
+    if (result.totalProcessed > 0) {
+      console.log(
+        `   🎯 Success rate: ${((result.cleanedCount / result.totalProcessed) * 100).toFixed(1)}%`,
+      );
+    }
+
+    if (result.errorCount > 0) {
+      console.warn(
+        `⚠️ ${result.errorCount} appointments failed to clean up - manual intervention may be required`,
+      );
+      result.errors.forEach((error, index) => {
+        console.warn(`   ${index + 1}. ${error}`);
+      });
+    }
+  } catch (error) {
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown error";
+    console.error("❌ Cleanup job failed:", errorMessage);
+    result.errors.push(`Job failed: ${errorMessage}`);
+    result.success = false;
+  }
+
+  return result;
+}
+
+/**
+ * Cleanup expired APPROVED_PENDING_PAYMENT consultations
+ *
+ * FIX for orphaned payment bug:
+ * When a consultant approves a consultation and payment expires,
+ * the consultation status remains APPROVED_PENDING_PAYMENT forever,
+ * blocking the slot permanently. This function resets those consultations.
+ *
+ * @returns CleanupResult with counts and error details
+ */
+export async function cleanupExpiredApprovalPendingPayments(): Promise<CleanupResult> {
+  console.log(
+    "🧹 Starting cleanup of expired APPROVED_PENDING_PAYMENT consultations...",
+  );
+
+  const result: CleanupResult = {
+    success: false,
+    cleanedCount: 0,
+    errorCount: 0,
+    totalProcessed: 0,
+    errors: [],
+  };
+
+  try {
+    // Find consultations stuck in APPROVED_PENDING_PAYMENT with expired payments
+    const expiredConsultations = await prisma.consultation.findMany({
+      where: {
+        requestStatus: RequestStatus.APPROVED_PENDING_PAYMENT,
+        appointment: {
+          payment: {
+            some: {
+              AND: [
+                { paymentStatus: PaymentStatus.PENDING },
+                { expiresAt: { lt: new Date() } },
+              ],
+            },
+          },
+        },
+      },
+      include: {
+        appointment: {
+          include: {
+            payment: {
+              where: { paymentStatus: PaymentStatus.PENDING },
+            },
+            slotsOfAppointment: true,
+          },
+        },
+      },
+    });
+
+    result.totalProcessed = expiredConsultations.length;
+    console.log(
+      `📊 Found ${expiredConsultations.length} expired APPROVED_PENDING_PAYMENT consultations`,
     );
 
-    if (errorCount > 0) {
-      console.warn(
-        `⚠️ ${errorCount} appointments failed to clean up - manual intervention may be required`,
+    // Process each expired consultation
+    for (const consultation of expiredConsultations) {
+      try {
+        await prisma.$transaction(async (tx) => {
+          // Update consultation status to REJECTED
+          await tx.consultation.update({
+            where: { id: consultation.id },
+            data: { requestStatus: RequestStatus.REJECTED },
+          });
+
+          // Delete tentative slots if appointment exists
+          if (consultation.appointment?.slotsOfAppointment) {
+            const deletedSlots = await tx.slotOfAppointment.deleteMany({
+              where: {
+                AND: [
+                  { appointmentId: consultation.appointment.id },
+                  { isTentative: true },
+                ],
+              },
+            });
+            console.log(
+              `🗑️ Deleted ${deletedSlots.count} tentative slots for consultation ${consultation.id}`,
+            );
+          }
+
+          // Mark expired payments as failed
+          if (consultation.appointment?.payment) {
+            for (const payment of consultation.appointment.payment) {
+              await tx.payment.update({
+                where: { id: payment.id },
+                data: { paymentStatus: PaymentStatus.FAILED },
+              });
+            }
+          }
+
+          console.log(
+            `✅ Reset consultation ${consultation.id} from APPROVED_PENDING_PAYMENT to REJECTED`,
+          );
+        });
+
+        result.cleanedCount++;
+      } catch (error) {
+        result.errorCount++;
+        const errorMessage =
+          error instanceof Error ? error.message : "Unknown error";
+        console.error(
+          `❌ Failed to clean up consultation ${consultation.id}:`,
+          errorMessage,
+        );
+        result.errors.push(
+          `Consultation cleanup failed for ${consultation.id}: ${errorMessage}`,
+        );
+      }
+    }
+
+    result.success = result.errorCount === 0;
+
+    // Summary
+    console.log(`\n📈 Expired Consultation Cleanup Summary:`);
+    console.log(
+      `   ✅ Successfully cleaned: ${result.cleanedCount} consultations`,
+    );
+    console.log(`   ❌ Failed to clean: ${result.errorCount} consultations`);
+    console.log(
+      `   📊 Total processed: ${result.totalProcessed} consultations`,
+    );
+
+    if (result.totalProcessed > 0) {
+      console.log(
+        `   🎯 Success rate: ${((result.cleanedCount / result.totalProcessed) * 100).toFixed(1)}%`,
       );
     }
   } catch (error) {
-    console.error("❌ Cleanup job failed:", error);
-    process.exit(1);
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown error";
+    console.error("❌ Expired consultation cleanup failed:", errorMessage);
+    result.errors.push(`Job failed: ${errorMessage}`);
+    result.success = false;
+  }
+
+  return result;
+}
+
+/**
+ * Run all cleanup tasks
+ *
+ * Executes both abandoned payment cleanup and expired consultation cleanup.
+ * Disconnects from database when complete.
+ *
+ * @returns Combined results from both cleanup operations
+ */
+export async function runAllCleanupTasks(): Promise<{
+  paymentResult: CleanupResult;
+  consultationResult: CleanupResult;
+  overallSuccess: boolean;
+}> {
+  const startTime = Date.now();
+  console.log(`🚀 Starting cleanup job at ${new Date().toISOString()}`);
+
+  try {
+    // Run abandoned payment cleanup
+    const paymentResult = await cleanupAbandonedPayments();
+
+    // Run expired consultation cleanup
+    const consultationResult = await cleanupExpiredApprovalPendingPayments();
+
+    const duration = (Date.now() - startTime) / 1000;
+    console.log(`⏱️ Job completed in ${duration.toFixed(2)} seconds`);
+
+    // Combined summary
+    console.log(`\n📊 Overall Cleanup Summary:`);
+    console.log(
+      `   🧹 Abandoned payments cleaned: ${paymentResult.cleanedCount}`,
+    );
+    console.log(
+      `   🧹 Expired consultations reset: ${consultationResult.cleanedCount}`,
+    );
+    console.log(
+      `   ❌ Total errors: ${paymentResult.errorCount + consultationResult.errorCount}`,
+    );
+
+    const overallSuccess = paymentResult.success && consultationResult.success;
+
+    return {
+      paymentResult,
+      consultationResult,
+      overallSuccess,
+    };
   } finally {
     await prisma.$disconnect();
   }
 }
 
+/**
+ * Disconnect from the database
+ * Call this when done using the cleanup functions if not using runAllCleanupTasks
+ */
+export async function disconnectDatabase(): Promise<void> {
+  await prisma.$disconnect();
+}
+
 // Run the cleanup if this script is executed directly
 if (import.meta.url === `file://${process.argv[1]}`) {
-  cleanupAbandonedPayments()
-    .then(() => {
-      console.log("🎉 Cleanup job completed successfully");
-      process.exit(0);
+  runAllCleanupTasks()
+    .then(({ overallSuccess }) => {
+      if (overallSuccess) {
+        console.log("🎉 Cleanup job completed successfully");
+        process.exit(0);
+      } else {
+        console.error("❌ Cleanup job completed with errors");
+        process.exit(1);
+      }
     })
     .catch((error) => {
       console.error("💥 Cleanup job failed:", error);
       process.exit(1);
     });
 }
-
-export { cleanupAbandonedPayments };
