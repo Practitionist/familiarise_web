@@ -11,16 +11,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
 
-    services:
-      redis:
-        image: redis
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
+    env:
+      # Required for distributed locking in race condition tests
+      # These must be set as GitHub secrets in your repository settings
+      # Settings > Secrets and variables > Actions > New repository secret
+      UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
+      UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DIRECT_URL: ${{ secrets.DIRECT_URL }}
 
     steps:
       - uses: actions/checkout@v5
@@ -35,9 +33,6 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
-
-      - name: Create .env file from secret
-        run: echo "${{ secrets.ENV_FILE }}" | base64 -d > .env
 
       - name: Run Race Condition Tests
         run: npm run test:race
