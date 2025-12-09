@@ -47,8 +47,8 @@ async function runTest() {
 
   logTestStart(config.testName, {
     Category: config.category,
-    "Scenario": "🐛 ORIGINAL BUG REPRODUCTION",
-    "Users": "Shubham Kumar and test_user (simulated)",
+    Scenario: "🐛 ORIGINAL BUG REPRODUCTION",
+    Users: "Shubham Kumar and test_user (simulated)",
     "Slot Time": new Date(slot.start).toLocaleString(),
     "Consultant ID": consultantId,
     "Bug Description": "Both users got the same slot before the fix",
@@ -72,11 +72,15 @@ async function runTest() {
 
   if (report.passed) {
     console.log("\n   ✅ BUG FIX VERIFIED!");
-    console.log("   The race condition that allowed double-booking has been fixed.");
+    console.log(
+      "   The race condition that allowed double-booking has been fixed.",
+    );
     console.log("   Only one user successfully booked the slot.");
   } else {
     console.log("\n   ⚠️  WARNING: Original bug may still exist!");
-    console.log("   Both users got success status - race condition not prevented.");
+    console.log(
+      "   Both users got success status - race condition not prevented.",
+    );
   }
 
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");

@@ -30,9 +30,13 @@ export async function GET(
     const session = await getServerSession(authOptions);
     if (
       !session?.user?.id ||
-      (session.user.role !== UserRole.ADMIN && session.user.role !== UserRole.STAFF)
+      (session.user.role !== UserRole.ADMIN &&
+        session.user.role !== UserRole.STAFF)
     ) {
-      return NextResponse.json({ error: "Unauthorized - Admin access required" }, { status: 403 });
+      return NextResponse.json(
+        { error: "Unauthorized - Admin access required" },
+        { status: 403 },
+      );
     }
 
     const { paymentId } = await params;
@@ -97,9 +101,13 @@ export async function POST(
     const session = await getServerSession(authOptions);
     if (
       !session?.user?.id ||
-      (session.user.role !== UserRole.ADMIN && session.user.role !== UserRole.STAFF)
+      (session.user.role !== UserRole.ADMIN &&
+        session.user.role !== UserRole.STAFF)
     ) {
-      return NextResponse.json({ error: "Unauthorized - Admin access required" }, { status: 403 });
+      return NextResponse.json(
+        { error: "Unauthorized - Admin access required" },
+        { status: 403 },
+      );
     }
 
     const { paymentId } = await params;
@@ -154,7 +162,9 @@ export async function POST(
     } catch (validationError) {
       const errorMessage =
         validationError instanceof ZodError
-          ? validationError.errors.map((e) => `${e.path.join(".")}: ${e.message}`).join("; ")
+          ? validationError.errors
+              .map((e) => `${e.path.join(".")}: ${e.message}`)
+              .join("; ")
           : validationError instanceof Error
             ? validationError.message
             : String(validationError);
@@ -169,7 +179,9 @@ export async function POST(
     }
 
     // Import handlePaymentSuccess dynamically to avoid circular dependencies
-    const { handlePaymentSuccess } = await import("@/lib/payments/webhooks/handlers");
+    const { handlePaymentSuccess } = await import(
+      "@/lib/payments/webhooks/handlers"
+    );
 
     // Retry appointment creation with corrected metadata
     try {
@@ -205,7 +217,10 @@ export async function POST(
       return NextResponse.json(
         {
           error: "Failed to create appointment",
-          details: recoveryError instanceof Error ? recoveryError.message : String(recoveryError),
+          details:
+            recoveryError instanceof Error
+              ? recoveryError.message
+              : String(recoveryError),
         },
         { status: 500 },
       );

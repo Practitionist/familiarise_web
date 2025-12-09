@@ -46,6 +46,7 @@ This is called a **race condition** - two processes "racing" to complete an oper
 ### Real-World Impact
 
 For our platform with millions of users worldwide:
+
 - **Consultants** get double-booked, damaging trust
 - **Users** pay for slots that get cancelled
 - **Support** gets overwhelmed with complaints
@@ -78,6 +79,7 @@ T=50ms   Result: Only ONE booking exists ✓
 ### Definition
 
 A **race condition** occurs when:
+
 1. Two or more processes access shared data concurrently
 2. At least one process modifies the data
 3. The final outcome depends on the timing/order of execution
@@ -88,14 +90,15 @@ A **race condition** occurs when:
 
 ```typescript
 // DANGEROUS: Both users might read count=0
-let count = await db.getParticipantCount(webinarId);  // Read
+let count = await db.getParticipantCount(webinarId); // Read
 if (count < maxParticipants) {
-  await db.addParticipant(userId);  // Write
-  await db.setParticipantCount(count + 1);  // Modify
+  await db.addParticipant(userId); // Write
+  await db.setParticipantCount(count + 1); // Modify
 }
 ```
 
 **What goes wrong:**
+
 ```
 User A reads count=99, checks 99 < 100 ✓
 User B reads count=99, checks 99 < 100 ✓
@@ -108,13 +111,14 @@ Result: 101 participants but count shows 100
 
 ```typescript
 // DANGEROUS: Slot might be taken between check and act
-const isAvailable = await checkSlotAvailability(slotId);  // Check
+const isAvailable = await checkSlotAvailability(slotId); // Check
 if (isAvailable) {
-  await createBooking(slotId, userId);  // Act
+  await createBooking(slotId, userId); // Act
 }
 ```
 
 **What goes wrong:**
+
 ```
 User A checks slot → available
 User B checks slot → available
@@ -132,6 +136,7 @@ await db.saveAppointment(appointment);
 ```
 
 **What goes wrong:**
+
 ```
 User A reads appointment (notes="original")
 User B reads appointment (notes="original")
@@ -147,6 +152,7 @@ Result: User A's update is lost!
 ### What is TOCTOU?
 
 TOCTOU is a specific type of race condition where:
+
 1. A condition is **checked** (Time of Check)
 2. The result is **used** to make a decision (Time of Use)
 3. The condition **changes** between these two moments
@@ -183,7 +189,7 @@ async function checkoutSlot(slotId: string, userId: string) {
   // TIME OF USE
   await db.slot.update({
     where: { id: slotId },
-    data: { isBooked: true, userId }
+    data: { isBooked: true, userId },
   });
 }
 ```
@@ -210,7 +216,7 @@ async function checkoutSlot(slotId: string, userId: string) {
     // TIME OF USE (still inside lock)
     await db.slot.update({
       where: { id: slotId },
-      data: { isBooked: true, userId }
+      data: { isBooked: true, userId },
     });
   } finally {
     // ALWAYS release the lock
@@ -226,6 +232,7 @@ async function checkoutSlot(slotId: string, userId: string) {
 ### What is a Distributed Lock?
 
 A **distributed lock** is a synchronization mechanism that:
+
 - Works across multiple servers/processes
 - Ensures mutual exclusion (only one holder at a time)
 - Has a defined lifetime (TTL) to prevent deadlocks
@@ -269,12 +276,12 @@ We need a **central lock store** (Redis) that all servers can access.
 
 A good distributed lock must have:
 
-| Property | Description | Our Implementation |
-|----------|-------------|-------------------|
-| **Mutual Exclusion** | Only one client can hold the lock | Redis `SET NX` |
-| **Deadlock Freedom** | Locks must eventually be released | TTL expiration |
-| **Fault Tolerance** | System works even if a client crashes | TTL auto-release |
-| **Safe Release** | Only the owner can release their lock | UUID verification |
+| Property             | Description                           | Our Implementation |
+| -------------------- | ------------------------------------- | ------------------ |
+| **Mutual Exclusion** | Only one client can hold the lock     | Redis `SET NX`     |
+| **Deadlock Freedom** | Locks must eventually be released     | TTL expiration     |
+| **Fault Tolerance**  | System works even if a client crashes | TTL auto-release   |
+| **Safe Release**     | Only the owner can release their lock | UUID verification  |
 
 ---
 
@@ -283,6 +290,7 @@ A good distributed lock must have:
 ### Why Redis?
 
 Redis is ideal for distributed locking because:
+
 1. **Atomic operations** - `SET NX` is guaranteed atomic
 2. **Fast** - In-memory, sub-millisecond operations
 3. **TTL support** - Built-in key expiration
@@ -303,9 +311,9 @@ SET key value NX PX milliseconds
 ```typescript
 // Attempt to acquire lock
 const result = await redis.set(
-  "slot-lock:consultant123:2025-01-15T10:00",  // key
-  "uuid-abc-123",                               // value (unique ID)
-  { nx: true, px: 30000 }                       // options
+  "slot-lock:consultant123:2025-01-15T10:00", // key
+  "uuid-abc-123", // value (unique ID)
+  { nx: true, px: 30000 }, // options
 );
 
 if (result === "OK") {
@@ -357,12 +365,13 @@ await redis.eval(script, [lockKey], [ourLockValue]);
 TTL is how long a lock remains valid before Redis automatically deletes it.
 
 ```typescript
-await redis.set(key, value, { px: 30000 });  // 30 second TTL
+await redis.set(key, value, { px: 30000 }); // 30 second TTL
 ```
 
 ### Why TTL is Critical
 
 Without TTL, locks could become **permanent** if:
+
 - Server crashes while holding lock
 - Network partition prevents release
 - Bug causes early function return without release
@@ -386,6 +395,7 @@ T=31s    Server B can acquire lock ✓
 ### Choosing TTL Duration
 
 **Too short:**
+
 ```
 TTL = 5 seconds
 Operation takes 7 seconds
@@ -398,6 +408,7 @@ T=7s     We finish and release... but it's not our lock anymore!
 ```
 
 **Too long:**
+
 ```
 TTL = 5 minutes
 Server crashes at T=1s
@@ -409,6 +420,7 @@ T=5min   Finally unlocked
 
 **Just right:**
 For our checkout operations:
+
 - Average operation: 2-5 seconds
 - Worst case (slow DB): 15-20 seconds
 - **Recommended TTL: 60 seconds** (3x worst case)
@@ -419,11 +431,11 @@ For long-running operations, we can extend the TTL:
 
 ```typescript
 async function withLockExtension(operation: () => Promise<void>) {
-  const lock = await acquireLock(key, 30000);  // 30s initial
+  const lock = await acquireLock(key, 30000); // 30s initial
 
   // Extend every 10 seconds while operation runs
   const extensionInterval = setInterval(async () => {
-    await extendLock(lock, 30000);  // Reset to 30s
+    await extendLock(lock, 30000); // Reset to 30s
   }, 10000);
 
   try {
@@ -465,12 +477,12 @@ async function withLockExtension(operation: () => Promise<void>) {
 
 ### Lock Types in Our System
 
-| Lock Type | Key Pattern | Use Case | TTL |
-|-----------|-------------|----------|-----|
-| Slot Booking | `slot-booking:{consultantId}:{slotTime}` | 1:1 consultations | 60s |
-| Event Checkout | `event-checkout:{type}:{eventId}` | Webinars, Classes | 60s |
-| Approval | `consultation-approval:{consultationId}` | Request approval | 60s |
-| Subscription | `subscription-approval:{subscriptionId}` | Subscription approval | 60s |
+| Lock Type      | Key Pattern                              | Use Case              | TTL |
+| -------------- | ---------------------------------------- | --------------------- | --- |
+| Slot Booking   | `slot-booking:{consultantId}:{slotTime}` | 1:1 consultations     | 60s |
+| Event Checkout | `event-checkout:{type}:{eventId}`        | Webinars, Classes     | 60s |
+| Approval       | `consultation-approval:{consultationId}` | Request approval      | 60s |
+| Subscription   | `subscription-approval:{subscriptionId}` | Subscription approval | 60s |
 
 ### Code Flow
 
@@ -520,6 +532,7 @@ Problem: Both payments created because validation doesn't see pending payments!
 ```
 
 **Why it fails:**
+
 - Validation checks `SlotOfAppointment` table
 - Payments are in `Payment` table
 - No connection until webhook fires
@@ -556,7 +569,7 @@ const appointment = await tx.appointment.create({
       create: {
         startsAt: slotStart,
         endsAt: slotEnd,
-        isTentative: true,  // ← TENTATIVE FLAG
+        isTentative: true, // ← TENTATIVE FLAG
       },
     },
   },
@@ -601,9 +614,9 @@ When a lock is already held, we don't give up immediately:
 
 ```typescript
 const DEFAULT_RETRY_CONFIG = {
-  retryCount: 10,           // Try up to 10 times
-  retryDelay: 200,          // Start with 200ms delay
-  retryJitter: 200,         // Add random 0-200ms
+  retryCount: 10, // Try up to 10 times
+  retryDelay: 200, // Start with 200ms delay
+  retryJitter: 200, // Add random 0-200ms
   exponentialBackoff: true, // Double delay each time
 };
 
@@ -618,6 +631,7 @@ const DEFAULT_RETRY_CONFIG = {
 ### Why Exponential Backoff?
 
 **Without backoff (all retry immediately):**
+
 ```
 T=0ms    1000 users try to acquire lock
 T=1ms    999 users immediately retry
@@ -626,6 +640,7 @@ T=3ms    Redis overwhelmed with requests 💥
 ```
 
 **With exponential backoff:**
+
 ```
 T=0ms    1000 users try to acquire lock, 1 succeeds
 T=200ms  ~500 users retry (others still waiting)
@@ -659,7 +674,8 @@ try {
   if (error instanceof SlotLockError) {
     // Another user is currently booking
     return {
-      error: "Another user is currently booking this slot. Please try again in a few seconds.",
+      error:
+        "Another user is currently booking this slot. Please try again in a few seconds.",
       retryAfter: error.retryAfterSeconds,
     };
   }
@@ -707,15 +723,17 @@ describe("Concurrent Checkout", () => {
     ]);
 
     // Exactly one should succeed
-    const successes = [resultA, resultB].filter(r => r.status === "fulfilled");
-    const failures = [resultA, resultB].filter(r => r.status === "rejected");
+    const successes = [resultA, resultB].filter(
+      (r) => r.status === "fulfilled",
+    );
+    const failures = [resultA, resultB].filter((r) => r.status === "rejected");
 
     expect(successes).toHaveLength(1);
     expect(failures).toHaveLength(1);
 
     // Database should have exactly one booking
     const bookings = await db.slotOfAppointment.findMany({
-      where: { startsAt: new Date(slotTime) }
+      where: { startsAt: new Date(slotTime) },
     });
     expect(bookings).toHaveLength(1);
   });
@@ -727,22 +745,22 @@ describe("Concurrent Checkout", () => {
 For production readiness, test with tools like k6:
 
 ```javascript
-import http from 'k6/http';
+import http from "k6/http";
 
 export const options = {
-  vus: 100,           // 100 virtual users
-  duration: '30s',    // for 30 seconds
+  vus: 100, // 100 virtual users
+  duration: "30s", // for 30 seconds
 };
 
-export default function() {
+export default function () {
   const payload = JSON.stringify({
-    appointmentType: 'CONSULTATION',
-    slotStartTimeInUTC: '2025-01-15T10:00:00Z',
+    appointmentType: "CONSULTATION",
+    slotStartTimeInUTC: "2025-01-15T10:00:00Z",
     // ... other fields
   });
 
-  http.post('https://api.example.com/checkout', payload, {
-    headers: { 'Content-Type': 'application/json' },
+  http.post("https://api.example.com/checkout", payload, {
+    headers: { "Content-Type": "application/json" },
   });
 }
 ```
@@ -757,7 +775,7 @@ export default function() {
 // ❌ WRONG - Lock never released if error occurs
 async function checkout() {
   const lock = await acquireLock(key);
-  await riskyOperation();  // If this throws...
+  await riskyOperation(); // If this throws...
   await releaseLock(lock); // ...this never runs!
 }
 
@@ -767,7 +785,7 @@ async function checkout() {
   try {
     await riskyOperation();
   } finally {
-    await releaseLock(lock);  // Always runs!
+    await releaseLock(lock); // Always runs!
   }
 }
 ```
@@ -789,7 +807,7 @@ const lock = await acquireLock(`slot-lock:${consultantId}:${slotTime}`);
 await redis.del(lockKey);
 
 // ✅ CORRECT - Only delete if value matches
-if (await redis.get(lockKey) === ourLockValue) {
+if ((await redis.get(lockKey)) === ourLockValue) {
   await redis.del(lockKey);
 }
 ```
@@ -798,16 +816,16 @@ if (await redis.get(lockKey) === ourLockValue) {
 
 ```typescript
 // ❌ WRONG - TOCTOU vulnerability
-const isAvailable = await checkAvailability(slot);  // Outside lock
+const isAvailable = await checkAvailability(slot); // Outside lock
 const lock = await acquireLock(key);
 if (isAvailable) {
-  await createBooking(slot);  // Slot might be taken now!
+  await createBooking(slot); // Slot might be taken now!
 }
 
 // ✅ CORRECT - Validate inside lock
 const lock = await acquireLock(key);
 try {
-  const isAvailable = await checkAvailability(slot);  // Inside lock
+  const isAvailable = await checkAvailability(slot); // Inside lock
   if (isAvailable) {
     await createBooking(slot);
   }
@@ -821,7 +839,7 @@ try {
 ```typescript
 // ❌ WRONG - Continues even if lock fails
 const lock = await acquireLock(key).catch(() => null);
-await createBooking(slot);  // Not protected!
+await createBooking(slot); // Not protected!
 
 // ✅ CORRECT - Handle lock failure explicitly
 try {
@@ -839,22 +857,22 @@ try {
 
 ## 12. Glossary
 
-| Term | Definition |
-|------|------------|
-| **Atomic Operation** | An operation that completes entirely or not at all - cannot be interrupted |
-| **Circuit Breaker** | Pattern that stops calling a failing service to prevent cascade failures |
-| **Clock Drift** | Time differences between servers due to unsynchronized clocks |
-| **Deadlock** | Situation where two processes wait for each other indefinitely |
-| **Distributed Lock** | A lock that works across multiple servers using a shared store |
-| **Exponential Backoff** | Retry strategy where wait time doubles after each failure |
-| **Idempotent** | Operation that produces same result regardless of how many times it's called |
-| **Jitter** | Random delay added to prevent synchronized retries |
-| **Mutual Exclusion** | Guarantee that only one process can access a resource at a time |
-| **Race Condition** | Bug where outcome depends on timing of concurrent operations |
-| **Redis** | In-memory data store used for caching and distributed locking |
-| **Tentative** | Temporary state indicating a pending/unconfirmed booking |
-| **TOCTOU** | Time-Of-Check to Time-Of-Use - race condition between validation and action |
-| **TTL** | Time-To-Live - how long before a lock automatically expires |
+| Term                    | Definition                                                                   |
+| ----------------------- | ---------------------------------------------------------------------------- |
+| **Atomic Operation**    | An operation that completes entirely or not at all - cannot be interrupted   |
+| **Circuit Breaker**     | Pattern that stops calling a failing service to prevent cascade failures     |
+| **Clock Drift**         | Time differences between servers due to unsynchronized clocks                |
+| **Deadlock**            | Situation where two processes wait for each other indefinitely               |
+| **Distributed Lock**    | A lock that works across multiple servers using a shared store               |
+| **Exponential Backoff** | Retry strategy where wait time doubles after each failure                    |
+| **Idempotent**          | Operation that produces same result regardless of how many times it's called |
+| **Jitter**              | Random delay added to prevent synchronized retries                           |
+| **Mutual Exclusion**    | Guarantee that only one process can access a resource at a time              |
+| **Race Condition**      | Bug where outcome depends on timing of concurrent operations                 |
+| **Redis**               | In-memory data store used for caching and distributed locking                |
+| **Tentative**           | Temporary state indicating a pending/unconfirmed booking                     |
+| **TOCTOU**              | Time-Of-Check to Time-Of-Use - race condition between validation and action  |
+| **TTL**                 | Time-To-Live - how long before a lock automatically expires                  |
 
 ---
 

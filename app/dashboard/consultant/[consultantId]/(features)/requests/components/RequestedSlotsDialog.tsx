@@ -442,10 +442,10 @@ export function RequestedSlotsDialog({
               hasConflicts
                 ? `Cannot allocate: ${conflicts.length} slot(s) have conflicts with existing appointments`
                 : hasOutsidePeriod
-                ? `Cannot allocate: ${outsidePeriod.length} slot(s) are outside the subscription scheduling period`
-                : hasOutsideSlots
-                ? `Warning: ${outsideAvailability.length} slot(s) are outside your regular availability. Click to override and allocate.`
-                : "Allocate all requested time slots"
+                  ? `Cannot allocate: ${outsidePeriod.length} slot(s) are outside the subscription scheduling period`
+                  : hasOutsideSlots
+                    ? `Warning: ${outsideAvailability.length} slot(s) are outside your regular availability. Click to override and allocate.`
+                    : "Allocate all requested time slots"
             }
           >
             {hasOutsideSlots

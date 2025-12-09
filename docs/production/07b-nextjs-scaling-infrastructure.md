@@ -44,15 +44,15 @@ circuit breakers, API gateways..."
 
 This isn't marketing hype - it's architectural truth. Here's why:
 
-| Component | Traditional Setup | Next.js + Vercel |
-|-----------|-------------------|------------------|
-| Load Balancing | Manual configuration | Automatic |
-| Auto-scaling | Complex rules | Instant, per-request |
-| SSL Certificates | Manual renewal | Automatic |
-| CDN | Separate service | Built-in |
-| DDoS Protection | Additional cost | Included |
-| Global Distribution | Complex multi-region | Automatic Edge Network |
-| Zero Downtime Deploys | Blue-green setup | Automatic |
+| Component             | Traditional Setup    | Next.js + Vercel       |
+| --------------------- | -------------------- | ---------------------- |
+| Load Balancing        | Manual configuration | Automatic              |
+| Auto-scaling          | Complex rules        | Instant, per-request   |
+| SSL Certificates      | Manual renewal       | Automatic              |
+| CDN                   | Separate service     | Built-in               |
+| DDoS Protection       | Additional cost      | Included               |
+| Global Distribution   | Complex multi-region | Automatic Edge Network |
+| Zero Downtime Deploys | Blue-green setup     | Automatic              |
 
 ---
 
@@ -82,6 +82,7 @@ This isn't marketing hype - it's architectural truth. Here's why:
 ### Serverless Functions (API Routes)
 
 Each API route automatically:
+
 - Scales from 0 to thousands of concurrent instances
 - Spins up in ~50ms (cold start)
 - Runs in the region closest to your database
@@ -219,19 +220,19 @@ Setup Time: Minutes
 
 ### Infrastructure Components to Skip
 
-| Component | Why Not Needed |
-|-----------|----------------|
-| **Load Balancer** | Vercel Edge handles this automatically |
-| **Kubernetes** | Serverless functions auto-scale per-request |
-| **Docker** | Vercel builds and deploys automatically |
-| **NGINX/Apache** | Vercel handles reverse proxy |
-| **Service Mesh** | Single deployment, not microservices |
-| **API Gateway** | Next.js API routes + middleware |
-| **Auto-scaling Groups** | Serverless = instant scaling |
-| **Health Checks** | Built into Vercel platform |
-| **Blue-Green Deployment** | Automatic with every deploy |
-| **Certificate Management** | Automatic SSL via Let's Encrypt |
-| **Geographic Load Balancing** | Automatic Edge Network routing |
+| Component                     | Why Not Needed                              |
+| ----------------------------- | ------------------------------------------- |
+| **Load Balancer**             | Vercel Edge handles this automatically      |
+| **Kubernetes**                | Serverless functions auto-scale per-request |
+| **Docker**                    | Vercel builds and deploys automatically     |
+| **NGINX/Apache**              | Vercel handles reverse proxy                |
+| **Service Mesh**              | Single deployment, not microservices        |
+| **API Gateway**               | Next.js API routes + middleware             |
+| **Auto-scaling Groups**       | Serverless = instant scaling                |
+| **Health Checks**             | Built into Vercel platform                  |
+| **Blue-Green Deployment**     | Automatic with every deploy                 |
+| **Certificate Management**    | Automatic SSL via Let's Encrypt             |
+| **Geographic Load Balancing** | Automatic Edge Network routing              |
 
 ### Patterns to Avoid
 
@@ -261,22 +262,22 @@ Setup Time: Minutes
 
 ### Essential for Production
 
-| Category | Tool | Document |
-|----------|------|----------|
-| **Error Tracking** | Sentry | `09-error-tracking-sentry.md` |
-| **Security** | Arcjet | `08-security-arcjet.md` |
-| **Analytics** | PostHog | `10-analytics-posthog.md` |
-| **Database** | Neon/PlanetScale | `02-database-performance.md` |
-| **Authentication** | Already implemented | - |
-| **Payments** | Already implemented | `03-payment-system.md` |
+| Category           | Tool                | Document                      |
+| ------------------ | ------------------- | ----------------------------- |
+| **Error Tracking** | Sentry              | `09-error-tracking-sentry.md` |
+| **Security**       | Arcjet              | `08-security-arcjet.md`       |
+| **Analytics**      | PostHog             | `10-analytics-posthog.md`     |
+| **Database**       | Neon/PlanetScale    | `02-database-performance.md`  |
+| **Authentication** | Already implemented | -                             |
+| **Payments**       | Already implemented | `03-payment-system.md`        |
 
 ### Add When Scaling (10K+ users)
 
-| Category | Tool | Document |
-|----------|------|----------|
-| **Caching** | Upstash Redis | `12-caching-upstash-redis.md` |
-| **Background Jobs** | Inngest | `11-background-jobs-inngest.md` |
-| **Logging** | Better Stack | `13-monitoring-observability.md` |
+| Category            | Tool          | Document                         |
+| ------------------- | ------------- | -------------------------------- |
+| **Caching**         | Upstash Redis | `12-caching-upstash-redis.md`    |
+| **Background Jobs** | Inngest       | `11-background-jobs-inngest.md`  |
+| **Logging**         | Better Stack  | `13-monitoring-observability.md` |
 
 ### Never Needed at Any Scale (on Vercel)
 
@@ -313,6 +314,7 @@ Setup Time: Minutes
 ```
 
 **Actions:**
+
 - Deploy to Vercel
 - Set up error tracking
 - Implement rate limiting
@@ -337,6 +339,7 @@ Setup Time: Minutes
 ```
 
 **Actions:**
+
 - Add Redis caching for hot data
 - Move webhook processing to background
 - Optimize slow database queries
@@ -361,6 +364,7 @@ Setup Time: Minutes
 ```
 
 **Actions:**
+
 - Scale database vertically, then add read replicas
 - Implement connection pooling
 - Cache everything possible
@@ -385,6 +389,7 @@ Setup Time: Minutes
 ```
 
 **Actions:**
+
 - Multi-region deployment
 - Database sharding
 - Custom infrastructure for specific needs
@@ -407,13 +412,13 @@ Setup Time: Minutes
 
 ### Why the Database is the Bottleneck
 
-| Layer | Scaling Method | Difficulty |
-|-------|---------------|------------|
-| **CDN/Static** | Infinite (Edge) | Automatic |
-| **Serverless Functions** | Infinite (per-request) | Automatic |
-| **Database Reads** | Read replicas | Moderate |
-| **Database Writes** | Sharding | Hard |
-| **Database Connections** | Pooling | Moderate |
+| Layer                    | Scaling Method         | Difficulty |
+| ------------------------ | ---------------------- | ---------- |
+| **CDN/Static**           | Infinite (Edge)        | Automatic  |
+| **Serverless Functions** | Infinite (per-request) | Automatic  |
+| **Database Reads**       | Read replicas          | Moderate   |
+| **Database Writes**      | Sharding               | Hard       |
+| **Database Connections** | Pooling                | Moderate   |
 
 ### Database Scaling Strategy
 
@@ -449,15 +454,16 @@ Stage 4: Shard or Multi-Region ($500+/mo)
 
 ### Spring Boot on AWS/GCP
 
-| Scale | Monthly Cost | Notes |
-|-------|--------------|-------|
-| 10K users | $200-500 | ECS/EKS + RDS + ALB |
-| 50K users | $500-1500 | Multiple instances |
-| 100K users | $1500-3000 | Auto-scaling, read replicas |
-| 500K users | $5000-15000 | Multi-AZ, monitoring |
-| 1M users | $15000-50000+ | Enterprise setup |
+| Scale      | Monthly Cost  | Notes                       |
+| ---------- | ------------- | --------------------------- |
+| 10K users  | $200-500      | ECS/EKS + RDS + ALB         |
+| 50K users  | $500-1500     | Multiple instances          |
+| 100K users | $1500-3000    | Auto-scaling, read replicas |
+| 500K users | $5000-15000   | Multi-AZ, monitoring        |
+| 1M users   | $15000-50000+ | Enterprise setup            |
 
 **Hidden Costs:**
+
 - DevOps engineer: $100K-150K/year
 - On-call support
 - Security compliance
@@ -466,15 +472,16 @@ Stage 4: Shard or Multi-Region ($500+/mo)
 
 ### Next.js on Vercel
 
-| Scale | Monthly Cost | Notes |
-|-------|--------------|-------|
-| 10K users | $20-50 | Pro plan + database |
-| 50K users | $100-200 | + Redis caching |
-| 100K users | $200-500 | + background jobs |
-| 500K users | $500-1500 | + database scaling |
-| 1M users | $2000-5000 | Enterprise plan |
+| Scale      | Monthly Cost | Notes               |
+| ---------- | ------------ | ------------------- |
+| 10K users  | $20-50       | Pro plan + database |
+| 50K users  | $100-200     | + Redis caching     |
+| 100K users | $200-500     | + background jobs   |
+| 500K users | $500-1500    | + database scaling  |
+| 1M users   | $2000-5000   | Enterprise plan     |
 
 **Hidden Costs:**
+
 - Minimal DevOps needed
 - No infrastructure management
 - Security handled by platform
@@ -647,10 +654,10 @@ Focus on product → Ship faster
 
 ## References
 
-| Document | Focus |
-|----------|-------|
-| `05-scaling-architecture.md` | Application-level scaling patterns |
-| `02-database-performance.md` | Database optimization |
-| `07-infrastructure-overview.md` | Complete tool matrix |
-| `12-caching-upstash-redis.md` | Caching implementation |
-| `11-background-jobs-inngest.md` | Background job patterns |
+| Document                        | Focus                              |
+| ------------------------------- | ---------------------------------- |
+| `05-scaling-architecture.md`    | Application-level scaling patterns |
+| `02-database-performance.md`    | Database optimization              |
+| `07-infrastructure-overview.md` | Complete tool matrix               |
+| `12-caching-upstash-redis.md`   | Caching implementation             |
+| `11-background-jobs-inngest.md` | Background job patterns            |

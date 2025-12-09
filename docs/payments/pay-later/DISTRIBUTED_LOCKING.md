@@ -7,6 +7,7 @@ The distributed locking mechanism prevents race conditions when multiple users o
 ## Why Upstash Redis?
 
 ### Advantages
+
 ✅ **Serverless**: No infrastructure management required
 ✅ **REST-based**: Works in serverless environments (Vercel, AWS Lambda)
 ✅ **Global replication**: Low latency worldwide
@@ -14,6 +15,7 @@ The distributed locking mechanism prevents race conditions when multiple users o
 ✅ **Pay-per-request**: Cost-effective for intermittent workloads
 
 ### Alternatives Considered
+
 ❌ **Local Redis**: Requires server management, not serverless-compatible
 ❌ **In-memory locks**: Don't work across multiple instances
 ❌ **Database locks**: Can cause deadlocks, slow performance
@@ -40,10 +42,10 @@ import redis from "@/lib/redis";
 
 // Initialize Redlock with configuration
 const redlock = new Redlock([redis], {
-  driftFactor: 0.01,     // Clock drift tolerance (1%)
-  retryCount: 3,         // Retry 3 times if lock is held
-  retryDelay: 200,       // Wait 200ms between retries
-  retryJitter: 200,      // Add random jitter to prevent thundering herd
+  driftFactor: 0.01, // Clock drift tolerance (1%)
+  retryCount: 3, // Retry 3 times if lock is held
+  retryDelay: 200, // Wait 200ms between retries
+  retryJitter: 200, // Add random jitter to prevent thundering herd
   automaticExtensionThreshold: 500, // Extend lock if needed
 });
 
@@ -121,6 +123,7 @@ Examples:
 ```
 
 ### Why This Format?
+
 - **Namespaced**: Prevents collisions with other locks
 - **Descriptive**: Easy to debug in Redis console
 - **Unique**: One lock per resource instance
@@ -130,6 +133,7 @@ Examples:
 ### Default: 30 Seconds
 
 **Reasoning**:
+
 - Approval endpoint typically completes in 1-3 seconds
 - 30 seconds provides buffer for slow database queries
 - Prevents indefinite lock if process crashes
@@ -139,6 +143,7 @@ Examples:
 ### TTL Scenarios
 
 #### Normal Operation (Lock Released)
+
 ```
 T0    Acquire lock (TTL: 30s)
 T1    Execute approval logic (2s)
@@ -147,6 +152,7 @@ T2    Release lock explicitly
 ```
 
 #### Process Crash (Auto-Expiry)
+
 ```
 T0    Acquire lock (TTL: 30s)
 T1    Process crashes 💥
@@ -155,6 +161,7 @@ T30   Lock expires automatically
 ```
 
 #### Retry Scenario (Lock Held)
+
 ```
 T0    User A: Acquire lock ✓
 T0.5  User B: Attempt lock (WAIT)
@@ -179,11 +186,10 @@ if (status === RequestStatus.APPROVED) {
   } catch (error) {
     return NextResponse.json(
       {
-        error: error instanceof Error
-          ? error.message
-          : "Failed to acquire lock",
+        error:
+          error instanceof Error ? error.message : "Failed to acquire lock",
       },
-      { status: 409 } // HTTP 409 Conflict
+      { status: 409 }, // HTTP 409 Conflict
     );
   }
 }
@@ -254,7 +260,10 @@ Lock Release:
 ### Unit Test: Lock Acquisition
 
 ```typescript
-import { lockConsultationApproval, unlockApproval } from "@/utils/appointmentlock";
+import {
+  lockConsultationApproval,
+  unlockApproval,
+} from "@/utils/appointmentlock";
 
 describe("Distributed Locking", () => {
   it("should acquire and release lock successfully", async () => {
@@ -277,9 +286,9 @@ describe("Distributed Locking", () => {
     const lock1 = await lockConsultationApproval(consultationId, 5000);
 
     // Second acquisition should fail
-    await expect(
-      lockConsultationApproval(consultationId, 100)
-    ).rejects.toThrow("Another approval is in progress");
+    await expect(lockConsultationApproval(consultationId, 100)).rejects.toThrow(
+      "Another approval is in progress",
+    );
 
     await unlockApproval(lock1);
   });
@@ -290,7 +299,7 @@ describe("Distributed Locking", () => {
     await lockConsultationApproval(consultationId, 1000); // 1 second TTL
     // Don't release - let it expire
 
-    await new Promise(resolve => setTimeout(resolve, 1500)); // Wait 1.5s
+    await new Promise((resolve) => setTimeout(resolve, 1500)); // Wait 1.5s
 
     // Lock should be expired, acquisition should succeed
     const lock2 = await lockConsultationApproval(consultationId, 5000);
@@ -322,12 +331,9 @@ describe("Concurrent Approval Protection", () => {
     const [response1, response2] = await Promise.all(approvalPromises);
 
     // One should succeed, one should return 409 Conflict or duplicate=true
-    const results = await Promise.all([
-      response1.json(),
-      response2.json(),
-    ]);
+    const results = await Promise.all([response1.json(), response2.json()]);
 
-    const successCount = results.filter(r => !r.duplicate && !r.error).length;
+    const successCount = results.filter((r) => !r.duplicate && !r.error).length;
     expect(successCount).toBe(1); // Only one success
   });
 });
@@ -340,12 +346,14 @@ describe("Concurrent Approval Protection", () => {
 **Symptoms**: All approval requests return 409 Conflict
 
 **Possible Causes**:
+
 1. Upstash Redis credentials incorrect
 2. Network connectivity issues
 3. Redis instance down
 4. Previous lock not released (rare with auto-expiry)
 
 **Solution**:
+
 ```bash
 # Check Redis connection
 curl -X POST https://your-redis.upstash.io/get/test-key \
@@ -365,12 +373,14 @@ curl -X POST https://your-redis.upstash.io/flushall \
 **Symptoms**: Approval takes >5 seconds
 
 **Possible Causes**:
+
 1. Lock acquisition retries (contention)
 2. High network latency to Upstash
 3. Database transaction timeout
 4. Email sending delay
 
 **Solution**:
+
 ```typescript
 // Add timing logs
 const startTime = Date.now();
@@ -387,11 +397,13 @@ console.log(`Transaction completed in ${Date.now() - txStart}ms`);
 **Symptoms**: Subsequent approvals fail even after waiting
 
 **Possible Causes**:
+
 1. Exception thrown before finally block
 2. Process crash without finally execution
 3. Network timeout during release
 
 **Solution**:
+
 - Locks auto-expire after 30 seconds
 - Wait 30 seconds and retry
 - Check Upstash console for stuck locks
@@ -402,6 +414,7 @@ console.log(`Transaction completed in ${Date.now() - txStart}ms`);
 ### ✅ DO
 
 1. **Always use try-finally** to release locks
+
 ```typescript
 let lock;
 try {
@@ -413,6 +426,7 @@ try {
 ```
 
 2. **Set appropriate TTL** based on expected duration
+
 ```typescript
 // Fast operation: 5 seconds
 lock = await lockConsultationApproval(id, 5000);
@@ -422,6 +436,7 @@ lock = await lockConsultationApproval(id, 30000);
 ```
 
 3. **Return meaningful errors** to users
+
 ```typescript
 catch (error) {
   return NextResponse.json(
@@ -434,6 +449,7 @@ catch (error) {
 ### ❌ DON'T
 
 1. **Don't use locks for non-critical sections**
+
 ```typescript
 // ❌ Bad: Locking read-only operations
 lock = await lockConsultationApproval(id);
@@ -446,6 +462,7 @@ if (status === RequestStatus.APPROVED) {
 ```
 
 2. **Don't forget error handling**
+
 ```typescript
 // ❌ Bad: Throws error to user
 const lock = await lockConsultationApproval(id);
@@ -459,6 +476,7 @@ try {
 ```
 
 3. **Don't set infinite TTL**
+
 ```typescript
 // ❌ Bad: Lock never expires
 lock = await lockConsultationApproval(id, Infinity);
@@ -481,19 +499,19 @@ UPSTASH_REDIS_REST_TOKEN=your_token_here
 
 ```typescript
 const redlock = new Redlock([redis], {
-  driftFactor: 0.01,     // Max clock drift (1%)
-  retryCount: 3,         // Retry attempts
-  retryDelay: 200,       // Base retry delay (ms)
-  retryJitter: 200,      // Random jitter (ms)
+  driftFactor: 0.01, // Max clock drift (1%)
+  retryCount: 3, // Retry attempts
+  retryDelay: 200, // Base retry delay (ms)
+  retryJitter: 200, // Random jitter (ms)
   automaticExtensionThreshold: 500, // Auto-extend threshold
 });
 ```
 
 ### Lock Settings
 
-| Setting | Value | Reason |
-|---------|-------|--------|
-| TTL | 30000ms | Buffer for slow operations |
-| Retry Count | 3 | Balance between UX and throughput |
-| Retry Delay | 200ms | Prevent thundering herd |
-| Retry Jitter | 200ms | Distribute retry timing |
+| Setting      | Value   | Reason                            |
+| ------------ | ------- | --------------------------------- |
+| TTL          | 30000ms | Buffer for slow operations        |
+| Retry Count  | 3       | Balance between UX and throughput |
+| Retry Delay  | 200ms   | Prevent thundering herd           |
+| Retry Jitter | 200ms   | Distribute retry timing           |

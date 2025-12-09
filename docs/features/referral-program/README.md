@@ -187,11 +187,13 @@ enum CreditSource {
 ```typescript
 // lib/referrals/service.ts
 
-const DEFAULT_REFERRER_REWARD = 50000;  // ₹500 in paise
-const DEFAULT_REFEREE_REWARD = 20000;   // ₹200 in paise
-const QUALIFICATION_WINDOW_DAYS = 30;    // Must qualify within 30 days
+const DEFAULT_REFERRER_REWARD = 50000; // ₹500 in paise
+const DEFAULT_REFEREE_REWARD = 20000; // ₹200 in paise
+const QUALIFICATION_WINDOW_DAYS = 30; // Must qualify within 30 days
 
-export async function createReferralCode(userId: string): Promise<ReferralCode> {
+export async function createReferralCode(
+  userId: string,
+): Promise<ReferralCode> {
   const user = await prisma.user.findUnique({
     where: { id: userId },
   });
@@ -219,7 +221,10 @@ export async function createReferralCode(userId: string): Promise<ReferralCode> 
 async function generateUniqueCode(name?: string | null): Promise<string> {
   // Try name-based code first
   if (name) {
-    const baseCode = name.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 6);
+    const baseCode = name
+      .toUpperCase()
+      .replace(/[^A-Z]/g, "")
+      .slice(0, 6);
     for (let i = 0; i < 100; i++) {
       const code = i === 0 ? baseCode : `${baseCode}${i}`;
       const exists = await prisma.referralCode.findUnique({ where: { code } });
@@ -228,12 +233,13 @@ async function generateUniqueCode(name?: string | null): Promise<string> {
   }
 
   // Fall back to random code
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let code: string;
   do {
-    code = Array.from({ length: 8 }, () =>
-      chars[Math.floor(Math.random() * chars.length)]
-    ).join('');
+    code = Array.from(
+      { length: 8 },
+      () => chars[Math.floor(Math.random() * chars.length)],
+    ).join("");
   } while (await prisma.referralCode.findUnique({ where: { code } }));
 
   return code;
@@ -241,14 +247,11 @@ async function generateUniqueCode(name?: string | null): Promise<string> {
 
 export async function applyReferralCode(
   newUserId: string,
-  code: string
+  code: string,
 ): Promise<Referral | null> {
   const referralCode = await prisma.referralCode.findFirst({
     where: {
-      OR: [
-        { code: code.toUpperCase() },
-        { customCode: code.toUpperCase() },
-      ],
+      OR: [{ code: code.toUpperCase() }, { customCode: code.toUpperCase() }],
       isActive: true,
     },
   });
@@ -270,8 +273,9 @@ export async function applyReferralCode(
     data: {
       referralCodeId: referralCode.id,
       referredUserId: newUserId,
-      status: 'SIGNED_UP',
-      referrerRewardAmount: referralCode.referrerReward || DEFAULT_REFERRER_REWARD,
+      status: "SIGNED_UP",
+      referrerRewardAmount:
+        referralCode.referrerReward || DEFAULT_REFERRER_REWARD,
       refereeRewardAmount: referralCode.refereeReward || DEFAULT_REFEREE_REWARD,
     },
   });
@@ -287,14 +291,14 @@ export async function applyReferralCode(
     await createReferralCredit(
       newUserId,
       referral.refereeRewardAmount,
-      'REFEREE_BONUS',
-      referral.id
+      "REFEREE_BONUS",
+      referral.id,
     );
 
     await sendEmail({
       to: await getUserEmail(newUserId),
-      subject: 'Welcome! You\'ve got a signup bonus 🎁',
-      template: 'referee-welcome',
+      subject: "Welcome! You've got a signup bonus 🎁",
+      template: "referee-welcome",
       data: { amount: referral.refereeRewardAmount / 100 },
     });
   }
@@ -304,24 +308,24 @@ export async function applyReferralCode(
 
 export async function processQualifyingAction(
   userId: string,
-  action: string // e.g., 'first_booking', 'first_payment'
+  action: string, // e.g., 'first_booking', 'first_payment'
 ): Promise<void> {
   const referral = await prisma.referral.findUnique({
     where: { referredUserId: userId },
     include: { referralCode: { include: { user: true } } },
   });
 
-  if (!referral || referral.status !== 'SIGNED_UP') return;
+  if (!referral || referral.status !== "SIGNED_UP") return;
 
   // Check if within qualification window
   const daysSinceSignup = Math.floor(
-    (Date.now() - referral.signedUpAt.getTime()) / (1000 * 60 * 60 * 24)
+    (Date.now() - referral.signedUpAt.getTime()) / (1000 * 60 * 60 * 24),
   );
 
   if (daysSinceSignup > QUALIFICATION_WINDOW_DAYS) {
     await prisma.referral.update({
       where: { id: referral.id },
-      data: { status: 'EXPIRED' },
+      data: { status: "EXPIRED" },
     });
     return;
   }
@@ -330,7 +334,7 @@ export async function processQualifyingAction(
   await prisma.referral.update({
     where: { id: referral.id },
     data: {
-      status: 'QUALIFIED',
+      status: "QUALIFIED",
       qualifiedAt: new Date(),
       qualifyingAction: action,
     },
@@ -341,14 +345,14 @@ export async function processQualifyingAction(
     await createReferralCredit(
       referral.referralCode.userId,
       referral.referrerRewardAmount,
-      'REFERRAL_BONUS',
-      referral.id
+      "REFERRAL_BONUS",
+      referral.id,
     );
 
     await prisma.referral.update({
       where: { id: referral.id },
       data: {
-        status: 'REWARDED',
+        status: "REWARDED",
         referrerRewardPaidAt: new Date(),
       },
     });
@@ -365,8 +369,8 @@ export async function processQualifyingAction(
     // Notify referrer
     await sendEmail({
       to: referral.referralCode.user.email,
-      subject: 'You earned a referral bonus! 🎉',
-      template: 'referrer-bonus',
+      subject: "You earned a referral bonus! 🎉",
+      template: "referrer-bonus",
       data: {
         amount: referral.referrerRewardAmount / 100,
         refereeName: await getUserName(userId),
@@ -379,7 +383,7 @@ async function createReferralCredit(
   userId: string,
   amount: number,
   source: CreditSource,
-  referralId?: string
+  referralId?: string,
 ): Promise<ReferralCredit> {
   const expiresAt = new Date();
   expiresAt.setMonth(expiresAt.getMonth() + 6); // 6 month expiry
@@ -388,7 +392,7 @@ async function createReferralCredit(
     data: {
       userId,
       amount,
-      currency: 'INR',
+      currency: "INR",
       source,
       referralId,
       remainingAmount: amount,
@@ -400,18 +404,15 @@ async function createReferralCredit(
 // Apply credits at checkout
 export async function applyCreditsToPayment(
   userId: string,
-  paymentAmount: number
+  paymentAmount: number,
 ): Promise<{ creditsUsed: number; remainingToPay: number }> {
   const availableCredits = await prisma.referralCredit.findMany({
     where: {
       userId,
       remainingAmount: { gt: 0 },
-      OR: [
-        { expiresAt: null },
-        { expiresAt: { gt: new Date() } },
-      ],
+      OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
     },
-    orderBy: { expiresAt: 'asc' }, // Use expiring first
+    orderBy: { expiresAt: "asc" }, // Use expiring first
   });
 
   let creditsUsed = 0;

@@ -229,20 +229,20 @@ export async function createLiveQASession(
     isFree: boolean;
     ticketPrice?: number;
     settings: QASettings;
-  }
+  },
 ): Promise<Webinar> {
   const consultantProfile = await prisma.consultantProfile.findUnique({
     where: { id: consultantProfileId },
     include: { user: true },
   });
 
-  if (!consultantProfile) throw new Error('Consultant not found');
+  if (!consultantProfile) throw new Error("Consultant not found");
 
   // Create webinar with Q&A settings
   return prisma.webinar.create({
     data: {
       webinarPlanId: await getOrCreateQAPlan(consultantProfileId, data),
-      status: 'SCHEDULED',
+      status: "SCHEDULED",
       isQnASession: true,
       qnaSettings: data.settings,
     },
@@ -250,18 +250,18 @@ export async function createLiveQASession(
 }
 
 interface QASettings {
-  allowPreQuestions: boolean;     // Allow questions before session starts
-  moderationEnabled: boolean;     // Require approval for questions
-  upvotingEnabled: boolean;       // Allow attendees to upvote
-  anonymousEnabled: boolean;      // Allow anonymous questions
-  maxQuestionsPerUser: number;    // Limit per attendee
+  allowPreQuestions: boolean; // Allow questions before session starts
+  moderationEnabled: boolean; // Require approval for questions
+  upvotingEnabled: boolean; // Allow attendees to upvote
+  anonymousEnabled: boolean; // Allow anonymous questions
+  maxQuestionsPerUser: number; // Limit per attendee
 }
 
 export async function submitQuestion(
   webinarId: string,
   userId: string,
   questionText: string,
-  isAnonymous: boolean = false
+  isAnonymous: boolean = false,
 ): Promise<LiveQuestion> {
   const webinar = await prisma.webinar.findUnique({
     where: { id: webinarId },
@@ -269,14 +269,14 @@ export async function submitQuestion(
   });
 
   if (!webinar?.isQnASession) {
-    throw new Error('Not a Q&A session');
+    throw new Error("Not a Q&A session");
   }
 
   const settings = webinar.qnaSettings as QASettings;
 
   // Check if session allows pre-questions
-  if (webinar.status === 'SCHEDULED' && !settings.allowPreQuestions) {
-    throw new Error('Pre-session questions not allowed');
+  if (webinar.status === "SCHEDULED" && !settings.allowPreQuestions) {
+    throw new Error("Pre-session questions not allowed");
   }
 
   // Check user's question limit
@@ -285,7 +285,9 @@ export async function submitQuestion(
   });
 
   if (userQuestionCount >= settings.maxQuestionsPerUser) {
-    throw new Error(`Maximum ${settings.maxQuestionsPerUser} questions allowed`);
+    throw new Error(
+      `Maximum ${settings.maxQuestionsPerUser} questions allowed`,
+    );
   }
 
   return prisma.liveQuestion.create({
@@ -294,7 +296,7 @@ export async function submitQuestion(
       userId,
       questionText,
       isAnonymous: settings.anonymousEnabled && isAnonymous,
-      status: settings.moderationEnabled ? 'PENDING' : 'APPROVED',
+      status: settings.moderationEnabled ? "PENDING" : "APPROVED",
       isApproved: !settings.moderationEnabled,
     },
   });
@@ -302,18 +304,18 @@ export async function submitQuestion(
 
 export async function upvoteQuestion(
   questionId: string,
-  userId: string
+  userId: string,
 ): Promise<LiveQuestion> {
   const question = await prisma.liveQuestion.findUnique({
     where: { id: questionId },
     include: { webinar: true },
   });
 
-  if (!question) throw new Error('Question not found');
+  if (!question) throw new Error("Question not found");
 
   const settings = question.webinar.qnaSettings as QASettings;
   if (!settings.upvotingEnabled) {
-    throw new Error('Upvoting not enabled');
+    throw new Error("Upvoting not enabled");
   }
 
   // Toggle upvote
@@ -324,7 +326,7 @@ export async function upvoteQuestion(
     data: {
       upvotes: hasUpvoted ? { decrement: 1 } : { increment: 1 },
       upvotedBy: hasUpvoted
-        ? question.upvotedBy.filter(id => id !== userId)
+        ? question.upvotedBy.filter((id) => id !== userId)
         : [...question.upvotedBy, userId],
     },
   });
@@ -334,26 +336,30 @@ export async function markQuestionAnswered(
   questionId: string,
   consultantUserId: string,
   answerStartTime?: number, // Seconds into the recording
-  answerText?: string
+  answerText?: string,
 ): Promise<LiveQuestion> {
   const question = await prisma.liveQuestion.findUnique({
     where: { id: questionId },
     include: {
-      webinar: { include: { webinarPlan: { include: { consultantProfile: true } } } },
+      webinar: {
+        include: { webinarPlan: { include: { consultantProfile: true } } },
+      },
     },
   });
 
-  if (!question) throw new Error('Question not found');
+  if (!question) throw new Error("Question not found");
 
   // Verify consultant owns this session
-  if (question.webinar.webinarPlan.consultantProfile.userId !== consultantUserId) {
-    throw new Error('Not authorized');
+  if (
+    question.webinar.webinarPlan.consultantProfile.userId !== consultantUserId
+  ) {
+    throw new Error("Not authorized");
   }
 
   return prisma.liveQuestion.update({
     where: { id: questionId },
     data: {
-      status: 'ANSWERED',
+      status: "ANSWERED",
       answeredAt: new Date(),
       answerStartTime,
       answerText,
@@ -363,18 +369,18 @@ export async function markQuestionAnswered(
 
 export async function getQuestionsQueue(
   webinarId: string,
-  sortBy: 'upvotes' | 'newest' | 'oldest' = 'upvotes'
+  sortBy: "upvotes" | "newest" | "oldest" = "upvotes",
 ): Promise<LiveQuestion[]> {
   const orderBy = {
-    upvotes: { upvotes: 'desc' as const },
-    newest: { createdAt: 'desc' as const },
-    oldest: { createdAt: 'asc' as const },
+    upvotes: { upvotes: "desc" as const },
+    newest: { createdAt: "desc" as const },
+    oldest: { createdAt: "asc" as const },
   }[sortBy];
 
   return prisma.liveQuestion.findMany({
     where: {
       webinarId,
-      status: { in: ['APPROVED', 'PENDING'] },
+      status: { in: ["APPROVED", "PENDING"] },
     },
     orderBy,
     include: {
@@ -626,13 +632,13 @@ POST /api/live-qa/[id]/end
 
 ### Streaming Options
 
-| Option | Pros | Cons |
-|--------|------|------|
-| Stream (existing) | Already integrated | May need Q&A extension |
-| Mux | High quality, easy APIs | Additional cost |
-| LiveKit | Open source, WebRTC | Self-hosted complexity |
-| YouTube Live | Free, familiar | Less control |
-| Zoom Webinar | Feature-rich | Expensive at scale |
+| Option            | Pros                    | Cons                   |
+| ----------------- | ----------------------- | ---------------------- |
+| Stream (existing) | Already integrated      | May need Q&A extension |
+| Mux               | High quality, easy APIs | Additional cost        |
+| LiveKit           | Open source, WebRTC     | Self-hosted complexity |
+| YouTube Live      | Free, familiar          | Less control           |
+| Zoom Webinar      | Feature-rich            | Expensive at scale     |
 
 ### Real-Time Updates
 

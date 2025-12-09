@@ -1,6 +1,12 @@
 "use client";
 
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+} from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -19,12 +25,12 @@ export default function ContactUsPage() {
           </div>
           <h1 className="text-4xl md:text-5xl font-bold mb-4">Contact Us</h1>
           <p className="text-xl text-muted-foreground max-w-3xl mx-auto">
-            We're here to help! Reach out to us with any questions, concerns, or feedback.
+            We're here to help! Reach out to us with any questions, concerns, or
+            feedback.
           </p>
         </div>
 
         <div className="max-w-6xl mx-auto grid md:grid-cols-2 gap-8">
-
           {/* Contact Information */}
           <div className="space-y-6">
             <Card>
@@ -35,7 +41,6 @@ export default function ContactUsPage() {
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
-
                 {/* Company Address */}
                 <div className="flex items-start gap-4">
                   <div className="flex-shrink-0 w-10 h-10 rounded-full bg-blue-100 dark:bg-blue-950 flex items-center justify-center">
@@ -44,7 +49,8 @@ export default function ContactUsPage() {
                   <div>
                     <h3 className="font-semibold mb-1">Address</h3>
                     <p className="text-sm text-muted-foreground">
-                      [COMPANY NAME]<br />
+                      [COMPANY NAME]
+                      <br />
                       [ADDRESS]
                     </p>
                   </div>
@@ -61,13 +67,19 @@ export default function ContactUsPage() {
                     <h3 className="font-semibold mb-1">Email</h3>
                     <p className="text-sm text-muted-foreground">
                       General Inquiries:{" "}
-                      <a href="mailto:[EMAIL]" className="text-blue-600 hover:underline">
+                      <a
+                        href="mailto:[EMAIL]"
+                        className="text-blue-600 hover:underline"
+                      >
                         [EMAIL]
                       </a>
                     </p>
                     <p className="text-sm text-muted-foreground mt-1">
                       Support:{" "}
-                      <a href="mailto:[SUPPORT_EMAIL]" className="text-blue-600 hover:underline">
+                      <a
+                        href="mailto:[SUPPORT_EMAIL]"
+                        className="text-blue-600 hover:underline"
+                      >
                         [SUPPORT_EMAIL]
                       </a>
                     </p>
@@ -84,7 +96,10 @@ export default function ContactUsPage() {
                   <div>
                     <h3 className="font-semibold mb-1">Phone</h3>
                     <p className="text-sm text-muted-foreground">
-                      <a href="tel:[PHONE]" className="text-blue-600 hover:underline">
+                      <a
+                        href="tel:[PHONE]"
+                        className="text-blue-600 hover:underline"
+                      >
                         [PHONE]
                       </a>
                     </p>
@@ -104,13 +119,14 @@ export default function ContactUsPage() {
                   <div>
                     <h3 className="font-semibold mb-1">Business Hours</h3>
                     <p className="text-sm text-muted-foreground">
-                      Monday - Friday: 9:00 AM - 6:00 PM IST<br />
-                      Saturday: 10:00 AM - 4:00 PM IST<br />
+                      Monday - Friday: 9:00 AM - 6:00 PM IST
+                      <br />
+                      Saturday: 10:00 AM - 4:00 PM IST
+                      <br />
                       Sunday: Closed
                     </p>
                   </div>
                 </div>
-
               </CardContent>
             </Card>
 
@@ -121,11 +137,15 @@ export default function ContactUsPage() {
               </CardHeader>
               <CardContent className="space-y-3">
                 <p className="text-sm text-muted-foreground">
-                  Before contacting us, you may find answers to your questions in our help resources:
+                  Before contacting us, you may find answers to your questions
+                  in our help resources:
                 </p>
                 <ul className="space-y-2">
                   <li className="text-sm">
-                    <a href="/pricing" className="text-blue-600 hover:underline">
+                    <a
+                      href="/pricing"
+                      className="text-blue-600 hover:underline"
+                    >
                       • Pricing & Platform Fees
                     </a>
                   </li>
@@ -135,7 +155,10 @@ export default function ContactUsPage() {
                     </a>
                   </li>
                   <li className="text-sm">
-                    <a href="/privacy" className="text-blue-600 hover:underline">
+                    <a
+                      href="/privacy"
+                      className="text-blue-600 hover:underline"
+                    >
                       • Privacy Policy
                     </a>
                   </li>
@@ -154,7 +177,8 @@ export default function ContactUsPage() {
             <CardHeader>
               <CardTitle className="text-2xl">Send us a Message</CardTitle>
               <CardDescription>
-                Fill out the form below and we'll get back to you as soon as possible
+                Fill out the form below and we'll get back to you as soon as
+                possible
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -253,7 +277,6 @@ export default function ContactUsPage() {
               </form>
             </CardContent>
           </Card>
-
         </div>
 
         {/* Additional Information */}
@@ -283,7 +306,6 @@ export default function ContactUsPage() {
             </CardContent>
           </Card>
         </div>
-
       </div>
     </section>
   );

@@ -44,6 +44,7 @@ await sendPaymentLinkEmail({
 ```
 
 **Email Content**:
+
 ```
 Subject: Payment Required - Consultation with Dr. Jane Smith
 
@@ -90,6 +91,7 @@ await sendPaymentSuccessEmail({
 ```
 
 **Email Content**:
+
 ```
 Subject: Payment Confirmed - Consultation with Dr. Jane Smith
 
@@ -138,6 +140,7 @@ await sendPaymentFailedEmail({
 ```
 
 **Email Content**:
+
 ```
 Subject: Payment Failed - Consultation with Dr. Jane Smith
 
@@ -247,8 +250,13 @@ export const PaymentLinkEmail = ({
         </Text>
 
         <Container style={detailsBox}>
-          <Text>Amount: {currency} {amount}</Text>
-          <Text>Type: {appointmentType.charAt(0).toUpperCase() + appointmentType.slice(1)}</Text>
+          <Text>
+            Amount: {currency} {amount}
+          </Text>
+          <Text>
+            Type:{" "}
+            {appointmentType.charAt(0).toUpperCase() + appointmentType.slice(1)}
+          </Text>
           <Text>Consultant: {consultantName}</Text>
           <Text>Expires: {expiryDate}</Text>
         </Container>
@@ -259,8 +267,8 @@ export const PaymentLinkEmail = ({
 
         <Text style={warning}>
           ⏰ <strong>Time Sensitive:</strong> This payment link expires in 48
-          hours. If you don't complete payment before {expiryDate}, your
-          request will revert to pending status.
+          hours. If you don't complete payment before {expiryDate}, your request
+          will revert to pending status.
         </Text>
 
         <Text style={paragraph}>
@@ -428,7 +436,9 @@ export async function PATCH(request, { params }) {
       expiresAt: new Date(Date.now() + 48 * 60 * 60 * 1000),
     });
 
-    console.log(`📧 Payment link email sent for consultation ${consultation.id}`);
+    console.log(
+      `📧 Payment link email sent for consultation ${consultation.id}`,
+    );
   }
 }
 ```
@@ -552,6 +562,7 @@ testEmail();
 Monitor at: https://resend.com/emails
 
 **Key Metrics**:
+
 - Delivery rate
 - Bounce rate
 - Open rate (if tracking enabled)
@@ -572,18 +583,21 @@ console.error("Failed to send payment link email:", error);
 ### ✅ DO
 
 1. **Use descriptive subject lines**
+
 ```typescript
-subject: `Payment Required - Consultation with ${consultantName}`
+subject: `Payment Required - Consultation with ${consultantName}`;
 // Not: "Payment Link"
 ```
 
 2. **Include all relevant details**
+
 ```typescript
 // Include: amount, currency, consultant name, expiry date
 // Don't make users click links to see basic info
 ```
 
 3. **Make CTAs prominent**
+
 ```tsx
 <Button style={prominentButton} href={paymentUrl}>
   Complete Payment
@@ -591,6 +605,7 @@ subject: `Payment Required - Consultation with ${consultantName}`
 ```
 
 4. **Handle errors gracefully**
+
 ```typescript
 // Log but don't throw - emails are non-critical
 try {
@@ -604,17 +619,21 @@ try {
 ### ❌ DON'T
 
 1. **Don't block critical flows on email**
+
 ```typescript
 // ❌ Bad: Payment fails if email fails
 await sendEmail(); // throws error
 await processPayment();
 
 // ✅ Good: Email failure doesn't affect payment
-try { await sendEmail(); } catch {}
+try {
+  await sendEmail();
+} catch {}
 await processPayment();
 ```
 
 2. **Don't send duplicate emails**
+
 ```typescript
 // ❌ Bad: Send email on every webhook retry
 await sendPaymentSuccessEmail();
@@ -625,6 +644,7 @@ await sendPaymentSuccessEmail();
 ```
 
 3. **Don't use plain text for complex layouts**
+
 ```typescript
 // ❌ Bad: Plain text with manual formatting
 const text = `Amount: ${amount}\nType: ${type}`;
@@ -658,11 +678,11 @@ const EMAIL_SENDERS = {
 
 ### Rate Limits (Resend)
 
-| Tier | Emails/Month | Rate Limit |
-|------|-------------|------------|
-| Free | 100 | 2/second |
-| Pro | 50,000 | 10/second |
-| Business | 100,000+ | Custom |
+| Tier     | Emails/Month | Rate Limit |
+| -------- | ------------ | ---------- |
+| Free     | 100          | 2/second   |
+| Pro      | 50,000       | 10/second  |
+| Business | 100,000+     | Custom     |
 
 ## Future Enhancements
 

@@ -35,9 +35,15 @@ async function cleanup(key: string) {
   await redis.del(key);
 }
 
-function logTest(testName: string, status: "START" | "PASS" | "FAIL", details?: any) {
+function logTest(
+  testName: string,
+  status: "START" | "PASS" | "FAIL",
+  details?: any,
+) {
   const emoji = status === "START" ? "🧪" : status === "PASS" ? "✅" : "❌";
-  console.log(`${emoji} ${testName}${details ? `: ${JSON.stringify(details)}` : ""}`);
+  console.log(
+    `${emoji} ${testName}${details ? `: ${JSON.stringify(details)}` : ""}`,
+  );
 }
 
 // ============================================================================
@@ -58,12 +64,15 @@ async function testBasicLuaExecution() {
       logTest(testName, "PASS", { result });
       return true;
     } else {
-      logTest(testName, "FAIL", { expected: "Hello from Lua!", actual: result });
+      logTest(testName, "FAIL", {
+        expected: "Hello from Lua!",
+        actual: result,
+      });
       return false;
     }
   } catch (error) {
     logTest(testName, "FAIL", {
-      error: error instanceof Error ? error.message : String(error)
+      error: error instanceof Error ? error.message : String(error),
     });
     return false;
   }
@@ -101,7 +110,7 @@ async function testAtomicLockRelease() {
       logTest(testName, "FAIL", {
         test: "2a - wrong value should return 0",
         expected: 0,
-        actual: result1
+        actual: result1,
       });
       await cleanup(key);
       return false;
@@ -112,7 +121,7 @@ async function testAtomicLockRelease() {
     if (stillExists !== 1) {
       logTest(testName, "FAIL", {
         test: "2a - key should still exist",
-        exists: stillExists
+        exists: stillExists,
       });
       await cleanup(key);
       return false;
@@ -125,7 +134,7 @@ async function testAtomicLockRelease() {
       logTest(testName, "FAIL", {
         test: "2b - correct value should return 1",
         expected: 1,
-        actual: result2
+        actual: result2,
       });
       await cleanup(key);
       return false;
@@ -136,7 +145,7 @@ async function testAtomicLockRelease() {
     if (nowExists !== 0) {
       logTest(testName, "FAIL", {
         test: "2b - key should be deleted",
-        exists: nowExists
+        exists: nowExists,
       });
       await cleanup(key);
       return false;
@@ -144,12 +153,12 @@ async function testAtomicLockRelease() {
 
     logTest(testName, "PASS", {
       wrongValueResult: result1,
-      correctValueResult: result2
+      correctValueResult: result2,
     });
     return true;
   } catch (error) {
     logTest(testName, "FAIL", {
-      error: error instanceof Error ? error.message : String(error)
+      error: error instanceof Error ? error.message : String(error),
     });
     await cleanup(key);
     return false;
@@ -194,7 +203,11 @@ async function testSemaphoreCounter() {
 
     // Test 3a: Increment 5 times (should all succeed)
     for (let i = 0; i < maxLimit; i++) {
-      const result = await redis.eval(script, [key], [maxLimit.toString(), "60000"]);
+      const result = await redis.eval(
+        script,
+        [key],
+        [maxLimit.toString(), "60000"],
+      );
       results.push(result);
 
       // Result should be [1, i+1] meaning success with new count
@@ -202,7 +215,7 @@ async function testSemaphoreCounter() {
         logTest(testName, "FAIL", {
           test: `3a - increment ${i + 1} failed`,
           expected: [1, i + 1],
-          actual: result
+          actual: result,
         });
         await cleanup(key);
         return false;
@@ -210,13 +223,21 @@ async function testSemaphoreCounter() {
     }
 
     // Test 3b: Try to increment beyond limit (should fail)
-    const overLimitResult = await redis.eval(script, [key], [maxLimit.toString(), "60000"]);
+    const overLimitResult = await redis.eval(
+      script,
+      [key],
+      [maxLimit.toString(), "60000"],
+    );
 
-    if (!Array.isArray(overLimitResult) || overLimitResult[0] !== 0 || overLimitResult[1] !== maxLimit) {
+    if (
+      !Array.isArray(overLimitResult) ||
+      overLimitResult[0] !== 0 ||
+      overLimitResult[1] !== maxLimit
+    ) {
       logTest(testName, "FAIL", {
         test: "3b - over limit should return [0, 5]",
         expected: [0, maxLimit],
-        actual: overLimitResult
+        actual: overLimitResult,
       });
       await cleanup(key);
       return false;
@@ -224,13 +245,13 @@ async function testSemaphoreCounter() {
 
     logTest(testName, "PASS", {
       successfulIncrements: maxLimit,
-      overLimitResult
+      overLimitResult,
     });
     await cleanup(key);
     return true;
   } catch (error) {
     logTest(testName, "FAIL", {
-      error: error instanceof Error ? error.message : String(error)
+      error: error instanceof Error ? error.message : String(error),
     });
     await cleanup(key);
     return false;
@@ -270,7 +291,7 @@ async function testLockExtension() {
       logTest(testName, "FAIL", {
         test: "4a - wrong value should return 0",
         expected: 0,
-        actual: result1
+        actual: result1,
       });
       await cleanup(key);
       return false;
@@ -283,7 +304,7 @@ async function testLockExtension() {
       logTest(testName, "FAIL", {
         test: "4b - correct value should return 1",
         expected: 1,
-        actual: result2
+        actual: result2,
       });
       await cleanup(key);
       return false;
@@ -296,7 +317,7 @@ async function testLockExtension() {
       logTest(testName, "FAIL", {
         test: "4b - TTL should be ~30000ms",
         expected: "25000-30000",
-        actual: ttl
+        actual: ttl,
       });
       await cleanup(key);
       return false;
@@ -305,13 +326,13 @@ async function testLockExtension() {
     logTest(testName, "PASS", {
       wrongValueResult: result1,
       correctValueResult: result2,
-      newTTL: ttl
+      newTTL: ttl,
     });
     await cleanup(key);
     return true;
   } catch (error) {
     logTest(testName, "FAIL", {
-      error: error instanceof Error ? error.message : String(error)
+      error: error instanceof Error ? error.message : String(error),
     });
     await cleanup(key);
     return false;
@@ -352,15 +373,18 @@ async function testRaceConditionPrevention() {
     const currentValue = await redis.get(key);
 
     // Wait for lock to expire
-    await new Promise(resolve => setTimeout(resolve, 150));
+    await new Promise((resolve) => setTimeout(resolve, 150));
 
     // User B acquires the lock (should succeed since A's lock expired)
-    const setBResult = await redis.set(key, userBValue, { nx: true, px: 10000 });
+    const setBResult = await redis.set(key, userBValue, {
+      nx: true,
+      px: 10000,
+    });
 
     if (setBResult !== "OK") {
       logTest(testName, "FAIL", {
         test: "User B should acquire expired lock",
-        setBResult
+        setBResult,
       });
       await cleanup(key);
       return false;
@@ -373,7 +397,7 @@ async function testRaceConditionPrevention() {
       logTest(testName, "FAIL", {
         test: "User A should NOT release User B's lock",
         expected: 0,
-        actual: releaseResult
+        actual: releaseResult,
       });
       await cleanup(key);
       return false;
@@ -386,7 +410,7 @@ async function testRaceConditionPrevention() {
       logTest(testName, "FAIL", {
         test: "User B's lock should still exist",
         expected: userBValue,
-        actual: finalValue
+        actual: finalValue,
       });
       await cleanup(key);
       return false;
@@ -395,13 +419,13 @@ async function testRaceConditionPrevention() {
     logTest(testName, "PASS", {
       scenario: "User A cannot delete User B's lock",
       releaseResult,
-      finalLockOwner: "User B"
+      finalLockOwner: "User B",
     });
     await cleanup(key);
     return true;
   } catch (error) {
     logTest(testName, "FAIL", {
-      error: error instanceof Error ? error.message : String(error)
+      error: error instanceof Error ? error.message : String(error),
     });
     await cleanup(key);
     return false;
@@ -428,19 +452,27 @@ async function runAllTests() {
   try {
     // Test 1: Basic Lua execution
     results.basicExecution = await testBasicLuaExecution();
-    await new Promise(resolve => setTimeout(resolve, TEST_CONFIG.CLEANUP_DELAY));
+    await new Promise((resolve) =>
+      setTimeout(resolve, TEST_CONFIG.CLEANUP_DELAY),
+    );
 
     // Test 2: Atomic lock release
     results.atomicRelease = await testAtomicLockRelease();
-    await new Promise(resolve => setTimeout(resolve, TEST_CONFIG.CLEANUP_DELAY));
+    await new Promise((resolve) =>
+      setTimeout(resolve, TEST_CONFIG.CLEANUP_DELAY),
+    );
 
     // Test 3: Semaphore counter
     results.semaphoreCounter = await testSemaphoreCounter();
-    await new Promise(resolve => setTimeout(resolve, TEST_CONFIG.CLEANUP_DELAY));
+    await new Promise((resolve) =>
+      setTimeout(resolve, TEST_CONFIG.CLEANUP_DELAY),
+    );
 
     // Test 4: Lock extension
     results.lockExtension = await testLockExtension();
-    await new Promise(resolve => setTimeout(resolve, TEST_CONFIG.CLEANUP_DELAY));
+    await new Promise((resolve) =>
+      setTimeout(resolve, TEST_CONFIG.CLEANUP_DELAY),
+    );
 
     // Test 5: Race condition prevention
     results.raceCondition = await testRaceConditionPrevention();
@@ -450,7 +482,7 @@ async function runAllTests() {
     console.log("📊 Test Summary");
     console.log("=".repeat(80));
 
-    const passed = Object.values(results).filter(r => r).length;
+    const passed = Object.values(results).filter((r) => r).length;
     const total = Object.keys(results).length;
 
     Object.entries(results).forEach(([test, passed]) => {
@@ -463,11 +495,15 @@ async function runAllTests() {
 
     if (passed === total) {
       console.log("🎉 ALL TESTS PASSED - Upstash Redis supports Lua scripts!");
-      console.log("✅ PR #233 can be safely merged (Lua script requirement met)\n");
+      console.log(
+        "✅ PR #233 can be safely merged (Lua script requirement met)\n",
+      );
       process.exit(0);
     } else {
       console.log("❌ SOME TESTS FAILED - Review Lua script support");
-      console.log("⚠️  PR #233 may need modifications for Upstash compatibility\n");
+      console.log(
+        "⚠️  PR #233 may need modifications for Upstash compatibility\n",
+      );
       process.exit(1);
     }
   } catch (error) {

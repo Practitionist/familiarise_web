@@ -66,23 +66,23 @@ This document outlines architectural improvements needed to scale the applicatio
 
 ### 1.2 Current Strengths
 
-| Aspect | Implementation | Status |
-|--------|----------------|--------|
-| Serverless | Vercel Functions | ✅ Auto-scaling |
-| Database Pooling | Supavisor | ✅ Connection pooling |
-| CDN | Vercel Edge | ✅ Global distribution |
-| Client Caching | TanStack Query | ✅ 1-5 min stale times |
-| Authentication | JWT-based | ✅ Stateless |
+| Aspect           | Implementation   | Status                 |
+| ---------------- | ---------------- | ---------------------- |
+| Serverless       | Vercel Functions | ✅ Auto-scaling        |
+| Database Pooling | Supavisor        | ✅ Connection pooling  |
+| CDN              | Vercel Edge      | ✅ Global distribution |
+| Client Caching   | TanStack Query   | ✅ 1-5 min stale times |
+| Authentication   | JWT-based        | ✅ Stateless           |
 
 ### 1.3 Current Weaknesses
 
-| Aspect | Issue | Impact |
-|--------|-------|--------|
-| Session Callback | DB query per request | Linear DB load growth |
-| Server Caching | None implemented | Repeated expensive queries |
-| Background Jobs | Manual/cron only | Blocking request processing |
-| Token Cache | In-memory (1000 limit) | Not distributed |
-| Webhook Processing | Synchronous | Timeout risk |
+| Aspect             | Issue                  | Impact                      |
+| ------------------ | ---------------------- | --------------------------- |
+| Session Callback   | DB query per request   | Linear DB load growth       |
+| Server Caching     | None implemented       | Repeated expensive queries  |
+| Background Jobs    | Manual/cron only       | Blocking request processing |
+| Token Cache        | In-memory (1000 limit) | Not distributed             |
+| Webhook Processing | Synchronous            | Timeout risk                |
 
 ---
 
@@ -122,13 +122,13 @@ This document outlines architectural improvements needed to scale the applicatio
 
 ### 2.2 Scaling Projections
 
-| Users | Current Performance | With Optimizations |
-|-------|--------------------|--------------------|
-| 1K | Good (~100ms) | Excellent (~30ms) |
-| 10K | Degraded (~300ms) | Good (~50ms) |
-| 100K | Poor (~1s+) | Good (~100ms) |
-| 1M | Unusable | Acceptable (~200ms) |
-| 10M | Failed | Needs horizontal scaling |
+| Users | Current Performance | With Optimizations       |
+| ----- | ------------------- | ------------------------ |
+| 1K    | Good (~100ms)       | Excellent (~30ms)        |
+| 10K   | Degraded (~300ms)   | Good (~50ms)             |
+| 100K  | Poor (~1s+)         | Good (~100ms)            |
+| 1M    | Unusable            | Acceptable (~200ms)      |
+| 10M   | Failed              | Needs horizontal scaling |
 
 ---
 
@@ -181,18 +181,18 @@ export const CACHE_KEYS = {
 
 // Cache TTLs (seconds)
 export const CACHE_TTL = {
-  USER_PROFILE: 3600,       // 1 hour
+  USER_PROFILE: 3600, // 1 hour
   CONSULTANT_PROFILE: 1800, // 30 min
-  AVAILABILITY: 300,        // 5 min
-  PLAN_DETAILS: 3600,       // 1 hour
-  DOMAIN_LIST: 86400,       // 24 hours
+  AVAILABILITY: 300, // 5 min
+  PLAN_DETAILS: 3600, // 1 hour
+  DOMAIN_LIST: 86400, // 24 hours
 };
 
 // Generic cache wrapper
 export async function withCache<T>(
   key: string,
   ttl: number,
-  fn: () => Promise<T>
+  fn: () => Promise<T>,
 ): Promise<T> {
   // Try to get from cache
   const cached = await redis.get<T>(key);
@@ -251,14 +251,11 @@ export async function getConsultantProfile(id: string) {
           },
         },
       });
-    }
+    },
   );
 }
 
-export async function getConsultantAvailability(
-  id: string,
-  date: string
-) {
+export async function getConsultantAvailability(id: string, date: string) {
   return withCache(
     CACHE_KEYS.CONSULTANT_AVAILABILITY(id, date),
     CACHE_TTL.AVAILABILITY,
@@ -271,7 +268,7 @@ export async function getConsultantAvailability(
           endTime: true,
         },
       });
-    }
+    },
   );
 }
 ```
@@ -302,7 +299,7 @@ export const CACHE_INVALIDATION_MAP = {
   // When appointment is booked
   "appointment.created": async (consultantId: string, date: string) => {
     await invalidateCache(
-      CACHE_KEYS.CONSULTANT_AVAILABILITY(consultantId, date)
+      CACHE_KEYS.CONSULTANT_AVAILABILITY(consultantId, date),
     );
   },
 
@@ -313,10 +310,7 @@ export const CACHE_INVALIDATION_MAP = {
 };
 
 // Usage in API routes
-export async function updateConsultantProfile(
-  id: string,
-  data: UpdateData
-) {
+export async function updateConsultantProfile(id: string, data: UpdateData) {
   const updated = await prisma.consultantProfile.update({
     where: { id },
     data,
@@ -455,7 +449,7 @@ export const processPaymentWebhook = inngest.createFunction(
     }
 
     return { status: "processed" };
-  }
+  },
 );
 
 // Email sending function
@@ -472,7 +466,7 @@ export const sendEmail = inngest.createFunction(
   async ({ event }) => {
     const { to, template, variables } = event.data;
     // Send email logic
-  }
+  },
 );
 
 // Cleanup function (scheduled)
@@ -499,7 +493,7 @@ export const cleanupAbandonedPayments = inngest.createFunction(
     }
 
     return { processed: abandoned.length };
-  }
+  },
 );
 ```
 
@@ -553,7 +547,7 @@ session: async ({ session, token }) => {
     },
   });
   // Adds user data to session
-}
+};
 ```
 
 **Issue:** Every authenticated request triggers a database query.
@@ -669,8 +663,8 @@ export async function POST(req: NextRequest) {
 ```typescript
 // Client-side: Update session after profile change
 async function updateProfile(data: ProfileData) {
-  await fetch('/api/user/profile', {
-    method: 'PUT',
+  await fetch("/api/user/profile", {
+    method: "PUT",
     body: JSON.stringify(data),
   });
 
@@ -686,6 +680,7 @@ async function updateProfile(data: ProfileData) {
 ### 6.1 Stream.io Optimization
 
 **Current Issues:**
+
 - Token fetched on every page load
 - Channel sync on every connection
 - No connection pooling awareness
@@ -993,7 +988,11 @@ export const logger = pino({
 });
 
 // Request logging middleware
-export function logRequest(req: NextRequest, res: NextResponse, duration: number) {
+export function logRequest(
+  req: NextRequest,
+  res: NextResponse,
+  duration: number,
+) {
   logger.info({
     type: "request",
     method: req.method,

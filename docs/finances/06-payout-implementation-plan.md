@@ -5,6 +5,7 @@
 This document outlines the technical implementation plan for adding payout functionality to Familiarise. Currently, payments are collected but there is no automated payout system to consultants.
 
 **Current State (December 2025):**
+
 - Payment collection: Working (Stripe/Razorpay)
 - Payout system: NOT IMPLEMENTED
 - Money flow: Held in platform account
@@ -327,7 +328,7 @@ interface CreateEarningsParams {
   payment: Payment;
   consultantProfileId: string;
   platformCommissionRate: number; // e.g., 0.20 for 20%
-  gatewayFeeRate: number;         // e.g., 0.03 for 3%
+  gatewayFeeRate: number; // e.g., 0.03 for 3%
 }
 
 export async function createEarningsRecord({
@@ -414,7 +415,7 @@ interface CreateLinkedAccountParams {
 }
 
 export async function createRazorpayLinkedAccount(
-  params: CreateLinkedAccountParams
+  params: CreateLinkedAccountParams,
 ) {
   const account = await razorpay.accounts.create({
     email: params.email,
@@ -616,7 +617,9 @@ interface RazorpayTransferEvent {
   };
 }
 
-export async function handleRazorpayPayoutWebhook(event: RazorpayTransferEvent) {
+export async function handleRazorpayPayoutWebhook(
+  event: RazorpayTransferEvent,
+) {
   const transfer = event.payload.transfer.entity;
 
   const payout = await prisma.payout.findUnique({
@@ -741,13 +744,16 @@ export async function releaseEarningsFromHold() {
 
     for (const earning of earningsToRelease) {
       const current = consultantBalances.get(earning.consultantProfileId) || 0;
-      consultantBalances.set(earning.consultantProfileId, current + earning.netAmount);
+      consultantBalances.set(
+        earning.consultantProfileId,
+        current + earning.netAmount,
+      );
     }
 
     // Update earnings status
     await tx.consultantEarnings.updateMany({
       where: {
-        id: { in: earningsToRelease.map(e => e.id) },
+        id: { in: earningsToRelease.map((e) => e.id) },
       },
       data: {
         status: EarningStatus.AVAILABLE,
@@ -814,7 +820,7 @@ export async function processWeeklyPayouts() {
 
   for (const consultant of eligibleConsultants) {
     try {
-      const earningIds = consultant.earnings.map(e => e.id);
+      const earningIds = consultant.earnings.map((e) => e.id);
 
       await processRazorpayPayout({
         consultantProfileId: consultant.id,
@@ -831,7 +837,9 @@ export async function processWeeklyPayouts() {
     }
   }
 
-  console.log(`Weekly payouts complete: ${results.processed} processed, ${results.failed} failed`);
+  console.log(
+    `Weekly payouts complete: ${results.processed} processed, ${results.failed} failed`,
+  );
   return results;
 }
 ```
@@ -845,12 +853,12 @@ name: Payout Jobs
 
 on:
   schedule:
-    - cron: '0 */1 * * *'    # Every hour: release holds
-    - cron: '30 17 * * 1'    # Monday 11 PM IST: weekly payouts
+    - cron: "0 */1 * * *" # Every hour: release holds
+    - cron: "30 17 * * 1" # Monday 11 PM IST: weekly payouts
   workflow_dispatch:
     inputs:
       job:
-        description: 'Job to run'
+        description: "Job to run"
         required: true
         type: choice
         options:
@@ -865,7 +873,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: "20"
       - run: npm ci
       - run: npx tsx jobs/release-earnings-hold.ts
         env:
@@ -878,7 +886,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: "20"
       - run: npm ci
       - run: npx tsx jobs/process-weekly-payouts.ts
         env:
@@ -905,7 +913,7 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
 export async function createStripeConnectedAccount(
   consultantProfileId: string,
   email: string,
-  country: string
+  country: string,
 ) {
   const account = await stripe.accounts.create({
     type: "express",
@@ -936,7 +944,7 @@ export async function createStripeConnectedAccount(
 export async function getStripeOnboardingLink(
   accountId: string,
   refreshUrl: string,
-  returnUrl: string
+  returnUrl: string,
 ) {
   const accountLink = await stripe.accountLinks.create({
     account: accountId,

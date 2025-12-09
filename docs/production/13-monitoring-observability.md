@@ -49,14 +49,14 @@ This document covers additional monitoring tools for logging, uptime monitoring,
 
 ### Tool Responsibilities
 
-| Tool | Category | What It Monitors |
-|------|----------|------------------|
-| **Sentry** | Errors | Exceptions, crashes, performance |
-| **PostHog** | Analytics | User behavior, conversions, features |
-| **Vercel Analytics** | Performance | Web Vitals, page speed |
-| **Better Stack (Logtail)** | Logging | Application logs, audit trails |
-| **Checkly** | Uptime | API endpoints, critical flows |
-| **Inngest** | Jobs | Background job execution |
+| Tool                       | Category    | What It Monitors                     |
+| -------------------------- | ----------- | ------------------------------------ |
+| **Sentry**                 | Errors      | Exceptions, crashes, performance     |
+| **PostHog**                | Analytics   | User behavior, conversions, features |
+| **Vercel Analytics**       | Performance | Web Vitals, page speed               |
+| **Better Stack (Logtail)** | Logging     | Application logs, audit trails       |
+| **Checkly**                | Uptime      | API endpoints, critical flows        |
+| **Inngest**                | Jobs        | Background job execution             |
 
 ---
 
@@ -113,7 +113,11 @@ class Logger {
     return logger;
   }
 
-  private log(level: LogLevel, message: string, data?: Record<string, unknown>) {
+  private log(
+    level: LogLevel,
+    message: string,
+    data?: Record<string, unknown>,
+  ) {
     const logEntry = {
       level,
       message,
@@ -268,25 +272,25 @@ auditLog({
 
 ```javascript
 // Checkly API Check: /api/health
-const response = await fetch('https://familiarise.com/api/health');
+const response = await fetch("https://familiarise.com/api/health");
 const data = await response.json();
 
-assert(response.status === 200, 'Health check should return 200');
-assert(data.status === 'ok', 'Status should be ok');
-assert(data.database === 'connected', 'Database should be connected');
+assert(response.status === 200, "Health check should return 200");
+assert(data.status === "ok", "Status should be ok");
+assert(data.database === "connected", "Database should be connected");
 ```
 
 #### Authentication Flow
 
 ```javascript
 // Checkly Browser Check: Auth Flow
-const { chromium } = require('playwright');
+const { chromium } = require("playwright");
 
 const browser = await chromium.launch();
 const page = await browser.newPage();
 
 // Navigate to sign in
-await page.goto('https://familiarise.com/auth/signin');
+await page.goto("https://familiarise.com/auth/signin");
 
 // Fill form
 await page.fill('input[name="email"]', process.env.TEST_USER_EMAIL);
@@ -296,11 +300,11 @@ await page.fill('input[name="password"]', process.env.TEST_USER_PASSWORD);
 await page.click('button[type="submit"]');
 
 // Wait for redirect
-await page.waitForURL('**/dashboard/**');
+await page.waitForURL("**/dashboard/**");
 
 // Verify dashboard loaded
-const heading = await page.textContent('h1');
-assert(heading.includes('Dashboard'), 'Should show dashboard');
+const heading = await page.textContent("h1");
+assert(heading.includes("Dashboard"), "Should show dashboard");
 
 await browser.close();
 ```
@@ -309,13 +313,13 @@ await browser.close();
 
 ```javascript
 // Checkly Browser Check: Checkout Availability
-const { chromium } = require('playwright');
+const { chromium } = require("playwright");
 
 const browser = await chromium.launch();
 const page = await browser.newPage();
 
 // Navigate to a consultant
-await page.goto('https://familiarise.com/explore/experts');
+await page.goto("https://familiarise.com/explore/experts");
 
 // Wait for results
 await page.waitForSelector('[data-testid="consultant-card"]');
@@ -328,19 +332,19 @@ await page.waitForSelector('[data-testid="book-button"]');
 
 // Verify booking button exists
 const bookButton = await page.$('[data-testid="book-button"]');
-assert(bookButton !== null, 'Book button should exist');
+assert(bookButton !== null, "Book button should exist");
 
 await browser.close();
 ```
 
 ### Check Schedule
 
-| Check | Frequency | Locations |
-|-------|-----------|-----------|
-| API Health | Every 1 min | US, EU, APAC |
-| Auth Flow | Every 5 min | US, EU |
-| Checkout Available | Every 5 min | US, EU |
-| Payment Flow | Every 15 min | US |
+| Check              | Frequency    | Locations    |
+| ------------------ | ------------ | ------------ |
+| API Health         | Every 1 min  | US, EU, APAC |
+| Auth Flow          | Every 5 min  | US, EU       |
+| Checkout Available | Every 5 min  | US, EU       |
+| Payment Flow       | Every 15 min | US           |
 
 ---
 
@@ -460,12 +464,12 @@ export async function GET() {
 
 ### Alert Categories
 
-| Category | Severity | Channel | Response Time |
-|----------|----------|---------|---------------|
-| Downtime | Critical | PagerDuty + Slack | Immediate |
-| Error Spike | High | Slack #alerts | 15 minutes |
-| Performance | Medium | Slack #alerts | 1 hour |
-| Business | Low | Email | Next business day |
+| Category    | Severity | Channel           | Response Time     |
+| ----------- | -------- | ----------------- | ----------------- |
+| Downtime    | Critical | PagerDuty + Slack | Immediate         |
+| Error Spike | High     | Slack #alerts     | 15 minutes        |
+| Performance | Medium   | Slack #alerts     | 1 hour            |
+| Business    | Low      | Email             | Next business day |
 
 ### Alert Definitions
 
@@ -565,9 +569,7 @@ export async function sendSlackAlert(alert: SlackAlert) {
             value: f.value,
             short: true,
           })),
-          footer: alert.runbook
-            ? `Runbook: ${alert.runbook}`
-            : undefined,
+          footer: alert.runbook ? `Runbook: ${alert.runbook}` : undefined,
           ts: Math.floor(Date.now() / 1000),
         },
       ],
@@ -657,7 +659,7 @@ async function checkStream(): Promise<CheckResult> {
   const start = Date.now();
   try {
     const response = await fetch(
-      `https://chat.stream-io-api.com/api/v1.0/check?api_key=${process.env.NEXT_PUBLIC_STREAM_API_KEY}`
+      `https://chat.stream-io-api.com/api/v1.0/check?api_key=${process.env.NEXT_PUBLIC_STREAM_API_KEY}`,
     );
     return {
       status: response.ok ? "ok" : "error",
@@ -735,30 +737,37 @@ export async function GET() {
 # Runbook: [Issue Name]
 
 ## Overview
+
 Brief description of the issue
 
 ## Severity
+
 Critical / High / Medium / Low
 
 ## Symptoms
+
 - What alerts fire
 - What users experience
 - What logs show
 
 ## Diagnosis Steps
+
 1. Step 1
 2. Step 2
 3. Step 3
 
 ## Resolution Steps
+
 1. Step 1
 2. Step 2
 3. Step 3
 
 ## Rollback Procedure
+
 If resolution doesn't work
 
 ## Post-Incident
+
 - Who to notify
 - What to document
 ```
@@ -769,24 +778,29 @@ If resolution doesn't work
 # Runbook: Database Connection Issues
 
 ## Overview
+
 Database connections failing or timing out
 
 ## Severity
+
 Critical
 
 ## Symptoms
+
 - Health check shows `database: error`
 - API routes returning 500 errors
 - Sentry errors mentioning Prisma/PostgreSQL
 - Users unable to sign in or view data
 
 ## Diagnosis Steps
+
 1. Check Supabase dashboard for database status
 2. Check connection pool metrics
 3. Review recent deployments
 4. Check for slow/blocking queries
 
 ## Resolution Steps
+
 1. **If Supabase outage:**
    - Check status.supabase.com
    - Wait for resolution
@@ -803,10 +817,12 @@ Critical
    - Add index if needed
 
 ## Rollback Procedure
+
 - Revert recent deployment if caused by code change
 - Scale down if traffic spike caused exhaustion
 
 ## Post-Incident
+
 - Notify: Engineering team, Product
 - Document: Root cause, timeline, resolution
 - Action items: Prevent recurrence
@@ -829,16 +845,16 @@ PAGERDUTY_ROUTING_KEY=xxx
 
 ### Monitoring URLs
 
-| Service | Dashboard URL |
-|---------|---------------|
-| Sentry | sentry.io/organizations/xxx |
-| PostHog | app.posthog.com/project/xxx |
-| Vercel | vercel.com/xxx/analytics |
-| Better Stack | logs.betterstack.com |
-| Checkly | app.checklyhq.com |
-| Inngest | app.inngest.com |
-| Upstash | console.upstash.com |
-| Supabase | app.supabase.com/project/xxx |
+| Service      | Dashboard URL                |
+| ------------ | ---------------------------- |
+| Sentry       | sentry.io/organizations/xxx  |
+| PostHog      | app.posthog.com/project/xxx  |
+| Vercel       | vercel.com/xxx/analytics     |
+| Better Stack | logs.betterstack.com         |
+| Checkly      | app.checklyhq.com            |
+| Inngest      | app.inngest.com              |
+| Upstash      | console.upstash.com          |
+| Supabase     | app.supabase.com/project/xxx |
 
 ### Verification Checklist
 

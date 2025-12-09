@@ -732,7 +732,7 @@ export async function createPayout(
   connectedAccountId: string,
   amount: number,
   currency: string,
-  earningIds: string[]
+  earningIds: string[],
 ) {
   // Create transfer to connected account
   const transfer = await stripe.transfers.create({
@@ -784,7 +784,7 @@ export async function POST(req: Request) {
     event = stripe.webhooks.constructEvent(
       body,
       signature,
-      process.env.STRIPE_CONNECT_WEBHOOK_SECRET!
+      process.env.STRIPE_CONNECT_WEBHOOK_SECRET!,
     );
   } catch (err) {
     return Response.json({ error: "Invalid signature" }, { status: 401 });

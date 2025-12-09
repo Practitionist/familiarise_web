@@ -41,7 +41,9 @@ const TEST_CONFIG = {
 
   // Test slot time (ensure this is in the future and doesn't overlap with real bookings)
   SLOT_START: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), // Tomorrow
-  SLOT_END: new Date(Date.now() + 24 * 60 * 60 * 1000 + 60 * 60 * 1000).toISOString(), // Tomorrow + 1 hour
+  SLOT_END: new Date(
+    Date.now() + 24 * 60 * 60 * 1000 + 60 * 60 * 1000,
+  ).toISOString(), // Tomorrow + 1 hour
 };
 
 // ============================================================================
@@ -63,7 +65,7 @@ const createCheckoutInput = (userId: string): CheckoutInput => ({
 
 async function testConcurrentCheckout() {
   console.log("\n🧪 Starting Concurrent Checkout Race Condition Test\n");
-  console.log("=" .repeat(80));
+  console.log("=".repeat(80));
 
   try {
     // Cleanup: Delete any existing test data
@@ -90,7 +92,7 @@ async function testConcurrentCheckout() {
     const results = await Promise.allSettled([checkoutA, checkoutB]);
 
     console.log("\n📊 Checkout Results:");
-    console.log("-" .repeat(80));
+    console.log("-".repeat(80));
 
     const successCount = results.filter((r) => r.status === "fulfilled").length;
     const failureCount = results.filter((r) => r.status === "rejected").length;
@@ -111,7 +113,7 @@ async function testConcurrentCheckout() {
 
     // Verify: Database state
     console.log("\n🔍 Verifying Database State:");
-    console.log("-" .repeat(80));
+    console.log("-".repeat(80));
 
     const appointments = await prisma.appointment.findMany({
       where: {
@@ -158,7 +160,7 @@ async function testConcurrentCheckout() {
 
     // Test Assertions
     console.log("\n✅ Test Assertions:");
-    console.log("-" .repeat(80));
+    console.log("-".repeat(80));
 
     const assertions = [
       {
@@ -176,7 +178,9 @@ async function testConcurrentCheckout() {
       {
         condition:
           appointments.length > 0 &&
-          appointments[0].slotsOfAppointment.every((s) => s.isTentative === false),
+          appointments[0].slotsOfAppointment.every(
+            (s) => s.isTentative === false,
+          ),
         message: `Appointment slots should be confirmed (isTentative=false)`,
       },
       {
@@ -185,7 +189,8 @@ async function testConcurrentCheckout() {
       },
       {
         condition:
-          payments.length > 0 && payments[0].paymentStatus === PaymentStatus.SUCCEEDED,
+          payments.length > 0 &&
+          payments[0].paymentStatus === PaymentStatus.SUCCEEDED,
         message: `Payment status should be SUCCEEDED`,
       },
     ];
@@ -199,7 +204,9 @@ async function testConcurrentCheckout() {
 
     console.log("\n" + "=".repeat(80));
     if (allPassed) {
-      console.log("🎉 ALL TESTS PASSED - Race condition fix is working correctly!");
+      console.log(
+        "🎉 ALL TESTS PASSED - Race condition fix is working correctly!",
+      );
     } else {
       console.log("❌ SOME TESTS FAILED - Race condition fix needs review");
     }

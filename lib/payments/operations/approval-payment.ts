@@ -57,10 +57,14 @@ export async function createApprovalPaymentIntent(
 ): Promise<ApprovalPaymentResult> {
   // Validate params
   if (params.appointmentType === "CONSULTATION" && !params.consultationId) {
-    throw new Error("consultationId required for CONSULTATION appointment type");
+    throw new Error(
+      "consultationId required for CONSULTATION appointment type",
+    );
   }
   if (params.appointmentType === "SUBSCRIPTION" && !params.subscriptionId) {
-    throw new Error("subscriptionId required for SUBSCRIPTION appointment type");
+    throw new Error(
+      "subscriptionId required for SUBSCRIPTION appointment type",
+    );
   }
 
   // FIX Issue #7: Check for existing payment to prevent duplicates
@@ -70,7 +74,9 @@ export async function createApprovalPaymentIntent(
   });
 
   if (hasExistingPayment) {
-    throw new Error("A payment link has already been generated for this request");
+    throw new Error(
+      "A payment link has already been generated for this request",
+    );
   }
 
   // BUG-D: Validate user has consultee profile (required for webhook to succeed)
@@ -85,7 +91,7 @@ export async function createApprovalPaymentIntent(
 
   if (!user.consulteeProfile) {
     throw new Error(
-      "User does not have a consultee profile. Please complete profile setup first."
+      "User does not have a consultee profile. Please complete profile setup first.",
     );
   }
 
@@ -192,9 +198,11 @@ async function calculateAmount(params: CreateApprovalPaymentParams): Promise<{
  * Build metadata for webhook processing
  * This metadata will be passed to handlePaymentSuccess() when payment completes
  */
-function buildApprovalMetadata(
-  params: CreateApprovalPaymentParams,
-): { appointmentId: string; appointmentType: string; [key: string]: string } {
+function buildApprovalMetadata(params: CreateApprovalPaymentParams): {
+  appointmentId: string;
+  appointmentType: string;
+  [key: string]: string;
+} {
   const metadata: Record<string, string> = {
     appointmentId: "pending", // Will be linked after payment success
     appointmentType: params.appointmentType,
@@ -255,7 +263,9 @@ export async function checkExistingPayment(params: {
 
     // Check if payment exists and is not expired
     const payment = consultation?.appointment?.payment?.find(
-      (p) => p.paymentStatus === PaymentStatus.SUCCEEDED || p.paymentStatus === PaymentStatus.PENDING,
+      (p) =>
+        p.paymentStatus === PaymentStatus.SUCCEEDED ||
+        p.paymentStatus === PaymentStatus.PENDING,
     );
 
     return !!payment;
@@ -276,7 +286,9 @@ export async function checkExistingPayment(params: {
     // Check any appointment for payment
     const hasPayment = subscription?.appointments.some((apt) =>
       apt.payment?.some(
-        (p) => p.paymentStatus === PaymentStatus.SUCCEEDED || p.paymentStatus === PaymentStatus.PENDING,
+        (p) =>
+          p.paymentStatus === PaymentStatus.SUCCEEDED ||
+          p.paymentStatus === PaymentStatus.PENDING,
       ),
     );
 

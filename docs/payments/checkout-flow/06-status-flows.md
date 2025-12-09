@@ -22,32 +22,32 @@ This document explains the complete status lifecycle for all 4 event types, incl
 
 ### Request Status (Consultation & Subscription)
 
-| Status | Description |
-|--------|-------------|
-| `PENDING` | User submitted request, awaiting payment or consultant action |
+| Status                     | Description                                                   |
+| -------------------------- | ------------------------------------------------------------- |
+| `PENDING`                  | User submitted request, awaiting payment or consultant action |
 | `APPROVED_PENDING_PAYMENT` | Consultant approved (Pay Later flow), waiting for user to pay |
-| `APPROVED` | Payment received, booking confirmed |
-| `REJECTED` | Consultant rejected OR payment expired |
-| `CANCELLED` | User or consultant cancelled |
-| `EXPIRED` | Request timed out without action |
+| `APPROVED`                 | Payment received, booking confirmed                           |
+| `REJECTED`                 | Consultant rejected OR payment expired                        |
+| `CANCELLED`                | User or consultant cancelled                                  |
+| `EXPIRED`                  | Request timed out without action                              |
 
 ### Event Status (Webinar & Class)
 
-| Status | Description |
-|--------|-------------|
-| `DRAFT` | Event created but not published |
-| `SCHEDULED` | Event published with confirmed date/time |
-| `IN_PROGRESS` | Event is currently happening |
-| `COMPLETED` | Event finished |
-| `CANCELLED` | Event was cancelled |
+| Status        | Description                              |
+| ------------- | ---------------------------------------- |
+| `DRAFT`       | Event created but not published          |
+| `SCHEDULED`   | Event published with confirmed date/time |
+| `IN_PROGRESS` | Event is currently happening             |
+| `COMPLETED`   | Event finished                           |
+| `CANCELLED`   | Event was cancelled                      |
 
 ### Payment Status
 
-| Status | Description |
-|--------|-------------|
-| `PENDING` | Payment initiated, awaiting completion |
-| `SUCCEEDED` | Payment completed successfully |
-| `FAILED` | Payment failed or was cancelled |
+| Status      | Description                            |
+| ----------- | -------------------------------------- |
+| `PENDING`   | Payment initiated, awaiting completion |
+| `SUCCEEDED` | Payment completed successfully         |
+| `FAILED`    | Payment failed or was cancelled        |
 
 ---
 
@@ -104,13 +104,13 @@ flowchart TD
 
 ### Consultation: Mock vs Real Payment
 
-| Step | Real Payment (Razorpay) | Mock Payment |
-|------|------------------------|--------------|
-| 1. Checkout | `handleCheckout(data, userId, false)` | `handleCheckout(data, userId, true)` |
-| 2. Payment Intent | Real Razorpay Order created | Fake ID: `order_mock_abc123` |
-| 3. User Action | Redirected to Razorpay checkout | No redirect, instant success |
-| 4. Confirmation | Webhook from Razorpay | Direct DB update in same transaction |
-| 5. Status Update | `handlePaymentSuccess()` via webhook | `handlePaymentSuccess()` called directly |
+| Step              | Real Payment (Razorpay)               | Mock Payment                             |
+| ----------------- | ------------------------------------- | ---------------------------------------- |
+| 1. Checkout       | `handleCheckout(data, userId, false)` | `handleCheckout(data, userId, true)`     |
+| 2. Payment Intent | Real Razorpay Order created           | Fake ID: `order_mock_abc123`             |
+| 3. User Action    | Redirected to Razorpay checkout       | No redirect, instant success             |
+| 4. Confirmation   | Webhook from Razorpay                 | Direct DB update in same transaction     |
+| 5. Status Update  | `handlePaymentSuccess()` via webhook  | `handlePaymentSuccess()` called directly |
 
 ---
 
@@ -175,14 +175,14 @@ Subscription: PENDING → (payment) → PENDING → (consultant allocates slots)
 
 ### Subscription: Mock vs Real Payment
 
-| Step | Real Payment (Razorpay) | Mock Payment |
-|------|------------------------|--------------|
-| 1. Checkout | Creates real Razorpay order | Creates `order_mock_xxx` |
-| 2. Payment UI | User sees Razorpay checkout | No UI, instant completion |
-| 3. Webhook | Razorpay sends webhook | Skipped - direct DB update |
-| 4. Status After Payment | `PENDING` (stays for slot allocation) | `PENDING` (same behavior) |
-| 5. Appears in Requests | Yes | Yes |
-| 6. After Slot Allocation | `APPROVED` | `APPROVED` |
+| Step                     | Real Payment (Razorpay)               | Mock Payment               |
+| ------------------------ | ------------------------------------- | -------------------------- |
+| 1. Checkout              | Creates real Razorpay order           | Creates `order_mock_xxx`   |
+| 2. Payment UI            | User sees Razorpay checkout           | No UI, instant completion  |
+| 3. Webhook               | Razorpay sends webhook                | Skipped - direct DB update |
+| 4. Status After Payment  | `PENDING` (stays for slot allocation) | `PENDING` (same behavior)  |
+| 5. Appears in Requests   | Yes                                   | Yes                        |
+| 6. After Slot Allocation | `APPROVED`                            | `APPROVED`                 |
 
 ---
 
@@ -231,13 +231,13 @@ flowchart TD
 
 ### Webinar: Mock vs Real Payment
 
-| Step | Real Payment | Mock Payment |
-|------|--------------|--------------|
-| 1. Register | Creates payment intent | Creates mock intent |
-| 2. Payment | User pays via gateway | Instant success |
-| 3. Slot Creation | Via webhook | Direct in transaction |
-| 4. User Joins | Added to shared appointment | Same |
-| 5. Webinar Status | Stays `SCHEDULED` | Stays `SCHEDULED` |
+| Step              | Real Payment                | Mock Payment          |
+| ----------------- | --------------------------- | --------------------- |
+| 1. Register       | Creates payment intent      | Creates mock intent   |
+| 2. Payment        | User pays via gateway       | Instant success       |
+| 3. Slot Creation  | Via webhook                 | Direct in transaction |
+| 4. User Joins     | Added to shared appointment | Same                  |
+| 5. Webinar Status | Stays `SCHEDULED`           | Stays `SCHEDULED`     |
 
 **Note:** Webinar status doesn't change based on user payments. It only changes based on event lifecycle (DRAFT → SCHEDULED → IN_PROGRESS → COMPLETED).
 
@@ -287,12 +287,12 @@ flowchart TD
 
 ### Class: Mock vs Real Payment
 
-| Step | Real Payment | Mock Payment |
-|------|--------------|--------------|
-| 1. Enroll | Creates payment intent | Creates mock intent |
-| 2. Payment | User pays via gateway | Instant success |
+| Step              | Real Payment                     | Mock Payment                |
+| ----------------- | -------------------------------- | --------------------------- |
+| 1. Enroll         | Creates payment intent           | Creates mock intent         |
+| 2. Payment        | User pays via gateway            | Instant success             |
 | 3. Session Access | Via webhook - joins all sessions | Direct - joins all sessions |
-| 4. Class Status | Stays `SCHEDULED` | Stays `SCHEDULED` |
+| 4. Class Status   | Stays `SCHEDULED`                | Stays `SCHEDULED`           |
 
 ---
 
@@ -300,16 +300,16 @@ flowchart TD
 
 ### Complete Comparison Table
 
-| Aspect | Real Payment (Razorpay/Stripe) | Mock Payment |
-|--------|-------------------------------|--------------|
-| **API Call** | Real gateway API | None (fake ID generated) |
-| **Payment ID Format** | `order_abc123...` (Razorpay) | `order_mock_abc123...` |
-| **User Experience** | Redirect to payment page | No redirect, instant |
-| **Confirmation Method** | Webhook callback | Direct DB update |
-| **Time to Complete** | User-dependent (seconds to minutes) | ~500ms (simulated delay) |
-| **Money Charged** | Yes (real money) | No |
-| **Use Case** | Production | Development/Testing |
-| **Environment** | Any | `NODE_ENV=development` or `ENABLE_MOCK_PAYMENTS=true` |
+| Aspect                  | Real Payment (Razorpay/Stripe)      | Mock Payment                                          |
+| ----------------------- | ----------------------------------- | ----------------------------------------------------- |
+| **API Call**            | Real gateway API                    | None (fake ID generated)                              |
+| **Payment ID Format**   | `order_abc123...` (Razorpay)        | `order_mock_abc123...`                                |
+| **User Experience**     | Redirect to payment page            | No redirect, instant                                  |
+| **Confirmation Method** | Webhook callback                    | Direct DB update                                      |
+| **Time to Complete**    | User-dependent (seconds to minutes) | ~500ms (simulated delay)                              |
+| **Money Charged**       | Yes (real money)                    | No                                                    |
+| **Use Case**            | Production                          | Development/Testing                                   |
+| **Environment**         | Any                                 | `NODE_ENV=development` or `ENABLE_MOCK_PAYMENTS=true` |
 
 ### How Mock Payments Work
 
@@ -403,29 +403,29 @@ flowchart TD
 
 ### Cleanup Timing
 
-| Scenario | Timeout | Cleanup Action |
-|----------|---------|----------------|
-| Direct payment abandoned | 30 min (explicit) or 35 min (fallback) | Delete appointment + payment |
-| Pay Later payment expired | 48 hours | Reset to REJECTED |
-| Mock payment (never expires) | N/A | Same cleanup if abandoned |
+| Scenario                     | Timeout                                | Cleanup Action               |
+| ---------------------------- | -------------------------------------- | ---------------------------- |
+| Direct payment abandoned     | 30 min (explicit) or 35 min (fallback) | Delete appointment + payment |
+| Pay Later payment expired    | 48 hours                               | Reset to REJECTED            |
+| Mock payment (never expires) | N/A                                    | Same cleanup if abandoned    |
 
 ### Files Involved
 
-| File | Purpose |
-|------|---------|
-| `jobs/cleanup-abandoned-payments.ts` | Main cleanup job |
+| File                                          | Purpose                         |
+| --------------------------------------------- | ------------------------------- |
+| `jobs/cleanup-abandoned-payments.ts`          | Main cleanup job                |
 | `app/api/cleanup/abandoned-payments/route.ts` | API endpoint for manual trigger |
-| `app/api/cleanup/approval-payments/route.ts` | Revert APPROVED_PENDING_PAYMENT |
+| `app/api/cleanup/approval-payments/route.ts`  | Revert APPROVED_PENDING_PAYMENT |
 
 ---
 
 ## Quick Reference: Status After Each Action
 
-| Event Type | After Checkout | After Payment | After Slot Allocation | After Event |
-|------------|---------------|---------------|----------------------|-------------|
-| **Consultation** | PENDING | APPROVED | N/A | COMPLETED* |
-| **Subscription** | PENDING | PENDING | APPROVED | COMPLETED* |
-| **Webinar** | N/A (pre-scheduled) | User joins | N/A | COMPLETED |
-| **Class** | N/A (pre-scheduled) | User enrolls | N/A | COMPLETED |
+| Event Type       | After Checkout      | After Payment | After Slot Allocation | After Event |
+| ---------------- | ------------------- | ------------- | --------------------- | ----------- |
+| **Consultation** | PENDING             | APPROVED      | N/A                   | COMPLETED\* |
+| **Subscription** | PENDING             | PENDING       | APPROVED              | COMPLETED\* |
+| **Webinar**      | N/A (pre-scheduled) | User joins    | N/A                   | COMPLETED   |
+| **Class**        | N/A (pre-scheduled) | User enrolls  | N/A                   | COMPLETED   |
 
-*Consultation/Subscription don't have a formal COMPLETED status - they're marked via meeting completion.
+\*Consultation/Subscription don't have a formal COMPLETED status - they're marked via meeting completion.

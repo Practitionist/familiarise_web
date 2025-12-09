@@ -50,7 +50,7 @@ async function runTest() {
     "Concurrent Users": config.concurrentUsers,
     "Slot Time": new Date(slot.start).toLocaleString(),
     "Consultant ID": consultantId,
-    "Validation": "Booking registry checks if slot already taken",
+    Validation: "Booking registry checks if slot already taken",
     "Expected Outcome": `${config.expectedSuccesses} success, ${config.expectedConflicts} conflicts`,
   });
 

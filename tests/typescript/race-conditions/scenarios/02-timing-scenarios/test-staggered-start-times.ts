@@ -65,24 +65,38 @@ async function runTest() {
   const promises: Promise<BookingResult>[] = [];
 
   // User 1: Start immediately
-  promises.push(simulateBookingAttempt(slot.start, consultantId, generateUserId(1)));
+  promises.push(
+    simulateBookingAttempt(slot.start, consultantId, generateUserId(1)),
+  );
 
   // User 2: Start after 50ms
   promises.push(
     new Promise<BookingResult>((resolve) => {
       setTimeout(async () => {
-        resolve(await simulateBookingAttempt(slot.start, consultantId, generateUserId(2)));
+        resolve(
+          await simulateBookingAttempt(
+            slot.start,
+            consultantId,
+            generateUserId(2),
+          ),
+        );
       }, 50);
-    })
+    }),
   );
 
   // User 3: Start after 100ms
   promises.push(
     new Promise<BookingResult>((resolve) => {
       setTimeout(async () => {
-        resolve(await simulateBookingAttempt(slot.start, consultantId, generateUserId(3)));
+        resolve(
+          await simulateBookingAttempt(
+            slot.start,
+            consultantId,
+            generateUserId(3),
+          ),
+        );
       }, 100);
-    })
+    }),
   );
 
   const results = await Promise.all(promises);

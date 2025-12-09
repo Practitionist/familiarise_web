@@ -101,11 +101,11 @@ model User {
 
 ### Provider Integration
 
-| Provider | OAuth | Calendar API | Webhook Support |
-|----------|-------|--------------|-----------------|
-| Google Calendar | OAuth 2.0 | Google Calendar API v3 | Push notifications |
-| Microsoft Outlook | OAuth 2.0 | Microsoft Graph API | Subscriptions |
-| Apple Calendar | OAuth 2.0 | CalDAV | Polling only |
+| Provider          | OAuth     | Calendar API           | Webhook Support    |
+| ----------------- | --------- | ---------------------- | ------------------ |
+| Google Calendar   | OAuth 2.0 | Google Calendar API v3 | Push notifications |
+| Microsoft Outlook | OAuth 2.0 | Microsoft Graph API    | Subscriptions      |
+| Apple Calendar    | OAuth 2.0 | CalDAV                 | Polling only       |
 
 ### Architecture Diagram
 
@@ -173,8 +173,8 @@ POST /api/webhooks/google-calendar
 ```typescript
 // lib/calendar/service.ts
 
-import { google } from 'googleapis';
-import { Client } from '@microsoft/microsoft-graph-client';
+import { google } from "googleapis";
+import { Client } from "@microsoft/microsoft-graph-client";
 
 export interface CalendarEvent {
   id?: string;
@@ -196,9 +196,14 @@ export interface BusyTime {
 export abstract class CalendarProvider {
   abstract getBusyTimes(start: Date, end: Date): Promise<BusyTime[]>;
   abstract createEvent(event: CalendarEvent): Promise<string>;
-  abstract updateEvent(eventId: string, event: Partial<CalendarEvent>): Promise<void>;
+  abstract updateEvent(
+    eventId: string,
+    event: Partial<CalendarEvent>,
+  ): Promise<void>;
   abstract deleteEvent(eventId: string): Promise<void>;
-  abstract listCalendars(): Promise<{ id: string; name: string; primary: boolean }[]>;
+  abstract listCalendars(): Promise<
+    { id: string; name: string; primary: boolean }[]
+  >;
 }
 
 // Google Calendar Implementation
@@ -208,10 +213,13 @@ export class GoogleCalendarProvider extends CalendarProvider {
   constructor(accessToken: string, refreshToken: string) {
     const oauth2Client = new google.auth.OAuth2(
       process.env.GOOGLE_CLIENT_ID,
-      process.env.GOOGLE_CLIENT_SECRET
+      process.env.GOOGLE_CLIENT_SECRET,
     );
-    oauth2Client.setCredentials({ access_token: accessToken, refresh_token: refreshToken });
-    this.calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+    oauth2Client.setCredentials({
+      access_token: accessToken,
+      refresh_token: refreshToken,
+    });
+    this.calendar = google.calendar({ version: "v3", auth: oauth2Client });
   }
 
   async getBusyTimes(start: Date, end: Date): Promise<BusyTime[]> {
@@ -219,12 +227,12 @@ export class GoogleCalendarProvider extends CalendarProvider {
       requestBody: {
         timeMin: start.toISOString(),
         timeMax: end.toISOString(),
-        items: [{ id: 'primary' }],
+        items: [{ id: "primary" }],
       },
     });
 
     const busy = response.data.calendars?.primary?.busy || [];
-    return busy.map(b => ({
+    return busy.map((b) => ({
       start: new Date(b.start!),
       end: new Date(b.end!),
     }));
@@ -232,7 +240,7 @@ export class GoogleCalendarProvider extends CalendarProvider {
 
   async createEvent(event: CalendarEvent): Promise<string> {
     const response = await this.calendar.events.insert({
-      calendarId: 'primary',
+      calendarId: "primary",
       conferenceDataVersion: 1,
       requestBody: {
         summary: event.title,
@@ -240,12 +248,15 @@ export class GoogleCalendarProvider extends CalendarProvider {
         start: { dateTime: event.start.toISOString() },
         end: { dateTime: event.end.toISOString() },
         location: event.meetingUrl || event.location,
-        attendees: event.attendees?.map(a => ({ email: a.email, displayName: a.name })),
+        attendees: event.attendees?.map((a) => ({
+          email: a.email,
+          displayName: a.name,
+        })),
         reminders: {
           useDefault: false,
           overrides: [
-            { method: 'popup', minutes: 60 },
-            { method: 'popup', minutes: 10 },
+            { method: "popup", minutes: 60 },
+            { method: "popup", minutes: 10 },
           ],
         },
       },
@@ -254,14 +265,19 @@ export class GoogleCalendarProvider extends CalendarProvider {
     return response.data.id!;
   }
 
-  async updateEvent(eventId: string, event: Partial<CalendarEvent>): Promise<void> {
+  async updateEvent(
+    eventId: string,
+    event: Partial<CalendarEvent>,
+  ): Promise<void> {
     await this.calendar.events.patch({
-      calendarId: 'primary',
+      calendarId: "primary",
       eventId,
       requestBody: {
         summary: event.title,
         description: event.description,
-        start: event.start ? { dateTime: event.start.toISOString() } : undefined,
+        start: event.start
+          ? { dateTime: event.start.toISOString() }
+          : undefined,
         end: event.end ? { dateTime: event.end.toISOString() } : undefined,
       },
     });
@@ -269,18 +285,20 @@ export class GoogleCalendarProvider extends CalendarProvider {
 
   async deleteEvent(eventId: string): Promise<void> {
     await this.calendar.events.delete({
-      calendarId: 'primary',
+      calendarId: "primary",
       eventId,
     });
   }
 
   async listCalendars() {
     const response = await this.calendar.calendarList.list();
-    return response.data.items?.map(c => ({
-      id: c.id!,
-      name: c.summary!,
-      primary: c.primary || false,
-    })) || [];
+    return (
+      response.data.items?.map((c) => ({
+        id: c.id!,
+        name: c.summary!,
+        primary: c.primary || false,
+      })) || []
+    );
   }
 }
 
@@ -295,13 +313,11 @@ export class MicrosoftCalendarProvider extends CalendarProvider {
   }
 
   async getBusyTimes(start: Date, end: Date): Promise<BusyTime[]> {
-    const response = await this.client
-      .api('/me/calendar/getSchedule')
-      .post({
-        schedules: ['me'],
-        startTime: { dateTime: start.toISOString(), timeZone: 'UTC' },
-        endTime: { dateTime: end.toISOString(), timeZone: 'UTC' },
-      });
+    const response = await this.client.api("/me/calendar/getSchedule").post({
+      schedules: ["me"],
+      startTime: { dateTime: start.toISOString(), timeZone: "UTC" },
+      endTime: { dateTime: end.toISOString(), timeZone: "UTC" },
+    });
 
     const items = response.value[0]?.scheduleItems || [];
     return items.map((item: any) => ({
@@ -311,15 +327,15 @@ export class MicrosoftCalendarProvider extends CalendarProvider {
   }
 
   async createEvent(event: CalendarEvent): Promise<string> {
-    const response = await this.client.api('/me/calendar/events').post({
+    const response = await this.client.api("/me/calendar/events").post({
       subject: event.title,
-      body: { contentType: 'text', content: event.description || '' },
-      start: { dateTime: event.start.toISOString(), timeZone: 'UTC' },
-      end: { dateTime: event.end.toISOString(), timeZone: 'UTC' },
+      body: { contentType: "text", content: event.description || "" },
+      start: { dateTime: event.start.toISOString(), timeZone: "UTC" },
+      end: { dateTime: event.end.toISOString(), timeZone: "UTC" },
       location: { displayName: event.location || event.meetingUrl },
-      attendees: event.attendees?.map(a => ({
+      attendees: event.attendees?.map((a) => ({
         emailAddress: { address: a.email, name: a.name },
-        type: 'required',
+        type: "required",
       })),
     });
 
@@ -331,13 +347,16 @@ export class MicrosoftCalendarProvider extends CalendarProvider {
 
 // Factory
 export function getCalendarProvider(
-  provider: 'google' | 'microsoft',
-  tokens: { accessToken: string; refreshToken?: string }
+  provider: "google" | "microsoft",
+  tokens: { accessToken: string; refreshToken?: string },
 ): CalendarProvider {
   switch (provider) {
-    case 'google':
-      return new GoogleCalendarProvider(tokens.accessToken, tokens.refreshToken!);
-    case 'microsoft':
+    case "google":
+      return new GoogleCalendarProvider(
+        tokens.accessToken,
+        tokens.refreshToken!,
+      );
+    case "microsoft":
       return new MicrosoftCalendarProvider(tokens.accessToken);
     default:
       throw new Error(`Unsupported provider: ${provider}`);
@@ -352,7 +371,7 @@ export function getCalendarProvider(
 
 export async function getAvailableSlots(
   consultantProfileId: string,
-  date: Date
+  date: Date,
 ): Promise<TimeSlot[]> {
   const consultant = await prisma.consultantProfile.findUnique({
     where: { id: consultantProfileId },
@@ -360,18 +379,24 @@ export async function getAvailableSlots(
   });
 
   // 1. Get platform availability slots
-  const platformSlots = await getPlatformAvailability(consultantProfileId, date);
+  const platformSlots = await getPlatformAvailability(
+    consultantProfileId,
+    date,
+  );
 
   // 2. Get external calendar busy times
   const calendarAccount = consultant?.user.accounts.find(
-    a => a.provider === 'google' || a.provider === 'azure-ad'
+    (a) => a.provider === "google" || a.provider === "azure-ad",
   );
 
   let busyTimes: BusyTime[] = [];
   if (calendarAccount?.access_token) {
     const provider = getCalendarProvider(
-      calendarAccount.provider as 'google' | 'microsoft',
-      { accessToken: calendarAccount.access_token, refreshToken: calendarAccount.refresh_token }
+      calendarAccount.provider as "google" | "microsoft",
+      {
+        accessToken: calendarAccount.access_token,
+        refreshToken: calendarAccount.refresh_token,
+      },
     );
 
     const dayStart = startOfDay(date);
@@ -385,11 +410,15 @@ export async function getAvailableSlots(
   return availableSlots;
 }
 
-function subtractBusyTimes(slots: TimeSlot[], busyTimes: BusyTime[]): TimeSlot[] {
-  return slots.filter(slot => {
-    return !busyTimes.some(busy =>
-      (slot.start >= busy.start && slot.start < busy.end) ||
-      (slot.end > busy.start && slot.end <= busy.end)
+function subtractBusyTimes(
+  slots: TimeSlot[],
+  busyTimes: BusyTime[],
+): TimeSlot[] {
+  return slots.filter((slot) => {
+    return !busyTimes.some(
+      (busy) =>
+        (slot.start >= busy.start && slot.start < busy.end) ||
+        (slot.end > busy.start && slot.end <= busy.end),
     );
   });
 }
@@ -400,15 +429,27 @@ function subtractBusyTimes(slots: TimeSlot[], busyTimes: BusyTime[]): TimeSlot[]
 ```typescript
 // lib/booking/calendar-sync.ts
 
-export async function syncBookingToCalendars(appointmentId: string): Promise<void> {
+export async function syncBookingToCalendars(
+  appointmentId: string,
+): Promise<void> {
   const appointment = await prisma.appointment.findUnique({
     where: { id: appointmentId },
     include: {
-      slotOfAppointments: { include: { user: { include: { accounts: true } } } },
+      slotOfAppointments: {
+        include: { user: { include: { accounts: true } } },
+      },
       consultation: {
         include: {
-          consultationPlan: { include: { consultantProfile: { include: { user: { include: { accounts: true } } } } } },
-          consulteeProfile: { include: { user: { include: { accounts: true } } } },
+          consultationPlan: {
+            include: {
+              consultantProfile: {
+                include: { user: { include: { accounts: true } } },
+              },
+            },
+          },
+          consulteeProfile: {
+            include: { user: { include: { accounts: true } } },
+          },
         },
       },
       // ... other appointment types
@@ -436,16 +477,22 @@ export async function syncBookingToCalendars(appointmentId: string): Promise<voi
 
   // Sync to consultant's calendar
   if (consultant.calendarAccount) {
-    const provider = getCalendarProvider(consultant.calendarAccount.provider, consultant.calendarAccount);
+    const provider = getCalendarProvider(
+      consultant.calendarAccount.provider,
+      consultant.calendarAccount,
+    );
     const eventId = await provider.createEvent(event);
-    await storeCalendarEventId(appointmentId, 'consultant', eventId);
+    await storeCalendarEventId(appointmentId, "consultant", eventId);
   }
 
   // Sync to consultee's calendar
   if (consultee.calendarAccount) {
-    const provider = getCalendarProvider(consultee.calendarAccount.provider, consultee.calendarAccount);
+    const provider = getCalendarProvider(
+      consultee.calendarAccount.provider,
+      consultee.calendarAccount,
+    );
     const eventId = await provider.createEvent(event);
-    await storeCalendarEventId(appointmentId, 'consultee', eventId);
+    await storeCalendarEventId(appointmentId, "consultee", eventId);
   }
 }
 ```

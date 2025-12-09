@@ -65,7 +65,7 @@ type SubscriptionCheckoutResult = {
 function buildPaymentMetadata(
   data: CheckoutInput,
   userId: string,
-): { appointmentId: string; appointmentType: string;[key: string]: string } {
+): { appointmentId: string; appointmentType: string; [key: string]: string } {
   return {
     appointmentId: "pending",
     appointmentType: data.appointmentType,
@@ -111,7 +111,10 @@ export class PaymentIntentManager {
       const paymentResponse = await createPaymentIntent(params);
 
       // Track the intent for potential cleanup
-      this.activeIntents.set(paymentResponse.id, params.metadata.userId || "unknown");
+      this.activeIntents.set(
+        paymentResponse.id,
+        params.metadata.userId || "unknown",
+      );
 
       return paymentResponse;
     } catch (error) {
@@ -327,7 +330,7 @@ export async function calculateAmountAndValidate(
       amount,
       currency,
       discountCodeId,
-      consulteeProfileId: user.consulteeProfile.id
+      consulteeProfileId: user.consulteeProfile.id,
     };
   });
 }
@@ -558,11 +561,16 @@ async function acquireCheckoutLock(
     // Get consultant user ID from plan
     let consultantUserId: string;
 
-    if (appointmentType === "CONSULTATION" || appointmentType === "SUBSCRIPTION") {
+    if (
+      appointmentType === "CONSULTATION" ||
+      appointmentType === "SUBSCRIPTION"
+    ) {
       consultantUserId = planData.consultantProfile!.userId;
     } else {
       // For WEBINAR/CLASS with slots (shouldn't happen but handle gracefully)
-      throw new Error("Invalid checkout configuration: slot-based checkout for event type");
+      throw new Error(
+        "Invalid checkout configuration: slot-based checkout for event type",
+      );
     }
 
     console.log(
@@ -689,7 +697,9 @@ async function verifyPlanExistsInsideLock(
   }
 
   if (!planExists) {
-    throw new Error("This plan is no longer available. Please refresh and try again.");
+    throw new Error(
+      "This plan is no longer available. Please refresh and try again.",
+    );
   }
 }
 
@@ -905,7 +915,9 @@ export async function handleSubscriptionCheckout(
   const subscription = await tx.subscription.create({
     data: {
       subscriptionPlanId: plan.id,
-      requestStatus: skipPayment ? RequestStatus.APPROVED : RequestStatus.PENDING,
+      requestStatus: skipPayment
+        ? RequestStatus.APPROVED
+        : RequestStatus.PENDING,
       requestedById: consulteeProfileId,
       requestNotes: data.notes,
       bookingSource: "DIRECT_CHECKOUT",
@@ -982,7 +994,7 @@ export async function handleWebinarCheckout(
   // Prevents slot timing from defaulting to new Date()
   if (!webinar.appointment?.slotsOfAppointment?.[0]) {
     throw new Error(
-      "This webinar has not been scheduled yet. Please wait for the consultant to set a date and time."
+      "This webinar has not been scheduled yet. Please wait for the consultant to set a date and time.",
     );
   }
 
@@ -990,10 +1002,13 @@ export async function handleWebinarCheckout(
   // TODO: (Optional) Add configurable buffer time before webinar ends if needed in future
   //       e.g., block registration 5 minutes before scheduled end time
   const blockedStatuses = ["COMPLETED", "CANCELLED"] as const;
-  if (blockedStatuses.includes(webinar.status as (typeof blockedStatuses)[number])) {
-    const message = webinar.status === "COMPLETED"
-      ? "This webinar has already ended."
-      : "This webinar has been cancelled.";
+  if (
+    blockedStatuses.includes(webinar.status as (typeof blockedStatuses)[number])
+  ) {
+    const message =
+      webinar.status === "COMPLETED"
+        ? "This webinar has already ended."
+        : "This webinar has been cancelled.";
     throw new Error(message);
   }
 
@@ -1018,7 +1033,8 @@ export async function handleWebinarCheckout(
         appointmentId: appointment.id,
         startsAt:
           webinar.appointment?.slotsOfAppointment[0]?.startsAt || new Date(),
-        endsAt: webinar.appointment?.slotsOfAppointment[0]?.endsAt || new Date(),
+        endsAt:
+          webinar.appointment?.slotsOfAppointment[0]?.endsAt || new Date(),
         isTentative: !skipPayment,
         user: {
           connect: { id: userId },
@@ -1060,7 +1076,9 @@ export async function handleClassCheckout(
   const plan = classInstance.classPlan;
 
   // OPT-2: Use extracted utility for participant counting
-  const currentParticipants = countUniqueParticipants(classInstance.appointments);
+  const currentParticipants = countUniqueParticipants(
+    classInstance.appointments,
+  );
 
   // Check if max participants reached
   if (currentParticipants >= plan.maxParticipants) {
@@ -1093,8 +1111,14 @@ export async function handleClassCheckout(
     const slot = await tx.slotOfAppointment.create({
       data: {
         appointmentId: appointment.id,
-        startsAt: existingSlot?.startsAt || appointment.slotsOfAppointment[0]?.startsAt || new Date(),
-        endsAt: existingSlot?.endsAt || appointment.slotsOfAppointment[0]?.endsAt || new Date(),
+        startsAt:
+          existingSlot?.startsAt ||
+          appointment.slotsOfAppointment[0]?.startsAt ||
+          new Date(),
+        endsAt:
+          existingSlot?.endsAt ||
+          appointment.slotsOfAppointment[0]?.endsAt ||
+          new Date(),
         isTentative: !skipPayment,
         user: {
           connect: { id: userId },
@@ -1114,7 +1138,7 @@ export async function handleClassCheckout(
     appointment: firstAppointment,
     plan,
     amount: plan.price,
-    slotsCreated: createdSlots.length
+    slotsCreated: createdSlots.length,
   };
 }
 
@@ -1139,7 +1163,8 @@ export async function handleCheckout(
   let lock: ApprovalLock | null = null;
   let lockType = "";
   // TYPE-1: Properly typed payment response instead of any
-  let paymentResponse: { id: string; client_secret: string | null } | null = null;
+  let paymentResponse: { id: string; client_secret: string | null } | null =
+    null;
 
   try {
     // STEP 1: Calculate amount and fetch plan data (OUTSIDE LOCK - just pricing)
@@ -1184,7 +1209,9 @@ export async function handleCheckout(
       });
     } catch (paymentError) {
       console.error("Payment intent creation failed:", paymentError);
-      throw new Error("Failed to create payment intent. Please try again later.");
+      throw new Error(
+        "Failed to create payment intent. Please try again later.",
+      );
     }
 
     // STEP 5: Create tentative appointment + payment record (INSIDE LOCK)
@@ -1244,7 +1271,9 @@ export async function handleCheckout(
           }
 
           default:
-            throw new Error(`Unsupported appointment type: ${validatedData.appointmentType}`);
+            throw new Error(
+              `Unsupported appointment type: ${validatedData.appointmentType}`,
+            );
         }
 
         // Create payment record linked to appointment (if created)
@@ -1312,7 +1341,9 @@ export async function handleCheckout(
         );
       }
 
-      throw new Error("Failed to record payment information. Please try again.");
+      throw new Error(
+        "Failed to record payment information. Please try again.",
+      );
     }
   } catch (error) {
     // Enhanced error handling with lock-specific errors
@@ -1334,4 +1365,3 @@ export async function handleCheckout(
     }
   }
 }
-

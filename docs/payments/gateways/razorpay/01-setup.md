@@ -7,6 +7,7 @@ This guide covers setting up Razorpay for payment processing on Familiarise. Raz
 ### What is Razorpay?
 
 Razorpay is India's leading payment gateway that supports:
+
 - Credit/Debit Cards (Visa, Mastercard, RuPay)
 - UPI (Google Pay, PhonePe, Paytm)
 - Net Banking (100+ banks)
@@ -33,14 +34,14 @@ Razorpay is India's leading payment gateway that supports:
 
 Before setting up Razorpay, ensure you have:
 
-| Requirement | Details |
-|-------------|---------|
+| Requirement           | Details                                           |
+| --------------------- | ------------------------------------------------- |
 | Business Registration | Sole proprietorship, Partnership, Pvt Ltd, or LLP |
-| PAN Card | Business PAN or Individual PAN |
-| GST Registration | Optional but recommended (for input tax credit) |
-| Bank Account | Current account in business name |
-| Website/App | Live URL for verification |
-| Email/Phone | For account verification |
+| PAN Card              | Business PAN or Individual PAN                    |
+| GST Registration      | Optional but recommended (for input tax credit)   |
+| Bank Account          | Current account in business name                  |
+| Website/App           | Live URL for verification                         |
+| Email/Phone           | For account verification                          |
 
 ---
 
@@ -244,7 +245,7 @@ import crypto from "crypto";
 export function verifyRazorpayWebhook(
   body: string,
   signature: string,
-  secret: string
+  secret: string,
 ): boolean {
   const expectedSignature = crypto
     .createHmac("sha256", secret)
@@ -253,7 +254,7 @@ export function verifyRazorpayWebhook(
 
   return crypto.timingSafeEqual(
     Buffer.from(signature),
-    Buffer.from(expectedSignature)
+    Buffer.from(expectedSignature),
   );
 }
 ```

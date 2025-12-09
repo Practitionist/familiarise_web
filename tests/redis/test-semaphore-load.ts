@@ -69,11 +69,11 @@ async function acquireEventSlot(
     return newCount
   `;
 
-  const slotNumber = await redis.eval(
+  const slotNumber = (await redis.eval(
     script,
     [counterKey],
     [maxParticipants.toString(), ttl.toString()],
-  ) as number;
+  )) as number;
 
   if (slotNumber === -1) {
     return null;
@@ -85,7 +85,9 @@ async function acquireEventSlot(
   return { reservationId, slotNumber, eventType, eventId };
 }
 
-async function releaseEventSlot(reservation: EventSlotReservation): Promise<void> {
+async function releaseEventSlot(
+  reservation: EventSlotReservation,
+): Promise<void> {
   const counterKey = `${TEST_CONFIG.TEST_KEY_PREFIX}counter:${reservation.eventType}:${reservation.eventId}`;
   const reservationKey = `${TEST_CONFIG.TEST_KEY_PREFIX}reservation:${reservation.eventType}:${reservation.eventId}:${reservation.reservationId}`;
 
@@ -104,7 +106,10 @@ async function releaseEventSlot(reservation: EventSlotReservation): Promise<void
   }
 }
 
-async function getEventSlotCount(eventType: string, eventId: string): Promise<number> {
+async function getEventSlotCount(
+  eventType: string,
+  eventId: string,
+): Promise<number> {
   const counterKey = `${TEST_CONFIG.TEST_KEY_PREFIX}counter:${eventType}:${eventId}`;
   const count = await redis.get(counterKey);
   return count ? parseInt(count as string, 10) : 0;
@@ -120,10 +125,23 @@ async function cleanup(eventType: string, eventId: string): Promise<void> {
 // Test Utilities
 // ============================================================================
 
-function logTest(testName: string, status: "START" | "PASS" | "FAIL" | "INFO", details?: any) {
-  const emoji = status === "START" ? "🧪" : status === "PASS" ? "✅" : status === "FAIL" ? "❌" : "ℹ️";
+function logTest(
+  testName: string,
+  status: "START" | "PASS" | "FAIL" | "INFO",
+  details?: any,
+) {
+  const emoji =
+    status === "START"
+      ? "🧪"
+      : status === "PASS"
+        ? "✅"
+        : status === "FAIL"
+          ? "❌"
+          : "ℹ️";
   const timestamp = new Date().toISOString().split("T")[1].slice(0, 12);
-  console.log(`[${timestamp}] ${emoji} ${testName}${details ? `: ${JSON.stringify(details)}` : ""}`);
+  console.log(
+    `[${timestamp}] ${emoji} ${testName}${details ? `: ${JSON.stringify(details)}` : ""}`,
+  );
 }
 
 // ============================================================================
@@ -155,8 +173,10 @@ async function testConcurrentSlotAcquisition() {
     const duration = Date.now() - startTime;
 
     // Count successes and failures
-    const successes = results.filter(r => r !== null) as EventSlotReservation[];
-    const failures = results.filter(r => r === null);
+    const successes = results.filter(
+      (r) => r !== null,
+    ) as EventSlotReservation[];
+    const failures = results.filter((r) => r === null);
 
     logTest(testName, "INFO", {
       totalAttempts: concurrentUsers,
@@ -201,8 +221,13 @@ async function testConcurrentSlotAcquisition() {
     }
 
     // Verify all slot numbers are unique and sequential
-    const slotNumbers = successes.map(s => s.slotNumber).sort((a, b) => a - b);
-    const expectedSlots = Array.from({ length: maxParticipants }, (_, i) => i + 1);
+    const slotNumbers = successes
+      .map((s) => s.slotNumber)
+      .sort((a, b) => a - b);
+    const expectedSlots = Array.from(
+      { length: maxParticipants },
+      (_, i) => i + 1,
+    );
 
     if (JSON.stringify(slotNumbers) !== JSON.stringify(expectedSlots)) {
       logTest(testName, "FAIL", {
@@ -276,8 +301,8 @@ async function testSlotReleaseAndReacquisition(
     }
 
     const newResults = await Promise.all(newPromises);
-    const newSuccesses = newResults.filter(r => r !== null);
-    const newFailures = newResults.filter(r => r === null);
+    const newSuccesses = newResults.filter((r) => r !== null);
+    const newFailures = newResults.filter((r) => r === null);
 
     if (newSuccesses.length !== slotsToRelease) {
       logTest(testName, "FAIL", {
@@ -342,10 +367,14 @@ async function testRapidAcquireRelease() {
       const acquirePromises: Promise<EventSlotReservation | null>[] = [];
 
       for (let j = 0; j < batchSize; j++) {
-        acquirePromises.push(acquireEventSlot(eventType, eventId, maxParticipants, 30000));
+        acquirePromises.push(
+          acquireEventSlot(eventType, eventId, maxParticipants, 30000),
+        );
       }
 
-      const acquired = (await Promise.all(acquirePromises)).filter(r => r !== null) as EventSlotReservation[];
+      const acquired = (await Promise.all(acquirePromises)).filter(
+        (r) => r !== null,
+      ) as EventSlotReservation[];
       totalAcquires += acquired.length;
 
       // Release some of them
@@ -369,7 +398,10 @@ async function testRapidAcquireRelease() {
       totalReleases,
       finalCounter: finalCount,
       durationMs: duration,
-      operationsPerSecond: ((totalAcquires + totalReleases) / (duration / 1000)).toFixed(2),
+      operationsPerSecond: (
+        (totalAcquires + totalReleases) /
+        (duration / 1000)
+      ).toFixed(2),
     });
 
     await cleanup(eventType, eventId);
@@ -401,7 +433,11 @@ async function testCounterNeverNegative() {
     // Acquire all slots
     const reservations: EventSlotReservation[] = [];
     for (let i = 0; i < maxParticipants; i++) {
-      const result = await acquireEventSlot(eventType, eventId, maxParticipants);
+      const result = await acquireEventSlot(
+        eventType,
+        eventId,
+        maxParticipants,
+      );
       if (result) reservations.push(result);
     }
 
@@ -491,7 +527,7 @@ async function runAllTests() {
     console.log("📊 Load Test Summary");
     console.log("=".repeat(80));
 
-    const passed = Object.values(results).filter(r => r).length;
+    const passed = Object.values(results).filter((r) => r).length;
     const total = Object.keys(results).length;
 
     Object.entries(results).forEach(([test, passed]) => {
@@ -504,7 +540,9 @@ async function runAllTests() {
 
     if (passed === total) {
       console.log("🎉 ALL LOAD TESTS PASSED!");
-      console.log("✅ Semaphore pattern handles 100+ concurrent checkouts correctly\n");
+      console.log(
+        "✅ Semaphore pattern handles 100+ concurrent checkouts correctly\n",
+      );
       process.exit(0);
     } else {
       console.log("❌ SOME LOAD TESTS FAILED");

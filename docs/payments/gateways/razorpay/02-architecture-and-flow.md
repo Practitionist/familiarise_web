@@ -432,7 +432,7 @@ export async function POST(req: Request) {
   const payment = await razorpay.payments.capture(
     razorpay_payment_id,
     amount,
-    "INR"
+    "INR",
   );
 
   // Update database

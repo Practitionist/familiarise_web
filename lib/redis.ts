@@ -122,7 +122,10 @@ export async function withCircuitBreaker<T>(
           }),
         );
       }
-    } else if (circuitBreaker.state === "CLOSED" && circuitBreaker.failures > 0) {
+    } else if (
+      circuitBreaker.state === "CLOSED" &&
+      circuitBreaker.failures > 0
+    ) {
       // Reset failure count on success
       circuitBreaker.failures = 0;
     }

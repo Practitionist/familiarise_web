@@ -472,9 +472,7 @@ async function cleanupExpiredApprovalPendingPayments(): Promise<CleanupResult> {
     console.log(
       `   ✅ Successfully cleaned: ${result.cleanedCount} consultations`,
     );
-    console.log(
-      `   ❌ Failed to clean: ${result.errorCount} consultations`,
-    );
+    console.log(`   ❌ Failed to clean: ${result.errorCount} consultations`);
     console.log(
       `   📊 Total processed: ${result.totalProcessed} consultations`,
     );
@@ -487,10 +485,7 @@ async function cleanupExpiredApprovalPendingPayments(): Promise<CleanupResult> {
   } catch (error) {
     const errorMessage =
       error instanceof Error ? error.message : "Unknown error";
-    console.error(
-      "❌ Expired consultation cleanup failed:",
-      errorMessage,
-    );
+    console.error("❌ Expired consultation cleanup failed:", errorMessage);
     result.errors.push(`Job failed: ${errorMessage}`);
     result.success = false;
   }

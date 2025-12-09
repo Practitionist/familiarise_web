@@ -32,34 +32,34 @@ The application has minimal rate limiting (5 requests/10 seconds globally) with 
 // Current configuration
 const ratelimit = new Ratelimit({
   redis: Redis.fromEnv(),
-  limiter: Ratelimit.slidingWindow(5, "10 s"),  // 5 requests per 10 seconds
+  limiter: Ratelimit.slidingWindow(5, "10 s"), // 5 requests per 10 seconds
   analytics: true,
 });
 ```
 
 ### 1.2 Implementation Gaps
 
-| Gap | Status | Severity |
-|-----|--------|----------|
-| Global limit only | ✅ Exists | - |
-| Per-endpoint limits | ❌ Missing | HIGH |
-| Per-user limits | ❌ Missing | HIGH |
-| Authentication endpoint limits | ❌ Missing | CRITICAL |
-| Webhook endpoint limits | ❌ Missing | HIGH |
-| Resource-intensive query limits | ❌ Missing | HIGH |
-| Burst handling | ❌ Missing | MEDIUM |
+| Gap                             | Status     | Severity |
+| ------------------------------- | ---------- | -------- |
+| Global limit only               | ✅ Exists  | -        |
+| Per-endpoint limits             | ❌ Missing | HIGH     |
+| Per-user limits                 | ❌ Missing | HIGH     |
+| Authentication endpoint limits  | ❌ Missing | CRITICAL |
+| Webhook endpoint limits         | ❌ Missing | HIGH     |
+| Resource-intensive query limits | ❌ Missing | HIGH     |
+| Burst handling                  | ❌ Missing | MEDIUM   |
 
 ### 1.3 Unprotected Critical Endpoints
 
-| Endpoint | Risk | Attack Vector |
-|----------|------|---------------|
-| `/api/auth/register` | CRITICAL | Account creation spam |
+| Endpoint                    | Risk     | Attack Vector                 |
+| --------------------------- | -------- | ----------------------------- |
+| `/api/auth/register`        | CRITICAL | Account creation spam         |
 | `/api/auth/forgot-password` | CRITICAL | Email enumeration, email spam |
-| `/api/auth/reset-password` | HIGH | Token brute force |
-| `/api/webhooks/*` | HIGH | Webhook flooding |
-| `/api/user/consultants` | HIGH | Data scraping, DB exhaustion |
-| `/api/slots/appointments` | HIGH | Resource exhaustion |
-| `/api/stream/debug` | CRITICAL | Data dump endpoint |
+| `/api/auth/reset-password`  | HIGH     | Token brute force             |
+| `/api/webhooks/*`           | HIGH     | Webhook flooding              |
+| `/api/user/consultants`     | HIGH     | Data scraping, DB exhaustion  |
+| `/api/slots/appointments`   | HIGH     | Resource exhaustion           |
+| `/api/stream/debug`         | CRITICAL | Data dump endpoint            |
 
 ---
 
@@ -77,6 +77,7 @@ const ratelimit = new Ratelimit({
 ```
 
 **Attack Pattern:**
+
 ```
 Attacker sends 1000 concurrent requests to /api/slots/appointments
 → Each request generates 100+ database queries
@@ -216,66 +217,66 @@ export const RATE_LIMITS = {
   // Authentication - strictest limits
   AUTH_REGISTER: new Ratelimit({
     redis,
-    limiter: Ratelimit.slidingWindow(3, "1 h"),  // 3 registrations per hour
+    limiter: Ratelimit.slidingWindow(3, "1 h"), // 3 registrations per hour
     prefix: "ratelimit:auth:register",
   }),
 
   AUTH_LOGIN: new Ratelimit({
     redis,
-    limiter: Ratelimit.slidingWindow(10, "15 m"),  // 10 attempts per 15 min
+    limiter: Ratelimit.slidingWindow(10, "15 m"), // 10 attempts per 15 min
     prefix: "ratelimit:auth:login",
   }),
 
   AUTH_FORGOT_PASSWORD: new Ratelimit({
     redis,
-    limiter: Ratelimit.slidingWindow(3, "15 m"),  // 3 requests per 15 min
+    limiter: Ratelimit.slidingWindow(3, "15 m"), // 3 requests per 15 min
     prefix: "ratelimit:auth:forgot",
   }),
 
   AUTH_RESET_PASSWORD: new Ratelimit({
     redis,
-    limiter: Ratelimit.slidingWindow(5, "1 h"),  // 5 attempts per hour
+    limiter: Ratelimit.slidingWindow(5, "1 h"), // 5 attempts per hour
     prefix: "ratelimit:auth:reset",
   }),
 
   // Webhooks - allow bursts but limit sustained load
   WEBHOOK: new Ratelimit({
     redis,
-    limiter: Ratelimit.tokenBucket(100, "1 m", 20),  // 100/min, 20 burst
+    limiter: Ratelimit.tokenBucket(100, "1 m", 20), // 100/min, 20 burst
     prefix: "ratelimit:webhook",
   }),
 
   // API - General endpoints
   API_READ: new Ratelimit({
     redis,
-    limiter: Ratelimit.slidingWindow(100, "1 m"),  // 100 reads per minute
+    limiter: Ratelimit.slidingWindow(100, "1 m"), // 100 reads per minute
     prefix: "ratelimit:api:read",
   }),
 
   API_WRITE: new Ratelimit({
     redis,
-    limiter: Ratelimit.slidingWindow(30, "1 m"),  // 30 writes per minute
+    limiter: Ratelimit.slidingWindow(30, "1 m"), // 30 writes per minute
     prefix: "ratelimit:api:write",
   }),
 
   // Resource-intensive queries
   EXPENSIVE_QUERY: new Ratelimit({
     redis,
-    limiter: Ratelimit.slidingWindow(10, "1 m"),  // 10 expensive queries per min
+    limiter: Ratelimit.slidingWindow(10, "1 m"), // 10 expensive queries per min
     prefix: "ratelimit:api:expensive",
   }),
 
   // Checkout/Payment - strict to prevent abuse
   CHECKOUT: new Ratelimit({
     redis,
-    limiter: Ratelimit.slidingWindow(10, "1 h"),  // 10 checkouts per hour
+    limiter: Ratelimit.slidingWindow(10, "1 h"), // 10 checkouts per hour
     prefix: "ratelimit:checkout",
   }),
 
   // Admin endpoints - allow more
   ADMIN: new Ratelimit({
     redis,
-    limiter: Ratelimit.slidingWindow(200, "1 m"),  // 200/min for admin
+    limiter: Ratelimit.slidingWindow(200, "1 m"), // 200/min for admin
     prefix: "ratelimit:admin",
   }),
 };
@@ -292,18 +293,18 @@ export function getEmailKey(email: string): string {
 
 ### 4.2 Endpoint-Specific Limits
 
-| Endpoint Pattern | Limit | Window | Key |
-|-----------------|-------|--------|-----|
-| `/api/auth/register` | 3 | 1 hour | IP |
-| `/api/auth/[...nextauth]` (login) | 10 | 15 min | IP + Email |
-| `/api/auth/forgot-password` | 3 | 15 min | IP + Email |
-| `/api/auth/reset-password` | 5 | 1 hour | Token |
-| `/api/webhooks/*` | 100 | 1 min | Gateway |
-| `/api/checkout/*` | 10 | 1 hour | User |
-| `/api/user/consultants` | 30 | 1 min | IP/User |
-| `/api/slots/appointments` | 20 | 1 min | IP/User |
-| `/api/admin/*` | 200 | 1 min | User |
-| Default API | 60 | 1 min | IP/User |
+| Endpoint Pattern                  | Limit | Window | Key        |
+| --------------------------------- | ----- | ------ | ---------- |
+| `/api/auth/register`              | 3     | 1 hour | IP         |
+| `/api/auth/[...nextauth]` (login) | 10    | 15 min | IP + Email |
+| `/api/auth/forgot-password`       | 3     | 15 min | IP + Email |
+| `/api/auth/reset-password`        | 5     | 1 hour | Token      |
+| `/api/webhooks/*`                 | 100   | 1 min  | Gateway    |
+| `/api/checkout/*`                 | 10    | 1 hour | User       |
+| `/api/user/consultants`           | 30    | 1 min  | IP/User    |
+| `/api/slots/appointments`         | 20    | 1 min  | IP/User    |
+| `/api/admin/*`                    | 200   | 1 min  | User       |
+| Default API                       | 60    | 1 min  | IP/User    |
 
 ---
 
@@ -317,7 +318,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { RATE_LIMITS, getUserKey, getEmailKey } from "@/lib/ratelimit";
 
 interface RateLimitConfig {
-  limiter: typeof RATE_LIMITS[keyof typeof RATE_LIMITS];
+  limiter: (typeof RATE_LIMITS)[keyof typeof RATE_LIMITS];
   keyGenerator?: (req: NextRequest) => string;
 }
 
@@ -355,7 +356,7 @@ const ENDPOINT_CONFIG: Record<string, RateLimitConfig> = {
 export async function rateLimit(
   req: NextRequest,
   config: RateLimitConfig,
-  identifier: string
+  identifier: string,
 ): Promise<{ success: boolean; remaining: number; reset: number }> {
   const { success, remaining, reset } = await config.limiter.limit(identifier);
 
@@ -364,7 +365,7 @@ export async function rateLimit(
 
 export function getRateLimitHeaders(
   remaining: number,
-  reset: number
+  reset: number,
 ): Record<string, string> {
   return {
     "X-RateLimit-Remaining": remaining.toString(),
@@ -384,9 +385,8 @@ import { RATE_LIMITS, getUserKey } from "@/lib/ratelimit";
 export async function POST(req: NextRequest) {
   // Apply rate limit
   const identifier = req.ip || "unknown";
-  const { success, remaining, reset } = await RATE_LIMITS.AUTH_REGISTER.limit(
-    identifier
-  );
+  const { success, remaining, reset } =
+    await RATE_LIMITS.AUTH_REGISTER.limit(identifier);
 
   if (!success) {
     return NextResponse.json(
@@ -401,7 +401,7 @@ export async function POST(req: NextRequest) {
           "X-RateLimit-Reset": reset.toString(),
           "Retry-After": Math.ceil((reset - Date.now()) / 1000).toString(),
         },
-      }
+      },
     );
   }
 
@@ -441,7 +441,7 @@ export async function middleware(request: NextRequest) {
             headers: {
               "Retry-After": Math.ceil((reset - Date.now()) / 1000).toString(),
             },
-          }
+          },
         );
       }
     }
@@ -467,7 +467,7 @@ export const QUERY_LIMITS = {
   MAX_INCLUDE_DEPTH: 3,
 
   // Timeout limits (ms)
-  QUERY_TIMEOUT: 10000,  // 10 seconds
+  QUERY_TIMEOUT: 10000, // 10 seconds
 
   // Result size limits
   MAX_RESULTS: 1000,
@@ -477,7 +477,7 @@ export const QUERY_LIMITS = {
 export function validatePagination(searchParams: URLSearchParams) {
   const limit = Math.min(
     Math.max(parseInt(searchParams.get("limit") || "20"), 1),
-    QUERY_LIMITS.MAX_PAGE_SIZE
+    QUERY_LIMITS.MAX_PAGE_SIZE,
   );
   const page = Math.max(parseInt(searchParams.get("page") || "1"), 1);
 
@@ -486,7 +486,7 @@ export function validatePagination(searchParams: URLSearchParams) {
 
 export function validateDateRange(
   startDate: string,
-  endDate: string
+  endDate: string,
 ): { start: Date; end: Date } {
   const start = new Date(startDate);
   const end = new Date(endDate);
@@ -500,7 +500,7 @@ export function validateDateRange(
   const diffDays = (end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24);
   if (diffDays > QUERY_LIMITS.MAX_DATE_RANGE_DAYS) {
     throw new Error(
-      `Date range cannot exceed ${QUERY_LIMITS.MAX_DATE_RANGE_DAYS} days`
+      `Date range cannot exceed ${QUERY_LIMITS.MAX_DATE_RANGE_DAYS} days`,
     );
   }
 
@@ -586,12 +586,12 @@ rules:
 // lib/circuitBreaker.ts
 interface CircuitBreakerConfig {
   failureThreshold: number;
-  resetTimeout: number;  // ms
+  resetTimeout: number; // ms
   halfOpenRequests: number;
 }
 
 class CircuitBreaker {
-  private state: 'CLOSED' | 'OPEN' | 'HALF_OPEN' = 'CLOSED';
+  private state: "CLOSED" | "OPEN" | "HALF_OPEN" = "CLOSED";
   private failureCount = 0;
   private lastFailureTime = 0;
   private halfOpenSuccesses = 0;
@@ -599,22 +599,22 @@ class CircuitBreaker {
   constructor(private config: CircuitBreakerConfig) {}
 
   async execute<T>(fn: () => Promise<T>): Promise<T> {
-    if (this.state === 'OPEN') {
+    if (this.state === "OPEN") {
       if (Date.now() - this.lastFailureTime > this.config.resetTimeout) {
-        this.state = 'HALF_OPEN';
+        this.state = "HALF_OPEN";
         this.halfOpenSuccesses = 0;
       } else {
-        throw new Error('Circuit breaker is open');
+        throw new Error("Circuit breaker is open");
       }
     }
 
     try {
       const result = await fn();
 
-      if (this.state === 'HALF_OPEN') {
+      if (this.state === "HALF_OPEN") {
         this.halfOpenSuccesses++;
         if (this.halfOpenSuccesses >= this.config.halfOpenRequests) {
-          this.state = 'CLOSED';
+          this.state = "CLOSED";
           this.failureCount = 0;
         }
       }
@@ -625,7 +625,7 @@ class CircuitBreaker {
       this.lastFailureTime = Date.now();
 
       if (this.failureCount >= this.config.failureThreshold) {
-        this.state = 'OPEN';
+        this.state = "OPEN";
       }
 
       throw error;
@@ -636,7 +636,7 @@ class CircuitBreaker {
 // Usage for database queries
 const dbCircuitBreaker = new CircuitBreaker({
   failureThreshold: 5,
-  resetTimeout: 30000,  // 30 seconds
+  resetTimeout: 30000, // 30 seconds
   halfOpenRequests: 3,
 });
 
@@ -676,7 +676,7 @@ class GracefulDegradation {
     }
 
     if (!redisHealth) {
-      this.config.reducedFunctionality.push('rate_limiting');
+      this.config.reducedFunctionality.push("rate_limiting");
     }
   }
 
@@ -698,8 +698,8 @@ export async function GET(req: NextRequest) {
     const cached = await redis.get(cacheKey);
     if (cached) return NextResponse.json(cached);
     return NextResponse.json(
-      { error: 'Service temporarily unavailable' },
-      { status: 503 }
+      { error: "Service temporarily unavailable" },
+      { status: 503 },
     );
   }
 
@@ -717,23 +717,23 @@ export async function GET(req: NextRequest) {
 // lib/metrics.ts
 export const RATE_LIMIT_METRICS = {
   // Request counts
-  'ratelimit.request.total': 'Counter',
-  'ratelimit.request.allowed': 'Counter',
-  'ratelimit.request.blocked': 'Counter',
+  "ratelimit.request.total": "Counter",
+  "ratelimit.request.allowed": "Counter",
+  "ratelimit.request.blocked": "Counter",
 
   // By endpoint
-  'ratelimit.endpoint.auth.blocked': 'Counter',
-  'ratelimit.endpoint.api.blocked': 'Counter',
-  'ratelimit.endpoint.webhook.blocked': 'Counter',
+  "ratelimit.endpoint.auth.blocked": "Counter",
+  "ratelimit.endpoint.api.blocked": "Counter",
+  "ratelimit.endpoint.webhook.blocked": "Counter",
 
   // Patterns
-  'ratelimit.ip.unique': 'Gauge',
-  'ratelimit.ip.suspicious': 'Counter',
-  'ratelimit.burst.detected': 'Counter',
+  "ratelimit.ip.unique": "Gauge",
+  "ratelimit.ip.suspicious": "Counter",
+  "ratelimit.burst.detected": "Counter",
 
   // Performance
-  'ratelimit.latency': 'Histogram',
-  'ratelimit.redis.errors': 'Counter',
+  "ratelimit.latency": "Histogram",
+  "ratelimit.redis.errors": "Counter",
 };
 ```
 
@@ -786,11 +786,13 @@ interface RateLimitLog {
 
 async function logRateLimitEvent(event: RateLimitLog): Promise<void> {
   // Log to structured logging system
-  console.log(JSON.stringify({
-    level: event.allowed ? 'info' : 'warn',
-    type: 'ratelimit',
-    ...event,
-  }));
+  console.log(
+    JSON.stringify({
+      level: event.allowed ? "info" : "warn",
+      type: "ratelimit",
+      ...event,
+    }),
+  );
 
   // Track suspicious patterns
   if (!event.allowed) {
@@ -801,11 +803,11 @@ async function logRateLimitEvent(event: RateLimitLog): Promise<void> {
 async function trackSuspiciousIP(ip: string): Promise<void> {
   const key = `suspicious:${ip}`;
   const count = await redis.incr(key);
-  await redis.expire(key, 3600);  // 1 hour window
+  await redis.expire(key, 3600); // 1 hour window
 
   if (count > 10) {
     // Flag for review
-    await redis.sadd('suspicious_ips', ip);
+    await redis.sadd("suspicious_ips", ip);
     // Could trigger automatic blocking or CAPTCHA requirement
   }
 }

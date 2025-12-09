@@ -59,8 +59,8 @@ export const PaymentLinkEmail = ({
             <Text style={paragraph}>Hi {name},</Text>
             <Text style={paragraph}>
               Great news! <strong>{consultantName}</strong> has approved your{" "}
-              {appointmentType} request. To confirm your booking, please complete
-              the payment.
+              {appointmentType} request. To confirm your booking, please
+              complete the payment.
             </Text>
 
             <Section style={paymentDetails}>

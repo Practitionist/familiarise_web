@@ -476,10 +476,13 @@ export function RequestSlotAllocationTab({
                 <TableCell>{request.requiredSlots}</TableCell>
                 <TableCell>
                   <div className="flex flex-col gap-1">
-                    <Badge variant={getRequestStatusBadgeVariant(request.status)}>
+                    <Badge
+                      variant={getRequestStatusBadgeVariant(request.status)}
+                    >
                       {request.status}
                     </Badge>
-                    {request.status === RequestStatus.APPROVED_PENDING_PAYMENT && (
+                    {request.status ===
+                      RequestStatus.APPROVED_PENDING_PAYMENT && (
                       <PaymentRequiredBadge variant="full" />
                     )}
                   </div>

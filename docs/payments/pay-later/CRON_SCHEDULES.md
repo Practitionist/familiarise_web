@@ -10,7 +10,7 @@ The payment approval workflow includes automated cleanup jobs to handle expired 
 
 **Purpose**: Revert `APPROVED_PENDING_PAYMENT` requests to `PENDING` after 48 hours
 
-**Schedule**: Every hour (0 */1 * * *)
+**Schedule**: Every hour (0 _/1 _ \* \*)
 
 **File**: `app/api/cleanup/approval-payments/route.ts`
 
@@ -194,7 +194,9 @@ export async function GET() {
       revertedConsultations.filter((r) => !r.success).length +
       revertedSubscriptions.filter((r) => !r.success).length;
 
-    console.log(`✅ Cleanup complete: ${totalReverted} reverted, ${totalFailed} failed`);
+    console.log(
+      `✅ Cleanup complete: ${totalReverted} reverted, ${totalFailed} failed`,
+    );
 
     return NextResponse.json({
       success: true,
@@ -372,12 +374,12 @@ const results = await Promise.all(
       console.error(`Failed to process ${item.id}:`, error);
       return { id: item.id, success: false, error };
     }
-  })
+  }),
 );
 
 // Report both successes and failures
-const successCount = results.filter(r => r.success).length;
-const failureCount = results.filter(r => !r.success).length;
+const successCount = results.filter((r) => r.success).length;
+const failureCount = results.filter((r) => !r.success).length;
 ```
 
 ### Database Transaction Errors
@@ -483,7 +485,9 @@ const totalExpired = expiredItems.length;
 for (let i = 0; i < totalExpired; i += batchSize) {
   const batch = expiredItems.slice(i, i + batchSize);
   await Promise.all(batch.map(processItem));
-  console.log(`Processed batch ${i / batchSize + 1}/${Math.ceil(totalExpired / batchSize)}`);
+  console.log(
+    `Processed batch ${i / batchSize + 1}/${Math.ceil(totalExpired / batchSize)}`,
+  );
 }
 ```
 
@@ -523,20 +527,25 @@ export async function GET() {
 ### ✅ DO
 
 1. **Log all cleanup operations**
+
 ```typescript
 console.log(`🔄 Starting cleanup: ${items.length} items to process`);
-console.log(`✅ Cleanup complete: ${successCount} succeeded, ${failCount} failed`);
+console.log(
+  `✅ Cleanup complete: ${successCount} succeeded, ${failCount} failed`,
+);
 ```
 
 2. **Handle partial failures gracefully**
+
 ```typescript
 // Don't throw - process all items even if some fail
 const results = await Promise.all(
-  items.map(item => processItem(item).catch(error => ({ error })))
+  items.map((item) => processItem(item).catch((error) => ({ error }))),
 );
 ```
 
 3. **Add safety checks**
+
 ```typescript
 // Verify item is actually expired
 const hoursSinceApproval = (now - updatedAt) / (1000 * 60 * 60);
@@ -547,6 +556,7 @@ if (hoursSinceApproval < 48) {
 ```
 
 4. **Monitor cleanup results**
+
 ```typescript
 // Return detailed results for monitoring
 return NextResponse.json({
@@ -559,6 +569,7 @@ return NextResponse.json({
 ### ❌ DON'T
 
 1. **Don't fail entire job if one item fails**
+
 ```typescript
 // ❌ Bad: One error stops everything
 for (const item of items) {
@@ -576,6 +587,7 @@ for (const item of items) {
 ```
 
 2. **Don't delete payment data**
+
 ```typescript
 // ❌ Bad: Delete payment records
 await prisma.payment.delete({ where: { id } });
@@ -587,6 +599,7 @@ await prisma.consultation.update({
 ```
 
 3. **Don't run cleanup synchronously in request handler**
+
 ```typescript
 // ❌ Bad: Block approval request with cleanup
 await runCleanup();

@@ -61,18 +61,18 @@ Existing Models Used:
 // Consultant Revenue Summary
 const revenueStats = await prisma.payment.aggregate({
   where: {
-    paymentStatus: 'SUCCEEDED',
+    paymentStatus: "SUCCEEDED",
     appointment: {
       OR: [
         { consultation: { consultationPlan: { consultantProfileId } } },
         { subscription: { subscriptionPlan: { consultantProfileId } } },
         // ... webinar, class
-      ]
+      ],
     },
-    createdAt: { gte: startDate, lte: endDate }
+    createdAt: { gte: startDate, lte: endDate },
   },
   _sum: { amount: true },
-  _count: true
+  _count: true,
 });
 
 // Booking by Day of Week
@@ -88,10 +88,10 @@ const bookingsByDay = await prisma.$queryRaw`
 
 // Client Retention (returning clients)
 const returningClients = await prisma.consultation.groupBy({
-  by: ['consulteeProfileId'],
+  by: ["consulteeProfileId"],
   where: { consultationPlan: { consultantProfileId } },
   _count: true,
-  having: { consulteeProfileId: { _count: { gt: 1 } } }
+  having: { consulteeProfileId: { _count: { gt: 1 } } },
 });
 ```
 
@@ -150,7 +150,7 @@ interface ConsultantAnalytics {
   ratings: {
     average: number;
     count: number;
-    distribution: Record<1|2|3|4|5, number>;
+    distribution: Record<1 | 2 | 3 | 4 | 5, number>;
     trend: number;
   };
 }
@@ -161,6 +161,7 @@ interface ConsultantAnalytics {
 None required - all data comes from internal database.
 
 Optional enhancements:
+
 - **Chart.js / Recharts** - Frontend visualization
 - **Redis** - Cache computed metrics (TTL: 5-15 minutes)
 - **Cron Jobs** - Pre-compute daily/weekly aggregates
@@ -273,7 +274,7 @@ components/
 // lib/analytics/consultant.ts
 export async function getConsultantAnalytics(
   consultantProfileId: string,
-  period: '7d' | '30d' | '90d' | '1y'
+  period: "7d" | "30d" | "90d" | "1y",
 ): Promise<ConsultantAnalytics> {
   const cacheKey = `analytics:consultant:${consultantProfileId}:${period}`;
 

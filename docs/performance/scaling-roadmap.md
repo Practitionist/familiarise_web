@@ -9,12 +9,12 @@
 
 **TL;DR**: Supabase can handle 1M+ users with proper optimization. Focus on query optimization, indexes, and caching before considering infrastructure changes.
 
-| Question | Answer |
-|----------|--------|
-| Need PlanetScale now? | No, Supabase scales to 1M+ |
-| Need Neon now? | No, but easy migration path if needed |
-| Need Kafka now? | No, Redis/BullMQ is enough |
-| When to reconsider? | When you hit 500K+ active users |
+| Question              | Answer                                |
+| --------------------- | ------------------------------------- |
+| Need PlanetScale now? | No, Supabase scales to 1M+            |
+| Need Neon now?        | No, but easy migration path if needed |
+| Need Kafka now?       | No, Redis/BullMQ is enough            |
+| When to reconsider?   | When you hit 500K+ active users       |
 
 ---
 
@@ -43,13 +43,13 @@ flowchart TD
 
 ### Stack Health Check
 
-| Component | Status | Capacity | Notes |
-|-----------|--------|----------|-------|
-| Supabase (PostgreSQL) | ✅ Good | 1M+ users | With proper optimization |
-| Upstash Redis | ✅ Good | High | Already using for locks/caching |
-| Prisma ORM | ⚠️ Watch | Variable | N+1 queries can bottleneck |
-| Next.js API Routes | ⚠️ Watch | Variable | Serverless cold starts at scale |
-| Payment Webhooks | ✅ Good | High | Async, non-blocking |
+| Component             | Status   | Capacity  | Notes                           |
+| --------------------- | -------- | --------- | ------------------------------- |
+| Supabase (PostgreSQL) | ✅ Good  | 1M+ users | With proper optimization        |
+| Upstash Redis         | ✅ Good  | High      | Already using for locks/caching |
+| Prisma ORM            | ⚠️ Watch | Variable  | N+1 queries can bottleneck      |
+| Next.js API Routes    | ⚠️ Watch | Variable  | Serverless cold starts at scale |
+| Payment Webhooks      | ✅ Good  | High      | Async, non-blocking             |
 
 ---
 
@@ -152,7 +152,7 @@ const usersWithAppointments = await prisma.user.findMany({
   include: {
     appointments: {
       take: 10,
-      orderBy: { createdAt: 'desc' },
+      orderBy: { createdAt: "desc" },
     },
   },
 });
@@ -200,10 +200,11 @@ Supabase uses **Supavisor** (replaced PgBouncer in 2024) automatically on port 6
 
 ```typescript
 // .env - Use pooled connection
-DATABASE_URL="postgresql://user:pass@db.xxx.supabase.co:6543/postgres?pgbouncer=true"
+DATABASE_URL =
+  "postgresql://user:pass@db.xxx.supabase.co:6543/postgres?pgbouncer=true";
 
 // For migrations, use direct connection (port 5432)
-DIRECT_URL="postgresql://user:pass@db.xxx.supabase.co:5432/postgres"
+DIRECT_URL = "postgresql://user:pass@db.xxx.supabase.co:5432/postgres";
 ```
 
 ```typescript
@@ -235,13 +236,13 @@ datasource db {
 
 ### 2.1 Upgrade to Supabase Pro
 
-| Feature | Free | Pro |
-|---------|------|-----|
-| Database size | 500MB | 8GB+ |
-| Connections | 60 | Unlimited (pooled) |
-| Read replicas | ❌ | ✅ Up to 2 |
-| Point-in-time recovery | ❌ | ✅ |
-| Daily backups | 7 days | 30 days |
+| Feature                | Free   | Pro                |
+| ---------------------- | ------ | ------------------ |
+| Database size          | 500MB  | 8GB+               |
+| Connections            | 60     | Unlimited (pooled) |
+| Read replicas          | ❌     | ✅ Up to 2         |
+| Point-in-time recovery | ❌     | ✅                 |
+| Daily backups          | 7 days | 30 days            |
 
 ### 2.2 Add Read Replicas
 
@@ -260,7 +261,7 @@ flowchart TD
 
 ```typescript
 // lib/prisma.ts
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from "@prisma/client";
 
 // Primary for writes
 const primaryPrisma = new PrismaClient({
@@ -285,8 +286,11 @@ export const db = {
   write: primaryPrisma,
 
   // Convenience method
-  query: <T>(operation: 'read' | 'write', fn: (prisma: PrismaClient) => Promise<T>) => {
-    const client = operation === 'read' ? replicaPrisma : primaryPrisma;
+  query: <T>(
+    operation: "read" | "write",
+    fn: (prisma: PrismaClient) => Promise<T>,
+  ) => {
+    const client = operation === "read" ? replicaPrisma : primaryPrisma;
     return fn(client);
   },
 };
@@ -305,7 +309,7 @@ const newBooking = await db.write.appointment.create({
 
 ```typescript
 // lib/cache/dashboard.ts
-import { Redis } from '@upstash/redis';
+import { Redis } from "@upstash/redis";
 
 const redis = Redis.fromEnv();
 
@@ -315,16 +319,16 @@ interface CacheConfig {
 }
 
 const CACHE_CONFIG: Record<string, CacheConfig> = {
-  dashboardHome: { ttl: 60, prefix: 'dash:home' },
-  appointments: { ttl: 30, prefix: 'dash:appts' },
-  requests: { ttl: 15, prefix: 'dash:reqs' },
-  userProfile: { ttl: 300, prefix: 'user:profile' },
+  dashboardHome: { ttl: 60, prefix: "dash:home" },
+  appointments: { ttl: 30, prefix: "dash:appts" },
+  requests: { ttl: 15, prefix: "dash:reqs" },
+  userProfile: { ttl: 300, prefix: "user:profile" },
 };
 
 export async function getCached<T>(
   key: string,
   fetcher: () => Promise<T>,
-  config: keyof typeof CACHE_CONFIG
+  config: keyof typeof CACHE_CONFIG,
 ): Promise<T> {
   const { ttl, prefix } = CACHE_CONFIG[config];
   const cacheKey = `${prefix}:${key}`;
@@ -359,7 +363,7 @@ export async function GET(req: Request) {
   const data = await getCached(
     consultantId,
     () => fetchDashboardData(consultantId),
-    'dashboardHome'
+    "dashboardHome",
   );
 
   return Response.json(data);
@@ -372,7 +376,7 @@ For latency-sensitive endpoints:
 
 ```typescript
 // app/api/dashboard/route.ts
-export const runtime = 'edge'; // Run at edge locations
+export const runtime = "edge"; // Run at edge locations
 
 export async function GET(req: Request) {
   // Edge-optimized response
@@ -380,8 +384,8 @@ export async function GET(req: Request) {
 
   return new Response(JSON.stringify(data), {
     headers: {
-      'Content-Type': 'application/json',
-      'Cache-Control': 'private, max-age=30',
+      "Content-Type": "application/json",
+      "Cache-Control": "private, max-age=30",
     },
   });
 }
@@ -438,7 +442,7 @@ Replace synchronous operations with event-driven patterns:
 
 ```typescript
 // lib/events/publisher.ts
-import { Redis } from '@upstash/redis';
+import { Redis } from "@upstash/redis";
 
 const redis = Redis.fromEnv();
 
@@ -449,14 +453,14 @@ interface Event {
 }
 
 export async function publishEvent(stream: string, event: Event) {
-  await redis.xadd(stream, '*', event);
+  await redis.xadd(stream, "*", event);
 }
 
 // Usage: Instead of synchronous operations
 async function handlePaymentSuccess(payment: Payment) {
   // Publish event instead of doing everything synchronously
-  await publishEvent('payments', {
-    type: 'PAYMENT_SUCCESS',
+  await publishEvent("payments", {
+    type: "PAYMENT_SUCCESS",
     payload: {
       paymentId: payment.id,
       userId: payment.userId,
@@ -469,12 +473,13 @@ async function handlePaymentSuccess(payment: Payment) {
 
 // Consumer (separate worker)
 async function consumePaymentEvents() {
-  let lastId = '0';
+  let lastId = "0";
 
   while (true) {
-    const events = await redis.xread(
-      { streams: { payments: lastId }, block: 5000 }
-    );
+    const events = await redis.xread({
+      streams: { payments: lastId },
+      block: 5000,
+    });
 
     for (const [stream, messages] of events || []) {
       for (const [id, event] of messages) {
@@ -490,11 +495,11 @@ async function consumePaymentEvents() {
 
 When to split:
 
-| Signal | Action |
-|--------|--------|
-| Single service >50 API routes | Consider splitting by domain |
-| Different scaling needs | Payments scale differently than chat |
-| Team growth >10 engineers | Domain ownership boundaries |
+| Signal                        | Action                               |
+| ----------------------------- | ------------------------------------ |
+| Single service >50 API routes | Consider splitting by domain         |
+| Different scaling needs       | Payments scale differently than chat |
+| Team growth >10 engineers     | Domain ownership boundaries          |
 
 **Recommended split:**
 
@@ -535,11 +540,11 @@ services/
 
 ### 4.1 Database Options
 
-| Option | Use Case | Considerations |
-|--------|----------|----------------|
-| **Neon** | PostgreSQL compatibility, auto-scaling | Easiest migration from Supabase |
-| **PlanetScale** | Horizontal sharding, MySQL | Schema changes required, no FKs |
-| **CockroachDB** | Global distribution, PostgreSQL-compatible | More complex operations |
+| Option          | Use Case                                   | Considerations                  |
+| --------------- | ------------------------------------------ | ------------------------------- |
+| **Neon**        | PostgreSQL compatibility, auto-scaling     | Easiest migration from Supabase |
+| **PlanetScale** | Horizontal sharding, MySQL                 | Schema changes required, no FKs |
+| **CockroachDB** | Global distribution, PostgreSQL-compatible | More complex operations         |
 
 ### 4.2 Event Streaming at Scale
 
@@ -580,13 +585,13 @@ flowchart LR
 ```typescript
 // lib/db/regional.ts
 const REGIONS = {
-  'us-east': process.env.DB_URL_US_EAST,
-  'eu-west': process.env.DB_URL_EU_WEST,
-  'ap-south': process.env.DB_URL_AP_SOUTH,
+  "us-east": process.env.DB_URL_US_EAST,
+  "eu-west": process.env.DB_URL_EU_WEST,
+  "ap-south": process.env.DB_URL_AP_SOUTH,
 };
 
 export function getRegionalDb(userRegion: string) {
-  const dbUrl = REGIONS[userRegion] || REGIONS['us-east'];
+  const dbUrl = REGIONS[userRegion] || REGIONS["us-east"];
   return new PrismaClient({
     datasources: { db: { url: dbUrl } },
   });
@@ -597,15 +602,15 @@ export function getRegionalDb(userRegion: string) {
 
 ## Bottleneck Quick Reference
 
-| Symptom | Likely Cause | Solution |
-|---------|--------------|----------|
-| Slow dashboard loads | N+1 queries | Use `select`, add indexes |
-| Connection timeouts | Pool exhaustion | Enable Supavisor, increase pool |
-| High DB CPU | Missing indexes | Add composite indexes |
-| Slow reads at scale | Single read node | Add read replicas |
+| Symptom              | Likely Cause           | Solution                                |
+| -------------------- | ---------------------- | --------------------------------------- |
+| Slow dashboard loads | N+1 queries            | Use `select`, add indexes               |
+| Connection timeouts  | Pool exhaustion        | Enable Supavisor, increase pool         |
+| High DB CPU          | Missing indexes        | Add composite indexes                   |
+| Slow reads at scale  | Single read node       | Add read replicas                       |
 | Write latency spikes | Transaction contention | Optimize transactions, async processing |
-| API cold starts | Serverless overhead | Edge functions, keep-warm |
-| Memory pressure | Large result sets | Pagination, streaming |
+| API cold starts      | Serverless overhead    | Edge functions, keep-warm               |
+| Memory pressure      | Large result sets      | Pagination, streaming                   |
 
 ---
 
@@ -615,6 +620,7 @@ export function getRegionalDb(userRegion: string) {
 
 ```markdown
 Watch these metrics:
+
 - [ ] Active connections (should be <80% of limit)
 - [ ] Query execution time (p95 <100ms for simple queries)
 - [ ] Database size growth rate
@@ -625,7 +631,7 @@ Watch these metrics:
 
 ```typescript
 // Instrument key operations
-import { metrics } from '@/lib/monitoring';
+import { metrics } from "@/lib/monitoring";
 
 export async function getDashboard(userId: string) {
   const start = performance.now();
@@ -633,12 +639,12 @@ export async function getDashboard(userId: string) {
   try {
     const data = await fetchDashboardData(userId);
 
-    metrics.timing('dashboard.load', performance.now() - start);
-    metrics.increment('dashboard.success');
+    metrics.timing("dashboard.load", performance.now() - start);
+    metrics.increment("dashboard.success");
 
     return data;
   } catch (error) {
-    metrics.increment('dashboard.error');
+    metrics.increment("dashboard.error");
     throw error;
   }
 }
@@ -648,12 +654,12 @@ export async function getDashboard(userId: string) {
 
 ## Cost Estimation
 
-| Phase | Users | Infrastructure | Monthly Cost |
-|-------|-------|---------------|--------------|
-| 1 | 0-100K | Supabase Free/Pro | $0-50 |
-| 2 | 100K-1M | Pro + Replicas + Redis | $100-500 |
-| 3 | 1M-10M | Pro + Heavy Caching + Events | $500-2000 |
-| 4 | 10M+ | Distributed DB + Kafka + Multi-region | $5000+ |
+| Phase | Users   | Infrastructure                        | Monthly Cost |
+| ----- | ------- | ------------------------------------- | ------------ |
+| 1     | 0-100K  | Supabase Free/Pro                     | $0-50        |
+| 2     | 100K-1M | Pro + Replicas + Redis                | $100-500     |
+| 3     | 1M-10M  | Pro + Heavy Caching + Events          | $500-2000    |
+| 4     | 10M+    | Distributed DB + Kafka + Multi-region | $5000+       |
 
 ---
 

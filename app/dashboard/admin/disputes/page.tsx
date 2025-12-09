@@ -225,7 +225,8 @@ export default function AdminDisputesPage() {
                     {data.disputes.map((dispute: any) => {
                       const isUrgent =
                         dispute.dueBy &&
-                        new Date(dispute.dueBy) < new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
+                        new Date(dispute.dueBy) <
+                          new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
 
                       return (
                         <tr
@@ -246,7 +247,8 @@ export default function AdminDisputesPage() {
                                   : dispute.status === "LOST"
                                     ? "bg-red-100 text-red-800"
                                     : dispute.status === "NEEDS_RESPONSE" ||
-                                        dispute.status === "WARNING_NEEDS_RESPONSE"
+                                        dispute.status ===
+                                          "WARNING_NEEDS_RESPONSE"
                                       ? "bg-yellow-100 text-yellow-800"
                                       : "bg-blue-100 text-blue-800"
                               }`}
@@ -264,7 +266,9 @@ export default function AdminDisputesPage() {
                             {dispute.dueBy ? (
                               <span
                                 className={
-                                  isUrgent ? "text-red-600 font-medium" : "text-gray-500"
+                                  isUrgent
+                                    ? "text-red-600 font-medium"
+                                    : "text-gray-500"
                                 }
                               >
                                 {new Date(dispute.dueBy).toLocaleDateString()}

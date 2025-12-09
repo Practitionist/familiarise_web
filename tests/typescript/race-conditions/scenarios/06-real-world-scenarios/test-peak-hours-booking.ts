@@ -46,7 +46,7 @@ async function runTest() {
 
   logTestStart(config.testName, {
     Category: config.category,
-    "Scenario": "Peak hours (9-11 AM) - high demand",
+    Scenario: "Peak hours (9-11 AM) - high demand",
     "Concurrent Users": config.concurrentUsers,
     "Slot Time": new Date(slot.start).toLocaleString() + " (PEAK HOUR)",
     "Consultant ID": consultantId,
@@ -66,7 +66,9 @@ async function runTest() {
 
   console.log(`\n📊 Peak Hours Performance:`);
   console.log(`   Peak Concurrent Users: ${config.concurrentUsers}`);
-  console.log(`   Handled Successfully: ${report.summary.successes}/${config.concurrentUsers}`);
+  console.log(
+    `   Handled Successfully: ${report.summary.successes}/${config.concurrentUsers}`,
+  );
   console.log(`   Conflict Responses: ${report.summary.conflicts}`);
   console.log(`   Avg Response Time: ${report.summary.averageDuration}ms`);
 

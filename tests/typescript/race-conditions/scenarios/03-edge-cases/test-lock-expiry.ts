@@ -108,7 +108,8 @@ async function runTest() {
         status: 409,
         duration: Date.now() - lock2Start,
         timestamp: new Date().toISOString(),
-        error: error instanceof Error ? error.message : "Failed to acquire lock",
+        error:
+          error instanceof Error ? error.message : "Failed to acquire lock",
       });
     } finally {
       if (lock2) await unlockSlotBooking(lock2);
@@ -156,10 +157,7 @@ async function runTest() {
   };
 
   const markdownContent = generateMarkdownReport(summaryReport);
-  await saveMarkdownReport(
-    markdownContent,
-    `test-lock-expiry-${timestamp}.md`,
-  );
+  await saveMarkdownReport(markdownContent, `test-lock-expiry-${timestamp}.md`);
 
   process.exit(report.passed ? 0 : 1);
 }

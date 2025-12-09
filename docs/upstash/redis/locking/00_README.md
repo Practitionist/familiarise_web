@@ -9,9 +9,11 @@
 This is a **production-ready distributed locking implementation** built on Upstash Redis that provides race condition protection for serverless applications.
 
 ### What is it?
+
 A lightweight, REST API-based locking system that prevents concurrent operations from creating duplicate payments, double-booking appointments, or processing the same approval request multiple times.
 
 ### When to use it?
+
 - **Payment Approval Workflows**: Ensure only one approval creates a payment link
 - **Subscription Processing**: Prevent duplicate subscription charges
 - **Appointment Booking**: Avoid double-booking time slots
@@ -20,6 +22,7 @@ A lightweight, REST API-based locking system that prevents concurrent operations
 > **Note**: API rate limiting is handled by **Arcjet** at the route level, not by this module.
 
 ### Why Upstash?
+
 - ✅ **Serverless-Native**: REST API works everywhere (Vercel Edge, Lambda, etc.)
 - ✅ **Zero Infrastructure**: Fully managed Redis, no servers to maintain
 - ✅ **Simple Integration**: Single package, drop-in replacement for Redlock
@@ -88,6 +91,7 @@ export async function approveConsultation(consultationId: string) {
 ```
 
 **Expected Output (Logs)**:
+
 ```json
 {"event":"lock_acquired","key":"consultation-approval:clx123","attempts":1,"duration_ms":78,"ttl":29700,"timestamp":"2025-11-29T12:34:56.789Z"}
 {"event":"lock_released","key":"consultation-approval:clx123","held_duration_ms":5058,"timestamp":"2025-11-29T12:35:01.847Z"}
@@ -115,7 +119,7 @@ export async function performRedisOperation() {
       // Your Redis operation here
       return await redis.get("some-key");
     },
-    () => null // Fallback value if circuit is open
+    () => null, // Fallback value if circuit is open
   );
 }
 ```
@@ -133,7 +137,10 @@ import {
   extendLock,
 } from "@/utils/appointmentlock";
 
-export async function processLongOperation(consultantId: string, slotTime: string) {
+export async function processLongOperation(
+  consultantId: string,
+  slotTime: string,
+) {
   const lock = await lockSlotBooking(consultantId, slotTime, 60000); // 60s TTL
 
   // Set up heartbeat to extend lock every 20 seconds
@@ -163,13 +170,13 @@ export async function processLongOperation(consultantId: string, slotTime: strin
 
 ### Lock Types
 
-| Lock Type | Default TTL | Use Case |
-|-----------|-------------|----------|
-| **Slot Booking** | 60 seconds | Prevent double-booking consultations |
-| **Consultation Approval** | 60 seconds | Payment link generation |
-| **Subscription Approval** | 60 seconds | Subscription processing |
-| **Event Checkout** | 60 seconds | Webinar/class checkout |
-| **Event Slot (Semaphore)** | 5 minutes | Multi-participant events |
+| Lock Type                  | Default TTL | Use Case                             |
+| -------------------------- | ----------- | ------------------------------------ |
+| **Slot Booking**           | 60 seconds  | Prevent double-booking consultations |
+| **Consultation Approval**  | 60 seconds  | Payment link generation              |
+| **Subscription Approval**  | 60 seconds  | Subscription processing              |
+| **Event Checkout**         | 60 seconds  | Webinar/class checkout               |
+| **Event Slot (Semaphore)** | 5 minutes   | Multi-participant events             |
 
 ### Core Features
 
@@ -195,11 +202,12 @@ const status = getCircuitBreakerStatus();
 // Wrap Redis operations with circuit breaker
 const result = await withCircuitBreaker(
   async () => await redis.get("key"),
-  () => null // Fallback if circuit is open
+  () => null, // Fallback if circuit is open
 );
 ```
 
 **Circuit States:**
+
 - **CLOSED**: Normal operation (all requests go through)
 - **OPEN**: Redis failing (fail fast, return fallback)
 - **HALF_OPEN**: Testing recovery (limited requests)
@@ -209,11 +217,13 @@ const result = await withCircuitBreaker(
 The circuit breaker state is stored **in-memory per instance**. In a multi-instance deployment (e.g., multiple Vercel serverless functions), each instance maintains its own circuit state.
 
 **Implications:**
+
 - Instance A may have circuit OPEN while Instance B has circuit CLOSED
 - Failures in one instance don't immediately affect others
 - This is acceptable for most use cases (localized failure detection)
 
 **For distributed circuit breaker state** (if needed in the future):
+
 ```typescript
 // Option 1: Store state in Redis itself (with short TTL)
 // Option 2: Use a distributed service like Redis Sentinel
@@ -308,6 +318,7 @@ lib/
 **Start here** → Read this README → Jump to [API Reference](./02_API_REFERENCE.md) → Try examples
 
 **Learning path**:
+
 1. Read Quick Start (above)
 2. Review [Common Use Cases](#common-use-cases) (below)
 3. Study [API Reference](./02_API_REFERENCE.md) for detailed documentation
@@ -318,6 +329,7 @@ lib/
 **Start here** → Read [Migration Guide](./01_MIGRATION_GUIDE.md)
 
 **Migration path**:
+
 1. Understand [Breaking Changes](./01_MIGRATION_GUIDE.md#breaking-changes)
 2. Follow [Migration Checklist](./01_MIGRATION_GUIDE.md#migration-checklist)
 3. Review [Architecture Comparison](./01_MIGRATION_GUIDE.md#architecture-deep-dive)
@@ -328,6 +340,7 @@ lib/
 **Having issues?** → Check [Troubleshooting Guide](./01_MIGRATION_GUIDE.md#troubleshooting)
 
 **Common problems**:
+
 - Lock acquisition always fails → [Solution](./01_MIGRATION_GUIDE.md#lock-acquisition-always-fails)
 - High retry rate → [Solution](./01_MIGRATION_GUIDE.md#high-retry-rate)
 - Locks not released → [Solution](./01_MIGRATION_GUIDE.md#locks-not-released)

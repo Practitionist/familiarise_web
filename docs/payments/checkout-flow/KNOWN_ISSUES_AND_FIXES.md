@@ -54,9 +54,9 @@ Validation happens BEFORE the lock is acquired, creating a time window where rac
 
 ```typescript
 // Current problematic flow:
-const { amount, currency } = await calculateAmountAndValidate(data, userId);  // ← Validates HERE
+const { amount, currency } = await calculateAmountAndValidate(data, userId); // ← Validates HERE
 // ... time passes (could be seconds) ...
-lock = await acquireCheckoutLock(data, planData);  // ← Lock acquired HERE
+lock = await acquireCheckoutLock(data, planData); // ← Lock acquired HERE
 ```
 
 #### Impact Analysis
@@ -68,6 +68,7 @@ lock = await acquireCheckoutLock(data, planData);  // ← Lock acquired HERE
 #### Root Cause
 
 The code structure was optimized for performance (validate early, fail fast) but created a TOCTOU window. While `revalidateInsideLock()` catches this, resources are wasted:
+
 1. Payment intent may already be created
 2. Database queries were executed unnecessarily
 3. User waits longer for the error
@@ -78,13 +79,16 @@ The current implementation is acceptable because `revalidateInsideLock()` provid
 
 ```typescript
 // In revalidateInsideLock(), add logging:
-console.log(JSON.stringify({
-  event: "checkout_revalidation_caught_race",
-  appointmentType: data.appointmentType,
-  userId,
-  message: "Early validation passed but revalidation failed - race condition prevented",
-  timestamp: new Date().toISOString(),
-}));
+console.log(
+  JSON.stringify({
+    event: "checkout_revalidation_caught_race",
+    appointmentType: data.appointmentType,
+    userId,
+    message:
+      "Early validation passed but revalidation failed - race condition prevented",
+    timestamp: new Date().toISOString(),
+  }),
+);
 ```
 
 **Status:** Acceptable as-is (defense-in-depth working correctly)
@@ -102,7 +106,7 @@ The default lock TTL of 30 seconds may expire during slow database operations, e
 
 ```typescript
 // Current implementation
-return await lockSlotBooking(consultantUserId, data.slotStartTimeInUTC, 30000);  // 30 seconds
+return await lockSlotBooking(consultantUserId, data.slotStartTimeInUTC, 30000); // 30 seconds
 ```
 
 #### Impact Analysis
@@ -114,6 +118,7 @@ return await lockSlotBooking(consultantUserId, data.slotStartTimeInUTC, 30000); 
 #### Root Cause
 
 30 seconds seemed sufficient for normal operations, but doesn't account for:
+
 - Database connection pool exhaustion
 - Network latency spikes
 - Complex transaction serialization
@@ -140,20 +145,20 @@ T=35s    User A's transaction commits → DOUBLE BOOKING
 export async function lockSlotBooking(
   consultantProfileId: string,
   slotStartTimeInUTC: string,
-  ttl: number = 60000,  // ← Increased from 15000 to 60000
+  ttl: number = 60000, // ← Increased from 15000 to 60000
 ): Promise<ApprovalLock> {
   const key = `slot-booking:${consultantProfileId}:${slotStartTimeInUTC}`;
   try {
     return await acquireLockWithRetry(key, ttl);
   } catch (error) {
-    throw new SlotLockError(consultantProfileId, slotStartTimeInUTC, 60);  // ← Updated message
+    throw new SlotLockError(consultantProfileId, slotStartTimeInUTC, 60); // ← Updated message
   }
 }
 
 export async function lockEventCheckout(
   appointmentType: string,
   eventOrPlanId: string,
-  ttl: number = 60000,  // ← Increased from 30000 to 60000
+  ttl: number = 60000, // ← Increased from 30000 to 60000
 ): Promise<ApprovalLock> {
   // ... implementation
 }
@@ -179,29 +184,35 @@ export async function extendLock(
     // Only extend if we still own the lock
     if (currentValue === lock.value) {
       await client.pexpire(lock.key, additionalTtl);
-      console.log(JSON.stringify({
-        event: "lock_extended",
-        key: lock.key,
-        additional_ttl_ms: additionalTtl,
-        timestamp: new Date().toISOString(),
-      }));
+      console.log(
+        JSON.stringify({
+          event: "lock_extended",
+          key: lock.key,
+          additional_ttl_ms: additionalTtl,
+          timestamp: new Date().toISOString(),
+        }),
+      );
       return true;
     }
 
-    console.warn(JSON.stringify({
-      event: "lock_extension_failed",
-      key: lock.key,
-      reason: "lock_ownership_lost",
-      timestamp: new Date().toISOString(),
-    }));
+    console.warn(
+      JSON.stringify({
+        event: "lock_extension_failed",
+        key: lock.key,
+        reason: "lock_ownership_lost",
+        timestamp: new Date().toISOString(),
+      }),
+    );
     return false;
   } catch (error) {
-    console.error(JSON.stringify({
-      event: "lock_extension_error",
-      key: lock.key,
-      error: error instanceof Error ? error.message : "Unknown error",
-      timestamp: new Date().toISOString(),
-    }));
+    console.error(
+      JSON.stringify({
+        event: "lock_extension_error",
+        key: lock.key,
+        error: error instanceof Error ? error.message : "Unknown error",
+        timestamp: new Date().toISOString(),
+      }),
+    );
     return false;
   }
 }
@@ -223,9 +234,9 @@ The lock release operation uses separate GET and DEL commands, which is not atom
 ```typescript
 // CURRENT (UNSAFE):
 async function releaseLock(lock: ApprovalLock): Promise<void> {
-  const currentValue = await lock.client.get(lock.key);  // ← GET
+  const currentValue = await lock.client.get(lock.key); // ← GET
   if (currentValue === lock.value) {
-    await lock.client.del(lock.key);  // ← DEL (separate operation!)
+    await lock.client.del(lock.key); // ← DEL (separate operation!)
   }
 }
 ```
@@ -239,6 +250,7 @@ async function releaseLock(lock: ApprovalLock): Promise<void> {
 #### Root Cause
 
 Between the GET and DEL operations:
+
 1. Original lock could expire (TTL)
 2. Another client could acquire the lock
 3. DEL then removes the NEW lock holder's lock
@@ -279,36 +291,42 @@ async function releaseLock(lock: ApprovalLock): Promise<void> {
 
     const result = await lock.client.eval(
       script,
-      [lock.key],      // KEYS
-      [lock.value],    // ARGV
+      [lock.key], // KEYS
+      [lock.value], // ARGV
     );
 
     const heldDuration = Date.now() - lock.acquiredAt;
 
     if (result === 1) {
-      console.log(JSON.stringify({
-        event: "lock_released",
-        key: lock.key,
-        held_duration_ms: heldDuration,
-        timestamp: new Date().toISOString(),
-      }));
+      console.log(
+        JSON.stringify({
+          event: "lock_released",
+          key: lock.key,
+          held_duration_ms: heldDuration,
+          timestamp: new Date().toISOString(),
+        }),
+      );
     } else {
-      console.log(JSON.stringify({
-        event: "lock_already_released",
-        key: lock.key,
-        reason: "value_mismatch_or_expired",
-        held_duration_ms: heldDuration,
-        timestamp: new Date().toISOString(),
-      }));
+      console.log(
+        JSON.stringify({
+          event: "lock_already_released",
+          key: lock.key,
+          reason: "value_mismatch_or_expired",
+          held_duration_ms: heldDuration,
+          timestamp: new Date().toISOString(),
+        }),
+      );
     }
   } catch (error: any) {
     // Never throw in unlock - log only
-    console.error(JSON.stringify({
-      event: "lock_release_error",
-      key: lock.key,
-      error: error.message,
-      timestamp: new Date().toISOString(),
-    }));
+    console.error(
+      JSON.stringify({
+        event: "lock_release_error",
+        key: lock.key,
+        error: error.message,
+        timestamp: new Date().toISOString(),
+      }),
+    );
   }
 }
 ```
@@ -344,6 +362,7 @@ case "SUBSCRIPTION": {
 #### Root Cause
 
 The subscription model was designed for consultant-allocated slots (via Requests tab), not direct checkout. However, when scheduling periods overlap, two users could:
+
 1. Both pass validation (no tentative appointments visible)
 2. Both create payments
 3. Result in conflicting subscriptions
@@ -403,7 +422,7 @@ export async function handleSubscriptionCheckout(
 
   if (existingPendingSubscription) {
     throw new Error(
-      "You already have a pending or active subscription for this plan with overlapping dates."
+      "You already have a pending or active subscription for this plan with overlapping dates.",
     );
   }
 
@@ -411,7 +430,9 @@ export async function handleSubscriptionCheckout(
   const subscription = await tx.subscription.create({
     data: {
       subscriptionPlanId: plan.id,
-      requestStatus: skipPayment ? RequestStatus.APPROVED : RequestStatus.PENDING,
+      requestStatus: skipPayment
+        ? RequestStatus.APPROVED
+        : RequestStatus.PENDING,
       requestedById: consulteeProfileId,
       requestNotes: data.notes,
       bookingSource: "DIRECT_CHECKOUT",
@@ -439,7 +460,7 @@ export async function handleSubscriptionCheckout(
     plan,
     amount: plan.price,
     isSchedulingPeriodRequest: !!isSchedulingPeriodRequest,
-    appointment,  // ← Now returns appointment for payment linkage
+    appointment, // ← Now returns appointment for payment linkage
   };
 }
 ```
@@ -487,6 +508,7 @@ const lock = await lockEventCheckout("WEBINAR", webinarId, 60000);
 #### Root Cause
 
 The locking strategy was designed for 1:1 consultations. For events with 100+ participants, serializing all checkouts means:
+
 - 100 users × 5 seconds each = 500 seconds total
 - Last user waits 8+ minutes
 - Many users will abandon
@@ -506,7 +528,7 @@ export async function acquireEventSlot(
   eventType: string,
   eventId: string,
   maxParticipants: number,
-  ttl: number = 300000,  // 5 minutes for payment completion
+  ttl: number = 300000, // 5 minutes for payment completion
 ): Promise<{ reservationId: string; slotNumber: number } | null> {
   const client = redisClient as Redis;
   const counterKey = `event-counter:${eventType}:${eventId}`;
@@ -533,20 +555,22 @@ export async function acquireEventSlot(
     return newCount
   `;
 
-  const slotNumber = await client.eval(
+  const slotNumber = (await client.eval(
     script,
     [counterKey],
     [maxParticipants.toString(), ttl.toString()],
-  ) as number;
+  )) as number;
 
   if (slotNumber === -1) {
-    console.log(JSON.stringify({
-      event: "event_slot_full",
-      eventType,
-      eventId,
-      maxParticipants,
-      timestamp: new Date().toISOString(),
-    }));
+    console.log(
+      JSON.stringify({
+        event: "event_slot_full",
+        eventType,
+        eventId,
+        maxParticipants,
+        timestamp: new Date().toISOString(),
+      }),
+    );
     return null;
   }
 
@@ -554,14 +578,16 @@ export async function acquireEventSlot(
   const reservationKey = `event-reservation:${eventType}:${eventId}:${reservationId}`;
   await client.set(reservationKey, slotNumber.toString(), { px: ttl });
 
-  console.log(JSON.stringify({
-    event: "event_slot_acquired",
-    eventType,
-    eventId,
-    slotNumber,
-    reservationId,
-    timestamp: new Date().toISOString(),
-  }));
+  console.log(
+    JSON.stringify({
+      event: "event_slot_acquired",
+      eventType,
+      eventId,
+      slotNumber,
+      reservationId,
+      timestamp: new Date().toISOString(),
+    }),
+  );
 
   return { reservationId, slotNumber };
 }
@@ -584,13 +610,15 @@ export async function releaseEventSlot(
     await client.del(reservationKey);
     await client.decr(counterKey);
 
-    console.log(JSON.stringify({
-      event: "event_slot_released",
-      eventType,
-      eventId,
-      reservationId,
-      timestamp: new Date().toISOString(),
-    }));
+    console.log(
+      JSON.stringify({
+        event: "event_slot_released",
+        eventType,
+        eventId,
+        reservationId,
+        timestamp: new Date().toISOString(),
+      }),
+    );
   }
 }
 
@@ -609,13 +637,15 @@ export async function confirmEventSlot(
   // Just remove reservation, counter stays (slot is now confirmed)
   await client.del(reservationKey);
 
-  console.log(JSON.stringify({
-    event: "event_slot_confirmed",
-    eventType,
-    eventId,
-    reservationId,
-    timestamp: new Date().toISOString(),
-  }));
+  console.log(
+    JSON.stringify({
+      event: "event_slot_confirmed",
+      eventType,
+      eventId,
+      reservationId,
+      timestamp: new Date().toISOString(),
+    }),
+  );
 }
 ```
 
@@ -677,7 +707,7 @@ await tx.payment.update({
     description: `Metadata validation failed...`,
   },
 });
-return;  // ← Silent exit, no appointment!
+return; // ← Silent exit, no appointment!
 ```
 
 #### Fix Implementation
@@ -709,18 +739,20 @@ await sendUrgentAlert({
 });
 
 // Log for monitoring dashboards
-console.error(JSON.stringify({
-  event: "CRITICAL_ALERT",
-  alert_type: "payment_without_appointment",
-  payment_id: payment.id,
-  payment_intent: paymentIntentId,
-  user_id: payment.userId,
-  amount: payment.amount,
-  currency: payment.currency,
-  error: errorMessage,
-  action_required: "Manual appointment creation or refund",
-  timestamp: new Date().toISOString(),
-}));
+console.error(
+  JSON.stringify({
+    event: "CRITICAL_ALERT",
+    alert_type: "payment_without_appointment",
+    payment_id: payment.id,
+    payment_intent: paymentIntentId,
+    user_id: payment.userId,
+    amount: payment.amount,
+    currency: payment.currency,
+    error: errorMessage,
+    action_required: "Manual appointment creation or refund",
+    timestamp: new Date().toISOString(),
+  }),
+);
 ```
 
 **Status:** FIXED - Alerting added for metadata failures
@@ -735,6 +767,7 @@ console.error(JSON.stringify({
 #### Problem Description
 
 Cleanup job can race with webhook:
+
 1. Cleanup finds expired payment at T=0
 2. Payment webhook fires at T=1ms
 3. Cleanup deletes appointment
@@ -754,12 +787,14 @@ for (const payment of appointment.payment) {
   });
 
   if (freshPayment?.paymentStatus === PaymentStatus.SUCCEEDED) {
-    console.log(JSON.stringify({
-      event: "cleanup_skipped_payment_succeeded",
-      paymentId: payment.id,
-      appointmentId: appointment.id,
-      timestamp: new Date().toISOString(),
-    }));
+    console.log(
+      JSON.stringify({
+        event: "cleanup_skipped_payment_succeeded",
+        paymentId: payment.id,
+        appointmentId: appointment.id,
+        timestamp: new Date().toISOString(),
+      }),
+    );
     // Skip this appointment - payment completed while we were processing
     continue;
   }
@@ -801,9 +836,9 @@ const circuitBreaker: CircuitBreakerState = {
 };
 
 const CIRCUIT_CONFIG = {
-  failureThreshold: 5,      // Open after 5 failures
-  resetTimeout: 30000,      // Try again after 30 seconds
-  halfOpenRequests: 3,      // Allow 3 test requests in half-open
+  failureThreshold: 5, // Open after 5 failures
+  resetTimeout: 30000, // Try again after 30 seconds
+  halfOpenRequests: 3, // Allow 3 test requests in half-open
 };
 
 /**
@@ -818,16 +853,20 @@ export async function withCircuitBreaker<T>(
     const timeSinceFailure = Date.now() - circuitBreaker.lastFailure;
     if (timeSinceFailure > CIRCUIT_CONFIG.resetTimeout) {
       circuitBreaker.state = "HALF_OPEN";
-      console.log(JSON.stringify({
-        event: "circuit_breaker_half_open",
-        timestamp: new Date().toISOString(),
-      }));
+      console.log(
+        JSON.stringify({
+          event: "circuit_breaker_half_open",
+          timestamp: new Date().toISOString(),
+        }),
+      );
     } else {
-      console.warn(JSON.stringify({
-        event: "circuit_breaker_open",
-        remaining_ms: CIRCUIT_CONFIG.resetTimeout - timeSinceFailure,
-        timestamp: new Date().toISOString(),
-      }));
+      console.warn(
+        JSON.stringify({
+          event: "circuit_breaker_open",
+          remaining_ms: CIRCUIT_CONFIG.resetTimeout - timeSinceFailure,
+          timestamp: new Date().toISOString(),
+        }),
+      );
       if (fallback) return fallback();
       throw new Error("Redis circuit breaker is OPEN - service unavailable");
     }
@@ -840,10 +879,12 @@ export async function withCircuitBreaker<T>(
     if (circuitBreaker.state === "HALF_OPEN") {
       circuitBreaker.state = "CLOSED";
       circuitBreaker.failures = 0;
-      console.log(JSON.stringify({
-        event: "circuit_breaker_closed",
-        timestamp: new Date().toISOString(),
-      }));
+      console.log(
+        JSON.stringify({
+          event: "circuit_breaker_closed",
+          timestamp: new Date().toISOString(),
+        }),
+      );
     }
 
     return result;
@@ -853,11 +894,13 @@ export async function withCircuitBreaker<T>(
 
     if (circuitBreaker.failures >= CIRCUIT_CONFIG.failureThreshold) {
       circuitBreaker.state = "OPEN";
-      console.error(JSON.stringify({
-        event: "circuit_breaker_opened",
-        failures: circuitBreaker.failures,
-        timestamp: new Date().toISOString(),
-      }));
+      console.error(
+        JSON.stringify({
+          event: "circuit_breaker_opened",
+          failures: circuitBreaker.failures,
+          timestamp: new Date().toISOString(),
+        }),
+      );
     }
 
     if (fallback) return fallback();
@@ -892,7 +935,7 @@ export async function checkRedisHealth(): Promise<boolean> {
 #### Problem Description
 
 ```typescript
-const slotEnd = new Date(slot.getTime() + 30 * 60 * 1000);  // Hardcoded 30 min
+const slotEnd = new Date(slot.getTime() + 30 * 60 * 1000); // Hardcoded 30 min
 ```
 
 #### Fix Implementation
@@ -918,18 +961,18 @@ private async validateNoConflicts(
 
 ## Implementation Status
 
-| Issue | Severity | Status | File(s) Modified |
-|-------|----------|--------|------------------|
-| #1 | Critical | Acceptable | (logging only) |
-| #2 | Critical | FIXED | `utils/appointmentlock.ts` |
-| #3 | Critical | FIXED | `utils/appointmentlock.ts` |
-| #4 | Critical | FIXED | `lib/payments/operations/checkout.ts` |
-| #5 | Critical | FIXED | `utils/appointmentlock.ts` |
-| #6 | High | FIXED | `jobs/cleanup-abandoned-payments.ts` |
-| #8 | High | FIXED | `lib/payments/webhooks/handlers.ts` |
-| #10 | High | FIXED | `jobs/cleanup-abandoned-payments.ts` |
-| #12 | High | FIXED | `lib/redis.ts` |
-| #11 | Medium | FIXED | `utils/slotAllocation/SlotValidationService.ts` |
+| Issue | Severity | Status     | File(s) Modified                                |
+| ----- | -------- | ---------- | ----------------------------------------------- |
+| #1    | Critical | Acceptable | (logging only)                                  |
+| #2    | Critical | FIXED      | `utils/appointmentlock.ts`                      |
+| #3    | Critical | FIXED      | `utils/appointmentlock.ts`                      |
+| #4    | Critical | FIXED      | `lib/payments/operations/checkout.ts`           |
+| #5    | Critical | FIXED      | `utils/appointmentlock.ts`                      |
+| #6    | High     | FIXED      | `jobs/cleanup-abandoned-payments.ts`            |
+| #8    | High     | FIXED      | `lib/payments/webhooks/handlers.ts`             |
+| #10   | High     | FIXED      | `jobs/cleanup-abandoned-payments.ts`            |
+| #12   | High     | FIXED      | `lib/redis.ts`                                  |
+| #11   | Medium   | FIXED      | `utils/slotAllocation/SlotValidationService.ts` |
 
 ---
 

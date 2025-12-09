@@ -36,7 +36,8 @@ export default function RazorpayCheckout({
       if (!isLoaded) {
         toast({
           title: "Payment System Not Loading",
-          description: "The Razorpay payment system couldn't load. This may be due to a slow connection or ad blocker. Please check your internet connection, disable any ad blockers, and try again.",
+          description:
+            "The Razorpay payment system couldn't load. This may be due to a slow connection or ad blocker. Please check your internet connection, disable any ad blockers, and try again.",
           variant: "destructive",
         });
         return;
@@ -61,7 +62,8 @@ export default function RazorpayCheckout({
       if (!process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID) {
         toast({
           title: "Payment System Configuration Error",
-          description: "The Razorpay payment system is not properly configured on this website. This is a technical issue on our end. Please contact support for assistance, or try a different payment method.",
+          description:
+            "The Razorpay payment system is not properly configured on this website. This is a technical issue on our end. Please contact support for assistance, or try a different payment method.",
           variant: "destructive",
         });
         return;

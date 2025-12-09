@@ -61,10 +61,7 @@ function generateLockValue(): string {
 /**
  * Calculate retry delay with exponential backoff and jitter
  */
-function calculateRetryDelay(
-  attempt: number,
-  config: LockRetryConfig,
-): number {
+function calculateRetryDelay(attempt: number, config: LockRetryConfig): number {
   const baseDelay = config.exponentialBackoff
     ? config.retryDelay * Math.pow(2, attempt)
     : config.retryDelay;
@@ -177,11 +174,7 @@ async function releaseLock(lock: ApprovalLock): Promise<void> {
       end
     `;
 
-    const result = await lock.client.eval(
-      script,
-      [lock.key],
-      [lock.value],
-    );
+    const result = await lock.client.eval(script, [lock.key], [lock.value]);
 
     const heldDuration = Date.now() - lock.acquiredAt;
 
@@ -447,11 +440,11 @@ export async function acquireEventSlot(
       return newCount
     `;
 
-    const slotNumber = await client.eval(
+    const slotNumber = (await client.eval(
       script,
       [counterKey],
       [maxParticipants.toString(), ttl.toString()],
-    ) as number;
+    )) as number;
 
     if (slotNumber === -1) {
       console.log(

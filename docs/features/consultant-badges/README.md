@@ -104,160 +104,165 @@ export interface BadgeDefinition {
   name: string;
   description: string;
   icon: string;
-  category: 'performance' | 'engagement' | 'milestone' | 'verification' | 'special';
-  tier?: 'standard' | 'silver' | 'gold' | 'platinum';
+  category:
+    | "performance"
+    | "engagement"
+    | "milestone"
+    | "verification"
+    | "special";
+  tier?: "standard" | "silver" | "gold" | "platinum";
   criteria: BadgeCriteria;
-  expirationDays?: number;  // If badge can expire
+  expirationDays?: number; // If badge can expire
 }
 
 interface BadgeCriteria {
-  type: 'threshold' | 'streak' | 'manual';
+  type: "threshold" | "streak" | "manual";
   metric?: string;
   value?: number;
-  period?: 'all_time' | '30_days' | '90_days';
+  period?: "all_time" | "30_days" | "90_days";
 }
 
 export const BADGES: BadgeDefinition[] = [
   // PERFORMANCE BADGES
   {
-    id: 'top_rated',
-    name: 'Top Rated',
-    description: 'Maintains 4.8+ rating with 10+ reviews',
-    icon: '⭐',
-    category: 'performance',
-    tier: 'gold',
+    id: "top_rated",
+    name: "Top Rated",
+    description: "Maintains 4.8+ rating with 10+ reviews",
+    icon: "⭐",
+    category: "performance",
+    tier: "gold",
     criteria: {
-      type: 'threshold',
-      metric: 'rating',
-      value: 96,  // 4.8 out of 5 = 96%
-      period: 'all_time',
+      type: "threshold",
+      metric: "rating",
+      value: 96, // 4.8 out of 5 = 96%
+      period: "all_time",
     },
   },
   {
-    id: 'highly_reviewed',
-    name: 'Highly Reviewed',
-    description: '50+ positive reviews',
-    icon: '💬',
-    category: 'performance',
+    id: "highly_reviewed",
+    name: "Highly Reviewed",
+    description: "50+ positive reviews",
+    icon: "💬",
+    category: "performance",
     criteria: {
-      type: 'threshold',
-      metric: 'review_count',
+      type: "threshold",
+      metric: "review_count",
       value: 50,
     },
   },
 
   // ENGAGEMENT BADGES
   {
-    id: 'quick_responder',
-    name: 'Quick Responder',
-    description: 'Responds to requests within 2 hours',
-    icon: '⚡',
-    category: 'engagement',
+    id: "quick_responder",
+    name: "Quick Responder",
+    description: "Responds to requests within 2 hours",
+    icon: "⚡",
+    category: "engagement",
     criteria: {
-      type: 'threshold',
-      metric: 'avg_response_time_hours',
+      type: "threshold",
+      metric: "avg_response_time_hours",
       value: 2,
-      period: '30_days',
+      period: "30_days",
     },
-    expirationDays: 30,  // Must maintain
+    expirationDays: 30, // Must maintain
   },
   {
-    id: 'super_active',
-    name: 'Super Active',
-    description: 'Online and available regularly',
-    icon: '🟢',
-    category: 'engagement',
+    id: "super_active",
+    name: "Super Active",
+    description: "Online and available regularly",
+    icon: "🟢",
+    category: "engagement",
     criteria: {
-      type: 'threshold',
-      metric: 'active_days',
+      type: "threshold",
+      metric: "active_days",
       value: 25,
-      period: '30_days',
+      period: "30_days",
     },
     expirationDays: 30,
   },
 
   // MILESTONE BADGES
   {
-    id: 'first_consultation',
-    name: 'First Steps',
-    description: 'Completed first consultation',
-    icon: '🎯',
-    category: 'milestone',
-    criteria: { type: 'threshold', metric: 'consultation_count', value: 1 },
+    id: "first_consultation",
+    name: "First Steps",
+    description: "Completed first consultation",
+    icon: "🎯",
+    category: "milestone",
+    criteria: { type: "threshold", metric: "consultation_count", value: 1 },
   },
   {
-    id: '50_consultations',
-    name: 'Experienced',
-    description: 'Completed 50 consultations',
-    icon: '📚',
-    category: 'milestone',
-    tier: 'silver',
-    criteria: { type: 'threshold', metric: 'consultation_count', value: 50 },
+    id: "50_consultations",
+    name: "Experienced",
+    description: "Completed 50 consultations",
+    icon: "📚",
+    category: "milestone",
+    tier: "silver",
+    criteria: { type: "threshold", metric: "consultation_count", value: 50 },
   },
   {
-    id: '100_consultations',
-    name: 'Expert Advisor',
-    description: 'Completed 100 consultations',
-    icon: '🏆',
-    category: 'milestone',
-    tier: 'gold',
-    criteria: { type: 'threshold', metric: 'consultation_count', value: 100 },
+    id: "100_consultations",
+    name: "Expert Advisor",
+    description: "Completed 100 consultations",
+    icon: "🏆",
+    category: "milestone",
+    tier: "gold",
+    criteria: { type: "threshold", metric: "consultation_count", value: 100 },
   },
   {
-    id: '500_consultations',
-    name: 'Master Consultant',
-    description: 'Completed 500 consultations',
-    icon: '👑',
-    category: 'milestone',
-    tier: 'platinum',
-    criteria: { type: 'threshold', metric: 'consultation_count', value: 500 },
+    id: "500_consultations",
+    name: "Master Consultant",
+    description: "Completed 500 consultations",
+    icon: "👑",
+    category: "milestone",
+    tier: "platinum",
+    criteria: { type: "threshold", metric: "consultation_count", value: 500 },
   },
 
   // VERIFICATION BADGES
   {
-    id: 'verified_identity',
-    name: 'Verified Identity',
-    description: 'Identity verified by platform',
-    icon: '✓',
-    category: 'verification',
-    criteria: { type: 'manual' },
+    id: "verified_identity",
+    name: "Verified Identity",
+    description: "Identity verified by platform",
+    icon: "✓",
+    category: "verification",
+    criteria: { type: "manual" },
   },
   {
-    id: 'verified_credentials',
-    name: 'Verified Credentials',
-    description: 'Professional credentials verified',
-    icon: '🎓',
-    category: 'verification',
-    criteria: { type: 'manual' },
+    id: "verified_credentials",
+    name: "Verified Credentials",
+    description: "Professional credentials verified",
+    icon: "🎓",
+    category: "verification",
+    criteria: { type: "manual" },
   },
 
   // SPECIAL BADGES
   {
-    id: 'rising_star',
-    name: 'Rising Star',
-    description: 'New consultant with exceptional early performance',
-    icon: '🌟',
-    category: 'special',
+    id: "rising_star",
+    name: "Rising Star",
+    description: "New consultant with exceptional early performance",
+    icon: "🌟",
+    category: "special",
     criteria: {
-      type: 'threshold',
-      metric: 'rating_in_first_90_days',
+      type: "threshold",
+      metric: "rating_in_first_90_days",
       value: 96,
     },
-    expirationDays: 180,  // Valid for 6 months
+    expirationDays: 180, // Valid for 6 months
   },
   {
-    id: 'platform_pick',
-    name: 'Platform Pick',
-    description: 'Handpicked by Familiarise team',
-    icon: '💎',
-    category: 'special',
-    tier: 'platinum',
-    criteria: { type: 'manual' },
+    id: "platform_pick",
+    name: "Platform Pick",
+    description: "Handpicked by Familiarise team",
+    icon: "💎",
+    category: "special",
+    tier: "platinum",
+    criteria: { type: "manual" },
   },
 ];
 
 export function getBadgeById(id: string): BadgeDefinition | undefined {
-  return BADGES.find(b => b.id === id);
+  return BADGES.find((b) => b.id === id);
 }
 ```
 
@@ -266,7 +271,9 @@ export function getBadgeById(id: string): BadgeDefinition | undefined {
 ```typescript
 // lib/badges/evaluator.ts
 
-export async function evaluateBadges(consultantProfileId: string): Promise<string[]> {
+export async function evaluateBadges(
+  consultantProfileId: string,
+): Promise<string[]> {
   const profile = await prisma.consultantProfile.findUnique({
     where: { id: consultantProfileId },
     include: {
@@ -284,7 +291,7 @@ export async function evaluateBadges(consultantProfileId: string): Promise<strin
   const earnedBadges: string[] = [];
 
   for (const badge of BADGES) {
-    if (badge.criteria.type === 'manual') continue;
+    if (badge.criteria.type === "manual") continue;
 
     const meetsThreshold = evaluateCriteria(badge.criteria, metrics);
     if (meetsThreshold) {
@@ -295,7 +302,9 @@ export async function evaluateBadges(consultantProfileId: string): Promise<strin
   return earnedBadges;
 }
 
-async function gatherMetrics(consultantProfileId: string): Promise<Record<string, number>> {
+async function gatherMetrics(
+  consultantProfileId: string,
+): Promise<Record<string, number>> {
   const [
     consultationCount,
     avgRating,
@@ -321,9 +330,13 @@ async function gatherMetrics(consultantProfileId: string): Promise<Record<string
 
 function evaluateCriteria(
   criteria: BadgeCriteria,
-  metrics: Record<string, number>
+  metrics: Record<string, number>,
 ): boolean {
-  if (criteria.type !== 'threshold' || !criteria.metric || criteria.value === undefined) {
+  if (
+    criteria.type !== "threshold" ||
+    !criteria.metric ||
+    criteria.value === undefined
+  ) {
     return false;
   }
 
@@ -331,7 +344,7 @@ function evaluateCriteria(
   if (metricValue === undefined) return false;
 
   // For response time, lower is better
-  if (criteria.metric.includes('response_time')) {
+  if (criteria.metric.includes("response_time")) {
     return metricValue <= criteria.value;
   }
 
@@ -349,7 +362,7 @@ export async function updateAllBadges(): Promise<void> {
     const earnedBadges = await evaluateBadges(consultant.id);
 
     // Check for expired badges
-    const validBadges = earnedBadges.filter(badgeId => {
+    const validBadges = earnedBadges.filter((badgeId) => {
       const badge = getBadgeById(badgeId);
       if (!badge?.expirationDays) return true;
       // Check if still meets criteria (already done in evaluateBadges)
@@ -357,8 +370,13 @@ export async function updateAllBadges(): Promise<void> {
     });
 
     // Update if changed
-    if (JSON.stringify(validBadges.sort()) !== JSON.stringify([...consultant.badges].sort())) {
-      const newBadges = validBadges.filter(b => !consultant.badges.includes(b));
+    if (
+      JSON.stringify(validBadges.sort()) !==
+      JSON.stringify([...consultant.badges].sort())
+    ) {
+      const newBadges = validBadges.filter(
+        (b) => !consultant.badges.includes(b),
+      );
 
       await prisma.consultantProfile.update({
         where: { id: consultant.id },
@@ -550,18 +568,21 @@ GET /api/explore/consultants?badges=top_rated,verified
 ## Badge Ideas by Category
 
 ### Performance
+
 - Top Rated (4.8+ rating)
 - Highly Reviewed (50+ reviews)
 - Perfect Score (5.0 rating, 10+ reviews)
 - Consistent Quality (4.5+ for 6 months)
 
 ### Engagement
+
 - Quick Responder (< 2hr response)
 - Super Active (25+ active days/month)
 - Always Available (never missed a session)
 - Early Bird (available mornings)
 
 ### Milestones
+
 - First Steps (1 consultation)
 - Growing (10 consultations)
 - Experienced (50 consultations)
@@ -570,16 +591,19 @@ GET /api/explore/consultants?badges=top_rated,verified
 - Legend (1000 consultations)
 
 ### Revenue
+
 - Rising Revenue (growing month-over-month)
 - Top Earner (top 10% by revenue)
 
 ### Verification
+
 - Verified Identity
 - Verified Credentials
 - Background Checked
 - LinkedIn Verified
 
 ### Special
+
 - Rising Star (new + high rated)
 - Platform Pick (staff selected)
 - Community Champion (helps others)

@@ -55,10 +55,10 @@ async function runTest() {
 
   logTestStart(config.testName, {
     Category: config.category,
-    "Scenario": "User booking multiple sessions with same consultant",
+    Scenario: "User booking multiple sessions with same consultant",
     "User ID": userId,
-    "Slots": "4 different time slots",
-    "Times": `${new Date(slot1.start).toLocaleTimeString()}, ${new Date(slot2.start).toLocaleTimeString()}, ${new Date(slot3.start).toLocaleTimeString()}, ${new Date(slot4.start).toLocaleTimeString()}`,
+    Slots: "4 different time slots",
+    Times: `${new Date(slot1.start).toLocaleTimeString()}, ${new Date(slot2.start).toLocaleTimeString()}, ${new Date(slot3.start).toLocaleTimeString()}, ${new Date(slot4.start).toLocaleTimeString()}`,
     "Consultant ID": consultantId,
     "Expected Outcome": `${config.expectedSuccesses} successes (all slots available)`,
   });

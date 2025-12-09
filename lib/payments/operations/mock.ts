@@ -81,7 +81,9 @@ export async function cancelMockPayment(
 /**
  * Validate mock payment metadata
  */
-export function validateMockPaymentMetadata(metadata: Record<string, string>): boolean {
+export function validateMockPaymentMetadata(
+  metadata: Record<string, string>,
+): boolean {
   // Check required fields
   if (!metadata.appointmentId || !metadata.appointmentType) {
     return false;

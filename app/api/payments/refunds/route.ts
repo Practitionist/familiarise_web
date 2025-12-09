@@ -142,9 +142,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       {
         error:
-          error instanceof Error
-            ? error.message
-            : "Failed to create refund",
+          error instanceof Error ? error.message : "Failed to create refund",
       },
       { status: 500 },
     );

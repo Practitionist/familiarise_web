@@ -165,7 +165,9 @@ export async function cancelStripePayment(
         error.code === "resource_missing" ||
         error.message.includes("already")
       ) {
-        console.log(`✅ Payment was already expired/cancelled: ${paymentIntentId}`);
+        console.log(
+          `✅ Payment was already expired/cancelled: ${paymentIntentId}`,
+        );
         return;
       }
     }
@@ -196,9 +198,8 @@ export async function createStripeRefund({
 
   try {
     // Fetch the payment intent to get the currency
-    const paymentIntent = await stripeClient.paymentIntents.retrieve(
-      paymentIntentId,
-    );
+    const paymentIntent =
+      await stripeClient.paymentIntents.retrieve(paymentIntentId);
     const currency = paymentIntent.currency;
 
     const refund = await stripeClient.refunds.create({
@@ -417,9 +418,7 @@ function mapRefundReason(
   return "requested_by_customer";
 }
 
-function mapStripeRefundStatus(
-  status: string | null,
-): RefundStatus {
+function mapStripeRefundStatus(status: string | null): RefundStatus {
   switch (status) {
     case "succeeded":
       return "SUCCEEDED";

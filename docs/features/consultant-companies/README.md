@@ -33,6 +33,7 @@ User (role: CONSULTANT)
 ```
 
 **Limitations:**
+
 - No organization/company concept
 - Each consultant operates independently
 - No shared branding, settings, or revenue pooling
@@ -430,16 +431,16 @@ interface Session {
 
     // NEW
     organizationMemberships: {
-      organizationId: string
-      organizationName: string
-      organizationSlug: string
-      role: OrganizationRole
-      status: MemberStatus
-    }[]
+      organizationId: string;
+      organizationName: string;
+      organizationSlug: string;
+      role: OrganizationRole;
+      status: MemberStatus;
+    }[];
 
-    primaryOrganizationId: string | null
-    currentOrganizationId: string | null  // For org switching
-  }
+    primaryOrganizationId: string | null;
+    currentOrganizationId: string | null; // For org switching
+  };
 }
 ```
 
@@ -449,30 +450,41 @@ interface Session {
 // New middleware for organization-scoped routes
 export async function withOrganization(
   req: NextRequest,
-  handler: (req: NextRequest, org: Organization, member: OrganizationMember) => Promise<NextResponse>
+  handler: (
+    req: NextRequest,
+    org: Organization,
+    member: OrganizationMember,
+  ) => Promise<NextResponse>,
 ) {
-  const session = await getServerSession(authOptions)
+  const session = await getServerSession(authOptions);
   if (!session?.user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const orgId = req.headers.get("x-organization-id") || session.user.currentOrganizationId
+  const orgId =
+    req.headers.get("x-organization-id") || session.user.currentOrganizationId;
   if (!orgId) {
-    return NextResponse.json({ error: "Organization required" }, { status: 400 })
+    return NextResponse.json(
+      { error: "Organization required" },
+      { status: 400 },
+    );
   }
 
   const membership = await prisma.organizationMember.findUnique({
     where: {
-      organizationId_userId: { organizationId: orgId, userId: session.user.id }
+      organizationId_userId: { organizationId: orgId, userId: session.user.id },
     },
-    include: { organization: true }
-  })
+    include: { organization: true },
+  });
 
   if (!membership || membership.status !== "ACTIVE") {
-    return NextResponse.json({ error: "Not a member of this organization" }, { status: 403 })
+    return NextResponse.json(
+      { error: "Not a member of this organization" },
+      { status: 403 },
+    );
   }
 
-  return handler(req, membership.organization, membership)
+  return handler(req, membership.organization, membership);
 }
 ```
 
@@ -705,11 +717,11 @@ CONSULTEE PAYS
 async function processOrganizationPayout(orgId: string, periodEnd: Date) {
   const org = await prisma.organization.findUnique({
     where: { id: orgId },
-    include: { settings: true, payoutAccount: true }
-  })
+    include: { settings: true, payoutAccount: true },
+  });
 
   if (!org?.payoutAccount || org.payoutAccount.status !== "VERIFIED") {
-    throw new Error("Payout account not verified")
+    throw new Error("Payout account not verified");
   }
 
   // Calculate revenue for period
@@ -719,19 +731,41 @@ async function processOrganizationPayout(orgId: string, periodEnd: Date) {
       createdAt: { gte: lastPayoutDate, lte: periodEnd },
       appointment: {
         OR: [
-          { consultation: { consultationPlan: { consultantProfile: { organizationMember: { organizationId: orgId } } } } },
-          { subscription: { subscriptionPlan: { consultantProfile: { organizationMember: { organizationId: orgId } } } } },
+          {
+            consultation: {
+              consultationPlan: {
+                consultantProfile: {
+                  organizationMember: { organizationId: orgId },
+                },
+              },
+            },
+          },
+          {
+            subscription: {
+              subscriptionPlan: {
+                consultantProfile: {
+                  organizationMember: { organizationId: orgId },
+                },
+              },
+            },
+          },
           // ... webinar, class
-        ]
-      }
-    }
-  })
+        ],
+      },
+    },
+  });
 
-  const grossRevenue = payments.reduce((sum, p) => sum + p.amount, 0)
-  const refunds = await calculateRefundsForPeriod(orgId, lastPayoutDate, periodEnd)
+  const grossRevenue = payments.reduce((sum, p) => sum + p.amount, 0);
+  const refunds = await calculateRefundsForPeriod(
+    orgId,
+    lastPayoutDate,
+    periodEnd,
+  );
 
-  const platformFee = Math.round(grossRevenue * org.settings.platformCommissionRate)
-  const netPayout = grossRevenue - platformFee - refunds
+  const platformFee = Math.round(
+    grossRevenue * org.settings.platformCommissionRate,
+  );
+  const netPayout = grossRevenue - platformFee - refunds;
 
   // Create payout record
   const payout = await prisma.payout.create({
@@ -746,18 +780,26 @@ async function processOrganizationPayout(orgId: string, periodEnd: Date) {
       refunds,
       netPayout,
       status: "PENDING",
-      paymentGateway: "STRIPE" // or based on payout account
-    }
-  })
+      paymentGateway: "STRIPE", // or based on payout account
+    },
+  });
 
   // Process via gateway
   if (org.payoutAccount.stripeConnectId) {
-    await processStripePayout(org.payoutAccount.stripeConnectId, netPayout, payout.id)
+    await processStripePayout(
+      org.payoutAccount.stripeConnectId,
+      netPayout,
+      payout.id,
+    );
   } else if (org.payoutAccount.razorpayFundAccountId) {
-    await processRazorpayPayout(org.payoutAccount.razorpayFundAccountId, netPayout, payout.id)
+    await processRazorpayPayout(
+      org.payoutAccount.razorpayFundAccountId,
+      netPayout,
+      payout.id,
+    );
   }
 
-  return payout
+  return payout;
 }
 ```
 
@@ -765,22 +807,36 @@ async function processOrganizationPayout(orgId: string, periodEnd: Date) {
 
 ```typescript
 // Refund flow with organization revenue adjustment
-async function processOrganizationRefund(paymentId: string, amount: number, reason: string) {
+async function processOrganizationRefund(
+  paymentId: string,
+  amount: number,
+  reason: string,
+) {
   const payment = await prisma.payment.findUnique({
     where: { id: paymentId },
     include: {
       appointment: {
         include: {
-          consultation: { include: { consultationPlan: { include: { consultantProfile: { include: { organizationMember: true } } } } } }
-        }
-      }
-    }
-  })
+          consultation: {
+            include: {
+              consultationPlan: {
+                include: {
+                  consultantProfile: { include: { organizationMember: true } },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
 
-  const orgMember = payment.appointment?.consultation?.consultationPlan?.consultantProfile?.organizationMember
+  const orgMember =
+    payment.appointment?.consultation?.consultationPlan?.consultantProfile
+      ?.organizationMember;
 
   // Process refund via gateway
-  const refundResult = await processGatewayRefund(payment, amount, reason)
+  const refundResult = await processGatewayRefund(payment, amount, reason);
 
   // Create refund record
   const refund = await prisma.refund.create({
@@ -791,9 +847,9 @@ async function processOrganizationRefund(paymentId: string, amount: number, reas
       status: refundResult.status,
       refundId: refundResult.refundId,
       paymentGateway: payment.paymentGateway,
-      paymentId: payment.id
-    }
-  })
+      paymentId: payment.id,
+    },
+  });
 
   // If org payment, track for payout adjustment
   if (orgMember) {
@@ -803,11 +859,11 @@ async function processOrganizationRefund(paymentId: string, amount: number, reas
         refundId: refund.id,
         amount,
         // Will be deducted from next payout
-      }
-    })
+      },
+    });
   }
 
-  return refund
+  return refund;
 }
 ```
 
@@ -941,13 +997,13 @@ NEW FEATURE FOR ORGS:
 // Updated checkout API for organization context
 interface CheckoutRequest {
   // Existing fields
-  planId: string
-  appointmentType: AppointmentsType
-  paymentGateway: PaymentGateway
+  planId: string;
+  appointmentType: AppointmentsType;
+  paymentGateway: PaymentGateway;
 
   // NEW: Organization context
-  organizationId?: string        // If booking from org consultant
-  organizationPlanId?: string    // If using org-level plan
+  organizationId?: string; // If booking from org consultant
+  organizationPlanId?: string; // If using org-level plan
 
   // Determines revenue split
   // If organizationId present: Use org settings for split
@@ -957,19 +1013,19 @@ interface CheckoutRequest {
 // Updated payment metadata
 interface PaymentMetadata {
   // Existing
-  appointmentId: string
-  appointmentType: string
-  userId: string
-  consultantProfileId: string
+  appointmentId: string;
+  appointmentType: string;
+  userId: string;
+  consultantProfileId: string;
 
   // NEW
-  organizationId?: string
-  organizationPlanId?: string
+  organizationId?: string;
+  organizationPlanId?: string;
   revenueSplit?: {
-    platform: number
-    organization: number
-    consultant: number
-  }
+    platform: number;
+    organization: number;
+    consultant: number;
+  };
 }
 ```
 

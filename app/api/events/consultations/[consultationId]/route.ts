@@ -348,9 +348,7 @@ export async function PATCH(
         return NextResponse.json(
           {
             error:
-              error instanceof Error
-                ? error.message
-                : "Failed to acquire lock",
+              error instanceof Error ? error.message : "Failed to acquire lock",
           },
           { status: 409 }, // Conflict - another approval in progress
         );
@@ -420,36 +418,36 @@ export async function PATCH(
 
           // Update consultation status
           const consultation = await tx.consultation.update({
-        where: { id: consultationId },
-        data: {
-          requestStatus: status,
-        },
-        include: {
-          consultationPlan: {
+            where: { id: consultationId },
+            data: {
+              requestStatus: status,
+            },
             include: {
-              consultantProfile: {
+              consultationPlan: {
+                include: {
+                  consultantProfile: {
+                    include: {
+                      user: true,
+                    },
+                  },
+                },
+              },
+              requestedBy: {
                 include: {
                   user: true,
                 },
               },
-            },
-          },
-          requestedBy: {
-            include: {
-              user: true,
-            },
-          },
-          appointment: {
-            include: {
-              slotsOfAppointment: {
+              appointment: {
                 include: {
-                  user: true,
+                  slotsOfAppointment: {
+                    include: {
+                      user: true,
+                    },
+                  },
                 },
               },
             },
-          },
-        },
-      });
+          });
 
           // If approved, check if payment exists
           if (status === RequestStatus.APPROVED) {
@@ -575,7 +573,9 @@ export async function PATCH(
 /**
  * Check if payment exists for this consultation
  */
-async function checkConsultationPayment(consultationId: string): Promise<boolean> {
+async function checkConsultationPayment(
+  consultationId: string,
+): Promise<boolean> {
   const consultation = await prisma.consultation.findUnique({
     where: { id: consultationId },
     include: {

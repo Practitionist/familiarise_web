@@ -57,7 +57,11 @@ async function runTest() {
   const results: BookingResult[] = await Promise.all([
     simulateBookingAttempt("not-a-date", consultantId, generateUserId(1)),
     simulateBookingAttempt("", consultantId, generateUserId(2)),
-    simulateBookingAttempt("2024-13-45T99:99:99", consultantId, generateUserId(3)),
+    simulateBookingAttempt(
+      "2024-13-45T99:99:99",
+      consultantId,
+      generateUserId(3),
+    ),
   ]);
 
   const duration = Date.now() - startTime;

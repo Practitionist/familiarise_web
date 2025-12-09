@@ -21,7 +21,7 @@ export function isUserWithId(value: unknown): value is { id: string } {
 export function countUniqueParticipants(
   appointments: Array<{
     slotsOfAppointment: Array<{ user?: Array<{ id: string }> | unknown }>;
-  }>
+  }>,
 ): number {
   const uniqueUserIds = new Set<string>();
 
@@ -46,7 +46,7 @@ export function countUniqueParticipants(
 export function countWebinarParticipants(
   appointment: {
     slotsOfAppointment?: Array<{ user?: Array<{ id: string }> | unknown }>;
-  } | null
+  } | null,
 ): number {
   if (!appointment?.slotsOfAppointment) return 0;
 
@@ -66,7 +66,7 @@ export function isUserEnrolled(
   appointments: Array<{
     slotsOfAppointment: Array<{ user?: Array<{ id: string }> | unknown }>;
   }>,
-  userId: string
+  userId: string,
 ): boolean {
   for (const apt of appointments) {
     for (const slot of apt.slotsOfAppointment) {

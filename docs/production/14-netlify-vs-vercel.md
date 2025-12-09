@@ -28,18 +28,18 @@
 
 ### Decision Matrix
 
-| Factor | Netlify | Vercel | Winner |
-|--------|---------|--------|--------|
-| Next.js Support | Good | Native (creators) | **Vercel** |
-| App Router Support | Reverse-engineered | First-class | **Vercel** |
-| SSR Performance | Slower, cold starts | Optimized | **Vercel** |
-| ISR (Incremental Static Regen) | Works, with issues | Native, reliable | **Vercel** |
-| Edge Functions | Good | Better for Next.js | **Vercel** |
-| Static Sites | Excellent | Excellent | Tie |
-| Pricing (Small Scale) | Similar | Similar | Tie |
-| Pricing (Large Scale) | Variable | More predictable | **Vercel** |
-| Developer Experience | Good | Best for Next.js | **Vercel** |
-| Enterprise Support | Good | Better for Next.js | **Vercel** |
+| Factor                         | Netlify             | Vercel             | Winner     |
+| ------------------------------ | ------------------- | ------------------ | ---------- |
+| Next.js Support                | Good                | Native (creators)  | **Vercel** |
+| App Router Support             | Reverse-engineered  | First-class        | **Vercel** |
+| SSR Performance                | Slower, cold starts | Optimized          | **Vercel** |
+| ISR (Incremental Static Regen) | Works, with issues  | Native, reliable   | **Vercel** |
+| Edge Functions                 | Good                | Better for Next.js | **Vercel** |
+| Static Sites                   | Excellent           | Excellent          | Tie        |
+| Pricing (Small Scale)          | Similar             | Similar            | Tie        |
+| Pricing (Large Scale)          | Variable            | More predictable   | **Vercel** |
+| Developer Experience           | Good                | Best for Next.js   | **Vercel** |
+| Enterprise Support             | Good                | Better for Next.js | **Vercel** |
 
 ### Verdict
 
@@ -80,15 +80,15 @@ Vercel's Advantages:
 
 ### Native Feature Support
 
-| Feature | Vercel | Netlify |
-|---------|--------|---------|
-| App Router | Day 1 support | Reverse-engineered |
-| Server Components | Native | Adapted |
-| Server Actions | Native | Adapted |
-| ISR | Native | Workarounds needed |
-| Partial Prerendering | Native | Limited |
-| Image Optimization | Built-in | Uses Netlify CDN |
-| Middleware | Edge-native | Edge Functions |
+| Feature              | Vercel        | Netlify            |
+| -------------------- | ------------- | ------------------ |
+| App Router           | Day 1 support | Reverse-engineered |
+| Server Components    | Native        | Adapted            |
+| Server Actions       | Native        | Adapted            |
+| ISR                  | Native        | Workarounds needed |
+| Partial Prerendering | Native        | Limited            |
+| Image Optimization   | Built-in      | Uses Netlify CDN   |
+| Middleware           | Edge-native   | Edge Functions     |
 
 ### Build Output API Problem
 
@@ -97,6 +97,7 @@ Vercel's Advantages:
 > — [Netlify Engineering Blog](https://www.netlify.com/blog/how-we-run-nextjs/)
 
 This means:
+
 - Netlify must reverse-engineer Next.js build output
 - Each Next.js update can break Netlify deployments
 - Netlify is always playing catch-up
@@ -157,12 +158,14 @@ interval. This is currently not possible."
 ### Engineering Overhead
 
 Netlify and other providers must:
+
 1. Read Vercel-tailored, undocumented build output
 2. Translate to their own format
 3. Write back to disk
 4. Maintain compatibility with each Next.js update
 
 This creates:
+
 - Delayed support for new features
 - Potential bugs and edge cases
 - Ongoing maintenance burden
@@ -174,49 +177,49 @@ This creates:
 
 ### Core Features
 
-| Feature | Vercel | Netlify |
-|---------|--------|---------|
-| **Deployment** | | |
-| Git integration | GitHub, GitLab, Bitbucket | GitHub, GitLab, Bitbucket |
-| Preview deployments | Yes | Yes |
-| Instant rollbacks | Yes | Yes |
-| Branch deployments | Yes | Yes |
-| **Next.js Specific** | | |
-| App Router | Native | Adapted |
-| Pages Router | Native | Supported |
-| API Routes | Native | Serverless Functions |
-| Server Components | Native | Adapted |
-| ISR | Native | Adapted |
-| Image Optimization | next/image native | Netlify Image CDN |
-| **Edge** | | |
-| Edge Functions | Yes | Yes |
-| Middleware | Native | Edge Functions |
-| Edge Config | Yes | No equivalent |
-| **Caching** | | |
-| CDN | Global | Global (100+ PoPs) |
-| Cache invalidation | Tag-based, path-based | Tag-based, path-based |
-| Stale-while-revalidate | Native | Supported |
+| Feature                | Vercel                    | Netlify                   |
+| ---------------------- | ------------------------- | ------------------------- |
+| **Deployment**         |                           |                           |
+| Git integration        | GitHub, GitLab, Bitbucket | GitHub, GitLab, Bitbucket |
+| Preview deployments    | Yes                       | Yes                       |
+| Instant rollbacks      | Yes                       | Yes                       |
+| Branch deployments     | Yes                       | Yes                       |
+| **Next.js Specific**   |                           |                           |
+| App Router             | Native                    | Adapted                   |
+| Pages Router           | Native                    | Supported                 |
+| API Routes             | Native                    | Serverless Functions      |
+| Server Components      | Native                    | Adapted                   |
+| ISR                    | Native                    | Adapted                   |
+| Image Optimization     | next/image native         | Netlify Image CDN         |
+| **Edge**               |                           |                           |
+| Edge Functions         | Yes                       | Yes                       |
+| Middleware             | Native                    | Edge Functions            |
+| Edge Config            | Yes                       | No equivalent             |
+| **Caching**            |                           |                           |
+| CDN                    | Global                    | Global (100+ PoPs)        |
+| Cache invalidation     | Tag-based, path-based     | Tag-based, path-based     |
+| Stale-while-revalidate | Native                    | Supported                 |
 
 ### Developer Experience
 
-| Aspect | Vercel | Netlify |
-|--------|--------|---------|
-| Next.js config | Zero-config | Some config needed |
-| Build times | Fast | Fast |
-| Logs | Excellent | Good |
-| Analytics | Built-in | Add-on |
-| Error handling | Integrated | Manual setup |
-| Local dev parity | Excellent | Good (some differences) |
+| Aspect           | Vercel      | Netlify                 |
+| ---------------- | ----------- | ----------------------- |
+| Next.js config   | Zero-config | Some config needed      |
+| Build times      | Fast        | Fast                    |
+| Logs             | Excellent   | Good                    |
+| Analytics        | Built-in    | Add-on                  |
+| Error handling   | Integrated  | Manual setup            |
+| Local dev parity | Excellent   | Good (some differences) |
 
 ### Built-in Features
 
-| Feature | Vercel | Netlify |
-|---------|--------|---------|
-| Form handling | No (use service) | Yes (built-in) |
-| Identity/Auth | No (use service) | Yes (Netlify Identity) |
-| A/B Testing | Edge Middleware | Built-in |
-| Split testing | Yes | Yes |
-| Scheduled functions | Via cron | Via cron |
+| Feature             | Vercel           | Netlify                |
+| ------------------- | ---------------- | ---------------------- |
+| Form handling       | No (use service) | Yes (built-in)         |
+| Identity/Auth       | No (use service) | Yes (Netlify Identity) |
+| A/B Testing         | Edge Middleware  | Built-in               |
+| Split testing       | Yes              | Yes                    |
+| Scheduled functions | Via cron         | Via cron               |
 
 ---
 
@@ -224,45 +227,46 @@ This creates:
 
 ### Free Tier
 
-| Resource | Vercel | Netlify |
-|----------|--------|---------|
-| Bandwidth | 100 GB | 100 GB |
-| Build minutes | 6,000/month | 300/month |
-| Serverless invocations | 100,000 | 125,000 |
-| Serverless execution | 100 GB-hours | N/A (invocation-based) |
-| Team members | 1 | 1 |
+| Resource               | Vercel       | Netlify                |
+| ---------------------- | ------------ | ---------------------- |
+| Bandwidth              | 100 GB       | 100 GB                 |
+| Build minutes          | 6,000/month  | 300/month              |
+| Serverless invocations | 100,000      | 125,000                |
+| Serverless execution   | 100 GB-hours | N/A (invocation-based) |
+| Team members           | 1            | 1                      |
 
 ### Pro/Team Plans
 
-| Resource | Vercel Pro ($20/user/mo) | Netlify Pro ($19/user/mo) |
-|----------|--------------------------|---------------------------|
-| Bandwidth | 1 TB | 1 TB |
-| Build minutes | Unlimited | 25,000/month |
-| Serverless execution | 1,000 GB-hours | 125k invocations |
-| Team members | Unlimited | Per-seat |
-| Support | Email | Email |
+| Resource             | Vercel Pro ($20/user/mo) | Netlify Pro ($19/user/mo) |
+| -------------------- | ------------------------ | ------------------------- |
+| Bandwidth            | 1 TB                     | 1 TB                      |
+| Build minutes        | Unlimited                | 25,000/month              |
+| Serverless execution | 1,000 GB-hours           | 125k invocations          |
+| Team members         | Unlimited                | Per-seat                  |
+| Support              | Email                    | Email                     |
 
 ### Enterprise
 
-| Aspect | Vercel | Netlify |
-|--------|--------|---------|
+| Aspect         | Vercel       | Netlify      |
+| -------------- | ------------ | ------------ |
 | Starting price | ~$500+/month | ~$450+/month |
-| SLA | 99.99% | 99.99% |
-| Support | Dedicated | Dedicated |
-| Custom limits | Yes | Yes |
-| SSO/SAML | Yes | Yes |
+| SLA            | 99.99%       | 99.99%       |
+| Support        | Dedicated    | Dedicated    |
+| Custom limits  | Yes          | Yes          |
+| SSO/SAML       | Yes          | Yes          |
 
 ### Cost at Scale (Estimated)
 
-| Users | Vercel | Netlify | Notes |
-|-------|--------|---------|-------|
-| 10K | $20-50 | $19-50 | Similar |
-| 50K | $100-200 | $100-200 | Similar |
-| 100K | $200-400 | $200-500 | Netlify SSR costs more |
-| 500K | $500-1000 | $700-1500 | Vercel more efficient |
-| 1M+ | $1500-3000 | $2000-4000+ | Vercel scales better |
+| Users | Vercel     | Netlify     | Notes                  |
+| ----- | ---------- | ----------- | ---------------------- |
+| 10K   | $20-50     | $19-50      | Similar                |
+| 50K   | $100-200   | $100-200    | Similar                |
+| 100K  | $200-400   | $200-500    | Netlify SSR costs more |
+| 500K  | $500-1000  | $700-1500   | Vercel more efficient  |
+| 1M+   | $1500-3000 | $2000-4000+ | Vercel scales better   |
 
 **Why Vercel is cheaper at scale:**
+
 - More efficient SSR execution
 - Better caching reduces function invocations
 - Native ISR reduces regeneration costs
@@ -274,22 +278,22 @@ This creates:
 
 ### Cold Start Times
 
-| Scenario | Vercel | Netlify |
-|----------|--------|---------|
-| Edge Function | ~0ms | ~0ms |
-| Serverless (Node.js) | 50-100ms | 200-500ms |
-| Serverless (with Prisma) | 100-200ms | 500-1000ms |
-| After long idle | 100-200ms | 1-3 seconds |
+| Scenario                 | Vercel    | Netlify     |
+| ------------------------ | --------- | ----------- |
+| Edge Function            | ~0ms      | ~0ms        |
+| Serverless (Node.js)     | 50-100ms  | 200-500ms   |
+| Serverless (with Prisma) | 100-200ms | 500-1000ms  |
+| After long idle          | 100-200ms | 1-3 seconds |
 
 ### Response Times (TTFB)
 
-| Content Type | Vercel | Netlify |
-|--------------|--------|---------|
-| Static (cached) | 10-50ms | 10-50ms |
-| ISR (cached) | 10-50ms | 50-100ms |
+| Content Type       | Vercel    | Netlify    |
+| ------------------ | --------- | ---------- |
+| Static (cached)    | 10-50ms   | 10-50ms    |
+| ISR (cached)       | 10-50ms   | 50-100ms   |
 | ISR (regenerating) | 100-300ms | 500-2000ms |
-| SSR (warm) | 50-150ms | 100-300ms |
-| SSR (cold) | 100-300ms | 500-3000ms |
+| SSR (warm)         | 50-150ms  | 100-300ms  |
+| SSR (cold)         | 100-300ms | 500-3000ms |
 
 ### Real-World Impact
 
@@ -366,8 +370,8 @@ const nextConfig = {
   async redirects() {
     return [
       {
-        source: '/old-path',
-        destination: '/new-path',
+        source: "/old-path",
+        destination: "/new-path",
         permanent: true,
       },
     ];
@@ -375,8 +379,8 @@ const nextConfig = {
   async rewrites() {
     return [
       {
-        source: '/api/legacy/:path*',
-        destination: '/api/:path*',
+        source: "/api/legacy/:path*",
+        destination: "/api/:path*",
       },
     ];
   },
@@ -453,24 +457,24 @@ Day 3: DNS & Go Live
 
 ### Migration Risks
 
-| Risk | Likelihood | Impact | Mitigation |
-|------|------------|--------|------------|
-| DNS propagation delay | Medium | Low | Use low TTL before migration |
-| Env var mismatch | Medium | High | Audit all vars beforehand |
-| Build differences | Low | Medium | Test in preview environment |
-| API route changes | Low | Medium | Test all endpoints |
-| Performance regression | Very Low | High | Baseline before migration |
+| Risk                   | Likelihood | Impact | Mitigation                   |
+| ---------------------- | ---------- | ------ | ---------------------------- |
+| DNS propagation delay  | Medium     | Low    | Use low TTL before migration |
+| Env var mismatch       | Medium     | High   | Audit all vars beforehand    |
+| Build differences      | Low        | Medium | Test in preview environment  |
+| API route changes      | Low        | Medium | Test all endpoints           |
+| Performance regression | Very Low   | High   | Baseline before migration    |
 
 ### Staying on Netlify Risks
 
-| Risk | Likelihood | Impact | Notes |
-|------|------------|--------|-------|
-| SSR timeouts | High | High | Known issue, worsens at scale |
-| Cold start latency | High | Medium | User experience degradation |
-| ISR failures | Medium | High | Content freshness issues |
-| App Router bugs | Medium | High | Routing inconsistencies |
-| Feature lag | High | Medium | Always behind Vercel |
-| Breaking changes | Medium | High | Each Next.js update is risky |
+| Risk               | Likelihood | Impact | Notes                         |
+| ------------------ | ---------- | ------ | ----------------------------- |
+| SSR timeouts       | High       | High   | Known issue, worsens at scale |
+| Cold start latency | High       | Medium | User experience degradation   |
+| ISR failures       | Medium     | High   | Content freshness issues      |
+| App Router bugs    | Medium     | High   | Routing inconsistencies       |
+| Feature lag        | High       | Medium | Always behind Vercel          |
+| Breaking changes   | Medium     | High   | Each Next.js update is risky  |
 
 ### Bottom Line
 

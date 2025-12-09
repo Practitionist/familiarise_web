@@ -7,6 +7,7 @@ This guide covers setting up Stripe for payment processing on Familiarise. Strip
 ### What is Stripe?
 
 Stripe is a global payment platform that supports:
+
 - Credit/Debit Cards worldwide
 - Apple Pay, Google Pay
 - Bank debits (ACH, SEPA)
@@ -49,13 +50,13 @@ Stripe is a global payment platform that supports:
 
 Before setting up Stripe, ensure you have:
 
-| Requirement | Details |
-|-------------|---------|
-| Business Entity | Registered business or individual |
-| Bank Account | For receiving payouts from Stripe |
-| Website | Live URL with clear product/service description |
-| Email | For account verification |
-| Government ID | For identity verification |
+| Requirement     | Details                                         |
+| --------------- | ----------------------------------------------- |
+| Business Entity | Registered business or individual               |
+| Bank Account    | For receiving payouts from Stripe               |
+| Website         | Live URL with clear product/service description |
+| Email           | For account verification                        |
+| Government ID   | For identity verification                       |
 
 ---
 
@@ -251,7 +252,7 @@ export default stripe;
 import { loadStripe } from "@stripe/stripe-js";
 
 export const stripePromise = loadStripe(
-  process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY!
+  process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY!,
 );
 ```
 
@@ -292,7 +293,7 @@ import Stripe from "stripe";
 export function verifyStripeWebhook(
   body: string,
   signature: string,
-  secret: string
+  secret: string,
 ): Stripe.Event {
   const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
 

@@ -172,7 +172,7 @@ export async function createGiftVoucher(
     deliveryDate?: Date;
     consultantProfileId: string;
     consultationPlanId: string;
-  }
+  },
 ): Promise<GiftVoucher> {
   const code = generateGiftCode();
   const expiresAt = new Date();
@@ -189,9 +189,10 @@ export async function createGiftVoucher(
       deliveryDate: giftData.deliveryDate || new Date(),
       consultantProfileId: giftData.consultantProfileId,
       consultationPlanId: giftData.consultationPlanId,
-      status: giftData.deliveryDate && giftData.deliveryDate > new Date()
-        ? 'PENDING'
-        : 'PENDING', // Will be DELIVERED after email sent
+      status:
+        giftData.deliveryDate && giftData.deliveryDate > new Date()
+          ? "PENDING"
+          : "PENDING", // Will be DELIVERED after email sent
       expiresAt,
     },
   });
@@ -207,13 +208,14 @@ export async function createGiftVoucher(
 }
 
 function generateGiftCode(): string {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // Exclude ambiguous chars
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // Exclude ambiguous chars
   const segments = [4, 4].map(() =>
-    Array.from({ length: 4 }, () =>
-      chars[Math.floor(Math.random() * chars.length)]
-    ).join('')
+    Array.from(
+      { length: 4 },
+      () => chars[Math.floor(Math.random() * chars.length)],
+    ).join(""),
   );
-  return `GIFT-${segments.join('-')}`;
+  return `GIFT-${segments.join("-")}`;
 }
 
 export async function deliverGiftEmail(voucherId: string): Promise<void> {
@@ -222,19 +224,19 @@ export async function deliverGiftEmail(voucherId: string): Promise<void> {
     include: {
       purchasedBy: { select: { name: true } },
       consultantProfile: {
-        include: { user: { select: { name: true, image: true } } }
+        include: { user: { select: { name: true, image: true } } },
       },
       consultationPlan: true,
     },
   });
 
-  if (!voucher || voucher.status !== 'PENDING') return;
+  if (!voucher || voucher.status !== "PENDING") return;
 
   // Send beautiful gift email
   await sendEmail({
     to: voucher.recipientEmail,
     subject: `🎁 You've received a gift from ${voucher.purchasedBy.name}!`,
-    template: 'gift-received',
+    template: "gift-received",
     data: {
       recipientName: voucher.recipientName,
       senderName: voucher.purchasedBy.name,
@@ -251,14 +253,14 @@ export async function deliverGiftEmail(voucherId: string): Promise<void> {
 
   await prisma.giftVoucher.update({
     where: { id: voucherId },
-    data: { status: 'DELIVERED' },
+    data: { status: "DELIVERED" },
   });
 }
 
 export async function redeemGift(
   code: string,
   redeemerUserId: string,
-  slotId: string
+  slotId: string,
 ): Promise<{ appointment: Appointment; voucher: GiftVoucher }> {
   const voucher = await prisma.giftVoucher.findUnique({
     where: { code },
@@ -269,16 +271,16 @@ export async function redeemGift(
   });
 
   // Validations
-  if (!voucher) throw new Error('Gift code not found');
-  if (voucher.status === 'REDEEMED') throw new Error('Gift already redeemed');
-  if (voucher.status === 'EXPIRED') throw new Error('Gift has expired');
-  if (voucher.status === 'REFUNDED') throw new Error('Gift was refunded');
+  if (!voucher) throw new Error("Gift code not found");
+  if (voucher.status === "REDEEMED") throw new Error("Gift already redeemed");
+  if (voucher.status === "EXPIRED") throw new Error("Gift has expired");
+  if (voucher.status === "REFUNDED") throw new Error("Gift was refunded");
   if (new Date() > voucher.expiresAt) {
     await prisma.giftVoucher.update({
       where: { id: voucher.id },
-      data: { status: 'EXPIRED' },
+      data: { status: "EXPIRED" },
     });
-    throw new Error('Gift has expired');
+    throw new Error("Gift has expired");
   }
 
   // Create appointment
@@ -292,15 +294,15 @@ export async function redeemGift(
       data: {
         consultationPlanId: voucher.consultationPlanId,
         consulteeProfileId: consulteeProfile!.id,
-        requestStatus: 'SCHEDULED',
-        bookingSource: 'GIFT_REDEMPTION',
+        requestStatus: "SCHEDULED",
+        bookingSource: "GIFT_REDEMPTION",
       },
     });
 
     const appointment = await tx.appointment.create({
       data: {
-        appointmentType: 'CONSULTATION',
-        status: 'SCHEDULED',
+        appointmentType: "CONSULTATION",
+        status: "SCHEDULED",
         consultationId: consultation.id,
       },
     });
@@ -314,7 +316,7 @@ export async function redeemGift(
     await tx.giftVoucher.update({
       where: { id: voucher.id },
       data: {
-        status: 'REDEEMED',
+        status: "REDEEMED",
         redeemedAt: new Date(),
         redeemedById: redeemerUserId,
         appointmentId: appointment.id,
@@ -327,8 +329,8 @@ export async function redeemGift(
   // Notify giver
   await sendEmail({
     to: voucher.purchasedBy.email,
-    subject: 'Your gift has been redeemed! 🎉',
-    template: 'gift-redeemed',
+    subject: "Your gift has been redeemed! 🎉",
+    template: "gift-redeemed",
     data: {
       recipientName: voucher.recipientName,
       consultantName: voucher.consultantProfile?.user?.name,

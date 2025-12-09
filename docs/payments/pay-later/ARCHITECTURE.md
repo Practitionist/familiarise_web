@@ -76,56 +76,63 @@ export async function PATCH(request, { params }) {
 
   try {
     // LAYER 2: Serializable Transaction
-    const result = await prisma.$transaction(async (tx) => {
-      // Fetch current state inside transaction
-      const currentConsultation = await tx.consultation.findUnique({
-        where: { id: consultationId },
-      });
-
-      // LAYER 3: Idempotency Check
-      if (currentConsultation.requestStatus === RequestStatus.APPROVED_PENDING_PAYMENT) {
-        return { duplicate: true };
-      }
-
-      // Check if payment exists
-      const hasPayment = await checkConsultationPayment(consultationId);
-
-      if (hasPayment) {
-        // Payment exists - create appointments immediately
-        await createAppointmentForConsultation(consultation);
-        return { data: consultation, duplicate: false };
-      } else {
-        // No payment - generate payment link
-        const paymentResult = await generatePaymentLink(consultation);
-
-        // Update status to APPROVED_PENDING_PAYMENT
-        const updatedConsultation = await tx.consultation.update({
+    const result = await prisma.$transaction(
+      async (tx) => {
+        // Fetch current state inside transaction
+        const currentConsultation = await tx.consultation.findUnique({
           where: { id: consultationId },
-          data: {
-            requestStatus: RequestStatus.APPROVED_PENDING_PAYMENT,
-            requestNotes: `${consultation.requestNotes}\n\n[System] Payment link generated: ${paymentResult.checkoutUrl}`,
-          },
         });
 
-        // Send payment link email
-        await sendPaymentLinkEmail({
-          email: updatedConsultation.requestedBy.user.email,
-          name: updatedConsultation.requestedBy.user.name,
-          consultantName: updatedConsultation.consultationPlan.consultantProfile.user.name,
-          appointmentType: "consultation",
-          amount: paymentResult.amount,
-          currency: paymentResult.currency,
-          paymentUrl: paymentResult.checkoutUrl,
-          expiresAt: new Date(Date.now() + 48 * 60 * 60 * 1000),
-        });
+        // LAYER 3: Idempotency Check
+        if (
+          currentConsultation.requestStatus ===
+          RequestStatus.APPROVED_PENDING_PAYMENT
+        ) {
+          return { duplicate: true };
+        }
 
-        return { data: updatedConsultation, duplicate: false };
-      }
-    }, {
-      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-      maxWait: 10000,
-      timeout: 30000,
-    });
+        // Check if payment exists
+        const hasPayment = await checkConsultationPayment(consultationId);
+
+        if (hasPayment) {
+          // Payment exists - create appointments immediately
+          await createAppointmentForConsultation(consultation);
+          return { data: consultation, duplicate: false };
+        } else {
+          // No payment - generate payment link
+          const paymentResult = await generatePaymentLink(consultation);
+
+          // Update status to APPROVED_PENDING_PAYMENT
+          const updatedConsultation = await tx.consultation.update({
+            where: { id: consultationId },
+            data: {
+              requestStatus: RequestStatus.APPROVED_PENDING_PAYMENT,
+              requestNotes: `${consultation.requestNotes}\n\n[System] Payment link generated: ${paymentResult.checkoutUrl}`,
+            },
+          });
+
+          // Send payment link email
+          await sendPaymentLinkEmail({
+            email: updatedConsultation.requestedBy.user.email,
+            name: updatedConsultation.requestedBy.user.name,
+            consultantName:
+              updatedConsultation.consultationPlan.consultantProfile.user.name,
+            appointmentType: "consultation",
+            amount: paymentResult.amount,
+            currency: paymentResult.currency,
+            paymentUrl: paymentResult.checkoutUrl,
+            expiresAt: new Date(Date.now() + 48 * 60 * 60 * 1000),
+          });
+
+          return { data: updatedConsultation, duplicate: false };
+        }
+      },
+      {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        maxWait: 10000,
+        timeout: 30000,
+      },
+    );
 
     return NextResponse.json(result);
   } finally {
@@ -173,7 +180,12 @@ export async function handlePaymentSuccess(paymentIntentId, metadata) {
     await confirmExistingAppointment(tx, appointment.id);
 
     // Send success email
-    await sendPaymentSuccessNotification(tx, payment, appointment.id, metadata.appointmentType);
+    await sendPaymentSuccessNotification(
+      tx,
+      payment,
+      appointment.id,
+      metadata.appointmentType,
+    );
   });
 }
 ```
@@ -181,6 +193,7 @@ export async function handlePaymentSuccess(paymentIntentId, metadata) {
 ## Database Schema
 
 ### Consultation Table
+
 ```prisma
 model Consultation {
   id                  String        @id @default(cuid())
@@ -195,6 +208,7 @@ model Consultation {
 ```
 
 ### Subscription Table
+
 ```prisma
 model Subscription {
   id                       String        @id @default(cuid())
@@ -211,6 +225,7 @@ model Subscription {
 ```
 
 ### RequestStatus Enum
+
 ```prisma
 enum RequestStatus {
   PENDING                    // Initial state
@@ -225,15 +240,16 @@ enum RequestStatus {
 
 ### Why Triple-Layer Protection?
 
-| Layer | Purpose | Protection Against | Trade-off |
-|-------|---------|-------------------|-----------|
-| **Distributed Lock** | Prevent concurrent approvals across instances | Multiple API servers processing same request | Adds 50-100ms latency |
-| **Serializable Transaction** | Ensure database-level isolation | Race conditions within transaction | May cause serialization errors (auto-retry) |
-| **Idempotency Check** | Application-level duplicate detection | Network retries, user double-clicks | Requires careful state management |
+| Layer                        | Purpose                                       | Protection Against                           | Trade-off                                   |
+| ---------------------------- | --------------------------------------------- | -------------------------------------------- | ------------------------------------------- |
+| **Distributed Lock**         | Prevent concurrent approvals across instances | Multiple API servers processing same request | Adds 50-100ms latency                       |
+| **Serializable Transaction** | Ensure database-level isolation               | Race conditions within transaction           | May cause serialization errors (auto-retry) |
+| **Idempotency Check**        | Application-level duplicate detection         | Network retries, user double-clicks          | Requires careful state management           |
 
 ### Race Condition Scenarios
 
 #### Scenario 1: Concurrent Approval Clicks
+
 ```
 Time  Instance A                    Instance B
 T0    User clicks "Approve" ────►   [Request arrives]
@@ -248,6 +264,7 @@ T8                                   Release lock
 ```
 
 #### Scenario 2: Payment Webhook Race
+
 ```
 Time  Webhook 1                     Webhook 2
 T0    payment.succeeded ────►       payment.succeeded ────►
@@ -265,18 +282,20 @@ T8                                   Commit (no changes)
 ## Error Handling
 
 ### Lock Acquisition Failure
+
 ```typescript
 try {
   lock = await lockConsultationApproval(consultationId, 30000);
 } catch (error) {
   return NextResponse.json(
     { error: "Another approval is in progress. Please try again." },
-    { status: 409 } // HTTP 409 Conflict
+    { status: 409 }, // HTTP 409 Conflict
   );
 }
 ```
 
 ### Transaction Serialization Error
+
 ```typescript
 // Prisma automatically retries serialization errors
 // But we also have custom retry logic in the transaction settings
@@ -288,6 +307,7 @@ try {
 ```
 
 ### Email Delivery Failure
+
 ```typescript
 // Emails are sent inside transaction but failures don't block payment processing
 try {
@@ -301,6 +321,7 @@ try {
 ## Performance Optimizations
 
 ### 1. **Connection Pooling**
+
 ```typescript
 // lib/redis.ts uses connection pooling
 const redlock = new Redlock([redis], {
@@ -312,6 +333,7 @@ const redlock = new Redlock([redis], {
 ```
 
 ### 2. **Query Optimization**
+
 ```typescript
 // Fetch all related data in single query
 const consultation = await tx.consultation.findUnique({
@@ -319,24 +341,25 @@ const consultation = await tx.consultation.findUnique({
   include: {
     consultationPlan: {
       include: {
-        consultantProfile: { include: { user: true } }
-      }
+        consultantProfile: { include: { user: true } },
+      },
     },
     requestedBy: { include: { user: true } },
-    appointment: { include: { payment: true } }
-  }
+    appointment: { include: { payment: true } },
+  },
 });
 ```
 
 ### 3. **React Query Caching**
+
 ```typescript
 // providers/ReactQueryProvider.tsx
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 60 * 1000,        // Cache for 1 minute
-      gcTime: 5 * 60 * 1000,       // Garbage collect after 5 minutes
-      refetchOnWindowFocus: true,  // Refresh when user returns
+      staleTime: 60 * 1000, // Cache for 1 minute
+      gcTime: 5 * 60 * 1000, // Garbage collect after 5 minutes
+      refetchOnWindowFocus: true, // Refresh when user returns
     },
   },
 });
@@ -345,14 +368,16 @@ const queryClient = new QueryClient({
 ## Monitoring & Observability
 
 ### Logging Strategy
+
 ```typescript
 // Log levels and contexts
-console.log(`✅ Payment ${paymentIntentId} processed successfully`);  // Success
-console.warn(`Payment link expires soon: ${consultationId}`);         // Warning
-console.error(`Failed to acquire lock for ${consultationId}`);        // Error
+console.log(`✅ Payment ${paymentIntentId} processed successfully`); // Success
+console.warn(`Payment link expires soon: ${consultationId}`); // Warning
+console.error(`Failed to acquire lock for ${consultationId}`); // Error
 ```
 
 ### Metrics to Monitor
+
 1. **Lock Acquisition Time**: Average time to acquire Redis lock
 2. **Transaction Duration**: Time from start to commit
 3. **Email Delivery Rate**: Success rate of email sends
@@ -360,6 +385,7 @@ console.error(`Failed to acquire lock for ${consultationId}`);        // Error
 5. **Duplicate Detection Rate**: How often idempotency checks prevent duplicates
 
 ### Health Checks
+
 - **Redis**: Monitor Upstash dashboard for connection errors
 - **Database**: Track transaction serialization failures
 - **Email**: Monitor Resend dashboard for bounces/failures
@@ -368,16 +394,19 @@ console.error(`Failed to acquire lock for ${consultationId}`);        // Error
 ## Scalability Considerations
 
 ### Horizontal Scaling
+
 - **Distributed locks** enable multiple Next.js instances to coordinate
 - **Stateless API routes** allow load balancing across instances
 - **React Query** reduces server load through client-side caching
 
 ### Vertical Scaling Limits
+
 - **Redis TTL**: 30-second lock timeout limits concurrent approvals
 - **Transaction timeout**: 30-second transaction limit for complex appointment creation
 - **Email rate limits**: Resend API has rate limits per account tier
 
 ### Future Enhancements
+
 1. **Lock-free optimistic concurrency**: Use database version fields
 2. **Event sourcing**: Append-only event log for audit trail
 3. **Message queue**: Decouple email sending from approval flow

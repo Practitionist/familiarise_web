@@ -69,15 +69,15 @@
 
 #### Trade-offs
 
-| Aspect | Redlock | Upstash | Winner |
-|--------|---------|---------|--------|
-| **Latency** | 5-10ms | 50-100ms | Redlock |
-| **Consistency** | Strong | Eventual | Redlock |
-| **Availability** | 99.99%+ | 99.99% | Tie |
-| **Serverless** | ❌ | ✅ | Upstash |
-| **Infrastructure** | Complex | Zero | Upstash |
-| **Cost** | High | Low (-90%) | Upstash |
-| **Setup** | Complex | Simple | Upstash |
+| Aspect             | Redlock | Upstash    | Winner  |
+| ------------------ | ------- | ---------- | ------- |
+| **Latency**        | 5-10ms  | 50-100ms   | Redlock |
+| **Consistency**    | Strong  | Eventual   | Redlock |
+| **Availability**   | 99.99%+ | 99.99%     | Tie     |
+| **Serverless**     | ❌      | ✅         | Upstash |
+| **Infrastructure** | Complex | Zero       | Upstash |
+| **Cost**           | High    | Low (-90%) | Upstash |
+| **Setup**          | Complex | Simple     | Upstash |
 
 **Verdict**: Upstash wins for serverless applications where 50-100ms latency is acceptable (which it is for approval workflows, payments, and appointment booking).
 
@@ -98,6 +98,7 @@ grep -r "lockConsultationApproval\|lockSubscriptionApproval\|lockAppointment" ap
 ```
 
 **Document**:
+
 - Which resources are being locked (consultations, subscriptions, appointments)
 - Current TTL values
 - Retry configurations
@@ -122,6 +123,7 @@ UPSTASH_REDIS_REST_TOKEN="AXmxASQgY..."
 #### ✅ 1.4 Review Lock Semantics
 
 Verify your lock usage patterns:
+
 - TTLs are appropriate for operation duration
 - Locks are always released in `finally` blocks
 - Error handling is correct
@@ -133,12 +135,14 @@ Verify your lock usage patterns:
 #### ✅ 2.1 Update Imports
 
 **Before** (Redlock):
+
 ```typescript
 import Redlock from "redlock";
 import { Redis } from "ioredis";
 ```
 
 **After** (Upstash):
+
 ```typescript
 import {
   lockConsultationApproval,
@@ -151,11 +155,13 @@ import {
 #### ✅ 2.2 Update Type Definitions
 
 **Before**:
+
 ```typescript
 let lock: Redlock.Lock | null = null;
 ```
 
 **After**:
+
 ```typescript
 let lock: ApprovalLock | null = null;
 ```
@@ -163,14 +169,16 @@ let lock: ApprovalLock | null = null;
 #### ✅ 2.3 Update Lock Acquisition
 
 **Before**:
+
 ```typescript
 const lock = await redlock.acquire(
   [`consultation-approval:${consultationId}`],
-  30000
+  30000,
 );
 ```
 
 **After**:
+
 ```typescript
 const lock = await lockConsultationApproval(consultationId, 30000);
 ```
@@ -178,6 +186,7 @@ const lock = await lockConsultationApproval(consultationId, 30000);
 #### ✅ 2.4 No Other Changes!
 
 The new API is a **drop-in replacement**:
+
 - Same try-finally pattern
 - Same error handling
 - Same TTL semantics
@@ -193,7 +202,10 @@ Test lock acquisition and release:
 
 ```typescript
 // __tests__/utils/appointmentlock.test.ts
-import { lockConsultationApproval, unlockApproval } from "@/utils/appointmentlock";
+import {
+  lockConsultationApproval,
+  unlockApproval,
+} from "@/utils/appointmentlock";
 
 describe("Upstash Distributed Locking", () => {
   it("should acquire lock with no contention", async () => {
@@ -206,9 +218,9 @@ describe("Upstash Distributed Locking", () => {
   it("should fail when lock already held", async () => {
     const lock1 = await lockConsultationApproval("test-456", 10000);
 
-    await expect(
-      lockConsultationApproval("test-456", 100)
-    ).rejects.toThrow("Another approval is in progress");
+    await expect(lockConsultationApproval("test-456", 100)).rejects.toThrow(
+      "Another approval is in progress",
+    );
 
     await unlockApproval(lock1);
   });
@@ -225,11 +237,11 @@ it("should prevent duplicate payments with concurrent requests", async () => {
 
   // Fire 50 concurrent approval requests
   const requests = Array.from({ length: 50 }, () =>
-    approveConsultation(consultationId)
+    approveConsultation(consultationId),
   );
 
   const results = await Promise.all(requests);
-  const successes = results.filter(r => r.success).length;
+  const successes = results.filter((r) => r.success).length;
 
   // Exactly ONE should succeed
   expect(successes).toBe(1);
@@ -270,6 +282,7 @@ vercel --target=staging
 #### ✅ 4.2 Monitor Metrics (24 hours)
 
 Track in staging:
+
 - Lock acquisition success rate (target: >99%)
 - Average acquisition time (target: <150ms P95)
 - Retry rate (target: <30%)
@@ -278,6 +291,7 @@ Track in staging:
 #### ✅ 4.3 Run End-to-End Tests
 
 Test approval workflow:
+
 1. Create test consultation
 2. Approve consultation (should create payment link)
 3. Try approving again (should return 409 Conflict)
@@ -298,6 +312,7 @@ vercel --prod
 #### ✅ 4.5 Monitor for 24 Hours
 
 Watch for:
+
 - Increased error rates
 - Lock acquisition timeouts
 - Duplicate payments (should be ZERO)
@@ -344,6 +359,7 @@ See [documentation](docs/upstash/redis/locking/00_README.md) for details.
 ### 1. Lock Object Type
 
 **Before** (Redlock):
+
 ```typescript
 import Redlock from "redlock";
 
@@ -351,6 +367,7 @@ type LockType = Redlock.Lock;
 ```
 
 **After** (Upstash):
+
 ```typescript
 import { ApprovalLock } from "@/utils/appointmentlock";
 
@@ -358,6 +375,7 @@ type LockType = ApprovalLock;
 ```
 
 **Migration**:
+
 1. Find all `Redlock.Lock` references:
    ```bash
    grep -r "Redlock\.Lock" app/ utils/ lib/
@@ -372,28 +390,31 @@ type LockType = ApprovalLock;
 ### 2. Lock Object Structure
 
 **Before** (Redlock):
+
 ```typescript
-lock.value         // string[] (array of resource names)
-lock.expiration    // number (Unix timestamp in milliseconds)
+lock.value; // string[] (array of resource names)
+lock.expiration; // number (Unix timestamp in milliseconds)
 ```
 
 **After** (Upstash):
+
 ```typescript
-lock.key           // string (Redis key)
-lock.value         // string (UUID for ownership)
-lock.ttl           // number (TTL in milliseconds)
-lock.acquiredAt    // number (Unix timestamp)
-lock.client        // Redis (Upstash client)
+lock.key; // string (Redis key)
+lock.value; // string (UUID for ownership)
+lock.ttl; // number (TTL in milliseconds)
+lock.acquiredAt; // number (Unix timestamp)
+lock.client; // Redis (Upstash client)
 ```
 
 **Migration**:
+
 ```typescript
 // Before
 const resource = lock.value[0];
 const expiresAt = lock.expiration;
 
 // After
-const resource = lock.key.split(':')[1]; // Extract from key
+const resource = lock.key.split(":")[1]; // Extract from key
 const expiresAt = lock.acquiredAt + lock.ttl;
 ```
 
@@ -404,6 +425,7 @@ const expiresAt = lock.acquiredAt + lock.ttl;
 ### 3. Error Types
 
 **Before** (Redlock):
+
 ```typescript
 try {
   lock = await redlock.acquire([key], ttl);
@@ -417,6 +439,7 @@ try {
 ```
 
 **After** (Upstash):
+
 ```typescript
 try {
   lock = await lockConsultationApproval(consultationId, ttl);
@@ -427,6 +450,7 @@ try {
 ```
 
 **Migration**:
+
 1. Remove error type checks (`instanceof`)
 2. Use error messages instead
 3. All lock acquisition failures throw generic `Error`
@@ -438,21 +462,23 @@ try {
 ### 4. Retry Configuration
 
 **Before** (Redlock):
+
 ```typescript
 const redlock = new Redlock([redis], {
   driftFactor: 0.01,
-  retryCount: 3,        // Only 3 retries
+  retryCount: 3, // Only 3 retries
   retryDelay: 200,
   retryJitter: 200,
 });
 ```
 
 **After** (Upstash):
+
 ```typescript
 // Internal configuration (not configurable via public API)
 const DEFAULT_RETRY_CONFIG = {
   driftFactor: 0.01,
-  retryCount: 10,       // 10 retries (more aggressive)
+  retryCount: 10, // 10 retries (more aggressive)
   retryDelay: 200,
   retryJitter: 200,
   exponentialBackoff: true, // NEW: Exponential backoff
@@ -460,6 +486,7 @@ const DEFAULT_RETRY_CONFIG = {
 ```
 
 **Migration**:
+
 - No code changes required
 - Retry behavior is now internal
 - More retries = higher success rate under contention
@@ -471,6 +498,7 @@ const DEFAULT_RETRY_CONFIG = {
 ### 5. Package Dependencies
 
 **Before**:
+
 ```json
 {
   "dependencies": {
@@ -482,6 +510,7 @@ const DEFAULT_RETRY_CONFIG = {
 ```
 
 **After**:
+
 ```json
 {
   "dependencies": {
@@ -491,6 +520,7 @@ const DEFAULT_RETRY_CONFIG = {
 ```
 
 **Migration**:
+
 ```bash
 npm uninstall redlock ioredis @types/ioredis
 npm install @upstash/redis
@@ -511,11 +541,13 @@ npm install @upstash/redis
 Redlock achieves distributed consensus by acquiring locks on multiple Redis instances simultaneously.
 
 **Core Principle**:
+
 - Acquire lock on N Redis instances (typically 3-5)
 - If majority (quorum) acquired within timeout → SUCCESS
 - Otherwise → FAIL
 
 **Pseudo-code**:
+
 ```python
 def acquire_redlock(resource, ttl):
     start_time = now()
@@ -543,12 +575,14 @@ def acquire_redlock(resource, ttl):
 #### Pros & Cons
 
 **Pros**:
+
 - ✅ Strong consistency guarantees (majority quorum)
 - ✅ High availability (survives N/2 instance failures)
 - ✅ Low latency (5-10ms with TCP)
 - ✅ Battle-tested algorithm
 
 **Cons**:
+
 - ❌ Complex setup (3+ Redis instances required)
 - ❌ Infrastructure overhead (servers, monitoring, backups)
 - ❌ Not serverless-compatible (TCP connections)
@@ -563,16 +597,18 @@ def acquire_redlock(resource, ttl):
 Upstash uses a single-instance lock with retry logic and exponential backoff.
 
 **Core Principle**:
+
 - Try to acquire lock with `SET NX PX` (atomic operation)
 - If failed → Wait with exponential backoff → Retry
 - If succeeded → Return lock object with UUID
 
 **Actual Code** (from `utils/appointmentlock.ts`):
+
 ```typescript
 async function acquireLockWithRetry(
   key: string,
   ttl: number,
-  config: LockRetryConfig = DEFAULT_RETRY_CONFIG
+  config: LockRetryConfig = DEFAULT_RETRY_CONFIG,
 ): Promise<ApprovalLock> {
   const client = redisClient as Redis;
   const value = generateLockValue(); // UUID
@@ -580,8 +616,8 @@ async function acquireLockWithRetry(
 
   for (let attempt = 0; attempt <= config.retryCount; attempt++) {
     const result = await client.set(key, value, {
-      nx: true,        // Only set if not exists
-      px: effectiveTTL // TTL in milliseconds
+      nx: true, // Only set if not exists
+      px: effectiveTTL, // TTL in milliseconds
     });
 
     if (result === "OK") {
@@ -590,8 +626,10 @@ async function acquireLockWithRetry(
 
     // Retry with exponential backoff
     if (attempt < config.retryCount) {
-      const delay = config.retryDelay * Math.pow(2, attempt) + Math.random() * config.retryJitter;
-      await new Promise(resolve => setTimeout(resolve, delay));
+      const delay =
+        config.retryDelay * Math.pow(2, attempt) +
+        Math.random() * config.retryJitter;
+      await new Promise((resolve) => setTimeout(resolve, delay));
     }
   }
 
@@ -602,6 +640,7 @@ async function acquireLockWithRetry(
 #### Pros & Cons
 
 **Pros**:
+
 - ✅ Simple implementation (single Redis instance)
 - ✅ Zero infrastructure (fully managed)
 - ✅ Serverless-compatible (REST API)
@@ -609,6 +648,7 @@ async function acquireLockWithRetry(
 - ✅ Observable (structured JSON logs)
 
 **Cons**:
+
 - ❌ Higher latency (50-100ms REST API)
 - ❌ Single point of failure (mitigated by 99.99% SLA)
 - ❌ Eventual consistency (not strong consistency)
@@ -620,6 +660,7 @@ async function acquireLockWithRetry(
 #### Latency Breakdown
 
 **Redlock (3 instances)**:
+
 ```
 ┌─────────────────────────────────┐
 │ Instance 1: 5ms RTT + 1ms SET   │ = 6ms
@@ -631,6 +672,7 @@ Total: ~19-25ms (parallel execution)
 ```
 
 **Upstash (1 REST call)**:
+
 ```
 ┌─────────────────────────────────┐
 │ Network RTT: 30-50ms (HTTP)     │
@@ -641,6 +683,7 @@ Total: ~50-100ms (single request)
 ```
 
 **Upstash with Retry (contention)**:
+
 ```
 Attempt 1: 50ms (fail)
 Delay: 200ms + jitter(0-200ms) = 200-400ms
@@ -664,21 +707,21 @@ Total: ~750-900ms (worst case)
 
 ### Results
 
-| Metric | Redlock | Upstash | Difference |
-|--------|---------|---------|------------|
-| **P50 Latency** | 8ms | 78ms | +70ms (9.8x) |
-| **P95 Latency** | 15ms | 120ms | +105ms (8x) |
-| **P99 Latency** | 25ms | 180ms | +155ms (7.2x) |
-| **Success Rate** | 99.2% | 99.5% | +0.3% |
-| **Retry Rate** | 18% | 25% | +7% |
-| **Cost (100K req)** | $50-200 | $0.20 | -99.6% |
+| Metric              | Redlock | Upstash | Difference    |
+| ------------------- | ------- | ------- | ------------- |
+| **P50 Latency**     | 8ms     | 78ms    | +70ms (9.8x)  |
+| **P95 Latency**     | 15ms    | 120ms   | +105ms (8x)   |
+| **P99 Latency**     | 25ms    | 180ms   | +155ms (7.2x) |
+| **Success Rate**    | 99.2%   | 99.5%   | +0.3%         |
+| **Retry Rate**      | 18%     | 25%     | +7%           |
+| **Cost (100K req)** | $50-200 | $0.20   | -99.6%        |
 
 ### Real-World Measurement
 
 From production logs (`consultation-approval`):
 
 ```json
-{"event":"lock_acquired","attempts":1,"duration_ms":107}
+{ "event": "lock_acquired", "attempts": 1, "duration_ms": 107 }
 ```
 
 **Actual P95**: 107ms (well within 150ms target)
@@ -857,6 +900,7 @@ echo "Failure rate: $rate%"
 #### 4. Upstash Dashboard Metrics
 
 Visit Upstash Console → Your Database → Metrics:
+
 - **Commands/Second**: Lock acquisition rate
 - **Average Latency**: Per-command latency
 - **Error Rate**: Redis errors (should be near 0%)
@@ -919,8 +963,11 @@ annotations:
 ```
 
 HTTP responses:
+
 ```json
-{"error": "Another approval is in progress for this consultation. Please try again."}
+{
+  "error": "Another approval is in progress for this consultation. Please try again."
+}
 ```
 
 #### Possible Causes
@@ -968,7 +1015,10 @@ export async function GET() {
     const result = await redisClient.set("test-key", "test-value");
     return Response.json({ success: true, result });
   } catch (error) {
-    return Response.json({ success: false, error: error.message }, { status: 500 });
+    return Response.json(
+      { success: false, error: error.message },
+      { status: 500 },
+    );
   }
 }
 ```
@@ -989,6 +1039,7 @@ Access `/api/test-redis` → Should return `{"success":true,"result":"OK"}`
 ```
 
 High lock acquisition times:
+
 ```json
 {"event":"lock_acquired","attempts":5,"duration_ms":2400,...}
 ```

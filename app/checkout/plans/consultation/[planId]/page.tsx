@@ -625,12 +625,14 @@ export default function ConsultationCheckoutPage({
                             slotOfAvailabilityWeeklyId: Array.isArray(
                               resolvedSearchParams.slotOfAvailabilityWeeklyId,
                             )
-                              ? resolvedSearchParams.slotOfAvailabilityWeeklyId[0]
+                              ? resolvedSearchParams
+                                  .slotOfAvailabilityWeeklyId[0]
                               : resolvedSearchParams.slotOfAvailabilityWeeklyId,
                             slotOfAvailabilityCustomId: Array.isArray(
                               resolvedSearchParams.slotOfAvailabilityCustomId,
                             )
-                              ? resolvedSearchParams.slotOfAvailabilityCustomId[0]
+                              ? resolvedSearchParams
+                                  .slotOfAvailabilityCustomId[0]
                               : resolvedSearchParams.slotOfAvailabilityCustomId,
                             discountCode: Array.isArray(
                               resolvedSearchParams.discountCode,
@@ -679,12 +681,14 @@ export default function ConsultationCheckoutPage({
                             slotOfAvailabilityWeeklyId: Array.isArray(
                               resolvedSearchParams.slotOfAvailabilityWeeklyId,
                             )
-                              ? resolvedSearchParams.slotOfAvailabilityWeeklyId[0]
+                              ? resolvedSearchParams
+                                  .slotOfAvailabilityWeeklyId[0]
                               : resolvedSearchParams.slotOfAvailabilityWeeklyId,
                             slotOfAvailabilityCustomId: Array.isArray(
                               resolvedSearchParams.slotOfAvailabilityCustomId,
                             )
-                              ? resolvedSearchParams.slotOfAvailabilityCustomId[0]
+                              ? resolvedSearchParams
+                                  .slotOfAvailabilityCustomId[0]
                               : resolvedSearchParams.slotOfAvailabilityCustomId,
                             discountCode: Array.isArray(
                               resolvedSearchParams.discountCode,
@@ -723,8 +727,7 @@ export default function ConsultationCheckoutPage({
                         disabled={isCheckoutProcessing}
                       >
                         {isCheckoutProcessing &&
-                        processingGateway ===
-                          `${gateway.gateway}-mock` ? (
+                        processingGateway === `${gateway.gateway}-mock` ? (
                           <>
                             <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-current mr-2"></div>
                             Processing...

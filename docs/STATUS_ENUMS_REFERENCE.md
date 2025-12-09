@@ -42,15 +42,15 @@ enum RequestStatus {
 
 #### Status Definitions
 
-| Status | Description | Can Transition To | Triggered By |
-|--------|-------------|-------------------|--------------|
-| `PENDING` | Initial state when user submits request | APPROVED, APPROVED_PENDING_PAYMENT, REJECTED, EXPIRED | User submission |
-| `APPROVED` | Consultant approved and payment confirmed | SCHEDULED, CANCELLED | Consultant approval + payment exists |
-| `APPROVED_PENDING_PAYMENT` | Consultant approved but awaiting payment | APPROVED, PENDING, EXPIRED, CANCELLED | Consultant approval without payment |
-| `SCHEDULED` | Appointment created and confirmed | CANCELLED | Appointment creation |
-| `REJECTED` | Consultant declined the request | - | Consultant rejection |
-| `CANCELLED` | Either party cancelled the request | - | User or consultant cancellation |
-| `EXPIRED` | Request expired (e.g., payment timeout) | - | Cron job (48hr payment timeout) |
+| Status                     | Description                               | Can Transition To                                     | Triggered By                         |
+| -------------------------- | ----------------------------------------- | ----------------------------------------------------- | ------------------------------------ |
+| `PENDING`                  | Initial state when user submits request   | APPROVED, APPROVED_PENDING_PAYMENT, REJECTED, EXPIRED | User submission                      |
+| `APPROVED`                 | Consultant approved and payment confirmed | SCHEDULED, CANCELLED                                  | Consultant approval + payment exists |
+| `APPROVED_PENDING_PAYMENT` | Consultant approved but awaiting payment  | APPROVED, PENDING, EXPIRED, CANCELLED                 | Consultant approval without payment  |
+| `SCHEDULED`                | Appointment created and confirmed         | CANCELLED                                             | Appointment creation                 |
+| `REJECTED`                 | Consultant declined the request           | -                                                     | Consultant rejection                 |
+| `CANCELLED`                | Either party cancelled the request        | -                                                     | User or consultant cancellation      |
+| `EXPIRED`                  | Request expired (e.g., payment timeout)   | -                                                     | Cron job (48hr payment timeout)      |
 
 #### Important Notes
 
@@ -75,10 +75,10 @@ enum BookingSource {
 }
 ```
 
-| Value | Description | Payment Flow |
-|-------|-------------|--------------|
-| `DIRECT_CHECKOUT` | User paid upfront during booking | Payment → Approval → Scheduling |
-| `REQUEST_SUBMITTED` | Request-for-approval flow | Approval → Payment → Scheduling |
+| Value               | Description                      | Payment Flow                    |
+| ------------------- | -------------------------------- | ------------------------------- |
+| `DIRECT_CHECKOUT`   | User paid upfront during booking | Payment → Approval → Scheduling |
+| `REQUEST_SUBMITTED` | Request-for-approval flow        | Approval → Payment → Scheduling |
 
 ---
 
@@ -100,12 +100,12 @@ enum WebinarStatus {
 }
 ```
 
-| Status | Description | Triggered By |
-|--------|-------------|--------------|
-| `SCHEDULED` | Appointment booked, awaiting start time | Appointment creation |
-| `IN_PROGRESS` | Webinar currently happening | Manual update or automated start |
-| `COMPLETED` | Webinar finished successfully | Manual update or automated end |
-| `CANCELLED` | Webinar cancelled | Consultant/admin cancellation |
+| Status        | Description                             | Triggered By                     |
+| ------------- | --------------------------------------- | -------------------------------- |
+| `SCHEDULED`   | Appointment booked, awaiting start time | Appointment creation             |
+| `IN_PROGRESS` | Webinar currently happening             | Manual update or automated start |
+| `COMPLETED`   | Webinar finished successfully           | Manual update or automated end   |
+| `CANCELLED`   | Webinar cancelled                       | Consultant/admin cancellation    |
 
 ---
 
@@ -163,11 +163,11 @@ enum PaymentStatus {
 }
 ```
 
-| Status | Description | Next Steps |
-|--------|-------------|------------|
-| `PENDING` | Payment initiated but not confirmed | Wait for webhook confirmation |
-| `SUCCEEDED` | Payment completed successfully | Create appointment |
-| `FAILED` | Payment attempt failed | User can retry or contact support |
+| Status      | Description                         | Next Steps                        |
+| ----------- | ----------------------------------- | --------------------------------- |
+| `PENDING`   | Payment initiated but not confirmed | Wait for webhook confirmation     |
+| `SUCCEEDED` | Payment completed successfully      | Create appointment                |
+| `FAILED`    | Payment attempt failed              | User can retry or contact support |
 
 #### Webhook Integration
 
@@ -193,12 +193,12 @@ enum RefundStatus {
 }
 ```
 
-| Status | Description | User Impact |
-|--------|-------------|-------------|
-| `PENDING` | Refund initiated but not processed | Funds not yet returned |
-| `SUCCEEDED` | Refund completed | Funds returned to original payment method |
-| `FAILED` | Refund processing failed | Contact support for resolution |
-| `CANCELLED` | Refund cancelled before processing | No funds returned |
+| Status      | Description                        | User Impact                               |
+| ----------- | ---------------------------------- | ----------------------------------------- |
+| `PENDING`   | Refund initiated but not processed | Funds not yet returned                    |
+| `SUCCEEDED` | Refund completed                   | Funds returned to original payment method |
+| `FAILED`    | Refund processing failed           | Contact support for resolution            |
+| `CANCELLED` | Refund cancelled before processing | No funds returned                         |
 
 ---
 
@@ -234,7 +234,7 @@ NEEDS_RESPONSE → UNDER_REVIEW → WON/LOST/CHARGE_REFUNDED
 
 #### Important Notes
 
-- Early warnings (WARNING_*) give merchants a chance to respond before formal dispute
+- Early warnings (WARNING\_\*) give merchants a chance to respond before formal dispute
 - `NEEDS_RESPONSE` has a deadline (typically 7-14 days) to submit evidence
 - Once status reaches `WON`, `LOST`, or `CHARGE_REFUNDED`, it's final
 - Razorpay disputes can only be accessed via webhooks (no direct API)
@@ -260,13 +260,13 @@ enum FeedbackStatus {
 }
 ```
 
-| Status | Description | SLA |
-|--------|-------------|-----|
-| `PENDING` | New feedback submitted | Response within 24hrs |
-| `ACKNOWLEDGED` | Team reviewed and acknowledged | - |
-| `IN_PROGRESS` | Team actively working on it | - |
-| `RESOLVED` | Issue fixed or feedback implemented | - |
-| `CLOSED` | Ticket closed (resolved or dismissed) | - |
+| Status         | Description                           | SLA                   |
+| -------------- | ------------------------------------- | --------------------- |
+| `PENDING`      | New feedback submitted                | Response within 24hrs |
+| `ACKNOWLEDGED` | Team reviewed and acknowledged        | -                     |
+| `IN_PROGRESS`  | Team actively working on it           | -                     |
+| `RESOLVED`     | Issue fixed or feedback implemented   | -                     |
+| `CLOSED`       | Ticket closed (resolved or dismissed) | -                     |
 
 ---
 
@@ -287,13 +287,13 @@ enum SupportTicketStatus {
 }
 ```
 
-| Status | Description | When Used |
-|--------|-------------|-----------|
-| `OPEN` | New support ticket created | Initial submission |
-| `IN_PROGRESS` | Team actively working on ticket | Agent assignment |
-| `ON_HOLD` | Waiting for external input | Awaiting user response, third-party, etc. |
-| `RESOLVED` | Issue successfully resolved | Problem fixed |
-| `CLOSED` | Ticket closed | After resolution or escalation closure |
+| Status        | Description                     | When Used                                 |
+| ------------- | ------------------------------- | ----------------------------------------- |
+| `OPEN`        | New support ticket created      | Initial submission                        |
+| `IN_PROGRESS` | Team actively working on ticket | Agent assignment                          |
+| `ON_HOLD`     | Waiting for external input      | Awaiting user response, third-party, etc. |
+| `RESOLVED`    | Issue successfully resolved     | Problem fixed                             |
+| `CLOSED`      | Ticket closed                   | After resolution or escalation closure    |
 
 ---
 
@@ -333,12 +333,12 @@ enum UserRole {
 }
 ```
 
-| Role | Description | Permissions |
-|------|-------------|-------------|
-| `CONSULTANT` | Service provider | Manage own profile, accept/reject requests, view own appointments |
-| `CONSULTEE` | Service consumer | Book consultations, submit requests, view own appointments |
-| `ADMIN` | Full system access | All operations, user management, system configuration |
-| `STAFF` | Limited admin access | Support tickets, content moderation, limited user management |
+| Role         | Description          | Permissions                                                       |
+| ------------ | -------------------- | ----------------------------------------------------------------- |
+| `CONSULTANT` | Service provider     | Manage own profile, accept/reject requests, view own appointments |
+| `CONSULTEE`  | Service consumer     | Book consultations, submit requests, view own appointments        |
+| `ADMIN`      | Full system access   | All operations, user management, system configuration             |
+| `STAFF`      | Limited admin access | Support tickets, content moderation, limited user management      |
 
 ---
 
@@ -347,6 +347,7 @@ enum UserRole {
 ### Request-to-Appointment Flow (Consultation/Subscription)
 
 #### Direct Checkout Flow
+
 ```
 User Action: Book + Pay
     ↓
@@ -362,6 +363,7 @@ Appointment Created
 ```
 
 #### Request-for-Approval Flow (NEW - Security Enhanced)
+
 ```
 User Action: Submit Request (no payment)
     ↓
@@ -386,6 +388,7 @@ Appointment Created
 ```
 
 #### Payment Timeout Flow
+
 ```
 RequestStatus: APPROVED_PENDING_PAYMENT
 Payment: PENDING
@@ -399,6 +402,7 @@ RequestStatus: PENDING or EXPIRED
 ---
 
 ### Webinar/Class Execution Flow
+
 ```
 Appointment: Created
     ↓
@@ -416,6 +420,7 @@ WebinarStatus/ClassStatus: COMPLETED
 ---
 
 ### Payment Dispute Flow
+
 ```
 Payment: SUCCEEDED
     ↓
@@ -449,6 +454,7 @@ If Escalated:
 ### When Working with RequestStatus
 
 1. **Always check for existing payments** before transitioning to APPROVED_PENDING_PAYMENT
+
    ```typescript
    const hasPayment = await checkPaymentExists(requestId);
    if (!hasPayment) {
@@ -460,8 +466,9 @@ If Escalated:
    ```
 
 2. **Set payment expiration** when creating APPROVED_PENDING_PAYMENT requests
+
    ```typescript
-   expiresAt: new Date(Date.now() + 48 * 60 * 60 * 1000) // 48 hours
+   expiresAt: new Date(Date.now() + 48 * 60 * 60 * 1000); // 48 hours
    ```
 
 3. **Never skip APPROVED status** - always transition through the proper flow:
@@ -471,8 +478,9 @@ If Escalated:
 ### When Working with PaymentStatus
 
 1. **Always validate webhook metadata** before marking payments as SUCCEEDED
+
    ```typescript
-   import { validateWebhookMetadata } from '@/schemas/webhooks/metadata';
+   import { validateWebhookMetadata } from "@/schemas/webhooks/metadata";
 
    try {
      validateWebhookMetadata(metadata);
@@ -483,10 +491,15 @@ If Escalated:
    ```
 
 2. **Use transactions** when updating payment status and creating appointments
+
    ```typescript
    await prisma.$transaction(async (tx) => {
-     await tx.payment.update({ /* ... */ });
-     await tx.appointment.create({ /* ... */ });
+     await tx.payment.update({
+       /* ... */
+     });
+     await tx.appointment.create({
+       /* ... */
+     });
    });
    ```
 
@@ -532,6 +545,7 @@ Before implementing any status change:
 ## Changelog
 
 ### 2025-11-28 - Security Enhancement
+
 - **Added**: `APPROVED_PENDING_PAYMENT` status to RequestStatus enum
 - **Purpose**: Prevent payment bypass vulnerability where consultations could be scheduled without payment
 - **Implementation**: Pay-after-approval workflow with 48-hour payment timeout

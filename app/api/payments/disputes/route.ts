@@ -68,7 +68,8 @@ export async function GET(req: NextRequest) {
     if (gateway && gateway !== "STRIPE") {
       return NextResponse.json(
         {
-          error: "Only Stripe supports direct dispute API. Razorpay disputes are webhook-only.",
+          error:
+            "Only Stripe supports direct dispute API. Razorpay disputes are webhook-only.",
         },
         { status: 400 },
       );
@@ -159,7 +160,8 @@ export async function POST(req: NextRequest) {
 
     // Validate request
     const body = await req.json();
-    const { disputeId: dbDisputeId, evidence } = submitEvidenceSchema.parse(body);
+    const { disputeId: dbDisputeId, evidence } =
+      submitEvidenceSchema.parse(body);
 
     // Move ALL validation inside transaction to prevent race conditions
     // (consistent with refunds fix)
@@ -186,13 +188,15 @@ export async function POST(req: NextRequest) {
         dispute.status === "LOST" ||
         dispute.status === "CHARGE_REFUNDED"
       ) {
-        throw new Error("Dispute is already resolved and cannot accept new evidence");
+        throw new Error(
+          "Dispute is already resolved and cannot accept new evidence",
+        );
       }
 
       // Check gateway support
       if (dispute.paymentGateway !== "STRIPE") {
         throw new Error(
-          "Only Stripe supports direct evidence submission. For Razorpay, use the dashboard."
+          "Only Stripe supports direct evidence submission. For Razorpay, use the dashboard.",
         );
       }
 
@@ -241,9 +245,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       {
         error:
-          error instanceof Error
-            ? error.message
-            : "Failed to submit evidence",
+          error instanceof Error ? error.message : "Failed to submit evidence",
       },
       { status: 500 },
     );

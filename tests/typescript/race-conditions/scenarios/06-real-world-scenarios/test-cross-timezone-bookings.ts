@@ -52,7 +52,7 @@ async function runTest() {
 
   logTestStart(config.testName, {
     Category: config.category,
-    "Scenario": "Users from different timezones booking same slot",
+    Scenario: "Users from different timezones booking same slot",
     "UTC Time": utcTime.toISOString(),
     "EST Time": `${estTime.toLocaleTimeString()} (1:00 PM)`,
     "PST Time": `${pstTime.toLocaleTimeString()} (10:00 AM)`,
@@ -83,7 +83,9 @@ async function runTest() {
   console.log(`   UTC Slot Time: ${utcTime.toISOString()}`);
   console.log(`   Successful Booking: ${report.summary.successes}/3`);
   console.log(`   Conflicts: ${report.summary.conflicts}/3`);
-  console.log(`   Lock Behavior: ${report.summary.successes === 1 ? "✅ Timezone-agnostic" : "❌ Issue detected"}`);
+  console.log(
+    `   Lock Behavior: ${report.summary.successes === 1 ? "✅ Timezone-agnostic" : "❌ Issue detected"}`,
+  );
 
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
   await saveJsonReport(

@@ -46,8 +46,7 @@ export const subscriptionMetadataSchema = baseMetadataSchema
   })
   .refine(
     (data) => {
-      const hasDirectSlots =
-        data.slotStartTimeInUTC && data.slotEndTimeInUTC;
+      const hasDirectSlots = data.slotStartTimeInUTC && data.slotEndTimeInUTC;
       const hasSchedulingPeriod =
         data.schedulingPeriodStartsAt && data.schedulingPeriodEndsAt;
       return hasDirectSlots || hasSchedulingPeriod;

@@ -78,23 +78,23 @@ model User {
 
 ### Notification Types & Timing
 
-| Event | Email | SMS | WhatsApp | Timing |
-|-------|-------|-----|----------|--------|
-| Booking Confirmed | Yes | Yes | Yes | Immediate |
-| Reminder | Yes | Yes | Yes | 24h, 1h before |
-| Cancellation | Yes | Yes | Yes | Immediate |
-| Reschedule | Yes | Yes | Yes | Immediate |
-| Payment Success | Yes | No | Optional | Immediate |
-| Payment Failed | Yes | Yes | Yes | Immediate |
-| Review Request | Yes | No | Yes | 1h after session |
+| Event             | Email | SMS | WhatsApp | Timing           |
+| ----------------- | ----- | --- | -------- | ---------------- |
+| Booking Confirmed | Yes   | Yes | Yes      | Immediate        |
+| Reminder          | Yes   | Yes | Yes      | 24h, 1h before   |
+| Cancellation      | Yes   | Yes | Yes      | Immediate        |
+| Reschedule        | Yes   | Yes | Yes      | Immediate        |
+| Payment Success   | Yes   | No  | Optional | Immediate        |
+| Payment Failed    | Yes   | Yes | Yes      | Immediate        |
+| Review Request    | Yes   | No  | Yes      | 1h after session |
 
 ### External Service Providers
 
-| Channel | Provider Options | Recommendation |
-|---------|-----------------|----------------|
-| SMS | Twilio, AWS SNS, MSG91, Exotel | **Twilio** (global) or **MSG91** (India-focused) |
-| WhatsApp | Twilio, Meta Business API, Gupshup | **Twilio** (unified API) or **Gupshup** (India) |
-| Push | Firebase FCM, OneSignal | **Firebase FCM** (free tier) |
+| Channel  | Provider Options                   | Recommendation                                   |
+| -------- | ---------------------------------- | ------------------------------------------------ |
+| SMS      | Twilio, AWS SNS, MSG91, Exotel     | **Twilio** (global) or **MSG91** (India-focused) |
+| WhatsApp | Twilio, Meta Business API, Gupshup | **Twilio** (unified API) or **Gupshup** (India)  |
+| Push     | Firebase FCM, OneSignal            | **Firebase FCM** (free tier)                     |
 
 ### Architecture Diagram
 
@@ -205,8 +205,8 @@ export const templates = {
 ```typescript
 // lib/notifications/service.ts
 
-import { Twilio } from 'twilio';
-import { Resend } from 'resend';
+import { Twilio } from "twilio";
+import { Resend } from "resend";
 
 const twilio = new Twilio(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
 const resend = new Resend(process.env.RESEND_API_KEY);
@@ -214,18 +214,21 @@ const resend = new Resend(process.env.RESEND_API_KEY);
 export async function sendNotification(
   userId: string,
   eventType: NotificationEvent,
-  data: Record<string, any>
+  data: Record<string, any>,
 ) {
   // 1. Get user with preferences
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    include: { notificationPreference: true }
+    include: { notificationPreference: true },
   });
 
-  if (!user) throw new Error('User not found');
+  if (!user) throw new Error("User not found");
 
-  const prefs = user.notificationPreference?.channelPreferences as ChannelPrefs || {
-    email: true, sms: false, whatsapp: false
+  const prefs = (user.notificationPreference
+    ?.channelPreferences as ChannelPrefs) || {
+    email: true,
+    sms: false,
+    whatsapp: false,
   };
 
   const template = templates[eventType];
@@ -250,20 +253,26 @@ export async function sendNotification(
   return results;
 }
 
-async function sendSMS(phone: string, message: string): Promise<NotificationResult> {
+async function sendSMS(
+  phone: string,
+  message: string,
+): Promise<NotificationResult> {
   try {
     const result = await twilio.messages.create({
       body: message,
       to: phone,
       from: process.env.TWILIO_PHONE_NUMBER,
     });
-    return { channel: 'sms', status: 'sent', messageId: result.sid };
+    return { channel: "sms", status: "sent", messageId: result.sid };
   } catch (error) {
-    return { channel: 'sms', status: 'failed', error: error.message };
+    return { channel: "sms", status: "failed", error: error.message };
   }
 }
 
-async function sendWhatsApp(phone: string, template: WhatsAppTemplate): Promise<NotificationResult> {
+async function sendWhatsApp(
+  phone: string,
+  template: WhatsAppTemplate,
+): Promise<NotificationResult> {
   try {
     const result = await twilio.messages.create({
       contentSid: template.template,
@@ -271,9 +280,9 @@ async function sendWhatsApp(phone: string, template: WhatsAppTemplate): Promise<
       to: `whatsapp:${phone}`,
       from: `whatsapp:${process.env.TWILIO_WHATSAPP_NUMBER}`,
     });
-    return { channel: 'whatsapp', status: 'sent', messageId: result.sid };
+    return { channel: "whatsapp", status: "sent", messageId: result.sid };
   } catch (error) {
-    return { channel: 'whatsapp', status: 'failed', error: error.message };
+    return { channel: "whatsapp", status: "failed", error: error.message };
   }
 }
 ```
@@ -285,8 +294,10 @@ async function sendWhatsApp(phone: string, template: WhatsAppTemplate): Promise<
 
 export async function GET(req: NextRequest) {
   // Verify cron secret
-  if (req.headers.get('Authorization') !== `Bearer ${process.env.CRON_SECRET}`) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (
+    req.headers.get("Authorization") !== `Bearer ${process.env.CRON_SECRET}`
+  ) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const now = new Date();
@@ -300,22 +311,28 @@ export async function GET(req: NextRequest) {
         gte: new Date(in24Hours.getTime() - 30 * 60 * 1000), // 24h ± 30min
         lte: new Date(in24Hours.getTime() + 30 * 60 * 1000),
       },
-      appointment: { status: 'SCHEDULED' },
+      appointment: { status: "SCHEDULED" },
       reminder24hSent: false, // Need to add this field or track separately
     },
     include: {
       appointment: {
         include: {
-          consultation: { include: { consultationPlan: { include: { consultantProfile: { include: { user: true } } } } } },
+          consultation: {
+            include: {
+              consultationPlan: {
+                include: { consultantProfile: { include: { user: true } } },
+              },
+            },
+          },
           // ... other types
-        }
-      }
-    }
+        },
+      },
+    },
   });
 
   // Send reminders
   for (const slot of appointments24h) {
-    await sendNotification(slot.userId, 'REMINDER_24H', {
+    await sendNotification(slot.userId, "REMINDER_24H", {
       consultantName: getConsultantName(slot.appointment),
       dateTime: formatDateTime(slot.startTime),
       time: formatTime(slot.startTime),
@@ -324,7 +341,10 @@ export async function GET(req: NextRequest) {
 
   // Similar for 1h reminders...
 
-  return NextResponse.json({ sent24h: appointments24h.length, sent1h: appointments1h.length });
+  return NextResponse.json({
+    sent24h: appointments24h.length,
+    sent1h: appointments1h.length,
+  });
 }
 ```
 
@@ -454,14 +474,15 @@ export async function GET(req: NextRequest) {
 
 ## Cost Considerations
 
-| Channel | Provider | Cost (approx) |
-|---------|----------|---------------|
-| SMS (India) | MSG91 | ₹0.15-0.25 per SMS |
-| SMS (US) | Twilio | $0.0079 per SMS |
-| WhatsApp | Twilio | $0.005-0.08 per message |
-| WhatsApp | Meta Direct | Free for 1000/month, then $0.006+ |
+| Channel     | Provider    | Cost (approx)                     |
+| ----------- | ----------- | --------------------------------- |
+| SMS (India) | MSG91       | ₹0.15-0.25 per SMS                |
+| SMS (US)    | Twilio      | $0.0079 per SMS                   |
+| WhatsApp    | Twilio      | $0.005-0.08 per message           |
+| WhatsApp    | Meta Direct | Free for 1000/month, then $0.006+ |
 
 **Recommendation**:
+
 - Use WhatsApp as primary (cheaper, richer)
 - SMS as fallback for users without WhatsApp
 - Implement cost tracking per user/month

@@ -23,7 +23,11 @@ import {
   generateConsultantId,
   generateUserId,
 } from "../../utilities/fixtures.js";
-import type { TestConfig, SummaryReport, BookingResult } from "../../utilities/types.js";
+import type {
+  TestConfig,
+  SummaryReport,
+  BookingResult,
+} from "../../utilities/types.js";
 
 async function runTest() {
   resetBookingRegistry();
@@ -54,8 +58,8 @@ async function runTest() {
   logTestStart(config.testName, {
     Category: config.category,
     "Concurrent Users": config.concurrentUsers,
-    "Slots": `${slots.length} different slots`,
-    "Contention": "2 users per slot",
+    Slots: `${slots.length} different slots`,
+    Contention: "2 users per slot",
     "Consultant ID": consultantId,
     "Expected Outcome": `${config.expectedSuccesses} successes, ${config.expectedConflicts} conflicts`,
   });
@@ -66,8 +70,20 @@ async function runTest() {
   const promises: Promise<BookingResult>[] = [];
 
   slots.forEach((slot, slotIndex) => {
-    promises.push(simulateBookingAttempt(slot.start, consultantId, generateUserId(slotIndex * 2 + 1)));
-    promises.push(simulateBookingAttempt(slot.start, consultantId, generateUserId(slotIndex * 2 + 2)));
+    promises.push(
+      simulateBookingAttempt(
+        slot.start,
+        consultantId,
+        generateUserId(slotIndex * 2 + 1),
+      ),
+    );
+    promises.push(
+      simulateBookingAttempt(
+        slot.start,
+        consultantId,
+        generateUserId(slotIndex * 2 + 2),
+      ),
+    );
   });
 
   const results = await Promise.all(promises);

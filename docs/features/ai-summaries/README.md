@@ -118,27 +118,27 @@ interface SessionSummary {
 ```typescript
 // lib/ai/summaries.ts
 
-import OpenAI from 'openai';
-import Anthropic from '@anthropic-ai/sdk';
+import OpenAI from "openai";
+import Anthropic from "@anthropic-ai/sdk";
 
 const openai = new OpenAI();
 const anthropic = new Anthropic();
 
 interface TranscriptSegment {
-  speaker: 'consultant' | 'consultee';
+  speaker: "consultant" | "consultee";
   text: string;
   timestamp: number;
 }
 
 export async function transcribeRecording(
-  recordingUrl: string
+  recordingUrl: string,
 ): Promise<string> {
   // Option 1: OpenAI Whisper
   const response = await openai.audio.transcriptions.create({
     file: await fetchAsFile(recordingUrl),
-    model: 'whisper-1',
-    response_format: 'verbose_json',
-    timestamp_granularities: ['segment'],
+    model: "whisper-1",
+    response_format: "verbose_json",
+    timestamp_granularities: ["segment"],
   });
 
   return response.text;
@@ -159,7 +159,7 @@ export async function generateSummary(
     consulteeName: string;
     appointmentType: string;
     planName: string;
-  }
+  },
 ): Promise<SessionSummary> {
   const systemPrompt = `You are an expert at summarizing professional consultation sessions.
 Generate a structured summary of the following consultation between ${context.consultantName} (consultant) and ${context.consulteeName} (client).
@@ -178,23 +178,28 @@ Provide your response as JSON with the following structure:
 }`;
 
   const response = await anthropic.messages.create({
-    model: 'claude-3-sonnet-20240229',
+    model: "claude-3-sonnet-20240229",
     max_tokens: 2000,
     messages: [
-      { role: 'user', content: `${systemPrompt}\n\nTranscript:\n${transcript}` }
+      {
+        role: "user",
+        content: `${systemPrompt}\n\nTranscript:\n${transcript}`,
+      },
     ],
   });
 
   const content = response.content[0];
-  if (content.type === 'text') {
+  if (content.type === "text") {
     return JSON.parse(content.text);
   }
 
-  throw new Error('Failed to generate summary');
+  throw new Error("Failed to generate summary");
 }
 
 // Background job handler
-export async function processRecordingSummary(recordingId: string): Promise<void> {
+export async function processRecordingSummary(
+  recordingId: string,
+): Promise<void> {
   const recording = await prisma.recording.findUnique({
     where: { id: recordingId },
     include: {
@@ -207,18 +212,20 @@ export async function processRecordingSummary(recordingId: string): Promise<void
                   consultation: {
                     include: {
                       consultationPlan: {
-                        include: { consultantProfile: { include: { user: true } } }
+                        include: {
+                          consultantProfile: { include: { user: true } },
+                        },
                       },
-                      consulteeProfile: { include: { user: true } }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    }
+                      consulteeProfile: { include: { user: true } },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
   });
 
   if (!recording || recording.processedAt) return;
@@ -228,12 +235,15 @@ export async function processRecordingSummary(recordingId: string): Promise<void
     const transcript = await transcribeRecording(recording.recordingUrl);
 
     // 2. Generate summary
-    const consultation = recording.meetingSession.slotOfAppointment?.appointment?.consultation;
+    const consultation =
+      recording.meetingSession.slotOfAppointment?.appointment?.consultation;
     const summary = await generateSummary(transcript, {
-      consultantName: consultation?.consultationPlan.consultantProfile.user.name || 'Consultant',
-      consulteeName: consultation?.consulteeProfile.user.name || 'Client',
-      appointmentType: 'Consultation',
-      planName: consultation?.consultationPlan.title || 'Session',
+      consultantName:
+        consultation?.consultationPlan.consultantProfile.user.name ||
+        "Consultant",
+      consulteeName: consultation?.consulteeProfile.user.name || "Client",
+      appointmentType: "Consultation",
+      planName: consultation?.consultationPlan.title || "Session",
     });
 
     // 3. Store results
@@ -249,13 +259,14 @@ export async function processRecordingSummary(recordingId: string): Promise<void
     // 4. Notify consultee
     const consulteeUserId = consultation?.consulteeProfile.user.id;
     if (consulteeUserId) {
-      await sendNotification(consulteeUserId, 'SESSION_SUMMARY_READY', {
-        consultantName: consultation?.consultationPlan.consultantProfile.user.name,
+      await sendNotification(consulteeUserId, "SESSION_SUMMARY_READY", {
+        consultantName:
+          consultation?.consultationPlan.consultantProfile.user.name,
         summaryUrl: `/dashboard/appointments/${recording.meetingSession.slotOfAppointment?.appointmentId}/summary`,
       });
     }
   } catch (error) {
-    console.error('Summary processing failed:', error);
+    console.error("Summary processing failed:", error);
     // Queue for retry
   }
 }
@@ -474,17 +485,18 @@ Thanks for using Familiarise!
 
 ## Cost Considerations
 
-| Service | Cost (approx) |
-|---------|---------------|
-| Whisper API | $0.006/min |
-| Deepgram | $0.0043/min |
-| AssemblyAI | $0.00025/sec |
+| Service         | Cost (approx)          |
+| --------------- | ---------------------- |
+| Whisper API     | $0.006/min             |
+| Deepgram        | $0.0043/min            |
+| AssemblyAI      | $0.00025/sec           |
 | Claude 3 Sonnet | $0.003/1K input tokens |
-| GPT-4 | $0.01/1K input tokens |
+| GPT-4           | $0.01/1K input tokens  |
 
 **Estimated cost per 60-min session**: $0.50 - $1.50
 
 Consider:
+
 - Caching summaries (never re-generate unless requested)
 - Batch processing during off-peak hours
 - Offering as premium feature

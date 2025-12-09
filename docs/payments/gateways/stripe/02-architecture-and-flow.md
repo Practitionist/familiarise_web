@@ -287,11 +287,13 @@ Stripe handles all conversions.
         "appointmentId": "appt_xxxxx"
       },
       "charges": {
-        "data": [{
-          "id": "ch_xxxxxxxxxxxxx",
-          "amount": 10000,
-          "balance_transaction": "txn_xxxxxxxxxxxxx"
-        }]
+        "data": [
+          {
+            "id": "ch_xxxxxxxxxxxxx",
+            "amount": 10000,
+            "balance_transaction": "txn_xxxxxxxxxxxxx"
+          }
+        ]
       }
     }
   }
@@ -378,7 +380,12 @@ export async function POST(req: Request) {
 ```tsx
 // components/checkout/StripeCheckout.tsx
 
-import { Elements, PaymentElement, useStripe, useElements } from "@stripe/react-stripe-js";
+import {
+  Elements,
+  PaymentElement,
+  useStripe,
+  useElements,
+} from "@stripe/react-stripe-js";
 import { stripePromise } from "@/lib/stripe-client";
 
 function CheckoutForm({ clientSecret }: { clientSecret: string }) {
@@ -417,7 +424,11 @@ function CheckoutForm({ clientSecret }: { clientSecret: string }) {
   );
 }
 
-export default function StripeCheckout({ clientSecret }: { clientSecret: string }) {
+export default function StripeCheckout({
+  clientSecret,
+}: {
+  clientSecret: string;
+}) {
   return (
     <Elements stripe={stripePromise} options={{ clientSecret }}>
       <CheckoutForm clientSecret={clientSecret} />
@@ -444,7 +455,7 @@ export async function POST(req: Request) {
     event = stripe.webhooks.constructEvent(
       body,
       signature,
-      process.env.STRIPE_WEBHOOK_SECRET!
+      process.env.STRIPE_WEBHOOK_SECRET!,
     );
   } catch (err) {
     return Response.json({ error: "Invalid signature" }, { status: 401 });
@@ -473,13 +484,13 @@ async function handlePaymentSuccess(paymentIntent: any) {
   // Get fee details from balance transaction
   const charge = paymentIntent.charges.data[0];
   const balanceTx = await stripe.balanceTransactions.retrieve(
-    charge.balance_transaction
+    charge.balance_transaction,
   );
 
   const grossAmount = paymentIntent.amount;
   const gatewayFee = balanceTx.fee;
   const netAmount = balanceTx.net;
-  const platformFee = Math.round(netAmount * 0.20);
+  const platformFee = Math.round(netAmount * 0.2);
   const consultantEarnings = netAmount - platformFee;
 
   await prisma.$transaction([

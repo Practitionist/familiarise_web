@@ -84,7 +84,9 @@ export async function POST(req: NextRequest) {
     console.log(`   ⚠️  Conflicts: ${conflicts}`);
     console.log(`   ❌ Errors: ${errors}`);
     console.log(`   ${testPassed ? "✅ TEST PASSED" : "❌ TEST FAILED"}`);
-    console.log(`   Expected: 1 success, ${concurrentRequests - 1} conflicts\n`);
+    console.log(
+      `   Expected: 1 success, ${concurrentRequests - 1} conflicts\n`,
+    );
 
     return NextResponse.json({
       testPassed,

@@ -121,22 +121,24 @@ Existing Models Used:
 // Store embeddings separately, query by consultant ID
 
 // Embedding generation
-import OpenAI from 'openai';
+import OpenAI from "openai";
 const openai = new OpenAI();
 
-async function generateConsultantEmbedding(profile: ConsultantProfile): Promise<number[]> {
+async function generateConsultantEmbedding(
+  profile: ConsultantProfile,
+): Promise<number[]> {
   const text = `
     ${profile.description}
     Specialization: ${profile.specialization}
     Qualifications: ${profile.qualifications}
     Experience: ${profile.experience} years
     Domain: ${profile.domain?.name}
-    SubDomains: ${profile.subDomains?.map(s => s.name).join(', ')}
-    Tags: ${profile.tags?.map(t => t.name).join(', ')}
+    SubDomains: ${profile.subDomains?.map((s) => s.name).join(", ")}
+    Tags: ${profile.tags?.map((t) => t.name).join(", ")}
   `;
 
   const response = await openai.embeddings.create({
-    model: 'text-embedding-ada-002',
+    model: "text-embedding-ada-002",
     input: text,
   });
 
@@ -152,10 +154,10 @@ async function generateConsultantEmbedding(profile: ConsultantProfile): Promise<
 interface MatchScore {
   total: number;
   breakdown: {
-    relevance: number;    // 0-1
-    quality: number;      // 0-1
-    freshness: number;    // 0-1
-    priceMatch: number;   // 0-1
+    relevance: number; // 0-1
+    quality: number; // 0-1
+    freshness: number; // 0-1
+    priceMatch: number; // 0-1
   };
   explanation: string[];
 }
@@ -170,7 +172,7 @@ const WEIGHTS = {
 export function calculateMatchScore(
   consultant: ConsultantProfile,
   query: ParsedQuery,
-  semanticSimilarity: number
+  semanticSimilarity: number,
 ): MatchScore {
   const breakdown = {
     relevance: calculateRelevance(consultant, query, semanticSimilarity),
@@ -193,7 +195,7 @@ export function calculateMatchScore(
 function calculateRelevance(
   consultant: ConsultantProfile,
   query: ParsedQuery,
-  semanticSimilarity: number
+  semanticSimilarity: number,
 ): number {
   let score = semanticSimilarity * 0.6; // Base semantic score
 
@@ -203,13 +205,18 @@ function calculateRelevance(
   }
 
   // Boost for subdomain match
-  const subdomainMatch = consultant.subDomains?.some(s => query.subdomainIds?.includes(s.id));
+  const subdomainMatch = consultant.subDomains?.some((s) =>
+    query.subdomainIds?.includes(s.id),
+  );
   if (subdomainMatch) {
     score += 0.1;
   }
 
   // Boost for tag match
-  const tagMatchCount = consultant.tags?.filter(t => query.keywords.includes(t.name.toLowerCase())).length || 0;
+  const tagMatchCount =
+    consultant.tags?.filter((t) =>
+      query.keywords.includes(t.name.toLowerCase()),
+    ).length || 0;
   score += Math.min(tagMatchCount * 0.05, 0.1);
 
   return Math.min(score, 1);
@@ -226,13 +233,19 @@ function calculateQuality(consultant: ConsultantProfile): number {
 function calculateFreshness(consultant: ConsultantProfile): number {
   // Favor consultants who are active and responsive
   const lastActiveScore = getLastActiveScore(consultant.user?.lastLogin);
-  const responseTimeScore = 1 - Math.min((consultant.avgResponseTime || 24) / 48, 1);
+  const responseTimeScore =
+    1 - Math.min((consultant.avgResponseTime || 24) / 48, 1);
   const availabilityScore = consultant.hasAvailabilityThisWeek ? 1 : 0.5;
 
-  return lastActiveScore * 0.3 + responseTimeScore * 0.3 + availabilityScore * 0.4;
+  return (
+    lastActiveScore * 0.3 + responseTimeScore * 0.3 + availabilityScore * 0.4
+  );
 }
 
-function generateExplanation(consultant: ConsultantProfile, scores: MatchScore['breakdown']): string[] {
+function generateExplanation(
+  consultant: ConsultantProfile,
+  scores: MatchScore["breakdown"],
+): string[] {
   const explanations: string[] = [];
 
   if (scores.relevance > 0.7) {
@@ -242,7 +255,7 @@ function generateExplanation(consultant: ConsultantProfile, scores: MatchScore['
     explanations.push(`${consultant.rating}% positive rating`);
   }
   if (scores.freshness > 0.8) {
-    explanations.push('Available this week');
+    explanations.push("Available this week");
   }
 
   return explanations;
@@ -294,7 +307,7 @@ interface MatchResult {
     tags: string[];
   };
   score: number;
-  explanation: string[];  // "Expert in fundraising", "4.9 rating", etc.
+  explanation: string[]; // "Expert in fundraising", "4.9 rating", etc.
   availability: {
     nextAvailable: Date;
     slotsThisWeek: number;
@@ -309,7 +322,7 @@ interface SearchResponse {
     domain: string | null;
     subdomains: string[];
     keywords: string[];
-    intent: 'consultation' | 'subscription' | 'webinar' | 'class';
+    intent: "consultation" | "subscription" | "webinar" | "class";
   };
   filters: {
     applied: Record<string, any>;
@@ -408,23 +421,23 @@ interface SearchResponse {
 
 ```typescript
 // Phase 1: Simple matching without embeddings
-async function simpleMatch(query: string, filters: Filters): Promise<ConsultantProfile[]> {
+async function simpleMatch(
+  query: string,
+  filters: Filters,
+): Promise<ConsultantProfile[]> {
   const keywords = extractKeywords(query); // Simple tokenization
 
   return prisma.consultantProfile.findMany({
     where: {
       OR: [
-        { description: { contains: keywords[0], mode: 'insensitive' } },
-        { specialization: { contains: keywords[0], mode: 'insensitive' } },
-        { tags: { some: { name: { in: keywords, mode: 'insensitive' } } } },
+        { description: { contains: keywords[0], mode: "insensitive" } },
+        { specialization: { contains: keywords[0], mode: "insensitive" } },
+        { tags: { some: { name: { in: keywords, mode: "insensitive" } } } },
       ],
       isActive: true,
       ...buildFilters(filters),
     },
-    orderBy: [
-      { rating: 'desc' },
-      { consultationCount: 'desc' },
-    ],
+    orderBy: [{ rating: "desc" }, { consultationCount: "desc" }],
     take: filters.limit || 10,
   });
 }

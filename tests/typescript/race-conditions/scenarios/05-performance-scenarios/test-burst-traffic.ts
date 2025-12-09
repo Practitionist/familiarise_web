@@ -49,7 +49,7 @@ async function runTest() {
     "Burst Size": `${config.concurrentUsers} concurrent requests`,
     "Slot Time": new Date(slot.start).toLocaleString(),
     "Consultant ID": consultantId,
-    "Scenario": "Sudden traffic spike (e.g., email notification)",
+    Scenario: "Sudden traffic spike (e.g., email notification)",
     "Expected Outcome": `${config.expectedSuccesses} success, ${config.expectedConflicts} conflicts`,
   });
 
@@ -73,7 +73,9 @@ async function runTest() {
   console.log(`\n📊 Burst Performance Metrics:`);
   console.log(`   Burst Duration: ${duration}ms`);
   console.log(`   Peak Load: ${config.concurrentUsers} concurrent requests`);
-  console.log(`   Handled: ${report.summary.successes + report.summary.conflicts}/${config.concurrentUsers} requests`);
+  console.log(
+    `   Handled: ${report.summary.successes + report.summary.conflicts}/${config.concurrentUsers} requests`,
+  );
 
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
   await saveJsonReport(

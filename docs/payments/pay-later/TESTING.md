@@ -76,7 +76,7 @@ describe("Distributed Locking", () => {
 
       // Second acquisition should fail
       await expect(
-        lockConsultationApproval(consultationId, 100)
+        lockConsultationApproval(consultationId, 100),
       ).rejects.toThrow("Another approval is in progress");
 
       await unlockApproval(lock1);
@@ -90,7 +90,7 @@ describe("Distributed Locking", () => {
       // Don't release - let it expire
 
       // Wait for expiry
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      await new Promise((resolve) => setTimeout(resolve, 1500));
 
       // Lock should be available again
       const lock2 = await lockConsultationApproval(consultationId, 5000);
@@ -259,27 +259,31 @@ describe("Consultation Approval API", () => {
     expect(response.status).toBe(200);
     expect(data.requiresPayment).toBe(true);
     expect(data.paymentUrl).toBeDefined();
-    expect(data.data.requestStatus).toBe(RequestStatus.APPROVED_PENDING_PAYMENT);
+    expect(data.data.requestStatus).toBe(
+      RequestStatus.APPROVED_PENDING_PAYMENT,
+    );
   });
 
   it("should prevent duplicate approvals", async () => {
     // First approval
     const response1 = await PATCH(
-      createMocks({ method: "PATCH", body: { status: RequestStatus.APPROVED } }).req,
-      { params: Promise.resolve({ consultationId: testConsultation.id }) }
+      createMocks({ method: "PATCH", body: { status: RequestStatus.APPROVED } })
+        .req,
+      { params: Promise.resolve({ consultationId: testConsultation.id }) },
     );
 
     // Second approval (concurrent)
     const response2 = await PATCH(
-      createMocks({ method: "PATCH", body: { status: RequestStatus.APPROVED } }).req,
-      { params: Promise.resolve({ consultationId: testConsultation.id }) }
+      createMocks({ method: "PATCH", body: { status: RequestStatus.APPROVED } })
+        .req,
+      { params: Promise.resolve({ consultationId: testConsultation.id }) },
     );
 
     const data1 = await response1.json();
     const data2 = await response2.json();
 
     // One should succeed, one should be duplicate
-    const successCount = [data1, data2].filter(d => !d.duplicate).length;
+    const successCount = [data1, data2].filter((d) => !d.duplicate).length;
     expect(successCount).toBe(1);
   });
 
@@ -289,8 +293,11 @@ describe("Consultation Approval API", () => {
 
     try {
       const response = await PATCH(
-        createMocks({ method: "PATCH", body: { status: RequestStatus.APPROVED } }).req,
-        { params: Promise.resolve({ consultationId: testConsultation.id }) }
+        createMocks({
+          method: "PATCH",
+          body: { status: RequestStatus.APPROVED },
+        }).req,
+        { params: Promise.resolve({ consultationId: testConsultation.id }) },
       );
 
       expect(response.status).toBe(409);
@@ -307,7 +314,10 @@ describe("Consultation Approval API", () => {
 
 ```typescript
 // __tests__/lib/payments/webhooks/handlers.test.ts
-import { handlePaymentSuccess, handlePaymentFailure } from "@/lib/payments/webhooks/handlers";
+import {
+  handlePaymentSuccess,
+  handlePaymentFailure,
+} from "@/lib/payments/webhooks/handlers";
 import prisma from "@/lib/prisma";
 import { PaymentStatus } from "@prisma/client";
 
@@ -431,7 +441,9 @@ test.describe("Payment Approval Workflow", () => {
     await consulteePage.click('button:has-text("Pay")');
 
     // 8. Verify success
-    await expect(consulteePage.locator("text=Payment Successful")).toBeVisible();
+    await expect(
+      consulteePage.locator("text=Payment Successful"),
+    ).toBeVisible();
 
     // 9. Check consultant dashboard shows approved status
     await page.reload();
@@ -495,30 +507,35 @@ describe("Approval Endpoint Performance", () => {
 ## Testing Checklist
 
 ### Unit Tests
+
 - [ ] Distributed locking (acquire, release, expiry)
 - [ ] Email service (send success, failures, missing config)
 - [ ] Payment helpers (intent creation, metadata)
 - [ ] Database queries (optimized, correct joins)
 
 ### Integration Tests
+
 - [ ] Approval flow (no payment, with payment, duplicate)
 - [ ] Webhook processing (success, failure, idempotency)
 - [ ] Dashboard endpoints (consultee, admin)
 - [ ] Cleanup job (expired items, partial failures)
 
 ### End-to-End Tests
+
 - [ ] Full approval → payment → confirmation flow
 - [ ] Payment link expiry and reversion
 - [ ] Concurrent approvals (race conditions)
 - [ ] Email delivery (payment link, success, failure)
 
 ### Performance Tests
+
 - [ ] Approval endpoint under load (100 concurrent)
 - [ ] Lock contention handling (multiple instances)
 - [ ] Database query performance (< 500ms p99)
 - [ ] Email sending throughput (rate limits)
 
 ### Security Tests
+
 - [ ] Authentication required for all endpoints
 - [ ] Authorization checks (consultant owns resource)
 - [ ] Webhook signature verification

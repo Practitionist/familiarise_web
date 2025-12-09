@@ -101,24 +101,24 @@ interface ConsultantSettings {
 ```typescript
 // lib/video/upload.ts
 
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from "@supabase/supabase-js";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
+  process.env.SUPABASE_SERVICE_ROLE_KEY!,
 );
 
 const MAX_DURATION_SECONDS = 90;
 const MAX_FILE_SIZE_MB = 100;
-const ALLOWED_TYPES = ['video/mp4', 'video/quicktime', 'video/webm'];
+const ALLOWED_TYPES = ["video/mp4", "video/quicktime", "video/webm"];
 
 export async function uploadVideoIntro(
   consultantProfileId: string,
-  file: File
+  file: File,
 ): Promise<{ url: string; thumbnailUrl: string; duration: number }> {
   // 1. Validate file type
   if (!ALLOWED_TYPES.includes(file.type)) {
-    throw new Error('Invalid file type. Please upload MP4, MOV, or WebM.');
+    throw new Error("Invalid file type. Please upload MP4, MOV, or WebM.");
   }
 
   // 2. Validate file size
@@ -129,13 +129,15 @@ export async function uploadVideoIntro(
   // 3. Validate duration (client-side check, verify server-side)
   const duration = await getVideoDuration(file);
   if (duration > MAX_DURATION_SECONDS) {
-    throw new Error(`Video too long. Maximum duration is ${MAX_DURATION_SECONDS} seconds.`);
+    throw new Error(
+      `Video too long. Maximum duration is ${MAX_DURATION_SECONDS} seconds.`,
+    );
   }
 
   // 4. Upload to Supabase Storage
   const fileName = `${consultantProfileId}/intro-${Date.now()}.mp4`;
   const { data, error } = await supabase.storage
-    .from('consultant-videos')
+    .from("consultant-videos")
     .upload(fileName, file, {
       contentType: file.type,
       upsert: true,
@@ -145,7 +147,7 @@ export async function uploadVideoIntro(
 
   // 5. Get public URL
   const { data: urlData } = supabase.storage
-    .from('consultant-videos')
+    .from("consultant-videos")
     .getPublicUrl(fileName);
 
   // 6. Generate thumbnail (using external service or ffmpeg)
@@ -170,13 +172,13 @@ export async function uploadVideoIntro(
 
 async function getVideoDuration(file: File): Promise<number> {
   return new Promise((resolve, reject) => {
-    const video = document.createElement('video');
-    video.preload = 'metadata';
+    const video = document.createElement("video");
+    video.preload = "metadata";
     video.onloadedmetadata = () => {
       URL.revokeObjectURL(video.src);
       resolve(video.duration);
     };
-    video.onerror = () => reject(new Error('Failed to load video'));
+    video.onerror = () => reject(new Error("Failed to load video"));
     video.src = URL.createObjectURL(file);
   });
 }
@@ -191,7 +193,7 @@ async function generateThumbnail(videoUrl: string): Promise<string> {
 
   // Option 3: Client-side canvas capture (during upload)
   // Return placeholder for now
-  return videoUrl.replace('.mp4', '_thumb.jpg');
+  return videoUrl.replace(".mp4", "_thumb.jpg");
 }
 ```
 

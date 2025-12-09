@@ -13,12 +13,12 @@ export class SlotLockError extends Error {
   constructor(
     public readonly consultantId: string,
     public readonly slotTime: string,
-    public readonly retryAfterSeconds: number = 15
+    public readonly retryAfterSeconds: number = 15,
   ) {
     super(
-      `Slot ${slotTime} for consultant ${consultantId} is currently being booked by another user. Please try again in ${retryAfterSeconds} seconds.`
+      `Slot ${slotTime} for consultant ${consultantId} is currently being booked by another user. Please try again in ${retryAfterSeconds} seconds.`,
     );
-    this.name = 'SlotLockError';
+    this.name = "SlotLockError";
 
     // Maintains proper stack trace for where error was thrown (V8 only)
     if (Error.captureStackTrace) {

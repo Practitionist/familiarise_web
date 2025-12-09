@@ -39,6 +39,7 @@ flowchart LR
 **Settlement:** T+2 days in INR
 
 **How Razorpay Handles This:**
+
 1. Customer pays in AUD (or USD, GBP, EUR, etc.)
 2. Razorpay converts to INR at market rate
 3. Platform receives INR
@@ -63,6 +64,7 @@ flowchart LR
 **Settlement:** T+2 days to USA bank
 
 **Challenges:**
+
 - Stripe India cannot pay out to international accounts
 - Need Stripe US entity OR use Stripe Atlas
 - Alternative: Use Wise/PayPal for international transfers
@@ -89,29 +91,29 @@ flowchart LR
 
 ### Razorpay (135 Currencies Accepted)
 
-| Currency | Accept Payments | Settle To |
-|----------|-----------------|-----------|
-| INR | Yes | INR (Indian Bank) |
-| USD | Yes | INR |
-| EUR | Yes | INR |
-| GBP | Yes | INR |
-| AUD | Yes | INR |
-| SGD | Yes | INR |
-| AED | Yes | INR |
+| Currency | Accept Payments | Settle To         |
+| -------- | --------------- | ----------------- |
+| INR      | Yes             | INR (Indian Bank) |
+| USD      | Yes             | INR               |
+| EUR      | Yes             | INR               |
+| GBP      | Yes             | INR               |
+| AUD      | Yes             | INR               |
+| SGD      | Yes             | INR               |
+| AED      | Yes             | INR               |
 
 **Key Point:** All settlements in INR to Indian bank accounts only.
 
 ### Stripe (47+ Countries)
 
-| Country | Accept | Payout | Currency |
-|---------|--------|--------|----------|
-| USA | Yes | Yes | USD |
-| UK | Yes | Yes | GBP |
-| Australia | Yes | Yes | AUD |
-| Canada | Yes | Yes | CAD |
-| Germany | Yes | Yes | EUR |
-| Singapore | Yes | Yes | SGD |
-| India | Yes | **No** | INR (accept only) |
+| Country   | Accept | Payout | Currency          |
+| --------- | ------ | ------ | ----------------- |
+| USA       | Yes    | Yes    | USD               |
+| UK        | Yes    | Yes    | GBP               |
+| Australia | Yes    | Yes    | AUD               |
+| Canada    | Yes    | Yes    | CAD               |
+| Germany   | Yes    | Yes    | EUR               |
+| Singapore | Yes    | Yes    | SGD               |
+| India     | Yes    | **No** | INR (accept only) |
 
 **Key Point:** Stripe India cannot payout internationally. Need separate entities.
 
@@ -123,13 +125,13 @@ flowchart LR
 
 **Payment:** $100 AUD
 
-| Step | Amount | Fee | Notes |
-|------|--------|-----|-------|
-| Customer Pays | $100 AUD | - | - |
-| Currency Conversion | ~₹5,500 INR | 1% markup | Market rate varies |
-| Gateway Fee | ₹5,335 | 3% + GST | Razorpay international |
-| Platform Commission | ₹1,067 | 20% | Platform revenue |
-| **Consultant Receives** | **₹4,268** | - | Final payout |
+| Step                    | Amount      | Fee       | Notes                  |
+| ----------------------- | ----------- | --------- | ---------------------- |
+| Customer Pays           | $100 AUD    | -         | -                      |
+| Currency Conversion     | ~₹5,500 INR | 1% markup | Market rate varies     |
+| Gateway Fee             | ₹5,335      | 3% + GST  | Razorpay international |
+| Platform Commission     | ₹1,067      | 20%       | Platform revenue       |
+| **Consultant Receives** | **₹4,268**  | -         | Final payout           |
 
 **Effective Rate:** Customer pays $100, consultant gets ₹4,268 (~$78 equivalent)
 
@@ -139,14 +141,14 @@ flowchart LR
 
 **Payment:** ₹5,000 INR
 
-| Step | Amount | Fee | Notes |
-|------|--------|-----|-------|
-| Customer Pays | ₹5,000 INR | - | - |
-| Gateway Fee | ₹4,855 | 2.9% | Stripe |
-| Currency Conversion | $58 USD | 1% | INR to USD |
-| Platform Commission | $11.60 | 20% | Platform revenue |
-| Connect Fee | $0.40 | 0.25% + $0.25 | Stripe Connect |
-| **Consultant Receives** | **$46 USD** | - | Final payout |
+| Step                    | Amount      | Fee           | Notes            |
+| ----------------------- | ----------- | ------------- | ---------------- |
+| Customer Pays           | ₹5,000 INR  | -             | -                |
+| Gateway Fee             | ₹4,855      | 2.9%          | Stripe           |
+| Currency Conversion     | $58 USD     | 1%            | INR to USD       |
+| Platform Commission     | $11.60      | 20%           | Platform revenue |
+| Connect Fee             | $0.40       | 0.25% + $0.25 | Stripe Connect   |
+| **Consultant Receives** | **$46 USD** | -             | Final payout     |
 
 ---
 
@@ -154,28 +156,28 @@ flowchart LR
 
 ### For Indian Platform (Familiarise)
 
-| Tax | Rate | Applies To |
-|-----|------|------------|
-| GST on Services | 18% | Platform commission (B2B) |
-| TDS on Payments | 10% | Payments to Indian consultants (if >₹30,000/year) |
-| Equalization Levy | 2% | Payments from non-resident (digital services) |
+| Tax               | Rate | Applies To                                        |
+| ----------------- | ---- | ------------------------------------------------- |
+| GST on Services   | 18%  | Platform commission (B2B)                         |
+| TDS on Payments   | 10%  | Payments to Indian consultants (if >₹30,000/year) |
+| Equalization Levy | 2%   | Payments from non-resident (digital services)     |
 
 ### For Indian Consultants
 
-| Tax | Rate | Notes |
-|-----|------|-------|
-| Income Tax | Slab rate | On total earnings |
-| GST | 18% | If turnover >₹20 lakhs |
-| TDS Credit | - | Claim TDS deducted by platform |
+| Tax        | Rate      | Notes                          |
+| ---------- | --------- | ------------------------------ |
+| Income Tax | Slab rate | On total earnings              |
+| GST        | 18%       | If turnover >₹20 lakhs         |
+| TDS Credit | -         | Claim TDS deducted by platform |
 
 ### For International Consultants
 
-| Country | Tax Form | Platform Responsibility |
-|---------|----------|------------------------|
-| USA | 1099-NEC | Issue if >$600/year |
-| UK | Self-assessment | Consultant's responsibility |
-| Australia | ABN required | Consultant's responsibility |
-| EU | VAT | Reverse charge mechanism |
+| Country   | Tax Form        | Platform Responsibility     |
+| --------- | --------------- | --------------------------- |
+| USA       | 1099-NEC        | Issue if >$600/year         |
+| UK        | Self-assessment | Consultant's responsibility |
+| Australia | ABN required    | Consultant's responsibility |
+| EU        | VAT             | Reverse charge mechanism    |
 
 ---
 
@@ -212,6 +214,7 @@ International Consultants: NOT SUPPORTED initially
 ```
 
 **Limitations:**
+
 - Cannot pay international consultants
 - All consultants must have Indian bank accounts
 
@@ -225,6 +228,7 @@ International Payouts: Stripe Connect
 ```
 
 **Requirements:**
+
 - Stripe Atlas (US entity) OR
 - Partner with international payment processor
 - Separate ledger for each currency
@@ -280,12 +284,12 @@ Consultant C (UK): £40 GBP
 
 ## Implementation Priority
 
-| Phase | Scope | Gateway | Payouts |
-|-------|-------|---------|---------|
-| **Phase 1** | India only | Razorpay | Razorpay Route |
-| **Phase 2** | India + Accept International | Razorpay | Razorpay Route (INR) |
-| **Phase 3** | Global Accept | Razorpay + Stripe | Route + Connect |
-| **Phase 4** | Global Payouts | Stripe Primary | Stripe Connect |
+| Phase       | Scope                        | Gateway           | Payouts              |
+| ----------- | ---------------------------- | ----------------- | -------------------- |
+| **Phase 1** | India only                   | Razorpay          | Razorpay Route       |
+| **Phase 2** | India + Accept International | Razorpay          | Razorpay Route (INR) |
+| **Phase 3** | Global Accept                | Razorpay + Stripe | Route + Connect      |
+| **Phase 4** | Global Payouts               | Stripe Primary    | Stripe Connect       |
 
 ---
 

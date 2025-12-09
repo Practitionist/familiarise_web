@@ -11,23 +11,23 @@ This document outlines the recommended approach for keeping dashboard data fresh
 
 ### Why Not Traditional Polling?
 
-| Approach | Problem |
-|----------|---------|
+| Approach             | Problem                                 |
+| -------------------- | --------------------------------------- |
 | Short polling (1-5s) | Too many requests, hammers the database |
-| Long polling (30s+) | Data feels stale, poor UX |
-| Aggressive refresh | Battery drain, bandwidth waste |
+| Long polling (30s+)  | Data feels stale, poor UX               |
+| Aggressive refresh   | Battery drain, bandwidth waste          |
 
 ### Why Not Supabase Realtime for Dashboards?
 
 While Supabase Realtime works well for chat/collaboration, it has limitations for dashboards:
 
-| Concern | Details |
-|---------|---------|
-| **Reliability** | WebSocket connections can silently fail without reconnection |
-| **RLS Complexity** | Requires careful Row Level Security configuration for each table |
-| **Overkill** | Dashboards need "fresh enough" data, not sub-second updates |
-| **Connection Limits** | Each tab/window opens a new connection |
-| **Debugging** | Harder to debug than HTTP requests |
+| Concern               | Details                                                          |
+| --------------------- | ---------------------------------------------------------------- |
+| **Reliability**       | WebSocket connections can silently fail without reconnection     |
+| **RLS Complexity**    | Requires careful Row Level Security configuration for each table |
+| **Overkill**          | Dashboards need "fresh enough" data, not sub-second updates      |
+| **Connection Limits** | Each tab/window opens a new connection                           |
+| **Debugging**         | Harder to debug than HTTP requests                               |
 
 **Our Recommendation**: Use Supabase Realtime sparingly (chat, live notifications) and use the 3-layer approach for dashboards.
 
@@ -72,12 +72,12 @@ flowchart TD
 
 Prefetching and real-time updates are **complementary strategies**, not competing ones:
 
-| Layer | Purpose | Timing |
-|-------|---------|--------|
-| **Prefetching** | Load data before user clicks | Mount, hover |
-| **SWR Cache** | Keep viewed data fresh | staleTime, window focus |
-| **Redis Cache** | Reduce database load | Server-side TTL |
-| **SSE** | Push critical updates | Webhooks, mutations |
+| Layer           | Purpose                      | Timing                  |
+| --------------- | ---------------------------- | ----------------------- |
+| **Prefetching** | Load data before user clicks | Mount, hover            |
+| **SWR Cache**   | Keep viewed data fresh       | staleTime, window focus |
+| **Redis Cache** | Reduce database load         | Server-side TTL         |
+| **SSE**         | Push critical updates        | Webhooks, mutations     |
 
 ### Combined Flow Diagram
 
@@ -127,15 +127,15 @@ sequenceDiagram
 
 ### When Each Layer Activates
 
-| Event | Layer Used |
-|-------|------------|
-| User enters dashboard | Prefetch (mount) |
-| User hovers over tab | Prefetch (hover) |
-| User clicks tab | Instant from cache |
-| 30s passes while viewing | SWR background revalidation |
-| User switches browser windows | SWR refetchOnWindowFocus |
-| New booking arrives via webhook | SSE → invalidate → refetch |
-| Same API called twice in 60s | Redis cache HIT |
+| Event                           | Layer Used                  |
+| ------------------------------- | --------------------------- |
+| User enters dashboard           | Prefetch (mount)            |
+| User hovers over tab            | Prefetch (hover)            |
+| User clicks tab                 | Instant from cache          |
+| 30s passes while viewing        | SWR background revalidation |
+| User switches browser windows   | SWR refetchOnWindowFocus    |
+| New booking arrives via webhook | SSE → invalidate → refetch  |
+| Same API called twice in 60s    | Redis cache HIT             |
 
 ### User Timeline Example
 
@@ -191,31 +191,31 @@ const cacheKeys = {
 
 ### TTL Configuration
 
-| Data Type | TTL | Rationale |
-|-----------|-----|-----------|
-| Dashboard home stats | 60s | Aggregates change slowly |
-| Appointment list | 30s | Needs reasonable freshness |
-| Request queue | 15s | More time-sensitive |
-| Payment history | 120s | Rarely changes |
-| User profile | 300s | Very stable |
+| Data Type            | TTL  | Rationale                  |
+| -------------------- | ---- | -------------------------- |
+| Dashboard home stats | 60s  | Aggregates change slowly   |
+| Appointment list     | 30s  | Needs reasonable freshness |
+| Request queue        | 15s  | More time-sensitive        |
+| Payment history      | 120s | Rarely changes             |
+| User profile         | 300s | Very stable                |
 
 ### Implementation
 
 ```typescript
 // lib/cache/dashboard.ts
-import { Redis } from '@upstash/redis';
+import { Redis } from "@upstash/redis";
 
 const redis = Redis.fromEnv();
 
 interface CacheOptions {
-  ttl?: number;  // seconds
+  ttl?: number; // seconds
   tags?: string[];
 }
 
 export async function getCachedOrFetch<T>(
   key: string,
   fetcher: () => Promise<T>,
-  options: CacheOptions = {}
+  options: CacheOptions = {},
 ): Promise<T> {
   const { ttl = 30 } = options;
 
@@ -253,7 +253,7 @@ export async function getConsultantDashboard(userId: string) {
         // ...
       });
     },
-    { ttl: 60 }
+    { ttl: 60 },
   );
 }
 ```
@@ -281,7 +281,7 @@ async function handlePaymentSuccess(paymentId: string) {
 
 ```typescript
 // lib/react-query/config.ts
-import { QueryClient } from '@tanstack/react-query';
+import { QueryClient } from "@tanstack/react-query";
 
 export const queryClient = new QueryClient({
   defaultOptions: {
@@ -313,17 +313,20 @@ export const queryClient = new QueryClient({
 ```typescript
 // hooks/useDashboard.ts
 export const dashboardKeys = {
-  all: ['dashboard'] as const,
+  all: ["dashboard"] as const,
 
   // Consultant
-  consultant: (userId: string) => [...dashboardKeys.all, 'consultant', userId] as const,
-  consultantHome: (userId: string) => [...dashboardKeys.consultant(userId), 'home'] as const,
+  consultant: (userId: string) =>
+    [...dashboardKeys.all, "consultant", userId] as const,
+  consultantHome: (userId: string) =>
+    [...dashboardKeys.consultant(userId), "home"] as const,
   consultantAppointments: (userId: string, tab: string) =>
-    [...dashboardKeys.consultant(userId), 'appointments', tab] as const,
+    [...dashboardKeys.consultant(userId), "appointments", tab] as const,
 
   // User
-  user: (userId: string) => [...dashboardKeys.all, 'user', userId] as const,
-  userBookings: (userId: string) => [...dashboardKeys.user(userId), 'bookings'] as const,
+  user: (userId: string) => [...dashboardKeys.all, "user", userId] as const,
+  userBookings: (userId: string) =>
+    [...dashboardKeys.user(userId), "bookings"] as const,
 };
 ```
 
@@ -331,14 +334,15 @@ export const dashboardKeys = {
 
 ```typescript
 // hooks/useConsultantDashboard.ts
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 export function useConsultantDashboard(userId: string) {
   const queryClient = useQueryClient();
 
   const { data, isLoading, error } = useQuery({
     queryKey: dashboardKeys.consultantHome(userId),
-    queryFn: () => fetch(`/api/dashboard/consultant/${userId}`).then(r => r.json()),
+    queryFn: () =>
+      fetch(`/api/dashboard/consultant/${userId}`).then((r) => r.json()),
     staleTime: 30 * 1000,
     refetchOnWindowFocus: true,
   });
@@ -362,10 +366,14 @@ const mutation = useMutation({
   mutationFn: updateAppointmentStatus,
   onMutate: async (newStatus) => {
     // Cancel outgoing refetches
-    await queryClient.cancelQueries({ queryKey: dashboardKeys.consultantHome(userId) });
+    await queryClient.cancelQueries({
+      queryKey: dashboardKeys.consultantHome(userId),
+    });
 
     // Snapshot previous value
-    const previous = queryClient.getQueryData(dashboardKeys.consultantHome(userId));
+    const previous = queryClient.getQueryData(
+      dashboardKeys.consultantHome(userId),
+    );
 
     // Optimistically update
     queryClient.setQueryData(dashboardKeys.consultantHome(userId), (old) => ({
@@ -377,11 +385,16 @@ const mutation = useMutation({
   },
   onError: (err, newStatus, context) => {
     // Rollback on error
-    queryClient.setQueryData(dashboardKeys.consultantHome(userId), context?.previous);
+    queryClient.setQueryData(
+      dashboardKeys.consultantHome(userId),
+      context?.previous,
+    );
   },
   onSettled: () => {
     // Refetch to ensure consistency
-    queryClient.invalidateQueries({ queryKey: dashboardKeys.consultantHome(userId) });
+    queryClient.invalidateQueries({
+      queryKey: dashboardKeys.consultantHome(userId),
+    });
   },
 });
 ```
@@ -394,25 +407,25 @@ Use SSE for **critical real-time updates** only. Not recommended for all dashboa
 
 ### When to Use SSE
 
-| Use SSE | Don't Use SSE |
-|---------|---------------|
+| Use SSE                   | Don't Use SSE               |
+| ------------------------- | --------------------------- |
 | New booking notifications | Historical appointment list |
-| Payment confirmations | Dashboard statistics |
-| Live consultation alerts | User profile data |
-| Urgent admin alerts | Pagination results |
+| Payment confirmations     | Dashboard statistics        |
+| Live consultation alerts  | User profile data           |
+| Urgent admin alerts       | Pagination results          |
 
 ### SSE Endpoint Implementation
 
 ```typescript
 // app/api/sse/dashboard/route.ts
-import { Redis } from '@upstash/redis';
+import { Redis } from "@upstash/redis";
 
 const redis = Redis.fromEnv();
 
 export async function GET(req: Request) {
   const userId = await getUserIdFromSession(req);
   if (!userId) {
-    return new Response('Unauthorized', { status: 401 });
+    return new Response("Unauthorized", { status: 401 });
   }
 
   const encoder = new TextEncoder();
@@ -423,7 +436,7 @@ export async function GET(req: Request) {
 
       // Send keepalive every 30s
       const keepalive = setInterval(() => {
-        controller.enqueue(encoder.encode(': keepalive\n\n'));
+        controller.enqueue(encoder.encode(": keepalive\n\n"));
       }, 30000);
 
       // Poll Redis for messages (Upstash doesn't support persistent subscriptions)
@@ -435,7 +448,7 @@ export async function GET(req: Request) {
       }, 1000);
 
       // Cleanup on close
-      req.signal.addEventListener('abort', () => {
+      req.signal.addEventListener("abort", () => {
         clearInterval(keepalive);
         clearInterval(pollInterval);
         controller.close();
@@ -445,9 +458,9 @@ export async function GET(req: Request) {
 
   return new Response(stream, {
     headers: {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      'Connection': 'keep-alive',
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
     },
   });
 }
@@ -457,8 +470,8 @@ export async function GET(req: Request) {
 
 ```typescript
 // hooks/useDashboardSSE.ts
-import { useEffect } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useEffect } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 
 export function useDashboardSSE(userId: string) {
   const queryClient = useQueryClient();
@@ -471,11 +484,15 @@ export function useDashboardSSE(userId: string) {
 
       // Invalidate relevant queries based on event type
       switch (data.type) {
-        case 'NEW_BOOKING':
-          queryClient.invalidateQueries({ queryKey: dashboardKeys.consultantHome(userId) });
+        case "NEW_BOOKING":
+          queryClient.invalidateQueries({
+            queryKey: dashboardKeys.consultantHome(userId),
+          });
           break;
-        case 'PAYMENT_RECEIVED':
-          queryClient.invalidateQueries({ queryKey: dashboardKeys.consultantRequests(userId) });
+        case "PAYMENT_RECEIVED":
+          queryClient.invalidateQueries({
+            queryKey: dashboardKeys.consultantRequests(userId),
+          });
           break;
       }
     };
@@ -497,13 +514,13 @@ export function useDashboardSSE(userId: string) {
 
 ```typescript
 // lib/realtime/publish.ts
-import { Redis } from '@upstash/redis';
+import { Redis } from "@upstash/redis";
 
 const redis = Redis.fromEnv();
 
 export async function publishDashboardUpdate(
   userId: string,
-  event: { type: string; data: unknown }
+  event: { type: string; data: unknown },
 ) {
   const channel = `dashboard:${userId}:updates`;
   await redis.rpush(channel, JSON.stringify(event));
@@ -518,7 +535,7 @@ async function handleWebhook(payment: Payment) {
 
   // Notify consultant dashboard
   await publishDashboardUpdate(payment.consultantId, {
-    type: 'PAYMENT_RECEIVED',
+    type: "PAYMENT_RECEIVED",
     data: { paymentId: payment.id, amount: payment.amount },
   });
 }
@@ -532,8 +549,8 @@ async function handleWebhook(payment: Payment) {
 
 ```typescript
 // lib/ratelimit/config.ts
-import { Ratelimit } from '@upstash/ratelimit';
-import { Redis } from '@upstash/redis';
+import { Ratelimit } from "@upstash/ratelimit";
+import { Redis } from "@upstash/redis";
 
 const redis = Redis.fromEnv();
 
@@ -542,33 +559,33 @@ export const rateLimits = {
   // Dashboard endpoints - generous limits
   dashboard: new Ratelimit({
     redis,
-    limiter: Ratelimit.slidingWindow(100, '1 m'), // 100 req/min
+    limiter: Ratelimit.slidingWindow(100, "1 m"), // 100 req/min
     analytics: true,
-    prefix: 'ratelimit:dashboard',
+    prefix: "ratelimit:dashboard",
   }),
 
   // Checkout endpoints - stricter limits
   checkout: new Ratelimit({
     redis,
-    limiter: Ratelimit.slidingWindow(10, '1 m'), // 10 req/min
+    limiter: Ratelimit.slidingWindow(10, "1 m"), // 10 req/min
     analytics: true,
-    prefix: 'ratelimit:checkout',
+    prefix: "ratelimit:checkout",
   }),
 
   // SSE connections - very limited
   sse: new Ratelimit({
     redis,
-    limiter: Ratelimit.slidingWindow(5, '1 m'), // 5 connections/min
+    limiter: Ratelimit.slidingWindow(5, "1 m"), // 5 connections/min
     analytics: true,
-    prefix: 'ratelimit:sse',
+    prefix: "ratelimit:sse",
   }),
 
   // API mutations - moderate limits
   mutations: new Ratelimit({
     redis,
-    limiter: Ratelimit.slidingWindow(30, '1 m'), // 30 req/min
+    limiter: Ratelimit.slidingWindow(30, "1 m"), // 30 req/min
     analytics: true,
-    prefix: 'ratelimit:mutations',
+    prefix: "ratelimit:mutations",
   }),
 };
 ```
@@ -577,26 +594,26 @@ export const rateLimits = {
 
 ```typescript
 // lib/security/arcjet.ts
-import arcjet, { shield, detectBot, rateLimit } from '@arcjet/next';
+import arcjet, { shield, detectBot, rateLimit } from "@arcjet/next";
 
 export const aj = arcjet({
   key: process.env.ARCJET_KEY!,
   rules: [
     // Shield against common attacks
-    shield({ mode: 'LIVE' }),
+    shield({ mode: "LIVE" }),
 
     // Bot detection
     detectBot({
-      mode: 'LIVE',
-      allow: ['CATEGORY:SEARCH_ENGINE'], // Allow search bots
+      mode: "LIVE",
+      allow: ["CATEGORY:SEARCH_ENGINE"], // Allow search bots
     }),
 
     // Global rate limit (backup to Upstash)
     rateLimit({
-      mode: 'LIVE',
-      match: '/api/dashboard/*',
-      characteristics: ['userId', 'ip.src'],
-      window: '1m',
+      mode: "LIVE",
+      match: "/api/dashboard/*",
+      characteristics: ["userId", "ip.src"],
+      window: "1m",
       max: 120,
     }),
   ],
@@ -607,30 +624,30 @@ export const aj = arcjet({
 
 ```typescript
 // middleware.ts (rate limiting portion)
-import { rateLimits } from '@/lib/ratelimit/config';
+import { rateLimits } from "@/lib/ratelimit/config";
 
 export async function ratelimitMiddleware(req: NextRequest) {
-  const ip = req.ip ?? '127.0.0.1';
+  const ip = req.ip ?? "127.0.0.1";
   const path = req.nextUrl.pathname;
 
   // Select appropriate limiter
   let limiter = rateLimits.dashboard;
-  if (path.includes('/checkout')) {
+  if (path.includes("/checkout")) {
     limiter = rateLimits.checkout;
-  } else if (path.includes('/sse')) {
+  } else if (path.includes("/sse")) {
     limiter = rateLimits.sse;
   }
 
   const { success, limit, remaining, reset } = await limiter.limit(ip);
 
   if (!success) {
-    return new Response('Too Many Requests', {
+    return new Response("Too Many Requests", {
       status: 429,
       headers: {
-        'X-RateLimit-Limit': limit.toString(),
-        'X-RateLimit-Remaining': remaining.toString(),
-        'X-RateLimit-Reset': reset.toString(),
-        'Retry-After': Math.ceil((reset - Date.now()) / 1000).toString(),
+        "X-RateLimit-Limit": limit.toString(),
+        "X-RateLimit-Remaining": remaining.toString(),
+        "X-RateLimit-Reset": reset.toString(),
+        "Retry-After": Math.ceil((reset - Date.now()) / 1000).toString(),
       },
     });
   }
@@ -645,12 +662,12 @@ export async function ratelimitMiddleware(req: NextRequest) {
 
 ### Current Stack Capabilities
 
-| Component | Capacity | Notes |
-|-----------|----------|-------|
-| **Supabase (Free)** | 500 concurrent connections | Sufficient for most startups |
-| **Supabase (Pro)** | Unlimited pooled connections | Uses Supavisor automatically |
-| **Upstash Redis** | 10K commands/day (free) | Scale with pay-as-you-go |
-| **Vercel** | Serverless, auto-scales | No connection pooling needed |
+| Component           | Capacity                     | Notes                        |
+| ------------------- | ---------------------------- | ---------------------------- |
+| **Supabase (Free)** | 500 concurrent connections   | Sufficient for most startups |
+| **Supabase (Pro)**  | Unlimited pooled connections | Uses Supavisor automatically |
+| **Upstash Redis**   | 10K commands/day (free)      | Scale with pay-as-you-go     |
+| **Vercel**          | Serverless, auto-scales      | No connection pooling needed |
 
 ### Supavisor (Built-in Connection Pooling)
 
@@ -664,19 +681,20 @@ As of January 2024, **Supavisor** is the default connection pooler for all Supab
 ```
 
 **You do NOT need:**
+
 - External PgBouncer setup
 - Third-party connection poolers
 - Special Prisma configuration
 
 ### When to Consider Alternatives
 
-| Trigger | Current Solution | Consider |
-|---------|-----------------|----------|
-| >10K concurrent users | Supabase Pro | Keep current setup |
-| >100K concurrent users | Supabase Pro | Neon or PlanetScale |
-| Global low-latency required | Single region | Multi-region with Neon |
-| Complex event streaming | SSE | Kafka + dedicated service |
-| >1M messages/day | Redis pub/sub | Kafka or AWS EventBridge |
+| Trigger                     | Current Solution | Consider                  |
+| --------------------------- | ---------------- | ------------------------- |
+| >10K concurrent users       | Supabase Pro     | Keep current setup        |
+| >100K concurrent users      | Supabase Pro     | Neon or PlanetScale       |
+| Global low-latency required | Single region    | Multi-region with Neon    |
+| Complex event streaming     | SSE              | Kafka + dedicated service |
+| >1M messages/day            | Redis pub/sub    | Kafka or AWS EventBridge  |
 
 ### Migration Path (If Needed)
 
@@ -696,6 +714,7 @@ Future (if scaling issues):
 ## Implementation Checklist
 
 ### Phase 1: Redis Caching
+
 - [ ] Set up Upstash Redis project
 - [ ] Implement `getCachedOrFetch` helper
 - [ ] Add cache keys for dashboard endpoints
@@ -703,6 +722,7 @@ Future (if scaling issues):
 - [ ] Add cache invalidation to webhooks
 
 ### Phase 2: React Query Optimization
+
 - [ ] Configure QueryClient with SWR settings
 - [ ] Create dashboard query key factory
 - [ ] Implement `useConsultantDashboard` hook
@@ -710,6 +730,7 @@ Future (if scaling issues):
 - [ ] Test refetchOnWindowFocus behavior
 
 ### Phase 3: Rate Limiting
+
 - [ ] Set up Upstash Ratelimit
 - [ ] Configure limits per endpoint type
 - [ ] Add rate limit headers to responses
@@ -717,6 +738,7 @@ Future (if scaling issues):
 - [ ] Monitor rate limit analytics
 
 ### Phase 4: SSE (Optional)
+
 - [ ] Identify critical real-time events
 - [ ] Implement SSE endpoint
 - [ ] Create Redis pub/sub channels
@@ -728,6 +750,7 @@ Future (if scaling issues):
 ## Quick Reference
 
 ### Cache TTLs
+
 ```
 Dashboard home:     60s
 Appointments:       30s
@@ -737,6 +760,7 @@ Profiles:          300s
 ```
 
 ### Rate Limits
+
 ```
 Dashboard API:     100 req/min
 Checkout API:       10 req/min
@@ -745,6 +769,7 @@ Mutations:          30 req/min
 ```
 
 ### Query staleTime
+
 ```
 Dashboard data:     30s
 User profile:       60s

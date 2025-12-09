@@ -11,6 +11,7 @@ This document covers how money flows from customers to consultants using payment
 ## Current State: NOT IMPLEMENTED
 
 As of December 2025:
+
 - Payment collection works (Stripe/Razorpay)
 - **NO payout system to consultants**
 - Money sits in platform account
@@ -26,12 +27,12 @@ As of December 2025:
 
 ### Key Concepts
 
-| Term | Definition |
-|------|------------|
-| **Linked Account** | Consultant's Razorpay sub-account |
-| **Transfer** | Moving money from main account to linked account |
-| **Settlement** | When linked account receives actual bank deposit |
-| **Hold** | Delaying settlement (e.g., until service delivered) |
+| Term               | Definition                                          |
+| ------------------ | --------------------------------------------------- |
+| **Linked Account** | Consultant's Razorpay sub-account                   |
+| **Transfer**       | Moving money from main account to linked account    |
+| **Settlement**     | When linked account receives actual bank deposit    |
+| **Hold**           | Delaying settlement (e.g., until service delivered) |
 
 ### Architecture Flow
 
@@ -74,15 +75,16 @@ flowchart TD
 
 ### KYC Requirements (India)
 
-| Account Type | Required Documents |
-|--------------|-------------------|
-| **Individual** | PAN Card, Bank Account, Aadhaar (optional) |
-| **Business** | GSTIN, PAN, Bank Account, Business Proof |
+| Account Type    | Required Documents                                  |
+| --------------- | --------------------------------------------------- |
+| **Individual**  | PAN Card, Bank Account, Aadhaar (optional)          |
+| **Business**    | GSTIN, PAN, Bank Account, Business Proof            |
 | **LLP/Company** | Registration Certificate, PAN, Bank, Directors' KYC |
 
 ### API Integration
 
 **1. Create Linked Account:**
+
 ```javascript
 const account = await razorpay.accounts.create({
   email: "consultant@example.com",
@@ -99,24 +101,25 @@ const account = await razorpay.accounts.create({
         city: "Mumbai",
         state: "Maharashtra",
         postal_code: 400001,
-        country: "IN"
-      }
-    }
+        country: "IN",
+      },
+    },
   },
   legal_info: {
     pan: "ABCDE1234F",
-    gst: "27ABCDE1234F1Z5" // Optional
+    gst: "27ABCDE1234F1Z5", // Optional
   },
   bank_account: {
     beneficiary_name: "John Doe",
     account_number: "1234567890123456",
     account_type: "savings",
-    ifsc_code: "HDFC0001234"
-  }
+    ifsc_code: "HDFC0001234",
+  },
 });
 ```
 
 **2. Split Payment at Checkout:**
+
 ```javascript
 const order = await razorpay.orders.create({
   amount: 100000, // ₹1000 in paise
@@ -127,40 +130,41 @@ const order = await razorpay.orders.create({
       amount: 77600, // ₹776 to consultant
       currency: "INR",
       on_hold: false, // or true to delay settlement
-      on_hold_until: null // timestamp if on_hold is true
-    }
-  ]
+      on_hold_until: null, // timestamp if on_hold is true
+    },
+  ],
 });
 // Platform automatically keeps ₹194 (100000 - 77600 - gateway fee)
 ```
 
 **3. Manual Transfer (Alternative):**
+
 ```javascript
 // After payment success, transfer manually
 const transfer = await razorpay.transfers.create({
   account: "acc_ConsultantLinkedAccountId",
   amount: 77600,
-  currency: "INR"
+  currency: "INR",
 });
 ```
 
 ### Settlement Timeline
 
-| Event | Timeline |
-|-------|----------|
-| Payment Captured | T+0 |
-| Transfer to Linked Account | T+0 (instant) |
+| Event                         | Timeline          |
+| ----------------------------- | ----------------- |
+| Payment Captured              | T+0               |
+| Transfer to Linked Account    | T+0 (instant)     |
 | Settlement to Consultant Bank | T+2 business days |
-| Settlement to Platform Bank | T+2 business days |
+| Settlement to Platform Bank   | T+2 business days |
 
 ### Razorpay Route Pricing
 
-| Component | Fee |
-|-----------|-----|
-| Payment Processing | 2% + GST |
-| Route Transfer | FREE (included) |
-| Linked Account | FREE |
-| Settlement | FREE |
+| Component          | Fee             |
+| ------------------ | --------------- |
+| Payment Processing | 2% + GST        |
+| Route Transfer     | FREE (included) |
+| Linked Account     | FREE            |
+| Settlement         | FREE            |
 
 ---
 
@@ -172,11 +176,11 @@ const transfer = await razorpay.transfers.create({
 
 ### Account Types
 
-| Type | Control | Onboarding | Use Case |
-|------|---------|------------|----------|
-| **Express** | Stripe handles | Stripe-hosted | Easiest, recommended |
-| **Standard** | User controls | User goes to Stripe | Existing Stripe users |
-| **Custom** | Platform controls | Platform builds | Full white-label |
+| Type         | Control           | Onboarding          | Use Case              |
+| ------------ | ----------------- | ------------------- | --------------------- |
+| **Express**  | Stripe handles    | Stripe-hosted       | Easiest, recommended  |
+| **Standard** | User controls     | User goes to Stripe | Existing Stripe users |
+| **Custom**   | Platform controls | Platform builds     | Full white-label      |
 
 **Recommendation:** Start with **Express** accounts
 
@@ -199,22 +203,23 @@ sequenceDiagram
 
 ### Stripe Connect Pricing
 
-| Component | Fee |
-|-----------|-----|
-| Payment Processing | 2.9% + $0.30 |
-| Connect Fee | 0.25% + $0.25 per payout |
-| International Cards | +1.5% |
-| Currency Conversion | 1% |
-| Instant Payouts | 1% (min $0.50) |
+| Component           | Fee                      |
+| ------------------- | ------------------------ |
+| Payment Processing  | 2.9% + $0.30             |
+| Connect Fee         | 0.25% + $0.25 per payout |
+| International Cards | +1.5%                    |
+| Currency Conversion | 1%                       |
+| Instant Payouts     | 1% (min $0.50)           |
 
 ### API Integration
 
 **1. Create Connected Account:**
+
 ```javascript
 const account = await stripe.accounts.create({
-  type: 'express',
-  country: 'US',
-  email: 'consultant@example.com',
+  type: "express",
+  country: "US",
+  email: "consultant@example.com",
   capabilities: {
     card_payments: { requested: true },
     transfers: { requested: true },
@@ -223,23 +228,25 @@ const account = await stripe.accounts.create({
 ```
 
 **2. Onboarding Link:**
+
 ```javascript
 const accountLink = await stripe.accountLinks.create({
   account: account.id,
-  refresh_url: 'https://familiarise.in/consultant/onboarding/refresh',
-  return_url: 'https://familiarise.in/consultant/onboarding/complete',
-  type: 'account_onboarding',
+  refresh_url: "https://familiarise.in/consultant/onboarding/refresh",
+  return_url: "https://familiarise.in/consultant/onboarding/complete",
+  type: "account_onboarding",
 });
 // Redirect consultant to accountLink.url
 ```
 
 **3. Split Payment:**
+
 ```javascript
 const paymentIntent = await stripe.paymentIntents.create({
   amount: 10000, // $100 in cents
-  currency: 'usd',
+  currency: "usd",
   transfer_data: {
-    destination: 'acct_ConsultantConnectedAccountId',
+    destination: "acct_ConsultantConnectedAccountId",
     amount: 7760, // $77.60 to consultant
   },
 });
@@ -249,9 +256,11 @@ const paymentIntent = await stripe.paymentIntents.create({
 ### Supported Countries (118+)
 
 **Full Payout Support:**
+
 - USA, UK, Canada, Australia, Germany, France, Netherlands, Singapore, Japan, etc.
 
 **Limited Support:**
+
 - India (receive only, not send)
 - Brazil, Mexico (additional requirements)
 
@@ -259,17 +268,17 @@ const paymentIntent = await stripe.paymentIntents.create({
 
 ## Comparison: Razorpay Route vs Stripe Connect
 
-| Feature | Razorpay Route | Stripe Connect |
-|---------|---------------|----------------|
-| **Primary Market** | India | Global |
-| **Currencies** | INR (settles in INR) | 135+ currencies |
-| **Payout Countries** | India only | 118+ countries |
-| **Setup Fee** | Free | Free |
-| **Transfer Fee** | Free | 0.25% + $0.25 |
-| **Settlement Time** | T+2 days | T+2 days (instant available) |
-| **KYC** | PAN + Bank | Varies by country |
-| **API Complexity** | Medium | Medium-High |
-| **Dashboard** | Good | Excellent |
+| Feature              | Razorpay Route       | Stripe Connect               |
+| -------------------- | -------------------- | ---------------------------- |
+| **Primary Market**   | India                | Global                       |
+| **Currencies**       | INR (settles in INR) | 135+ currencies              |
+| **Payout Countries** | India only           | 118+ countries               |
+| **Setup Fee**        | Free                 | Free                         |
+| **Transfer Fee**     | Free                 | 0.25% + $0.25                |
+| **Settlement Time**  | T+2 days             | T+2 days (instant available) |
+| **KYC**              | PAN + Bank           | Varies by country            |
+| **API Complexity**   | Medium               | Medium-High                  |
+| **Dashboard**        | Good                 | Excellent                    |
 
 ---
 
@@ -338,11 +347,11 @@ flowchart TD
 
 ### Recommendation
 
-| Stage | Frequency | Minimum |
-|-------|-----------|---------|
-| MVP | Weekly | ₹500 |
-| Growth | Daily or On-Demand | ₹200 |
-| Scale | Instant or Daily | ₹100 |
+| Stage  | Frequency          | Minimum |
+| ------ | ------------------ | ------- |
+| MVP    | Weekly             | ₹500    |
+| Growth | Daily or On-Demand | ₹200    |
+| Scale  | Instant or Daily   | ₹100    |
 
 ---
 
@@ -363,12 +372,12 @@ flowchart TD
 
 ### Hold Periods by Event Type
 
-| Event Type | Hold Period | Rationale |
-|------------|-------------|-----------|
-| Consultation | 24 hours | Quick delivery |
-| Webinar | 48 hours | After event ends |
-| Subscription | 7 days | First session buffer |
-| Class | Per-session | Release after each |
+| Event Type   | Hold Period | Rationale            |
+| ------------ | ----------- | -------------------- |
+| Consultation | 24 hours    | Quick delivery       |
+| Webinar      | 48 hours    | After event ends     |
+| Subscription | 7 days      | First session buffer |
+| Class        | Per-session | Release after each   |
 
 ---
 

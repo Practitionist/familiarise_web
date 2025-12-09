@@ -54,7 +54,7 @@ async function runTest() {
   logTestStart(config.testName, {
     Category: config.category,
     "Concurrent Users": config.concurrentUsers,
-    "Slots": "3 different slots (2 users each)",
+    Slots: "3 different slots (2 users each)",
     "Slot Times": `${new Date(slot1.start).toLocaleTimeString()}, ${new Date(slot2.start).toLocaleTimeString()}, ${new Date(slot3.start).toLocaleTimeString()}`,
     "Consultant ID": consultantId,
     "Expected Outcome": `${config.expectedSuccesses} successes (1 per slot), ${config.expectedConflicts} conflicts`,

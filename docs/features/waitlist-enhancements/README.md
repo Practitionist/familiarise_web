@@ -136,10 +136,10 @@ enum WaitlistStatus {
 // lib/waitlist/priority.ts
 
 interface PriorityFactors {
-  timeInQueue: number;      // Days waiting
+  timeInQueue: number; // Days waiting
   previousBookings: number; // With this consultant
-  isPremiumUser: boolean;   // If premium tier exists
-  urgencyFlag: boolean;     // User marked as urgent
+  isPremiumUser: boolean; // If premium tier exists
+  urgencyFlag: boolean; // User marked as urgent
 }
 
 export function calculatePriority(factors: PriorityFactors): number {
@@ -166,17 +166,17 @@ export function calculatePriority(factors: PriorityFactors): number {
 
 export async function getNextInQueue(
   consultantProfileId: string,
-  consultationPlanId?: string
+  consultationPlanId?: string,
 ): Promise<Waitlist | null> {
   return prisma.waitlist.findFirst({
     where: {
       consultantProfileId,
       consultationPlanId,
-      status: 'WAITING',
+      status: "WAITING",
     },
     orderBy: [
-      { priority: 'desc' },
-      { createdAt: 'asc' }, // FIFO for same priority
+      { priority: "desc" },
+      { createdAt: "asc" }, // FIFO for same priority
     ],
   });
 }
@@ -188,9 +188,9 @@ export async function getNextInQueue(
 // lib/waitlist/handlers.ts
 
 export async function handleSlotOpening(
-  type: 'consultant' | 'webinar' | 'class',
+  type: "consultant" | "webinar" | "class",
   entityId: string,
-  slotsAvailable: number = 1
+  slotsAvailable: number = 1,
 ): Promise<void> {
   const whereClause = {
     consultant: { consultantProfileId: entityId },
@@ -202,12 +202,9 @@ export async function handleSlotOpening(
   const waitlistedUsers = await prisma.waitlist.findMany({
     where: {
       ...whereClause,
-      status: 'WAITING',
+      status: "WAITING",
     },
-    orderBy: [
-      { priority: 'desc' },
-      { createdAt: 'asc' },
-    ],
+    orderBy: [{ priority: "desc" }, { createdAt: "asc" }],
     take: slotsAvailable,
     include: { user: true },
   });
@@ -218,21 +215,23 @@ export async function handleSlotOpening(
   }
 }
 
-async function notifyWaitlistUser(entry: Waitlist & { user: User }): Promise<void> {
+async function notifyWaitlistUser(
+  entry: Waitlist & { user: User },
+): Promise<void> {
   const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000); // 48 hours
 
   // Update status
   await prisma.waitlist.update({
     where: { id: entry.id },
     data: {
-      status: 'NOTIFIED',
+      status: "NOTIFIED",
       notifiedAt: new Date(),
       expiresAt,
     },
   });
 
   // Send notifications via all channels
-  await sendNotification(entry.userId, 'WAITLIST_SLOT_AVAILABLE', {
+  await sendNotification(entry.userId, "WAITLIST_SLOT_AVAILABLE", {
     consultantName: entry.consultantProfile?.user?.name,
     bookingUrl: generateBookingUrl(entry),
     expiresAt,
@@ -243,7 +242,7 @@ async function notifyWaitlistUser(entry: Waitlist & { user: User }): Promise<voi
 export async function processExpiredNotifications(): Promise<void> {
   const expiredEntries = await prisma.waitlist.findMany({
     where: {
-      status: 'NOTIFIED',
+      status: "NOTIFIED",
       expiresAt: { lt: new Date() },
     },
   });
@@ -252,14 +251,14 @@ export async function processExpiredNotifications(): Promise<void> {
     // Mark as expired
     await prisma.waitlist.update({
       where: { id: entry.id },
-      data: { status: 'EXPIRED' },
+      data: { status: "EXPIRED" },
     });
 
     // Notify next in queue
     await handleSlotOpening(
-      entry.webinarId ? 'webinar' : entry.classId ? 'class' : 'consultant',
+      entry.webinarId ? "webinar" : entry.classId ? "class" : "consultant",
       entry.webinarId || entry.classId || entry.consultantProfileId!,
-      1
+      1,
     );
   }
 }

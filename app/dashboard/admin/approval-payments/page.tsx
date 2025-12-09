@@ -72,16 +72,23 @@ export default function ApprovalPaymentsPage() {
 
   const approvalPayments: ApprovalPayment[] = data?.approvalPayments || [];
   const expiredCount = approvalPayments.filter((p) => p.isExpired).length;
-  const expiringSoonCount = approvalPayments.filter((p) => p.isExpiringSoon && !p.isExpired).length;
-  const activeCount = approvalPayments.filter((p) => !p.isExpired && !p.isExpiringSoon).length;
+  const expiringSoonCount = approvalPayments.filter(
+    (p) => p.isExpiringSoon && !p.isExpired,
+  ).length;
+  const activeCount = approvalPayments.filter(
+    (p) => !p.isExpired && !p.isExpiringSoon,
+  ).length;
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Approval Payments Monitor</h1>
+          <h1 className="text-3xl font-bold text-gray-900">
+            Approval Payments Monitor
+          </h1>
           <p className="text-gray-600 mt-1">
-            Track consultations and subscriptions awaiting payment after approval
+            Track consultations and subscriptions awaiting payment after
+            approval
           </p>
         </div>
         <Button
@@ -91,7 +98,9 @@ export default function ApprovalPaymentsPage() {
           disabled={isLoading}
           className="gap-2"
         >
-          <RefreshCcw className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`} />
+          <RefreshCcw
+            className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`}
+          />
           Refresh
         </Button>
       </div>
@@ -100,7 +109,9 @@ export default function ApprovalPaymentsPage() {
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-gray-600">Total Pending</CardTitle>
+            <CardTitle className="text-sm font-medium text-gray-600">
+              Total Pending
+            </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{approvalPayments.length}</div>
@@ -108,28 +119,44 @@ export default function ApprovalPaymentsPage() {
         </Card>
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-green-600">Active</CardTitle>
+            <CardTitle className="text-sm font-medium text-green-600">
+              Active
+            </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-green-600">{activeCount}</div>
+            <div className="text-2xl font-bold text-green-600">
+              {activeCount}
+            </div>
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-amber-600">Expiring Soon</CardTitle>
+            <CardTitle className="text-sm font-medium text-amber-600">
+              Expiring Soon
+            </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-amber-600">{expiringSoonCount}</div>
-            <p className="text-xs text-gray-500 mt-1">&lt; 24 hours remaining</p>
+            <div className="text-2xl font-bold text-amber-600">
+              {expiringSoonCount}
+            </div>
+            <p className="text-xs text-gray-500 mt-1">
+              &lt; 24 hours remaining
+            </p>
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-red-600">Expired</CardTitle>
+            <CardTitle className="text-sm font-medium text-red-600">
+              Expired
+            </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-red-600">{expiredCount}</div>
-            <p className="text-xs text-gray-500 mt-1">Requires manual intervention</p>
+            <div className="text-2xl font-bold text-red-600">
+              {expiredCount}
+            </div>
+            <p className="text-xs text-gray-500 mt-1">
+              Requires manual intervention
+            </p>
           </CardContent>
         </Card>
       </div>
@@ -163,7 +190,9 @@ export default function ApprovalPaymentsPage() {
                     <div className="flex-1 space-y-2">
                       {/* Header */}
                       <div className="flex items-center gap-2">
-                        <h3 className="font-semibold text-gray-900">{payment.title}</h3>
+                        <h3 className="font-semibold text-gray-900">
+                          {payment.title}
+                        </h3>
                         <Badge
                           variant="outline"
                           className={
@@ -178,7 +207,9 @@ export default function ApprovalPaymentsPage() {
                           <Badge variant="destructive">EXPIRED</Badge>
                         )}
                         {payment.isExpiringSoon && !payment.isExpired && (
-                          <Badge className="bg-amber-500 text-white">EXPIRING SOON</Badge>
+                          <Badge className="bg-amber-500 text-white">
+                            EXPIRING SOON
+                          </Badge>
                         )}
                       </div>
 
@@ -186,12 +217,18 @@ export default function ApprovalPaymentsPage() {
                       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
                         <div>
                           <p className="text-gray-500">Consultant</p>
-                          <p className="font-medium text-gray-900">{payment.consultantName}</p>
+                          <p className="font-medium text-gray-900">
+                            {payment.consultantName}
+                          </p>
                         </div>
                         <div>
                           <p className="text-gray-500">Consultee</p>
-                          <p className="font-medium text-gray-900">{payment.consulteeName}</p>
-                          <p className="text-xs text-gray-500">{payment.consulteeEmail}</p>
+                          <p className="font-medium text-gray-900">
+                            {payment.consulteeName}
+                          </p>
+                          <p className="text-xs text-gray-500">
+                            {payment.consulteeEmail}
+                          </p>
                         </div>
                         <div>
                           <p className="text-gray-500">Amount</p>
@@ -201,7 +238,9 @@ export default function ApprovalPaymentsPage() {
                         </div>
                         <div>
                           <p className="text-gray-500">Status</p>
-                          <p className="font-medium text-amber-700">{payment.status}</p>
+                          <p className="font-medium text-amber-700">
+                            {payment.status}
+                          </p>
                         </div>
                       </div>
 
@@ -210,16 +249,31 @@ export default function ApprovalPaymentsPage() {
                         <div className="flex items-center gap-1 text-gray-500">
                           <Clock className="h-3 w-3" />
                           <span>
-                            Approved {formatDistanceToNow(new Date(payment.approvedAt), { addSuffix: true })}
+                            Approved{" "}
+                            {formatDistanceToNow(new Date(payment.approvedAt), {
+                              addSuffix: true,
+                            })}
                           </span>
                         </div>
                         {payment.isExpired ? (
                           <span className="text-red-600 font-medium">
-                            Expired {formatDistanceToNow(new Date(payment.expiresAt), { addSuffix: true })}
+                            Expired{" "}
+                            {formatDistanceToNow(new Date(payment.expiresAt), {
+                              addSuffix: true,
+                            })}
                           </span>
                         ) : (
-                          <span className={payment.isExpiringSoon ? "text-amber-600 font-medium" : "text-gray-500"}>
-                            Expires {formatDistanceToNow(new Date(payment.expiresAt), { addSuffix: true })}
+                          <span
+                            className={
+                              payment.isExpiringSoon
+                                ? "text-amber-600 font-medium"
+                                : "text-gray-500"
+                            }
+                          >
+                            Expires{" "}
+                            {formatDistanceToNow(new Date(payment.expiresAt), {
+                              addSuffix: true,
+                            })}
                           </span>
                         )}
                       </div>
@@ -229,7 +283,9 @@ export default function ApprovalPaymentsPage() {
                         <Alert variant="destructive">
                           <AlertCircle className="h-4 w-4" />
                           <AlertDescription className="text-xs">
-                            This payment link has expired. Manual intervention required to either extend the deadline or revert the request to pending status.
+                            This payment link has expired. Manual intervention
+                            required to either extend the deadline or revert the
+                            request to pending status.
                           </AlertDescription>
                         </Alert>
                       )}
@@ -241,7 +297,9 @@ export default function ApprovalPaymentsPage() {
                         <Button
                           size="sm"
                           variant="outline"
-                          onClick={() => window.open(payment.paymentUrl, "_blank")}
+                          onClick={() =>
+                            window.open(payment.paymentUrl, "_blank")
+                          }
                           className="gap-2"
                         >
                           View Payment Link
@@ -254,7 +312,7 @@ export default function ApprovalPaymentsPage() {
                         onClick={() =>
                           window.open(
                             `/dashboard/admin/${payment.type === "consultation" ? "consultations" : "subscriptions"}/${payment.id}`,
-                            "_blank"
+                            "_blank",
                           )
                         }
                       >
@@ -269,7 +327,8 @@ export default function ApprovalPaymentsPage() {
             <div className="text-center py-12">
               <p className="text-gray-500">No pending approval payments</p>
               <p className="text-sm text-gray-400 mt-1">
-                All approved requests have been paid or are still in pending status
+                All approved requests have been paid or are still in pending
+                status
               </p>
             </div>
           )}

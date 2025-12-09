@@ -58,7 +58,8 @@ async function runTest() {
     "Slot Time": new Date(slot.start).toLocaleString(),
     "Consultant ID": consultantId,
     "Retry Delay": "After 500ms",
-    "Expected Outcome": "User 1 succeeds, User 2 conflicts (then could retry on different slot)",
+    "Expected Outcome":
+      "User 1 succeeds, User 2 conflicts (then could retry on different slot)",
   });
 
   const startTime = Date.now();
@@ -75,14 +76,20 @@ async function runTest() {
   // Verify User 2 got conflict
   if (result2.status === 409) {
     console.log("   ✅ User 2 received expected conflict (409)");
-    console.log("   Phase 2: User 2 retrying on a different slot after delay...");
+    console.log(
+      "   Phase 2: User 2 retrying on a different slot after delay...",
+    );
 
     // Wait a bit (simulating user seeing error and retrying)
     await new Promise((resolve) => setTimeout(resolve, 500));
 
     // User 2 retries on a different slot (realistic scenario)
     const slot2 = generateTestSlot(7, 16, 0); // Different slot
-    const retryResult = await simulateBookingAttempt(slot2.start, consultantId, user2);
+    const retryResult = await simulateBookingAttempt(
+      slot2.start,
+      consultantId,
+      user2,
+    );
 
     results.push(retryResult);
 

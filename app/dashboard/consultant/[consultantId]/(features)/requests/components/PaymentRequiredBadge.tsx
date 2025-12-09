@@ -1,6 +1,11 @@
 import { Badge } from "@/components/ui/badge";
 import { Clock, CreditCard } from "lucide-react";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 interface PaymentRequiredBadgeProps {
   /**
@@ -56,8 +61,8 @@ export function PaymentRequiredBadge({
         <TooltipContent>
           <p className="text-sm font-medium">Approved - Awaiting Payment</p>
           <p className="text-xs text-muted-foreground">
-            Payment link has been sent to the client. Slot allocation will proceed after
-            successful payment.
+            Payment link has been sent to the client. Slot allocation will
+            proceed after successful payment.
           </p>
         </TooltipContent>
       </Tooltip>

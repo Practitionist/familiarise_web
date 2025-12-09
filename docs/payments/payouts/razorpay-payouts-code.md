@@ -250,8 +250,8 @@ model Payment {
 import { prisma } from "@/lib/prisma";
 import { Payment, EarningStatus } from "@prisma/client";
 
-const PLATFORM_COMMISSION_RATE = 0.20;  // 20%
-const GATEWAY_FEE_RATE = 0.0236;        // 2.36% (2% + 18% GST)
+const PLATFORM_COMMISSION_RATE = 0.2; // 20%
+const GATEWAY_FEE_RATE = 0.0236; // 2.36% (2% + 18% GST)
 
 interface CreateEarningsParams {
   payment: Payment;
@@ -303,14 +303,18 @@ export async function createEarningsRecord({
     return earning;
   });
 
-  console.log(`Created earnings record: ${earnings.id} for ${netAmount / 100} INR`);
+  console.log(
+    `Created earnings record: ${earnings.id} for ${netAmount / 100} INR`,
+  );
   return earnings;
 }
 
 /**
  * Get hold period in hours based on appointment type.
  */
-async function getHoldPeriodHours(appointmentId: string | null): Promise<number> {
+async function getHoldPeriodHours(
+  appointmentId: string | null,
+): Promise<number> {
   if (!appointmentId) return 24; // Default 24 hours
 
   const appointment = await prisma.appointment.findUnique({
@@ -326,10 +330,10 @@ async function getHoldPeriodHours(appointmentId: string | null): Promise<number>
   if (!appointment) return 24;
 
   // Different hold periods per type
-  if (appointment.consultation) return 24;      // 1 day
-  if (appointment.subscription) return 168;     // 7 days
-  if (appointment.webinar) return 48;           // 2 days (after event)
-  if (appointment.class) return 24;             // 1 day per session
+  if (appointment.consultation) return 24; // 1 day
+  if (appointment.subscription) return 168; // 7 days
+  if (appointment.webinar) return 48; // 2 days (after event)
+  if (appointment.class) return 24; // 1 day per session
 
   return 24;
 }
@@ -380,7 +384,7 @@ interface CreateLinkedAccountParams {
  * @see https://razorpay.com/docs/payments/route/linked-account/
  */
 export async function createRazorpayLinkedAccount(
-  params: CreateLinkedAccountParams
+  params: CreateLinkedAccountParams,
 ) {
   try {
     // Create account with Razorpay
@@ -423,7 +427,7 @@ export async function createRazorpayLinkedAccount(
         razorpayKycStatus: mapRazorpayStatus(account.status),
         displayName: maskBankAccount(
           params.bankAccount.accountNumber,
-          params.bankAccount.ifscCode
+          params.bankAccount.ifscCode,
         ),
         isActive: account.status === "activated",
       },
@@ -433,7 +437,7 @@ export async function createRazorpayLinkedAccount(
         razorpayKycStatus: mapRazorpayStatus(account.status),
         displayName: maskBankAccount(
           params.bankAccount.accountNumber,
-          params.bankAccount.ifscCode
+          params.bankAccount.ifscCode,
         ),
         isActive: account.status === "activated",
       },
@@ -447,7 +451,7 @@ export async function createRazorpayLinkedAccount(
       "Failed to create payout account",
       "LINKED_ACCOUNT_CREATION_FAILED",
       "RAZORPAY",
-      error
+      error,
     );
   }
 }
@@ -512,7 +516,7 @@ export async function processRazorpayPayout({
     throw new PaymentError(
       "No active Razorpay linked account found",
       "NO_LINKED_ACCOUNT",
-      "RAZORPAY"
+      "RAZORPAY",
     );
   }
 
@@ -529,7 +533,7 @@ export async function processRazorpayPayout({
     throw new PaymentError(
       "No available earnings to payout",
       "NO_AVAILABLE_EARNINGS",
-      "RAZORPAY"
+      "RAZORPAY",
     );
   }
 
@@ -539,7 +543,7 @@ export async function processRazorpayPayout({
     throw new PaymentError(
       `Minimum payout amount is ${MINIMUM_PAYOUT_AMOUNT / 100} INR`,
       "BELOW_MINIMUM_PAYOUT",
-      "RAZORPAY"
+      "RAZORPAY",
     );
   }
 
@@ -596,7 +600,9 @@ export async function processRazorpayPayout({
         },
       });
 
-      console.log(`Payout initiated: ${payout.id} for ${totalAmount / 100} INR`);
+      console.log(
+        `Payout initiated: ${payout.id} for ${totalAmount / 100} INR`,
+      );
       return { payout, transfer };
     } catch (error) {
       // Mark payout as failed
@@ -604,7 +610,8 @@ export async function processRazorpayPayout({
         where: { id: payout.id },
         data: {
           status: PayoutStatus.FAILED,
-          failureReason: error instanceof Error ? error.message : "Unknown error",
+          failureReason:
+            error instanceof Error ? error.message : "Unknown error",
         },
       });
       throw error;
@@ -802,7 +809,7 @@ export async function releaseEarningsFromHold() {
       const current = consultantBalances.get(earning.consultantProfileId) || 0;
       consultantBalances.set(
         earning.consultantProfileId,
-        current + earning.netAmount
+        current + earning.netAmount,
       );
     }
 
@@ -933,13 +940,13 @@ name: Payout Jobs
 on:
   schedule:
     # Release holds: Every hour
-    - cron: '0 * * * *'
+    - cron: "0 * * * *"
     # Weekly payouts: Monday 5:30 PM UTC (11 PM IST)
-    - cron: '30 17 * * 1'
+    - cron: "30 17 * * 1"
   workflow_dispatch:
     inputs:
       job:
-        description: 'Job to run'
+        description: "Job to run"
         required: true
         type: choice
         options:
@@ -954,8 +961,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: "20"
+          cache: "npm"
       - run: npm ci
       - run: npx prisma generate
       - run: npx tsx jobs/release-earnings-hold.ts
@@ -969,8 +976,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: "20"
+          cache: "npm"
       - run: npm ci
       - run: npx prisma generate
       - run: npx tsx jobs/process-weekly-payouts.ts

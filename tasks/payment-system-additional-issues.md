@@ -11,12 +11,12 @@
 
 After fixing the 8 critical bugs documented in `payment-workflow-critical-bugs.md`, a comprehensive audit revealed **5 additional bugs**, **3 performance optimizations**, **2 type safety issues**, and **3 code cleanup items**.
 
-| Category | Count | Highest Severity |
-|----------|-------|------------------|
-| Bugs | 5 | High |
-| Optimizations | 3 | High Impact |
-| Type Safety | 2 | High |
-| Code Cleanup | 3 | Low |
+| Category      | Count | Highest Severity |
+| ------------- | ----- | ---------------- |
+| Bugs          | 5     | High             |
+| Optimizations | 3     | High Impact      |
+| Type Safety   | 2     | High             |
+| Code Cleanup  | 3     | Low              |
 
 ---
 
@@ -34,7 +34,7 @@ The webinar checkout validates that a webinar is scheduled (has appointment with
 // Current code - only checks if scheduled, not if in future
 if (!webinar.appointment?.slotsOfAppointment?.[0]) {
   throw new Error(
-    "This webinar has not been scheduled yet. Please wait for the consultant to set a date and time."
+    "This webinar has not been scheduled yet. Please wait for the consultant to set a date and time.",
   );
 }
 // ❌ Missing: Check if webinar.appointment.slotsOfAppointment[0].startsAt > now
@@ -50,12 +50,12 @@ if (!webinar.appointment?.slotsOfAppointment?.[0]) {
 
 ### Impact
 
-| Impact | Description |
-|--------|-------------|
-| **Revenue Issues** | Refund requests for past events |
-| **User Confusion** | Paying for something that already happened |
-| **Support Tickets** | Users complaining about missed webinars |
-| **Data Quality** | Bookings for past events pollute analytics |
+| Impact              | Description                                |
+| ------------------- | ------------------------------------------ |
+| **Revenue Issues**  | Refund requests for past events            |
+| **User Confusion**  | Paying for something that already happened |
+| **Support Tickets** | Users complaining about missed webinars    |
+| **Data Quality**    | Bookings for past events pollute analytics |
 
 ### Fix Options
 
@@ -65,7 +65,9 @@ if (!webinar.appointment?.slotsOfAppointment?.[0]) {
 // After existing schedule validation
 const scheduledStart = webinar.appointment.slotsOfAppointment[0].startsAt;
 if (new Date(scheduledStart) < new Date()) {
-  throw new Error("This webinar has already occurred and is no longer available for booking.");
+  throw new Error(
+    "This webinar has already occurred and is no longer available for booking.",
+  );
 }
 ```
 
@@ -131,12 +133,12 @@ T=0:04   Request B: Create $75 refund (succeeds!)
 
 ### Impact
 
-| Impact | Description |
-|--------|-------------|
-| **Financial Loss** | Refunding more than paid |
-| **Gateway Errors** | Stripe/Razorpay will reject over-refunds |
-| **Data Corruption** | Refund totals don't match payment |
-| **Audit Issues** | Financial records inconsistent |
+| Impact              | Description                              |
+| ------------------- | ---------------------------------------- |
+| **Financial Loss**  | Refunding more than paid                 |
+| **Gateway Errors**  | Stripe/Razorpay will reject over-refunds |
+| **Data Corruption** | Refund totals don't match payment        |
+| **Audit Issues**    | Financial records inconsistent           |
 
 ### Fix Options
 
@@ -210,12 +212,14 @@ export async function createStripePaymentIntent(params: {
 }) {
   // ❌ No validation of amount > 0
   const session = await stripe.checkout.sessions.create({
-    line_items: [{
-      price_data: {
-        unit_amount: params.amount, // Could be 0 or negative!
-        // ...
+    line_items: [
+      {
+        price_data: {
+          unit_amount: params.amount, // Could be 0 or negative!
+          // ...
+        },
       },
-    }],
+    ],
   });
 }
 ```
@@ -230,12 +234,12 @@ export async function createStripePaymentIntent(params: {
 
 ### Impact
 
-| Impact | Description |
-|--------|-------------|
+| Impact             | Description                         |
+| ------------------ | ----------------------------------- |
 | **Gateway Errors** | Stripe rejects zero-amount payments |
-| **UX Issues** | Confusing error messages |
-| **Free Access** | If bypassed, users get free access |
-| **Reporting** | $0 payments skew revenue metrics |
+| **UX Issues**      | Confusing error messages            |
+| **Free Access**    | If bypassed, users get free access  |
+| **Reporting**      | $0 payments skew revenue metrics    |
 
 ### Fix Options
 
@@ -255,7 +259,11 @@ export async function createStripePaymentIntent(params: { amount: number; ... })
 ```typescript
 if (params.amount === 0) {
   // Skip payment gateway, directly confirm appointment
-  return { id: `free_${Date.now()}`, client_secret: null, isFreeCheckout: true };
+  return {
+    id: `free_${Date.now()}`,
+    client_secret: null,
+    isFreeCheckout: true,
+  };
 }
 ```
 
@@ -263,11 +271,13 @@ if (params.amount === 0) {
 
 ```typescript
 // In checkout.ts discount calculation
-const discountedAmount = discount.discountType === "PERCENTAGE"
-  ? amount * (1 - discount.discountValue / 100)
-  : Math.max(1, amount - discount.discountValue); // Minimum $0.01
+const discountedAmount =
+  discount.discountType === "PERCENTAGE"
+    ? amount * (1 - discount.discountValue / 100)
+    : Math.max(1, amount - discount.discountValue); // Minimum $0.01
 
-if (discountedAmount < 100) { // Minimum 1 INR/USD in cents
+if (discountedAmount < 100) {
+  // Minimum 1 INR/USD in cents
   throw new Error("Discount cannot reduce price below minimum");
 }
 ```
@@ -321,12 +331,12 @@ export async function createApprovalPaymentIntent(
 
 ### Impact
 
-| Impact | Description |
-|--------|-------------|
-| **Payment Without Service** | User pays but gets nothing |
-| **Manual Recovery** | Admin must create appointment manually |
-| **Support Burden** | Confusing situation for all parties |
-| **Trust Issues** | User loses trust in platform |
+| Impact                      | Description                            |
+| --------------------------- | -------------------------------------- |
+| **Payment Without Service** | User pays but gets nothing             |
+| **Manual Recovery**         | Admin must create appointment manually |
+| **Support Burden**          | Confusing situation for all parties    |
+| **Trust Issues**            | User loses trust in platform           |
 
 ### Fix Options
 
@@ -347,7 +357,9 @@ export async function createApprovalPaymentIntent(params) {
   }
 
   if (!user.consulteeProfile) {
-    throw new Error("User does not have a consultee profile. Please complete profile setup first.");
+    throw new Error(
+      "User does not have a consultee profile. Please complete profile setup first.",
+    );
   }
 
   // ... rest of function
@@ -412,12 +424,12 @@ T=0:03   User A: Create payment for deleted plan → ERROR
 
 ### Impact
 
-| Impact | Description |
-|--------|-------------|
-| **Cryptic Errors** | "Plan not found" during checkout |
+| Impact             | Description                                |
+| ------------------ | ------------------------------------------ |
+| **Cryptic Errors** | "Plan not found" during checkout           |
 | **Payment Issues** | Payment intent created but DB insert fails |
-| **UX Degradation** | User sees error after entering payment |
-| **Cleanup Needed** | Orphaned payment intents |
+| **UX Degradation** | User sees error after entering payment     |
+| **Cleanup Needed** | Orphaned payment intents                   |
 
 ### Fix Options
 
@@ -461,6 +473,7 @@ Plans are never hard-deleted, just marked inactive. Checkout checks active statu
 ## OPT-1: Heavy Include Chains in Notifications
 
 ### Category: Performance
+
 ### Impact: HIGH
 
 ### Situation
@@ -483,14 +496,16 @@ const payment = await tx.payment.findUnique({
               include: {
                 consultantProfile: {
                   include: {
-                    user: true,  // Just need name!
+                    user: true, // Just need name!
                   },
                 },
               },
             },
           },
         },
-        subscription: { /* same deep nesting */ },
+        subscription: {
+          /* same deep nesting */
+        },
       },
     },
   },
@@ -549,6 +564,7 @@ const notificationData = await tx.payment.findUnique({
 ## OPT-2: Duplicate Participant Counting Logic
 
 ### Category: Code Duplication
+
 ### Impact: MEDIUM
 
 ### Situation
@@ -556,17 +572,20 @@ const notificationData = await tx.payment.findUnique({
 Participant counting for webinars and classes is implemented differently in 3 locations with subtle differences.
 
 **Locations**:
+
 1. `checkout.ts:245-250` (webinar validation)
 2. `checkout.ts:277-281` (class validation)
 3. `checkout.ts:1005-1012` (class checkout)
 
 ```typescript
 // Location 1: Simple optional chaining
-const currentParticipants = webinar.appointment?.slotsOfAppointment?.length || 0;
+const currentParticipants =
+  webinar.appointment?.slotsOfAppointment?.length || 0;
 
 // Location 2: Reduce pattern
 const currentParticipants = classInstance.appointments.reduce(
-  (total, apt) => total + apt.slotsOfAppointment.length, 0
+  (total, apt) => total + apt.slotsOfAppointment.length,
+  0,
 );
 
 // Location 3: Set-based unique counting
@@ -591,14 +610,16 @@ for (const apt of classInstance.appointments) {
 ```typescript
 // utils/eventParticipants.ts
 export function countUniqueParticipants(
-  appointments: Array<{ slotsOfAppointment: Array<{ user?: Array<{ id: string }> }> }>
+  appointments: Array<{
+    slotsOfAppointment: Array<{ user?: Array<{ id: string }> }>;
+  }>,
 ): number {
   const uniqueUserIds = new Set<string>();
 
   for (const apt of appointments) {
     for (const slot of apt.slotsOfAppointment) {
       if (Array.isArray(slot.user)) {
-        slot.user.forEach(u => uniqueUserIds.add(u.id));
+        slot.user.forEach((u) => uniqueUserIds.add(u.id));
       }
     }
   }
@@ -608,7 +629,9 @@ export function countUniqueParticipants(
 
 // For single-appointment events (webinars)
 export function countWebinarParticipants(
-  appointment: { slotsOfAppointment: Array<{ user?: Array<{ id: string }> }> } | null
+  appointment: {
+    slotsOfAppointment: Array<{ user?: Array<{ id: string }> }>;
+  } | null,
 ): number {
   if (!appointment) return 0;
   return countUniqueParticipants([appointment]);
@@ -620,6 +643,7 @@ export function countWebinarParticipants(
 ## OPT-3: Missing Database Indexes
 
 ### Category: Performance
+
 ### Impact: HIGH (at scale)
 
 ### Situation
@@ -627,6 +651,7 @@ export function countWebinarParticipants(
 The `validateSlotAvailability` function performs complex range queries without optimal indexes.
 
 **Query Pattern** (checkout.ts:356-378):
+
 ```sql
 SELECT * FROM "SlotOfAppointment"
 WHERE (
@@ -672,6 +697,7 @@ CREATE INDEX idx_slot_tentative_time ON "SlotOfAppointment" ("isTentative", "sta
 ## TYPE-1: Unsafe `any` Type in Payment Response
 
 ### Category: Type Safety
+
 ### Severity: HIGH
 
 ### Situation
@@ -679,7 +705,7 @@ CREATE INDEX idx_slot_tentative_time ON "SlotOfAppointment" ("isTentative", "sta
 **Code Location**: `checkout.ts:1149`
 
 ```typescript
-let paymentResponse: any = null;  // ❌ Loses all type safety
+let paymentResponse: any = null; // ❌ Loses all type safety
 ```
 
 ### Fix
@@ -699,6 +725,7 @@ let paymentResponse: PaymentIntentResponse | null = null;
 ## TYPE-2: Unsafe Type Casting
 
 ### Category: Type Safety
+
 ### Severity: MEDIUM
 
 ### Situation
@@ -715,12 +742,12 @@ slot.user.forEach((u: { id: string }) => uniqueUserIds.add(u.id));
 ```typescript
 // Add type guard
 function isUserWithId(value: unknown): value is { id: string } {
-  return typeof value === 'object' && value !== null && 'id' in value;
+  return typeof value === "object" && value !== null && "id" in value;
 }
 
 // Use safely
 if (Array.isArray(slot.user)) {
-  slot.user.filter(isUserWithId).forEach(u => uniqueUserIds.add(u.id));
+  slot.user.filter(isUserWithId).forEach((u) => uniqueUserIds.add(u.id));
 }
 ```
 
@@ -729,6 +756,7 @@ if (Array.isArray(slot.user)) {
 ## CLEAN-1: Dead Code - Unused `confirmAppointment`
 
 ### Category: Code Cleanup
+
 ### Severity: LOW
 
 **Location**: `checkout.ts:1078-1127`
@@ -742,6 +770,7 @@ This function duplicates `confirmExistingAppointment` in handlers.ts but is neve
 ## CLEAN-2: Unused Import
 
 ### Category: Code Cleanup
+
 ### Severity: LOW
 
 **Location**: `checkout.ts:19`
@@ -758,6 +787,7 @@ import { handlePaymentSuccess } from "@/lib/payments/webhooks/handlers";
 ## CLEAN-3: Unused Parameter
 
 ### Category: Code Cleanup
+
 ### Severity: LOW
 
 **Location**: `checkout.ts:1081`
@@ -776,48 +806,40 @@ export async function confirmAppointment(
 
 ## Implementation Priority Matrix
 
-| ID | Severity | Effort | Risk if Unfixed | Priority |
-|----|----------|--------|-----------------|----------|
-| BUG-A | High | Low | Medium | P1 |
-| BUG-B | High | Medium | High | P1 |
-| BUG-C | Medium | Low | Low | P2 |
-| BUG-D | Medium | Low | Medium | P2 |
-| BUG-E | Medium | Low | Low | P3 |
-| OPT-1 | High | Medium | N/A (perf) | P2 |
-| OPT-2 | Medium | Low | N/A (maint) | P3 |
-| OPT-3 | High | Low | N/A (perf) | P2 |
-| TYPE-1 | High | Low | Medium | P2 |
-| TYPE-2 | Medium | Low | Low | P3 |
-| CLEAN-1 | Low | Low | N/A | P3 |
-| CLEAN-2 | Low | Trivial | N/A | P3 |
-| CLEAN-3 | Low | Trivial | N/A | P3 |
+| ID      | Severity | Effort  | Risk if Unfixed | Priority |
+| ------- | -------- | ------- | --------------- | -------- |
+| BUG-A   | High     | Low     | Medium          | P1       |
+| BUG-B   | High     | Medium  | High            | P1       |
+| BUG-C   | Medium   | Low     | Low             | P2       |
+| BUG-D   | Medium   | Low     | Medium          | P2       |
+| BUG-E   | Medium   | Low     | Low             | P3       |
+| OPT-1   | High     | Medium  | N/A (perf)      | P2       |
+| OPT-2   | Medium   | Low     | N/A (maint)     | P3       |
+| OPT-3   | High     | Low     | N/A (perf)      | P2       |
+| TYPE-1  | High     | Low     | Medium          | P2       |
+| TYPE-2  | Medium   | Low     | Low             | P3       |
+| CLEAN-1 | Low      | Low     | N/A             | P3       |
+| CLEAN-2 | Low      | Trivial | N/A             | P3       |
+| CLEAN-3 | Low      | Trivial | N/A             | P3       |
 
 ---
 
 ## Recommended Fix Order
 
 **Phase 1 - Quick Wins (30 min)**
+
 1. BUG-A: Past webinar validation
 2. CLEAN-2: Remove unused import
 3. CLEAN-3: Remove unused parameter
 4. TYPE-1: Add PaymentIntentResponse type
 
-**Phase 2 - Critical Bugs (1-2 hours)**
-5. BUG-B: Refund race condition
-6. BUG-C: Zero amount validation
-7. BUG-D: Profile validation
+**Phase 2 - Critical Bugs (1-2 hours)** 5. BUG-B: Refund race condition 6. BUG-C: Zero amount validation 7. BUG-D: Profile validation
 
-**Phase 3 - Optimization (2-3 hours)**
-8. OPT-1: Optimize notification queries
-9. OPT-2: Extract participant counting
-10. OPT-3: Add database indexes
+**Phase 3 - Optimization (2-3 hours)** 8. OPT-1: Optimize notification queries 9. OPT-2: Extract participant counting 10. OPT-3: Add database indexes
 
-**Phase 4 - Cleanup**
-11. CLEAN-1: Remove dead code
-12. TYPE-2: Add type guards
-13. BUG-E: Plan deletion race
+**Phase 4 - Cleanup** 11. CLEAN-1: Remove dead code 12. TYPE-2: Add type guards 13. BUG-E: Plan deletion race
 
 ---
 
-*Created by: Payment System Audit*
-*Last Updated: 2025-12-06*
+_Created by: Payment System Audit_
+_Last Updated: 2025-12-06_

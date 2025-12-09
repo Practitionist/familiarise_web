@@ -40,7 +40,11 @@ export class SlotValidationService {
     consultantUserId: string,
     slotDurationMinutes: number = 30,
   ): Promise<ValidationResult> {
-    return await this.validateNoConflicts(slots, consultantUserId, slotDurationMinutes);
+    return await this.validateNoConflicts(
+      slots,
+      consultantUserId,
+      slotDurationMinutes,
+    );
   }
 
   /**
@@ -64,7 +68,7 @@ export class SlotValidationService {
     // FIX Issue #11: Pass slot duration from config for conflict checking
     // Calculate slot duration in minutes from hours (default to 30 minutes)
     const slotDurationMinutes = config.sessionDurationInHours
-      ? Math.round(config.sessionDurationInHours * 60 / slots.length)
+      ? Math.round((config.sessionDurationInHours * 60) / slots.length)
       : 30;
 
     const conflictCheck = await this.validateNoConflicts(
@@ -183,7 +187,9 @@ export class SlotValidationService {
 
     for (const slot of slots) {
       // Calculate the end time of the proposed slot using configurable duration
-      const slotEnd = new Date(slot.getTime() + slotDurationMinutes * 60 * 1000);
+      const slotEnd = new Date(
+        slot.getTime() + slotDurationMinutes * 60 * 1000,
+      );
 
       const existingAppointment = await this.prismaClient.appointment.findFirst(
         {

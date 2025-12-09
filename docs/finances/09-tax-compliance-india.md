@@ -12,39 +12,39 @@ This document covers tax obligations for Familiarise as an Indian marketplace pl
 
 ### Platform Registration
 
-| Requirement | Threshold | Notes |
-|-------------|-----------|-------|
-| GST Registration | Turnover > ₹20 lakhs | Mandatory for service providers |
-| Inter-state supplies | Any amount | Registration required regardless of threshold |
-| E-commerce operator | Any amount | Special provisions apply |
+| Requirement          | Threshold            | Notes                                         |
+| -------------------- | -------------------- | --------------------------------------------- |
+| GST Registration     | Turnover > ₹20 lakhs | Mandatory for service providers               |
+| Inter-state supplies | Any amount           | Registration required regardless of threshold |
+| E-commerce operator  | Any amount           | Special provisions apply                      |
 
 **Source**: [ClearTax GST Guide](https://cleartax.in/s/gst-rates)
 
 ### Applicable GST Rates
 
-| Service Type | GST Rate | SAC Code |
-|--------------|----------|----------|
-| Platform fees/Commission | 18% | 998313 (Online content) |
-| IT-enabled services | 18% | 998314 |
-| Educational services | 18% | 999293 (except exempt categories) |
-| Payment gateway services | 18% | 997159 |
+| Service Type             | GST Rate | SAC Code                          |
+| ------------------------ | -------- | --------------------------------- |
+| Platform fees/Commission | 18%      | 998313 (Online content)           |
+| IT-enabled services      | 18%      | 998314                            |
+| Educational services     | 18%      | 999293 (except exempt categories) |
+| Payment gateway services | 18%      | 997159                            |
 
 ### GST 2.0 Changes (September 2025)
 
 The 56th GST Council meeting introduced a simplified two-rate framework:
 
-| Old Structure | New Structure (GST 2.0) |
-|---------------|-------------------------|
+| Old Structure         | New Structure (GST 2.0)       |
+| --------------------- | ----------------------------- |
 | 0%, 5%, 12%, 18%, 28% | 5% (no ITC) or 18% (with ITC) |
 
 **Impact**: Most platform services remain at 18% with Input Tax Credit (ITC) available.
 
 ### E-commerce TCS (Tax Collected at Source)
 
-| Provision | Rate | Notes |
-|-----------|------|-------|
-| TCS on supplies via platform | 0.5% | Reduced from 1% (July 2024) |
-| Applies to | Intra-state supplies | Interstate = IGST |
+| Provision                    | Rate                 | Notes                       |
+| ---------------------------- | -------------------- | --------------------------- |
+| TCS on supplies via platform | 0.5%                 | Reduced from 1% (July 2024) |
+| Applies to                   | Intra-state supplies | Interstate = IGST           |
 
 **When TCS applies**: When e-commerce operator collects payment on behalf of suppliers (consultants).
 
@@ -56,12 +56,12 @@ The 56th GST Council meeting introduced a simplified two-rate framework:
 
 **Applies to**: Payments to consultants for professional/technical services
 
-| Parameter | FY 2024-25 | FY 2025-26 |
-|-----------|------------|------------|
-| Threshold | ₹30,000/year | ₹50,000/year |
-| Rate (Professional) | 10% | 10% |
-| Rate (Technical) | 2% | 2% |
-| No PAN rate | 20% | 20% |
+| Parameter           | FY 2024-25   | FY 2025-26   |
+| ------------------- | ------------ | ------------ |
+| Threshold           | ₹30,000/year | ₹50,000/year |
+| Rate (Professional) | 10%          | 10%          |
+| Rate (Technical)    | 2%           | 2%           |
+| No PAN rate         | 20%          | 20%          |
 
 **Source**: [ClearTax Section 194J](https://cleartax.in/s/section-194j)
 
@@ -80,14 +80,14 @@ flowchart TD
 
 ### TDS Compliance Calendar
 
-| Due Date | Action | Form |
-|----------|--------|------|
-| 7th of each month | TDS deposit | Challan 281 |
-| 31st July | Q1 return | 26Q |
-| 31st October | Q2 return | 26Q |
-| 31st January | Q3 return | 26Q |
-| 31st May | Q4 return | 26Q |
-| 15th June | Form 16A issue | 16A |
+| Due Date          | Action         | Form        |
+| ----------------- | -------------- | ----------- |
+| 7th of each month | TDS deposit    | Challan 281 |
+| 31st July         | Q1 return      | 26Q         |
+| 31st October      | Q2 return      | 26Q         |
+| 31st January      | Q3 return      | 26Q         |
+| 31st May          | Q4 return      | 26Q         |
+| 15th June         | Form 16A issue | 16A         |
 
 ### TDS Calculation Example
 
@@ -104,12 +104,12 @@ Platform deposits: ₹10,000 to government
 
 ### Section 194C vs 194J
 
-| Section | 194C (Contractors) | 194J (Professionals) |
-|---------|-------------------|---------------------|
-| Applies to | Physical work contracts | Professional services |
-| Rate (Ind/HUF) | 1% | 10% |
-| Rate (Others) | 2% | 10% |
-| Threshold | ₹30K single / ₹1L aggregate | ₹30K → ₹50K |
+| Section        | 194C (Contractors)          | 194J (Professionals)  |
+| -------------- | --------------------------- | --------------------- |
+| Applies to     | Physical work contracts     | Professional services |
+| Rate (Ind/HUF) | 1%                          | 10%                   |
+| Rate (Others)  | 2%                          | 10%                   |
+| Threshold      | ₹30K single / ₹1L aggregate | ₹30K → ₹50K           |
 
 **For Familiarise**: Use Section 194J for consultant payments (professional services)
 
@@ -119,12 +119,12 @@ Platform deposits: ₹10,000 to government
 
 ### As an Aggregator/Marketplace
 
-| Obligation | Requirement |
-|------------|-------------|
-| GST Registration | Mandatory |
-| TCS Collection | If collecting payment on behalf of suppliers |
-| TDS Deduction | On payments to consultants above threshold |
-| Invoice Generation | For platform fees charged |
+| Obligation         | Requirement                                  |
+| ------------------ | -------------------------------------------- |
+| GST Registration   | Mandatory                                    |
+| TCS Collection     | If collecting payment on behalf of suppliers |
+| TDS Deduction      | On payments to consultants above threshold   |
+| Invoice Generation | For platform fees charged                    |
 
 ### Invoice Requirements
 
@@ -142,12 +142,12 @@ Invoice to Consultant:
 
 ### Record Keeping
 
-| Document | Retention Period |
-|----------|------------------|
-| Invoices | 8 years |
-| TDS records | 8 years |
-| GST returns | 8 years |
-| Payment records | 8 years |
+| Document        | Retention Period |
+| --------------- | ---------------- |
+| Invoices        | 8 years          |
+| TDS records     | 8 years          |
+| GST returns     | 8 years          |
+| Payment records | 8 years          |
 
 ---
 
@@ -155,24 +155,25 @@ Invoice to Consultant:
 
 ### GST for Consultants
 
-| Consultant Status | GST Requirement |
-|-------------------|-----------------|
-| Turnover < ₹20 lakhs | Not required (can opt-in) |
+| Consultant Status    | GST Requirement            |
+| -------------------- | -------------------------- |
+| Turnover < ₹20 lakhs | Not required (can opt-in)  |
 | Turnover > ₹20 lakhs | Mandatory GST registration |
-| Inter-state services | Registration required |
+| Inter-state services | Registration required      |
 
 ### Income Tax for Consultants
 
 | Income Slab (Old Regime) | Tax Rate |
-|--------------------------|----------|
-| Up to ₹2.5 lakhs | Nil |
-| ₹2.5 - 5 lakhs | 5% |
-| ₹5 - 10 lakhs | 20% |
-| Above ₹10 lakhs | 30% |
+| ------------------------ | -------- |
+| Up to ₹2.5 lakhs         | Nil      |
+| ₹2.5 - 5 lakhs           | 5%       |
+| ₹5 - 10 lakhs            | 20%      |
+| Above ₹10 lakhs          | 30%      |
 
 ### TDS Credit
 
 Consultants can claim TDS deducted by platform:
+
 1. TDS reflects in Form 26AS
 2. Claim credit while filing ITR
 3. Excess TDS can be refunded
@@ -188,15 +189,15 @@ Consultants can claim TDS deducted by platform:
 
 interface ConsultantPaymentTracker {
   consultantId: string;
-  financialYear: string;  // "2025-26"
+  financialYear: string; // "2025-26"
   totalPayments: number;
   tdsDeducted: number;
-  tdsThreshold: number;   // 50000 for FY 2025-26
+  tdsThreshold: number; // 50000 for FY 2025-26
 }
 
 function shouldDeductTDS(
   totalPaidThisYear: number,
-  thresholdFY: number = 50000
+  thresholdFY: number = 50000,
 ): boolean {
   return totalPaidThisYear > thresholdFY;
 }
@@ -206,11 +207,11 @@ function calculateTDS(
   hasPAN: boolean,
   isFirstPaymentAboveThreshold: boolean,
   totalPaidThisYear: number,
-  threshold: number
+  threshold: number,
 ): number {
   if (totalPaidThisYear <= threshold) return 0;
 
-  const rate = hasPAN ? 0.10 : 0.20;  // 10% or 20%
+  const rate = hasPAN ? 0.1 : 0.2; // 10% or 20%
 
   if (isFirstPaymentAboveThreshold) {
     // Deduct TDS on entire amount above threshold
@@ -329,25 +330,25 @@ TDS @ 20% = ₹4,000 (higher rate)
 
 ## Important Thresholds Summary
 
-| Tax Type | Threshold | Rate | Notes |
-|----------|-----------|------|-------|
-| GST Registration | ₹20 lakhs turnover | 18% | Services |
-| TDS 194J | ₹50,000/year (FY25-26) | 10% | Professional |
-| TCS E-commerce | Any amount | 0.5% | If collecting payments |
-| Tax Audit | ₹2 crore turnover | - | Mandatory audit |
+| Tax Type         | Threshold              | Rate | Notes                  |
+| ---------------- | ---------------------- | ---- | ---------------------- |
+| GST Registration | ₹20 lakhs turnover     | 18%  | Services               |
+| TDS 194J         | ₹50,000/year (FY25-26) | 10%  | Professional           |
+| TCS E-commerce   | Any amount             | 0.5% | If collecting payments |
+| Tax Audit        | ₹2 crore turnover      | -    | Mandatory audit        |
 
 ---
 
 ## Resources & Forms
 
-| Purpose | Form/Document |
-|---------|---------------|
-| TDS Payment | Challan 281 |
-| TDS Return | Form 26Q |
-| TDS Certificate | Form 16A |
-| GST Registration | REG-01 |
-| GST Monthly Return | GSTR-3B |
-| GST Annual Return | GSTR-9 |
+| Purpose            | Form/Document |
+| ------------------ | ------------- |
+| TDS Payment        | Challan 281   |
+| TDS Return         | Form 26Q      |
+| TDS Certificate    | Form 16A      |
+| GST Registration   | REG-01        |
+| GST Monthly Return | GSTR-3B       |
+| GST Annual Return  | GSTR-9        |
 
 ### Useful Links
 

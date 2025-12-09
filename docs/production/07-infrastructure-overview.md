@@ -25,13 +25,13 @@ This document provides a comprehensive overview of all infrastructure tools and 
 
 ### Level Definitions
 
-| Level | Definition | Timeline |
-|-------|------------|----------|
-| 🔴 **CRITICAL** | Cannot launch without this | Before launch |
-| 🟠 **HIGH** | Significant risk without this | Week 1 |
-| 🟡 **MEDIUM** | Important for growth | Month 1 |
-| 🟢 **LOW** | Nice to have, optimize later | Month 2+ |
-| ⚪ **NOT NEEDED** | Skip for now | Future consideration |
+| Level             | Definition                    | Timeline             |
+| ----------------- | ----------------------------- | -------------------- |
+| 🔴 **CRITICAL**   | Cannot launch without this    | Before launch        |
+| 🟠 **HIGH**       | Significant risk without this | Week 1               |
+| 🟡 **MEDIUM**     | Important for growth          | Month 1              |
+| 🟢 **LOW**        | Nice to have, optimize later  | Month 2+             |
+| ⚪ **NOT NEEDED** | Skip for now                  | Future consideration |
 
 ---
 
@@ -39,48 +39,48 @@ This document provides a comprehensive overview of all infrastructure tools and 
 
 ### 🔴 CRITICAL - Must Have Before Launch
 
-| Tool | Category | Purpose | Free Tier | Doc Reference |
-|------|----------|---------|-----------|---------------|
-| **Arcjet** | Security | Rate limiting, bot detection, WAF, DDoS | ✅ Yes | `08-security-arcjet.md` |
-| **Sentry** | Monitoring | Error tracking, crash reports, stack traces | ✅ Yes | `09-error-tracking-sentry.md` |
-| **Vercel Analytics** | Analytics | Web Vitals, performance monitoring | ✅ Included | Built-in |
+| Tool                 | Category   | Purpose                                     | Free Tier   | Doc Reference                 |
+| -------------------- | ---------- | ------------------------------------------- | ----------- | ----------------------------- |
+| **Arcjet**           | Security   | Rate limiting, bot detection, WAF, DDoS     | ✅ Yes      | `08-security-arcjet.md`       |
+| **Sentry**           | Monitoring | Error tracking, crash reports, stack traces | ✅ Yes      | `09-error-tracking-sentry.md` |
+| **Vercel Analytics** | Analytics  | Web Vitals, performance monitoring          | ✅ Included | Built-in                      |
 
 ### 🟠 HIGH - Implement Week 1
 
-| Tool | Category | Purpose | Free Tier | Doc Reference |
-|------|----------|---------|-----------|---------------|
-| **PostHog** | Analytics | Product analytics, session replay, feature flags | ✅ Yes ($50k startup credits) | `10-analytics-posthog.md` |
-| **Inngest** | Jobs | Background jobs, webhooks, scheduled tasks | ✅ Yes | `11-background-jobs-inngest.md` |
-| **Upstash Redis** | Caching | Data caching, session storage | ✅ Yes | `12-caching-upstash-redis.md` |
+| Tool              | Category  | Purpose                                          | Free Tier                     | Doc Reference                   |
+| ----------------- | --------- | ------------------------------------------------ | ----------------------------- | ------------------------------- |
+| **PostHog**       | Analytics | Product analytics, session replay, feature flags | ✅ Yes ($50k startup credits) | `10-analytics-posthog.md`       |
+| **Inngest**       | Jobs      | Background jobs, webhooks, scheduled tasks       | ✅ Yes                        | `11-background-jobs-inngest.md` |
+| **Upstash Redis** | Caching   | Data caching, session storage                    | ✅ Yes                        | `12-caching-upstash-redis.md`   |
 
 ### 🟡 MEDIUM - Implement Month 1
 
-| Tool | Category | Purpose | Free Tier | Doc Reference |
-|------|----------|---------|-----------|---------------|
-| **Better Stack (Logtail)** | Logging | Centralized log management | ✅ Yes | `13-monitoring-observability.md` |
-| **Checkly** | Uptime | Synthetic monitoring, API checks | ✅ Yes | `13-monitoring-observability.md` |
+| Tool                       | Category | Purpose                          | Free Tier | Doc Reference                    |
+| -------------------------- | -------- | -------------------------------- | --------- | -------------------------------- |
+| **Better Stack (Logtail)** | Logging  | Centralized log management       | ✅ Yes    | `13-monitoring-observability.md` |
+| **Checkly**                | Uptime   | Synthetic monitoring, API checks | ✅ Yes    | `13-monitoring-observability.md` |
 
 ### 🟢 LOW - Optimize Later
 
-| Tool | Category | Purpose | Free Tier | Notes |
-|------|----------|---------|-----------|-------|
-| **Google Analytics** | Marketing | Ad attribution, SEO tracking | ✅ Yes | Only if running paid ads |
-| **Stripe Radar** | Fraud | Payment fraud detection | Pay per transaction | Built into Stripe |
+| Tool                 | Category  | Purpose                      | Free Tier           | Notes                    |
+| -------------------- | --------- | ---------------------------- | ------------------- | ------------------------ |
+| **Google Analytics** | Marketing | Ad attribution, SEO tracking | ✅ Yes              | Only if running paid ads |
+| **Stripe Radar**     | Fraud     | Payment fraud detection      | Pay per transaction | Built into Stripe        |
 
 ### ⚪ NOT NEEDED - Skip
 
-| Tool | Category | Why Skip |
-|------|----------|----------|
-| **Upstash QStash** | Queues | Inngest is better for your use case |
-| **Upstash Vector** | AI | No semantic search needed |
-| **Upstash Kafka** | Streaming | Overkill for current scale |
-| **Datadog** | APM | Too expensive, Sentry + PostHog sufficient |
-| **New Relic** | APM | Redundant with Sentry |
-| **Mixpanel** | Analytics | PostHog covers this |
-| **Amplitude** | Analytics | PostHog covers this |
-| **LogRocket** | Session Replay | PostHog has this |
-| **LaunchDarkly** | Feature Flags | PostHog has this |
-| **Split.io** | Feature Flags | PostHog has this |
+| Tool               | Category       | Why Skip                                   |
+| ------------------ | -------------- | ------------------------------------------ |
+| **Upstash QStash** | Queues         | Inngest is better for your use case        |
+| **Upstash Vector** | AI             | No semantic search needed                  |
+| **Upstash Kafka**  | Streaming      | Overkill for current scale                 |
+| **Datadog**        | APM            | Too expensive, Sentry + PostHog sufficient |
+| **New Relic**      | APM            | Redundant with Sentry                      |
+| **Mixpanel**       | Analytics      | PostHog covers this                        |
+| **Amplitude**      | Analytics      | PostHog covers this                        |
+| **LogRocket**      | Session Replay | PostHog has this                           |
+| **LaunchDarkly**   | Feature Flags  | PostHog has this                           |
+| **Split.io**       | Feature Flags  | PostHog has this                           |
 
 ---
 
@@ -183,46 +183,46 @@ User Request
 
 ### Startup Phase (0-1K Users)
 
-| Service | Tier | Monthly Cost |
-|---------|------|--------------|
-| Vercel | Pro | $20 |
-| Supabase (DB) | Pro | $25 |
-| Upstash Redis | Pay-as-you-go | $0-10 |
-| Arcjet | Free | $0 |
-| Sentry | Free | $0 |
-| PostHog | Free | $0 |
-| Inngest | Free | $0 |
-| Vercel Analytics | Included | $0 |
-| **TOTAL** | | **$45-55/month** |
+| Service          | Tier          | Monthly Cost     |
+| ---------------- | ------------- | ---------------- |
+| Vercel           | Pro           | $20              |
+| Supabase (DB)    | Pro           | $25              |
+| Upstash Redis    | Pay-as-you-go | $0-10            |
+| Arcjet           | Free          | $0               |
+| Sentry           | Free          | $0               |
+| PostHog          | Free          | $0               |
+| Inngest          | Free          | $0               |
+| Vercel Analytics | Included      | $0               |
+| **TOTAL**        |               | **$45-55/month** |
 
 ### Growth Phase (1K-10K Users)
 
-| Service | Tier | Monthly Cost |
-|---------|------|--------------|
-| Vercel | Pro | $20 |
-| Supabase (DB) | Pro | $25 |
-| Upstash Redis | Pro | $50 |
-| Arcjet | Pro | $49 |
-| Sentry | Team | $26 |
-| PostHog | Scale | $0 (startup credits) |
-| Inngest | Pro | $50 |
-| Better Stack | Free | $0 |
-| **TOTAL** | | **$220/month** |
+| Service       | Tier  | Monthly Cost         |
+| ------------- | ----- | -------------------- |
+| Vercel        | Pro   | $20                  |
+| Supabase (DB) | Pro   | $25                  |
+| Upstash Redis | Pro   | $50                  |
+| Arcjet        | Pro   | $49                  |
+| Sentry        | Team  | $26                  |
+| PostHog       | Scale | $0 (startup credits) |
+| Inngest       | Pro   | $50                  |
+| Better Stack  | Free  | $0                   |
+| **TOTAL**     |       | **$220/month**       |
 
 ### Scale Phase (10K-100K Users)
 
-| Service | Tier | Monthly Cost |
-|---------|------|--------------|
-| Vercel | Enterprise | $500+ |
-| Supabase (DB) | Team | $599 |
-| Upstash Redis | Enterprise | $200 |
-| Arcjet | Business | $199 |
-| Sentry | Business | $80 |
-| PostHog | Scale | $450 |
-| Inngest | Enterprise | $200 |
-| Better Stack | Pro | $25 |
-| Checkly | Team | $40 |
-| **TOTAL** | | **$2,300/month** |
+| Service       | Tier       | Monthly Cost     |
+| ------------- | ---------- | ---------------- |
+| Vercel        | Enterprise | $500+            |
+| Supabase (DB) | Team       | $599             |
+| Upstash Redis | Enterprise | $200             |
+| Arcjet        | Business   | $199             |
+| Sentry        | Business   | $80              |
+| PostHog       | Scale      | $450             |
+| Inngest       | Enterprise | $200             |
+| Better Stack  | Pro        | $25              |
+| Checkly       | Team       | $40              |
+| **TOTAL**     |            | **$2,300/month** |
 
 ---
 
@@ -300,49 +300,49 @@ Day 4-5: Monitoring Setup
 
 #### Arcjet vs Alternatives
 
-| Feature | Arcjet | Cloudflare WAF | AWS WAF |
-|---------|--------|----------------|---------|
-| Next.js Native | ✅ First-class | ⚠️ Proxy-based | ❌ Complex |
-| Rate Limiting | ✅ Built-in | ✅ Built-in | ✅ Built-in |
-| Bot Detection | ✅ AI-powered | ✅ Good | ⚠️ Basic |
-| Setup Time | 10 mins | 1 hour | 2+ hours |
-| Cost | Free-$199 | $20-$200+ | Complex pricing |
-| **Winner** | ✅ | | |
+| Feature        | Arcjet         | Cloudflare WAF | AWS WAF         |
+| -------------- | -------------- | -------------- | --------------- |
+| Next.js Native | ✅ First-class | ⚠️ Proxy-based | ❌ Complex      |
+| Rate Limiting  | ✅ Built-in    | ✅ Built-in    | ✅ Built-in     |
+| Bot Detection  | ✅ AI-powered  | ✅ Good        | ⚠️ Basic        |
+| Setup Time     | 10 mins        | 1 hour         | 2+ hours        |
+| Cost           | Free-$199      | $20-$200+      | Complex pricing |
+| **Winner**     | ✅             |                |                 |
 
 #### Sentry vs Alternatives
 
-| Feature | Sentry | Datadog | Bugsnag |
-|---------|--------|---------|---------|
-| Error Tracking | ✅ Excellent | ✅ Good | ✅ Good |
-| Performance | ✅ Good | ✅ Excellent | ⚠️ Basic |
-| Session Replay | ✅ Yes | ✅ Yes | ❌ No |
-| Pricing | Affordable | Expensive | Mid-range |
-| Next.js Support | ✅ Excellent | ✅ Good | ✅ Good |
-| **Winner** | ✅ | | |
+| Feature         | Sentry       | Datadog      | Bugsnag   |
+| --------------- | ------------ | ------------ | --------- |
+| Error Tracking  | ✅ Excellent | ✅ Good      | ✅ Good   |
+| Performance     | ✅ Good      | ✅ Excellent | ⚠️ Basic  |
+| Session Replay  | ✅ Yes       | ✅ Yes       | ❌ No     |
+| Pricing         | Affordable   | Expensive    | Mid-range |
+| Next.js Support | ✅ Excellent | ✅ Good      | ✅ Good   |
+| **Winner**      | ✅           |              |           |
 
 #### PostHog vs Alternatives
 
-| Feature | PostHog | Mixpanel | Amplitude |
-|---------|---------|----------|-----------|
+| Feature           | PostHog      | Mixpanel     | Amplitude    |
+| ----------------- | ------------ | ------------ | ------------ |
 | Product Analytics | ✅ Excellent | ✅ Excellent | ✅ Excellent |
-| Session Replay | ✅ Built-in | ❌ No | ❌ No |
-| Feature Flags | ✅ Built-in | ❌ No | ⚠️ Limited |
-| A/B Testing | ✅ Built-in | ❌ No | ✅ Yes |
-| Pricing | Best value | Expensive | Expensive |
-| Self-host Option | ✅ Yes | ❌ No | ❌ No |
-| **Winner** | ✅ | | |
+| Session Replay    | ✅ Built-in  | ❌ No        | ❌ No        |
+| Feature Flags     | ✅ Built-in  | ❌ No        | ⚠️ Limited   |
+| A/B Testing       | ✅ Built-in  | ❌ No        | ✅ Yes       |
+| Pricing           | Best value   | Expensive    | Expensive    |
+| Self-host Option  | ✅ Yes       | ❌ No        | ❌ No        |
+| **Winner**        | ✅           |              |              |
 
 #### Inngest vs Alternatives
 
-| Feature | Inngest | QStash | Trigger.dev |
-|---------|---------|--------|-------------|
-| TypeScript | ✅ First-class | ⚠️ Basic | ✅ First-class |
-| Step Functions | ✅ Yes | ❌ No | ✅ Yes |
-| Local Dev | ✅ Built-in | ❌ Needs ngrok | ✅ Built-in |
-| Retries | ✅ Customizable | ✅ Built-in | ✅ Customizable |
-| Dashboard | ✅ Full UI | ❌ No | ✅ Full UI |
-| Vercel Integration | ✅ Excellent | ✅ Good | ✅ Good |
-| **Winner** | ✅ | | |
+| Feature            | Inngest         | QStash         | Trigger.dev     |
+| ------------------ | --------------- | -------------- | --------------- |
+| TypeScript         | ✅ First-class  | ⚠️ Basic       | ✅ First-class  |
+| Step Functions     | ✅ Yes          | ❌ No          | ✅ Yes          |
+| Local Dev          | ✅ Built-in     | ❌ Needs ngrok | ✅ Built-in     |
+| Retries            | ✅ Customizable | ✅ Built-in    | ✅ Customizable |
+| Dashboard          | ✅ Full UI      | ❌ No          | ✅ Full UI      |
+| Vercel Integration | ✅ Excellent    | ✅ Good        | ✅ Good         |
+| **Winner**         | ✅              |                |                 |
 
 ---
 
@@ -393,12 +393,12 @@ npm install @logtail/next
 
 ## Document Index
 
-| # | Document | Focus Area | Priority |
-|---|----------|------------|----------|
-| 07 | infrastructure-overview.md | This document | - |
-| 08 | security-arcjet.md | Rate limiting, WAF, bot detection | 🔴 CRITICAL |
-| 09 | error-tracking-sentry.md | Error monitoring, crash reports | 🔴 CRITICAL |
-| 10 | analytics-posthog.md | Product analytics, session replay | 🟠 HIGH |
-| 11 | background-jobs-inngest.md | Job queue, webhooks | 🟠 HIGH |
-| 12 | caching-upstash-redis.md | Redis caching, sessions | 🟠 HIGH |
-| 13 | monitoring-observability.md | Logs, uptime, dashboards | 🟡 MEDIUM |
+| #   | Document                    | Focus Area                        | Priority    |
+| --- | --------------------------- | --------------------------------- | ----------- |
+| 07  | infrastructure-overview.md  | This document                     | -           |
+| 08  | security-arcjet.md          | Rate limiting, WAF, bot detection | 🔴 CRITICAL |
+| 09  | error-tracking-sentry.md    | Error monitoring, crash reports   | 🔴 CRITICAL |
+| 10  | analytics-posthog.md        | Product analytics, session replay | 🟠 HIGH     |
+| 11  | background-jobs-inngest.md  | Job queue, webhooks               | 🟠 HIGH     |
+| 12  | caching-upstash-redis.md    | Redis caching, sessions           | 🟠 HIGH     |
+| 13  | monitoring-observability.md | Logs, uptime, dashboards          | 🟡 MEDIUM   |

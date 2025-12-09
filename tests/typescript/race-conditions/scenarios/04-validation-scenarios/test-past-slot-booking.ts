@@ -18,9 +18,7 @@ import {
   generateMarkdownReport,
   resetBookingRegistry,
 } from "../../utilities/test-helpers.js";
-import {
-  generateConsultantId,
-} from "../../utilities/fixtures.js";
+import { generateConsultantId } from "../../utilities/fixtures.js";
 import type { TestConfig, SummaryReport } from "../../utilities/types.js";
 
 async function runTest() {
@@ -53,7 +51,7 @@ async function runTest() {
     "Concurrent Users": config.concurrentUsers,
     "Slot Time": new Date(pastSlot).toLocaleString() + " (PAST)",
     "Consultant ID": consultantId,
-    "Note": "Lock mechanism still works, validation layer would reject in production",
+    Note: "Lock mechanism still works, validation layer would reject in production",
     "Expected Outcome": `${config.expectedSuccesses} success, ${config.expectedConflicts} conflicts (lock-level)`,
   });
 

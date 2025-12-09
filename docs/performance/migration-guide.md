@@ -11,13 +11,13 @@ This guide covers how to migrate between infrastructure providers **without disr
 
 ### When to Consider Migration
 
-| Trigger | Current Limit | Consider Migration |
-|---------|--------------|-------------------|
-| Connection errors | Supabase free tier (500 conn) | Upgrade to Pro first |
-| Slow reads | Single region | Add read replicas first |
-| Write bottleneck | ~10K writes/sec | Neon or PlanetScale |
-| Global latency | Single region DB | Multi-region (Neon) |
-| Event throughput | 10K events/sec | Kafka |
+| Trigger           | Current Limit                 | Consider Migration      |
+| ----------------- | ----------------------------- | ----------------------- |
+| Connection errors | Supabase free tier (500 conn) | Upgrade to Pro first    |
+| Slow reads        | Single region                 | Add read replicas first |
+| Write bottleneck  | ~10K writes/sec               | Neon or PlanetScale     |
+| Global latency    | Single region DB              | Multi-region (Neon)     |
+| Event throughput  | 10K events/sec                | Kafka                   |
 
 ### Migration Decision Matrix
 
@@ -49,6 +49,7 @@ This guide covers how to migrate between infrastructure providers **without disr
 ### Supabase → Neon (Recommended Path)
 
 **Why Neon?**
+
 - Same PostgreSQL - **schema compatible, no code changes**
 - Auto-scaling compute (scale to zero, scale up on demand)
 - Database branching for development/staging
@@ -107,9 +108,10 @@ pg_dump --data-only --table=users \
 
 ```typescript
 // lib/prisma.ts - Feature flag approach
-const DATABASE_URL = process.env.USE_NEON === 'true'
-  ? process.env.NEON_DATABASE_URL
-  : process.env.SUPABASE_DATABASE_URL;
+const DATABASE_URL =
+  process.env.USE_NEON === "true"
+    ? process.env.NEON_DATABASE_URL
+    : process.env.SUPABASE_DATABASE_URL;
 
 const prisma = new PrismaClient({
   datasources: {
@@ -137,20 +139,21 @@ const prisma = new PrismaClient({
 ### Supabase → PlanetScale (Complex Path)
 
 **Why PlanetScale?**
+
 - Horizontal sharding built-in (Vitess)
 - Handles 10M+ concurrent users
 - Zero-downtime schema changes
 
 **Compatibility**: ⚠️ Low (PostgreSQL → MySQL)
 
-| PostgreSQL | PlanetScale/MySQL |
-|------------|-------------------|
-| `SERIAL` | `AUTO_INCREMENT` |
-| `JSONB` | `JSON` |
-| `UUID` | `CHAR(36)` or `BINARY(16)` |
-| `TIMESTAMP WITH TIME ZONE` | `DATETIME` |
-| Foreign keys | ❌ Not supported (application-level) |
-| Arrays | ❌ Not supported (use JSON) |
+| PostgreSQL                 | PlanetScale/MySQL                    |
+| -------------------------- | ------------------------------------ |
+| `SERIAL`                   | `AUTO_INCREMENT`                     |
+| `JSONB`                    | `JSON`                               |
+| `UUID`                     | `CHAR(36)` or `BINARY(16)`           |
+| `TIMESTAMP WITH TIME ZONE` | `DATETIME`                           |
+| Foreign keys               | ❌ Not supported (application-level) |
+| Arrays                     | ❌ Not supported (use JSON)          |
 
 #### Migration Strategy: Dual-Write Pattern
 
@@ -180,31 +183,32 @@ flowchart TD
 
 ```typescript
 // lib/db/dual-write.ts
-import { PrismaClient as SupabasePrisma } from '@prisma/supabase';
-import { PrismaClient as PlanetScalePrisma } from '@prisma/planetscale';
+import { PrismaClient as SupabasePrisma } from "@prisma/supabase";
+import { PrismaClient as PlanetScalePrisma } from "@prisma/planetscale";
 
 const supabase = new SupabasePrisma();
 const planetscale = new PlanetScalePrisma();
 
-const MIGRATION_PHASE = process.env.MIGRATION_PHASE || 'supabase-primary';
+const MIGRATION_PHASE = process.env.MIGRATION_PHASE || "supabase-primary";
 
 export async function createUser(data: UserCreateInput) {
   switch (MIGRATION_PHASE) {
-    case 'supabase-primary':
+    case "supabase-primary":
       // Supabase is source of truth, shadow to PlanetScale
       const user = await supabase.user.create({ data });
 
       // Async shadow write (don't await, don't fail on error)
-      planetscale.user.create({ data: transformForMySQL(data) })
-        .catch(err => console.error('Shadow write failed:', err));
+      planetscale.user
+        .create({ data: transformForMySQL(data) })
+        .catch((err) => console.error("Shadow write failed:", err));
 
       return user;
 
-    case 'planetscale-primary':
+    case "planetscale-primary":
       // PlanetScale is source of truth
       return planetscale.user.create({ data: transformForMySQL(data) });
 
-    case 'dual-verify':
+    case "dual-verify":
       // Write to both, verify consistency
       const [supaResult, psResult] = await Promise.all([
         supabase.user.create({ data }),
@@ -242,8 +246,8 @@ export async function createAppointment(data: AppointmentInput) {
     planetscale.consultant.findUnique({ where: { id: data.consultantId } }),
   ]);
 
-  if (!user) throw new Error('User not found');
-  if (!consultant) throw new Error('Consultant not found');
+  if (!user) throw new Error("User not found");
+  if (!consultant) throw new Error("Consultant not found");
 
   return planetscale.appointment.create({ data });
 }
@@ -314,12 +318,11 @@ export function createDualWriteMiddleware(config: {
 
       // Secondary write (async, fire-and-forget)
       const transformedData = config.transform?.(data) ?? data;
-      config.secondary[model].create({ data: transformedData })
-        .catch(err => {
-          // Log to monitoring, don't fail the request
-          logger.error('Secondary write failed', { model, err });
-          metrics.increment('dual_write.secondary_failure');
-        });
+      config.secondary[model].create({ data: transformedData }).catch((err) => {
+        // Log to monitoring, don't fail the request
+        logger.error("Secondary write failed", { model, err });
+        metrics.increment("dual_write.secondary_failure");
+      });
 
       return result;
     },
@@ -343,6 +346,7 @@ flowchart LR
 ```
 
 **Tools:**
+
 - AWS DMS (Database Migration Service)
 - Debezium (open source)
 - Airbyte
@@ -355,15 +359,16 @@ flowchart LR
 ### Redis/BullMQ → Upstash Kafka
 
 **When to migrate:**
+
 - Current: BullMQ handles ~10K jobs/minute
 - Trigger: Need 100K+ events/second, multiple consumers, event replay
 
 ```typescript
 // Phase 1: Dual-publish to both systems
-import { Queue } from 'bullmq';
-import { Kafka } from '@upstash/kafka';
+import { Queue } from "bullmq";
+import { Kafka } from "@upstash/kafka";
 
-const bullQueue = new Queue('payments');
+const bullQueue = new Queue("payments");
 const kafka = new Kafka({
   url: process.env.UPSTASH_KAFKA_REST_URL,
   username: process.env.UPSTASH_KAFKA_REST_USERNAME,
@@ -373,12 +378,12 @@ const kafka = new Kafka({
 export async function publishPaymentEvent(event: PaymentEvent) {
   const phase = process.env.KAFKA_MIGRATION_PHASE;
 
-  if (phase === 'bullmq-primary' || phase === 'dual') {
-    await bullQueue.add('payment', event);
+  if (phase === "bullmq-primary" || phase === "dual") {
+    await bullQueue.add("payment", event);
   }
 
-  if (phase === 'kafka-primary' || phase === 'dual') {
-    await kafka.producer().produce('payments', JSON.stringify(event));
+  if (phase === "kafka-primary" || phase === "dual") {
+    await kafka.producer().produce("payments", JSON.stringify(event));
   }
 }
 
@@ -458,14 +463,12 @@ export async function publishPaymentEvent(event: PaymentEvent) {
 
 ```typescript
 // Using Vercel Edge Config for instant rollback
-import { get } from '@vercel/edge-config';
+import { get } from "@vercel/edge-config";
 
 export async function getDatabaseUrl() {
-  const useNewDb = await get('use_new_database');
+  const useNewDb = await get("use_new_database");
 
-  return useNewDb
-    ? process.env.NEW_DATABASE_URL
-    : process.env.OLD_DATABASE_URL;
+  return useNewDb ? process.env.NEW_DATABASE_URL : process.env.OLD_DATABASE_URL;
 }
 
 // Rollback: Update edge config, instant effect
@@ -493,12 +496,12 @@ psql old_db < delta.sql
 
 ### Rollback Decision Matrix
 
-| Scenario | Action |
-|----------|--------|
-| Error rate >1% | Immediate rollback |
-| Latency >2x baseline | Investigate, rollback if not resolved in 15min |
-| Data mismatch detected | Pause migration, investigate |
-| Single user affected | Fix forward if possible |
+| Scenario               | Action                                         |
+| ---------------------- | ---------------------------------------------- |
+| Error rate >1%         | Immediate rollback                             |
+| Latency >2x baseline   | Investigate, rollback if not resolved in 15min |
+| Data mismatch detected | Pause migration, investigate                   |
+| Single user affected   | Fix forward if possible                        |
 
 ---
 
@@ -512,20 +515,20 @@ async function verifyMigration() {
   const checks = [
     // Row counts
     {
-      name: 'User count',
+      name: "User count",
       source: () => sourceDb.user.count(),
       target: () => targetDb.user.count(),
     },
     // Sample records
     {
-      name: 'Random user data',
-      source: () => sourceDb.user.findFirst({ orderBy: { id: 'desc' } }),
-      target: () => targetDb.user.findFirst({ orderBy: { id: 'desc' } }),
+      name: "Random user data",
+      source: () => sourceDb.user.findFirst({ orderBy: { id: "desc" } }),
+      target: () => targetDb.user.findFirst({ orderBy: { id: "desc" } }),
       compare: (a, b) => a.email === b.email && a.name === b.name,
     },
     // Aggregate checks
     {
-      name: 'Payment totals',
+      name: "Payment totals",
       source: () => sourceDb.payment.aggregate({ _sum: { amount: true } }),
       target: () => targetDb.payment.aggregate({ _sum: { amount: true } }),
     },
@@ -541,10 +544,10 @@ async function verifyMigration() {
       ? check.compare(sourceResult, targetResult)
       : JSON.stringify(sourceResult) === JSON.stringify(targetResult);
 
-    console.log(`${check.name}: ${match ? '✅' : '❌'}`);
+    console.log(`${check.name}: ${match ? "✅" : "❌"}`);
     if (!match) {
-      console.log('  Source:', sourceResult);
-      console.log('  Target:', targetResult);
+      console.log("  Source:", sourceResult);
+      console.log("  Target:", targetResult);
     }
   }
 }
@@ -555,9 +558,9 @@ async function verifyMigration() {
 ```typescript
 // Compare query performance before/after
 const queries = [
-  { name: 'Dashboard load', fn: () => getDashboardData(userId) },
-  { name: 'Appointments list', fn: () => getAppointments(consultantId) },
-  { name: 'Payment history', fn: () => getPayments(userId, 100) },
+  { name: "Dashboard load", fn: () => getDashboardData(userId) },
+  { name: "Appointments list", fn: () => getAppointments(consultantId) },
+  { name: "Payment history", fn: () => getPayments(userId, 100) },
 ];
 
 for (const query of queries) {

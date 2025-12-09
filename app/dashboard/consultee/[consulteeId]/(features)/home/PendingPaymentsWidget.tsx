@@ -2,7 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { CreditCard, Clock, ExternalLink, AlertCircle } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
@@ -28,7 +34,9 @@ interface PendingPaymentsWidgetProps {
  * Widget to display pending payments that require action from the consultee
  * Shows on the consultee home dashboard when there are approved requests awaiting payment
  */
-export function PendingPaymentsWidget({ consulteeId }: PendingPaymentsWidgetProps) {
+export function PendingPaymentsWidget({
+  consulteeId,
+}: PendingPaymentsWidgetProps) {
   const [pendingPayments, setPendingPayments] = useState<PendingPayment[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -37,7 +45,9 @@ export function PendingPaymentsWidget({ consulteeId }: PendingPaymentsWidgetProp
     async function fetchPendingPayments() {
       try {
         setLoading(true);
-        const response = await fetch(`/api/dashboard/consultee/${consulteeId}/pending-payments`);
+        const response = await fetch(
+          `/api/dashboard/consultee/${consulteeId}/pending-payments`,
+        );
 
         if (!response.ok) {
           throw new Error("Failed to fetch pending payments");
@@ -47,7 +57,11 @@ export function PendingPaymentsWidget({ consulteeId }: PendingPaymentsWidgetProp
         setPendingPayments(data.pendingPayments || []);
       } catch (err) {
         console.error("Error fetching pending payments:", err);
-        setError(err instanceof Error ? err.message : "Failed to load pending payments");
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Failed to load pending payments",
+        );
       } finally {
         setLoading(false);
       }
@@ -86,8 +100,9 @@ export function PendingPaymentsWidget({ consulteeId }: PendingPaymentsWidgetProp
           Payment Required
         </CardTitle>
         <CardDescription className="text-amber-700">
-          You have {pendingPayments.length} {pendingPayments.length === 1 ? "request" : "requests"}{" "}
-          awaiting payment to proceed with scheduling
+          You have {pendingPayments.length}{" "}
+          {pendingPayments.length === 1 ? "request" : "requests"} awaiting
+          payment to proceed with scheduling
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -100,24 +115,33 @@ export function PendingPaymentsWidget({ consulteeId }: PendingPaymentsWidgetProp
               <div className="flex-1">
                 <h4 className="font-semibold text-gray-900">{payment.title}</h4>
                 <p className="text-sm text-gray-600 mt-1">
-                  with <span className="font-medium">{payment.consultantName}</span>
+                  with{" "}
+                  <span className="font-medium">{payment.consultantName}</span>
                 </p>
                 <div className="flex items-center gap-4 mt-2 text-sm">
                   <span className="font-semibold text-gray-900">
                     {payment.currency} {payment.amount}
                   </span>
                   <span className="text-gray-500">•</span>
-                  <span className="capitalize text-gray-600">{payment.type}</span>
+                  <span className="capitalize text-gray-600">
+                    {payment.type}
+                  </span>
                 </div>
                 <div className="flex items-center gap-1 mt-2 text-xs text-gray-500">
                   <Clock className="h-3 w-3" />
                   {payment.isExpiringSoon ? (
                     <span className="text-red-600 font-medium">
-                      Expires {formatDistanceToNow(new Date(payment.expiresAt), { addSuffix: true })}
+                      Expires{" "}
+                      {formatDistanceToNow(new Date(payment.expiresAt), {
+                        addSuffix: true,
+                      })}
                     </span>
                   ) : (
                     <span>
-                      Approved {formatDistanceToNow(new Date(payment.approvedAt), { addSuffix: true })}
+                      Approved{" "}
+                      {formatDistanceToNow(new Date(payment.approvedAt), {
+                        addSuffix: true,
+                      })}
                     </span>
                   )}
                 </div>
@@ -136,7 +160,8 @@ export function PendingPaymentsWidget({ consulteeId }: PendingPaymentsWidgetProp
               <Alert variant="destructive" className="mt-3">
                 <AlertCircle className="h-4 w-4" />
                 <AlertDescription className="text-xs">
-                  This payment link expires soon! Complete payment within 24 hours or your request will be reverted to pending status.
+                  This payment link expires soon! Complete payment within 24
+                  hours or your request will be reverted to pending status.
                 </AlertDescription>
               </Alert>
             )}

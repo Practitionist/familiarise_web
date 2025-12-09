@@ -14,10 +14,7 @@ import {
 import { calculateSubscriptionEndDate } from "@/utils/dateUtils";
 import { validateWebhookMetadata } from "@/schemas/webhooks/metadata";
 import { ZodError } from "zod";
-import {
-  sendPaymentSuccessEmail,
-  sendPaymentFailedEmail,
-} from "@/lib/email";
+import { sendPaymentSuccessEmail, sendPaymentFailedEmail } from "@/lib/email";
 
 // ============================================================================
 // Type Definitions
@@ -114,7 +111,9 @@ export async function handlePaymentSuccess(
     } catch (validationError) {
       const errorMessage =
         validationError instanceof ZodError
-          ? validationError.errors.map((e) => `${e.path.join(".")}: ${e.message}`).join("; ")
+          ? validationError.errors
+              .map((e) => `${e.path.join(".")}: ${e.message}`)
+              .join("; ")
           : validationError instanceof Error
             ? validationError.message
             : String(validationError);
@@ -148,7 +147,8 @@ export async function handlePaymentSuccess(
           amount: payment.amount,
           currency: payment.currency,
           error: errorMessage,
-          action_required: "IMMEDIATE: Manual appointment creation or full refund required",
+          action_required:
+            "IMMEDIATE: Manual appointment creation or full refund required",
           dashboard_url: `${process.env.NEXT_PUBLIC_APP_URL}/admin/payments/${payment.id}`,
           timestamp: new Date().toISOString(),
         }),
@@ -163,7 +163,7 @@ export async function handlePaymentSuccess(
 Payment ID:      ${payment.id}
 Payment Intent:  ${paymentIntentId}
 User ID:         ${payment.userId}
-User Email:      ${payment.user.email || 'N/A'}
+User Email:      ${payment.user.email || "N/A"}
 Amount:          ${payment.currency} ${payment.amount / 100}
 Error:           ${errorMessage}
 
@@ -287,7 +287,9 @@ export async function handlePaymentFailure(paymentIntentId: string) {
 
     // FIX Issue #8: Idempotency check - prevent duplicate processing
     if (payment.paymentStatus === PaymentStatus.FAILED) {
-      console.log(`Payment ${paymentIntentId} has already been marked as failed.`);
+      console.log(
+        `Payment ${paymentIntentId} has already been marked as failed.`,
+      );
       return;
     }
 
@@ -357,7 +359,8 @@ async function createAppointmentFromWebhook(
       console.warn(
         JSON.stringify({
           event: "legacy_subscription_creation",
-          warning: "Creating subscription via webhook - expected only for old payments",
+          warning:
+            "Creating subscription via webhook - expected only for old payments",
           paymentId: payment.id,
           planId,
           timestamp: new Date().toISOString(),
@@ -472,7 +475,11 @@ async function createSubscription(
   };
 
   // Only add slots if NOT a scheduling period request
-  if (!isSchedulingPeriodRequest && data.slotStartTimeInUTC && data.slotEndTimeInUTC) {
+  if (
+    !isSchedulingPeriodRequest &&
+    data.slotStartTimeInUTC &&
+    data.slotEndTimeInUTC
+  ) {
     appointmentData.slotsOfAppointment = {
       create: {
         startsAt: new Date(data.slotStartTimeInUTC),
@@ -491,10 +498,7 @@ async function createSubscription(
   });
 }
 
-async function createWebinar(
-  tx: Prisma.TransactionClient,
-  data: EventData,
-) {
+async function createWebinar(tx: Prisma.TransactionClient, data: EventData) {
   const webinar = await tx.webinar.findUnique({
     where: { id: data.eventId },
     include: { appointment: { include: { slotsOfAppointment: true } } },
@@ -540,10 +544,7 @@ async function createWebinar(
   return createdAppointment;
 }
 
-async function createClass(
-  tx: Prisma.TransactionClient,
-  data: EventData,
-) {
+async function createClass(tx: Prisma.TransactionClient, data: EventData) {
   const classInstance = await tx.class.findUnique({
     where: { id: data.eventId },
     include: { classPlan: true },
@@ -723,11 +724,19 @@ async function confirmExistingAppointment(
 
   // Update status for consultation and subscription
   if (appointment.consultation) {
-    await confirmApprovalStatus(tx, "consultation", appointment.consultation.id);
+    await confirmApprovalStatus(
+      tx,
+      "consultation",
+      appointment.consultation.id,
+    );
   }
 
   if (appointment.subscription) {
-    await confirmApprovalStatus(tx, "subscription", appointment.subscription.id);
+    await confirmApprovalStatus(
+      tx,
+      "subscription",
+      appointment.subscription.id,
+    );
   }
 
   // Update webinar status
@@ -857,7 +866,9 @@ async function sendPaymentSuccessNotification(
       consultantName =
         appointment.consultation.consultationPlan.consultantProfile.user.name ||
         "Consultant";
-    } else if (appointment.subscription?.subscriptionPlan?.consultantProfile?.user) {
+    } else if (
+      appointment.subscription?.subscriptionPlan?.consultantProfile?.user
+    ) {
       consultantName =
         appointment.subscription.subscriptionPlan.consultantProfile.user.name ||
         "Consultant";
@@ -976,7 +987,9 @@ async function sendPaymentFailureNotification(
         "Consultant";
       appointmentType = "consultation";
       retryUrl = `${process.env.NEXT_PUBLIC_APP_URL}/consultations/${appointment.consultation.id}/payment`;
-    } else if (appointment.subscription?.subscriptionPlan?.consultantProfile?.user) {
+    } else if (
+      appointment.subscription?.subscriptionPlan?.consultantProfile?.user
+    ) {
       consultantName =
         appointment.subscription.subscriptionPlan.consultantProfile.user.name ||
         "Consultant";

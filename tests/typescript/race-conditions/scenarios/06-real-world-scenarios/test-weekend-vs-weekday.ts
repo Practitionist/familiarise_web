@@ -18,10 +18,12 @@ import {
   generateMarkdownReport,
   resetBookingRegistry,
 } from "../../utilities/test-helpers.js";
-import {
-  generateConsultantId,
-} from "../../utilities/fixtures.js";
-import type { TestConfig, SummaryReport, BookingResult } from "../../utilities/types.js";
+import { generateConsultantId } from "../../utilities/fixtures.js";
+import type {
+  TestConfig,
+  SummaryReport,
+  BookingResult,
+} from "../../utilities/types.js";
 
 async function runTest() {
   resetBookingRegistry();
@@ -54,7 +56,7 @@ async function runTest() {
 
   logTestStart(config.testName, {
     Category: config.category,
-    "Scenario": "Weekend vs Weekday booking comparison",
+    Scenario: "Weekend vs Weekday booking comparison",
     "Weekday Slot": new Date(weekdaySlot).toLocaleString() + " (Monday)",
     "Weekend Slot": new Date(weekendSlot).toLocaleString() + " (Saturday)",
     "Users per Slot": 3,
@@ -68,12 +70,20 @@ async function runTest() {
 
   // Test weekday slot
   console.log("   📅 Testing weekday slot (Monday)...");
-  const weekdayResults = await executeConcurrentBookings(weekdaySlot, consultantId, 3);
+  const weekdayResults = await executeConcurrentBookings(
+    weekdaySlot,
+    consultantId,
+    3,
+  );
   allResults.push(...weekdayResults);
 
   // Test weekend slot
   console.log("   📅 Testing weekend slot (Saturday)...");
-  const weekendResults = await executeConcurrentBookings(weekendSlot, consultantId, 3);
+  const weekendResults = await executeConcurrentBookings(
+    weekendSlot,
+    consultantId,
+    3,
+  );
   allResults.push(...weekendResults);
 
   const duration = Date.now() - startTime;
@@ -82,9 +92,15 @@ async function runTest() {
   logTestResult(report);
 
   console.log(`\n📊 Weekend vs Weekday Analysis:`);
-  console.log(`   Weekday (Monday): ${weekdayResults.filter(r => r.status === 201).length} success, ${weekdayResults.filter(r => r.status === 409).length} conflicts`);
-  console.log(`   Weekend (Saturday): ${weekendResults.filter(r => r.status === 201).length} success, ${weekendResults.filter(r => r.status === 409).length} conflicts`);
-  console.log(`   Behavior Consistent: ${weekdayResults.filter(r => r.status === 201).length === weekendResults.filter(r => r.status === 201).length ? "✅ Yes" : "❌ No"}`);
+  console.log(
+    `   Weekday (Monday): ${weekdayResults.filter((r) => r.status === 201).length} success, ${weekdayResults.filter((r) => r.status === 409).length} conflicts`,
+  );
+  console.log(
+    `   Weekend (Saturday): ${weekendResults.filter((r) => r.status === 201).length} success, ${weekendResults.filter((r) => r.status === 409).length} conflicts`,
+  );
+  console.log(
+    `   Behavior Consistent: ${weekdayResults.filter((r) => r.status === 201).length === weekendResults.filter((r) => r.status === 201).length ? "✅ Yes" : "❌ No"}`,
+  );
 
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
   await saveJsonReport(

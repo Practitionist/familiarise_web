@@ -402,9 +402,9 @@ Navigate to **Documents** section in Razorpay Dashboard:
 
 **Submission Details**:
 
-- Submission Date: ******\_\_\_******
-- Submission Time: ******\_\_\_******
-- Application Reference Number: ******\_\_\_******
+- Submission Date: **\*\***\_\_\_**\*\***
+- Submission Time: **\*\***\_\_\_**\*\***
+- Application Reference Number: **\*\***\_\_\_**\*\***
 
 **Status**: ⏳ Pending / ✅ Completed
 
@@ -439,7 +439,7 @@ While waiting for approval (2-4 business days):
 - [ ] Day 3: Verification in progress
 - [ ] Day 4: Approved / Pending clarification
 
-**Current Status**: ********\_********
+**Current Status**: **\*\*\*\***\_**\*\*\*\***
 
 ---
 
@@ -467,7 +467,7 @@ Once approved:
 - [ ] Live mode now available
 - [ ] Save approval email for records
 
-**KYC Approval Date**: ******\_\_\_******
+**KYC Approval Date**: **\*\***\_\_\_**\*\***
 
 **Status**: ⏳ Pending / ✅ Completed
 
@@ -526,7 +526,7 @@ Set up webhook to receive payment notifications:
 
 **Webhook Configuration**:
 
-- Webhook URL: ******\_\_\_******
+- Webhook URL: **\*\***\_\_\_**\*\***
 - Webhook Secret: Stored securely
 
 **Status**: ⏳ Pending / ✅ Completed
@@ -549,8 +549,8 @@ Set up automatic settlements to your bank account:
 
 **Settlement Configuration**:
 
-- Schedule: ******\_\_\_******
-- Settlement Account: ******\_\_\_******
+- Schedule: **\*\***\_\_\_**\*\***
+- Settlement Account: **\*\***\_\_\_**\*\***
 
 **Status**: ⏳ Pending / ✅ Completed
 
@@ -620,7 +620,7 @@ Update payment integration code:
   const isValid = validateWebhookSignature(
     body,
     signature,
-    process.env.RAZORPAY_WEBHOOK_SECRET!
+    process.env.RAZORPAY_WEBHOOK_SECRET!,
   );
   ```
 
@@ -653,8 +653,8 @@ Before going live, test in staging:
 
 **Staging Deployment**:
 
-- Staging URL: ******\_\_\_******
-- Deployment Date: ******\_\_\_******
+- Staging URL: **\*\***\_\_\_**\*\***
+- Deployment Date: **\*\***\_\_\_**\*\***
 
 **Status**: ⏳ Pending / ✅ Completed
 
@@ -678,7 +678,7 @@ Perform end-to-end testing in staging with **real money** (use small amounts):
 - [ ] Verify payment status updated in dashboard
 - [ ] Check Razorpay Dashboard for transaction
 
-**Test Amount**: ₹******\_\_\_******
+**Test Amount**: ₹**\*\***\_\_\_**\*\***
 **Test Result**: ⏳ Pending / ✅ Pass / ❌ Fail
 
 #### Test Case 2: Failed Payment
@@ -812,9 +812,9 @@ Final checks before production deployment:
 
 **Production Deployment**:
 
-- Deployment Date: ******\_\_\_******
-- Deployment Time: ******\_\_\_******
-- Production URL: ******\_\_\_******
+- Deployment Date: **\*\***\_\_\_**\*\***
+- Deployment Time: **\*\***\_\_\_**\*\***
+- Production URL: **\*\***\_\_\_**\*\***
 
 **Status**: ⏳ Pending / ✅ Completed
 

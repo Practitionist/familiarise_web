@@ -1,5 +1,11 @@
 import prisma from "@/lib/prisma";
-import { AppointmentsType, PaymentGateway, PaymentStatus, Prisma, RequestStatus } from "@prisma/client";
+import {
+  AppointmentsType,
+  PaymentGateway,
+  PaymentStatus,
+  Prisma,
+  RequestStatus,
+} from "@prisma/client";
 import { addMonths, addWeeks, setHours, setMinutes } from "date-fns";
 import { NextRequest, NextResponse } from "next/server";
 import { createApprovalPaymentIntent } from "@/lib/payments/operations/approval-payment";
@@ -349,9 +355,7 @@ export async function PATCH(
         return NextResponse.json(
           {
             error:
-              error instanceof Error
-                ? error.message
-                : "Failed to acquire lock",
+              error instanceof Error ? error.message : "Failed to acquire lock",
           },
           { status: 409 }, // Conflict - another approval in progress
         );
@@ -421,36 +425,36 @@ export async function PATCH(
 
           // Update subscription status
           const subscription = await tx.subscription.update({
-        where: { id: subscriptionId },
-        data: {
-          requestStatus: status,
-        },
-        include: {
-          subscriptionPlan: {
+            where: { id: subscriptionId },
+            data: {
+              requestStatus: status,
+            },
             include: {
-              consultantProfile: {
+              subscriptionPlan: {
+                include: {
+                  consultantProfile: {
+                    include: {
+                      user: true,
+                    },
+                  },
+                },
+              },
+              requestedBy: {
                 include: {
                   user: true,
                 },
               },
-            },
-          },
-          requestedBy: {
-            include: {
-              user: true,
-            },
-          },
-          appointments: {
-            include: {
-              slotsOfAppointment: {
+              appointments: {
                 include: {
-                  user: true,
+                  slotsOfAppointment: {
+                    include: {
+                      user: true,
+                    },
+                  },
                 },
               },
             },
-          },
-        },
-      });
+          });
 
           // If approved, check if payment exists
           if (status === RequestStatus.APPROVED) {
@@ -471,7 +475,8 @@ export async function PATCH(
               return { data: subscription, duplicate: false };
             } else {
               // No payment - generate payment link
-              const paymentResult = await generatePaymentLinkForSubscription(subscription);
+              const paymentResult =
+                await generatePaymentLinkForSubscription(subscription);
 
               // Update status to APPROVED_PENDING_PAYMENT
               const updatedSubscription = await tx.subscription.update({
@@ -585,7 +590,9 @@ export async function PATCH(
 /**
  * Check if payment exists for this subscription
  */
-async function checkSubscriptionPayment(subscriptionId: string): Promise<boolean> {
+async function checkSubscriptionPayment(
+  subscriptionId: string,
+): Promise<boolean> {
   const subscription = await prisma.subscription.findUnique({
     where: { id: subscriptionId },
     include: {
@@ -603,7 +610,10 @@ async function checkSubscriptionPayment(subscriptionId: string): Promise<boolean
     },
   });
 
-  return (subscription?.appointments?.some(apt => (apt.payment?.length ?? 0) > 0)) ?? false;
+  return (
+    subscription?.appointments?.some((apt) => (apt.payment?.length ?? 0) > 0) ??
+    false
+  );
 }
 
 /**
@@ -620,7 +630,8 @@ async function generatePaymentLinkForSubscription(
     subscriptionId: subscription.id,
     planId: subscriptionPlan.id,
     paymentGateway: PaymentGateway.STRIPE, // Default to Stripe, could be made configurable
-    schedulingPeriodStartsAt: subscription.schedulingPeriodStartsAt?.toISOString(),
+    schedulingPeriodStartsAt:
+      subscription.schedulingPeriodStartsAt?.toISOString(),
     schedulingPeriodEndsAt: subscription.schedulingPeriodEndsAt?.toISOString(),
     notes: subscription.requestNotes ?? undefined,
   });

@@ -22,7 +22,11 @@ import {
   generateTestSlot,
   generateConsultantId,
 } from "../../utilities/fixtures.js";
-import type { TestConfig, SummaryReport, BookingResult } from "../../utilities/types.js";
+import type {
+  TestConfig,
+  SummaryReport,
+  BookingResult,
+} from "../../utilities/types.js";
 
 async function runTest() {
   resetBookingRegistry();
@@ -83,7 +87,9 @@ async function runTest() {
   console.log(`   Total Duration: ${duration}ms`);
   console.log(`   Waves: 3`);
   console.log(`   Total Requests: ${allResults.length}`);
-  console.log(`   Successful Waves: ${[wave1, wave2, wave3].filter(w => w.some(r => r.status === 201)).length}/3`);
+  console.log(
+    `   Successful Waves: ${[wave1, wave2, wave3].filter((w) => w.some((r) => r.status === 201)).length}/3`,
+  );
 
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
   await saveJsonReport(

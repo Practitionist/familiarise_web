@@ -7,6 +7,7 @@ This directory contains tests to verify that the race condition fix for concurre
 ## What Was Fixed
 
 ### The Problem (Before Fix)
+
 1. User A clicks checkout → Validates slot (available ✓) → Creates payment with `appointmentId: null`
 2. User B clicks checkout → Validates slot (available ✓) → Creates payment with `appointmentId: null`
 3. Both payments created → Slot permanently blocked with duplicate pending payments
@@ -14,6 +15,7 @@ This directory contains tests to verify that the race condition fix for concurre
 **Root Cause**: Validation checked `slotOfAppointment` table, but payments were invisible until webhook created appointments later.
 
 ### The Solution (After Fix)
+
 1. User A acquires distributed lock → Re-validates → **Creates tentative appointment** → Creates payment linked to appointment
 2. User B acquires distributed lock (waits) → Re-validates → **Sees tentative appointment** → Validation fails ✗
 3. Only ONE payment + tentative appointment created
@@ -22,16 +24,19 @@ This directory contains tests to verify that the race condition fix for concurre
 ## Key Changes
 
 ### 1. Modified `handleCheckout()` (`/lib/payments/operations/checkout.ts`)
+
 - Now creates tentative appointments INSIDE the distributed lock
 - Payment is linked to appointment immediately (not null)
 - Validation can see tentative bookings
 
 ### 2. Updated `handlePaymentSuccess()` (`/lib/payments/webhooks/handlers.ts`)
+
 - **NEW FLOW**: If `appointmentId` exists → confirm it (set `isTentative: false`)
 - **LEGACY FLOW**: If `appointmentId` is null → create appointment from metadata
 - Backwards compatible with older payments
 
 ### 3. No Changes to Handlers
+
 - `handleConsultationCheckout()`, `handleSubscriptionCheckout()`, etc. already support `isTentative` flag
 - They use `skipPayment` parameter which maps to `!isTentative`
 
@@ -40,14 +45,15 @@ This directory contains tests to verify that the race condition fix for concurre
 ### Prerequisites
 
 1. Update test configuration with real database IDs:
+
    ```typescript
    const TEST_CONFIG = {
-     PLAN_ID: "clx123...",              // Consultation plan ID
+     PLAN_ID: "clx123...", // Consultation plan ID
      CONSULTANT_PROFILE_ID: "clx456...", // Consultant profile ID
-     USER_A_ID: "user_a_id",            // First test user
-     USER_B_ID: "user_b_id",            // Second test user
-     SLOT_START: "...",                 // Future slot start time
-     SLOT_END: "...",                   // Future slot end time
+     USER_A_ID: "user_a_id", // First test user
+     USER_B_ID: "user_b_id", // Second test user
+     SLOT_START: "...", // Future slot start time
+     SLOT_END: "...", // Future slot end time
    };
    ```
 
@@ -136,14 +142,17 @@ Check logs for these events:
 ## Troubleshooting
 
 ### Test fails with "Lock acquisition timeout"
+
 - **Cause**: Redis is down or unreachable
 - **Fix**: Check Redis connection in `/lib/redis.ts`
 
 ### Both users succeed (race condition not fixed)
+
 - **Cause**: Distributed locking not working or appointments not being created
 - **Fix**: Check logs for lock acquisition failures
 
 ### Second user gets different error
+
 - **Cause**: Validation error message may vary
 - **Expected errors**:
   - "Time slot is already booked"

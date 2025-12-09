@@ -13,7 +13,11 @@
  * - npx ts-node scripts/test-race-condition-fix.ts
  */
 
-import { ApprovalLock, lockSlotBooking, unlockSlotBooking } from "@/utils/appointmentlock";
+import {
+  ApprovalLock,
+  lockSlotBooking,
+  unlockSlotBooking,
+} from "@/utils/appointmentlock";
 
 async function testConcurrentLockAcquisition() {
   console.log("\n🧪 TESTING SLOT BOOKING RACE CONDITION FIX");
@@ -29,7 +33,9 @@ async function testConcurrentLockAcquisition() {
   console.log("\n" + "-".repeat(62) + "\n");
 
   console.log("⚡ TEST 1: Lock Prevents Concurrent Access\n");
-  console.log("   Simulating: User A acquires lock, Users B & C try concurrently\n");
+  console.log(
+    "   Simulating: User A acquires lock, Users B & C try concurrently\n",
+  );
 
   const startTime = Date.now();
   const locks: (ApprovalLock | null)[] = [];
@@ -38,7 +44,9 @@ async function testConcurrentLockAcquisition() {
   console.log("   [User A] Attempting to acquire lock...");
   const lockA = await lockSlotBooking(consultantId, slotTime, 20000); // 20s TTL
   locks.push(lockA);
-  console.log("   [User A] ✅ Lock acquired! Simulating booking process (2s)...\n");
+  console.log(
+    "   [User A] ✅ Lock acquired! Simulating booking process (2s)...\n",
+  );
 
   // Step 2: While User A holds the lock, Users B & C try to acquire (should fail quickly)
   const attemptBPromise = lockSlotBooking(consultantId, slotTime, 2000) // Short TTL for quick failure
@@ -108,8 +116,8 @@ async function testConcurrentLockAcquisition() {
   }
 
   // Analyze results
-  const successes = resultsTable.filter((r) =>
-    r.status.includes("SUCCESS") && !r.status.includes("BUG"),
+  const successes = resultsTable.filter(
+    (r) => r.status.includes("SUCCESS") && !r.status.includes("BUG"),
   ).length;
   const blocked = bcResults.filter((r) => r.status.includes("BLOCKED")).length;
 
@@ -126,7 +134,9 @@ async function testConcurrentLockAcquisition() {
     console.log("\n   ✅ TEST 1 PASSED! User A held lock, B & C were blocked.");
     console.log("      Race condition protection is working!");
   } else {
-    console.log("\n   ❌ TEST 1 FAILED! Users B or C acquired lock while A held it!");
+    console.log(
+      "\n   ❌ TEST 1 FAILED! Users B or C acquired lock while A held it!",
+    );
     console.log(`      ${2 - blocked} user(s) bypassed the lock (expected: 0)`);
     return false;
   }
@@ -147,7 +157,9 @@ async function testConcurrentLockAcquisition() {
   await unlockSlotBooking(lock2);
   console.log("   🔓 Second lock released");
 
-  console.log("\n   ✅ TEST 2 PASSED! Lock release and re-acquisition works.\n");
+  console.log(
+    "\n   ✅ TEST 2 PASSED! Lock release and re-acquisition works.\n",
+  );
 
   // TEST 3: Different slots can be locked simultaneously
   console.log("=".repeat(62));
@@ -184,9 +196,7 @@ async function main() {
 
     if (allTestsPassed) {
       console.log("   ✅ ALL TESTS PASSED!");
-      console.log(
-        "   ✅ Race condition fix is working correctly.",
-      );
+      console.log("   ✅ Race condition fix is working correctly.");
       console.log("   ✅ Distributed locking prevents double-booking.");
       console.log(
         "\n   The slot booking system now properly prevents concurrent",

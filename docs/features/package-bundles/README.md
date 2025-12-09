@@ -42,15 +42,15 @@ Allow consultants to create and sell consultation packages (bundles) at discount
 // Store bundle metadata in Payment.metadata
 
 interface BundleMetadata {
-  type: 'PACKAGE_BUNDLE';
-  bundleId: string;         // Unique bundle identifier
-  totalSessions: number;    // e.g., 5
-  usedSessions: number;     // e.g., 2
+  type: "PACKAGE_BUNDLE";
+  bundleId: string; // Unique bundle identifier
+  totalSessions: number; // e.g., 5
+  usedSessions: number; // e.g., 2
   remainingSessions: number; // e.g., 3
   originalPaymentId: string; // Payment that purchased the bundle
   consultantProfileId: string;
   consultationPlanId: string;
-  expiresAt: string;        // ISO date
+  expiresAt: string; // ISO date
   sessionHistory: {
     appointmentId: string;
     usedAt: string;
@@ -145,19 +145,19 @@ enum PackageStatus {
 
 interface PackageConfig {
   sessionsIncluded: number;
-  discountPercent: number;  // e.g., 20 for 20% off
+  discountPercent: number; // e.g., 20 for 20% off
   validityDays: number;
 }
 
 const PACKAGE_TEMPLATES: Record<string, PackageConfig> = {
-  'starter': { sessionsIncluded: 3, discountPercent: 10, validityDays: 60 },
-  'growth': { sessionsIncluded: 5, discountPercent: 15, validityDays: 90 },
-  'premium': { sessionsIncluded: 10, discountPercent: 20, validityDays: 180 },
+  starter: { sessionsIncluded: 3, discountPercent: 10, validityDays: 60 },
+  growth: { sessionsIncluded: 5, discountPercent: 15, validityDays: 90 },
+  premium: { sessionsIncluded: 10, discountPercent: 20, validityDays: 180 },
 };
 
 export function calculatePackagePrice(
   regularSessionPrice: number,
-  config: PackageConfig
+  config: PackageConfig,
 ): {
   totalPrice: number;
   pricePerSession: number;
@@ -267,7 +267,7 @@ GET /api/packages/purchases/[purchaseId]/usage
 export async function bookFromPackage(
   purchaseId: string,
   slotId: string,
-  userId: string
+  userId: string,
 ): Promise<Appointment> {
   const purchase = await prisma.packagePurchase.findUnique({
     where: { id: purchaseId },
@@ -275,11 +275,11 @@ export async function bookFromPackage(
   });
 
   // Validations
-  if (!purchase) throw new Error('Package purchase not found');
-  if (purchase.userId !== userId) throw new Error('Unauthorized');
-  if (purchase.status !== 'ACTIVE') throw new Error('Package is not active');
-  if (purchase.sessionsRemaining <= 0) throw new Error('No sessions remaining');
-  if (new Date() > purchase.expiresAt) throw new Error('Package has expired');
+  if (!purchase) throw new Error("Package purchase not found");
+  if (purchase.userId !== userId) throw new Error("Unauthorized");
+  if (purchase.status !== "ACTIVE") throw new Error("Package is not active");
+  if (purchase.sessionsRemaining <= 0) throw new Error("No sessions remaining");
+  if (new Date() > purchase.expiresAt) throw new Error("Package has expired");
 
   // Create appointment (no payment required)
   const appointment = await prisma.$transaction(async (tx) => {
@@ -288,16 +288,16 @@ export async function bookFromPackage(
       data: {
         consultationPlanId: purchase.package.consultationPlanId,
         consulteeProfileId: await getConsulteeProfileId(userId),
-        requestStatus: 'APPROVED_PENDING_PAYMENT', // Skip to approved
-        bookingSource: 'PACKAGE_BOOKING',
+        requestStatus: "APPROVED_PENDING_PAYMENT", // Skip to approved
+        bookingSource: "PACKAGE_BOOKING",
       },
     });
 
     // Create appointment
     const appointment = await tx.appointment.create({
       data: {
-        appointmentType: 'CONSULTATION',
-        status: 'SCHEDULED',
+        appointmentType: "CONSULTATION",
+        status: "SCHEDULED",
         consultationId: consultation.id,
       },
     });
@@ -323,7 +323,7 @@ export async function bookFromPackage(
       data: {
         sessionsUsed: { increment: 1 },
         sessionsRemaining: newRemaining,
-        status: newRemaining === 0 ? 'COMPLETED' : 'ACTIVE',
+        status: newRemaining === 0 ? "COMPLETED" : "ACTIVE",
         completedAt: newRemaining === 0 ? new Date() : null,
       },
     });

@@ -172,7 +172,7 @@ enum MessageContentType {
 
 export async function getOrCreateConversation(
   consultantProfileId: string,
-  consulteeProfileId: string
+  consulteeProfileId: string,
 ): Promise<Conversation> {
   let conversation = await prisma.conversation.findUnique({
     where: {
@@ -188,7 +188,7 @@ export async function getOrCreateConversation(
       data: {
         consultantProfileId,
         consulteeProfileId,
-        status: 'ACTIVE',
+        status: "ACTIVE",
       },
     });
   }
@@ -201,7 +201,12 @@ export async function sendMessage(
   senderId: string,
   senderType: ParticipantType,
   content: string,
-  attachments?: { fileName: string; fileUrl: string; fileSize: number; mimeType: string }[]
+  attachments?: {
+    fileName: string;
+    fileUrl: string;
+    fileSize: number;
+    mimeType: string;
+  }[],
 ): Promise<Message> {
   const conversation = await prisma.conversation.findUnique({
     where: { id: conversationId },
@@ -211,8 +216,8 @@ export async function sendMessage(
     },
   });
 
-  if (!conversation || conversation.status !== 'ACTIVE') {
-    throw new Error('Conversation not found or inactive');
+  if (!conversation || conversation.status !== "ACTIVE") {
+    throw new Error("Conversation not found or inactive");
   }
 
   // Validate sender is participant
@@ -220,7 +225,7 @@ export async function sendMessage(
   const isConsultee = conversation.consulteeProfile.userId === senderId;
 
   if (!isConsultant && !isConsultee) {
-    throw new Error('Not authorized to send messages in this conversation');
+    throw new Error("Not authorized to send messages in this conversation");
   }
 
   const message = await prisma.message.create({
@@ -229,10 +234,12 @@ export async function sendMessage(
       senderId,
       senderType,
       content,
-      contentType: 'TEXT',
-      attachments: attachments ? {
-        create: attachments,
-      } : undefined,
+      contentType: "TEXT",
+      attachments: attachments
+        ? {
+            create: attachments,
+          }
+        : undefined,
     },
     include: { attachments: true },
   });
@@ -256,7 +263,10 @@ export async function sendMessage(
   return message;
 }
 
-async function notifyNewMessage(conversation: Conversation, message: Message): Promise<void> {
+async function notifyNewMessage(
+  conversation: Conversation,
+  message: Message,
+): Promise<void> {
   // Using Pusher
   const pusher = new Pusher({
     appId: process.env.PUSHER_APP_ID!,
@@ -265,7 +275,7 @@ async function notifyNewMessage(conversation: Conversation, message: Message): P
     cluster: process.env.PUSHER_CLUSTER!,
   });
 
-  await pusher.trigger(`conversation-${conversation.id}`, 'new-message', {
+  await pusher.trigger(`conversation-${conversation.id}`, "new-message", {
     message: {
       id: message.id,
       senderId: message.senderId,
@@ -278,7 +288,7 @@ async function notifyNewMessage(conversation: Conversation, message: Message): P
 
 export async function markAsRead(
   conversationId: string,
-  userId: string
+  userId: string,
 ): Promise<void> {
   const conversation = await prisma.conversation.findUnique({
     where: { id: conversationId },
@@ -334,7 +344,7 @@ export async function getUnreadCount(userId: string): Promise<number> {
       consultantProfileId: user.consultantProfile.id,
       messages: {
         some: {
-          senderType: 'CONSULTEE',
+          senderType: "CONSULTEE",
           isRead: false,
         },
       },
@@ -346,7 +356,7 @@ export async function getUnreadCount(userId: string): Promise<number> {
       consulteeProfileId: user.consulteeProfile.id,
       messages: {
         some: {
-          senderType: 'CONSULTANT',
+          senderType: "CONSULTANT",
           isRead: false,
         },
       },
@@ -574,11 +584,11 @@ GET /api/messages/unread-count
 ```typescript
 // Allow consultants to control messaging
 interface MessagingSettings {
-  messagingEnabled: boolean;          // Allow messages at all
-  allowPreBookingMessages: boolean;   // Before any booking
-  allowPostSessionMessages: boolean;  // After session ends
-  postSessionMessageDays: number;     // How long after session
+  messagingEnabled: boolean; // Allow messages at all
+  allowPreBookingMessages: boolean; // Before any booking
+  allowPostSessionMessages: boolean; // After session ends
+  postSessionMessageDays: number; // How long after session
   autoResponseEnabled: boolean;
-  autoResponseMessage: string;        // "Thanks for reaching out..."
+  autoResponseMessage: string; // "Thanks for reaching out..."
 }
 ```

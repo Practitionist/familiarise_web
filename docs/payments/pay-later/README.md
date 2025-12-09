@@ -53,25 +53,33 @@ sequenceDiagram
 ## Key Features
 
 ### 1. **Triple-Layer Race Condition Protection**
+
 Prevents duplicate payment links under high concurrency:
+
 - **Layer 1**: Upstash Redis distributed locks (Redlock algorithm)
 - **Layer 2**: Prisma serializable transactions
 - **Layer 3**: Application-level idempotency checks
 
 ### 2. **Email Notification System**
+
 Automated emails at every payment stage:
+
 - Payment link email (with 48-hour countdown)
 - Payment success confirmation
 - Payment failure with retry instructions
 
 ### 3. **Real-Time Dashboard Updates**
+
 Three dashboards with live payment status:
+
 - **Consultant**: Payment status badges on requests table
 - **Consultee**: Pending payments widget on home page
 - **Admin**: Comprehensive approval payments monitor
 
 ### 4. **Automated Expiry Management**
+
 Cron job to handle expired payment links:
+
 - Runs every hour
 - Detects payment links older than 48 hours
 - Reverts status from `APPROVED_PENDING_PAYMENT` → `PENDING`
@@ -79,12 +87,12 @@ Cron job to handle expired payment links:
 
 ## Status Enum Reference
 
-| Status | Description | User Action |
-|--------|-------------|-------------|
-| `PENDING` | Initial state after request submission | Consultant needs to approve |
-| `APPROVED_PENDING_PAYMENT` | Approved, awaiting payment | Consultee needs to pay within 48hrs |
-| `APPROVED` | Paid and confirmed | Slots allocated, ready for scheduling |
-| `REJECTED` | Declined by consultant | Request closed |
+| Status                     | Description                            | User Action                           |
+| -------------------------- | -------------------------------------- | ------------------------------------- |
+| `PENDING`                  | Initial state after request submission | Consultant needs to approve           |
+| `APPROVED_PENDING_PAYMENT` | Approved, awaiting payment             | Consultee needs to pay within 48hrs   |
+| `APPROVED`                 | Paid and confirmed                     | Slots allocated, ready for scheduling |
+| `REJECTED`                 | Declined by consultant                 | Request closed                        |
 
 ## Payment Link Lifecycle
 
@@ -109,6 +117,7 @@ Slots Allocated
 ## Implementation Components
 
 ### Backend
+
 - **Approval Endpoints**: `app/api/events/{consultations|subscriptions}/[id]/route.ts`
 - **Webhook Handlers**: `lib/payments/webhooks/handlers.ts`
 - **Distributed Locking**: `utils/appointmentlock.ts`
@@ -116,11 +125,13 @@ Slots Allocated
 - **Cron Jobs**: `app/api/cleanup/approval-payments/route.ts`
 
 ### Frontend
+
 - **Consultant Dashboard**: `PaymentRequiredBadge` component
 - **Consultee Dashboard**: `PendingPaymentsWidget` component
 - **Admin Dashboard**: Approval payments monitor page
 
 ### Infrastructure
+
 - **Redis**: Upstash Redis (serverless, REST-based)
 - **Payment Gateway**: Stripe (configurable)
 - **Email Provider**: Resend API with React Email templates
@@ -179,6 +190,7 @@ NEXT_PUBLIC_APP_URL=https://familiarise.com
 ## Support & Maintenance
 
 For issues or questions:
+
 1. Check [Troubleshooting Guide](./TROUBLESHOOTING.md)
 2. Review logs in admin panel: `/dashboard/admin/payments`
 3. Monitor Redis health: Upstash console

@@ -7,13 +7,15 @@
 Approve or update consultation request status.
 
 **Request**:
+
 ```typescript
 {
-  status: RequestStatus  // APPROVED, REJECTED, etc.
+  status: RequestStatus; // APPROVED, REJECTED, etc.
 }
 ```
 
 **Response** (Payment link generated):
+
 ```json
 {
   "data": {
@@ -33,6 +35,7 @@ Approve or update consultation request status.
 ```
 
 **Response** (Payment exists):
+
 ```json
 {
   "data": {
@@ -46,6 +49,7 @@ Approve or update consultation request status.
 ```
 
 **Response** (Duplicate/Idempotent):
+
 ```json
 {
   "data": { ... },
@@ -54,6 +58,7 @@ Approve or update consultation request status.
 ```
 
 **Error Responses**:
+
 ```json
 // 404 Not Found
 {
@@ -72,11 +77,13 @@ Approve or update consultation request status.
 ```
 
 **Race Condition Protection**:
+
 - Distributed lock (30s TTL)
 - Serializable transaction
 - Idempotency checks
 
 **Example**:
+
 ```bash
 curl -X PATCH https://familiarise.com/api/events/consultations/clx123abc \
   -H "Content-Type: application/json" \
@@ -90,13 +97,15 @@ curl -X PATCH https://familiarise.com/api/events/consultations/clx123abc \
 Approve or update subscription request status.
 
 **Request**:
+
 ```typescript
 {
-  status: RequestStatus  // APPROVED, REJECTED, etc.
+  status: RequestStatus; // APPROVED, REJECTED, etc.
 }
 ```
 
 **Response** (Payment link generated):
+
 ```json
 {
   "data": {
@@ -116,6 +125,7 @@ Approve or update subscription request status.
 ```
 
 **Response** (Payment exists):
+
 ```json
 {
   "data": {
@@ -139,6 +149,7 @@ Approve or update subscription request status.
 Fetch all pending payment links for a consultee.
 
 **Response**:
+
 ```json
 {
   "pendingPayments": [
@@ -172,10 +183,12 @@ Fetch all pending payment links for a consultee.
 ```
 
 **Fields**:
+
 - `isExpiringSoon`: true if < 24 hours remaining
 - `isExpired`: true if expiry time has passed (excluded from results)
 
 **Example**:
+
 ```bash
 curl https://familiarise.com/api/dashboard/consultee/clxConsultee123/pending-payments
 ```
@@ -187,6 +200,7 @@ curl https://familiarise.com/api/dashboard/consultee/clxConsultee123/pending-pay
 Fetch all approval payments for admin monitoring.
 
 **Response**:
+
 ```json
 {
   "approvalPayments": [
@@ -216,11 +230,13 @@ Fetch all approval payments for admin monitoring.
 ```
 
 **Sorting**:
+
 1. Expired items first
 2. Expiring soon items next
 3. Active items by approval date (newest first)
 
 **Example**:
+
 ```bash
 curl https://familiarise.com/api/dashboard/admin/approval-payments \
   -H "Authorization: Bearer <admin-token>"
@@ -234,9 +250,10 @@ curl https://familiarise.com/api/dashboard/admin/approval-payments \
 
 Manually trigger cleanup of expired payment links.
 
-**Cron Schedule**: Runs automatically every hour (0 */1 * * *)
+**Cron Schedule**: Runs automatically every hour (0 _/1 _ \* \*)
 
 **Response**:
+
 ```json
 {
   "success": true,
@@ -277,6 +294,7 @@ Manually trigger cleanup of expired payment links.
 ```
 
 **Error Response**:
+
 ```json
 {
   "success": false,
@@ -286,6 +304,7 @@ Manually trigger cleanup of expired payment links.
 ```
 
 **Example**:
+
 ```bash
 # Manual trigger
 curl https://familiarise.com/api/cleanup/approval-payments
@@ -300,10 +319,12 @@ curl https://familiarise.com/api/cleanup/approval-payments
 Handle Stripe payment webhooks.
 
 **Events Processed**:
+
 - `payment_intent.succeeded`
 - `payment_intent.payment_failed`
 
 **Request** (Stripe sends):
+
 ```typescript
 {
   type: "payment_intent.succeeded",
@@ -326,6 +347,7 @@ Handle Stripe payment webhooks.
 ```
 
 **Processing Flow**:
+
 1. Verify Stripe signature
 2. Extract payment intent ID and metadata
 3. Call `handlePaymentSuccess()` or `handlePaymentFailure()`
@@ -336,6 +358,7 @@ Handle Stripe payment webhooks.
 8. Return 200 OK
 
 **Response**:
+
 ```json
 {
   "received": true
@@ -355,6 +378,7 @@ Create payment intent for approved consultations/subscriptions.
 **Called by**: Approval endpoints (internal use)
 
 **Request**:
+
 ```typescript
 {
   userId: string;
@@ -372,6 +396,7 @@ Create payment intent for approved consultations/subscriptions.
 ```
 
 **Response**:
+
 ```json
 {
   "checkoutUrl": "https://checkout.stripe.com/c/pay/cs_test_...",
@@ -382,6 +407,7 @@ Create payment intent for approved consultations/subscriptions.
 ```
 
 **Example** (internal call):
+
 ```typescript
 const paymentResult = await createApprovalPaymentIntent({
   userId: "clxUser123",
@@ -402,10 +428,12 @@ const paymentResult = await createApprovalPaymentIntent({
 ### Approval Endpoints
 
 **Limits**:
+
 - 10 requests/minute per consultation/subscription ID
 - 100 requests/hour per user
 
 **Headers**:
+
 ```
 X-RateLimit-Limit: 10
 X-RateLimit-Remaining: 9
@@ -413,6 +441,7 @@ X-RateLimit-Reset: 1642003200
 ```
 
 **Error Response** (429 Too Many Requests):
+
 ```json
 {
   "error": "Rate limit exceeded. Please try again in 60 seconds."
@@ -422,12 +451,14 @@ X-RateLimit-Reset: 1642003200
 ### Dashboard Endpoints
 
 **Limits**:
+
 - 60 requests/minute per user
 - No burst limit
 
 ### Cleanup Endpoints
 
 **Limits**:
+
 - Admin only
 - 1 request/minute (manual triggers)
 - Cron runs automatically (not subject to rate limits)
@@ -445,27 +476,27 @@ Content-Type: application/json
 
 ### Permissions
 
-| Endpoint | Role Required |
-|----------|--------------|
-| PATCH /api/events/consultations/[id] | CONSULTANT (owner) |
-| PATCH /api/events/subscriptions/[id] | CONSULTANT (owner) |
+| Endpoint                                           | Role Required              |
+| -------------------------------------------------- | -------------------------- |
+| PATCH /api/events/consultations/[id]               | CONSULTANT (owner)         |
+| PATCH /api/events/subscriptions/[id]               | CONSULTANT (owner)         |
 | GET /api/dashboard/consultee/[id]/pending-payments | CONSULTEE (owner) or ADMIN |
-| GET /api/dashboard/admin/approval-payments | ADMIN |
-| GET /api/cleanup/approval-payments | ADMIN or Cron |
+| GET /api/dashboard/admin/approval-payments         | ADMIN                      |
+| GET /api/cleanup/approval-payments                 | ADMIN or Cron              |
 
 ---
 
 ## Error Codes
 
-| Status Code | Meaning | Common Cause |
-|-------------|---------|--------------|
-| 400 | Bad Request | Invalid request body or parameters |
-| 401 | Unauthorized | Missing or invalid authentication token |
-| 403 | Forbidden | User lacks permission for this resource |
-| 404 | Not Found | Consultation/subscription doesn't exist |
-| 409 | Conflict | Lock acquisition failed (concurrent request) |
-| 429 | Too Many Requests | Rate limit exceeded |
-| 500 | Internal Server Error | Database error, payment gateway error, etc. |
+| Status Code | Meaning               | Common Cause                                 |
+| ----------- | --------------------- | -------------------------------------------- |
+| 400         | Bad Request           | Invalid request body or parameters           |
+| 401         | Unauthorized          | Missing or invalid authentication token      |
+| 403         | Forbidden             | User lacks permission for this resource      |
+| 404         | Not Found             | Consultation/subscription doesn't exist      |
+| 409         | Conflict              | Lock acquisition failed (concurrent request) |
+| 429         | Too Many Requests     | Rate limit exceeded                          |
+| 500         | Internal Server Error | Database error, payment gateway error, etc.  |
 
 ---
 
@@ -473,15 +504,16 @@ Content-Type: application/json
 
 **Target Latencies** (p99):
 
-| Endpoint | Target | Typical |
-|----------|--------|---------|
-| Approval (no payment) | < 2s | 500ms |
-| Approval (with payment) | < 3s | 1.5s |
-| Dashboard queries | < 500ms | 200ms |
-| Cleanup job | < 30s | 5s |
-| Webhooks | < 2s | 800ms |
+| Endpoint                | Target  | Typical |
+| ----------------------- | ------- | ------- |
+| Approval (no payment)   | < 2s    | 500ms   |
+| Approval (with payment) | < 3s    | 1.5s    |
+| Dashboard queries       | < 500ms | 200ms   |
+| Cleanup job             | < 30s   | 5s      |
+| Webhooks                | < 2s    | 800ms   |
 
 **Latency Breakdown** (approval with payment):
+
 - Lock acquisition: 50-100ms
 - Payment intent creation: 500-1000ms
 - Database transaction: 200-500ms
@@ -522,24 +554,27 @@ curl -X POST https://api.stripe.com/v1/payment_intents \
 **Endpoint**: `https://familiarise.com/api/webhooks/stripe`
 
 **Events to Subscribe**:
+
 ```
 payment_intent.succeeded
 payment_intent.payment_failed
 ```
 
 **Webhook Signature Verification**:
+
 ```typescript
 const signature = request.headers.get("stripe-signature");
 const event = stripe.webhooks.constructEvent(
   rawBody,
   signature,
-  process.env.STRIPE_WEBHOOK_SECRET
+  process.env.STRIPE_WEBHOOK_SECRET,
 );
 ```
 
 ### Webhook Retry Policy
 
 Stripe retries failed webhooks:
+
 - Immediately
 - After 1 hour
 - After 3 hours
@@ -617,6 +652,7 @@ curl https://familiarise.com/api/health/redis
 ### Logging
 
 All endpoints log:
+
 - Request ID
 - User ID
 - Action performed
@@ -625,6 +661,7 @@ All endpoints log:
 - Error details (if any)
 
 Example:
+
 ```
 [2025-01-15 10:00:00] INFO: Approval requested
   requestId: req_abc123

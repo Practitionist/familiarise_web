@@ -132,8 +132,7 @@ export async function GET() {
             consultation.consultationPlan?.consultantProfile?.user?.name ||
             "Unknown Consultant",
           consultantEmail:
-            consultation.consultationPlan?.consultantProfile?.user?.email ||
-            "",
+            consultation.consultationPlan?.consultantProfile?.user?.email || "",
           consulteeName:
             consultation.requestedBy?.user?.name || "Unknown Consultee",
           consulteeEmail: consultation.requestedBy?.user?.email || "",

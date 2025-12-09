@@ -106,54 +106,60 @@ interface BufferConfig {
 
 export function getEffectiveBuffers(
   consultantProfile: ConsultantProfile,
-  plan?: ConsultationPlan | SubscriptionPlan
+  plan?: ConsultationPlan | SubscriptionPlan,
 ): BufferConfig {
   // Plan-specific buffers override profile defaults
   return {
-    beforeMinutes: plan?.bufferBeforeMinutes ?? consultantProfile.bufferBeforeMinutes ?? 0,
-    afterMinutes: plan?.bufferAfterMinutes ?? consultantProfile.bufferAfterMinutes ?? 15,
+    beforeMinutes:
+      plan?.bufferBeforeMinutes ?? consultantProfile.bufferBeforeMinutes ?? 0,
+    afterMinutes:
+      plan?.bufferAfterMinutes ?? consultantProfile.bufferAfterMinutes ?? 15,
   };
 }
 
 export function applyBuffersToSlots(
   availableSlots: TimeSlot[],
   buffers: BufferConfig,
-  sessionDurationMinutes: number
+  sessionDurationMinutes: number,
 ): TimeSlot[] {
-  return availableSlots.map(slot => {
-    // Adjust slot to account for buffers
-    const adjustedStart = addMinutes(slot.start, buffers.beforeMinutes);
-    const adjustedEnd = subMinutes(slot.end, buffers.afterMinutes);
+  return availableSlots
+    .map((slot) => {
+      // Adjust slot to account for buffers
+      const adjustedStart = addMinutes(slot.start, buffers.beforeMinutes);
+      const adjustedEnd = subMinutes(slot.end, buffers.afterMinutes);
 
-    // Check if slot is still valid after buffer application
-    const effectiveDuration = differenceInMinutes(adjustedEnd, adjustedStart);
+      // Check if slot is still valid after buffer application
+      const effectiveDuration = differenceInMinutes(adjustedEnd, adjustedStart);
 
-    if (effectiveDuration < sessionDurationMinutes) {
-      // Slot too short after buffers, mark as unavailable
-      return null;
-    }
+      if (effectiveDuration < sessionDurationMinutes) {
+        // Slot too short after buffers, mark as unavailable
+        return null;
+      }
 
-    return {
-      ...slot,
-      effectiveStart: adjustedStart,
-      effectiveEnd: adjustedEnd,
-    };
-  }).filter(Boolean);
+      return {
+        ...slot,
+        effectiveStart: adjustedStart,
+        effectiveEnd: adjustedEnd,
+      };
+    })
+    .filter(Boolean);
 }
 
 // When checking availability
 export async function getAvailableSlots(
   consultantProfileId: string,
   date: Date,
-  planId?: string
+  planId?: string,
 ): Promise<TimeSlot[]> {
   const profile = await prisma.consultantProfile.findUnique({
     where: { id: consultantProfileId },
   });
 
-  const plan = planId ? await prisma.consultationPlan.findUnique({
-    where: { id: planId },
-  }) : null;
+  const plan = planId
+    ? await prisma.consultationPlan.findUnique({
+        where: { id: planId },
+      })
+    : null;
 
   const buffers = getEffectiveBuffers(profile, plan);
 
@@ -161,10 +167,13 @@ export async function getAvailableSlots(
   const rawSlots = await getRawAvailabilitySlots(consultantProfileId, date);
 
   // Get existing appointments
-  const existingAppointments = await getExistingAppointments(consultantProfileId, date);
+  const existingAppointments = await getExistingAppointments(
+    consultantProfileId,
+    date,
+  );
 
   // Block time including buffers around existing appointments
-  const blockedSlots = existingAppointments.flatMap(apt => {
+  const blockedSlots = existingAppointments.flatMap((apt) => {
     const aptBuffers = getEffectiveBuffers(profile, apt.plan);
     return {
       start: subMinutes(apt.startTime, aptBuffers.beforeMinutes),
@@ -185,15 +194,17 @@ export async function validateBookingWithBuffers(
   consultantProfileId: string,
   slotStart: Date,
   slotEnd: Date,
-  planId?: string
+  planId?: string,
 ): Promise<{ valid: boolean; reason?: string }> {
   const profile = await prisma.consultantProfile.findUnique({
     where: { id: consultantProfileId },
   });
 
-  const plan = planId ? await prisma.consultationPlan.findUnique({
-    where: { id: planId },
-  }) : null;
+  const plan = planId
+    ? await prisma.consultationPlan.findUnique({
+        where: { id: planId },
+      })
+    : null;
 
   const buffers = getEffectiveBuffers(profile, plan);
 
@@ -205,7 +216,7 @@ export async function validateBookingWithBuffers(
   const conflictingAppointments = await prisma.slotOfAppointment.findMany({
     where: {
       appointment: {
-        status: { in: ['SCHEDULED', 'TENTATIVE'] },
+        status: { in: ["SCHEDULED", "TENTATIVE"] },
         OR: [
           { consultation: { consultationPlan: { consultantProfileId } } },
           { subscription: { subscriptionPlan: { consultantProfileId } } },
@@ -225,7 +236,8 @@ export async function validateBookingWithBuffers(
   if (conflictingAppointments.length > 0) {
     return {
       valid: false,
-      reason: 'This time slot conflicts with another appointment or buffer time.',
+      reason:
+        "This time slot conflicts with another appointment or buffer time.",
     };
   }
 
@@ -403,10 +415,12 @@ see that 10:00-11:25 and 13:00-14:25 are unavailable.
 ## Recommendations
 
 ### Default Values
+
 - **Before buffer**: 0-10 minutes (preparation)
 - **After buffer**: 10-15 minutes (notes, break)
 
 ### By Service Type
+
 - **Consultation**: 10 before, 15 after
 - **Subscription session**: 5 before, 10 after (recurring, less prep)
 - **Webinar**: 15 before (tech setup), 0 after

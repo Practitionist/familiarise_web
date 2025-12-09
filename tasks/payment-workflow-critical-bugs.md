@@ -4,6 +4,7 @@
 **Status**: Identified - Awaiting Fix
 **Priority**: P0 (Critical)
 **Affected Files**:
+
 - `lib/payments/operations/checkout.ts`
 - `lib/payments/webhooks/handlers.ts`
 
@@ -20,16 +21,16 @@ During a comprehensive validation of all payment workflows for the 4 appointment
 - Incorrect slot times for webinars
 - Development/testing data inconsistencies
 
-| # | Severity | Issue | Affected Types |
-|---|----------|-------|----------------|
-| 1 | 🔴 Critical | Wrong user's slots confirmed | Webinar, Class |
-| 2 | 🔴 Critical | Duplicate subscription creation | Subscription |
-| 3 | 🔴 Critical | Only first session confirmed | Class |
-| 4 | 🟠 High | Lock TTL mismatch (30s vs 60s) | All types |
-| 5 | 🟠 High | Webinar slot timing defaults to now | Webinar |
-| 6 | 🟠 High | Mock payment status never updated | All (dev) |
-| 7 | 🟡 Medium | Approval flow no duplicate check | Consultation, Subscription |
-| 8 | 🟡 Medium | Failure handler lacks idempotency | All types |
+| #   | Severity    | Issue                               | Affected Types             |
+| --- | ----------- | ----------------------------------- | -------------------------- |
+| 1   | 🔴 Critical | Wrong user's slots confirmed        | Webinar, Class             |
+| 2   | 🔴 Critical | Duplicate subscription creation     | Subscription               |
+| 3   | 🔴 Critical | Only first session confirmed        | Class                      |
+| 4   | 🟠 High     | Lock TTL mismatch (30s vs 60s)      | All types                  |
+| 5   | 🟠 High     | Webinar slot timing defaults to now | Webinar                    |
+| 6   | 🟠 High     | Mock payment status never updated   | All (dev)                  |
+| 7   | 🟡 Medium   | Approval flow no duplicate check    | Consultation, Subscription |
+| 8   | 🟡 Medium   | Failure handler lacks idempotency   | All types                  |
 
 ---
 
@@ -48,7 +49,7 @@ async function confirmExistingAppointment(
 ) {
   // BUG: Updates ALL slots for this appointment, regardless of user
   await tx.slotOfAppointment.updateMany({
-    where: { appointmentId },  // ⚠️ No user filter!
+    where: { appointmentId }, // ⚠️ No user filter!
     data: { isTentative: false },
   });
   // ...
@@ -58,6 +59,7 @@ async function confirmExistingAppointment(
 ### How It Happens
 
 **Webinar Database Model**:
+
 ```
 Webinar "React Basics" (max 50 participants)
   └── Appointment (shared by all participants)
@@ -67,6 +69,7 @@ Webinar "React Basics" (max 50 participants)
 ```
 
 **Timeline**:
+
 ```
 T=0:00  User A starts checkout → creates tentative slot for User A
 T=0:05  User B starts checkout → creates tentative slot for User B
@@ -83,11 +86,11 @@ RESULT: Users B and C have confirmed slots without paying!
 
 ### Impact
 
-| Impact | Description |
-|--------|-------------|
-| **Revenue Loss** | Users access paid content without payment |
-| **Capacity Issues** | Confirmed non-paying users consume available slots |
-| **Audit Trail** | Payment records don't match slot confirmations |
+| Impact                | Description                                         |
+| --------------------- | --------------------------------------------------- |
+| **Revenue Loss**      | Users access paid content without payment           |
+| **Capacity Issues**   | Confirmed non-paying users consume available slots  |
+| **Audit Trail**       | Payment records don't match slot confirmations      |
 | **Refund Complexity** | No payment to refund for non-paying confirmed users |
 
 **Estimated Financial Impact**: If 10% of webinar/class checkouts are concurrent, approximately 5% of confirmed slots may be unpaid.
@@ -104,7 +107,7 @@ The `confirmExistingAppointment` function was designed for 1:1 appointments (con
 async function confirmExistingAppointment(
   tx: Prisma.TransactionClient,
   appointmentId: string,
-  userId?: string,  // NEW: Optional user filter
+  userId?: string, // NEW: Optional user filter
 ) {
   const whereClause: Prisma.SlotOfAppointmentWhereInput = { appointmentId };
 
@@ -159,12 +162,14 @@ await tx.slotOfAppointment.update({
 When a user checks out a subscription, the system creates the subscription record during checkout. When payment succeeds, the webhook handler creates **another subscription record** from metadata, resulting in duplicate subscriptions.
 
 **Code Locations**:
+
 - Checkout: `lib/payments/operations/checkout.ts:825-836`
 - Webhook: `lib/payments/webhooks/handlers.ts:347-356, 412-474`
 
 ### How It Happens
 
 **Step 1: Checkout creates Subscription A**
+
 ```typescript
 // checkout.ts:825-836
 const subscription = await tx.subscription.create({
@@ -176,21 +181,23 @@ const subscription = await tx.subscription.create({
 });
 
 // BUT: createdAppointment is set to null for subscriptions
-createdAppointment = null;  // Line 1174
+createdAppointment = null; // Line 1174
 ```
 
 **Step 2: Payment record has no appointmentId**
+
 ```typescript
 // checkout.ts:1217
 await tx.payment.create({
   data: {
     // ...
-    appointmentId: createdAppointment?.id || null,  // NULL for subscriptions!
+    appointmentId: createdAppointment?.id || null, // NULL for subscriptions!
   },
 });
 ```
 
 **Step 3: Webhook uses legacy flow and creates Subscription B**
+
 ```typescript
 // handlers.ts:186-204
 if (payment.appointmentId) {
@@ -228,13 +235,13 @@ Payment:
 
 ### Impact
 
-| Impact | Description |
-|--------|-------------|
-| **Data Corruption** | Two subscription records for one purchase |
-| **Orphaned Records** | Subscription A remains PENDING forever |
-| **Reporting Errors** | Analytics show double the subscriptions |
-| **User Confusion** | Dashboard may show duplicate entries |
-| **Cleanup Complexity** | No automated way to identify orphans |
+| Impact                 | Description                               |
+| ---------------------- | ----------------------------------------- |
+| **Data Corruption**    | Two subscription records for one purchase |
+| **Orphaned Records**   | Subscription A remains PENDING forever    |
+| **Reporting Errors**   | Analytics show double the subscriptions   |
+| **User Confusion**     | Dashboard may show duplicate entries      |
+| **Cleanup Complexity** | No automated way to identify orphans      |
 
 ### Root Cause
 
@@ -316,6 +323,7 @@ if (metadata.subscriptionId) {
 When a user enrolls in a multi-session class (e.g., 10-week course), the checkout creates slots across ALL appointments (sessions). However, the payment record only stores the first appointment's ID. When payment succeeds, only the first session's slots are confirmed.
 
 **Code Locations**:
+
 - Slot creation: `lib/payments/operations/checkout.ts:986-1004`
 - First appointment return: `lib/payments/operations/checkout.ts:1007-1017`
 - Webhook confirmation: `lib/payments/webhooks/handlers.ts:628-631`
@@ -323,6 +331,7 @@ When a user enrolls in a multi-session class (e.g., 10-week course), the checkou
 ### How It Happens
 
 **Step 1: Checkout creates slots for ALL sessions**
+
 ```typescript
 // checkout.ts:986-1004
 for (const appointment of classInstance.appointments) {
@@ -339,28 +348,31 @@ for (const appointment of classInstance.appointments) {
 ```
 
 **Step 2: Only FIRST appointment returned**
+
 ```typescript
 // checkout.ts:1007-1014
 const firstAppointment = classInstance.appointments[0];
 return {
-  appointment: firstAppointment,  // Only week 1!
+  appointment: firstAppointment, // Only week 1!
   plan,
   amount: plan.price,
-  slotsCreated: createdSlots.length
+  slotsCreated: createdSlots.length,
 };
 ```
 
 **Step 3: Payment links to first appointment only**
+
 ```typescript
 // checkout.ts:1217
 appointmentId: createdAppointment?.id || null,  // Only week 1's appointment ID
 ```
 
 **Step 4: Webhook confirms only first session**
+
 ```typescript
 // handlers.ts:628-631
 await tx.slotOfAppointment.updateMany({
-  where: { appointmentId },  // Only matches week 1
+  where: { appointmentId }, // Only matches week 1
   data: { isTentative: false },
 });
 ```
@@ -385,13 +397,13 @@ Payment:
 
 ### Impact
 
-| Impact | Description |
-|--------|-------------|
-| **Partial Access** | User can only access 1 of 10 sessions |
-| **Cleanup Job Deletes Paid Slots** | Weeks 2-10 slots deleted as "abandoned" |
-| **Support Tickets** | Users report missing sessions |
-| **Refund Requests** | Perceived as service not delivered |
-| **Manual Fix Required** | Admin must manually confirm remaining slots |
+| Impact                             | Description                                 |
+| ---------------------------------- | ------------------------------------------- |
+| **Partial Access**                 | User can only access 1 of 10 sessions       |
+| **Cleanup Job Deletes Paid Slots** | Weeks 2-10 slots deleted as "abandoned"     |
+| **Support Tickets**                | Users report missing sessions               |
+| **Refund Requests**                | Perceived as service not delivered          |
+| **Manual Fix Required**            | Admin must manually confirm remaining slots |
 
 ### Root Cause
 
@@ -492,6 +504,7 @@ for (const link of linkedAppointments) {
 The checkout flow explicitly uses 30-second lock TTL, but the documentation and `appointmentlock.ts` specify 60 seconds as the default. This inconsistency can cause race conditions under high load.
 
 **Code Locations**:
+
 - Checkout locks: `lib/payments/operations/checkout.ts:576, 595, 610`
 - Default TTL: `utils/appointmentlock.ts:47`
 
@@ -499,16 +512,17 @@ The checkout flow explicitly uses 30-second lock TTL, but the documentation and 
 
 ```typescript
 // checkout.ts uses explicit 30s
-return await lockSlotBooking(consultantUserId, data.slotStartTimeInUTC, 30000);  // 30s
-return await lockEventCheckout(appointmentType, data.eventId, 30000);             // 30s
+return await lockSlotBooking(consultantUserId, data.slotStartTimeInUTC, 30000); // 30s
+return await lockEventCheckout(appointmentType, data.eventId, 30000); // 30s
 
 // appointmentlock.ts default is 60s
-const DEFAULT_LOCK_TTL = 60000;  // 60 seconds
+const DEFAULT_LOCK_TTL = 60000; // 60 seconds
 ```
 
 ### When This Causes Problems
 
 **Scenario: Slow Database Under Load**
+
 ```
 T=0:00   User A acquires lock (TTL=30s)
 T=0:05   User A starts database transaction
@@ -522,12 +536,12 @@ T=0:40   User B's transaction completes → creates DUPLICATE slot!
 
 ### Impact
 
-| Impact | Description |
-|--------|-------------|
-| **Race Conditions** | Lock expires during slow operations |
-| **Double Bookings** | Two users book same slot |
-| **Data Integrity** | Overlapping appointments |
-| **Production Incidents** | Under high load, issue manifests |
+| Impact                   | Description                         |
+| ------------------------ | ----------------------------------- |
+| **Race Conditions**      | Lock expires during slow operations |
+| **Double Bookings**      | Two users book same slot            |
+| **Data Integrity**       | Overlapping appointments            |
+| **Production Incidents** | Under high load, issue manifests    |
 
 ### Root Cause
 
@@ -566,16 +580,16 @@ return await lockEventCheckout(appointmentType, data.planId, 60000);
 
 ## Implementation Priority
 
-| Priority | Issue | Effort | Risk if Unfixed |
-|----------|-------|--------|-----------------|
-| P0 | #1 Wrong user slots confirmed | Medium | Revenue loss, free access |
-| P0 | #2 Duplicate subscriptions | Medium | Data corruption |
-| P0 | #3 Class partial confirmation | Low | Service not delivered |
-| P1 | #4 Lock TTL mismatch | Low | Race conditions |
-| P1 | #5 Webinar slot timing | Low | Incorrect slot times |
-| P1 | #6 Mock payment status | Low | Data inconsistency |
-| P2 | #7 Approval flow no dedup | Low | Duplicate payments |
-| P2 | #8 Failure handler idempotency | Very Low | Minor cleanup issues |
+| Priority | Issue                          | Effort   | Risk if Unfixed           |
+| -------- | ------------------------------ | -------- | ------------------------- |
+| P0       | #1 Wrong user slots confirmed  | Medium   | Revenue loss, free access |
+| P0       | #2 Duplicate subscriptions     | Medium   | Data corruption           |
+| P0       | #3 Class partial confirmation  | Low      | Service not delivered     |
+| P1       | #4 Lock TTL mismatch           | Low      | Race conditions           |
+| P1       | #5 Webinar slot timing         | Low      | Incorrect slot times      |
+| P1       | #6 Mock payment status         | Low      | Data inconsistency        |
+| P2       | #7 Approval flow no dedup      | Low      | Duplicate payments        |
+| P2       | #8 Failure handler idempotency | Very Low | Minor cleanup issues      |
 
 ### Recommended Implementation Order
 
@@ -597,24 +611,28 @@ return await lockEventCheckout(appointmentType, data.planId, 60000);
 When the first user books a webinar, the slot creation code falls back to `new Date()` for start/end times because there are no existing slots to copy from. The Webinar model lacks scheduled time fields.
 
 **Code Locations**:
+
 - Checkout: `lib/payments/operations/checkout.ts:910-912`
 - Webhook: `lib/payments/webhooks/handlers.ts:502-504`
 
 ### How It Happens
 
 **Step 1: First webinar booking**
+
 ```typescript
 // checkout.ts:910-912
 await tx.slotOfAppointment.create({
   data: {
-    startsAt: webinar.appointment?.slotsOfAppointment[0]?.startsAt || new Date(), // ⚠️ No existing slots!
-    endsAt: webinar.appointment?.slotsOfAppointment[0]?.endsAt || new Date(),     // ⚠️ Defaults to NOW
+    startsAt:
+      webinar.appointment?.slotsOfAppointment[0]?.startsAt || new Date(), // ⚠️ No existing slots!
+    endsAt: webinar.appointment?.slotsOfAppointment[0]?.endsAt || new Date(), // ⚠️ Defaults to NOW
     // ...
   },
 });
 ```
 
 **Database Schema Issue**:
+
 ```prisma
 model Webinar {
   id              String        @id @default(cuid())
@@ -634,12 +652,12 @@ model Class {
 
 ### Impact
 
-| Impact | Description |
-|--------|-------------|
-| **Wrong Slot Times** | First booking has start/end = checkout timestamp |
-| **Calendar Issues** | Webinar appears at wrong time in user calendar |
-| **Notifications** | Reminders sent for incorrect times |
-| **Analytics** | Duration calculations will be wrong (0 or negative) |
+| Impact               | Description                                         |
+| -------------------- | --------------------------------------------------- |
+| **Wrong Slot Times** | First booking has start/end = checkout timestamp    |
+| **Calendar Issues**  | Webinar appears at wrong time in user calendar      |
+| **Notifications**    | Reminders sent for incorrect times                  |
+| **Analytics**        | Duration calculations will be wrong (0 or negative) |
 
 ### Root Cause
 
@@ -663,7 +681,7 @@ model Webinar {
 // In checkout.ts
 await tx.slotOfAppointment.create({
   data: {
-    startsAt: webinar.scheduledStartAt,  // Use webinar's scheduled time
+    startsAt: webinar.scheduledStartAt, // Use webinar's scheduled time
     endsAt: webinar.scheduledEndAt,
     // ...
   },
@@ -694,6 +712,7 @@ Mock payments (used in development) create payment records with `PENDING` status
 ### How It Happens
 
 **Real Payment Flow**:
+
 ```
 1. Checkout creates payment with status = PENDING
 2. User pays via Stripe/Razorpay
@@ -702,6 +721,7 @@ Mock payments (used in development) create payment records with `PENDING` status
 ```
 
 **Mock Payment Flow**:
+
 ```
 1. Checkout creates payment with status = PENDING
 2. Mock payment intent returns immediately with status = "succeeded"
@@ -714,7 +734,7 @@ Mock payments (used in development) create payment records with `PENDING` status
 await tx.payment.create({
   data: {
     // ...
-    paymentStatus: PaymentStatus.PENDING,  // Same for mock AND real payments
+    paymentStatus: PaymentStatus.PENDING, // Same for mock AND real payments
     isMockPayment,
     // ...
   },
@@ -724,12 +744,12 @@ await tx.payment.create({
 
 ### Impact
 
-| Impact | Description |
-|--------|-------------|
-| **Data Inconsistency** | Appointment confirmed but payment shows PENDING |
-| **Cleanup Job Issues** | May try to clean up "abandoned" mock payments |
-| **Reporting** | Revenue reports don't count mock payments |
-| **Testing Confusion** | Developers see PENDING status, think something's wrong |
+| Impact                 | Description                                            |
+| ---------------------- | ------------------------------------------------------ |
+| **Data Inconsistency** | Appointment confirmed but payment shows PENDING        |
+| **Cleanup Job Issues** | May try to clean up "abandoned" mock payments          |
+| **Reporting**          | Revenue reports don't count mock payments              |
+| **Testing Confusion**  | Developers see PENDING status, think something's wrong |
 
 ### Root Cause
 
@@ -749,6 +769,7 @@ if (isMockPayment) {
 ```
 
 **Alternative**: Call `handlePaymentSuccess` for mock payments after checkout:
+
 ```typescript
 if (isMockPayment) {
   await handlePaymentSuccess(
@@ -799,6 +820,7 @@ export async function checkExistingPayment(params: {...}): Promise<boolean> {
 ```
 
 **Scenario**:
+
 1. Consultant clicks "Approve" on consultation
 2. System creates Payment A with payment link
 3. Consultant clicks "Approve" again (double-click, page reload, etc.)
@@ -808,11 +830,11 @@ export async function checkExistingPayment(params: {...}): Promise<boolean> {
 
 ### Impact
 
-| Impact | Description |
-|--------|-------------|
-| **Double Charges** | User could pay twice if they receive multiple links |
-| **Orphaned Payments** | One payment succeeds, others become orphaned |
-| **User Confusion** | Multiple payment emails for same consultation |
+| Impact                | Description                                         |
+| --------------------- | --------------------------------------------------- |
+| **Double Charges**    | User could pay twice if they receive multiple links |
+| **Orphaned Payments** | One payment succeeds, others become orphaned        |
+| **User Confusion**    | Multiple payment emails for same consultation       |
 
 ### Root Cause
 
@@ -831,7 +853,9 @@ export async function createApprovalPaymentIntent(
   });
 
   if (hasExistingPayment) {
-    throw new Error("A payment link has already been generated for this request");
+    throw new Error(
+      "A payment link has already been generated for this request",
+    );
   }
 
   // Rest of function...
@@ -884,21 +908,22 @@ export async function handlePaymentFailure(paymentIntentId: string) {
 ```
 
 **Comparison with Success Handler**:
+
 ```typescript
 // handlers.ts:106-108 - Success handler HAS idempotency check
 if (payment.paymentStatus === PaymentStatus.SUCCEEDED) {
   console.log(`Payment ${paymentIntentId} has already been processed.`);
-  return;  // ✅ Early return
+  return; // ✅ Early return
 }
 ```
 
 ### Impact
 
-| Impact | Description |
-|--------|-------------|
-| **Minor** | Duplicate cleanup attempts (mostly no-op) |
-| **Logs** | Unnecessary log entries for already-failed payments |
-| **Performance** | Extra database queries on duplicate webhooks |
+| Impact          | Description                                         |
+| --------------- | --------------------------------------------------- |
+| **Minor**       | Duplicate cleanup attempts (mostly no-op)           |
+| **Logs**        | Unnecessary log entries for already-failed payments |
+| **Performance** | Extra database queries on duplicate webhooks        |
 
 ### Root Cause
 
@@ -938,6 +963,7 @@ export async function handlePaymentFailure(paymentIntentId: string) {
 ## Verification Queries
 
 ### Find Orphaned Subscriptions (Issue #2)
+
 ```sql
 SELECT s.id, s.request_status, s.created_at, p.id as payment_id
 FROM "Subscription" s
@@ -949,6 +975,7 @@ AND p.id IS NULL;
 ```
 
 ### Find Partially Confirmed Class Enrollments (Issue #3)
+
 ```sql
 SELECT c.id as class_id, u.id as user_id, u.email,
   COUNT(*) as total_slots,
@@ -964,6 +991,7 @@ AND SUM(CASE WHEN s.is_tentative = false THEN 1 ELSE 0 END) > 0;
 ```
 
 ### Find Unpaid Confirmed Webinar Slots (Issue #1)
+
 ```sql
 SELECT w.id as webinar_id, s.id as slot_id, u.email,
   p.payment_status, s.is_tentative
@@ -978,6 +1006,7 @@ AND (p.payment_status IS NULL OR p.payment_status != 'SUCCEEDED');
 ```
 
 ### Find Webinars with Wrong Slot Times (Issue #5)
+
 ```sql
 -- Find slots where start time is suspiciously close to creation time (likely defaulted to new Date())
 SELECT w.id as webinar_id, s.id as slot_id,
@@ -990,6 +1019,7 @@ WHERE ABS(EXTRACT(EPOCH FROM (s.starts_at - s.created_at))) < 60;  -- Within 60 
 ```
 
 ### Find Mock Payments Still Pending (Issue #6)
+
 ```sql
 SELECT p.id, p.payment_intent, p.payment_status, p.is_mock_payment,
   p.created_at, a.id as appointment_id
@@ -1000,6 +1030,7 @@ AND p.payment_status = 'PENDING';
 ```
 
 ### Find Duplicate Approval Payments (Issue #7)
+
 ```sql
 -- Consultations with multiple pending/succeeded payments
 SELECT c.id as consultation_id, COUNT(p.id) as payment_count,
@@ -1022,5 +1053,5 @@ HAVING COUNT(p.id) > 1;
 
 ---
 
-*Created by: Payment Workflow Validation*
-*Last Updated: 2025-12-06*
+_Created by: Payment Workflow Validation_
+_Last Updated: 2025-12-06_

@@ -28,22 +28,22 @@ This roadmap provides a prioritized action plan for preparing the SaaS applicati
 
 ### By Severity
 
-| Severity | Count | Category |
-|----------|-------|----------|
-| 🔴 CRITICAL | 12 | Security, Data Exposure |
-| 🟠 HIGH | 18 | Performance, Payments |
-| 🟡 MEDIUM | 15 | Scaling, Monitoring |
-| 🟢 LOW | 8 | Optimization |
+| Severity    | Count | Category                |
+| ----------- | ----- | ----------------------- |
+| 🔴 CRITICAL | 12    | Security, Data Exposure |
+| 🟠 HIGH     | 18    | Performance, Payments   |
+| 🟡 MEDIUM   | 15    | Scaling, Monitoring     |
+| 🟢 LOW      | 8     | Optimization            |
 
 ### By Category
 
-| Category | Critical | High | Medium | Low |
-|----------|----------|------|--------|-----|
-| Security | 8 | 5 | 3 | 1 |
-| Database | 2 | 6 | 4 | 2 |
-| Payments | 2 | 5 | 3 | 2 |
-| Rate Limiting | 0 | 2 | 3 | 1 |
-| Architecture | 0 | 0 | 2 | 2 |
+| Category      | Critical | High | Medium | Low |
+| ------------- | -------- | ---- | ------ | --- |
+| Security      | 8        | 5    | 3      | 1   |
+| Database      | 2        | 6    | 4      | 2   |
+| Payments      | 2        | 5    | 3      | 2   |
+| Rate Limiting | 0        | 2    | 3      | 1   |
+| Architecture  | 0        | 0    | 2      | 2   |
 
 ---
 
@@ -51,39 +51,39 @@ This roadmap provides a prioritized action plan for preparing the SaaS applicati
 
 ### Must Have (P0) - Block Production Launch
 
-| ID | Issue | Document | Effort |
-|----|-------|----------|--------|
-| SEC-01 | 77 unprotected API endpoints | 01-security | 2 days |
-| SEC-02 | Password hash in API response | 01-security | 1 hour |
-| SEC-03 | Disabled auth in user endpoints | 01-security | 30 min |
-| SEC-04 | Missing authorization checks | 01-security | 1 day |
-| DB-01 | 20+ missing database indexes | 02-database | 4 hours |
-| PAY-01 | Webhook replay vulnerability | 03-payment | 4 hours |
-| PAY-02 | Refund over-calculation bug | 03-payment | 1 hour |
+| ID     | Issue                           | Document    | Effort  |
+| ------ | ------------------------------- | ----------- | ------- |
+| SEC-01 | 77 unprotected API endpoints    | 01-security | 2 days  |
+| SEC-02 | Password hash in API response   | 01-security | 1 hour  |
+| SEC-03 | Disabled auth in user endpoints | 01-security | 30 min  |
+| SEC-04 | Missing authorization checks    | 01-security | 1 day   |
+| DB-01  | 20+ missing database indexes    | 02-database | 4 hours |
+| PAY-01 | Webhook replay vulnerability    | 03-payment  | 4 hours |
+| PAY-02 | Refund over-calculation bug     | 03-payment  | 1 hour  |
 
 ### Should Have (P1) - Fix Within First Week
 
-| ID | Issue | Document | Effort |
-|----|-------|----------|--------|
-| SEC-05 | Debug endpoint exposure | 01-security | 2 hours |
-| SEC-06 | Input validation gaps | 01-security | 1 day |
-| DB-02 | N+1 query problems | 02-database | 2 days |
-| DB-03 | Race conditions | 02-database | 1 day |
-| PAY-03 | Slot overlap detection bug | 03-payment | 2 hours |
-| PAY-04 | LemonSqueezy incomplete | 03-payment | 4 hours |
-| RL-01 | Auth endpoint rate limiting | 04-ratelimit | 4 hours |
-| RL-02 | Webhook rate limiting | 04-ratelimit | 2 hours |
+| ID     | Issue                       | Document     | Effort  |
+| ------ | --------------------------- | ------------ | ------- |
+| SEC-05 | Debug endpoint exposure     | 01-security  | 2 hours |
+| SEC-06 | Input validation gaps       | 01-security  | 1 day   |
+| DB-02  | N+1 query problems          | 02-database  | 2 days  |
+| DB-03  | Race conditions             | 02-database  | 1 day   |
+| PAY-03 | Slot overlap detection bug  | 03-payment   | 2 hours |
+| PAY-04 | LemonSqueezy incomplete     | 03-payment   | 4 hours |
+| RL-01  | Auth endpoint rate limiting | 04-ratelimit | 4 hours |
+| RL-02  | Webhook rate limiting       | 04-ratelimit | 2 hours |
 
 ### Nice to Have (P2) - Fix Within First Month
 
-| ID | Issue | Document | Effort |
-|----|-------|----------|--------|
-| DB-04 | Session optimization | 05-scaling | 4 hours |
-| DB-05 | Connection pooling config | 02-database | 2 hours |
-| SCALE-01 | Redis caching layer | 05-scaling | 2 days |
-| SCALE-02 | Background job processing | 05-scaling | 3 days |
-| RL-03 | Per-endpoint rate limits | 04-ratelimit | 1 day |
-| MON-01 | Comprehensive monitoring | 05-scaling | 2 days |
+| ID       | Issue                     | Document     | Effort  |
+| -------- | ------------------------- | ------------ | ------- |
+| DB-04    | Session optimization      | 05-scaling   | 4 hours |
+| DB-05    | Connection pooling config | 02-database  | 2 hours |
+| SCALE-01 | Redis caching layer       | 05-scaling   | 2 days  |
+| SCALE-02 | Background job processing | 05-scaling   | 3 days  |
+| RL-03    | Per-endpoint rate limits  | 04-ratelimit | 1 day   |
+| MON-01   | Comprehensive monitoring  | 05-scaling   | 2 days  |
 
 ---
 
@@ -150,9 +150,10 @@ passwordResetExpires: u.passwordResetExpires || null,
 // After auth check, add ownership verification:
 const isOwner =
   appointment?.consultation?.requestedBy?.userId === session.user.id ||
-  session.user.consultantProfileId === appointment?.consultation?.consultationPlan?.consultantProfileId;
+  session.user.consultantProfileId ===
+    appointment?.consultation?.consultationPlan?.consultantProfileId;
 
-const isAdmin = session.user.role === 'ADMIN' || session.user.role === 'STAFF';
+const isAdmin = session.user.role === "ADMIN" || session.user.role === "STAFF";
 
 if (!isOwner && !isAdmin) {
   return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -264,6 +265,7 @@ model WebhookLog {
 ### 4.4 Fix N+1 Queries
 
 **Priority Files:**
+
 1. `app/api/slots/appointments/route.ts`
 2. `app/api/events/subscriptions/route.ts`
 3. `app/api/events/consultations/route.ts`
@@ -277,14 +279,16 @@ const appointments = await prisma.appointment.findMany({
     id: true,
     consultationId: true,
     // Only needed fields
-  }
+  },
 });
 
 // Parallel fetch relations
-const consultationIds = appointments.map(a => a.consultationId).filter(Boolean);
+const consultationIds = appointments
+  .map((a) => a.consultationId)
+  .filter(Boolean);
 const consultations = await prisma.consultation.findMany({
   where: { id: { in: consultationIds } },
-  select: { id: true, title: true }
+  select: { id: true, title: true },
 });
 ```
 
@@ -327,9 +331,9 @@ const existingBooking = await tx.slotOfAppointment.findFirst({
       { startsAt: { lt: slotEnd } },
       { endsAt: { gt: slotStart } },
       { consultantProfileId: consultantId },
-      { isTentative: false }
-    ]
-  }
+      { isTentative: false },
+    ],
+  },
 });
 ```
 
@@ -340,7 +344,7 @@ const existingBooking = await tx.slotOfAppointment.findFirst({
 ```typescript
 // At the start of webhook handler:
 const existing = await prisma.webhookLog.findUnique({
-  where: { eventId_gateway: { eventId: event.id, gateway: "STRIPE" } }
+  where: { eventId_gateway: { eventId: event.id, gateway: "STRIPE" } },
 });
 
 if (existing) {
@@ -348,7 +352,7 @@ if (existing) {
 }
 
 await prisma.webhookLog.create({
-  data: { eventId: event.id, gateway: "STRIPE", eventType: event.type }
+  data: { eventId: event.id, gateway: "STRIPE", eventType: event.type },
 });
 
 // Continue with processing...
@@ -387,16 +391,14 @@ export async function POST(req: NextRequest) {
   const { success } = await RATE_LIMITS.AUTH_REGISTER.limit(ip);
 
   if (!success) {
-    return NextResponse.json(
-      { error: "Too many attempts" },
-      { status: 429 }
-    );
+    return NextResponse.json({ error: "Too many attempts" }, { status: 429 });
   }
   // Continue...
 }
 ```
 
 Apply similar to:
+
 - `/api/auth/forgot-password`
 - `/api/auth/reset-password`
 
@@ -424,7 +426,7 @@ export const QUERY_LIMITS = {
 // Apply in list endpoints
 const limit = Math.min(
   Math.max(parseInt(searchParams.get("limit") || "20"), 1),
-  QUERY_LIMITS.MAX_PAGE_SIZE
+  QUERY_LIMITS.MAX_PAGE_SIZE,
 );
 ```
 
@@ -450,7 +452,7 @@ const limit = Math.min(
 export async function withCache<T>(
   key: string,
   ttl: number,
-  fn: () => Promise<T>
+  fn: () => Promise<T>,
 ): Promise<T> {
   const cached = await redis.get<T>(key);
   if (cached) return cached;
@@ -462,6 +464,7 @@ export async function withCache<T>(
 ```
 
 Apply to:
+
 - Consultant profiles
 - Availability data
 - Domain/subdomain lists
@@ -473,6 +476,7 @@ Remove DB query from session callback, store data in JWT.
 ### 7.3 Implement Background Jobs
 
 Set up Inngest for:
+
 - Webhook processing
 - Email sending
 - Cleanup jobs
@@ -512,17 +516,17 @@ curl -X DELETE http://localhost:3000/api/appointments/123/cancel \
 
 ```javascript
 // k6 load test
-import http from 'k6/http';
+import http from "k6/http";
 
 export const options = {
   stages: [
-    { duration: '1m', target: 50 },
-    { duration: '3m', target: 100 },
-    { duration: '1m', target: 0 },
+    { duration: "1m", target: 50 },
+    { duration: "3m", target: 100 },
+    { duration: "1m", target: 0 },
   ],
   thresholds: {
-    http_req_duration: ['p(95)<500'],
-    http_req_failed: ['rate<0.01'],
+    http_req_duration: ["p(95)<500"],
+    http_req_failed: ["rate<0.01"],
   },
 };
 ```
@@ -532,11 +536,11 @@ export const options = {
 ```typescript
 // Test double booking prevention
 async function testConcurrentBooking() {
-  const promises = Array(10).fill(null).map(() =>
-    bookSlot(sameSlotParams)
-  );
+  const promises = Array(10)
+    .fill(null)
+    .map(() => bookSlot(sameSlotParams));
   const results = await Promise.allSettled(promises);
-  const successes = results.filter(r => r.status === 'fulfilled');
+  const successes = results.filter((r) => r.status === "fulfilled");
   expect(successes.length).toBe(1);
 }
 ```
@@ -559,23 +563,27 @@ async function testConcurrentBooking() {
 ### 9.2 Phased Rollout
 
 **Week 1: Internal Testing**
+
 - Deploy to staging
 - Internal team testing
 - Fix critical bugs
 
 **Week 2: Beta Users**
+
 - Deploy to production with feature flags
 - Invite 50-100 beta users
 - Monitor closely
 - Fix issues
 
 **Week 3: Soft Launch**
+
 - Remove feature flags
 - Limit signups (1000 users)
 - Active monitoring
 - Performance tuning
 
 **Week 4+: General Availability**
+
 - Open signups
 - Scale infrastructure as needed
 - Continue monitoring
@@ -616,22 +624,22 @@ npx prisma studio
 
 ### Emergency Contacts
 
-| Role | Responsibility |
-|------|----------------|
-| Backend Lead | Database issues, API bugs |
-| Security Lead | Security incidents |
-| DevOps | Infrastructure issues |
-| Product | User communication |
+| Role          | Responsibility            |
+| ------------- | ------------------------- |
+| Backend Lead  | Database issues, API bugs |
+| Security Lead | Security incidents        |
+| DevOps        | Infrastructure issues     |
+| Product       | User communication        |
 
 ---
 
 ## Document References
 
-| # | Document | Focus Area |
-|---|----------|------------|
-| 01 | security-vulnerabilities.md | Authentication, Authorization, Data Exposure |
-| 02 | database-performance.md | Indexes, N+1, Race Conditions, Pooling |
-| 03 | payment-system.md | Webhooks, Refunds, Disputes, Fraud |
-| 04 | rate-limiting-ddos.md | Rate Limits, DDoS Protection |
-| 05 | scaling-architecture.md | Caching, Jobs, Sessions, Infrastructure |
-| 06 | implementation-roadmap.md | This document |
+| #   | Document                    | Focus Area                                   |
+| --- | --------------------------- | -------------------------------------------- |
+| 01  | security-vulnerabilities.md | Authentication, Authorization, Data Exposure |
+| 02  | database-performance.md     | Indexes, N+1, Race Conditions, Pooling       |
+| 03  | payment-system.md           | Webhooks, Refunds, Disputes, Fraud           |
+| 04  | rate-limiting-ddos.md       | Rate Limits, DDoS Protection                 |
+| 05  | scaling-architecture.md     | Caching, Jobs, Sessions, Infrastructure      |
+| 06  | implementation-roadmap.md   | This document                                |

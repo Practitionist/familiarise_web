@@ -46,10 +46,10 @@ async function runTest() {
 
   logTestStart(config.testName, {
     Category: config.category,
-    "Load": `${config.concurrentUsers} concurrent requests`,
+    Load: `${config.concurrentUsers} concurrent requests`,
     "Slot Time": new Date(slot.start).toLocaleString(),
     "Consultant ID": consultantId,
-    "Metric": "Requests processed per second",
+    Metric: "Requests processed per second",
     "Expected Outcome": `${config.expectedSuccesses} success, ${config.expectedConflicts} conflicts`,
   });
 
@@ -65,7 +65,9 @@ async function runTest() {
   logTestResult(report);
 
   // Calculate throughput metrics
-  const throughputPerSec = Math.round((config.concurrentUsers / duration) * 1000);
+  const throughputPerSec = Math.round(
+    (config.concurrentUsers / duration) * 1000,
+  );
   const avgLatency = Math.round(duration / config.concurrentUsers);
 
   console.log(`\n📊 Throughput Metrics:`);
@@ -75,7 +77,9 @@ async function runTest() {
   console.log(`   Avg Latency: ${avgLatency}ms per request`);
   console.log(`   P95 Latency: ${report.summary.p95Duration}ms`);
   console.log(`   P99 Latency: ${report.summary.p99Duration}ms`);
-  console.log(`   Success Rate: ${((report.summary.successes / config.concurrentUsers) * 100).toFixed(1)}%`);
+  console.log(
+    `   Success Rate: ${((report.summary.successes / config.concurrentUsers) * 100).toFixed(1)}%`,
+  );
 
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
   await saveJsonReport(
@@ -103,10 +107,7 @@ async function runTest() {
   };
 
   const markdownContent = generateMarkdownReport(summaryReport);
-  await saveMarkdownReport(
-    markdownContent,
-    `test-throughput-${timestamp}.md`,
-  );
+  await saveMarkdownReport(markdownContent, `test-throughput-${timestamp}.md`);
 
   process.exit(report.passed ? 0 : 1);
 }

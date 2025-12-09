@@ -86,7 +86,8 @@ export async function GET(req: NextRequest) {
   try {
     // Verify cron secret to prevent unauthorized access
     const authHeader = req.headers.get("authorization");
-    const cronSecret = process.env.CRON_SECRET || process.env.VERCEL_CRON_SECRET;
+    const cronSecret =
+      process.env.CRON_SECRET || process.env.VERCEL_CRON_SECRET;
 
     if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
       console.warn("Unauthorized cron job attempt");
@@ -182,7 +183,10 @@ export async function GET(req: NextRequest) {
       timestamp: new Date().toISOString(),
     };
 
-    console.log("✅ Approval payment expiration check completed:", result.statistics);
+    console.log(
+      "✅ Approval payment expiration check completed:",
+      result.statistics,
+    );
 
     return NextResponse.json(result);
   } catch (error) {

@@ -55,7 +55,7 @@ async function runTest() {
     "Rapid Users": config.concurrentUsers,
     "Slot Time": new Date(slot.start).toLocaleString(),
     "Consultant ID": consultantId,
-    "Timing": "<10ms gaps between requests",
+    Timing: "<10ms gaps between requests",
     "Expected Outcome": `${config.expectedSuccesses} success, ${config.expectedConflicts} conflicts`,
   });
 
@@ -69,9 +69,15 @@ async function runTest() {
     promises.push(
       new Promise<BookingResult>((resolve) => {
         setTimeout(async () => {
-          resolve(await simulateBookingAttempt(slot.start, consultantId, generateUserId(i)));
+          resolve(
+            await simulateBookingAttempt(
+              slot.start,
+              consultantId,
+              generateUserId(i),
+            ),
+          );
         }, delay);
-      })
+      }),
     );
   }
 

@@ -193,7 +193,7 @@ export const stripeConnect = {
   async createAccountLink(
     accountId: string,
     refreshUrl: string,
-    returnUrl: string
+    returnUrl: string,
   ): Promise<Stripe.AccountLink> {
     return stripe.accountLinks.create({
       account: accountId,
@@ -308,7 +308,7 @@ export class StripeConnectedAccountService {
     const accountLink = await stripeConnect.createAccountLink(
       account.id,
       `${baseUrl}/dashboard/payout-settings?refresh=true`,
-      `${baseUrl}/dashboard/payout-settings?onboarding=complete`
+      `${baseUrl}/dashboard/payout-settings?onboarding=complete`,
     );
 
     return {
@@ -333,7 +333,7 @@ export class StripeConnectedAccountService {
     const accountLink = await stripeConnect.createAccountLink(
       linkedAccount.stripeAccountId,
       `${baseUrl}/dashboard/payout-settings?refresh=true`,
-      `${baseUrl}/dashboard/payout-settings?onboarding=complete`
+      `${baseUrl}/dashboard/payout-settings?onboarding=complete`,
     );
 
     return accountLink.url;
@@ -346,7 +346,12 @@ export class StripeConnectedAccountService {
     const account = await stripeConnect.getAccount(stripeAccountId);
 
     // Determine KYC status
-    let kycStatus: "NOT_STARTED" | "PENDING" | "COMPLETED" | "FAILED" | "RESTRICTED";
+    let kycStatus:
+      | "NOT_STARTED"
+      | "PENDING"
+      | "COMPLETED"
+      | "FAILED"
+      | "RESTRICTED";
 
     if (account.details_submitted && account.payouts_enabled) {
       kycStatus = "COMPLETED";
@@ -439,7 +444,8 @@ export class StripeConnectedAccountService {
   }
 }
 
-export const stripeConnectedAccountService = new StripeConnectedAccountService();
+export const stripeConnectedAccountService =
+  new StripeConnectedAccountService();
 ```
 
 ---
@@ -468,7 +474,7 @@ export class StripeTransferService {
     connectedAccountId: string,
     amount: number,
     currency: string,
-    earningIds: string[]
+    earningIds: string[],
   ): Promise<TransferResult> {
     try {
       // Create the Stripe transfer
@@ -514,7 +520,8 @@ export class StripeTransferService {
         where: { id: payoutId },
         data: {
           status: "FAILED",
-          failureReason: error instanceof Error ? error.message : "Unknown error",
+          failureReason:
+            error instanceof Error ? error.message : "Unknown error",
         },
       });
 
@@ -528,13 +535,18 @@ export class StripeTransferService {
   /**
    * Process payout for a single consultant
    */
-  async processConsultantPayout(consultantProfileId: string): Promise<TransferResult> {
+  async processConsultantPayout(
+    consultantProfileId: string,
+  ): Promise<TransferResult> {
     // Get consultant's linked account
     const linkedAccount = await prisma.linkedAccount.findUnique({
       where: { consultantProfileId },
     });
 
-    if (!linkedAccount?.stripeAccountId || !linkedAccount.stripePayoutsEnabled) {
+    if (
+      !linkedAccount?.stripeAccountId ||
+      !linkedAccount.stripePayoutsEnabled
+    ) {
       return {
         success: false,
         error: "Consultant not set up for Stripe payouts",
@@ -557,7 +569,10 @@ export class StripeTransferService {
     }
 
     // Calculate totals (group by currency)
-    const totalAmount = availableEarnings.reduce((sum, e) => sum + e.netAmount, 0);
+    const totalAmount = availableEarnings.reduce(
+      (sum, e) => sum + e.netAmount,
+      0,
+    );
     const currency = availableEarnings[0].currency; // Assume same currency
 
     // Minimum payout threshold (100 cents = $1)
@@ -588,7 +603,7 @@ export class StripeTransferService {
       linkedAccount.stripeAccountId,
       totalAmount,
       currency,
-      earningIds
+      earningIds,
     );
   }
 
@@ -638,7 +653,10 @@ export class StripeTransferService {
   /**
    * Handle failed transfer webhook
    */
-  async handleTransferFailed(transferId: string, failureMessage?: string): Promise<void> {
+  async handleTransferFailed(
+    transferId: string,
+    failureMessage?: string,
+  ): Promise<void> {
     const payout = await prisma.payout.findUnique({
       where: { gatewayPayoutId: transferId },
     });
@@ -720,7 +738,11 @@ export class StripeConnectWebhookHandler {
    */
   async verifyEvent(body: string, signature: string): Promise<Stripe.Event> {
     try {
-      return stripe.webhooks.constructEvent(body, signature, this.webhookSecret);
+      return stripe.webhooks.constructEvent(
+        body,
+        signature,
+        this.webhookSecret,
+      );
     } catch (err) {
       throw new Error(`Webhook signature verification failed: ${err}`);
     }
@@ -741,7 +763,9 @@ export class StripeConnectWebhookHandler {
         break;
 
       case "account.application.deauthorized":
-        await this.handleAccountDeauthorized(event.data.object as Stripe.Account);
+        await this.handleAccountDeauthorized(
+          event.data.object as Stripe.Account,
+        );
         break;
 
       // Transfer Events
@@ -782,12 +806,16 @@ export class StripeConnectWebhookHandler {
     await stripeConnectedAccountService.syncAccountStatus(account.id);
   }
 
-  private async handleAccountAuthorized(account: Stripe.Account): Promise<void> {
+  private async handleAccountAuthorized(
+    account: Stripe.Account,
+  ): Promise<void> {
     console.log(`Account authorized: ${account.id}`);
     await stripeConnectedAccountService.syncAccountStatus(account.id);
   }
 
-  private async handleAccountDeauthorized(account: Stripe.Account): Promise<void> {
+  private async handleAccountDeauthorized(
+    account: Stripe.Account,
+  ): Promise<void> {
     console.log(`Account deauthorized: ${account.id}`);
     // Mark account as inactive
     await stripeConnectedAccountService.syncAccountStatus(account.id);
@@ -796,7 +824,9 @@ export class StripeConnectWebhookHandler {
 
   // ===== Transfer Event Handlers =====
 
-  private async handleTransferCreated(transfer: Stripe.Transfer): Promise<void> {
+  private async handleTransferCreated(
+    transfer: Stripe.Transfer,
+  ): Promise<void> {
     console.log(`Transfer created: ${transfer.id}, amount: ${transfer.amount}`);
     // Informational - no action needed
   }
@@ -811,22 +841,26 @@ export class StripeConnectWebhookHandler {
     // Note: transfer.failure_message might contain the reason
     await stripeTransferService.handleTransferFailed(
       transfer.id,
-      "Transfer failed - check Stripe dashboard for details"
+      "Transfer failed - check Stripe dashboard for details",
     );
   }
 
-  private async handleTransferReversed(transfer: Stripe.Transfer): Promise<void> {
+  private async handleTransferReversed(
+    transfer: Stripe.Transfer,
+  ): Promise<void> {
     console.log(`Transfer reversed: ${transfer.id}`);
     await stripeTransferService.handleTransferFailed(
       transfer.id,
-      "Transfer was reversed"
+      "Transfer was reversed",
     );
   }
 
   // ===== Payout Event Handlers (Connected Account -> Bank) =====
 
   private async handlePayoutPaid(payout: Stripe.Payout): Promise<void> {
-    console.log(`Payout to bank completed: ${payout.id}, account: ${payout.destination}`);
+    console.log(
+      `Payout to bank completed: ${payout.id}, account: ${payout.destination}`,
+    );
     // This is when money hits the consultant's actual bank account
     // Optional: Update settled timestamp
   }
@@ -859,20 +893,26 @@ export async function POST(req: Request) {
   if (!signature) {
     return NextResponse.json(
       { error: "Missing stripe-signature header" },
-      { status: 400 }
+      { status: 400 },
     );
   }
 
   try {
-    const event = await stripeConnectWebhookHandler.verifyEvent(body, signature);
+    const event = await stripeConnectWebhookHandler.verifyEvent(
+      body,
+      signature,
+    );
     await stripeConnectWebhookHandler.handleEvent(event);
 
     return NextResponse.json({ received: true });
   } catch (error) {
     console.error("Webhook error:", error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Webhook handler failed" },
-      { status: 400 }
+      {
+        error:
+          error instanceof Error ? error.message : "Webhook handler failed",
+      },
+      { status: 400 },
     );
   }
 }
@@ -936,21 +976,22 @@ export async function processWeeklyStripePayouts(): Promise<PayoutJobResult> {
     },
   });
 
-  console.log(`Found ${eligibleConsultants.length} consultants eligible for Stripe payout`);
+  console.log(
+    `Found ${eligibleConsultants.length} consultants eligible for Stripe payout`,
+  );
 
   // Process each consultant
   for (const consultant of eligibleConsultants) {
     result.processed++;
 
     try {
-      const transferResult = await stripeTransferService.processConsultantPayout(
-        consultant.id
-      );
+      const transferResult =
+        await stripeTransferService.processConsultantPayout(consultant.id);
 
       if (transferResult.success) {
         result.succeeded++;
         console.log(
-          `Payout initiated for ${consultant.user.email}: ${transferResult.transferId}`
+          `Payout initiated for ${consultant.user.email}: ${transferResult.transferId}`,
         );
       } else {
         result.failed++;
@@ -959,7 +1000,7 @@ export async function processWeeklyStripePayouts(): Promise<PayoutJobResult> {
           error: transferResult.error || "Unknown error",
         });
         console.error(
-          `Payout failed for ${consultant.user.email}: ${transferResult.error}`
+          `Payout failed for ${consultant.user.email}: ${transferResult.error}`,
         );
       }
     } catch (error) {
@@ -976,7 +1017,7 @@ export async function processWeeklyStripePayouts(): Promise<PayoutJobResult> {
   }
 
   console.log(
-    `Stripe payout job complete: ${result.succeeded}/${result.processed} succeeded`
+    `Stripe payout job complete: ${result.succeeded}/${result.processed} succeeded`,
   );
 
   return result;
@@ -1022,10 +1063,7 @@ export async function GET(req: Request) {
     return NextResponse.json(result);
   } catch (error) {
     console.error("Stripe payout cron failed:", error);
-    return NextResponse.json(
-      { error: "Payout job failed" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Payout job failed" }, { status: 500 });
   }
 }
 ```
@@ -1053,7 +1091,7 @@ export async function POST(req: Request) {
 
   try {
     const result = await stripeConnectedAccountService.createConnectedAccount(
-      session.user.consultantProfileId
+      session.user.consultantProfileId,
     );
 
     return NextResponse.json({
@@ -1063,8 +1101,11 @@ export async function POST(req: Request) {
   } catch (error) {
     console.error("Create Stripe account error:", error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Failed to create account" },
-      { status: 500 }
+      {
+        error:
+          error instanceof Error ? error.message : "Failed to create account",
+      },
+      { status: 500 },
     );
   }
 }
@@ -1089,14 +1130,14 @@ export async function GET(req: Request) {
 
   try {
     const onboardingUrl = await stripeConnectedAccountService.getOnboardingLink(
-      session.user.consultantProfileId
+      session.user.consultantProfileId,
     );
 
     return NextResponse.json({ onboardingUrl });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Failed to get link" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -1142,7 +1183,9 @@ export async function GET(req: Request) {
   }
 
   // Sync latest status from Stripe
-  await stripeConnectedAccountService.syncAccountStatus(linkedAccount.stripeAccountId);
+  await stripeConnectedAccountService.syncAccountStatus(
+    linkedAccount.stripeAccountId,
+  );
 
   // Get updated data
   const updatedAccount = await prisma.linkedAccount.findUnique({
@@ -1191,13 +1234,13 @@ export async function GET(req: Request) {
 
   try {
     const dashboardUrl = await stripeConnectedAccountService.getDashboardLink(
-      linkedAccount.stripeAccountId
+      linkedAccount.stripeAccountId,
     );
     return NextResponse.json({ dashboardUrl });
   } catch (error) {
     return NextResponse.json(
       { error: "Failed to generate dashboard link" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -1312,16 +1355,14 @@ async function testStripePayout() {
   const testConsultantId = "test-consultant-id";
 
   // 1. Check if can receive payouts
-  const canReceive = await stripeConnectedAccountService.canReceivePayouts(
-    testConsultantId
-  );
+  const canReceive =
+    await stripeConnectedAccountService.canReceivePayouts(testConsultantId);
   console.log("Can receive payouts:", canReceive);
 
   // 2. Process payout
   if (canReceive.canReceive) {
-    const result = await stripeTransferService.processConsultantPayout(
-      testConsultantId
-    );
+    const result =
+      await stripeTransferService.processConsultantPayout(testConsultantId);
     console.log("Payout result:", result);
   }
 }
@@ -1372,20 +1413,20 @@ Testing:
 // Common Stripe Connect errors
 
 // Account errors
-"account_invalid"              // Account doesn't exist
-"account_country_invalid"      // Account in unsupported country
-"acct_id_invalid"              // Invalid account ID format
+"account_invalid"; // Account doesn't exist
+"account_country_invalid"; // Account in unsupported country
+"acct_id_invalid"; // Invalid account ID format
 
 // Transfer errors
-"amount_too_large"             // Exceeds available balance
-"amount_too_small"             // Below minimum ($1)
-"insufficient_funds"           // Platform balance too low
-"destination_invalid"          // Invalid destination account
-"currency_mismatch"            // Currency doesn't match account
+"amount_too_large"; // Exceeds available balance
+"amount_too_small"; // Below minimum ($1)
+"insufficient_funds"; // Platform balance too low
+"destination_invalid"; // Invalid destination account
+"currency_mismatch"; // Currency doesn't match account
 
 // Payout errors
-"account_restricted"           // Account needs verification
-"payouts_not_allowed"          // Payouts disabled on account
+"account_restricted"; // Account needs verification
+"payouts_not_allowed"; // Payouts disabled on account
 ```
 
 ---

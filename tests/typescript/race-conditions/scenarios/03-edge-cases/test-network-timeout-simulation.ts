@@ -66,7 +66,10 @@ async function runTest() {
   const startTime = Date.now();
 
   // Simulate slow network requests
-  const simulateSlowRequest = async (userId: string, networkDelay: number): Promise<BookingResult> => {
+  const simulateSlowRequest = async (
+    userId: string,
+    networkDelay: number,
+  ): Promise<BookingResult> => {
     const requestStart = Date.now();
     let lock: ApprovalLock | null = null;
 
@@ -107,7 +110,8 @@ async function runTest() {
         status: 409,
         duration: Date.now() - requestStart,
         timestamp: new Date().toISOString(),
-        error: error instanceof Error ? error.message : "Failed to acquire lock",
+        error:
+          error instanceof Error ? error.message : "Failed to acquire lock",
       };
     } finally {
       if (lock) await unlockSlotBooking(lock);
@@ -115,7 +119,7 @@ async function runTest() {
   };
 
   const results: BookingResult[] = await Promise.all([
-    simulateSlowRequest(generateUserId(1), 500),  // 500ms network delay
+    simulateSlowRequest(generateUserId(1), 500), // 500ms network delay
     simulateSlowRequest(generateUserId(2), 1000), // 1000ms network delay
   ]);
 

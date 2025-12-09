@@ -66,8 +66,12 @@ async function runTest() {
 
   console.log(`\n📊 Performance Metrics:`);
   console.log(`   Total Duration: ${duration}ms`);
-  console.log(`   Avg Request Time: ${Math.round(duration / config.concurrentUsers)}ms`);
-  console.log(`   Throughput: ${Math.round((config.concurrentUsers / duration) * 1000)} requests/sec`);
+  console.log(
+    `   Avg Request Time: ${Math.round(duration / config.concurrentUsers)}ms`,
+  );
+  console.log(
+    `   Throughput: ${Math.round((config.concurrentUsers / duration) * 1000)} requests/sec`,
+  );
 
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
   await saveJsonReport(

@@ -122,9 +122,9 @@ export const PaymentFailedEmail = ({
 
             {expiresAt && (
               <Text style={warningText}>
-                ⏰ <strong>Time Sensitive:</strong> This payment link will expire
-                in 48 hours. If you don't complete the payment before then, your
-                request will be reverted to pending status.
+                ⏰ <strong>Time Sensitive:</strong> This payment link will
+                expire in 48 hours. If you don't complete the payment before
+                then, your request will be reverted to pending status.
               </Text>
             )}
 

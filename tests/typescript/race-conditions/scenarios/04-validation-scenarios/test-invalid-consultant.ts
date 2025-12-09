@@ -18,10 +18,7 @@ import {
   generateMarkdownReport,
   resetBookingRegistry,
 } from "../../utilities/test-helpers.js";
-import {
-  generateTestSlot,
-  generateUserId,
-} from "../../utilities/fixtures.js";
+import { generateTestSlot, generateUserId } from "../../utilities/fixtures.js";
 import type {
   TestConfig,
   SummaryReport,

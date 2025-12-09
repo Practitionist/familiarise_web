@@ -132,9 +132,7 @@ interface WidgetConfig {
 ></iframe>
 
 <!-- Option 3: Popup Button -->
-<button onclick="FamiliariseWidget.open('abc123')">
-  Book a Consultation
-</button>
+<button onclick="FamiliariseWidget.open('abc123')">Book a Consultation</button>
 <script src="https://familiarise.com/widget.js"></script>
 
 <!-- Option 4: Floating Button -->
@@ -151,60 +149,62 @@ interface WidgetConfig {
 ```typescript
 // public/widget.js (compiled from TypeScript/React)
 
-(function() {
-  const WIDGET_URL = 'https://familiarise.com';
+(function () {
+  const WIDGET_URL = "https://familiarise.com";
 
   // Parse script attributes
   const script = document.currentScript;
   const consultantId = script?.dataset.consultant;
-  const mode = script?.dataset.mode || 'inline';
-  const theme = script?.dataset.theme || 'light';
-  const position = script?.dataset.position || 'bottom-right';
+  const mode = script?.dataset.mode || "inline";
+  const theme = script?.dataset.theme || "light";
+  const position = script?.dataset.position || "bottom-right";
 
   if (!consultantId) {
-    console.error('Familiarise Widget: data-consultant attribute required');
+    console.error("Familiarise Widget: data-consultant attribute required");
     return;
   }
 
   // Create widget container
-  const container = document.createElement('div');
-  container.id = 'familiarise-widget-container';
+  const container = document.createElement("div");
+  container.id = "familiarise-widget-container";
 
-  if (mode === 'inline') {
-    const target = document.getElementById('familiarise-widget');
+  if (mode === "inline") {
+    const target = document.getElementById("familiarise-widget");
     if (target) {
       target.appendChild(container);
     }
-  } else if (mode === 'floating') {
+  } else if (mode === "floating") {
     container.className = `familiarise-floating familiarise-${position}`;
     document.body.appendChild(container);
   }
 
   // Load widget iframe
-  const iframe = document.createElement('iframe');
+  const iframe = document.createElement("iframe");
   iframe.src = `${WIDGET_URL}/embed/${consultantId}?theme=${theme}&mode=${mode}`;
-  iframe.style.border = 'none';
-  iframe.style.width = mode === 'inline' ? '100%' : '380px';
-  iframe.style.height = mode === 'inline' ? '600px' : '500px';
-  iframe.allow = 'payment';
+  iframe.style.border = "none";
+  iframe.style.width = mode === "inline" ? "100%" : "380px";
+  iframe.style.height = mode === "inline" ? "600px" : "500px";
+  iframe.allow = "payment";
 
   container.appendChild(iframe);
 
   // Handle messages from iframe
-  window.addEventListener('message', (event) => {
+  window.addEventListener("message", (event) => {
     if (event.origin !== WIDGET_URL) return;
 
     const { type, data } = event.data;
 
     switch (type) {
-      case 'BOOKING_COMPLETE':
-        window.dispatchEvent(new CustomEvent('familiarise:booking', { detail: data }));
+      case "BOOKING_COMPLETE":
+        window.dispatchEvent(
+          new CustomEvent("familiarise:booking", { detail: data }),
+        );
         break;
-      case 'RESIZE':
+      case "RESIZE":
         iframe.style.height = `${data.height}px`;
         break;
-      case 'OPEN_CHECKOUT':
-        window.open(data.url, '_blank');
+      case "OPEN_CHECKOUT":
+        window.open(data.url, "_blank");
         break;
     }
   });
@@ -217,7 +217,7 @@ interface WidgetConfig {
       document.body.appendChild(modal);
     },
     close: () => {
-      const modal = document.getElementById('familiarise-modal');
+      const modal = document.getElementById("familiarise-modal");
       if (modal) modal.remove();
     },
   };

@@ -11,13 +11,13 @@ Familiarise operates in the **expert services marketplace / EdTech** space, comp
 
 ### Key Findings
 
-| Metric | Familiarise | Competitors Average |
-|--------|-------------|---------------------|
-| Funding | Pre-seed/Bootstrap | $1M - $782M |
-| Users | Early stage | 300K - 10M+ |
-| Revenue Model | Multi-modal | Mostly single-modal |
-| Tech Stack | Modern (Next.js 15) | Mixed (older stacks) |
-| Unique Features | 4 service types | 1-2 service types |
+| Metric          | Familiarise         | Competitors Average  |
+| --------------- | ------------------- | -------------------- |
+| Funding         | Pre-seed/Bootstrap  | $1M - $782M          |
+| Users           | Early stage         | 300K - 10M+          |
+| Revenue Model   | Multi-modal         | Mostly single-modal  |
+| Tech Stack      | Modern (Next.js 15) | Mixed (older stacks) |
+| Unique Features | 4 service types     | 1-2 service types    |
 
 ---
 
@@ -25,16 +25,17 @@ Familiarise operates in the **expert services marketplace / EdTech** space, comp
 
 ### 1.1 Topmate.io
 
-| Attribute | Details |
-|-----------|---------|
-| **Founded** | 2021 |
-| **HQ** | Bengaluru, India |
-| **Funding** | $1.13M (Seed - Titan Capital, India Quotient) |
-| **Valuation** | ₹33.3Cr (~$4M) |
-| **Users** | 300,000+ experts, 1M+ users |
-| **Focus** | 1:1 mentorship & expert sessions |
+| Attribute     | Details                                       |
+| ------------- | --------------------------------------------- |
+| **Founded**   | 2021                                          |
+| **HQ**        | Bengaluru, India                              |
+| **Funding**   | $1.13M (Seed - Titan Capital, India Quotient) |
+| **Valuation** | ₹33.3Cr (~$4M)                                |
+| **Users**     | 300,000+ experts, 1M+ users                   |
+| **Focus**     | 1:1 mentorship & expert sessions              |
 
 **Core Features:**
+
 - Single-link service page for experts
 - 1:1 sessions, webinars, priority DMs
 - WhatsApp integration for bookings
@@ -43,6 +44,7 @@ Familiarise operates in the **expert services marketplace / EdTech** space, comp
 - Calendar, Zoom integration
 
 **Business Model:**
+
 - 5% commission + transaction fees
 - "We earn when you earn" approach
 - No monthly subscription fees
@@ -53,15 +55,16 @@ Familiarise operates in the **expert services marketplace / EdTech** space, comp
 
 ### 1.2 Preplaced.in
 
-| Attribute | Details |
-|-----------|---------|
-| **Founded** | ~2020 |
-| **HQ** | India |
-| **Funding** | Undisclosed (Smile Group) |
-| **Focus** | Long-term career mentorship (tech-focused) |
-| **Mentors** | 600+ |
+| Attribute   | Details                                    |
+| ----------- | ------------------------------------------ |
+| **Founded** | ~2020                                      |
+| **HQ**      | India                                      |
+| **Funding** | Undisclosed (Smile Group)                  |
+| **Focus**   | Long-term career mentorship (tech-focused) |
+| **Mentors** | 600+                                       |
 
 **Core Features:**
+
 - Long-term 1:1 mentorship (3-6 months)
 - Free trial sessions
 - Chat support with mentors
@@ -69,6 +72,7 @@ Familiarise operates in the **expert services marketplace / EdTech** space, comp
 - Focus: Interview prep, tech skill development
 
 **Business Model:**
+
 - Starting at ₹2,500/month
 - Mentors set their own pricing (₹5,000 - ₹7,500/month typical)
 - Per-session: $60 (2 sessions/week) to $120 (every 3 days)
@@ -79,15 +83,16 @@ Familiarise operates in the **expert services marketplace / EdTech** space, comp
 
 ### 1.3 Metvy.com
 
-| Attribute | Details |
-|-----------|---------|
-| **Founded** | 2018 |
-| **HQ** | New Delhi, India |
-| **Funding** | $188K (Pre-Series A) |
-| **Revenue** | ₹55.3L (~$66K) as of March 2024 |
-| **Employees** | 201-500 |
+| Attribute     | Details                         |
+| ------------- | ------------------------------- |
+| **Founded**   | 2018                            |
+| **HQ**        | New Delhi, India                |
+| **Funding**   | $188K (Pre-Series A)            |
+| **Revenue**   | ₹55.3L (~$66K) as of March 2024 |
+| **Employees** | 201-500                         |
 
 **Core Features:**
+
 - AI-powered networking & matching
 - Hyperlocal networking (geo-based notifications)
 - Cohort-based learning programs
@@ -96,6 +101,7 @@ Familiarise operates in the **expert services marketplace / EdTech** space, comp
 - Real-time analytics & adaptive learning
 
 **Business Model:**
+
 - Subscription for programs
 - Cohort-based learning fees
 
@@ -105,16 +111,17 @@ Familiarise operates in the **expert services marketplace / EdTech** space, comp
 
 ### 1.4 upGrad.com
 
-| Attribute | Details |
-|-----------|---------|
-| **Founded** | 2015 |
-| **HQ** | Mumbai, India |
-| **Funding** | $782.7M total |
-| **Valuation** | $2.25 Billion |
-| **Users** | 10M+ learners, 100+ countries |
+| Attribute         | Details                                    |
+| ----------------- | ------------------------------------------ |
+| **Founded**       | 2015                                       |
+| **HQ**            | Mumbai, India                              |
+| **Funding**       | $782.7M total                              |
+| **Valuation**     | $2.25 Billion                              |
+| **Users**         | 10M+ learners, 100+ countries              |
 | **Key Investors** | Temasek, Bodhi Tree, ETS Strategic Capital |
 
 **Core Features:**
+
 - 500+ courses, 50+ specializations
 - University-accredited degrees (MBA, MS)
 - AI-powered learning platform
@@ -124,6 +131,7 @@ Familiarise operates in the **expert services marketplace / EdTech** space, comp
 - Mobile app with offline access
 
 **Business Model:**
+
 - Premium pricing (₹50K - ₹5L+ per program)
 - No-cost EMI options
 - B2B corporate learning (acquired Harappa)
@@ -134,14 +142,15 @@ Familiarise operates in the **expert services marketplace / EdTech** space, comp
 
 ### 1.5 ProPeers.in
 
-| Attribute | Details |
-|-----------|---------|
-| **Founded** | ~2022 |
-| **HQ** | India |
-| **Focus** | Peer community + mentorship |
-| **Platform** | Mobile-first (iOS app) |
+| Attribute    | Details                     |
+| ------------ | --------------------------- |
+| **Founded**  | ~2022                       |
+| **HQ**       | India                       |
+| **Focus**    | Peer community + mentorship |
+| **Platform** | Mobile-first (iOS app)      |
 
 **Core Features:**
+
 - Full-time mentorship programs
 - Peer community with achievements feed
 - Skills & achievements showcase
@@ -151,6 +160,7 @@ Familiarise operates in the **expert services marketplace / EdTech** space, comp
 - Country-based pricing
 
 **Business Model:**
+
 - Session-based fees
 - Bootcamp fees
 - Freemium community features
@@ -161,17 +171,18 @@ Familiarise operates in the **expert services marketplace / EdTech** space, comp
 
 ### 1.6 GrowthSchool.io
 
-| Attribute | Details |
-|-----------|---------|
-| **Founded** | 2021 |
-| **HQ** | Bengaluru, India |
-| **Funding** | $5M Seed (Sequoia, Owl Ventures, 80+ angels) |
-| **Revenue** | ₹5Cr/month peak, 400% YoY growth |
-| **Users** | 1M+ learners |
-| **Employees** | 150 |
+| Attribute      | Details                                                          |
+| -------------- | ---------------------------------------------------------------- |
+| **Founded**    | 2021                                                             |
+| **HQ**         | Bengaluru, India                                                 |
+| **Funding**    | $5M Seed (Sequoia, Owl Ventures, 80+ angels)                     |
+| **Revenue**    | ₹5Cr/month peak, 400% YoY growth                                 |
+| **Users**      | 1M+ learners                                                     |
+| **Employees**  | 150                                                              |
 | **Key Angels** | Kunal Shah (CRED), Nikhil Kamath (Zerodha), Ritesh Agarwal (OYO) |
 
 **Core Features:**
+
 - 1,000+ live sessions
 - Gen AI-powered upskilling
 - Cohort-based programs (4-24 weeks)
@@ -180,6 +191,7 @@ Familiarise operates in the **expert services marketplace / EdTech** space, comp
 - Mentors from top companies (Google, Meta, etc.)
 
 **Business Model:**
+
 - Subscription: ₹5,000 - ₹18,000/year
 - Extensive programs: ₹15,000 - ₹70,000+
 - Free workshops (funnel → upsell)
@@ -192,36 +204,36 @@ Familiarise operates in the **expert services marketplace / EdTech** space, comp
 
 ### 2.1 Tech Stack Comparison
 
-| Platform | Frontend | Backend | Database | Real-time | Payments | Hosting |
-|----------|----------|---------|----------|-----------|----------|---------|
-| **Familiarise** | Next.js 15, React 18, TailwindCSS | Next.js API Routes, Prisma | PostgreSQL (Supabase) | Stream.io (Video + Chat) | Stripe + Razorpay | Vercel/Docker |
-| **Topmate** | React (likely) | Node.js | PostgreSQL | Zoom integration | Stripe, Razorpay | AWS |
-| **Preplaced** | React | Unknown | Unknown | Zoom/Meet | Razorpay | Unknown |
-| **Metvy** | React Native | Unknown | Unknown | Native | Unknown | Unknown |
-| **upGrad** | React | Java/Node | PostgreSQL | Proprietary | All gateways | AWS/GCP |
-| **ProPeers** | React Native | Unknown | Unknown | Native | Razorpay | Unknown |
-| **GrowthSchool** | React | Unknown | Unknown | Zoom | Razorpay | Unknown |
+| Platform         | Frontend                          | Backend                    | Database              | Real-time                | Payments          | Hosting       |
+| ---------------- | --------------------------------- | -------------------------- | --------------------- | ------------------------ | ----------------- | ------------- |
+| **Familiarise**  | Next.js 15, React 18, TailwindCSS | Next.js API Routes, Prisma | PostgreSQL (Supabase) | Stream.io (Video + Chat) | Stripe + Razorpay | Vercel/Docker |
+| **Topmate**      | React (likely)                    | Node.js                    | PostgreSQL            | Zoom integration         | Stripe, Razorpay  | AWS           |
+| **Preplaced**    | React                             | Unknown                    | Unknown               | Zoom/Meet                | Razorpay          | Unknown       |
+| **Metvy**        | React Native                      | Unknown                    | Unknown               | Native                   | Unknown           | Unknown       |
+| **upGrad**       | React                             | Java/Node                  | PostgreSQL            | Proprietary              | All gateways      | AWS/GCP       |
+| **ProPeers**     | React Native                      | Unknown                    | Unknown               | Native                   | Razorpay          | Unknown       |
+| **GrowthSchool** | React                             | Unknown                    | Unknown               | Zoom                     | Razorpay          | Unknown       |
 
 ### 2.2 Technical Advantages of Familiarise
 
-| Feature | Familiarise | Most Competitors |
-|---------|-------------|------------------|
-| **Integrated Video/Chat** | Stream.io (native) | External (Zoom links) |
-| **Real-time Communication** | Built-in WebRTC | Third-party redirects |
-| **Multi-gateway Payments** | Stripe + Razorpay | Single gateway |
-| **Slot Algorithm** | Custom complex scheduling | Basic calendar |
-| **Document Review** | Native feature | Not available |
-| **Recording** | Built-in | Zoom-dependent |
+| Feature                     | Familiarise               | Most Competitors      |
+| --------------------------- | ------------------------- | --------------------- |
+| **Integrated Video/Chat**   | Stream.io (native)        | External (Zoom links) |
+| **Real-time Communication** | Built-in WebRTC           | Third-party redirects |
+| **Multi-gateway Payments**  | Stripe + Razorpay         | Single gateway        |
+| **Slot Algorithm**          | Custom complex scheduling | Basic calendar        |
+| **Document Review**         | Native feature            | Not available         |
+| **Recording**               | Built-in                  | Zoom-dependent        |
 
 ### 2.3 Technical Gaps to Address
 
-| Gap | Impact | Priority |
-|-----|--------|----------|
-| **Mobile App** | ProPeers, Metvy have mobile-first approach | HIGH |
-| **AI Features** | Metvy, upGrad, GrowthSchool have AI integration | HIGH |
-| **Hyperlocal** | Metvy's geo-based networking is unique | MEDIUM |
-| **Offline Access** | upGrad offers offline content | LOW |
-| **WhatsApp Integration** | Topmate has native WhatsApp booking | MEDIUM |
+| Gap                      | Impact                                          | Priority |
+| ------------------------ | ----------------------------------------------- | -------- |
+| **Mobile App**           | ProPeers, Metvy have mobile-first approach      | HIGH     |
+| **AI Features**          | Metvy, upGrad, GrowthSchool have AI integration | HIGH     |
+| **Hyperlocal**           | Metvy's geo-based networking is unique          | MEDIUM   |
+| **Offline Access**       | upGrad offers offline content                   | LOW      |
+| **WhatsApp Integration** | Topmate has native WhatsApp booking             | MEDIUM   |
 
 ---
 
@@ -229,15 +241,15 @@ Familiarise operates in the **expert services marketplace / EdTech** space, comp
 
 ### 3.1 Revenue Models
 
-| Platform | Model | Take Rate | Pricing Range |
-|----------|-------|-----------|---------------|
-| **Familiarise** | Multi-modal (sessions, subscriptions, webinars, classes) | TBD | Flexible |
-| **Topmate** | Commission-based | 5% + tx fees | $10 - $500/session |
-| **Preplaced** | Subscription | Platform fee | ₹2,500 - ₹7,500/mo |
-| **Metvy** | Cohort-based | Unknown | Unknown |
-| **upGrad** | Premium courses | 100% (owned) | ₹50K - ₹5L |
-| **ProPeers** | Session + Bootcamp | Unknown | Variable |
-| **GrowthSchool** | Subscription + Programs | 100% (owned) | ₹5K - ₹70K |
+| Platform         | Model                                                    | Take Rate    | Pricing Range      |
+| ---------------- | -------------------------------------------------------- | ------------ | ------------------ |
+| **Familiarise**  | Multi-modal (sessions, subscriptions, webinars, classes) | TBD          | Flexible           |
+| **Topmate**      | Commission-based                                         | 5% + tx fees | $10 - $500/session |
+| **Preplaced**    | Subscription                                             | Platform fee | ₹2,500 - ₹7,500/mo |
+| **Metvy**        | Cohort-based                                             | Unknown      | Unknown            |
+| **upGrad**       | Premium courses                                          | 100% (owned) | ₹50K - ₹5L         |
+| **ProPeers**     | Session + Bootcamp                                       | Unknown      | Variable           |
+| **GrowthSchool** | Subscription + Programs                                  | 100% (owned) | ₹5K - ₹70K         |
 
 ### 3.2 Familiarise Revenue Model Advantages
 
@@ -248,12 +260,12 @@ Familiarise operates in the **expert services marketplace / EdTech** space, comp
 
 ### 3.3 Monetization Recommendations
 
-| Strategy | Expected Impact | Implementation Effort |
-|----------|-----------------|----------------------|
-| Set commission at **10-15%** (undercut competitors) | High user acquisition | Low |
-| Add **freemium tier** for discovery | User growth | Medium |
-| Introduce **instant payouts** (like Topmate) | Expert satisfaction | Medium |
-| **B2B/Enterprise** tier | High-value contracts | High |
+| Strategy                                            | Expected Impact       | Implementation Effort |
+| --------------------------------------------------- | --------------------- | --------------------- |
+| Set commission at **10-15%** (undercut competitors) | High user acquisition | Low                   |
+| Add **freemium tier** for discovery                 | User growth           | Medium                |
+| Introduce **instant payouts** (like Topmate)        | Expert satisfaction   | Medium                |
+| **B2B/Enterprise** tier                             | High-value contracts  | High                  |
 
 ---
 
@@ -280,6 +292,7 @@ Familiarise operates in the **expert services marketplace / EdTech** space, comp
 ```
 
 ### Familiarise Target Position: **Premium Marketplace**
+
 - More comprehensive than Topmate (multi-modal)
 - More flexible than Preplaced (not just long-term)
 - More accessible than upGrad (not degree-focused)
@@ -290,6 +303,7 @@ Familiarise operates in the **expert services marketplace / EdTech** space, comp
 ## 5. SWOT Analysis for Familiarise
 
 ### Strengths
+
 - **Modern tech stack** (Next.js 15, latest React)
 - **Integrated real-time** (Stream.io video + chat)
 - **Multi-modal offerings** (4 service types)
@@ -298,6 +312,7 @@ Familiarise operates in the **expert services marketplace / EdTech** space, comp
 - **Multi-payment gateway** (Stripe + Razorpay)
 
 ### Weaknesses
+
 - **Early stage** - Limited user base
 - **No mobile app** - Missing mobile-first users
 - **No AI features** - Competitors have AI
@@ -305,6 +320,7 @@ Familiarise operates in the **expert services marketplace / EdTech** space, comp
 - **No job placement** - upGrad/Preplaced offer this
 
 ### Opportunities
+
 - **Niche down** - Focus on specific verticals
 - **AI integration** - Expert matching, personalized recommendations
 - **Corporate training** - B2B market (upGrad direction)
@@ -312,6 +328,7 @@ Familiarise operates in the **expert services marketplace / EdTech** space, comp
 - **Community features** - Build retention like ProPeers
 
 ### Threats
+
 - **Well-funded competitors** - Topmate ($1.13M), upGrad ($782M)
 - **Market saturation** - Many players in India EdTech
 - **Price pressure** - Race to bottom on commissions
@@ -323,33 +340,33 @@ Familiarise operates in the **expert services marketplace / EdTech** space, comp
 
 ### 6.1 Immediate Priorities (0-3 months)
 
-| Priority | Action | Rationale |
-|----------|--------|-----------|
-| **1** | **Launch AI-powered expert matching** | Metvy, upGrad, GrowthSchool all have AI; table stakes now |
-| **2** | **Add WhatsApp integration** | Topmate's key differentiator; critical for India market |
-| **3** | **Implement instant payouts** | Topmate offers this; experts prefer immediate access |
-| **4** | **Create mobile PWA** | Faster than native app; ProPeers is mobile-first |
-| **5** | **Set competitive commission (8-10%)** | Undercut Topmate's 15% effective rate |
+| Priority | Action                                 | Rationale                                                 |
+| -------- | -------------------------------------- | --------------------------------------------------------- |
+| **1**    | **Launch AI-powered expert matching**  | Metvy, upGrad, GrowthSchool all have AI; table stakes now |
+| **2**    | **Add WhatsApp integration**           | Topmate's key differentiator; critical for India market   |
+| **3**    | **Implement instant payouts**          | Topmate offers this; experts prefer immediate access      |
+| **4**    | **Create mobile PWA**                  | Faster than native app; ProPeers is mobile-first          |
+| **5**    | **Set competitive commission (8-10%)** | Undercut Topmate's 15% effective rate                     |
 
 ### 6.2 Medium-term Priorities (3-6 months)
 
-| Priority | Action | Rationale |
-|----------|--------|-----------|
-| **6** | **Build community features** | ProPeers, GrowthSchool have strong communities |
-| **7** | **Add certification system** | Preplaced, upGrad offer certificates; builds credibility |
-| **8** | **Implement referral program** | Topmate grew via expert referrals |
-| **9** | **Launch native mobile apps** | iOS + Android for full mobile coverage |
-| **10** | **Add cohort-based learning** | GrowthSchool, Metvy model works well |
+| Priority | Action                         | Rationale                                                |
+| -------- | ------------------------------ | -------------------------------------------------------- |
+| **6**    | **Build community features**   | ProPeers, GrowthSchool have strong communities           |
+| **7**    | **Add certification system**   | Preplaced, upGrad offer certificates; builds credibility |
+| **8**    | **Implement referral program** | Topmate grew via expert referrals                        |
+| **9**    | **Launch native mobile apps**  | iOS + Android for full mobile coverage                   |
+| **10**   | **Add cohort-based learning**  | GrowthSchool, Metvy model works well                     |
 
 ### 6.3 Long-term Priorities (6-12 months)
 
-| Priority | Action | Rationale |
-|----------|--------|-----------|
-| **11** | **B2B corporate platform** | upGrad acquired Harappa for this; high LTV |
-| **12** | **Job placement partnerships** | upGrad has 4,500+ hiring partners |
-| **13** | **University partnerships** | For accredited programs |
-| **14** | **International localization** | Multi-language, multi-currency |
-| **15** | **AI content generation** | GrowthSchool uses Gen AI for content |
+| Priority | Action                         | Rationale                                  |
+| -------- | ------------------------------ | ------------------------------------------ |
+| **11**   | **B2B corporate platform**     | upGrad acquired Harappa for this; high LTV |
+| **12**   | **Job placement partnerships** | upGrad has 4,500+ hiring partners          |
+| **13**   | **University partnerships**    | For accredited programs                    |
+| **14**   | **International localization** | Multi-language, multi-currency             |
+| **15**   | **AI content generation**      | GrowthSchool uses Gen AI for content       |
 
 ---
 
@@ -357,30 +374,30 @@ Familiarise operates in the **expert services marketplace / EdTech** space, comp
 
 ### Features Familiarise Has (Advantages)
 
-| Feature | Familiarise | Topmate | Preplaced | upGrad | GrowthSchool |
-|---------|:-----------:|:-------:|:---------:|:------:|:------------:|
-| 1:1 Consultations | ✅ | ✅ | ✅ | ❌ | ❌ |
-| Subscriptions | ✅ | ❌ | ✅ | ❌ | ✅ |
-| Webinars | ✅ | ✅ | ❌ | ✅ | ✅ |
-| Multi-week Classes | ✅ | ❌ | ✅ | ✅ | ✅ |
-| Integrated Video | ✅ | ❌ | ❌ | ✅ | ❌ |
-| Integrated Chat | ✅ | ❌ | ❌ | ✅ | ❌ |
-| Document Review | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Multi-gateway Payments | ✅ | ✅ | ❌ | ✅ | ❌ |
-| Request Approval Flow | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Feature                | Familiarise | Topmate | Preplaced | upGrad | GrowthSchool |
+| ---------------------- | :---------: | :-----: | :-------: | :----: | :----------: |
+| 1:1 Consultations      |     ✅      |   ✅    |    ✅     |   ❌   |      ❌      |
+| Subscriptions          |     ✅      |   ❌    |    ✅     |   ❌   |      ✅      |
+| Webinars               |     ✅      |   ✅    |    ❌     |   ✅   |      ✅      |
+| Multi-week Classes     |     ✅      |   ❌    |    ✅     |   ✅   |      ✅      |
+| Integrated Video       |     ✅      |   ❌    |    ❌     |   ✅   |      ❌      |
+| Integrated Chat        |     ✅      |   ❌    |    ❌     |   ✅   |      ❌      |
+| Document Review        |     ✅      |   ❌    |    ❌     |   ❌   |      ❌      |
+| Multi-gateway Payments |     ✅      |   ✅    |    ❌     |   ✅   |      ❌      |
+| Request Approval Flow  |     ✅      |   ❌    |    ❌     |   ❌   |      ❌      |
 
 ### Features Familiarise Needs (Gaps)
 
-| Feature | Familiarise | Topmate | Preplaced | upGrad | GrowthSchool |
-|---------|:-----------:|:-------:|:---------:|:------:|:------------:|
-| Mobile App | ❌ | ❌ | ❌ | ✅ | ✅ |
-| AI Matching | ❌ | ✅ | ❌ | ✅ | ✅ |
-| WhatsApp Integration | ❌ | ✅ | ❌ | ❌ | ❌ |
-| Job Placement | ❌ | ❌ | ✅ | ✅ | ❌ |
-| Certification | ❌ | ❌ | ✅ | ✅ | ✅ |
-| Community Groups | ❌ | ❌ | ❌ | ✅ | ✅ |
-| Instant Payouts | ❌ | ✅ | ❌ | N/A | N/A |
-| Hyperlocal Networking | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Feature               | Familiarise | Topmate | Preplaced | upGrad | GrowthSchool |
+| --------------------- | :---------: | :-----: | :-------: | :----: | :----------: |
+| Mobile App            |     ❌      |   ❌    |    ❌     |   ✅   |      ✅      |
+| AI Matching           |     ❌      |   ✅    |    ❌     |   ✅   |      ✅      |
+| WhatsApp Integration  |     ❌      |   ✅    |    ❌     |   ❌   |      ❌      |
+| Job Placement         |     ❌      |   ❌    |    ✅     |   ✅   |      ❌      |
+| Certification         |     ❌      |   ❌    |    ✅     |   ✅   |      ✅      |
+| Community Groups      |     ❌      |   ❌    |    ❌     |   ✅   |      ✅      |
+| Instant Payouts       |     ❌      |   ✅    |    ❌     |  N/A   |     N/A      |
+| Hyperlocal Networking |     ❌      |   ❌    |    ❌     |   ❌   |      ❌      |
 
 ---
 
@@ -400,22 +417,22 @@ Familiarise operates in the **expert services marketplace / EdTech** space, comp
 
 ### 8.3 Differentiation Message
 
-| vs. Competitor | Key Message |
-|----------------|-------------|
-| vs. Topmate | "More than just 1:1s - run your complete knowledge business" |
-| vs. Preplaced | "Flexibility without long-term commitment lock-in" |
-| vs. upGrad | "For independent experts, not universities" |
-| vs. GrowthSchool | "Real consulting, not just recorded content" |
+| vs. Competitor   | Key Message                                                  |
+| ---------------- | ------------------------------------------------------------ |
+| vs. Topmate      | "More than just 1:1s - run your complete knowledge business" |
+| vs. Preplaced    | "Flexibility without long-term commitment lock-in"           |
+| vs. upGrad       | "For independent experts, not universities"                  |
+| vs. GrowthSchool | "Real consulting, not just recorded content"                 |
 
 ### 8.4 Growth Tactics
 
-| Tactic | Channel | Expected Impact |
-|--------|---------|-----------------|
-| Expert referral program | Word of mouth | High |
-| LinkedIn creator partnerships | Social | Medium |
-| Free migration from Topmate | Direct outreach | High |
-| Content marketing (expert success stories) | Blog/SEO | Medium |
-| Twitter/X expert community | Social | Medium |
+| Tactic                                     | Channel         | Expected Impact |
+| ------------------------------------------ | --------------- | --------------- |
+| Expert referral program                    | Word of mouth   | High            |
+| LinkedIn creator partnerships              | Social          | Medium          |
+| Free migration from Topmate                | Direct outreach | High            |
+| Content marketing (expert success stories) | Blog/SEO        | Medium          |
+| Twitter/X expert community                 | Social          | Medium          |
 
 ---
 
@@ -453,6 +470,7 @@ Week 23-24: Advanced analytics for experts
 ## 10. Key Metrics to Track
 
 ### Growth Metrics
+
 - Monthly Active Experts (MAE)
 - Monthly Active Learners (MAL)
 - Gross Merchandise Value (GMV)
@@ -460,6 +478,7 @@ Week 23-24: Advanced analytics for experts
 - Sessions per Learner
 
 ### Engagement Metrics
+
 - Session completion rate
 - Repeat booking rate
 - Expert response time
@@ -467,6 +486,7 @@ Week 23-24: Advanced analytics for experts
 - Document review turnaround
 
 ### Financial Metrics
+
 - Take rate / Commission revenue
 - Average Transaction Value (ATV)
 - Customer Lifetime Value (CLV)
@@ -474,6 +494,7 @@ Week 23-24: Advanced analytics for experts
 - CAC payback period
 
 ### Competitive Metrics
+
 - Expert migration from competitors
 - Win rate vs. specific competitors
 - Feature parity score
@@ -484,18 +505,21 @@ Week 23-24: Advanced analytics for experts
 ## 11. Conclusion
 
 Familiarise has a **technically superior product** compared to most competitors, with:
+
 - Modern stack (Next.js 15, React 18)
 - Integrated real-time (Stream.io)
 - Multi-modal offerings (4 service types)
 - Robust payment handling (Stripe + Razorpay)
 
 The key challenges are:
+
 1. **Market awareness** - Need aggressive go-to-market
 2. **AI integration** - Table stakes now; must add
 3. **Mobile experience** - Critical for India market
 4. **Community building** - Key to retention
 
 **Recommended Focus:**
+
 1. **Short-term:** AI matching, WhatsApp, instant payouts
 2. **Medium-term:** Mobile app, community, certifications
 3. **Long-term:** B2B enterprise, job placement, international
@@ -507,23 +531,27 @@ With strategic execution on these priorities, Familiarise can carve out a unique
 ## Sources
 
 ### Topmate.io
+
 - [Topmate Official](https://topmate.io/)
 - [Topmate Pricing - Subscribed.FYI](https://subscribed.fyi/topmate/)
 - [Topmate Crunchbase](https://www.crunchbase.com/organization/topmate)
 - [Topmate Tracxn](https://tracxn.com/d/companies/topmate/__0feQnNqxu633GVIOYt_LQu9YkfyWhOqrZyDJy8IiSew)
 
 ### Preplaced.in
+
 - [Preplaced Official](https://www.preplaced.in/)
 - [Preplaced Mentorship Fees](https://www.preplaced.in/blog/preplaced-mentorship-fees)
 - [Preplaced Tracxn](https://tracxn.com/d/companies/preplaced/__JogXqLqmLuq-BdJgiLMyYaoLGPhkC-Sl_gCab-DtO4k/funding-and-investors)
 
 ### Metvy.com
+
 - [Metvy Official](https://www.metvy.com/)
 - [Metvy YourStory](https://yourstory.com/companies/metvy)
 - [Metvy Inc42](https://inc42.com/company/metvy/)
 - [Metvy Crunchbase](https://www.crunchbase.com/organization/metvy)
 
 ### upGrad.com
+
 - [upGrad Official](https://www.upgrad.com/)
 - [upGrad Learning Platform](https://www.upgrad.com/blog/upgrad-learning-platform/)
 - [upGrad Crunchbase](https://www.crunchbase.com/organization/upgrad/company_financials)
@@ -531,11 +559,13 @@ With strategic execution on these priorities, Familiarise can carve out a unique
 - [upGrad PitchBook](https://pitchbook.com/profiles/company/171784-45)
 
 ### ProPeers.in
+
 - [ProPeers Official](https://www.propeers.in/)
 - [ProPeers App Store](https://apps.apple.com/in/app/propeers/id6446427356)
 - [ProPeers Full-Time Mentorship](https://www.propeers.in/full-time-mentorship)
 
 ### GrowthSchool.io
+
 - [GrowthSchool Official](https://home.growthschool.io/)
 - [GrowthSchool About](https://home.growthschool.io/about-us)
 - [GrowthSchool Crunchbase](https://www.crunchbase.com/organization/growthschool)

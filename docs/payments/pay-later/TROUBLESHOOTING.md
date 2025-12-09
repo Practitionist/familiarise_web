@@ -7,6 +7,7 @@
 **Symptom**: Approval requests return 409 Conflict: "Another approval is in progress"
 
 **Possible Causes**:
+
 - Multiple concurrent approval attempts
 - Previous lock not released (rare with auto-expiry)
 - Redis connection issues
@@ -51,6 +52,7 @@ setTimeout(() => {
 ```
 
 **Prevention**:
+
 - Always use try-finally to release locks
 - Set appropriate TTL (30s default)
 - Monitor Redis health in Upstash console
@@ -62,6 +64,7 @@ setTimeout(() => {
 **Symptom**: Emails not being sent or received
 
 **Possible Causes**:
+
 - Missing RESEND_API_KEY environment variable
 - Invalid "from" email address (not verified in Resend)
 - Recipient email bounced/blocked
@@ -117,6 +120,7 @@ try {
 ```
 
 **Prevention**:
+
 - Configure Resend properly before deployment
 - Monitor email delivery rates
 - Implement retry logic for transient failures
@@ -129,6 +133,7 @@ try {
 **Symptom**: Payment links expire before 48 hours or don't expire
 
 **Possible Causes**:
+
 - Cleanup cron job not running
 - Incorrect expiry threshold calculation
 - System time/timezone issues
@@ -178,6 +183,7 @@ console.log("Expiry threshold:", expiryThreshold.toISOString());
 ```
 
 **Prevention**:
+
 - Monitor cron job execution in Vercel dashboard
 - Add alerts for cleanup failures
 - Test expiry logic with different timezones
@@ -190,6 +196,7 @@ console.log("Expiry threshold:", expiryThreshold.toISOString());
 **Symptom**: Multiple payment links generated for same request
 
 **Possible Causes**:
+
 - Redis lock not acquired (connection failure)
 - Transaction isolation level too low
 - Idempotency check not working
@@ -251,6 +258,7 @@ if (health !== "PONG") {
 ```
 
 **Prevention**:
+
 - Monitor Redis uptime (Upstash dashboard)
 - Always use Serializable transaction isolation
 - Implement UI-level debouncing
@@ -263,6 +271,7 @@ if (health !== "PONG") {
 **Symptom**: Payments succeed in Stripe but appointments not created
 
 **Possible Causes**:
+
 - Webhook signature verification failing
 - Missing/invalid metadata in payment intent
 - Database transaction errors
@@ -299,11 +308,7 @@ if (!webhookSecret) {
   throw new Error("STRIPE_WEBHOOK_SECRET not configured");
 }
 
-const event = stripe.webhooks.constructEvent(
-  rawBody,
-  signature,
-  webhookSecret
-);
+const event = stripe.webhooks.constructEvent(rawBody, signature, webhookSecret);
 
 // Solution 2: Validate metadata
 const { metadata } = event.data.object;
@@ -322,13 +327,14 @@ export const maxDuration = 10; // 10 seconds
 return NextResponse.json({ received: true });
 
 // Process asynchronously
-processWebhookAsync(event).catch(error => {
+processWebhookAsync(event).catch((error) => {
   console.error("Async webhook processing failed:", error);
   // Alert admin
 });
 ```
 
 **Prevention**:
+
 - Test webhooks in development with Stripe CLI
 - Monitor webhook delivery in Stripe dashboard
 - Set appropriate timeout limits
@@ -342,6 +348,7 @@ processWebhookAsync(event).catch(error => {
 **Symptom**: Dashboard shows stale payment status
 
 **Possible Causes**:
+
 - refetchOnWindowFocus disabled
 - staleTime set too high
 - Query keys not invalidated after mutations
@@ -355,8 +362,8 @@ processWebhookAsync(event).catch(error => {
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      refetchOnWindowFocus: true,  // Should be true
-      staleTime: 60 * 1000,        // 1 minute
+      refetchOnWindowFocus: true, // Should be true
+      staleTime: 60 * 1000, // 1 minute
     },
   },
 });
@@ -393,6 +400,7 @@ const mutation = useMutation({
 ```
 
 **Prevention**:
+
 - Configure React Query properly from start
 - Use consistent query keys
 - Invalidate queries after mutations
@@ -405,6 +413,7 @@ const mutation = useMutation({
 **Symptom**: "Transaction failed: could not serialize access"
 
 **Possible Causes**:
+
 - High concurrent approval requests
 - Long-running transactions
 - Complex queries with multiple joins
@@ -467,6 +476,7 @@ postgresql://user:pass@localhost:5432/db?connection_limit=50
 ```
 
 **Prevention**:
+
 - Keep transactions short
 - Fetch data efficiently (include all relations in one query)
 - Use appropriate isolation level (Serializable for approval flow)
@@ -476,16 +486,16 @@ postgresql://user:pass@localhost:5432/db?connection_limit=50
 
 ## Error Messages Reference
 
-| Error Message | Cause | Solution |
-|--------------|-------|----------|
-| "Another approval is in progress" | Lock already held | Wait 30s or retry |
-| "Email service not configured" | Missing RESEND_API_KEY | Add to .env file |
-| "Payment intent creation failed" | Stripe API error | Check Stripe dashboard |
-| "Transaction failed: serialization" | Concurrent updates | Retry automatically |
+| Error Message                           | Cause                  | Solution                     |
+| --------------------------------------- | ---------------------- | ---------------------------- |
+| "Another approval is in progress"       | Lock already held      | Wait 30s or retry            |
+| "Email service not configured"          | Missing RESEND_API_KEY | Add to .env file             |
+| "Payment intent creation failed"        | Stripe API error       | Check Stripe dashboard       |
+| "Transaction failed: serialization"     | Concurrent updates     | Retry automatically          |
 | "Webhook signature verification failed" | Invalid webhook secret | Update STRIPE_WEBHOOK_SECRET |
-| "Consultation not found" | Invalid ID | Check consultation exists |
-| "Lock acquisition timeout" | Redis unreachable | Check Upstash status |
-| "Payment link expired" | > 48 hours passed | Re-approve request |
+| "Consultation not found"                | Invalid ID             | Check consultation exists    |
+| "Lock acquisition timeout"              | Redis unreachable      | Check Upstash status         |
+| "Payment link expired"                  | > 48 hours passed      | Re-approve request           |
 
 ---
 
@@ -606,6 +616,7 @@ console.log(`[${requestId}] Approval completed`);
 **Scenario**: Cleanup job failed, hundreds of expired links
 
 **Procedure**:
+
 ```bash
 # 1. Manual cleanup trigger
 curl https://familiarise.com/api/cleanup/approval-payments
@@ -634,6 +645,7 @@ curl https://familiarise.com/api/cleanup/approval-payments
 **Scenario**: Upstash Redis is down
 
 **Immediate Actions**:
+
 ```typescript
 // 1. Disable distributed locking temporarily
 const LOCK_DISABLED = process.env.EMERGENCY_DISABLE_LOCKS === "true";
@@ -657,6 +669,7 @@ if (!LOCK_DISABLED) {
 **Scenario**: Resend API is down
 
 **Immediate Actions**:
+
 ```typescript
 // 1. Payment links still generated (don't block on email)
 // Emails are sent in try-catch, won't throw

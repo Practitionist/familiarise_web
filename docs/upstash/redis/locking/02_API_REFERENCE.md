@@ -52,10 +52,7 @@ import {
 } from "@/utils/appointmentlock";
 
 // Slot booking locks
-import {
-  lockSlotBooking,
-  unlockSlotBooking,
-} from "@/utils/appointmentlock";
+import { lockSlotBooking, unlockSlotBooking } from "@/utils/appointmentlock";
 
 // Event checkout locks
 import {
@@ -90,23 +87,23 @@ import { withCircuitBreaker, checkRedisHealth } from "@/lib/redis";
 
 ### Quick Reference
 
-| Function | Purpose | Default TTL | Returns |
-|----------|---------|-------------|---------|
-| `lockConsultationApproval` | Lock consultation approval | 60s | `ApprovalLock` |
-| `lockSubscriptionApproval` | Lock subscription approval | 60s | `ApprovalLock` |
-| `unlockApproval` | Release any approval lock | N/A | `void` |
-| `lockSlotBooking` | Lock time slot for booking | 60s | `ApprovalLock` |
-| `unlockSlotBooking` | Release slot booking lock | N/A | `void` |
-| `lockEventCheckout` | Lock event for checkout | 60s | `ApprovalLock` |
-| `unlockEventCheckout` | Release event checkout lock | N/A | `void` |
-| `acquireEventSlot` | Reserve slot (semaphore) | 5min | `EventSlotReservation \| null` |
-| `releaseEventSlot` | Release semaphore slot | N/A | `void` |
-| `confirmEventSlot` | Confirm slot after payment | N/A | `void` |
-| `getEventSlotCount` | Get current reservation count | N/A | `number` |
-| `extendLock` | Extend lock TTL (heartbeat) | +30s | `boolean` |
-| `lockAppointment` | Lock appointment (legacy) | 5min | `ApprovalLock` |
-| `unlockAppointment` | Release appointment lock | N/A | `void` |
-| `isAppointmentLocked` | Check appointment lock status | N/A | `boolean` |
+| Function                   | Purpose                       | Default TTL | Returns                        |
+| -------------------------- | ----------------------------- | ----------- | ------------------------------ |
+| `lockConsultationApproval` | Lock consultation approval    | 60s         | `ApprovalLock`                 |
+| `lockSubscriptionApproval` | Lock subscription approval    | 60s         | `ApprovalLock`                 |
+| `unlockApproval`           | Release any approval lock     | N/A         | `void`                         |
+| `lockSlotBooking`          | Lock time slot for booking    | 60s         | `ApprovalLock`                 |
+| `unlockSlotBooking`        | Release slot booking lock     | N/A         | `void`                         |
+| `lockEventCheckout`        | Lock event for checkout       | 60s         | `ApprovalLock`                 |
+| `unlockEventCheckout`      | Release event checkout lock   | N/A         | `void`                         |
+| `acquireEventSlot`         | Reserve slot (semaphore)      | 5min        | `EventSlotReservation \| null` |
+| `releaseEventSlot`         | Release semaphore slot        | N/A         | `void`                         |
+| `confirmEventSlot`         | Confirm slot after payment    | N/A         | `void`                         |
+| `getEventSlotCount`        | Get current reservation count | N/A         | `number`                       |
+| `extendLock`               | Extend lock TTL (heartbeat)   | +30s        | `boolean`                      |
+| `lockAppointment`          | Lock appointment (legacy)     | 5min        | `ApprovalLock`                 |
+| `unlockAppointment`        | Release appointment lock      | N/A         | `void`                         |
+| `isAppointmentLocked`      | Check appointment lock status | N/A         | `boolean`                      |
 
 ---
 
@@ -121,20 +118,21 @@ Acquires a distributed lock for preventing concurrent consultation approval atte
 ```typescript
 async function lockConsultationApproval(
   consultationId: string,
-  ttl: number = 60000
-): Promise<ApprovalLock>
+  ttl: number = 60000,
+): Promise<ApprovalLock>;
 ```
 
 #### Parameters
 
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `consultationId` | `string` | Yes | - | Unique consultation identifier (e.g., `"clx123abc"`) |
-| `ttl` | `number` | No | `60000` | Time-to-live in milliseconds (60 seconds default) |
+| Parameter        | Type     | Required | Default | Description                                          |
+| ---------------- | -------- | -------- | ------- | ---------------------------------------------------- |
+| `consultationId` | `string` | Yes      | -       | Unique consultation identifier (e.g., `"clx123abc"`) |
+| `ttl`            | `number` | No       | `60000` | Time-to-live in milliseconds (60 seconds default)    |
 
 #### Returns
 
 `Promise<ApprovalLock>` - Lock object containing:
+
 - `key`: Redis key (`"consultation-approval:clx123"`)
 - `value`: UUID for ownership verification
 - `ttl`: Effective TTL with drift protection (59400ms)
@@ -152,12 +150,15 @@ async function lockConsultationApproval(
 ##### Example 1: Basic Consultation Approval
 
 ```typescript
-import { lockConsultationApproval, unlockApproval } from "@/utils/appointmentlock";
+import {
+  lockConsultationApproval,
+  unlockApproval,
+} from "@/utils/appointmentlock";
 import { NextResponse } from "next/server";
 
 export async function PATCH(
   request: Request,
-  { params }: { params: { consultationId: string } }
+  { params }: { params: { consultationId: string } },
 ) {
   const { consultationId } = params;
   const { status } = await request.json();
@@ -182,7 +183,7 @@ export async function PATCH(
     // Lock acquisition failed
     return NextResponse.json(
       { error: "Another approval is in progress. Please try again." },
-      { status: 409 } // Conflict status code
+      { status: 409 }, // Conflict status code
     );
   } finally {
     // ✅ Always release lock (never throws)
@@ -194,6 +195,7 @@ export async function PATCH(
 ```
 
 **Expected Log Output**:
+
 ```json
 {"event":"lock_acquired","key":"consultation-approval:clx123","attempts":1,"duration_ms":78,"ttl":29700,"timestamp":"2025-11-29T12:34:56.789Z"}
 {"event":"lock_released","key":"consultation-approval:clx123","held_duration_ms":5058,"timestamp":"2025-11-29T12:35:01.847Z"}
@@ -210,6 +212,7 @@ lock = await lockConsultationApproval(consultationId, 60000);
 ```
 
 **TTL Selection Rules**:
+
 - TTL ≥ max expected operation duration
 - Include 15-20% buffer for retries
 - Shorter TTL = less contention, but riskier
@@ -253,21 +256,24 @@ Acquires a distributed lock for preventing concurrent subscription approval atte
 ```typescript
 async function lockSubscriptionApproval(
   subscriptionId: string,
-  ttl: number = 60000
-): Promise<ApprovalLock>
+  ttl: number = 60000,
+): Promise<ApprovalLock>;
 ```
 
 #### Parameters
 
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `subscriptionId` | `string` | Yes | - | Unique subscription identifier |
-| `ttl` | `number` | No | `60000` | Time-to-live in milliseconds (60 seconds default) |
+| Parameter        | Type     | Required | Default | Description                                       |
+| ---------------- | -------- | -------- | ------- | ------------------------------------------------- |
+| `subscriptionId` | `string` | Yes      | -       | Unique subscription identifier                    |
+| `ttl`            | `number` | No       | `60000` | Time-to-live in milliseconds (60 seconds default) |
 
 #### Usage Example
 
 ```typescript
-import { lockSubscriptionApproval, unlockApproval } from "@/utils/appointmentlock";
+import {
+  lockSubscriptionApproval,
+  unlockApproval,
+} from "@/utils/appointmentlock";
 
 export async function approveSubscription(subscriptionId: string) {
   let lock;
@@ -296,14 +302,14 @@ Safely releases an approval lock with ownership verification. **Never throws** -
 #### Signature
 
 ```typescript
-async function unlockApproval(lock: ApprovalLock): Promise<void>
+async function unlockApproval(lock: ApprovalLock): Promise<void>;
 ```
 
 #### Parameters
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `lock` | `ApprovalLock` | Yes | Lock object returned from `lockConsultationApproval` or `lockSubscriptionApproval` |
+| Parameter | Type           | Required | Description                                                                        |
+| --------- | -------------- | -------- | ---------------------------------------------------------------------------------- |
+| `lock`    | `ApprovalLock` | Yes      | Lock object returned from `lockConsultationApproval` or `lockSubscriptionApproval` |
 
 #### Behavior
 
@@ -371,17 +377,17 @@ Acquires a distributed lock for preventing double-booking of time slots during c
 async function lockSlotBooking(
   consultantProfileId: string,
   slotStartTimeInUTC: string,
-  ttl: number = 60000
-): Promise<ApprovalLock>
+  ttl: number = 60000,
+): Promise<ApprovalLock>;
 ```
 
 #### Parameters
 
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `consultantProfileId` | `string` | Yes | - | The consultant's profile ID |
-| `slotStartTimeInUTC` | `string` | Yes | - | Slot start time in ISO format (e.g., `"2025-01-15T10:00:00.000Z"`) |
-| `ttl` | `number` | No | `60000` | Time-to-live in milliseconds (60 seconds default) |
+| Parameter             | Type     | Required | Default | Description                                                        |
+| --------------------- | -------- | -------- | ------- | ------------------------------------------------------------------ |
+| `consultantProfileId` | `string` | Yes      | -       | The consultant's profile ID                                        |
+| `slotStartTimeInUTC`  | `string` | Yes      | -       | Slot start time in ISO format (e.g., `"2025-01-15T10:00:00.000Z"`) |
+| `ttl`                 | `number` | No       | `60000` | Time-to-live in milliseconds (60 seconds default)                  |
 
 #### Throws
 
@@ -394,7 +400,7 @@ import { lockSlotBooking, unlockSlotBooking } from "@/utils/appointmentlock";
 
 async function createConsultationBooking(
   consultantProfileId: string,
-  slotTime: string
+  slotTime: string,
 ) {
   let lock;
   try {
@@ -407,7 +413,10 @@ async function createConsultationBooking(
     return { success: true };
   } catch (error) {
     if (error.name === "SlotLockError") {
-      return { error: "This slot is being booked by another user", status: 409 };
+      return {
+        error: "This slot is being booked by another user",
+        status: 409,
+      };
     }
     throw error;
   } finally {
@@ -425,7 +434,7 @@ Releases a slot booking lock. Identical to `unlockApproval()`.
 #### Signature
 
 ```typescript
-async function unlockSlotBooking(lock: ApprovalLock): Promise<void>
+async function unlockSlotBooking(lock: ApprovalLock): Promise<void>;
 ```
 
 ---
@@ -442,22 +451,25 @@ Acquires a distributed lock for preventing concurrent event checkout attempts. U
 async function lockEventCheckout(
   appointmentType: string,
   eventOrPlanId: string,
-  ttl: number = 60000
-): Promise<ApprovalLock>
+  ttl: number = 60000,
+): Promise<ApprovalLock>;
 ```
 
 #### Parameters
 
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `appointmentType` | `string` | Yes | - | Type of appointment (`"WEBINAR"`, `"CLASS"`, `"SUBSCRIPTION"`) |
-| `eventOrPlanId` | `string` | Yes | - | Event ID or subscription plan ID |
-| `ttl` | `number` | No | `60000` | Time-to-live in milliseconds (60 seconds default) |
+| Parameter         | Type     | Required | Default | Description                                                    |
+| ----------------- | -------- | -------- | ------- | -------------------------------------------------------------- |
+| `appointmentType` | `string` | Yes      | -       | Type of appointment (`"WEBINAR"`, `"CLASS"`, `"SUBSCRIPTION"`) |
+| `eventOrPlanId`   | `string` | Yes      | -       | Event ID or subscription plan ID                               |
+| `ttl`             | `number` | No       | `60000` | Time-to-live in milliseconds (60 seconds default)              |
 
 #### Usage Example
 
 ```typescript
-import { lockEventCheckout, unlockEventCheckout } from "@/utils/appointmentlock";
+import {
+  lockEventCheckout,
+  unlockEventCheckout,
+} from "@/utils/appointmentlock";
 
 async function checkoutWebinar(webinarId: string) {
   let lock;
@@ -486,7 +498,7 @@ Releases an event checkout lock. Identical to `unlockApproval()`.
 #### Signature
 
 ```typescript
-async function unlockEventCheckout(lock: ApprovalLock): Promise<void>
+async function unlockEventCheckout(lock: ApprovalLock): Promise<void>;
 ```
 
 ---
@@ -506,18 +518,18 @@ async function acquireEventSlot(
   eventType: string,
   eventId: string,
   maxParticipants: number,
-  ttl: number = 300000
-): Promise<EventSlotReservation | null>
+  ttl: number = 300000,
+): Promise<EventSlotReservation | null>;
 ```
 
 #### Parameters
 
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `eventType` | `string` | Yes | - | Type of event (`"WEBINAR"`, `"CLASS"`) |
-| `eventId` | `string` | Yes | - | Unique event identifier |
-| `maxParticipants` | `number` | Yes | - | Maximum concurrent reservations allowed |
-| `ttl` | `number` | No | `300000` | Reservation TTL in ms (5 minutes for payment completion) |
+| Parameter         | Type     | Required | Default  | Description                                              |
+| ----------------- | -------- | -------- | -------- | -------------------------------------------------------- |
+| `eventType`       | `string` | Yes      | -        | Type of event (`"WEBINAR"`, `"CLASS"`)                   |
+| `eventId`         | `string` | Yes      | -        | Unique event identifier                                  |
+| `maxParticipants` | `number` | Yes      | -        | Maximum concurrent reservations allowed                  |
+| `ttl`             | `number` | No       | `300000` | Reservation TTL in ms (5 minutes for payment completion) |
 
 #### Returns
 
@@ -572,8 +584,8 @@ Releases an event slot reservation. Decrements the counter to allow another user
 
 ```typescript
 async function releaseEventSlot(
-  reservation: EventSlotReservation
-): Promise<void>
+  reservation: EventSlotReservation,
+): Promise<void>;
 ```
 
 ---
@@ -586,8 +598,8 @@ Confirms an event slot after successful payment. Removes reservation tracking bu
 
 ```typescript
 async function confirmEventSlot(
-  reservation: EventSlotReservation
-): Promise<void>
+  reservation: EventSlotReservation,
+): Promise<void>;
 ```
 
 ---
@@ -601,8 +613,8 @@ Returns the current number of reservations for an event.
 ```typescript
 async function getEventSlotCount(
   eventType: string,
-  eventId: string
-): Promise<number>
+  eventId: string,
+): Promise<number>;
 ```
 
 #### Usage Example
@@ -636,16 +648,16 @@ Extends a lock's TTL using the heartbeat pattern. Call periodically during long 
 ```typescript
 async function extendLock(
   lock: ApprovalLock,
-  additionalTtl: number = 30000
-): Promise<boolean>
+  additionalTtl: number = 30000,
+): Promise<boolean>;
 ```
 
 #### Parameters
 
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `lock` | `ApprovalLock` | Yes | - | The lock to extend |
-| `additionalTtl` | `number` | No | `30000` | Additional TTL to add (30 seconds default) |
+| Parameter       | Type           | Required | Default | Description                                |
+| --------------- | -------------- | -------- | ------- | ------------------------------------------ |
+| `lock`          | `ApprovalLock` | Yes      | -       | The lock to extend                         |
+| `additionalTtl` | `number`       | No       | `30000` | Additional TTL to add (30 seconds default) |
 
 #### Returns
 
@@ -700,16 +712,16 @@ Acquires a distributed lock for appointment booking. **Legacy API** - use approv
 ```typescript
 async function lockAppointment(
   appointmentId: string,
-  ttl: number = 300000
-): Promise<ApprovalLock>
+  ttl: number = 300000,
+): Promise<ApprovalLock>;
 ```
 
 #### Parameters
 
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `appointmentId` | `string` | Yes | - | Unique appointment identifier |
-| `ttl` | `number` | No | `300000` | Time-to-live in milliseconds (5 minutes default) |
+| Parameter       | Type     | Required | Default  | Description                                      |
+| --------------- | -------- | -------- | -------- | ------------------------------------------------ |
+| `appointmentId` | `string` | Yes      | -        | Unique appointment identifier                    |
+| `ttl`           | `number` | No       | `300000` | Time-to-live in milliseconds (5 minutes default) |
 
 #### Usage Example
 
@@ -747,7 +759,7 @@ Releases an appointment lock. Identical to `unlockApproval()` - kept for API con
 #### Signature
 
 ```typescript
-async function unlockAppointment(lock: ApprovalLock): Promise<void>
+async function unlockAppointment(lock: ApprovalLock): Promise<void>;
 ```
 
 ---
@@ -759,16 +771,14 @@ Checks if an appointment is currently locked without acquiring the lock.
 #### Signature
 
 ```typescript
-async function isAppointmentLocked(
-  appointmentId: string
-): Promise<boolean>
+async function isAppointmentLocked(appointmentId: string): Promise<boolean>;
 ```
 
 #### Parameters
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `appointmentId` | `string` | Yes | Unique appointment identifier |
+| Parameter       | Type     | Required | Description                   |
+| --------------- | -------- | -------- | ----------------------------- |
+| `appointmentId` | `string` | Yes      | Unique appointment identifier |
 
 #### Returns
 
@@ -809,7 +819,7 @@ async function canBookAppointment(appointmentId: string): Promise<boolean> {
 ```typescript
 async function waitForAppointmentAvailability(
   appointmentId: string,
-  timeoutMs: number = 30000
+  timeoutMs: number = 30000,
 ): Promise<boolean> {
   const startTime = Date.now();
   const pollInterval = 1000; // Check every second
@@ -848,23 +858,23 @@ async function getAppointmentStatus(appointmentId: string) {
 
 ```typescript
 export interface ApprovalLock {
-  key: string;        // Redis key for the lock
-  value: string;      // UUID for ownership verification
-  ttl: number;        // Effective TTL in milliseconds
+  key: string; // Redis key for the lock
+  value: string; // UUID for ownership verification
+  ttl: number; // Effective TTL in milliseconds
   acquiredAt: number; // Unix timestamp when acquired
-  client: Redis;      // Upstash Redis client reference
+  client: Redis; // Upstash Redis client reference
 }
 ```
 
 #### Properties
 
-| Property | Type | Description | Example |
-|----------|------|-------------|---------|
-| `key` | `string` | Redis key following naming convention | `"consultation-approval:clx123"` |
-| `value` | `string` | Cryptographically random UUID for safe release | `"a3f2b8c1-4d5e-6f7g-8h9i-0j1k2l3m4n5o"` |
-| `ttl` | `number` | Effective TTL with clock drift protection (ms) | `59400` (60000ms - 1% drift) |
-| `acquiredAt` | `number` | Unix timestamp in milliseconds | `1701259896789` |
-| `client` | `Redis` | Upstash Redis client for release operations | `Redis { ... }` |
+| Property     | Type     | Description                                    | Example                                  |
+| ------------ | -------- | ---------------------------------------------- | ---------------------------------------- |
+| `key`        | `string` | Redis key following naming convention          | `"consultation-approval:clx123"`         |
+| `value`      | `string` | Cryptographically random UUID for safe release | `"a3f2b8c1-4d5e-6f7g-8h9i-0j1k2l3m4n5o"` |
+| `ttl`        | `number` | Effective TTL with clock drift protection (ms) | `59400` (60000ms - 1% drift)             |
+| `acquiredAt` | `number` | Unix timestamp in milliseconds                 | `1701259896789`                          |
+| `client`     | `Redis`  | Upstash Redis client for release operations    | `Redis { ... }`                          |
 
 #### Usage
 
@@ -872,10 +882,10 @@ export interface ApprovalLock {
 // Lock object returned from acquisition functions
 const lock: ApprovalLock = await lockConsultationApproval("clx123");
 
-console.log(lock.key);         // "consultation-approval:clx123"
-console.log(lock.value);       // "a3f2b8c1-..."
-console.log(lock.ttl);         // 59400
-console.log(lock.acquiredAt);  // 1701259896789
+console.log(lock.key); // "consultation-approval:clx123"
+console.log(lock.value); // "a3f2b8c1-..."
+console.log(lock.ttl); // 59400
+console.log(lock.acquiredAt); // 1701259896789
 
 // Used for safe release
 await unlockApproval(lock);
@@ -887,23 +897,23 @@ await unlockApproval(lock);
 
 ```typescript
 export interface LockRetryConfig {
-  retryCount: number;           // Number of retry attempts
-  retryDelay: number;           // Base delay in milliseconds
-  retryJitter: number;          // Random jitter in milliseconds
-  exponentialBackoff: boolean;  // Use exponential backoff
-  driftFactor: number;          // Clock drift factor
+  retryCount: number; // Number of retry attempts
+  retryDelay: number; // Base delay in milliseconds
+  retryJitter: number; // Random jitter in milliseconds
+  exponentialBackoff: boolean; // Use exponential backoff
+  driftFactor: number; // Clock drift factor
 }
 ```
 
 #### Properties
 
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| `retryCount` | `number` | `10` | Number of retry attempts (total attempts = retryCount + 1) |
-| `retryDelay` | `number` | `200` | Base delay in milliseconds between retries |
-| `retryJitter` | `number` | `200` | Random jitter (0-200ms) added to each retry |
-| `exponentialBackoff` | `boolean` | `true` | Use exponential backoff (2^attempt) |
-| `driftFactor` | `number` | `0.01` | TTL reduction factor (1% safety margin) |
+| Property             | Type      | Default | Description                                                |
+| -------------------- | --------- | ------- | ---------------------------------------------------------- |
+| `retryCount`         | `number`  | `10`    | Number of retry attempts (total attempts = retryCount + 1) |
+| `retryDelay`         | `number`  | `200`   | Base delay in milliseconds between retries                 |
+| `retryJitter`        | `number`  | `200`   | Random jitter (0-200ms) added to each retry                |
+| `exponentialBackoff` | `boolean` | `true`  | Use exponential backoff (2^attempt)                        |
+| `driftFactor`        | `number`  | `0.01`  | TTL reduction factor (1% safety margin)                    |
 
 #### Retry Delay Calculation
 
@@ -917,13 +927,13 @@ const delay = exponentialBackoff
 #### Retry Delay Examples
 
 | Attempt | Base Delay (exponential) | Jitter (0-200ms) | Total Range |
-|---------|--------------------------|------------------|-------------|
-| 0 | 200ms × 2^0 = 200ms | 0-200ms | 200-400ms |
-| 1 | 200ms × 2^1 = 400ms | 0-200ms | 400-600ms |
-| 2 | 200ms × 2^2 = 800ms | 0-200ms | 800-1000ms |
-| 3 | 200ms × 2^3 = 1600ms | 0-200ms | 1600-1800ms |
-| 4 | 200ms × 2^4 = 3200ms | 0-200ms | 3200-3400ms |
-| 5 | 200ms × 2^5 = 6400ms | 0-200ms | 6400-6600ms |
+| ------- | ------------------------ | ---------------- | ----------- |
+| 0       | 200ms × 2^0 = 200ms      | 0-200ms          | 200-400ms   |
+| 1       | 200ms × 2^1 = 400ms      | 0-200ms          | 400-600ms   |
+| 2       | 200ms × 2^2 = 800ms      | 0-200ms          | 800-1000ms  |
+| 3       | 200ms × 2^3 = 1600ms     | 0-200ms          | 1600-1800ms |
+| 4       | 200ms × 2^4 = 3200ms     | 0-200ms          | 3200-3400ms |
+| 5       | 200ms × 2^5 = 6400ms     | 0-200ms          | 6400-6600ms |
 
 **Total Time (10 retries)**: ~30-35 seconds
 
@@ -933,21 +943,21 @@ const delay = exponentialBackoff
 
 ```typescript
 export interface EventSlotReservation {
-  reservationId: string;  // Unique reservation UUID
-  slotNumber: number;     // Slot number (1 to maxParticipants)
-  eventType: string;      // Event type (WEBINAR, CLASS)
-  eventId: string;        // Event identifier
+  reservationId: string; // Unique reservation UUID
+  slotNumber: number; // Slot number (1 to maxParticipants)
+  eventType: string; // Event type (WEBINAR, CLASS)
+  eventId: string; // Event identifier
 }
 ```
 
 #### Properties
 
-| Property | Type | Description | Example |
-|----------|------|-------------|---------|
-| `reservationId` | `string` | Unique UUID for this reservation | `"a3f2b8c1-4d5e-..."` |
-| `slotNumber` | `number` | Slot number in the semaphore (1 to max) | `5` |
-| `eventType` | `string` | Type of event being reserved | `"WEBINAR"` |
-| `eventId` | `string` | Unique event identifier | `"clx123abc"` |
+| Property        | Type     | Description                             | Example               |
+| --------------- | -------- | --------------------------------------- | --------------------- |
+| `reservationId` | `string` | Unique UUID for this reservation        | `"a3f2b8c1-4d5e-..."` |
+| `slotNumber`    | `number` | Slot number in the semaphore (1 to max) | `5`                   |
+| `eventType`     | `string` | Type of event being reserved            | `"WEBINAR"`           |
+| `eventId`       | `string` | Unique event identifier                 | `"clx123abc"`         |
 
 #### Usage
 
@@ -956,10 +966,10 @@ export interface EventSlotReservation {
 const reservation = await acquireEventSlot("WEBINAR", "web123", 50);
 
 if (reservation) {
-  console.log(reservation.reservationId);  // "a3f2b8c1-..."
-  console.log(reservation.slotNumber);     // 5
-  console.log(reservation.eventType);      // "WEBINAR"
-  console.log(reservation.eventId);        // "web123"
+  console.log(reservation.reservationId); // "a3f2b8c1-..."
+  console.log(reservation.slotNumber); // 5
+  console.log(reservation.eventType); // "WEBINAR"
+  console.log(reservation.eventId); // "web123"
 
   // On success: confirm the slot
   await confirmEventSlot(reservation);
@@ -997,8 +1007,13 @@ The application validates environment variables at startup:
 
 ```typescript
 // lib/redis.ts
-if (!process.env.UPSTASH_REDIS_REST_URL || !process.env.UPSTASH_REDIS_REST_TOKEN) {
-  throw new Error("UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN must be set");
+if (
+  !process.env.UPSTASH_REDIS_REST_URL ||
+  !process.env.UPSTASH_REDIS_REST_TOKEN
+) {
+  throw new Error(
+    "UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN must be set",
+  );
 }
 ```
 
@@ -1037,14 +1052,14 @@ Redis Namespace
 
 ### TTL Defaults
 
-| Lock Type | Default TTL | Effective TTL (after drift) | Use Case |
-|-----------|-------------|----------------------------|----------|
-| Consultation Approval | 60 seconds | 59.4 seconds | Payment link generation |
-| Subscription Approval | 60 seconds | 59.4 seconds | Subscription processing |
-| Slot Booking | 60 seconds | 59.4 seconds | Time slot allocation |
-| Event Checkout | 60 seconds | 59.4 seconds | Webinar/class checkout |
-| Event Slot (Semaphore) | 5 minutes | 4.95 minutes | Multi-participant payment window |
-| Appointment Lock (Legacy) | 5 minutes | 4.95 minutes | Complex time slot allocation |
+| Lock Type                 | Default TTL | Effective TTL (after drift) | Use Case                         |
+| ------------------------- | ----------- | --------------------------- | -------------------------------- |
+| Consultation Approval     | 60 seconds  | 59.4 seconds                | Payment link generation          |
+| Subscription Approval     | 60 seconds  | 59.4 seconds                | Subscription processing          |
+| Slot Booking              | 60 seconds  | 59.4 seconds                | Time slot allocation             |
+| Event Checkout            | 60 seconds  | 59.4 seconds                | Webinar/class checkout           |
+| Event Slot (Semaphore)    | 5 minutes   | 4.95 minutes                | Multi-participant payment window |
+| Appointment Lock (Legacy) | 5 minutes   | 4.95 minutes                | Complex time slot allocation     |
 
 #### TTL Selection Guidelines
 
@@ -1054,6 +1069,7 @@ Redis Namespace
 4. **Consider clock drift** (1% reduction applied automatically)
 
 **Examples**:
+
 - Operation takes 8-12s → Use 15s TTL
 - Operation takes 30-40s → Use 60s TTL (default)
 - Operation takes 60-90s → Use 120s TTL + lock extension
@@ -1064,8 +1080,8 @@ Redis Namespace
 
 ```typescript
 // Automatic TTL adjustment
-const requestedTTL = 60000;  // 60 seconds
-const driftFactor = 0.01;    // 1% safety margin
+const requestedTTL = 60000; // 60 seconds
+const driftFactor = 0.01; // 1% safety margin
 const effectiveTTL = Math.floor(requestedTTL * (1 - driftFactor));
 // effectiveTTL = 59400ms (59.4 seconds)
 ```
@@ -1124,7 +1140,7 @@ try {
       message: "Please try again in a few seconds",
       retryAfter: 3,
     },
-    { status: 409 }
+    { status: 409 },
   );
 }
 ```

@@ -40,8 +40,14 @@ interface CategorySummary {
   tests: TestResult[];
 }
 
-async function discoverTests(filterCategory?: string, filterTest?: string): Promise<TestFile[]> {
-  const scenariosDir = path.join(process.cwd(), "tests/typescript/race-conditions/scenarios");
+async function discoverTests(
+  filterCategory?: string,
+  filterTest?: string,
+): Promise<TestFile[]> {
+  const scenariosDir = path.join(
+    process.cwd(),
+    "tests/typescript/race-conditions/scenarios",
+  );
   const tests: TestFile[] = [];
 
   const categories = await fs.readdir(scenariosDir);
@@ -299,16 +305,22 @@ async function main() {
   // Discover all tests
   console.log("📂 Discovering tests...");
   const tests = await discoverTests(filterCategory, filterTest);
-  console.log(`✅ Found ${tests.length} tests across ${new Set(tests.map(t => t.category)).size} categories\n`);
+  console.log(
+    `✅ Found ${tests.length} tests across ${new Set(tests.map((t) => t.category)).size} categories\n`,
+  );
 
   const masterStartTime = Date.now();
   let results: TestResult[] = [];
 
   if (mode === "sequential") {
-    console.log("⏳ Running tests sequentially (this will take 15-20 minutes)...\n");
+    console.log(
+      "⏳ Running tests sequentially (this will take 15-20 minutes)...\n",
+    );
     results = await runTestsSequentially(tests);
   } else {
-    console.log("⚡ Parallel mode not yet implemented. Falling back to sequential...\n");
+    console.log(
+      "⚡ Parallel mode not yet implemented. Falling back to sequential...\n",
+    );
     results = await runTestsSequentially(tests);
   }
 
