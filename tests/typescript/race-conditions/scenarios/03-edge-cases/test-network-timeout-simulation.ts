@@ -7,6 +7,11 @@
  *
  * This test validates that the system handles network latency variations
  * and doesn't fail under slow network conditions.
+ *
+ * Test Flow:
+ * 1. Two users try to book the same slot with different network delays
+ * 2. User 1 has 500ms network delay, User 2 has 1000ms
+ * 3. Despite delays, only one should successfully book
  */
 
 import {
@@ -34,8 +39,15 @@ import type {
   BookingResult,
 } from "../../utilities/types.js";
 
+/**
+ * Shared booking registry to track slots booked during this test
+ * This simulates the database state across concurrent requests
+ */
+const bookedSlots = new Map<string, string>();
+
 async function runTest() {
   resetBookingRegistry();
+  bookedSlots.clear(); // Clear local registry too
 
   const config: TestConfig = {
     testName: "Network Timeout Simulation",
@@ -65,7 +77,10 @@ async function runTest() {
 
   const startTime = Date.now();
 
-  // Simulate slow network requests
+  /**
+   * Simulate a slow network request with network delay before lock acquisition
+   * Uses the shared bookedSlots Map to track booking state across concurrent requests
+   */
   const simulateSlowRequest = async (
     userId: string,
     networkDelay: number,
@@ -79,11 +94,10 @@ async function runTest() {
 
       lock = await lockSlotBooking(consultantId, slot.start, 15000);
 
-      // Check if slot already booked
+      // Check if slot already booked using SHARED registry
       const slotKey = `${consultantId}:${slot.start}`;
-      const bookedSlots = new Map<string, string>(); // Simplified for this test
 
-      if (bookedSlots.get(slotKey)) {
+      if (bookedSlots.has(slotKey)) {
         return {
           userId,
           status: 409,
@@ -93,8 +107,10 @@ async function runTest() {
         };
       }
 
-      // Simulate processing time
+      // Simulate processing time (database write)
       await new Promise((resolve) => setTimeout(resolve, 150));
+
+      // Mark slot as booked in shared registry
       bookedSlots.set(slotKey, userId);
 
       return {

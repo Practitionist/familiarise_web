@@ -3,9 +3,18 @@
  * Category: 04 - Validation Scenarios
  *
  * Scenario: Attempt to book with malformed or empty consultant ID
- * Expected: System handles gracefully (may produce errors or specific behavior)
+ * Expected: Lock layer accepts any string keys (validation happens at API layer)
  *
- * This test validates input validation for consultant identifiers.
+ * This test validates that the lock layer handles arbitrary consultant IDs gracefully.
+ * Note: In production, the API would reject invalid IDs before reaching the lock layer.
+ * This test confirms the lock mechanism itself doesn't break on unusual inputs.
+ *
+ * Each consultant ID is unique, so each booking goes to a different "slot":
+ * - "":2025-12-16T11:00:00.000Z
+ * - "null":2025-12-16T11:00:00.000Z
+ * - "invalid-@#$%":2025-12-16T11:00:00.000Z
+ *
+ * Expected: 3 successes (each is a unique slot key)
  */
 
 import {
@@ -33,10 +42,12 @@ async function runTest() {
     category: "04-validation-scenarios",
     concurrentUsers: 3,
     slotTime: "",
-    consultantId: "invalid",
-    expectedSuccesses: 0,
+    consultantId: "various-invalid",
+    // Each request uses a different consultant ID, so each gets a unique lock key
+    // Lock layer doesn't validate - all 3 succeed with their own unique slots
+    expectedSuccesses: 3,
     expectedConflicts: 0,
-    expectedErrors: 3,
+    expectedErrors: 0,
   };
 
   const slot = generateTestSlot(7, 11, 0);
@@ -47,7 +58,8 @@ async function runTest() {
     Category: config.category,
     "Test Cases": "Empty string, null-like, malformed ID",
     "Slot Time": new Date(slot.start).toLocaleString(),
-    "Expected Outcome": "All requests should handle gracefully",
+    "Expected Outcome":
+      "All 3 succeed (different consultant IDs = different lock keys)",
   });
 
   const startTime = Date.now();
@@ -60,8 +72,8 @@ async function runTest() {
 
   const duration = Date.now() - startTime;
 
-  // For this test, we expect all to succeed with locking (validation is minimal in test)
-  // In production, API would reject these before reaching lock layer
+  // Lock layer accepts any string keys - validation happens at API layer in production
+  // Each consultant ID creates a unique lock key, so all 3 requests succeed
   const report = generateTestReport(config, results, duration);
   logTestResult(report);
 

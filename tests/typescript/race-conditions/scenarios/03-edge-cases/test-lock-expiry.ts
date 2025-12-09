@@ -7,6 +7,14 @@
  *
  * This test validates that locks don't permanently block slots if a
  * request hangs or times out.
+ *
+ * Test Flow:
+ * 1. User 1 acquires lock with 2s TTL but simulates a hang (doesn't book or release)
+ * 2. Wait 2.5s for lock to auto-expire
+ * 3. User 2 should be able to acquire lock and book successfully
+ *
+ * Expected: 1 success (User 2 books after lock expires)
+ * Note: User 1's hung request is tracked separately, not as a booking attempt
  */
 
 import {
@@ -40,10 +48,10 @@ async function runTest() {
   const config: TestConfig = {
     testName: "Lock Expiry Simulation",
     category: "03-edge-cases",
-    concurrentUsers: 2,
+    concurrentUsers: 1, // Only User 2 actually attempts to book (after lock expiry)
     slotTime: "",
     consultantId: "",
-    expectedSuccesses: 1,
+    expectedSuccesses: 1, // User 2 succeeds after lock expires
     expectedConflicts: 0,
     expectedErrors: 0,
   };
@@ -75,13 +83,15 @@ async function runTest() {
     // Simulate processing but DON'T unlock (testing auto-expiry)
     await new Promise((resolve) => setTimeout(resolve, 100));
 
-    results.push({
-      userId: user1,
-      status: 201,
-      duration: Date.now() - lock1Start,
-      timestamp: new Date().toISOString(),
-      data: { message: "Lock acquired but not released (simulating hang)" },
-    });
+    // User 1 simulates a hung request - they acquire the lock but never complete booking
+    // This is NOT a successful booking, just a lock acquisition for testing expiry
+    console.log(
+      `   🔒 User 1 acquired lock (will hold until expiry to simulate hang)`,
+    );
+    console.log(
+      `   ⏱️  Lock TTL: 2000ms, held for: ${Date.now() - lock1Start}ms`,
+    );
+    // Note: We don't push User 1's result as a booking attempt since they never booked
 
     // Wait for lock to expire
     console.log("   ⏳ Waiting 2.5s for lock to expire...");
