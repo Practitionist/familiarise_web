@@ -368,6 +368,9 @@ export async function saveJsonReport(
     "tests/typescript/race-conditions/results",
     filename,
   );
+  // Ensure directory exists
+  const dir = path.dirname(filepath);
+  await fs.mkdir(dir, { recursive: true });
   await fs.writeFile(filepath, JSON.stringify(report, null, 2), "utf-8");
   console.log(`📄 JSON report saved: ${filepath}`);
 }
@@ -386,6 +389,9 @@ export async function saveMarkdownReport(
     "tests/typescript/race-conditions/results/reports",
     filename,
   );
+  // Ensure directory exists
+  const dir = path.dirname(filepath);
+  await fs.mkdir(dir, { recursive: true });
   await fs.writeFile(filepath, content, "utf-8");
   console.log(`📄 Markdown report saved: ${filepath}`);
 }
