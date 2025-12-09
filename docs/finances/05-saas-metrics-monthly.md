@@ -374,7 +374,7 @@ ARPU = Total Revenue / Active Users
 
 ## Month-by-Month Tracking Template
 
-### Month: ****\_\_**** (Fill in)
+### Month: \***\*\_\_\*\*** (Fill in)
 
 #### Revenue Metrics
 
