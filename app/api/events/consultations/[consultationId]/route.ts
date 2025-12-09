@@ -466,9 +466,10 @@ export async function PATCH(
                 where: { id: consultationId },
                 data: {
                   requestStatus: RequestStatus.APPROVED_PENDING_PAYMENT,
+                  pendingPaymentUrl: paymentResult.checkoutUrl,
                   requestNotes: consultation.requestNotes
-                    ? `${consultation.requestNotes}\n\n[System] Payment link generated: ${paymentResult.checkoutUrl}`
-                    : `[System] Payment link generated: ${paymentResult.checkoutUrl}`,
+                    ? `${consultation.requestNotes}\n\n[System] Payment link generated and sent to user.`
+                    : `[System] Payment link generated and sent to user.`,
                 },
                 include: {
                   consultationPlan: {

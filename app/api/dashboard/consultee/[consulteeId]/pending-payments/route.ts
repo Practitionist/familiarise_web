@@ -128,8 +128,7 @@ export async function GET(
             "Consultant",
           amount: consultation.consultationPlan?.price || 0,
           currency: consultation.consultationPlan?.priceCurrency || "INR",
-          // Extract payment URL from requestNotes (it's appended there in the approval endpoint)
-          paymentUrl: extractPaymentUrl(consultation.requestNotes || ""),
+          paymentUrl: consultation.pendingPaymentUrl || "",
           approvedAt: consultation.updatedAt.toISOString(),
           expiresAt: expiresAt.toISOString(),
           isExpiringSoon,
@@ -152,8 +151,7 @@ export async function GET(
             "Consultant",
           amount: subscription.subscriptionPlan?.price || 0,
           currency: subscription.subscriptionPlan?.priceCurrency || "INR",
-          // Extract payment URL from requestNotes (it's appended there in the approval endpoint)
-          paymentUrl: extractPaymentUrl(subscription.requestNotes || ""),
+          paymentUrl: subscription.pendingPaymentUrl || "",
           approvedAt: subscription.updatedAt.toISOString(),
           expiresAt: expiresAt.toISOString(),
           isExpiringSoon,
@@ -183,15 +181,4 @@ export async function GET(
       { status: 500 },
     );
   }
-}
-
-/**
- * Helper function to extract payment URL from requestNotes
- * The URL is appended in the format: "[System] Payment link generated: https://..."
- */
-function extractPaymentUrl(requestNotes: string): string {
-  const urlMatch = requestNotes.match(
-    /Payment link generated: (https:\/\/[^\s\n]+)/,
-  );
-  return urlMatch?.[1] || "";
 }

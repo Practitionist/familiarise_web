@@ -488,9 +488,10 @@ export async function PATCH(
                   requestStatus: RequestStatus.APPROVED_PENDING_PAYMENT,
                   schedulingPeriodStartsAt: startDate,
                   schedulingPeriodEndsAt: endDate,
+                  pendingPaymentUrl: paymentResult.checkoutUrl,
                   requestNotes: subscription.requestNotes
-                    ? `${subscription.requestNotes}\n\n[System] Payment link generated: ${paymentResult.checkoutUrl}`
-                    : `[System] Payment link generated: ${paymentResult.checkoutUrl}`,
+                    ? `${subscription.requestNotes}\n\n[System] Payment link generated and sent to user.`
+                    : `[System] Payment link generated and sent to user.`,
                 },
                 include: {
                   subscriptionPlan: {

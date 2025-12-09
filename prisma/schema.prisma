@@ -397,6 +397,7 @@ model Consultation {
   requestedById          String
   requestedAt            DateTime         @default(now()) @db.Timestamptz()
   requestNotes           String?
+  pendingPaymentUrl      String? // Payment link while awaiting payment (cleared after payment)
   bookingSource          BookingSource    @default(REQUEST_SUBMITTED)
   feedbackFromConsultee  String?
   feedbackFromConsultant String?
@@ -445,6 +446,7 @@ model Subscription {
   requestedById          String
   requestedAt            DateTime         @default(now()) @db.Timestamptz()
   requestNotes           String?
+  pendingPaymentUrl      String? // Payment link while awaiting payment (cleared after payment)
   bookingSource          BookingSource    @default(REQUEST_SUBMITTED)
   feedbackFromConsultee  String?
   feedbackFromConsultant String?
