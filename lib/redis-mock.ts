@@ -69,7 +69,11 @@ class LuaExecutor {
 
       // Handle variable assignment (non-local)
       const assignMatch = trimmed.match(/^(\w+)\s*=\s*(.+)$/);
-      if (assignMatch && !trimmed.startsWith("if ") && !trimmed.startsWith("return ")) {
+      if (
+        assignMatch &&
+        !trimmed.startsWith("if ") &&
+        !trimmed.startsWith("return ")
+      ) {
         const [, varName, expr] = assignMatch;
         variables[varName] = this.evaluateExpression(expr, variables);
         i++;
@@ -539,13 +543,28 @@ export class MockRedis {
   }
 
   /**
+   * Get the remaining time to live for a key in milliseconds
+   * Returns -2 if key doesn't exist, -1 if no expiry, or remaining TTL in ms
+   */
+  async pttl(key: string): Promise<number> {
+    const entry = this.store.get(key);
+    if (!entry) {
+      return -2; // Key doesn't exist
+    }
+    if (entry.expiry === undefined) {
+      return -1; // Key exists but has no expiry
+    }
+    if (entry.expiry <= Date.now()) {
+      this.store.delete(key); // Clean up expired key
+      return -2; // Key expired
+    }
+    return entry.expiry - Date.now();
+  }
+
+  /**
    * Execute a Lua script
    */
-  async eval(
-    script: string,
-    keys: string[],
-    args: string[],
-  ): Promise<unknown> {
+  async eval(script: string, keys: string[], args: string[]): Promise<unknown> {
     const executor = new LuaExecutor(this.store, keys, args);
     return executor.execute(script);
   }

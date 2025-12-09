@@ -20,33 +20,40 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { PaymentStatus, Prisma, RequestStatus } from "@prisma/client";
-
-// Expiration time: 48 hours
-const EXPIRATION_HOURS = 48;
+import { APPROVAL_PAYMENT_EXPIRATION_HOURS } from "@/lib/payments/constants";
 
 /**
  * Revert consultation or subscription status from APPROVED_PENDING_PAYMENT to PENDING
  * Used when payment link expires after 48 hours
+ *
+ * FIX: Re-checks status inside transaction to prevent race condition where
+ * user completes payment between initial query and transaction execution.
  */
 async function revertApprovalStatus(
   tx: Prisma.TransactionClient,
   entityType: "consultation" | "subscription",
   entityId: string,
-  currentStatus: string,
 ): Promise<boolean> {
-  if (currentStatus !== "APPROVED_PENDING_PAYMENT") {
-    return false; // Nothing to revert
-  }
-
   const systemNote =
     "[System] Payment expired after 48 hours. Status reverted to PENDING.";
 
   if (entityType === "consultation") {
+    // Re-fetch inside transaction to get current status (prevents race condition)
     const consultation = await tx.consultation.findUnique({
       where: { id: entityId },
+      select: { requestStatus: true, requestNotes: true },
     });
 
-    if (!consultation) return false;
+    // Check status INSIDE transaction - if user completed payment, status will be APPROVED
+    if (
+      !consultation ||
+      consultation.requestStatus !== RequestStatus.APPROVED_PENDING_PAYMENT
+    ) {
+      console.log(
+        `⏭️ Skipping consultation ${entityId} - status is ${consultation?.requestStatus || "not found"}`,
+      );
+      return false; // Already processed or status changed
+    }
 
     await tx.consultation.update({
       where: { id: entityId },
@@ -61,11 +68,22 @@ async function revertApprovalStatus(
     console.log(`✅ Reverted consultation ${entityId} to PENDING`);
     return true;
   } else {
+    // Re-fetch inside transaction to get current status (prevents race condition)
     const subscription = await tx.subscription.findUnique({
       where: { id: entityId },
+      select: { requestStatus: true, requestNotes: true },
     });
 
-    if (!subscription) return false;
+    // Check status INSIDE transaction - if user completed payment, status will be APPROVED
+    if (
+      !subscription ||
+      subscription.requestStatus !== RequestStatus.APPROVED_PENDING_PAYMENT
+    ) {
+      console.log(
+        `⏭️ Skipping subscription ${entityId} - status is ${subscription?.requestStatus || "not found"}`,
+      );
+      return false; // Already processed or status changed
+    }
 
     await tx.subscription.update({
       where: { id: entityId },
@@ -97,7 +115,9 @@ export async function GET(req: NextRequest) {
     console.log("🕐 Starting approval payment expiration check...");
 
     const expirationDate = new Date();
-    expirationDate.setHours(expirationDate.getHours() - EXPIRATION_HOURS);
+    expirationDate.setHours(
+      expirationDate.getHours() - APPROVAL_PAYMENT_EXPIRATION_HOURS,
+    );
 
     // Find expired pending payments
     const expiredPayments = await prisma.payment.findMany({
@@ -130,24 +150,22 @@ export async function GET(req: NextRequest) {
     for (const payment of expiredPayments) {
       try {
         await prisma.$transaction(async (tx) => {
-          // Revert consultation status
+          // Revert consultation status (status re-checked inside function)
           if (payment.appointment?.consultation) {
             const reverted = await revertApprovalStatus(
               tx,
               "consultation",
               payment.appointment.consultation.id,
-              payment.appointment.consultation.requestStatus,
             );
             if (reverted) consultationsReverted++;
           }
 
-          // Revert subscription status
+          // Revert subscription status (status re-checked inside function)
           if (payment.appointment?.subscription) {
             const reverted = await revertApprovalStatus(
               tx,
               "subscription",
               payment.appointment.subscription.id,
-              payment.appointment.subscription.requestStatus,
             );
             if (reverted) subscriptionsReverted++;
           }

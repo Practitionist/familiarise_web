@@ -121,11 +121,8 @@ export async function POST(req: NextRequest) {
 
     try {
       // ACQUIRE LOCK for this specific slot
-      lock = await lockSlotBooking(
-        consultantProfileId,
-        slotStartTimeInUTC,
-        15000,
-      );
+      // Use default 60s TTL (15s was too short for slow database operations)
+      lock = await lockSlotBooking(consultantProfileId, slotStartTimeInUTC);
 
       console.log(
         JSON.stringify({

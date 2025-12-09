@@ -9,6 +9,7 @@ import {
 import { addHours } from "date-fns";
 import { NextRequest, NextResponse } from "next/server";
 import { createApprovalPaymentIntent } from "@/lib/payments/operations/approval-payment";
+import { APPROVAL_PAYMENT_EXPIRATION_MS } from "@/lib/payments/constants";
 import {
   lockConsultationApproval,
   unlockApproval,
@@ -509,7 +510,9 @@ export async function PATCH(
                 amount: paymentResult.amount,
                 currency: paymentResult.currency,
                 paymentUrl: paymentResult.checkoutUrl,
-                expiresAt: new Date(Date.now() + 48 * 60 * 60 * 1000),
+                expiresAt: new Date(
+                  Date.now() + APPROVAL_PAYMENT_EXPIRATION_MS,
+                ),
               });
 
               console.log(

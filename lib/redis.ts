@@ -33,7 +33,10 @@ if (USE_MOCK_REDIS) {
   console.log(
     JSON.stringify({
       event: "redis_mock_enabled",
-      reason: process.env.NODE_ENV === "test" ? "NODE_ENV=test" : "USE_MOCK_REDIS=true",
+      reason:
+        process.env.NODE_ENV === "test"
+          ? "NODE_ENV=test"
+          : "USE_MOCK_REDIS=true",
       timestamp: new Date().toISOString(),
     }),
   );

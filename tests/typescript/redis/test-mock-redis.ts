@@ -148,11 +148,27 @@ async function runTests() {
     `;
 
     // First 3 should succeed
-    const r1 = await redis.eval(script, ["event-counter"], [String(maxParticipants), String(ttl)]);
-    const r2 = await redis.eval(script, ["event-counter"], [String(maxParticipants), String(ttl)]);
-    const r3 = await redis.eval(script, ["event-counter"], [String(maxParticipants), String(ttl)]);
+    const r1 = await redis.eval(
+      script,
+      ["event-counter"],
+      [String(maxParticipants), String(ttl)],
+    );
+    const r2 = await redis.eval(
+      script,
+      ["event-counter"],
+      [String(maxParticipants), String(ttl)],
+    );
+    const r3 = await redis.eval(
+      script,
+      ["event-counter"],
+      [String(maxParticipants), String(ttl)],
+    );
     // 4th should fail
-    const r4 = await redis.eval(script, ["event-counter"], [String(maxParticipants), String(ttl)]);
+    const r4 = await redis.eval(
+      script,
+      ["event-counter"],
+      [String(maxParticipants), String(ttl)],
+    );
 
     if (r1 === 1 && r2 === 2 && r3 === 3 && r4 === -1) {
       console.log("✅ Test 6: Semaphore Lua script - PASS");
@@ -179,12 +195,18 @@ async function runTests() {
         return 0
       end
     `;
-    const result = await redis.eval(script, ["extend-lock"], ["my-token", "30000"]);
+    const result = await redis.eval(
+      script,
+      ["extend-lock"],
+      ["my-token", "30000"],
+    );
     if (result === 1) {
       console.log("✅ Test 7: Lock extend Lua script - PASS");
       passed++;
     } else {
-      console.log(`❌ Test 7: Lock extend Lua script - FAIL (result: ${result})`);
+      console.log(
+        `❌ Test 7: Lock extend Lua script - FAIL (result: ${result})`,
+      );
       failed++;
     }
   } catch (e) {
@@ -221,7 +243,9 @@ async function runTests() {
       console.log("✅ Test 9: del - PASS");
       passed++;
     } else {
-      console.log(`❌ Test 9: del - FAIL (d1: ${d1}, d2: ${d2}, afterDel: ${afterDel})`);
+      console.log(
+        `❌ Test 9: del - FAIL (d1: ${d1}, d2: ${d2}, afterDel: ${afterDel})`,
+      );
       failed++;
     }
   } catch (e) {

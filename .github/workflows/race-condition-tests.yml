@@ -2,17 +2,17 @@ name: Race Condition Tests
 
 on:
   push:
-    branches: [dev]  # Only run when merged to dev
-  workflow_dispatch:  # Allow manual trigger for testing
+    branches: [dev] # Only run when merged to dev
+  workflow_dispatch: # Allow manual trigger for testing
     inputs:
       use_real_redis:
-        description: 'Use real Upstash Redis instead of mock'
+        description: "Use real Upstash Redis instead of mock"
         required: false
-        default: 'false'
+        default: "false"
         type: choice
         options:
-          - 'false'
-          - 'true'
+          - "false"
+          - "true"
 
 jobs:
   race-condition-tests:
