@@ -723,6 +723,9 @@ model SlotOfAppointment {
 
   @@index([appointmentId])
   @@index([isTentative, appointmentId])
+  // OPT-3: Additional indexes for time range queries in validateSlotAvailability
+  @@index([startsAt, endsAt])
+  @@index([isTentative, startsAt, endsAt])
 }
 
 ////////////////////////////////////////////// MEETINGS FOR STREAM ////////////////////////////////////////////////////

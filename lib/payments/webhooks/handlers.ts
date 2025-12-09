@@ -219,7 +219,8 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
     }
 
     // Confirm appointment: set isTentative = false and update status to APPROVED
-    await confirmExistingAppointment(tx, appointment.id);
+    // FIX Issue #1 & #3: Pass userId to confirm only this user's slots for multi-user events
+    await confirmExistingAppointment(tx, appointment.id, payment.userId);
 
     // Send payment success email
     await sendPaymentSuccessNotification(
@@ -281,6 +282,12 @@ export async function handlePaymentFailure(paymentIntentId: string) {
       console.warn(
         `Payment record not found for failed intent: ${paymentIntentId}`,
       );
+      return;
+    }
+
+    // FIX Issue #8: Idempotency check - prevent duplicate processing
+    if (payment.paymentStatus === PaymentStatus.FAILED) {
+      console.log(`Payment ${paymentIntentId} has already been marked as failed.`);
       return;
     }
 
@@ -494,6 +501,11 @@ async function createWebinar(
   });
   if (!webinar) throw new Error("Webinar not found");
 
+  // FIX Issue #5: Validate webinar is scheduled before allowing booking
+  if (!webinar.appointment?.slotsOfAppointment?.[0]) {
+    throw new Error("Webinar has not been scheduled. Cannot create booking.");
+  }
+
   let appointment = webinar.appointment;
   if (!appointment) {
     appointment = await tx.appointment.create({
@@ -610,7 +622,10 @@ async function confirmApprovalStatus(
       throw new Error(`Subscription ${entityId} not found`);
     }
 
-    // If status is APPROVED_PENDING_PAYMENT, confirm the appointment
+    // For subscriptions: Only transition APPROVED_PENDING_PAYMENT → APPROVED
+    // Do NOT change PENDING → APPROVED here!
+    // Subscription stays PENDING until consultant allocates slots via Requests tab
+    // SlotAllocationService.allocate() will set status to APPROVED when slots are allocated
     if (subscription.requestStatus === RequestStatus.APPROVED_PENDING_PAYMENT) {
       await tx.subscription.update({
         where: { id: entityId },
@@ -619,28 +634,30 @@ async function confirmApprovalStatus(
       console.log(
         `✅ Subscription ${entityId} payment completed - moving from APPROVED_PENDING_PAYMENT to APPROVED`,
       );
-    } else if (subscription.requestStatus !== RequestStatus.APPROVED) {
-      // Only update if not already approved
-      await tx.subscription.update({
-        where: { id: entityId },
-        data: { requestStatus: RequestStatus.APPROVED },
-      });
+    } else {
+      console.log(
+        `ℹ️ Subscription ${entityId} payment received - keeping status as ${subscription.requestStatus} (consultant will allocate slots)`,
+      );
     }
   }
 }
 
 /**
  * Confirm appointment by making slots non-tentative and updating status
+ *
+ * FIX Issue #1 & #3: For multi-user events (WEBINAR, CLASS), only confirm
+ * the paying user's slots, not all slots for the shared appointment.
+ *
+ * @param tx - Prisma transaction client
+ * @param appointmentId - The appointment ID to confirm
+ * @param userId - The paying user's ID (required for WEBINAR/CLASS to prevent confirming other users' slots)
  */
 async function confirmExistingAppointment(
   tx: Prisma.TransactionClient,
   appointmentId: string,
+  userId?: string,
 ) {
-  await tx.slotOfAppointment.updateMany({
-    where: { appointmentId },
-    data: { isTentative: false },
-  });
-
+  // First fetch appointment to determine type
   const appointment = await tx.appointment.findUnique({
     where: { id: appointmentId },
     include: {
@@ -651,21 +668,78 @@ async function confirmExistingAppointment(
     },
   });
 
-  // Use helper for consultation and subscription
-  if (appointment?.consultation) {
+  if (!appointment) {
+    console.warn(`Appointment ${appointmentId} not found for confirmation`);
+    return;
+  }
+
+  // FIX Issue #3: For CLASS, confirm ALL user's slots across all sessions
+  // Classes have multiple appointments (one per session), but payment only links to first
+  if (appointment.class && userId) {
+    await tx.slotOfAppointment.updateMany({
+      where: {
+        appointment: { classId: appointment.class.id },
+        user: { some: { id: userId } },
+      },
+      data: { isTentative: false },
+    });
+
+    console.log(
+      JSON.stringify({
+        event: "class_all_sessions_confirmed",
+        classId: appointment.class.id,
+        userId,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+  }
+  // FIX Issue #1: For WEBINAR, confirm only the paying user's slot
+  // Webinars share one appointment among all participants
+  else if (appointment.webinar && userId) {
+    await tx.slotOfAppointment.updateMany({
+      where: {
+        appointmentId,
+        user: { some: { id: userId } },
+      },
+      data: { isTentative: false },
+    });
+
+    console.log(
+      JSON.stringify({
+        event: "webinar_user_slot_confirmed",
+        webinarId: appointment.webinar.id,
+        userId,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+  }
+  // For CONSULTATION and SUBSCRIPTION: original behavior (single user per appointment)
+  else {
+    await tx.slotOfAppointment.updateMany({
+      where: { appointmentId },
+      data: { isTentative: false },
+    });
+  }
+
+  // Update status for consultation and subscription
+  if (appointment.consultation) {
     await confirmApprovalStatus(tx, "consultation", appointment.consultation.id);
   }
 
-  if (appointment?.subscription) {
+  if (appointment.subscription) {
     await confirmApprovalStatus(tx, "subscription", appointment.subscription.id);
   }
-  if (appointment?.webinar) {
+
+  // Update webinar status
+  if (appointment.webinar) {
     await tx.webinar.update({
       where: { id: appointment.webinar.id },
       data: { status: "SCHEDULED" },
     });
   }
-  if (appointment?.class) {
+
+  // Update class status
+  if (appointment.class) {
     await tx.class.update({
       where: { id: appointment.class.id },
       data: { status: "SCHEDULED" },

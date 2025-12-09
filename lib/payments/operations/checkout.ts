@@ -8,15 +8,12 @@ import { CheckoutInput, checkoutSchema } from "@/schemas/checkout";
 import { calculateSubscriptionEndDate } from "@/utils/dateUtils";
 import {
   AppointmentsType,
-  ClassStatus,
   PaymentGateway,
   PaymentStatus,
   Prisma,
   RequestStatus,
-  WebinarStatus,
 } from "@prisma/client";
 import { cancelPaymentIntent, createPaymentIntent } from "../index";
-import { handlePaymentSuccess } from "@/lib/payments/webhooks/handlers";
 import {
   lockSlotBooking,
   unlockSlotBooking,
@@ -24,6 +21,10 @@ import {
   unlockEventCheckout,
   ApprovalLock,
 } from "@/utils/appointmentlock";
+import {
+  countUniqueParticipants,
+  isUserEnrolled,
+} from "@/lib/payments/utils/participants";
 
 // Re-export for backward compatibility
 export const unifiedCheckoutSchema = checkoutSchema;
@@ -35,7 +36,8 @@ export type { CheckoutInput };
 
 /**
  * Unified return type for subscription checkout
- * Creates placeholder appointment for payment linkage
+ * FIX Issue #2: Creates placeholder appointment for payment linkage
+ * This ensures webhook uses NEW FLOW (confirm) not LEGACY FLOW (create duplicate)
  * Consultant allocates specific slots later via Requests tab
  */
 type SubscriptionCheckoutResult = {
@@ -48,8 +50,8 @@ type SubscriptionCheckoutResult = {
   }>;
   amount: number;
   subscription: Prisma.SubscriptionGetPayload<Record<string, never>>;
-  isSchedulingPeriodRequest: boolean;
   appointment: Prisma.AppointmentGetPayload<Record<string, never>>;
+  isSchedulingPeriodRequest: boolean;
 };
 
 // ============================================================================
@@ -574,7 +576,7 @@ async function acquireCheckoutLock(
       }),
     );
 
-    return await lockSlotBooking(consultantUserId, data.slotStartTimeInUTC, 30000);
+    return await lockSlotBooking(consultantUserId, data.slotStartTimeInUTC);
   }
 
   // Strategy B: Event-based locking (WEBINAR, CLASS, scheduling-period SUBSCRIPTION)
@@ -593,7 +595,7 @@ async function acquireCheckoutLock(
       }),
     );
 
-    return await lockEventCheckout(appointmentType, data.eventId, 30000);
+    return await lockEventCheckout(appointmentType, data.eventId);
   }
 
   // Scheduling period SUBSCRIPTION (no slots during checkout)
@@ -608,7 +610,7 @@ async function acquireCheckoutLock(
       }),
     );
 
-    return await lockEventCheckout(appointmentType, data.planId, 30000);
+    return await lockEventCheckout(appointmentType, data.planId);
   }
 
   // Should not reach here if validation is correct
@@ -649,6 +651,49 @@ async function releaseCheckoutLock(
 }
 
 /**
+ * BUG-E: Verify plan still exists inside lock
+ * Prevents race condition where plan is deleted between initial validation and checkout
+ */
+async function verifyPlanExistsInsideLock(
+  tx: Prisma.TransactionClient,
+  appointmentType: string,
+  planId: string,
+): Promise<void> {
+  let planExists = false;
+
+  switch (appointmentType) {
+    case "CONSULTATION":
+      planExists = !!(await tx.consultationPlan.findUnique({
+        where: { id: planId },
+        select: { id: true },
+      }));
+      break;
+    case "SUBSCRIPTION":
+      planExists = !!(await tx.subscriptionPlan.findUnique({
+        where: { id: planId },
+        select: { id: true },
+      }));
+      break;
+    case "WEBINAR":
+      planExists = !!(await tx.webinarPlan.findUnique({
+        where: { id: planId },
+        select: { id: true },
+      }));
+      break;
+    case "CLASS":
+      planExists = !!(await tx.classPlan.findUnique({
+        where: { id: planId },
+        select: { id: true },
+      }));
+      break;
+  }
+
+  if (!planExists) {
+    throw new Error("This plan is no longer available. Please refresh and try again.");
+  }
+}
+
+/**
  * Re-validate availability inside the lock
  * Critical for preventing TOCTOU race conditions
  */
@@ -667,6 +712,9 @@ async function revalidateInsideLock(
     if (!user?.consulteeProfile) {
       throw new Error("User profile not found");
     }
+
+    // BUG-E: Re-validate plan still exists (could be deleted between initial validation and lock)
+    await verifyPlanExistsInsideLock(tx, data.appointmentType, data.planId);
 
     // Re-validate slot availability based on appointment type
     switch (data.appointmentType) {
@@ -866,8 +914,9 @@ export async function handleSubscriptionCheckout(
     },
   });
 
-  // Create placeholder appointment for payment linkage
+  // FIX Issue #2: Create placeholder appointment for payment linkage
   // This ensures webhook uses NEW FLOW (confirm) not LEGACY FLOW (create duplicate)
+  // Makes this handler symmetrical with others - consultant allocates slots later
   const appointment = await tx.appointment.create({
     data: {
       appointmentType: AppointmentsType.SUBSCRIPTION,
@@ -877,11 +926,11 @@ export async function handleSubscriptionCheckout(
   });
 
   return {
+    appointment,
     subscription,
     plan,
     amount: plan.price,
     isSchedulingPeriodRequest: !!isSchedulingPeriodRequest,
-    appointment,
   };
 }
 
@@ -927,6 +976,25 @@ export async function handleWebinarCheckout(
     } else {
       throw new Error("Webinar is full");
     }
+  }
+
+  // FIX Issue #5: Validate webinar is scheduled before allowing booking
+  // Prevents slot timing from defaulting to new Date()
+  if (!webinar.appointment?.slotsOfAppointment?.[0]) {
+    throw new Error(
+      "This webinar has not been scheduled yet. Please wait for the consultant to set a date and time."
+    );
+  }
+
+  // Allow late joiners: SCHEDULED and IN_PROGRESS webinars can accept new registrations
+  // TODO: (Optional) Add configurable buffer time before webinar ends if needed in future
+  //       e.g., block registration 5 minutes before scheduled end time
+  const blockedStatuses = ["COMPLETED", "CANCELLED"] as const;
+  if (blockedStatuses.includes(webinar.status as (typeof blockedStatuses)[number])) {
+    const message = webinar.status === "COMPLETED"
+      ? "This webinar has already ended."
+      : "This webinar has been cancelled.";
+    throw new Error(message);
   }
 
   // Create or reuse appointment
@@ -991,16 +1059,8 @@ export async function handleClassCheckout(
 
   const plan = classInstance.classPlan;
 
-  // Count unique participants (not slots) - one user = one participant
-  const uniqueUserIds = new Set<string>();
-  for (const apt of classInstance.appointments) {
-    for (const slot of apt.slotsOfAppointment) {
-      if (slot.user && Array.isArray(slot.user)) {
-        slot.user.forEach((u: { id: string }) => uniqueUserIds.add(u.id));
-      }
-    }
-  }
-  const currentParticipants = uniqueUserIds.size;
+  // OPT-2: Use extracted utility for participant counting
+  const currentParticipants = countUniqueParticipants(classInstance.appointments);
 
   // Check if max participants reached
   if (currentParticipants >= plan.maxParticipants) {
@@ -1019,8 +1079,8 @@ export async function handleClassCheckout(
     }
   }
 
-  // Check if user is already enrolled
-  if (uniqueUserIds.has(userId)) {
+  // Check if user is already enrolled - OPT-2: Use extracted utility
+  if (isUserEnrolled(classInstance.appointments, userId)) {
     throw new Error("You are already enrolled in this class");
   }
 
@@ -1059,64 +1119,6 @@ export async function handleClassCheckout(
 }
 
 // ============================================================================
-// Appointment Confirmation
-// ============================================================================
-
-/**
- * Confirm appointment by making slots non-tentative and updating status
- */
-export async function confirmAppointment(
-  tx: Prisma.TransactionClient,
-  appointmentId: string,
-  _appointmentType: string,
-) {
-  // Make slot non-tentative
-  await tx.slotOfAppointment.updateMany({
-    where: { appointmentId },
-    data: { isTentative: false },
-  });
-
-  // Update specific appointment type status
-  const appointment = await tx.appointment.findUnique({
-    where: { id: appointmentId },
-    include: {
-      consultation: true,
-      subscription: true,
-      webinar: true,
-      class: true,
-    },
-  });
-
-  if (appointment?.consultation) {
-    await tx.consultation.update({
-      where: { id: appointment.consultation.id },
-      data: { requestStatus: RequestStatus.APPROVED },
-    });
-  }
-
-  if (appointment?.subscription) {
-    await tx.subscription.update({
-      where: { id: appointment.subscription.id },
-      data: { requestStatus: RequestStatus.APPROVED },
-    });
-  }
-
-  if (appointment?.webinar) {
-    await tx.webinar.update({
-      where: { id: appointment.webinar.id },
-      data: { status: WebinarStatus.SCHEDULED },
-    });
-  }
-
-  if (appointment?.class) {
-    await tx.class.update({
-      where: { id: appointment.class.id },
-      data: { status: ClassStatus.SCHEDULED },
-    });
-  }
-}
-
-// ============================================================================
 // Main Checkout Flows
 // ============================================================================
 
@@ -1136,7 +1138,8 @@ export async function handleCheckout(
 ) {
   let lock: ApprovalLock | null = null;
   let lockType = "";
-  let paymentResponse: any = null;
+  // TYPE-1: Properly typed payment response instead of any
+  let paymentResponse: { id: string; client_secret: string | null } | null = null;
 
   try {
     // STEP 1: Calculate amount and fetch plan data (OUTSIDE LOCK - just pricing)
@@ -1245,12 +1248,13 @@ export async function handleCheckout(
         }
 
         // Create payment record linked to appointment (if created)
-        await tx.payment.create({
+        // paymentResponse is guaranteed to be set at this point (we'd have thrown in the try-catch above)
+        const payment = await tx.payment.create({
           data: {
             amount,
             currency,
             paymentMethod: "CARD",
-            paymentIntent: paymentResponse.id,
+            paymentIntent: paymentResponse!.id,
             paymentGateway: validatedData.paymentGateway,
             paymentStatus: PaymentStatus.PENDING,
             isMockPayment,
@@ -1260,6 +1264,14 @@ export async function handleCheckout(
             expiresAt: new Date(Date.now() + 30 * 60 * 1000), // 30 minutes
           },
         });
+
+        // FIX Issue #6: Update mock payment status directly (no webhook for mock payments)
+        if (isMockPayment) {
+          await tx.payment.update({
+            where: { id: payment.id },
+            data: { paymentStatus: PaymentStatus.SUCCEEDED },
+          });
+        }
 
         return { appointmentId: createdAppointment?.id };
       });

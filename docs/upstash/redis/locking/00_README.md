@@ -247,7 +247,9 @@ graph LR
 │  Application Layer                                  │
 │  ├─ lockConsultationApproval(consultationId)       │
 │  ├─ lockSubscriptionApproval(subscriptionId)       │
-│  └─ checkRateLimit(identifier)                     │
+│  ├─ lockSlotBooking(consultantId, slotTime)        │
+│  ├─ lockEventCheckout(appointmentType, eventId)    │
+│  └─ acquireEventSlot(type, id, maxParticipants)    │
 └──────────────────────┬──────────────────────────────┘
                        ↓
 ┌─────────────────────────────────────────────────────┐
@@ -276,15 +278,24 @@ graph LR
 
 ```
 utils/
-└── appointmentlock.ts          # Core lock implementation (278 lines)
-    ├── lockConsultationApproval()
-    ├── lockSubscriptionApproval()
-    ├── unlockApproval()
+└── appointmentlock.ts          # Core lock implementation (~674 lines)
+    ├── lockConsultationApproval()     # Consultation approval locks
+    ├── lockSubscriptionApproval()     # Subscription approval locks
+    ├── lockSlotBooking()              # Time slot booking locks
+    ├── lockEventCheckout()            # Event checkout locks
+    ├── acquireEventSlot()             # Semaphore for multi-participant events
+    ├── releaseEventSlot()             # Release semaphore slot
+    ├── confirmEventSlot()             # Confirm slot after payment
+    ├── getEventSlotCount()            # Get current reservation count
+    ├── extendLock()                   # Extend lock TTL (heartbeat pattern)
     └── Legacy: lockAppointment(), isAppointmentLocked()
 
 lib/
-└── redis.ts                    # Upstash client setup (72 lines)
-    ├── checkRateLimit()
+└── redis.ts                    # Upstash client setup (~250 lines)
+    ├── withCircuitBreaker()           # Circuit breaker pattern
+    ├── checkRedisHealth()             # Health check
+    ├── getCircuitBreakerStatus()      # Status for monitoring
+    ├── acquireLock() / releaseLock()  # Simple lock utilities
     └── Environment validation
 ```
 
@@ -352,24 +363,7 @@ try {
 
 **Result**: ✅ Exactly one payment link created, even with 100 concurrent requests
 
-### Use Case 2: Rate Limiting
-
-**Problem**: API endpoints vulnerable to abuse (brute force, spam)
-
-**Solution**: Rate limit by user ID, IP, or endpoint
-
-```typescript
-import { checkRateLimit } from "@/lib/redis";
-
-const allowed = await checkRateLimit(`user:${userId}:approval`);
-if (!allowed) {
-  return Response.json({ error: "Too many requests" }, { status: 429 });
-}
-```
-
-**Result**: ✅ Maximum 5 requests per 10 seconds per user
-
-### Use Case 3: Appointment Booking (Legacy)
+### Use Case 2: Appointment Booking (Legacy)
 
 **Problem**: Multiple users booking the same time slot simultaneously
 

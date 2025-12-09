@@ -13,7 +13,7 @@
  */
 
 import prisma from "@/lib/prisma";
-import { AppointmentsType, PaymentGateway, PaymentStatus } from "@prisma/client";
+import { PaymentGateway, PaymentStatus } from "@prisma/client";
 import { createPaymentIntent } from "../index";
 
 // ============================================================================
@@ -61,6 +61,32 @@ export async function createApprovalPaymentIntent(
   }
   if (params.appointmentType === "SUBSCRIPTION" && !params.subscriptionId) {
     throw new Error("subscriptionId required for SUBSCRIPTION appointment type");
+  }
+
+  // FIX Issue #7: Check for existing payment to prevent duplicates
+  const hasExistingPayment = await checkExistingPayment({
+    consultationId: params.consultationId,
+    subscriptionId: params.subscriptionId,
+  });
+
+  if (hasExistingPayment) {
+    throw new Error("A payment link has already been generated for this request");
+  }
+
+  // BUG-D: Validate user has consultee profile (required for webhook to succeed)
+  const user = await prisma.user.findUnique({
+    where: { id: params.userId },
+    include: { consulteeProfile: true },
+  });
+
+  if (!user) {
+    throw new Error("User not found");
+  }
+
+  if (!user.consulteeProfile) {
+    throw new Error(
+      "User does not have a consultee profile. Please complete profile setup first."
+    );
   }
 
   // Get plan and calculate amount

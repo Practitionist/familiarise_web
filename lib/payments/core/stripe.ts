@@ -86,6 +86,15 @@ export async function createStripeCheckoutSession({
     );
   }
 
+  // BUG-C: Validate amount is positive before creating payment intent
+  if (amount <= 0) {
+    throw new PaymentError(
+      "Payment amount must be greater than zero",
+      "INVALID_AMOUNT",
+      "STRIPE",
+    );
+  }
+
   try {
     const session = await stripeClient.checkout.sessions.create({
       payment_method_types: ["card"],
