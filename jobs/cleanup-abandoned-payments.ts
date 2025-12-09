@@ -12,10 +12,13 @@ import {
   cleanupExpiredApprovalPendingPayments,
   disconnectDatabase,
   type CleanupResult,
-} from "../scripts/cleanup-abandoned-payments.js";
+} from "../scripts/cleanup-abandoned-payments";
+
+import fs from "fs";
 
 /**
- * Output results to GitHub Actions
+ * Output results to GitHub Actions using environment files
+ * See: https://github.blog/changelog/2022-10-11-github-actions-deprecating-save-state-and-set-output-commands/
  */
 function outputToGitHubActions(
   paymentResult: CleanupResult,
@@ -24,23 +27,19 @@ function outputToGitHubActions(
 ): void {
   if (!process.env.GITHUB_ACTIONS) return;
 
-  // Payment cleanup outputs
-  console.log(`::set-output name=cleaned_count::${paymentResult.cleanedCount}`);
-  console.log(`::set-output name=error_count::${paymentResult.errorCount}`);
-  console.log(
-    `::set-output name=total_processed::${paymentResult.totalProcessed}`,
-  );
+  const outputFile = process.env.GITHUB_OUTPUT;
+  if (outputFile) {
+    const outputs = [
+      `cleaned_count=${paymentResult.cleanedCount}`,
+      `error_count=${paymentResult.errorCount}`,
+      `total_processed=${paymentResult.totalProcessed}`,
+      `consultation_cleaned_count=${consultationResult.cleanedCount}`,
+      `consultation_error_count=${consultationResult.errorCount}`,
+      `success=${overallSuccess}`,
+    ].join("\n");
 
-  // Consultation cleanup outputs
-  console.log(
-    `::set-output name=consultation_cleaned_count::${consultationResult.cleanedCount}`,
-  );
-  console.log(
-    `::set-output name=consultation_error_count::${consultationResult.errorCount}`,
-  );
-
-  // Overall success
-  console.log(`::set-output name=success::${overallSuccess}`);
+    fs.appendFileSync(outputFile, outputs + "\n");
+  }
 
   if (!overallSuccess) {
     const allErrors = [
@@ -99,7 +98,10 @@ async function main(): Promise<void> {
     console.error("💥 Cleanup job failed:", errorMessage);
 
     if (process.env.GITHUB_ACTIONS) {
-      console.log(`::set-output name=success::false`);
+      const outputFile = process.env.GITHUB_OUTPUT;
+      if (outputFile) {
+        fs.appendFileSync(outputFile, "success=false\n");
+      }
       console.log(`::error::Cleanup job failed: ${errorMessage}`);
     }
 

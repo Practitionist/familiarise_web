@@ -23,7 +23,7 @@ import {
   RequestStatus,
 } from "@prisma/client";
 import Stripe from "stripe";
-import { cancelRazorpayOrder } from "../lib/payments/core/razorpay.js";
+import { cancelRazorpayOrder } from "../lib/payments/core/razorpay";
 
 const prisma = new PrismaClient();
 
