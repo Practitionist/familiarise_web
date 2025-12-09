@@ -45,11 +45,11 @@ async function cancelPaymentIntent(
         break;
 
       case PaymentGateway.RAZORPAY:
-        if (process.env.RAZORPAY_KEY_SECRET && process.env.RAZORPAY_KEY_ID) {
+        if (process.env.RAZORPAY_SECRET && process.env.RAZORPAY_KEY_ID) {
           const Razorpay = require("razorpay");
           const razorpay = new Razorpay({
             key_id: process.env.RAZORPAY_KEY_ID,
-            key_secret: process.env.RAZORPAY_KEY_SECRET,
+            key_secret: process.env.RAZORPAY_SECRET,
           });
           await razorpay.payments.cancel(paymentIntent);
           console.log(`✅ Cancelled Razorpay payment: ${paymentIntent}`);
@@ -540,9 +540,11 @@ async function main(): Promise<void> {
   }
 }
 
-// Run the job if this file is executed directly (GitHub Actions)
-if (require.main === module) {
-  main();
-}
+// Run the cleanup job
+main().catch((error) => {
+  console.error("\n❌ Cleanup job failed:");
+  console.error(error);
+  process.exit(1);
+});
 
 export { cleanupAbandonedPayments };
