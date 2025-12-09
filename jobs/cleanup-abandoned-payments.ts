@@ -8,7 +8,12 @@
  * Runs every 15 minutes via scheduled workflow.
  */
 
-import { PrismaClient, PaymentStatus, PaymentGateway } from "@prisma/client";
+import {
+  PrismaClient,
+  PaymentStatus,
+  PaymentGateway,
+  RequestStatus,
+} from "@prisma/client";
 
 const prisma = new PrismaClient();
 
@@ -128,9 +133,11 @@ async function cleanupAbandonedPayments(): Promise<CleanupResult> {
                       { expiresAt: null }, // No expiration set (legacy)
                       {
                         createdAt: {
-                          lt: new Date(Date.now() - 30 * 60 * 1000),
+                          // FIX Issue #6: Increased from 30 to 35 minutes buffer
+                          // Prevents race condition at payment expiration boundary
+                          lt: new Date(Date.now() - 35 * 60 * 1000),
                         },
-                      }, // 30 min fallback
+                      }, // 35 min fallback (5 min buffer over 30 min expiry)
                     ],
                   },
                 ],
@@ -165,6 +172,34 @@ async function cleanupAbandonedPayments(): Promise<CleanupResult> {
     for (const appointment of abandonedAppointments) {
       try {
         await prisma.$transaction(async (tx) => {
+          // FIX Issue #10: Re-check payment status before cleanup
+          // Prevents race condition where payment webhook fires during cleanup processing
+          let shouldSkip = false;
+          for (const payment of appointment.payment) {
+            const freshPayment = await tx.payment.findUnique({
+              where: { id: payment.id },
+            });
+
+            if (freshPayment?.paymentStatus === PaymentStatus.SUCCEEDED) {
+              console.log(
+                JSON.stringify({
+                  event: "cleanup_skipped_payment_succeeded",
+                  paymentId: payment.id,
+                  appointmentId: appointment.id,
+                  reason: "Payment completed during cleanup processing",
+                  timestamp: new Date().toISOString(),
+                }),
+              );
+              shouldSkip = true;
+              break;
+            }
+          }
+
+          if (shouldSkip) {
+            // Skip this appointment - payment completed while we were processing
+            return;
+          }
+
           // Cancel payment intents
           for (const payment of appointment.payment) {
             try {
@@ -322,6 +357,148 @@ async function cleanupAbandonedPayments(): Promise<CleanupResult> {
 }
 
 /**
+ * Cleanup expired APPROVED_PENDING_PAYMENT consultations
+ *
+ * FIX for orphaned payment bug:
+ * When a consultant approves a consultation and payment expires,
+ * the consultation status remains APPROVED_PENDING_PAYMENT forever,
+ * blocking the slot permanently. This function resets those consultations.
+ */
+async function cleanupExpiredApprovalPendingPayments(): Promise<CleanupResult> {
+  console.log(
+    "🧹 Starting cleanup of expired APPROVED_PENDING_PAYMENT consultations...",
+  );
+
+  const result: CleanupResult = {
+    success: false,
+    cleanedCount: 0,
+    errorCount: 0,
+    totalProcessed: 0,
+    errors: [],
+  };
+
+  try {
+    // Find consultations stuck in APPROVED_PENDING_PAYMENT with expired payments
+    const expiredConsultations = await prisma.consultation.findMany({
+      where: {
+        requestStatus: RequestStatus.APPROVED_PENDING_PAYMENT,
+        appointment: {
+          payment: {
+            some: {
+              AND: [
+                { paymentStatus: PaymentStatus.PENDING },
+                { expiresAt: { lt: new Date() } },
+              ],
+            },
+          },
+        },
+      },
+      include: {
+        appointment: {
+          include: {
+            payment: {
+              where: { paymentStatus: PaymentStatus.PENDING },
+            },
+            slotsOfAppointment: true,
+          },
+        },
+      },
+    });
+
+    result.totalProcessed = expiredConsultations.length;
+    console.log(
+      `📊 Found ${expiredConsultations.length} expired APPROVED_PENDING_PAYMENT consultations`,
+    );
+
+    // Process each expired consultation
+    for (const consultation of expiredConsultations) {
+      try {
+        await prisma.$transaction(async (tx) => {
+          // Update consultation status to REJECTED
+          await tx.consultation.update({
+            where: { id: consultation.id },
+            data: { requestStatus: RequestStatus.REJECTED },
+          });
+
+          // Delete tentative slots if appointment exists
+          if (consultation.appointment?.slotsOfAppointment) {
+            const deletedSlots = await tx.slotOfAppointment.deleteMany({
+              where: {
+                AND: [
+                  { appointmentId: consultation.appointment.id },
+                  { isTentative: true },
+                ],
+              },
+            });
+            console.log(
+              `🗑️ Deleted ${deletedSlots.count} tentative slots for consultation ${consultation.id}`,
+            );
+          }
+
+          // Mark expired payments as failed
+          if (consultation.appointment?.payment) {
+            for (const payment of consultation.appointment.payment) {
+              await tx.payment.update({
+                where: { id: payment.id },
+                data: { paymentStatus: PaymentStatus.FAILED },
+              });
+            }
+          }
+
+          console.log(
+            `✅ Reset consultation ${consultation.id} from APPROVED_PENDING_PAYMENT to REJECTED`,
+          );
+        });
+
+        result.cleanedCount++;
+      } catch (error) {
+        result.errorCount++;
+        const errorMessage =
+          error instanceof Error ? error.message : "Unknown error";
+        console.error(
+          `❌ Failed to clean up consultation ${consultation.id}:`,
+          errorMessage,
+        );
+        result.errors.push(
+          `Consultation cleanup failed for ${consultation.id}: ${errorMessage}`,
+        );
+      }
+    }
+
+    result.success = result.errorCount === 0;
+
+    // Summary
+    console.log(`\n📈 Expired Consultation Cleanup Summary:`);
+    console.log(
+      `   ✅ Successfully cleaned: ${result.cleanedCount} consultations`,
+    );
+    console.log(
+      `   ❌ Failed to clean: ${result.errorCount} consultations`,
+    );
+    console.log(
+      `   📊 Total processed: ${result.totalProcessed} consultations`,
+    );
+
+    if (result.totalProcessed > 0) {
+      console.log(
+        `   🎯 Success rate: ${((result.cleanedCount / result.totalProcessed) * 100).toFixed(1)}%`,
+      );
+    }
+  } catch (error) {
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown error";
+    console.error(
+      "❌ Expired consultation cleanup failed:",
+      errorMessage,
+    );
+    result.errors.push(`Job failed: ${errorMessage}`);
+    result.success = false;
+  }
+
+  return result;
+}
+
+/**
  * Entry point for GitHub Actions
  */
 async function main(): Promise<void> {
@@ -329,12 +506,31 @@ async function main(): Promise<void> {
   console.log(`🚀 Starting cleanup job at ${new Date().toISOString()}`);
 
   try {
-    const result = await cleanupAbandonedPayments();
+    // Run abandoned payment cleanup
+    const paymentResult = await cleanupAbandonedPayments();
+
+    // Run expired consultation cleanup
+    const consultationResult = await cleanupExpiredApprovalPendingPayments();
 
     const duration = (Date.now() - startTime) / 1000;
     console.log(`⏱️ Job completed in ${duration.toFixed(2)} seconds`);
 
-    if (result.success) {
+    // Combined summary
+    console.log(`\n📊 Overall Cleanup Summary:`);
+    console.log(
+      `   🧹 Abandoned payments cleaned: ${paymentResult.cleanedCount}`,
+    );
+    console.log(
+      `   🧹 Expired consultations reset: ${consultationResult.cleanedCount}`,
+    );
+    console.log(
+      `   ❌ Total errors: ${paymentResult.errorCount + consultationResult.errorCount}`,
+    );
+
+    // Determine overall success
+    const overallSuccess = paymentResult.success && consultationResult.success;
+
+    if (overallSuccess) {
       console.log("🎉 Cleanup job completed successfully");
       process.exit(0);
     } else {

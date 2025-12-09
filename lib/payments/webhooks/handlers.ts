@@ -72,7 +72,19 @@ interface EventData {
 // ============================================================================
 
 /**
- * Handle successful payment - creates or confirms appointments
+ * Handle successful payment - confirms or creates appointments
+ *
+ * TWO FLOWS SUPPORTED:
+ * 1. NEW FLOW (Race Condition Fix): Appointment created during checkout (tentative)
+ *    - payment.appointmentId exists
+ *    - Just confirm appointment by setting isTentative = false
+ *    - This prevents race conditions by making validation see tentative bookings
+ *
+ * 2. LEGACY FLOW: Appointment NOT created during checkout
+ *    - payment.appointmentId is null
+ *    - Create appointment from webhook metadata
+ *    - Used for backwards compatibility and older payment flows
+ *
  * Used by both webhook handlers and mock payment flows
  */
 export async function handlePaymentSuccess(
@@ -112,19 +124,53 @@ export async function handlePaymentSuccess(
         errorMessage,
       );
 
-      // Mark payment as succeeded but flag for manual review
+      // FIX Issue #8: Enhanced alerting for metadata validation failures
+      // This is a CRITICAL condition - customer charged but no appointment created!
       await tx.payment.update({
         where: { id: payment.id },
         data: {
           paymentStatus: PaymentStatus.SUCCEEDED,
-          // Store error in description for manual recovery
-          description: `Metadata validation failed: ${errorMessage}. Manual recovery required via admin panel.`,
+          // Store error in description for manual recovery - prefixed for easy searching
+          description: `REQUIRES_MANUAL_RECOVERY: Metadata validation failed: ${errorMessage}. Customer charged but appointment NOT created.`,
         },
       });
 
-      // Alert for monitoring
+      // CRITICAL ALERT - Log in structured format for monitoring systems
+      // This should trigger PagerDuty/Slack alerts via log monitoring
       console.error(
-        `⚠️ ALERT: Payment ${payment.id} succeeded but appointment creation blocked due to invalid metadata. User: ${payment.userId}`,
+        JSON.stringify({
+          event: "CRITICAL_PAYMENT_WITHOUT_APPOINTMENT",
+          alert_priority: "P1",
+          payment_id: payment.id,
+          payment_intent: paymentIntentId,
+          user_id: payment.userId,
+          user_email: payment.user.email,
+          amount: payment.amount,
+          currency: payment.currency,
+          error: errorMessage,
+          action_required: "IMMEDIATE: Manual appointment creation or full refund required",
+          dashboard_url: `${process.env.NEXT_PUBLIC_APP_URL}/admin/payments/${payment.id}`,
+          timestamp: new Date().toISOString(),
+        }),
+      );
+
+      // Also log in human-readable format for direct log viewing
+      console.error(
+        `
+================================================================================
+                    CRITICAL ALERT: PAYMENT WITHOUT APPOINTMENT
+================================================================================
+Payment ID:      ${payment.id}
+Payment Intent:  ${paymentIntentId}
+User ID:         ${payment.userId}
+User Email:      ${payment.user.email || 'N/A'}
+Amount:          ${payment.currency} ${payment.amount / 100}
+Error:           ${errorMessage}
+
+ACTION REQUIRED: Customer was charged but appointment was NOT created!
+                 Either create appointment manually or issue full refund.
+================================================================================
+        `,
       );
 
       // Exit early - appointment not created, requires manual intervention
@@ -138,18 +184,43 @@ export async function handlePaymentSuccess(
 
     let appointment;
     if (payment.appointmentId) {
+      // NEW FLOW: Appointment already created during checkout (tentative)
+      // Just confirm it by setting isTentative = false
       appointment = await tx.appointment.findUnique({
         where: { id: payment.appointmentId },
       });
+
+      console.log(
+        JSON.stringify({
+          event: "webhook_confirming_existing_appointment",
+          paymentIntent: paymentIntentId,
+          appointmentId: payment.appointmentId,
+          timestamp: new Date().toISOString(),
+        }),
+      );
     } else {
+      // LEGACY FLOW: Appointment not created during checkout
+      // Create it now from webhook metadata
       appointment = await createAppointmentFromWebhook(tx, metadata, payment);
+
+      console.log(
+        JSON.stringify({
+          event: "webhook_creating_new_appointment",
+          paymentIntent: paymentIntentId,
+          appointmentId: appointment.id,
+          appointmentType: metadata.appointmentType,
+          timestamp: new Date().toISOString(),
+        }),
+      );
     }
 
     if (!appointment) {
       throw new Error("Failed to create or find appointment");
     }
 
-    await confirmExistingAppointment(tx, appointment.id);
+    // Confirm appointment: set isTentative = false and update status to APPROVED
+    // FIX Issue #1 & #3: Pass userId to confirm only this user's slots for multi-user events
+    await confirmExistingAppointment(tx, appointment.id, payment.userId);
 
     // Send payment success email
     await sendPaymentSuccessNotification(
@@ -214,6 +285,12 @@ export async function handlePaymentFailure(paymentIntentId: string) {
       return;
     }
 
+    // FIX Issue #8: Idempotency check - prevent duplicate processing
+    if (payment.paymentStatus === PaymentStatus.FAILED) {
+      console.log(`Payment ${paymentIntentId} has already been marked as failed.`);
+      return;
+    }
+
     await tx.payment.update({
       where: { id: payment.id },
       data: { paymentStatus: PaymentStatus.FAILED },
@@ -275,6 +352,17 @@ async function createAppointmentFromWebhook(
       });
       break;
     case AppointmentsType.SUBSCRIPTION:
+      // LEGACY FLOW WARNING: This should only happen for old payments
+      // New subscriptions create placeholder appointment during checkout
+      console.warn(
+        JSON.stringify({
+          event: "legacy_subscription_creation",
+          warning: "Creating subscription via webhook - expected only for old payments",
+          paymentId: payment.id,
+          planId,
+          timestamp: new Date().toISOString(),
+        }),
+      );
       appointment = await createSubscription(tx, {
         planId,
         slotStartTimeInUTC,
@@ -413,6 +501,11 @@ async function createWebinar(
   });
   if (!webinar) throw new Error("Webinar not found");
 
+  // FIX Issue #5: Validate webinar is scheduled before allowing booking
+  if (!webinar.appointment?.slotsOfAppointment?.[0]) {
+    throw new Error("Webinar has not been scheduled. Cannot create booking.");
+  }
+
   let appointment = webinar.appointment;
   if (!appointment) {
     appointment = await tx.appointment.create({
@@ -529,7 +622,10 @@ async function confirmApprovalStatus(
       throw new Error(`Subscription ${entityId} not found`);
     }
 
-    // If status is APPROVED_PENDING_PAYMENT, confirm the appointment
+    // For subscriptions: Only transition APPROVED_PENDING_PAYMENT → APPROVED
+    // Do NOT change PENDING → APPROVED here!
+    // Subscription stays PENDING until consultant allocates slots via Requests tab
+    // SlotAllocationService.allocate() will set status to APPROVED when slots are allocated
     if (subscription.requestStatus === RequestStatus.APPROVED_PENDING_PAYMENT) {
       await tx.subscription.update({
         where: { id: entityId },
@@ -538,28 +634,30 @@ async function confirmApprovalStatus(
       console.log(
         `✅ Subscription ${entityId} payment completed - moving from APPROVED_PENDING_PAYMENT to APPROVED`,
       );
-    } else if (subscription.requestStatus !== RequestStatus.APPROVED) {
-      // Only update if not already approved
-      await tx.subscription.update({
-        where: { id: entityId },
-        data: { requestStatus: RequestStatus.APPROVED },
-      });
+    } else {
+      console.log(
+        `ℹ️ Subscription ${entityId} payment received - keeping status as ${subscription.requestStatus} (consultant will allocate slots)`,
+      );
     }
   }
 }
 
 /**
  * Confirm appointment by making slots non-tentative and updating status
+ *
+ * FIX Issue #1 & #3: For multi-user events (WEBINAR, CLASS), only confirm
+ * the paying user's slots, not all slots for the shared appointment.
+ *
+ * @param tx - Prisma transaction client
+ * @param appointmentId - The appointment ID to confirm
+ * @param userId - The paying user's ID (required for WEBINAR/CLASS to prevent confirming other users' slots)
  */
 async function confirmExistingAppointment(
   tx: Prisma.TransactionClient,
   appointmentId: string,
+  userId?: string,
 ) {
-  await tx.slotOfAppointment.updateMany({
-    where: { appointmentId },
-    data: { isTentative: false },
-  });
-
+  // First fetch appointment to determine type
   const appointment = await tx.appointment.findUnique({
     where: { id: appointmentId },
     include: {
@@ -570,21 +668,78 @@ async function confirmExistingAppointment(
     },
   });
 
-  // Use helper for consultation and subscription
-  if (appointment?.consultation) {
+  if (!appointment) {
+    console.warn(`Appointment ${appointmentId} not found for confirmation`);
+    return;
+  }
+
+  // FIX Issue #3: For CLASS, confirm ALL user's slots across all sessions
+  // Classes have multiple appointments (one per session), but payment only links to first
+  if (appointment.class && userId) {
+    await tx.slotOfAppointment.updateMany({
+      where: {
+        appointment: { classId: appointment.class.id },
+        user: { some: { id: userId } },
+      },
+      data: { isTentative: false },
+    });
+
+    console.log(
+      JSON.stringify({
+        event: "class_all_sessions_confirmed",
+        classId: appointment.class.id,
+        userId,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+  }
+  // FIX Issue #1: For WEBINAR, confirm only the paying user's slot
+  // Webinars share one appointment among all participants
+  else if (appointment.webinar && userId) {
+    await tx.slotOfAppointment.updateMany({
+      where: {
+        appointmentId,
+        user: { some: { id: userId } },
+      },
+      data: { isTentative: false },
+    });
+
+    console.log(
+      JSON.stringify({
+        event: "webinar_user_slot_confirmed",
+        webinarId: appointment.webinar.id,
+        userId,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+  }
+  // For CONSULTATION and SUBSCRIPTION: original behavior (single user per appointment)
+  else {
+    await tx.slotOfAppointment.updateMany({
+      where: { appointmentId },
+      data: { isTentative: false },
+    });
+  }
+
+  // Update status for consultation and subscription
+  if (appointment.consultation) {
     await confirmApprovalStatus(tx, "consultation", appointment.consultation.id);
   }
 
-  if (appointment?.subscription) {
+  if (appointment.subscription) {
     await confirmApprovalStatus(tx, "subscription", appointment.subscription.id);
   }
-  if (appointment?.webinar) {
+
+  // Update webinar status
+  if (appointment.webinar) {
     await tx.webinar.update({
       where: { id: appointment.webinar.id },
       data: { status: "SCHEDULED" },
     });
   }
-  if (appointment?.class) {
+
+  // Update class status
+  if (appointment.class) {
     await tx.class.update({
       where: { id: appointment.class.id },
       data: { status: "SCHEDULED" },

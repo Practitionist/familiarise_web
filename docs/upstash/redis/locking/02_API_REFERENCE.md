@@ -11,17 +11,29 @@
    - [lockConsultationApproval](#lockconsultationapproval)
    - [lockSubscriptionApproval](#locksubscriptionapproval)
    - [unlockApproval](#unlockapproval)
-3. [Legacy Lock API](#legacy-lock-api)
+3. [Slot Booking Lock API](#slot-booking-lock-api)
+   - [lockSlotBooking](#lockslotbooking)
+   - [unlockSlotBooking](#unlockslotbooking)
+4. [Event Checkout Lock API](#event-checkout-lock-api)
+   - [lockEventCheckout](#lockeventcheckout)
+   - [unlockEventCheckout](#unlockeventcheckout)
+5. [Event Slot Semaphore API](#event-slot-semaphore-api)
+   - [acquireEventSlot](#acquireeventslot)
+   - [releaseEventSlot](#releaseeventslot)
+   - [confirmEventSlot](#confirmeventslot)
+   - [getEventSlotCount](#geteventslotcount)
+6. [Lock Extension API](#lock-extension-api)
+   - [extendLock](#extendlock)
+7. [Legacy Lock API](#legacy-lock-api)
    - [lockAppointment](#lockappointment)
    - [unlockAppointment](#unlockappointment)
    - [isAppointmentLocked](#isappointmentlocked)
-4. [Rate Limiting API](#rate-limiting-api)
-   - [checkRateLimit](#checkratelimit)
-5. [Types & Interfaces](#types--interfaces)
+8. [Types & Interfaces](#types--interfaces)
    - [ApprovalLock](#approvallock-interface)
    - [LockRetryConfig](#lockretryconfig-interface)
-6. [Configuration Reference](#configuration-reference)
-7. [Best Practices](#best-practices)
+   - [EventSlotReservation](#eventslotreservation-interface)
+9. [Configuration Reference](#configuration-reference)
+10. [Best Practices](#best-practices)
 
 ---
 
@@ -39,6 +51,30 @@ import {
   LockRetryConfig,
 } from "@/utils/appointmentlock";
 
+// Slot booking locks
+import {
+  lockSlotBooking,
+  unlockSlotBooking,
+} from "@/utils/appointmentlock";
+
+// Event checkout locks
+import {
+  lockEventCheckout,
+  unlockEventCheckout,
+} from "@/utils/appointmentlock";
+
+// Event slot semaphore (multi-participant events)
+import {
+  acquireEventSlot,
+  releaseEventSlot,
+  confirmEventSlot,
+  getEventSlotCount,
+  EventSlotReservation,
+} from "@/utils/appointmentlock";
+
+// Lock extension (heartbeat pattern)
+import { extendLock } from "@/utils/appointmentlock";
+
 // Legacy locks (appointment booking)
 import {
   lockAppointment,
@@ -46,21 +82,31 @@ import {
   isAppointmentLocked,
 } from "@/utils/appointmentlock";
 
-// Rate limiting
-import { checkRateLimit } from "@/lib/redis";
+// Circuit breaker (for Redis operations)
+import { withCircuitBreaker, checkRedisHealth } from "@/lib/redis";
 ```
+
+> **Note**: API rate limiting is handled by **Arcjet** at the route level, not by this module.
 
 ### Quick Reference
 
 | Function | Purpose | Default TTL | Returns |
 |----------|---------|-------------|---------|
-| `lockConsultationApproval` | Lock consultation approval | 30s | `ApprovalLock` |
-| `lockSubscriptionApproval` | Lock subscription approval | 30s | `ApprovalLock` |
+| `lockConsultationApproval` | Lock consultation approval | 60s | `ApprovalLock` |
+| `lockSubscriptionApproval` | Lock subscription approval | 60s | `ApprovalLock` |
 | `unlockApproval` | Release any approval lock | N/A | `void` |
+| `lockSlotBooking` | Lock time slot for booking | 60s | `ApprovalLock` |
+| `unlockSlotBooking` | Release slot booking lock | N/A | `void` |
+| `lockEventCheckout` | Lock event for checkout | 60s | `ApprovalLock` |
+| `unlockEventCheckout` | Release event checkout lock | N/A | `void` |
+| `acquireEventSlot` | Reserve slot (semaphore) | 5min | `EventSlotReservation \| null` |
+| `releaseEventSlot` | Release semaphore slot | N/A | `void` |
+| `confirmEventSlot` | Confirm slot after payment | N/A | `void` |
+| `getEventSlotCount` | Get current reservation count | N/A | `number` |
+| `extendLock` | Extend lock TTL (heartbeat) | +30s | `boolean` |
 | `lockAppointment` | Lock appointment (legacy) | 5min | `ApprovalLock` |
 | `unlockAppointment` | Release appointment lock | N/A | `void` |
 | `isAppointmentLocked` | Check appointment lock status | N/A | `boolean` |
-| `checkRateLimit` | Check rate limit status | 10s | `boolean` |
 
 ---
 
@@ -75,7 +121,7 @@ Acquires a distributed lock for preventing concurrent consultation approval atte
 ```typescript
 async function lockConsultationApproval(
   consultationId: string,
-  ttl: number = 30000
+  ttl: number = 60000
 ): Promise<ApprovalLock>
 ```
 
@@ -84,14 +130,14 @@ async function lockConsultationApproval(
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `consultationId` | `string` | Yes | - | Unique consultation identifier (e.g., `"clx123abc"`) |
-| `ttl` | `number` | No | `30000` | Time-to-live in milliseconds (30 seconds default) |
+| `ttl` | `number` | No | `60000` | Time-to-live in milliseconds (60 seconds default) |
 
 #### Returns
 
 `Promise<ApprovalLock>` - Lock object containing:
 - `key`: Redis key (`"consultation-approval:clx123"`)
 - `value`: UUID for ownership verification
-- `ttl`: Effective TTL with drift protection (29700ms)
+- `ttl`: Effective TTL with drift protection (59400ms)
 - `acquiredAt`: Timestamp when lock was acquired
 - `client`: Upstash Redis client reference
 
@@ -123,7 +169,7 @@ export async function PATCH(
 
   let lock;
   try {
-    // ✅ Acquire lock with 30-second default TTL
+    // ✅ Acquire lock with 60-second default TTL
     lock = await lockConsultationApproval(consultationId);
 
     // Protected critical section
@@ -207,7 +253,7 @@ Acquires a distributed lock for preventing concurrent subscription approval atte
 ```typescript
 async function lockSubscriptionApproval(
   subscriptionId: string,
-  ttl: number = 30000
+  ttl: number = 60000
 ): Promise<ApprovalLock>
 ```
 
@@ -216,7 +262,7 @@ async function lockSubscriptionApproval(
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `subscriptionId` | `string` | Yes | - | Unique subscription identifier |
-| `ttl` | `number` | No | `30000` | Time-to-live in milliseconds |
+| `ttl` | `number` | No | `60000` | Time-to-live in milliseconds (60 seconds default) |
 
 #### Usage Example
 
@@ -310,6 +356,336 @@ try {
 await unlockApproval(lock);
 await unlockApproval(lock); // ✅ Safe, logs "lock_already_released"
 ```
+
+---
+
+## Slot Booking Lock API
+
+### lockSlotBooking()
+
+Acquires a distributed lock for preventing double-booking of time slots during consultation creation.
+
+#### Signature
+
+```typescript
+async function lockSlotBooking(
+  consultantProfileId: string,
+  slotStartTimeInUTC: string,
+  ttl: number = 60000
+): Promise<ApprovalLock>
+```
+
+#### Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `consultantProfileId` | `string` | Yes | - | The consultant's profile ID |
+| `slotStartTimeInUTC` | `string` | Yes | - | Slot start time in ISO format (e.g., `"2025-01-15T10:00:00.000Z"`) |
+| `ttl` | `number` | No | `60000` | Time-to-live in milliseconds (60 seconds default) |
+
+#### Throws
+
+- `SlotLockError`: Thrown when another user is currently booking this slot
+
+#### Usage Example
+
+```typescript
+import { lockSlotBooking, unlockSlotBooking } from "@/utils/appointmentlock";
+
+async function createConsultationBooking(
+  consultantProfileId: string,
+  slotTime: string
+) {
+  let lock;
+  try {
+    lock = await lockSlotBooking(consultantProfileId, slotTime);
+
+    // Protected: verify slot and create booking
+    await verifySlotAvailability(consultantProfileId, slotTime);
+    await createBooking(consultantProfileId, slotTime);
+
+    return { success: true };
+  } catch (error) {
+    if (error.name === "SlotLockError") {
+      return { error: "This slot is being booked by another user", status: 409 };
+    }
+    throw error;
+  } finally {
+    if (lock) await unlockSlotBooking(lock);
+  }
+}
+```
+
+---
+
+### unlockSlotBooking()
+
+Releases a slot booking lock. Identical to `unlockApproval()`.
+
+#### Signature
+
+```typescript
+async function unlockSlotBooking(lock: ApprovalLock): Promise<void>
+```
+
+---
+
+## Event Checkout Lock API
+
+### lockEventCheckout()
+
+Acquires a distributed lock for preventing concurrent event checkout attempts. Used for webinars, classes, and subscription scheduling.
+
+#### Signature
+
+```typescript
+async function lockEventCheckout(
+  appointmentType: string,
+  eventOrPlanId: string,
+  ttl: number = 60000
+): Promise<ApprovalLock>
+```
+
+#### Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `appointmentType` | `string` | Yes | - | Type of appointment (`"WEBINAR"`, `"CLASS"`, `"SUBSCRIPTION"`) |
+| `eventOrPlanId` | `string` | Yes | - | Event ID or subscription plan ID |
+| `ttl` | `number` | No | `60000` | Time-to-live in milliseconds (60 seconds default) |
+
+#### Usage Example
+
+```typescript
+import { lockEventCheckout, unlockEventCheckout } from "@/utils/appointmentlock";
+
+async function checkoutWebinar(webinarId: string) {
+  let lock;
+  try {
+    lock = await lockEventCheckout("WEBINAR", webinarId);
+
+    // Protected: process checkout
+    await processPayment(webinarId);
+    await enrollUser(webinarId);
+
+    return { success: true };
+  } catch (error) {
+    return { error: "Another checkout in progress", status: 409 };
+  } finally {
+    if (lock) await unlockEventCheckout(lock);
+  }
+}
+```
+
+---
+
+### unlockEventCheckout()
+
+Releases an event checkout lock. Identical to `unlockApproval()`.
+
+#### Signature
+
+```typescript
+async function unlockEventCheckout(lock: ApprovalLock): Promise<void>
+```
+
+---
+
+## Event Slot Semaphore API
+
+The semaphore API allows multiple concurrent checkouts for multi-participant events (webinars, classes) up to a configurable limit. Unlike mutex locks, semaphores allow parallel operations.
+
+### acquireEventSlot()
+
+Reserves a slot in the event semaphore. Returns reservation info if successful, `null` if the event is full.
+
+#### Signature
+
+```typescript
+async function acquireEventSlot(
+  eventType: string,
+  eventId: string,
+  maxParticipants: number,
+  ttl: number = 300000
+): Promise<EventSlotReservation | null>
+```
+
+#### Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `eventType` | `string` | Yes | - | Type of event (`"WEBINAR"`, `"CLASS"`) |
+| `eventId` | `string` | Yes | - | Unique event identifier |
+| `maxParticipants` | `number` | Yes | - | Maximum concurrent reservations allowed |
+| `ttl` | `number` | No | `300000` | Reservation TTL in ms (5 minutes for payment completion) |
+
+#### Returns
+
+- `EventSlotReservation`: Reservation object if slot acquired
+- `null`: If event has reached maximum participants
+
+#### Usage Example
+
+```typescript
+import {
+  acquireEventSlot,
+  releaseEventSlot,
+  confirmEventSlot,
+} from "@/utils/appointmentlock";
+
+async function checkoutWebinar(webinarId: string, maxSeats: number) {
+  // Reserve a slot (allows parallel checkouts up to maxSeats)
+  const reservation = await acquireEventSlot("WEBINAR", webinarId, maxSeats);
+
+  if (!reservation) {
+    return { error: "Webinar is full", status: 409 };
+  }
+
+  try {
+    // Process payment (5 minute window)
+    const paymentResult = await processPayment(webinarId);
+
+    if (paymentResult.success) {
+      // Confirm slot (removes reservation tracking, keeps counter)
+      await confirmEventSlot(reservation);
+      return { success: true };
+    } else {
+      // Release slot (decrements counter, allows another user)
+      await releaseEventSlot(reservation);
+      return { error: "Payment failed", status: 402 };
+    }
+  } catch (error) {
+    // Release on any error
+    await releaseEventSlot(reservation);
+    throw error;
+  }
+}
+```
+
+---
+
+### releaseEventSlot()
+
+Releases an event slot reservation. Decrements the counter to allow another user to book.
+
+#### Signature
+
+```typescript
+async function releaseEventSlot(
+  reservation: EventSlotReservation
+): Promise<void>
+```
+
+---
+
+### confirmEventSlot()
+
+Confirms an event slot after successful payment. Removes reservation tracking but keeps the counter (slot is now permanent in the database).
+
+#### Signature
+
+```typescript
+async function confirmEventSlot(
+  reservation: EventSlotReservation
+): Promise<void>
+```
+
+---
+
+### getEventSlotCount()
+
+Returns the current number of reservations for an event.
+
+#### Signature
+
+```typescript
+async function getEventSlotCount(
+  eventType: string,
+  eventId: string
+): Promise<number>
+```
+
+#### Usage Example
+
+```typescript
+import { getEventSlotCount } from "@/utils/appointmentlock";
+
+async function checkAvailability(webinarId: string, maxSeats: number) {
+  const currentCount = await getEventSlotCount("WEBINAR", webinarId);
+  const available = maxSeats - currentCount;
+
+  return {
+    total: maxSeats,
+    reserved: currentCount,
+    available,
+    isFull: available <= 0,
+  };
+}
+```
+
+---
+
+## Lock Extension API
+
+### extendLock()
+
+Extends a lock's TTL using the heartbeat pattern. Call periodically during long operations to prevent lock expiration.
+
+#### Signature
+
+```typescript
+async function extendLock(
+  lock: ApprovalLock,
+  additionalTtl: number = 30000
+): Promise<boolean>
+```
+
+#### Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `lock` | `ApprovalLock` | Yes | - | The lock to extend |
+| `additionalTtl` | `number` | No | `30000` | Additional TTL to add (30 seconds default) |
+
+#### Returns
+
+- `true`: Lock extended successfully
+- `false`: Lock extension failed (ownership lost)
+
+#### Usage Example
+
+```typescript
+import {
+  lockConsultationApproval,
+  unlockApproval,
+  extendLock,
+} from "@/utils/appointmentlock";
+
+async function processLongOperation(consultationId: string) {
+  const lock = await lockConsultationApproval(consultationId, 60000);
+
+  // Set up heartbeat to extend lock every 20 seconds
+  const heartbeat = setInterval(async () => {
+    const extended = await extendLock(lock, 30000);
+    if (!extended) {
+      console.warn("Lock extension failed - lost ownership");
+      clearInterval(heartbeat);
+    }
+  }, 20000);
+
+  try {
+    // Long-running operation (may take > 60s)
+    await step1(); // 25s
+    await step2(); // 25s
+    await step3(); // 25s
+  } finally {
+    clearInterval(heartbeat);
+    await unlockApproval(lock);
+  }
+}
+```
+
+**Best Practice**: Set heartbeat interval to approximately 2/3 of the additional TTL (e.g., 20s heartbeat for 30s extension).
 
 ---
 
@@ -466,141 +842,6 @@ async function getAppointmentStatus(appointmentId: string) {
 
 ---
 
-## Rate Limiting API
-
-### checkRateLimit()
-
-Checks if an identifier is within rate limits using sliding window algorithm.
-
-#### Signature
-
-```typescript
-async function checkRateLimit(identifier: string): Promise<boolean>
-```
-
-#### Parameters
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `identifier` | `string` | Yes | Unique identifier (user ID, IP address, API key, etc.) |
-
-#### Returns
-
-- `true`: Request allowed (within limits)
-- `false`: Request denied (rate limited)
-
-#### Configuration
-
-- **Limit**: 5 requests per 10 seconds
-- **Algorithm**: Sliding window (precise, no burst allowance)
-- **Scope**: Per identifier (not global)
-
-#### Usage Examples
-
-##### Example 1: User-based Rate Limiting
-
-```typescript
-import { checkRateLimit } from "@/lib/redis";
-
-export async function POST(request: Request) {
-  const userId = await getUserId(request);
-
-  // Check: max 5 approval requests per 10 seconds per user
-  const allowed = await checkRateLimit(`user:${userId}:approval`);
-
-  if (!allowed) {
-    return Response.json(
-      {
-        error: "Too many approval requests. Please try again in 10 seconds.",
-        retryAfter: 10,
-      },
-      {
-        status: 429, // Too Many Requests
-        headers: { "Retry-After": "10" },
-      }
-    );
-  }
-
-  // Process approval...
-  return Response.json({ success: true });
-}
-```
-
-##### Example 2: IP-based Rate Limiting
-
-```typescript
-import { checkRateLimit } from "@/lib/redis";
-
-export async function middleware(request: Request) {
-  const ip = request.headers.get("x-forwarded-for") || "unknown";
-
-  // Protect public endpoints from IP-based abuse
-  const allowed = await checkRateLimit(`ip:${ip}:public-api`);
-
-  if (!allowed) {
-    return new Response("Rate limit exceeded", {
-      status: 429,
-      headers: {
-        "Retry-After": "10",
-        "X-RateLimit-Limit": "5",
-        "X-RateLimit-Window": "10s",
-      },
-    });
-  }
-
-  return next();
-}
-```
-
-##### Example 3: Endpoint-specific Limiting
-
-```typescript
-import { checkRateLimit } from "@/lib/redis";
-
-// Different limits for different endpoints
-const RATE_LIMITS = {
-  "/api/approval": { limit: 5, window: 10 },
-  "/api/search": { limit: 20, window: 10 },
-  "/api/webhooks": { limit: 100, window: 10 },
-};
-
-export async function checkEndpointRateLimit(
-  endpoint: string,
-  userId: string
-): Promise<boolean> {
-  const identifier = `endpoint:${endpoint}:user:${userId}`;
-  return await checkRateLimit(identifier);
-}
-```
-
-##### Example 4: Rate Limit with Response Headers
-
-```typescript
-import { checkRateLimit } from "@/lib/redis";
-
-export async function POST(request: Request) {
-  const userId = await getUserId(request);
-  const allowed = await checkRateLimit(`user:${userId}:api`);
-
-  const headers = {
-    "X-RateLimit-Limit": "5",
-    "X-RateLimit-Window": "10s",
-    "X-RateLimit-Remaining": allowed ? "4" : "0",
-  };
-
-  if (!allowed) {
-    return Response.json(
-      { error: "Rate limit exceeded" },
-      { status: 429, headers: { ...headers, "Retry-After": "10" } }
-    );
-  }
-
-  return Response.json({ success: true }, { headers });
-}
-```
-
----
-
 ## Types & Interfaces
 
 ### ApprovalLock Interface
@@ -621,7 +862,7 @@ export interface ApprovalLock {
 |----------|------|-------------|---------|
 | `key` | `string` | Redis key following naming convention | `"consultation-approval:clx123"` |
 | `value` | `string` | Cryptographically random UUID for safe release | `"a3f2b8c1-4d5e-6f7g-8h9i-0j1k2l3m4n5o"` |
-| `ttl` | `number` | Effective TTL with clock drift protection (ms) | `29700` (30000ms - 1% drift) |
+| `ttl` | `number` | Effective TTL with clock drift protection (ms) | `59400` (60000ms - 1% drift) |
 | `acquiredAt` | `number` | Unix timestamp in milliseconds | `1701259896789` |
 | `client` | `Redis` | Upstash Redis client for release operations | `Redis { ... }` |
 
@@ -633,7 +874,7 @@ const lock: ApprovalLock = await lockConsultationApproval("clx123");
 
 console.log(lock.key);         // "consultation-approval:clx123"
 console.log(lock.value);       // "a3f2b8c1-..."
-console.log(lock.ttl);         // 29700
+console.log(lock.ttl);         // 59400
 console.log(lock.acquiredAt);  // 1701259896789
 
 // Used for safe release
@@ -685,6 +926,48 @@ const delay = exponentialBackoff
 | 5 | 200ms × 2^5 = 6400ms | 0-200ms | 6400-6600ms |
 
 **Total Time (10 retries)**: ~30-35 seconds
+
+---
+
+### EventSlotReservation Interface
+
+```typescript
+export interface EventSlotReservation {
+  reservationId: string;  // Unique reservation UUID
+  slotNumber: number;     // Slot number (1 to maxParticipants)
+  eventType: string;      // Event type (WEBINAR, CLASS)
+  eventId: string;        // Event identifier
+}
+```
+
+#### Properties
+
+| Property | Type | Description | Example |
+|----------|------|-------------|---------|
+| `reservationId` | `string` | Unique UUID for this reservation | `"a3f2b8c1-4d5e-..."` |
+| `slotNumber` | `number` | Slot number in the semaphore (1 to max) | `5` |
+| `eventType` | `string` | Type of event being reserved | `"WEBINAR"` |
+| `eventId` | `string` | Unique event identifier | `"clx123abc"` |
+
+#### Usage
+
+```typescript
+// Reservation returned from acquireEventSlot
+const reservation = await acquireEventSlot("WEBINAR", "web123", 50);
+
+if (reservation) {
+  console.log(reservation.reservationId);  // "a3f2b8c1-..."
+  console.log(reservation.slotNumber);     // 5
+  console.log(reservation.eventType);      // "WEBINAR"
+  console.log(reservation.eventId);        // "web123"
+
+  // On success: confirm the slot
+  await confirmEventSlot(reservation);
+
+  // On failure: release the slot
+  await releaseEventSlot(reservation);
+}
+```
 
 ---
 
@@ -756,9 +1039,12 @@ Redis Namespace
 
 | Lock Type | Default TTL | Effective TTL (after drift) | Use Case |
 |-----------|-------------|----------------------------|----------|
-| Consultation Approval | 30 seconds | 29.7 seconds | Fast payment link generation |
-| Subscription Approval | 30 seconds | 29.7 seconds | Fast subscription processing |
-| Appointment Lock | 5 minutes | 4.95 minutes | Complex time slot allocation |
+| Consultation Approval | 60 seconds | 59.4 seconds | Payment link generation |
+| Subscription Approval | 60 seconds | 59.4 seconds | Subscription processing |
+| Slot Booking | 60 seconds | 59.4 seconds | Time slot allocation |
+| Event Checkout | 60 seconds | 59.4 seconds | Webinar/class checkout |
+| Event Slot (Semaphore) | 5 minutes | 4.95 minutes | Multi-participant payment window |
+| Appointment Lock (Legacy) | 5 minutes | 4.95 minutes | Complex time slot allocation |
 
 #### TTL Selection Guidelines
 
@@ -769,8 +1055,8 @@ Redis Namespace
 
 **Examples**:
 - Operation takes 8-12s → Use 15s TTL
-- Operation takes 20-25s → Use 30s TTL (default)
-- Operation takes 45-50s → Use 60s TTL
+- Operation takes 30-40s → Use 60s TTL (default)
+- Operation takes 60-90s → Use 120s TTL + lock extension
 
 ---
 
@@ -778,10 +1064,10 @@ Redis Namespace
 
 ```typescript
 // Automatic TTL adjustment
-const requestedTTL = 30000;  // 30 seconds
+const requestedTTL = 60000;  // 60 seconds
 const driftFactor = 0.01;    // 1% safety margin
 const effectiveTTL = Math.floor(requestedTTL * (1 - driftFactor));
-// effectiveTTL = 29700ms (29.7 seconds)
+// effectiveTTL = 59400ms (59.4 seconds)
 ```
 
 **Why?** Prevents lock expiration race conditions in distributed systems with unsynchronized clocks.
@@ -843,17 +1129,22 @@ try {
 }
 ```
 
-#### 5. Use Specific Identifiers for Rate Limiting
+#### 5. Use Lock Extension for Long Operations
 
 ```typescript
-// ✅ Good: Specific identifiers
-await checkRateLimit(`user:${userId}:approval`);
-await checkRateLimit(`ip:${ip}:public-api`);
-await checkRateLimit(`endpoint:/api/webhooks:user:${userId}`);
+// ✅ Good: Extend lock for long operations
+const lock = await lockConsultationApproval(consultationId, 60000);
+const heartbeat = setInterval(() => extendLock(lock, 30000), 20000);
+try {
+  await longRunningOperation(); // May take > 60s
+} finally {
+  clearInterval(heartbeat);
+  await unlockApproval(lock);
+}
 
-// ❌ Bad: Generic identifiers
-await checkRateLimit(userId);           // Unclear scope
-await checkRateLimit("rate-limit");     // Shares limit across all users
+// ❌ Bad: Hope operation completes before TTL
+const lock = await lockConsultationApproval(consultationId, 30000);
+await veryLongOperation(); // May fail if > 30s
 ```
 
 ---

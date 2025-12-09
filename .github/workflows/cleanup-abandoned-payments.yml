@@ -27,7 +27,7 @@ jobs:
         run: echo "${{ secrets.ENV_FILE }}" | base64 -d > .env
 
       - name: Run abandoned payment cleanup
-        run: npx ts-node --esm jobs/cleanup-abandoned-payments.ts
+        run: npx tsx jobs/cleanup-abandoned-payments.ts
 
       - name: Notify on failure
         if: failure()

@@ -26,6 +26,24 @@ export class SlotValidationService {
   ) {}
 
   /**
+   * Simple slot availability check (used for lock validation)
+   * Only checks for conflicts - no schedule or future validation
+   *
+   * USE CASE: Re-validation inside distributed lock after acquisition
+   * This ensures the slot is still available before creating the booking.
+   *
+   * FIX Issue #11: Added slotDurationMinutes parameter for configurable slot duration
+   * @param slotDurationMinutes - Duration of each slot in minutes (default: 30)
+   */
+  async checkSlotAvailability(
+    slots: Date[],
+    consultantUserId: string,
+    slotDurationMinutes: number = 30,
+  ): Promise<ValidationResult> {
+    return await this.validateNoConflicts(slots, consultantUserId, slotDurationMinutes);
+  }
+
+  /**
    * Main validation entry point
    * Routes to appropriate validator based on event type
    */
@@ -43,9 +61,16 @@ export class SlotValidationService {
     const scheduleCheck = this.validateMatchesSchedule(slots, consultant);
     if (!scheduleCheck.isValid) return scheduleCheck;
 
+    // FIX Issue #11: Pass slot duration from config for conflict checking
+    // Calculate slot duration in minutes from hours (default to 30 minutes)
+    const slotDurationMinutes = config.sessionDurationInHours
+      ? Math.round(config.sessionDurationInHours * 60 / slots.length)
+      : 30;
+
     const conflictCheck = await this.validateNoConflicts(
       slots,
       consultant.userId,
+      slotDurationMinutes,
     );
     if (!conflictCheck.isValid) return conflictCheck;
 
@@ -144,15 +169,21 @@ export class SlotValidationService {
    * - slotEndTimeInUTC > slot: Existing slot ends after proposed starts
    * - Together: Detects ANY time period overlap
    */
+  /**
+   * FIX Issue #11: Slot duration is now configurable
+   * Default remains 30 minutes for backwards compatibility
+   * @param slotDurationMinutes - Duration of each slot in minutes (default: 30)
+   */
   private async validateNoConflicts(
     slots: Date[],
     consultantUserId: string,
+    slotDurationMinutes: number = 30,
   ): Promise<ValidationResult> {
     const errors: string[] = [];
 
     for (const slot of slots) {
-      // Calculate the end time of the proposed slot (30-minute slots)
-      const slotEnd = new Date(slot.getTime() + 30 * 60 * 1000);
+      // Calculate the end time of the proposed slot using configurable duration
+      const slotEnd = new Date(slot.getTime() + slotDurationMinutes * 60 * 1000);
 
       const existingAppointment = await this.prismaClient.appointment.findFirst(
         {
@@ -161,7 +192,21 @@ export class SlotValidationService {
               {
                 OR: [
                   { subscription: { requestStatus: RequestStatus.APPROVED } },
-                  { consultation: { requestStatus: RequestStatus.APPROVED } },
+                  // FIX: Check ALL consultation booking states (not just APPROVED)
+                  // PENDING = User submitted, awaiting consultant approval (tentative)
+                  // APPROVED = Consultant approved (if no payment required)
+                  // APPROVED_PENDING_PAYMENT = Consultant approved, awaiting payment
+                  {
+                    consultation: {
+                      requestStatus: {
+                        in: [
+                          RequestStatus.PENDING,
+                          RequestStatus.APPROVED,
+                          RequestStatus.APPROVED_PENDING_PAYMENT,
+                        ],
+                      },
+                    },
+                  },
                   { webinar: { status: "SCHEDULED" } },
                   { class: { status: "SCHEDULED" } },
                 ],
@@ -202,11 +247,30 @@ export class SlotValidationService {
                 },
               },
             },
+            payment: true, // Need payment data to check expiry
           },
         },
       );
 
       if (existingAppointment) {
+        // FIX: Check if consultation is APPROVED_PENDING_PAYMENT with expired payment
+        // If payment expired, slot is actually free (orphaned payment bug fix)
+        if (
+          existingAppointment.consultation?.requestStatus ===
+          RequestStatus.APPROVED_PENDING_PAYMENT
+        ) {
+          const payment = existingAppointment.payment?.[0];
+          if (payment?.expiresAt) {
+            const now = new Date();
+            const paymentExpired = new Date(payment.expiresAt) < now;
+            if (paymentExpired) {
+              // Payment expired - slot is actually available, skip this conflict
+              continue;
+            }
+          }
+        }
+
+        // Slot is genuinely booked - add error
         let conflictDetails = `${slot.toLocaleString()}`;
         if (existingAppointment.consultation) {
           conflictDetails += ` (conflicts with consultation for ${existingAppointment.consultation.requestedBy?.user?.name || "unknown"})`;

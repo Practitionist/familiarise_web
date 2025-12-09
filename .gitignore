@@ -50,6 +50,7 @@ migrations/
 
 # testing
 /coverage
+tests/typescript/race-conditions/results/
 
 # next.js
 /.next/

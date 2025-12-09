@@ -14,8 +14,10 @@ A lightweight, REST API-based locking system that prevents concurrent operations
 ### When to use it?
 - **Payment Approval Workflows**: Ensure only one approval creates a payment link
 - **Subscription Processing**: Prevent duplicate subscription charges
-- **Appointment Booking**: Avoid double-booking time slots (legacy)
-- **Rate Limiting**: Protect APIs from abuse (5 requests / 10 seconds)
+- **Appointment Booking**: Avoid double-booking time slots
+- **Circuit Breaking**: Protect against Redis failures with graceful degradation
+
+> **Note**: API rate limiting is handled by **Arcjet** at the route level, not by this module.
 
 ### Why Upstash?
 - ✅ **Serverless-Native**: REST API works everywhere (Vercel Edge, Lambda, etc.)
@@ -91,31 +93,67 @@ export async function approveConsultation(consultationId: string) {
 {"event":"lock_released","key":"consultation-approval:clx123","held_duration_ms":5058,"timestamp":"2025-11-29T12:35:01.847Z"}
 ```
 
-#### Example 2: Rate Limiting
+#### Example 2: Circuit Breaker
 
-Protect your API endpoints from abuse:
+Protect your application when Redis is unavailable:
 
 ```typescript
-import { checkRateLimit } from "@/lib/redis";
+import { withCircuitBreaker, checkRedisHealth } from "@/lib/redis";
 
-export async function POST(request: Request) {
-  const userId = await getUserId(request);
+// Health check endpoint
+export async function GET() {
+  const redisHealthy = await checkRedisHealth();
+  return Response.json({
+    redis: redisHealthy ? "healthy" : "unhealthy",
+  });
+}
 
-  // Check rate limit: 5 requests per 10 seconds
-  const allowed = await checkRateLimit(`user:${userId}:approval`);
+// Using circuit breaker for Redis operations
+export async function performRedisOperation() {
+  return withCircuitBreaker(
+    async () => {
+      // Your Redis operation here
+      return await redis.get("some-key");
+    },
+    () => null // Fallback value if circuit is open
+  );
+}
+```
 
-  if (!allowed) {
-    return Response.json(
-      { error: "Too many requests. Please try again in 10 seconds." },
-      {
-        status: 429,
-        headers: { "Retry-After": "10" },
-      }
-    );
+> **Note**: For API rate limiting, use **Arcjet** instead. See the Arcjet documentation for setup.
+
+#### Example 3: Lock Extension for Long Operations
+
+For operations that may exceed the initial TTL, use lock extension:
+
+```typescript
+import {
+  lockSlotBooking,
+  unlockSlotBooking,
+  extendLock,
+} from "@/utils/appointmentlock";
+
+export async function processLongOperation(consultantId: string, slotTime: string) {
+  const lock = await lockSlotBooking(consultantId, slotTime, 60000); // 60s TTL
+
+  // Set up heartbeat to extend lock every 20 seconds
+  const heartbeat = setInterval(async () => {
+    const extended = await extendLock(lock, 30000); // Extend by 30s
+    if (!extended) {
+      console.warn("Lock extension failed - lost ownership");
+      clearInterval(heartbeat);
+    }
+  }, 20000);
+
+  try {
+    // Long-running operation (may take > 60s)
+    await performComplexDatabaseOperation();
+    await callExternalPaymentAPI();
+    await sendNotifications();
+  } finally {
+    clearInterval(heartbeat);
+    await unlockSlotBooking(lock);
   }
-
-  // Process request...
-  return Response.json({ success: true });
 }
 ```
 
@@ -127,18 +165,62 @@ export async function POST(request: Request) {
 
 | Lock Type | Default TTL | Use Case |
 |-----------|-------------|----------|
-| **Consultation Approval** | 30 seconds | Fast payment link generation |
-| **Subscription Approval** | 30 seconds | Fast subscription processing |
-| **Appointment Lock** (legacy) | 5 minutes | Complex time slot allocation |
-| **Rate Limiting** | 10 seconds | API abuse protection |
+| **Slot Booking** | 60 seconds | Prevent double-booking consultations |
+| **Consultation Approval** | 60 seconds | Payment link generation |
+| **Subscription Approval** | 60 seconds | Subscription processing |
+| **Event Checkout** | 60 seconds | Webinar/class checkout |
+| **Event Slot (Semaphore)** | 5 minutes | Multi-participant events |
 
 ### Core Features
 
 1. **SET NX PX**: Atomic Redis operation (set-if-not-exists with TTL)
 2. **UUID Ownership**: Each lock has unique ID for safe release verification
-3. **Exponential Backoff**: Smart retry strategy (10 attempts, 200ms base delay)
-4. **Clock Drift Protection**: 1% TTL safety margin prevents timing bugs
-5. **Structured Logging**: Every operation logged as JSON for monitoring
+3. **Atomic Release**: Lua script ensures only owner can release (prevents race conditions)
+4. **Exponential Backoff**: Smart retry strategy (10 attempts, 200ms base delay)
+5. **Lock Extension**: Heartbeat pattern for long-running operations
+6. **Semaphore Pattern**: Parallel checkout for multi-participant events
+7. **Structured Logging**: Every operation logged as JSON for monitoring
+
+### Circuit Breaker Pattern
+
+The circuit breaker protects against Redis failures:
+
+```typescript
+import { withCircuitBreaker, getCircuitBreakerStatus } from "@/lib/redis";
+
+// Check circuit status (for health endpoints)
+const status = getCircuitBreakerStatus();
+// { state: "CLOSED", failures: 0, lastFailure: null }
+
+// Wrap Redis operations with circuit breaker
+const result = await withCircuitBreaker(
+  async () => await redis.get("key"),
+  () => null // Fallback if circuit is open
+);
+```
+
+**Circuit States:**
+- **CLOSED**: Normal operation (all requests go through)
+- **OPEN**: Redis failing (fail fast, return fallback)
+- **HALF_OPEN**: Testing recovery (limited requests)
+
+#### ⚠️ Circuit Breaker Limitation: In-Memory State
+
+The circuit breaker state is stored **in-memory per instance**. In a multi-instance deployment (e.g., multiple Vercel serverless functions), each instance maintains its own circuit state.
+
+**Implications:**
+- Instance A may have circuit OPEN while Instance B has circuit CLOSED
+- Failures in one instance don't immediately affect others
+- This is acceptable for most use cases (localized failure detection)
+
+**For distributed circuit breaker state** (if needed in the future):
+```typescript
+// Option 1: Store state in Redis itself (with short TTL)
+// Option 2: Use a distributed service like Redis Sentinel
+// Option 3: Use Upstash's built-in rate limiting with circuit breaker
+```
+
+See [Future Improvements](#future-improvements) for more details.
 
 ### Lock Lifecycle
 
@@ -165,7 +247,9 @@ graph LR
 │  Application Layer                                  │
 │  ├─ lockConsultationApproval(consultationId)       │
 │  ├─ lockSubscriptionApproval(subscriptionId)       │
-│  └─ checkRateLimit(identifier)                     │
+│  ├─ lockSlotBooking(consultantId, slotTime)        │
+│  ├─ lockEventCheckout(appointmentType, eventId)    │
+│  └─ acquireEventSlot(type, id, maxParticipants)    │
 └──────────────────────┬──────────────────────────────┘
                        ↓
 ┌─────────────────────────────────────────────────────┐
@@ -194,15 +278,24 @@ graph LR
 
 ```
 utils/
-└── appointmentlock.ts          # Core lock implementation (278 lines)
-    ├── lockConsultationApproval()
-    ├── lockSubscriptionApproval()
-    ├── unlockApproval()
+└── appointmentlock.ts          # Core lock implementation (~674 lines)
+    ├── lockConsultationApproval()     # Consultation approval locks
+    ├── lockSubscriptionApproval()     # Subscription approval locks
+    ├── lockSlotBooking()              # Time slot booking locks
+    ├── lockEventCheckout()            # Event checkout locks
+    ├── acquireEventSlot()             # Semaphore for multi-participant events
+    ├── releaseEventSlot()             # Release semaphore slot
+    ├── confirmEventSlot()             # Confirm slot after payment
+    ├── getEventSlotCount()            # Get current reservation count
+    ├── extendLock()                   # Extend lock TTL (heartbeat pattern)
     └── Legacy: lockAppointment(), isAppointmentLocked()
 
 lib/
-└── redis.ts                    # Upstash client setup (72 lines)
-    ├── checkRateLimit()
+└── redis.ts                    # Upstash client setup (~250 lines)
+    ├── withCircuitBreaker()           # Circuit breaker pattern
+    ├── checkRedisHealth()             # Health check
+    ├── getCircuitBreakerStatus()      # Status for monitoring
+    ├── acquireLock() / releaseLock()  # Simple lock utilities
     └── Environment validation
 ```
 
@@ -270,24 +363,7 @@ try {
 
 **Result**: ✅ Exactly one payment link created, even with 100 concurrent requests
 
-### Use Case 2: Rate Limiting
-
-**Problem**: API endpoints vulnerable to abuse (brute force, spam)
-
-**Solution**: Rate limit by user ID, IP, or endpoint
-
-```typescript
-import { checkRateLimit } from "@/lib/redis";
-
-const allowed = await checkRateLimit(`user:${userId}:approval`);
-if (!allowed) {
-  return Response.json({ error: "Too many requests" }, { status: 429 });
-}
-```
-
-**Result**: ✅ Maximum 5 requests per 10 seconds per user
-
-### Use Case 3: Appointment Booking (Legacy)
+### Use Case 2: Appointment Booking (Legacy)
 
 **Problem**: Multiple users booking the same time slot simultaneously
 
