@@ -12,7 +12,7 @@
  * 4. Lock extension script (atomic TTL update)
  *
  * RUN:
- * npx tsx tests/redis/test-lua-script-support.ts
+ * npx tsx tests/typescript/redis/test-lua-script-support.ts
  */
 
 import redis from "@/lib/redis";

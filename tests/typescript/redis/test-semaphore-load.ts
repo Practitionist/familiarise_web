@@ -12,7 +12,7 @@
  * 4. Stress test with rapid acquire/release cycles
  *
  * RUN:
- * npx tsx tests/redis/test-semaphore-load.ts
+ * npx tsx tests/typescript/redis/test-semaphore-load.ts
  */
 
 import redis from "@/lib/redis";

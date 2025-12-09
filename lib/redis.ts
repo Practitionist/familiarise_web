@@ -8,26 +8,53 @@
  *
  * NOTE: API rate limiting is handled by Arcjet at the route level.
  * This module focuses on Redis operations for distributed state management.
+ *
+ * Mock Mode:
+ * - Set USE_MOCK_REDIS=true for local development without Upstash credentials
+ * - Automatically enabled when NODE_ENV=test
+ * - Mock provides in-memory Redis with full Lua script support
  */
 
 import { Redis } from "@upstash/redis";
 import crypto from "crypto";
+import { getMockRedis, MockRedis } from "./redis-mock";
 
-// Validate environment variables
-if (
-  !process.env.UPSTASH_REDIS_REST_URL ||
-  !process.env.UPSTASH_REDIS_REST_TOKEN
-) {
-  throw new Error(
-    "UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN must be set",
+// Check if we should use mock Redis
+const USE_MOCK_REDIS =
+  process.env.USE_MOCK_REDIS === "true" || process.env.NODE_ENV === "test";
+
+// Type that represents either real Redis or MockRedis
+type RedisClient = Redis | MockRedis;
+
+let redis: RedisClient;
+
+if (USE_MOCK_REDIS) {
+  // Use mock Redis for local dev and tests
+  console.log(
+    JSON.stringify({
+      event: "redis_mock_enabled",
+      reason: process.env.NODE_ENV === "test" ? "NODE_ENV=test" : "USE_MOCK_REDIS=true",
+      timestamp: new Date().toISOString(),
+    }),
   );
-}
+  redis = getMockRedis();
+} else {
+  // Validate environment variables for real Redis
+  if (
+    !process.env.UPSTASH_REDIS_REST_URL ||
+    !process.env.UPSTASH_REDIS_REST_TOKEN
+  ) {
+    throw new Error(
+      "UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN must be set (or use USE_MOCK_REDIS=true for local dev)",
+    );
+  }
 
-// Initialize Upstash Redis client
-const redis = new Redis({
-  url: process.env.UPSTASH_REDIS_REST_URL,
-  token: process.env.UPSTASH_REDIS_REST_TOKEN,
-});
+  // Initialize real Upstash Redis client
+  redis = new Redis({
+    url: process.env.UPSTASH_REDIS_REST_URL,
+    token: process.env.UPSTASH_REDIS_REST_TOKEN,
+  });
+}
 
 // ============================================================================
 // Circuit Breaker Pattern
@@ -247,6 +274,23 @@ export async function releaseLock(key: string, token: string): Promise<void> {
   `;
 
   await redis.eval(script, [key], [token]);
+}
+
+/**
+ * Check if mock Redis is being used
+ */
+export function isMockRedis(): boolean {
+  return USE_MOCK_REDIS;
+}
+
+/**
+ * Reset mock Redis state (for testing)
+ * No-op if using real Redis
+ */
+export function resetRedisForTesting(): void {
+  if (USE_MOCK_REDIS && redis instanceof MockRedis) {
+    redis.clear();
+  }
 }
 
 export default redis;

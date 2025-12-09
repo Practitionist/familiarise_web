@@ -1,9 +1,18 @@
 name: Race Condition Tests
 
 on:
-  pull_request:
-    branches: [dev, staging, prod]
-    types: [opened, synchronize, reopened]
+  push:
+    branches: [dev]  # Only run when merged to dev
+  workflow_dispatch:  # Allow manual trigger for testing
+    inputs:
+      use_real_redis:
+        description: 'Use real Upstash Redis instead of mock'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
 
 jobs:
   race-condition-tests:
@@ -12,9 +21,10 @@ jobs:
     timeout-minutes: 25
 
     env:
-      # Required for distributed locking in race condition tests
-      # These must be set as GitHub secrets in your repository settings
-      # Settings > Secrets and variables > Actions > New repository secret
+      # Use mock Redis by default to save Upstash quota
+      # Set use_real_redis to 'true' in workflow_dispatch to test with real Redis
+      USE_MOCK_REDIS: ${{ github.event.inputs.use_real_redis == 'true' && 'false' || 'true' }}
+      # Real Redis credentials (only used when USE_MOCK_REDIS=false)
       UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
       UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
       DATABASE_URL: ${{ secrets.DATABASE_URL }}

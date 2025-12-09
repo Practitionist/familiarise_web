@@ -5,7 +5,7 @@
  * comprehensive reports. Supports both sequential and parallel execution.
  *
  * Usage:
- *   npx tsx tests/race-conditions/master-runner.ts [mode]
+ *   npx tsx tests/typescript/race-conditions/master-runner.ts [mode]
  *
  * Modes:
  *   sequential - Run tests one by one (default, ~17-23 minutes)

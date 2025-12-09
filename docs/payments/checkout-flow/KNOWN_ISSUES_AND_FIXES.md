@@ -980,7 +980,7 @@ private async validateNoConflicts(
 
 After implementing fixes, verify:
 
-- [ ] Run `npx tsx tests/race-conditions/test-checkout-race-condition-fix.ts`
+- [ ] Run `npx tsx tests/typescript/race-conditions/test-checkout-race-condition-fix.ts`
 - [ ] Test concurrent checkout for consultations (expect 1 success, 1 failure)
 - [ ] Test concurrent checkout for subscriptions with overlapping periods
 - [ ] Test webinar checkout with multiple concurrent users
