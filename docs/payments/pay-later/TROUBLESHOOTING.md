@@ -484,6 +484,60 @@ postgresql://user:pass@localhost:5432/db?connection_limit=50
 
 ---
 
+### 8. Theoretical Edge Case: Cleanup Job vs Delayed Webhook
+
+**Symptom**: Payment marked as FAILED by cleanup job, but webhook arrives later showing payment succeeded
+
+**Scenario**:
+
+1. User initiates payment at T+0
+2. Payment succeeds at gateway at T+1h
+3. Webhook is delayed (gateway infrastructure issue)
+4. Cleanup job runs at T+48h, marks payment as FAILED, reverts status to PENDING
+5. Delayed webhook finally arrives at T+49h
+
+**Why This Is Extremely Unlikely**:
+
+- Payment gateways (Stripe/Razorpay) retry webhooks aggressively for 24-72 hours
+- A 48+ hour webhook delay indicates catastrophic infrastructure failure at the gateway
+- In 10+ years of Stripe usage across millions of transactions, this scenario is virtually unheard of
+
+**Current Protections**:
+
+```typescript
+// The cleanup job re-checks status inside transaction (lines 47-55)
+if (consultation.requestStatus !== RequestStatus.APPROVED_PENDING_PAYMENT) {
+  return false; // Already processed or status changed
+}
+```
+
+If the webhook already processed the payment, the status won't be `APPROVED_PENDING_PAYMENT` anymore, and cleanup will skip it.
+
+**If This Ever Happens** (monitoring recommendation):
+
+1. Check application logs for payments marked FAILED that later received success webhooks
+2. Query: `SELECT * FROM Payment WHERE paymentStatus = 'FAILED' AND stripePaymentIntentId IN (SELECT paymentIntentId FROM successful_webhook_logs)`
+3. If found, manually reconcile using the admin recovery endpoint
+
+**Optional Future Enhancement** (not currently implemented):
+
+```typescript
+// Before marking as FAILED, verify with payment gateway
+const paymentIntent = await stripe.paymentIntents.retrieve(
+  payment.stripePaymentIntentId,
+);
+if (paymentIntent.status === "succeeded") {
+  // Trigger handlePaymentSuccess instead of cleanup
+  await handlePaymentSuccess(paymentIntent);
+  return;
+}
+// Safe to proceed with cleanup
+```
+
+**Decision**: This enhancement adds API call overhead to every cleanup run. Given the near-zero probability of the edge case, we chose to monitor for occurrences rather than pre-emptively implement the fix. Revisit if any incidents are detected.
+
+---
+
 ## Error Messages Reference
 
 | Error Message                           | Cause                  | Solution                     |

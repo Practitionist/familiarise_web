@@ -46,16 +46,16 @@ enum RequestStatus {
 | -------------------------- | ----------------------------------------- | ----------------------------------------------------- | ------------------------------------ |
 | `PENDING`                  | Initial state when user submits request   | APPROVED, APPROVED_PENDING_PAYMENT, REJECTED, EXPIRED | User submission                      |
 | `APPROVED`                 | Consultant approved and payment confirmed | SCHEDULED, CANCELLED                                  | Consultant approval + payment exists |
-| `APPROVED_PENDING_PAYMENT` | Consultant approved but awaiting payment  | APPROVED, PENDING, EXPIRED, CANCELLED                 | Consultant approval without payment  |
+| `APPROVED_PENDING_PAYMENT` | Consultant approved but awaiting payment  | APPROVED, PENDING, CANCELLED                          | Consultant approval without payment  |
 | `SCHEDULED`                | Appointment created and confirmed         | CANCELLED                                             | Appointment creation                 |
 | `REJECTED`                 | Consultant declined the request           | -                                                     | Consultant rejection                 |
 | `CANCELLED`                | Either party cancelled the request        | -                                                     | User or consultant cancellation      |
-| `EXPIRED`                  | Request expired (e.g., payment timeout)   | -                                                     | Cron job (48hr payment timeout)      |
+| `EXPIRED`                  | Request expired without action            | -                                                     | Reserved for future use              |
 
 #### Important Notes
 
 - **APPROVED_PENDING_PAYMENT** is a security feature added to prevent payment bypass
-- Payments must be completed within 48 hours or request reverts to PENDING/EXPIRED
+- Payments must be completed within 48 hours or request reverts to PENDING
 - Only APPROVED requests can transition to SCHEDULED status
 - SCHEDULED status is final for successful bookings
 
