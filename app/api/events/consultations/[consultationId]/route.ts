@@ -458,8 +458,17 @@ export async function PATCH(
             );
 
             if (hasPayment) {
-              // Payment already exists - proceed with appointment creation
-              await createAppointmentForConsultation(consultation);
+              // Payment already exists - check if tentative appointment exists
+              if (consultation.appointment) {
+                // Confirm existing tentative appointment by setting slots to non-tentative
+                await tx.slotOfAppointment.updateMany({
+                  where: { appointmentId: consultation.appointment.id },
+                  data: { isTentative: false },
+                });
+              } else {
+                // Only create new appointment if none exists (direct checkout flow)
+                await createAppointmentForConsultation(consultation);
+              }
               return { data: consultation, duplicate: false };
             } else {
               // No payment - generate payment link

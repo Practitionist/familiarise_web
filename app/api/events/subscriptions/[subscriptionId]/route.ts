@@ -465,8 +465,7 @@ export async function PATCH(
             );
 
             if (hasPayment) {
-              // Payment already exists - proceed with appointment creation
-              // Update scheduling dates
+              // Payment already exists - update scheduling dates
               await tx.subscription.update({
                 where: { id: subscriptionId },
                 data: {
@@ -475,7 +474,22 @@ export async function PATCH(
                 },
               });
 
-              await createAppointmentsForSubscription(subscription, tx);
+              // Check if tentative appointments already exist
+              if (
+                subscription.appointments &&
+                subscription.appointments.length > 0
+              ) {
+                // Confirm existing tentative appointments by setting slots to non-tentative
+                for (const appointment of subscription.appointments) {
+                  await tx.slotOfAppointment.updateMany({
+                    where: { appointmentId: appointment.id },
+                    data: { isTentative: false },
+                  });
+                }
+              } else {
+                // Only create new appointments if none exist (direct checkout flow)
+                await createAppointmentsForSubscription(subscription, tx);
+              }
               return { data: subscription, duplicate: false };
             } else {
               // No payment - generate payment link
