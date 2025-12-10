@@ -459,7 +459,10 @@ export async function PATCH(
 
           // If approved, check if payment exists
           if (status === RequestStatus.APPROVED) {
-            const hasPayment = await checkSubscriptionPayment(subscription.id);
+            const hasPayment = await checkSubscriptionPayment(
+              tx,
+              subscription.id,
+            );
 
             if (hasPayment) {
               // Payment already exists - proceed with appointment creation
@@ -598,11 +601,13 @@ export async function PATCH(
 
 /**
  * Check if payment exists for this subscription
+ * Uses transaction client to maintain serializable isolation
  */
 async function checkSubscriptionPayment(
+  tx: Prisma.TransactionClient,
   subscriptionId: string,
 ): Promise<boolean> {
-  const subscription = await prisma.subscription.findUnique({
+  const subscription = await tx.subscription.findUnique({
     where: { id: subscriptionId },
     include: {
       appointments: {
