@@ -199,6 +199,7 @@ export async function calculateAmountAndValidate(
           tx,
           validatedData,
           user.consulteeProfile.id,
+          plan.consultantProfile.user.id, // FIX: Pass consultant user ID to filter by consultant
         );
         amount = plan.price;
         break;
@@ -221,6 +222,7 @@ export async function calculateAmountAndValidate(
           tx,
           validatedData,
           user.consulteeProfile.id,
+          plan.consultantProfile.user.id, // FIX: Pass consultant user ID to filter by consultant
         );
         amount = plan.price;
         break;
@@ -350,13 +352,15 @@ export async function validateSlotAvailability(
   tx: Prisma.TransactionClient,
   data: CheckoutInput,
   userId?: string,
+  consultantUserId?: string, // NEW: Filter by consultant to prevent blocking across different consultants
 ) {
   if (!data.slotStartTimeInUTC || !data.slotEndTimeInUTC) return;
 
   const slotStart = new Date(data.slotStartTimeInUTC);
   const slotEnd = new Date(data.slotEndTimeInUTC);
 
-  // 1. Check for confirmed overlapping appointments
+  // 1. Check for confirmed overlapping appointments FOR THIS CONSULTANT ONLY
+  // FIX: Previously checked ALL consultants globally, now filters by specific consultant
   const existingBooking = await tx.slotOfAppointment.findFirst({
     where: {
       AND: [
@@ -377,6 +381,18 @@ export async function validateSlotAvailability(
           ],
         },
         { isTentative: false }, // Only confirmed bookings
+        // FIX: Filter by consultant - only check slots belonging to this consultant
+        ...(consultantUserId
+          ? [
+              {
+                user: {
+                  some: {
+                    id: consultantUserId,
+                  },
+                },
+              },
+            ]
+          : []),
       ],
     },
   });
@@ -385,7 +401,7 @@ export async function validateSlotAvailability(
     throw new Error("Time slot is already booked");
   }
 
-  // 2. Check for duplicate tentative bookings by the same user
+  // 2. Check for duplicate tentative bookings by the same user FOR THIS CONSULTANT
   if (userId) {
     const recentAttempt = await tx.slotOfAppointment.findFirst({
       where: {
@@ -407,6 +423,18 @@ export async function validateSlotAvailability(
             ],
           },
           { isTentative: true },
+          // FIX: Filter by consultant - only check tentative slots for this consultant
+          ...(consultantUserId
+            ? [
+                {
+                  user: {
+                    some: {
+                      id: consultantUserId,
+                    },
+                  },
+                },
+              ]
+            : []),
           {
             appointment: {
               payment: {
@@ -445,7 +473,7 @@ export async function validateSlotAvailability(
     }
   }
 
-  // 3. Check for excessive tentative bookings (rate limiting)
+  // 3. Check for excessive tentative bookings (rate limiting) FOR THIS CONSULTANT
   const tentativeCount = await tx.slotOfAppointment.count({
     where: {
       AND: [
@@ -466,6 +494,18 @@ export async function validateSlotAvailability(
           ],
         },
         { isTentative: true },
+        // FIX: Filter by consultant - only count tentative slots for this consultant
+        ...(consultantUserId
+          ? [
+              {
+                user: {
+                  some: {
+                    id: consultantUserId,
+                  },
+                },
+              },
+            ]
+          : []),
         {
           appointment: {
             payment: {
@@ -496,7 +536,7 @@ export async function validateSlotAvailability(
     },
   });
 
-  // Allow max 3 pending attempts for the same slot
+  // Allow max 3 pending attempts for the same slot for this consultant
   if (tentativeCount >= 3) {
     throw new Error(
       "This time slot is temporarily unavailable due to high demand. Please try again later.",
@@ -728,13 +768,44 @@ async function revalidateInsideLock(
 
     // Re-validate slot availability based on appointment type
     switch (data.appointmentType) {
-      case "CONSULTATION":
-      case "SUBSCRIPTION":
+      case "CONSULTATION": {
         // Only validate if there are slots
         if (data.slotStartTimeInUTC && data.slotEndTimeInUTC) {
-          await validateSlotAvailability(tx, data, user.consulteeProfile.id);
+          // FIX: Fetch plan to get consultant user ID for filtering
+          const consultationPlan = await tx.consultationPlan.findUnique({
+            where: { id: data.planId },
+            include: { consultantProfile: { include: { user: true } } },
+          });
+          if (!consultationPlan) throw new Error("Consultation plan not found");
+
+          await validateSlotAvailability(
+            tx,
+            data,
+            user.consulteeProfile.id,
+            consultationPlan.consultantProfile.user.id,
+          );
         }
         break;
+      }
+      case "SUBSCRIPTION": {
+        // Only validate if there are slots
+        if (data.slotStartTimeInUTC && data.slotEndTimeInUTC) {
+          // FIX: Fetch plan to get consultant user ID for filtering
+          const subscriptionPlan = await tx.subscriptionPlan.findUnique({
+            where: { id: data.planId },
+            include: { consultantProfile: { include: { user: true } } },
+          });
+          if (!subscriptionPlan) throw new Error("Subscription plan not found");
+
+          await validateSlotAvailability(
+            tx,
+            data,
+            user.consulteeProfile.id,
+            subscriptionPlan.consultantProfile.user.id,
+          );
+        }
+        break;
+      }
 
       case "WEBINAR": {
         if (!data.eventId) throw new Error("Event ID is required for webinar");
@@ -817,7 +888,13 @@ export async function handleConsultationCheckout(
   }
 
   // Validate slot availability
-  await validateSlotAvailability(tx, data, consulteeProfileId);
+  // FIX: Pass consultant user ID to filter by consultant
+  await validateSlotAvailability(
+    tx,
+    data,
+    consulteeProfileId,
+    plan.consultantProfile.user.id,
+  );
 
   // Create consultation
   const consultation = await tx.consultation.create({
