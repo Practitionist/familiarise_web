@@ -2,7 +2,7 @@
 
 Complete reference for all status enums used throughout the Familiarise application.
 
-**Last Updated**: 2025-11-28
+**Last Updated**: 2025-12-11
 **Related Files**: `prisma/schema.prisma`
 
 ---
@@ -199,6 +199,26 @@ enum RefundStatus {
 | `SUCCEEDED` | Refund completed                   | Funds returned to original payment method |
 | `FAILED`    | Refund processing failed           | Contact support for resolution            |
 | `CANCELLED` | Refund cancelled before processing | No funds returned                         |
+
+#### Two-Phase Refund Pattern (Important)
+
+The refund API uses a **two-phase pattern** to prevent race conditions while avoiding long-running transactions:
+
+```
+Phase 1 (Transaction):
+  → Validate payment can be refunded
+  → Calculate available balance (including PENDING refunds)
+  → Create PENDING refund record (claims the amount)
+  → Commit
+
+Phase 2 (No Transaction):
+  → Call external payment gateway (Stripe/Razorpay)
+
+Phase 3 (No Transaction):
+  → Update refund to SUCCEEDED/FAILED based on result
+```
+
+**Why PENDING is critical**: When calculating available refund balance, both `SUCCEEDED` and `PENDING` refunds are counted. This prevents race conditions where two concurrent requests could both pass validation and trigger double refunds at the gateway level.
 
 ---
 
@@ -544,6 +564,24 @@ Before implementing any status change:
 
 ## Changelog
 
+### 2025-12-11 - Refund/Dispute API Improvements
+
+- **Changed**: Refund API now uses two-phase pattern for race condition prevention
+- **Purpose**: Prevent double refunds while avoiding long-running database transactions
+- **Implementation**:
+  - Phase 1: Create PENDING refund record (claims amount atomically)
+  - Phase 2: Call external payment gateway (outside transaction)
+  - Phase 3: Update refund status based on result
+- **Changed**: Dispute evidence submission moved outside database transaction
+- **Changed**: Email sending in approval flows wrapped in try-catch (non-blocking)
+- **Changed**: Cleanup route simplified - removed redundant `createdAt` check
+- **Files Modified**:
+  - `app/api/payments/refunds/route.ts` - Two-phase refund pattern
+  - `app/api/payments/disputes/route.ts` - External API outside transaction
+  - `app/api/events/consultations/[consultationId]/route.ts` - Email try-catch
+  - `app/api/events/subscriptions/[subscriptionId]/route.ts` - Email try-catch
+  - `app/api/cleanup/approval-payments/route.ts` - Removed redundant check
+
 ### 2025-11-28 - Security Enhancement
 
 - **Added**: `APPROVED_PENDING_PAYMENT` status to RequestStatus enum
@@ -559,4 +597,4 @@ Before implementing any status change:
 ---
 
 **Questions or Issues?**
-See related documentation above or check the PR that introduced these changes: `fix/payment-algorithm-1`
+See related documentation above or check the PR that introduced these changes: `fix/payment-algorithm-2`

@@ -54,11 +54,23 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const { paymentId, amount, reason } = createRefundSchema.parse(body);
 
-    // BUG-B FIX: Move ALL validation inside transaction to prevent race conditions
-    // Previously, refund amount was calculated outside the transaction, allowing
-    // concurrent requests to both pass validation and exceed the payment amount
-    const result = await prisma.$transaction(async (tx) => {
-      // Get payment details INSIDE transaction (with implicit row lock)
+    // ==========================================================================
+    // TWO-PHASE REFUND PATTERN
+    // ==========================================================================
+    // Phase 1: Create PENDING refund record (claims the amount, prevents race conditions)
+    // Phase 2: Call external payment gateway (outside transaction)
+    // Phase 3: Update refund status based on gateway result
+    //
+    // This prevents:
+    // - Double refunds (PENDING record claims the amount atomically)
+    // - Long-running transactions (API call is outside)
+    // - Data loss (we always have a record for reconciliation)
+    // ==========================================================================
+
+    // PHASE 1: Create PENDING refund record in a transaction
+    // This atomically validates and claims the refund amount
+    const phase1Result = await prisma.$transaction(async (tx) => {
+      // Get payment with refunds inside transaction
       const payment = await tx.payment.findUnique({
         where: { id: paymentId },
         include: {
@@ -72,60 +84,92 @@ export async function POST(req: NextRequest) {
         throw new Error("Payment not found");
       }
 
-      // Check if payment can be refunded
       if (payment.paymentStatus !== "SUCCEEDED") {
         throw new Error("Only successful payments can be refunded");
       }
 
-      // Calculate total refunded INSIDE transaction
-      const totalRefunded = payment.refunds
-        .filter((r) => r.status === "SUCCEEDED")
+      // Calculate total already refunded (SUCCEEDED) + pending refunds (PENDING)
+      // Including PENDING prevents race conditions - if another request created
+      // a PENDING refund, we'll see it and fail validation
+      const totalRefundedOrPending = payment.refunds
+        .filter((r) => r.status === "SUCCEEDED" || r.status === "PENDING")
         .reduce((sum, r) => sum + r.amount, 0);
 
-      if (totalRefunded >= payment.amount) {
+      if (totalRefundedOrPending >= payment.amount) {
         throw new Error("Payment has already been fully refunded");
       }
 
-      // Calculate refund amount INSIDE transaction
-      const refundAmount = amount || payment.amount - totalRefunded;
+      const refundAmount = amount || payment.amount - totalRefundedOrPending;
 
-      if (refundAmount > payment.amount - totalRefunded) {
+      if (refundAmount > payment.amount - totalRefundedOrPending) {
         throw new Error("Refund amount exceeds available balance");
       }
 
-      // Create refund via payment gateway
-      const refundResult = await createRefund({
-        paymentIntentId: payment.paymentIntent,
-        amount: refundAmount,
-        reason,
-      });
-
-      // Store refund in database INSIDE transaction
-      const refundRecord = await tx.refund.create({
+      // Create PENDING refund record - this "claims" the amount
+      // Uses a placeholder refundId that will be updated after gateway call
+      const pendingRefund = await tx.refund.create({
         data: {
           amount: refundAmount,
           currency: payment.currency,
           reason,
-          status: refundResult.status,
-          refundId: refundResult.refundId,
+          status: "PENDING",
+          refundId: `pending_${Date.now()}_${Math.random().toString(36).slice(2)}`,
           paymentGateway: payment.paymentGateway,
-          metadata: refundResult.metadata as Prisma.InputJsonValue,
+          metadata: {},
           paymentId: payment.id,
         },
       });
 
-      return { payment, refundResult, refundRecord };
+      return { payment, pendingRefund, refundAmount };
+    });
+
+    const { payment, pendingRefund, refundAmount } = phase1Result;
+
+    // PHASE 2: Call external payment gateway OUTSIDE transaction
+    let refundResult;
+    try {
+      refundResult = await createRefund({
+        paymentIntentId: payment.paymentIntent,
+        amount: refundAmount,
+        reason,
+      });
+    } catch (gatewayError) {
+      // Gateway call failed - mark refund as FAILED
+      await prisma.refund.update({
+        where: { id: pendingRefund.id },
+        data: {
+          status: "FAILED",
+          metadata: {
+            error:
+              gatewayError instanceof Error
+                ? gatewayError.message
+                : "Gateway call failed",
+          },
+        },
+      });
+
+      throw gatewayError;
+    }
+
+    // PHASE 3: Update refund record with gateway result
+    const finalRefund = await prisma.refund.update({
+      where: { id: pendingRefund.id },
+      data: {
+        status: refundResult.status,
+        refundId: refundResult.refundId,
+        metadata: refundResult.metadata as Prisma.InputJsonValue,
+      },
     });
 
     return NextResponse.json({
       success: true,
       refund: {
-        id: result.refundRecord.id,
-        refundId: result.refundResult.refundId,
-        amount: result.refundResult.amount,
-        currency: result.refundResult.currency,
-        status: result.refundResult.status,
-        paymentId: result.payment.id,
+        id: finalRefund.id,
+        refundId: refundResult.refundId,
+        amount: refundResult.amount,
+        currency: refundResult.currency,
+        status: refundResult.status,
+        paymentId: payment.id,
       },
       message: "Refund created successfully",
     });

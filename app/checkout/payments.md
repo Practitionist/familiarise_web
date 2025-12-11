@@ -419,6 +419,79 @@ SKIP_PAYMENT=false  # Set to true for development
 - Database connection status
 - Critical error alerting
 
+## Refunds and Disputes
+
+### Refund API Pattern
+
+The refund system uses a **two-phase pattern** to prevent race conditions while avoiding long-running database transactions:
+
+```mermaid
+sequenceDiagram
+    participant Admin
+    participant API as Refund API
+    participant DB as Database
+    participant PG as Payment Gateway
+
+    Admin->>API: POST /api/payments/refunds
+
+    Note over API,DB: Phase 1: Transaction
+    API->>DB: Validate payment, check balance
+    API->>DB: Create PENDING refund (claims amount)
+    DB-->>API: Refund record created
+
+    Note over API,PG: Phase 2: External Call (no transaction)
+    API->>PG: createRefund()
+    PG-->>API: Refund result
+
+    Note over API,DB: Phase 3: Update status
+    API->>DB: Update refund to SUCCEEDED/FAILED
+    API-->>Admin: Response
+```
+
+**Why Two-Phase?**
+- **Problem**: External API calls (Stripe/Razorpay) can take 500ms-5s+. Keeping them inside a database transaction holds connections and can cause pool exhaustion.
+- **Naive fix risk**: Moving API calls outside transactions without protection creates race conditions (double refunds).
+- **Solution**: Create a PENDING refund record first (atomically claims the amount), then call external API, then update status.
+
+**Race Condition Prevention:**
+```
+Request A: Validates balance = $100 → Creates PENDING refund → Commits
+Request B: Validates balance = $0 (sees PENDING) → FAILS validation
+Request A: Calls gateway → Updates to SUCCEEDED
+```
+
+### Dispute API Pattern
+
+The disputes API uses a simpler pattern since evidence submission doesn't have race condition risks:
+
+```
+1. Validate dispute status (outside transaction)
+2. Submit evidence to Stripe (outside transaction)
+3. Update dispute record (single atomic update)
+```
+
+**Key differences from refunds:**
+- No financial risk from submitting evidence multiple times
+- No "claiming" mechanism needed
+- External API call can safely be outside any transaction
+
+### Email Handling in Approval Flows
+
+Payment link emails in consultation/subscription approval routes are wrapped in try-catch:
+
+```typescript
+try {
+  await sendPaymentLinkEmail({ ... });
+} catch (emailError) {
+  // Log error but don't fail the transaction
+  console.error("Failed to send payment link email:", emailError);
+}
+```
+
+**Rationale**: If email fails, the user can still find the payment link on their dashboard via `pendingPaymentUrl`. The approval should succeed even if email delivery fails.
+
+---
+
 ## Future Enhancements
 
 ### Planned Features

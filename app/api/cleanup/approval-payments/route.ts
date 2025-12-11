@@ -20,7 +20,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { PaymentStatus, Prisma, RequestStatus } from "@prisma/client";
-import { APPROVAL_PAYMENT_EXPIRATION_HOURS } from "@/lib/payments/constants";
 
 /**
  * Revert consultation or subscription status from APPROVED_PENDING_PAYMENT to PENDING
@@ -114,18 +113,11 @@ export async function GET(req: NextRequest) {
 
     console.log("🕐 Starting approval payment expiration check...");
 
-    const expirationDate = new Date();
-    expirationDate.setHours(
-      expirationDate.getHours() - APPROVAL_PAYMENT_EXPIRATION_HOURS,
-    );
-
     // Find expired pending payments
+    // Note: Only checking expiresAt is sufficient since expiresAt = createdAt + 48 hours
     const expiredPayments = await prisma.payment.findMany({
       where: {
         paymentStatus: PaymentStatus.PENDING,
-        createdAt: {
-          lt: expirationDate,
-        },
         expiresAt: {
           not: null,
           lt: new Date(),

@@ -484,7 +484,105 @@ postgresql://user:pass@localhost:5432/db?connection_limit=50
 
 ---
 
-### 8. Theoretical Edge Case: Cleanup Job vs Delayed Webhook
+### 8. Refund Race Conditions (Two-Phase Pattern)
+
+**Symptom**: Double refunds issued, or refund exceeds available balance
+
+**Background**: The refund API uses a two-phase pattern to prevent race conditions while avoiding long-running database transactions (which can cause connection pool exhaustion when external API calls are slow).
+
+**How the Pattern Works**:
+
+```
+Phase 1 (Transaction - Fast):
+  → Validate payment can be refunded
+  → Calculate available balance (SUCCEEDED + PENDING refunds)
+  → Create PENDING refund record (claims the amount)
+  → Commit
+
+Phase 2 (No Transaction):
+  → Call Stripe/Razorpay API (can be slow)
+
+Phase 3 (No Transaction):
+  → Update refund to SUCCEEDED/FAILED
+```
+
+**Why This Prevents Double Refunds**:
+
+If two concurrent requests try to refund the same payment:
+1. Request A enters Phase 1, creates PENDING refund for $100
+2. Request B enters Phase 1, sees PENDING refund, available balance = $0
+3. Request B fails validation (insufficient balance)
+4. Request A completes Phases 2 and 3
+
+**Diagnostic Steps**:
+
+```sql
+-- Check for stuck PENDING refunds (potential failed Phase 2)
+SELECT * FROM "Refund"
+WHERE status = 'PENDING'
+  AND "createdAt" < NOW() - INTERVAL '5 minutes';
+
+-- Check for duplicate refunds on same payment
+SELECT "paymentId", COUNT(*) as refund_count, SUM(amount) as total_refunded
+FROM "Refund"
+WHERE status IN ('SUCCEEDED', 'PENDING')
+GROUP BY "paymentId"
+HAVING COUNT(*) > 1;
+```
+
+**Solutions**:
+
+```typescript
+// If PENDING refund is stuck (gateway call failed but record exists):
+// 1. Check gateway dashboard for actual refund status
+// 2. If refund succeeded at gateway, update DB to SUCCEEDED
+// 3. If refund failed at gateway, update DB to FAILED
+
+// Manual reconciliation:
+await prisma.refund.update({
+  where: { id: stuckRefundId },
+  data: { status: 'FAILED', metadata: { error: 'Manual reconciliation - gateway call failed' } }
+});
+```
+
+**Related File**: `app/api/payments/refunds/route.ts`
+
+---
+
+### 9. Dispute Evidence Submission
+
+**Symptom**: Evidence submission to Stripe fails or takes too long
+
+**Background**: The disputes API moves external API calls outside of database transactions to prevent connection pool issues. Unlike refunds, dispute evidence submission doesn't have race condition risks (submitting evidence multiple times doesn't cause financial harm).
+
+**Current Pattern**:
+
+```
+1. Validate dispute status (not WON/LOST/CHARGE_REFUNDED)
+2. Submit evidence to Stripe (outside transaction)
+3. Update dispute record in database
+```
+
+**Diagnostic Steps**:
+
+```bash
+# Check Stripe Dashboard for dispute status
+# Dashboard → Payments → Disputes → Find dispute
+
+# Check application logs for evidence submission errors
+grep "Evidence submission error" /var/log/application.log
+```
+
+**Important Notes**:
+- Only Stripe supports direct evidence submission via API
+- Razorpay disputes must be handled via their dashboard
+- Evidence submission deadlines are strict (7-14 days typically)
+
+**Related File**: `app/api/payments/disputes/route.ts`
+
+---
+
+### 10. Theoretical Edge Case: Cleanup Job vs Delayed Webhook
 
 **Symptom**: Payment marked as FAILED by cleanup job, but webhook arrives later showing payment succeeded
 

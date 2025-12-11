@@ -539,24 +539,35 @@ export async function PATCH(
               });
 
               // Send payment link email to user
-              await sendPaymentLinkEmail({
-                email: updatedSubscription.requestedBy.user.email || "",
-                name: updatedSubscription.requestedBy.user.name || "User",
-                consultantName:
-                  updatedSubscription.subscriptionPlan.consultantProfile.user
-                    .name || "Consultant",
-                appointmentType: "subscription",
-                amount: paymentResult.amount,
-                currency: paymentResult.currency,
-                paymentUrl: paymentResult.checkoutUrl,
-                expiresAt: new Date(
-                  Date.now() + APPROVAL_PAYMENT_EXPIRATION_MS,
-                ),
-              });
-
-              console.log(
-                `📧 Payment link email sent for subscription ${subscription.id}`,
-              );
+              // Wrapped in try-catch to prevent email failures from rolling back the transaction
+              // User can still find the payment link on their dashboard via pendingPaymentUrl
+              try {
+                await sendPaymentLinkEmail({
+                  email: updatedSubscription.requestedBy.user.email || "",
+                  name: updatedSubscription.requestedBy.user.name || "User",
+                  consultantName:
+                    updatedSubscription.subscriptionPlan.consultantProfile.user
+                      .name || "Consultant",
+                  appointmentType: "subscription",
+                  amount: paymentResult.amount,
+                  currency: paymentResult.currency,
+                  paymentUrl: paymentResult.checkoutUrl,
+                  expiresAt: new Date(
+                    Date.now() + APPROVAL_PAYMENT_EXPIRATION_MS,
+                  ),
+                });
+                console.log(
+                  `📧 Payment link email sent for subscription ${subscription.id}`,
+                );
+              } catch (emailError) {
+                // Log error but don't fail the transaction - user can find payment link in dashboard
+                console.error(
+                  `⚠️ Failed to send payment link email for subscription ${subscription.id}:`,
+                  emailError instanceof Error
+                    ? emailError.message
+                    : "Unknown error",
+                );
+              }
 
               return {
                 data: updatedSubscription,

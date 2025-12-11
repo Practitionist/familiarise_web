@@ -163,63 +163,65 @@ export async function POST(req: NextRequest) {
     const { disputeId: dbDisputeId, evidence } =
       submitEvidenceSchema.parse(body);
 
-    // Move ALL validation inside transaction to prevent race conditions
-    // (consistent with refunds fix)
-    const result = await prisma.$transaction(async (tx) => {
-      // Get dispute from database INSIDE transaction
-      const dispute = await tx.dispute.findUnique({
-        where: { id: dbDisputeId },
-        include: {
-          payment: {
-            include: {
-              user: { select: { id: true, email: true, name: true } },
-            },
+    // STEP 1: Get dispute and validate OUTSIDE transaction
+    const dispute = await prisma.dispute.findUnique({
+      where: { id: dbDisputeId },
+      include: {
+        payment: {
+          include: {
+            user: { select: { id: true, email: true, name: true } },
           },
         },
-      });
-
-      if (!dispute) {
-        throw new Error("Dispute not found");
-      }
-
-      // Check if dispute can still accept evidence INSIDE transaction
-      if (
-        dispute.status === "WON" ||
-        dispute.status === "LOST" ||
-        dispute.status === "CHARGE_REFUNDED"
-      ) {
-        throw new Error(
-          "Dispute is already resolved and cannot accept new evidence",
-        );
-      }
-
-      // Check gateway support
-      if (dispute.paymentGateway !== "STRIPE") {
-        throw new Error(
-          "Only Stripe supports direct evidence submission. For Razorpay, use the dashboard.",
-        );
-      }
-
-      // Submit to Stripe
-      const disputeResult = await submitDisputeEvidence(
-        {
-          disputeId: dispute.disputeId,
-          evidence,
-        },
-        dispute.paymentGateway,
-      );
-
-      // Update database INSIDE transaction
-      await tx.dispute.update({
-        where: { disputeId: dispute.disputeId },
-        data: {
-          status: disputeResult.status,
-          evidence: disputeResult.evidence as Prisma.InputJsonValue,
-        },
-      });
-
-      return { dispute, disputeResult };
+      },
     });
+
+    if (!dispute) {
+      return NextResponse.json({ error: "Dispute not found" }, { status: 404 });
+    }
+
+    // Check if dispute can still accept evidence
+    if (
+      dispute.status === "WON" ||
+      dispute.status === "LOST" ||
+      dispute.status === "CHARGE_REFUNDED"
+    ) {
+      return NextResponse.json(
+        { error: "Dispute is already resolved and cannot accept new evidence" },
+        { status: 400 },
+      );
+    }
+
+    // Check gateway support
+    if (dispute.paymentGateway !== "STRIPE") {
+      return NextResponse.json(
+        {
+          error:
+            "Only Stripe supports direct evidence submission. For Razorpay, use the dashboard.",
+        },
+        { status: 400 },
+      );
+    }
+
+    // STEP 2: Submit to Stripe OUTSIDE transaction
+    // This prevents holding DB connections during potentially slow API calls
+    const disputeResult = await submitDisputeEvidence(
+      {
+        disputeId: dispute.disputeId,
+        evidence,
+      },
+      dispute.paymentGateway,
+    );
+
+    // STEP 3: Update database in a small, focused transaction
+    await prisma.dispute.update({
+      where: { disputeId: dispute.disputeId },
+      data: {
+        status: disputeResult.status,
+        evidence: disputeResult.evidence as Prisma.InputJsonValue,
+      },
+    });
+
+    const result = { dispute, disputeResult };
 
     return NextResponse.json({
       success: true,
