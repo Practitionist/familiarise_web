@@ -3,6 +3,7 @@
 > Complete system architecture for Stream Chat and Video integration
 
 ## Table of Contents
+
 - [System Architecture](#system-architecture)
 - [Component Relationships](#component-relationships)
 - [Data Flow](#data-flow)
@@ -76,25 +77,25 @@ graph TB
 
 #### Client Components
 
-| Component | Location | Purpose |
-|-----------|----------|---------|
-| **StreamProvider** | `providers/StreamProvider.tsx` | Initializes Chat & Video clients, manages connection state |
-| **Chat Client** | Stream SDK | Manages real-time messaging connections |
-| **Video Client** | Stream SDK | Manages video call connections |
-| **Meeting Components** | `app/meetings/[id]/` | Video call UI (Setup, Room, Controls) |
-| **Error Boundary** | `components/stream/StreamErrorBoundary.tsx` | Catches and recovers from Stream errors |
-| **Custom Hooks** | `app/meetings/[id]/hooks/` | React hooks for Stream operations |
+| Component              | Location                                    | Purpose                                                    |
+| ---------------------- | ------------------------------------------- | ---------------------------------------------------------- |
+| **StreamProvider**     | `providers/StreamProvider.tsx`              | Initializes Chat & Video clients, manages connection state |
+| **Chat Client**        | Stream SDK                                  | Manages real-time messaging connections                    |
+| **Video Client**       | Stream SDK                                  | Manages video call connections                             |
+| **Meeting Components** | `app/meetings/[id]/`                        | Video call UI (Setup, Room, Controls)                      |
+| **Error Boundary**     | `components/stream/StreamErrorBoundary.tsx` | Catches and recovers from Stream errors                    |
+| **Custom Hooks**       | `app/meetings/[id]/hooks/`                  | React hooks for Stream operations                          |
 
 #### Server Components
 
-| Component | Location | Purpose |
-|-----------|----------|---------|
-| **Token Providers** | `actions/stream/chat/stream.action.ts` | Generate JWT tokens for auth |
-| **User Actions** | `actions/stream/chat/user.action.ts` | User upsert, search, sync |
-| **Channel Actions** | `actions/stream/chat/channel.action.ts` | Channel creation & management |
-| **Meeting Actions** | `actions/stream/meetings/meeting.action.ts` | Meeting session operations |
-| **Sync Job** | `jobs/stream-sync.ts` | Daily user cleanup |
-| **API Endpoints** | `app/api/stream/` | REST endpoints for Stream operations |
+| Component           | Location                                    | Purpose                              |
+| ------------------- | ------------------------------------------- | ------------------------------------ |
+| **Token Providers** | `actions/stream/chat/stream.action.ts`      | Generate JWT tokens for auth         |
+| **User Actions**    | `actions/stream/chat/user.action.ts`        | User upsert, search, sync            |
+| **Channel Actions** | `actions/stream/chat/channel.action.ts`     | Channel creation & management        |
+| **Meeting Actions** | `actions/stream/meetings/meeting.action.ts` | Meeting session operations           |
+| **Sync Job**        | `jobs/stream-sync.ts`                       | Daily user cleanup                   |
+| **API Endpoints**   | `app/api/stream/`                           | REST endpoints for Stream operations |
 
 ---
 
@@ -292,18 +293,20 @@ flowchart TD
 Stream SDK integrates with Prisma for:
 
 **User Management:**
+
 ```typescript
 // Sync between Prisma and Stream
-const user = await prisma.user.findUnique({ where: { id } })
+const user = await prisma.user.findUnique({ where: { id } });
 await chatClient.upsertUser({
   id: user.id,
   name: user.name,
   image: user.image,
-  role: mapRoleToStream(user.role) // ⚠️ Currently returns "admin" for all
-})
+  role: mapRoleToStream(user.role), // ⚠️ Currently returns "admin" for all
+});
 ```
 
 **Meeting Sessions:**
+
 ```prisma
 model MeetingSession {
   id           String   @id @default(cuid())
@@ -317,6 +320,7 @@ model MeetingSession {
 ```
 
 **Appointment Linking:**
+
 - Consultations → 1-on-1 messaging channels
 - Subscriptions → Recurring messaging channels
 - Webinars → Group team channels
@@ -326,11 +330,11 @@ model MeetingSession {
 
 ```typescript
 // StreamProvider uses session for initialization
-const { data: session } = useSession()
+const { data: session } = useSession();
 
 if (session?.user?.id) {
   // Initialize Stream with authenticated user
-  connectUserToStream(session.user.id)
+  connectUserToStream(session.user.id);
 }
 ```
 
@@ -338,13 +342,13 @@ if (session?.user?.id) {
 
 Channels are automatically created for:
 
-| Event Type | Channel ID Format | Channel Type | Members |
-|------------|------------------|--------------|---------|
-| Consultation | `consultation-{id}` | `messaging` | Consultee + Consultant |
-| Subscription | `subscription-{id}` | `messaging` | Consultee + Consultant |
-| Webinar | `webinar-{id}` | `team` | All participants + host |
-| Class | `class-{id}` | `team` | All participants + host |
-| Direct Message | `{userId1}-{userId2}` | `messaging` | Two users (alphabetical) |
+| Event Type     | Channel ID Format     | Channel Type | Members                  |
+| -------------- | --------------------- | ------------ | ------------------------ |
+| Consultation   | `consultation-{id}`   | `messaging`  | Consultee + Consultant   |
+| Subscription   | `subscription-{id}`   | `messaging`  | Consultee + Consultant   |
+| Webinar        | `webinar-{id}`        | `team`       | All participants + host  |
+| Class          | `class-{id}`          | `team`       | All participants + host  |
+| Direct Message | `{userId1}-{userId2}` | `messaging`  | Two users (alphabetical) |
 
 ---
 
@@ -357,17 +361,15 @@ Channels are automatically created for:
 
 ```typescript
 // StreamProvider manages both clients
-const [chatClient, setChatClient] = useState<StreamChat>()
-const [videoClient, setVideoClient] = useState<StreamVideoClient>()
+const [chatClient, setChatClient] = useState<StreamChat>();
+const [videoClient, setVideoClient] = useState<StreamVideoClient>();
 
 // Parallel initialization
-Promise.all([
-  initializeChatClient(),
-  initializeVideoClient()
-])
+Promise.all([initializeChatClient(), initializeVideoClient()]);
 ```
 
 **Benefits:**
+
 - Single connection state
 - Shared token caching
 - Unified error handling
@@ -378,15 +380,16 @@ Promise.all([
 **Solution:** Cache tokens for 50 minutes (10-minute safety buffer)
 
 ```typescript
-const TOKEN_CACHE_DURATION = 50 * 60 * 1000 // 50 minutes
+const TOKEN_CACHE_DURATION = 50 * 60 * 1000; // 50 minutes
 
 if (Date.now() - cachedToken.timestamp > TOKEN_CACHE_DURATION) {
   // Refresh token before it expires
-  const newToken = await generateToken()
+  const newToken = await generateToken();
 }
 ```
 
 **Benefits:**
+
 - Prevents mid-session disconnections
 - Reduces token generation API calls
 - Smooth user experience
@@ -397,18 +400,19 @@ if (Date.now() - cachedToken.timestamp > TOKEN_CACHE_DURATION) {
 **Solution:** Retry with increasing delays
 
 ```typescript
-const delays = [1000, 2000, 4000, 8000, 16000] // Max 30s
+const delays = [1000, 2000, 4000, 8000, 16000]; // Max 30s
 for (let attempt = 0; attempt < 5; attempt++) {
   try {
-    await connectUser()
-    break
+    await connectUser();
+    break;
   } catch (error) {
-    await delay(delays[attempt])
+    await delay(delays[attempt]);
   }
 }
 ```
 
 **Benefits:**
+
 - Handles temporary network issues
 - Prevents server overload
 - Better user experience
@@ -422,11 +426,14 @@ for (let attempt = 0; attempt < 5; attempt++) {
 // Create channel AND add members in one operation
 await channel.create({
   members: [consultant, consultee],
-  data: { /* channel metadata */ }
-})
+  data: {
+    /* channel metadata */
+  },
+});
 ```
 
 **Benefits:**
+
 - No race conditions
 - Consistent membership
 - Idempotent operations
@@ -440,12 +447,13 @@ await channel.create({
 useEffect(() => {
   if (chatConnected) {
     // Sync all event channels user should have access to
-    syncUserEventChannels(userId)
+    syncUserEventChannels(userId);
   }
-}, [chatConnected])
+}, [chatConnected]);
 ```
 
 **Benefits:**
+
 - Always up-to-date channels
 - Handles offline scenarios
 - Automatic recovery
@@ -457,12 +465,14 @@ useEffect(() => {
 ### Why Two Separate SDKs?
 
 **Chat SDK:**
+
 - Optimized for messaging
 - Built-in typing indicators
 - Message persistence
 - Channel types and permissions
 
 **Video SDK:**
+
 - Optimized for WebRTC
 - Call quality management
 - Device handling
@@ -479,8 +489,8 @@ useEffect(() => {
 ```typescript
 // Server Action (secure)
 export async function tokenProvider(userId: string) {
-  const user = await validateUser(userId)
-  return streamClient.createToken(userId, exp)
+  const user = await validateUser(userId);
+  return streamClient.createToken(userId, exp);
 }
 ```
 
@@ -490,6 +500,7 @@ export async function tokenProvider(userId: string) {
 **Alternative:** Eager creation on appointment booking
 
 **Tradeoffs:**
+
 - ✅ Lower Stream API usage
 - ✅ No orphaned channels
 - ⚠️ Potential race conditions (see [Known Issues](./13-known-issues.md#medium-bug-3-channel-creation-race-conditions))
@@ -500,6 +511,7 @@ export async function tokenProvider(userId: string) {
 **Purpose:** Clean up users deleted from Prisma but still in Stream
 
 **Tradeoffs:**
+
 - ✅ Keeps Stream/Prisma in sync
 - ✅ Reduces Stream billing
 - ⚠️ Hard delete (no recovery)
@@ -518,11 +530,12 @@ export async function tokenProvider(userId: string) {
 ```typescript
 // File: lib/user.ts:98-115
 export function mapRoleToStream(role: string): string {
-  return "admin" // ⚠️ Everyone is admin!
+  return "admin"; // ⚠️ Everyone is admin!
 }
 ```
 
 **Impact:**
+
 - No permission enforcement
 - All users can moderate channels
 - Potential data access issues
@@ -532,12 +545,14 @@ export function mapRoleToStream(role: string): string {
 ### Token Security
 
 ✅ **Good Practices:**
+
 - Tokens generated server-side only
 - Short expiry (1 hour)
 - User validation before generation
 - Secure storage (not in localStorage)
 
 ⚠️ **Areas for Improvement:**
+
 - No token revocation mechanism
 - No audit logging for token generation
 - No rate limiting on token endpoints
@@ -549,6 +564,7 @@ export function mapRoleToStream(role: string): string {
 ### Connection Optimization
 
 **Parallel Initialization:**
+
 ```typescript
 // Chat and Video connect simultaneously
 Promise.all([
@@ -562,6 +578,7 @@ Promise.all([
 ### Token Caching
 
 **Impact:**
+
 - **Without cache:** 2 API calls per page load
 - **With cache:** ~2 API calls per hour
 - **Savings:** 95% reduction in token generation calls
@@ -578,12 +595,12 @@ Promise.all([
 
 ### Current Limits
 
-| Resource | Limit | Notes |
-|----------|-------|-------|
-| Concurrent connections | Unlimited (per plan) | Based on Stream pricing |
-| Channels per user | ~100 recommended | Performance degrades beyond |
-| Messages per channel | Unlimited | Archived after 30 days |
-| Call participants | 100 (default) | Configurable per call type |
+| Resource               | Limit                | Notes                       |
+| ---------------------- | -------------------- | --------------------------- |
+| Concurrent connections | Unlimited (per plan) | Based on Stream pricing     |
+| Channels per user      | ~100 recommended     | Performance degrades beyond |
+| Messages per channel   | Unlimited            | Archived after 30 days      |
+| Call participants      | 100 (default)        | Configurable per call type  |
 
 ### Horizontal Scaling
 
@@ -602,12 +619,14 @@ Promise.all([
 ## Next Steps
 
 **For detailed implementation:**
+
 - [02. Setup & Configuration](./02-setup-configuration.md) - Get started
 - [03. Provider & Authentication](./03-provider-authentication.md) - Deep dive into StreamProvider
 - [04. Chat Implementation](./04-chat-implementation.md) - Messaging features
 - [05. Video Implementation](./05-video-implementation.md) - Video calls
 
 **For troubleshooting:**
+
 - [13. Known Issues](./13-known-issues.md) - Current bugs
 - [14. Troubleshooting](./14-troubleshooting.md) - Common problems
 

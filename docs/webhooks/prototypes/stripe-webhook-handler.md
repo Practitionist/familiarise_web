@@ -39,8 +39,6 @@ export async function POST(req: NextRequest) {
   }
 }
 
-
-
 // utils/webhook.ts
 import crypto from "crypto";
 import { NextRequest } from "next/server";
@@ -198,14 +196,16 @@ export function standardizeWebhookEvent(
     if (event.meta.event_name === "order_created") {
       return {
         eventType: "payment.succeeded",
-        paymentIntentId: event.data.attributes.first_order_item.order_id.toString(),
+        paymentIntentId:
+          event.data.attributes.first_order_item.order_id.toString(),
         metadata: event.meta.custom_data ?? {},
       };
     }
     if (event.meta.event_name === "order_refunded") {
       return {
         eventType: "payment.failed",
-        paymentIntentId: event.data.attributes.first_order_item.order_id.toString(),
+        paymentIntentId:
+          event.data.attributes.first_order_item.order_id.toString(),
         metadata: event.meta.custom_data ?? {},
       };
     }
@@ -242,10 +242,7 @@ export async function processWebhookEvent(event: StandardizedEvent) {
   }
 }
 
-async function handleSuccessfulPayment(
-  paymentIntentId: string,
-  metadata: any,
-) {
+async function handleSuccessfulPayment(paymentIntentId: string, metadata: any) {
   await prisma.$transaction(async (tx) => {
     const payment = await tx.payment.findUnique({
       where: { paymentIntent: paymentIntentId },
@@ -257,9 +254,7 @@ async function handleSuccessfulPayment(
     }
 
     if (payment.paymentStatus === "SUCCEEDED") {
-      console.log(
-        `Payment ${paymentIntentId} has already been processed.`,
-      );
+      console.log(`Payment ${paymentIntentId} has already been processed.`);
       return;
     }
 

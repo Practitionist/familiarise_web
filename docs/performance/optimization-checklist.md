@@ -1,5 +1,8 @@
 # Performance Optimization Checklist
 
+> **Note:** This checklist documents the React Query migration completed in January 2025.
+> For current real-time dashboard and caching strategies, see [`realtime-caching-strategy.md`](./realtime-caching-strategy.md).
+
 ## 🎯 Overview
 
 This document tracks the complete dashboard performance optimization project to eliminate 10+ second load times and multiple-click navigation issues.

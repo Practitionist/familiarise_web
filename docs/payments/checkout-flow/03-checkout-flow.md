@@ -107,10 +107,11 @@ The API categorizes errors for client-side handling:
 ### 1.4 Response Format
 
 **Success Response:**
+
 ```json
 {
   "paymentIntent": "cs_...",
-  "amount": 150.00,
+  "amount": 150.0,
   "currency": "USD",
   "gateway": "STRIPE",
   "checkoutUrl": "https://checkout.stripe.com/...",
@@ -124,6 +125,7 @@ The API categorizes errors for client-side handling:
 ```
 
 **Error Response:**
+
 ```json
 {
   "error": "Slot is no longer available",
@@ -160,18 +162,21 @@ The system supports multiple payment gateways with a unified interface:
 
 ```typescript
 // Gateway selection based on currency and mode
-function selectPaymentGateway(currency: string, isMockPayment: boolean): PaymentGateway {
+function selectPaymentGateway(
+  currency: string,
+  isMockPayment: boolean,
+): PaymentGateway {
   if (isMockPayment) {
     return PaymentGateway.STRIPE; // Mock uses Stripe format
   }
 
   switch (currency) {
-    case 'USD':
-    case 'EUR':
-    case 'GBP':
+    case "USD":
+    case "EUR":
+    case "GBP":
       return PaymentGateway.STRIPE;
 
-    case 'INR':
+    case "INR":
       return PaymentGateway.RAZORPAY;
 
     default:
@@ -185,12 +190,14 @@ function selectPaymentGateway(currency: string, isMockPayment: boolean): Payment
 **File:** `/lib/payments/core/stripe.ts`
 
 #### Key Features:
+
 - **Checkout Sessions:** Uses Stripe Checkout (not Payment Intents directly)
 - **Automatic Tax Calculation:** Support for tax calculations (if enabled)
 - **Card Payments Only:** Currently supports card payments
 - **30-Minute Expiration:** Built into checkout session
 
 #### Checkout Session Creation:
+
 ```typescript
 // Lines 76-123
 export async function createStripeCheckoutSession({
@@ -200,17 +207,19 @@ export async function createStripeCheckoutSession({
 }: PaymentIntentParams): Promise<PaymentIntent> {
   const session = await stripeClient.checkout.sessions.create({
     payment_method_types: ["card"],
-    line_items: [{
-      price_data: {
-        currency: currency.toLowerCase(),
-        product_data: {
-          name: `${metadata.appointmentType} Appointment`,
-          description: `Appointment booking for ${metadata.appointmentType}`,
+    line_items: [
+      {
+        price_data: {
+          currency: currency.toLowerCase(),
+          product_data: {
+            name: `${metadata.appointmentType} Appointment`,
+            description: `Appointment booking for ${metadata.appointmentType}`,
+          },
+          unit_amount: toSmallestUnit(amount, currency), // Convert to cents
         },
-        unit_amount: toSmallestUnit(amount, currency), // Convert to cents
+        quantity: 1,
       },
-      quantity: 1,
-    }],
+    ],
     mode: "payment",
     success_url: `${getBaseUrl()}/checkout/checkout-success?session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: `${getBaseUrl()}/checkout/checkout-failure`,
@@ -229,6 +238,7 @@ export async function createStripeCheckoutSession({
 ```
 
 #### Currency Conversion:
+
 ```typescript
 // Lines 56-59
 const toSmallestUnit = (amount: number, currency: string): number => {
@@ -242,12 +252,14 @@ const toSmallestUnit = (amount: number, currency: string): number => {
 **File:** `/lib/payments/core/razorpay.ts`
 
 #### Key Features:
+
 - **Order-Based Flow:** Uses Razorpay Orders (not direct payment)
 - **Multiple Payment Methods:** UPI, cards, wallets, net banking
 - **INR Currency:** Optimized for Indian Rupee
 - **Custom UI:** Requires frontend integration
 
 #### Order Creation:
+
 ```typescript
 // Lines 61-93
 export async function createRazorpayOrder({
@@ -279,15 +291,18 @@ export async function createRazorpayOrder({
 **File:** `/lib/payments/operations/mock.ts`
 
 #### Purpose:
+
 Mock payments enable development and testing without calling actual payment gateways.
 
 #### Key Features:
+
 - **Instant Success:** Always returns "succeeded" status
 - **No Gateway Calls:** Zero-cost testing
 - **Gateway Format Matching:** IDs match real gateway formats
 - **Development Only:** Controlled by environment flags
 
 #### Mock Payment Creation:
+
 ```typescript
 // Lines 18-37
 export async function createMockPaymentIntent({
@@ -316,6 +331,7 @@ export async function createMockPaymentIntent({
 ```
 
 #### Environment Configuration:
+
 ```typescript
 // Lines 152-158
 export function shouldEnableMockPayments(): boolean {
@@ -327,6 +343,7 @@ export function shouldEnableMockPayments(): boolean {
 ```
 
 #### Safety Warnings:
+
 ```typescript
 // Lines 163-172
 export function logMockPaymentWarning(gateway: PaymentGateway): void {
@@ -378,6 +395,7 @@ All checkout data is stored in payment intent metadata for recovery:
 ```
 
 **Why Metadata?**
+
 - **Recovery:** Recreate appointment from webhook even if server crashes
 - **Idempotency:** Multiple webhook calls use same metadata
 - **Debugging:** Full context available in payment gateway dashboard
@@ -399,13 +417,16 @@ const payment = await tx.payment.create({
     paymentGateway: gateway,
     paymentIntent: paymentIntentId,
     appointmentId: null, // Linked after payment succeeds
-    paymentStatus: skipPayment ? PaymentStatus.SUCCEEDED : PaymentStatus.PENDING,
+    paymentStatus: skipPayment
+      ? PaymentStatus.SUCCEEDED
+      : PaymentStatus.PENDING,
     expiresAt: new Date(Date.now() + 30 * 60 * 1000), // 30 minutes
   },
 });
 ```
 
 **Key Fields:**
+
 - `paymentIntent`: Gateway-provided ID (unique identifier)
 - `appointmentId`: Initially null, linked after success
 - `paymentStatus`: PENDING → SUCCEEDED or FAILED
@@ -462,13 +483,14 @@ sequenceDiagram
 **File:** `/app/api/webhooks/stripe/route.ts`
 
 #### Supported Events:
+
 ```typescript
 // Lines 39-55
 switch (eventType) {
   case "payment_intent.succeeded":
     await handlePaymentSuccess(
       event.data.object.id,
-      event.data.object.metadata || {}
+      event.data.object.metadata || {},
     );
     break;
 
@@ -487,24 +509,23 @@ switch (eventType) {
 ```
 
 #### Signature Verification:
+
 ```typescript
 // Lines 26-29
-const { isValid, body } = await verifyWebhookSignature(
-  req,
-  secret,
-  "stripe"
-);
+const { isValid, body } = await verifyWebhookSignature(req, secret, "stripe");
 ```
 
 **Implementation:** `/app/api/webhooks/utils.ts` (lines 14-53)
+
 ```typescript
 export async function verifyWebhookSignature(
   req: Request,
   secret: string,
   gateway: "stripe" | "razorpay",
 ): Promise<{ isValid: boolean; body: string }> {
-  const signature = req.headers.get("stripe-signature") ||
-                    req.headers.get("x-razorpay-signature");
+  const signature =
+    req.headers.get("stripe-signature") ||
+    req.headers.get("x-razorpay-signature");
   const body = await req.text();
 
   if (gateway === "stripe") {
@@ -527,27 +548,26 @@ export async function verifyWebhookSignature(
 **File:** `/app/api/webhooks/razorpay/route.ts`
 
 #### Supported Events:
+
 ```typescript
 // Lines 44-64
 switch (eventType) {
   case "payment.captured":
     await handlePaymentSuccess(
       event.payload.payment.entity.order_id,
-      event.payload.payment.entity.notes || {}
+      event.payload.payment.entity.notes || {},
     );
     break;
 
   case "order.paid":
     await handlePaymentSuccess(
       event.payload.order.entity.id,
-      event.payload.order.entity.notes || {}
+      event.payload.order.entity.notes || {},
     );
     break;
 
   case "payment.failed":
-    await handlePaymentFailure(
-      event.payload.payment.entity.order_id
-    );
+    await handlePaymentFailure(event.payload.payment.entity.order_id);
     break;
 }
 ```
@@ -571,7 +591,9 @@ export async function handlePaymentSuccess(
     });
 
     if (!payment) {
-      throw new Error(`Payment record not found for intent: ${paymentIntentId}`);
+      throw new Error(
+        `Payment record not found for intent: ${paymentIntentId}`,
+      );
     }
 
     // 2. Idempotency check
@@ -606,7 +628,7 @@ export async function handlePaymentSuccess(
     await confirmExistingAppointment(tx, appointment.id);
 
     console.log(
-      `✅ Payment ${paymentIntentId} processed successfully. Appointment ID: ${appointment.id}`
+      `✅ Payment ${paymentIntentId} processed successfully. Appointment ID: ${appointment.id}`,
     );
   });
 }
@@ -801,7 +823,7 @@ export async function handlePaymentFailure(paymentIntentId: string) {
 
     if (!payment) {
       console.warn(
-        `Payment record not found for failed intent: ${paymentIntentId}`
+        `Payment record not found for failed intent: ${paymentIntentId}`,
       );
       return;
     }
@@ -842,7 +864,7 @@ async function cleanupFailedPaymentAppointment(
 
   // Find tentative slots
   const tentativeSlots = appointment.slotsOfAppointment.filter(
-    (slot) => slot.isTentative
+    (slot) => slot.isTentative,
   );
 
   if (tentativeSlots.length > 0) {
@@ -877,6 +899,7 @@ async function cleanupFailedPaymentAppointment(
 ```
 
 **Cleanup Rules:**
+
 - **Webinar/Class:** Remove only the user's tentative slot, keep appointment
 - **Consultation/Subscription:** If no confirmed slots remain, delete everything
 - **Partial Failure:** If some slots confirmed, keep appointment with confirmed slots
@@ -932,9 +955,11 @@ stateDiagram-v2
 ### 6.3 State Details
 
 #### PENDING State
+
 **Duration:** Up to 30 minutes
 
 **Characteristics:**
+
 - Payment intent created in gateway
 - Payment record exists in database
 - Tentative slots reserved (for consultation/subscription)
@@ -942,6 +967,7 @@ stateDiagram-v2
 - Can transition to either SUCCEEDED or FAILED
 
 **Database State:**
+
 ```typescript
 {
   paymentStatus: PaymentStatus.PENDING,
@@ -952,6 +978,7 @@ stateDiagram-v2
 ```
 
 **Associated Appointment State:**
+
 ```typescript
 {
   slotsOfAppointment: [{
@@ -966,9 +993,11 @@ stateDiagram-v2
 ```
 
 #### SUCCEEDED State
+
 **Final State:** No further transitions
 
 **Characteristics:**
+
 - Payment completed in gateway
 - Webhook received and processed
 - Appointment confirmed (non-tentative)
@@ -976,6 +1005,7 @@ stateDiagram-v2
 - User receives confirmation
 
 **Database State:**
+
 ```typescript
 {
   paymentStatus: PaymentStatus.SUCCEEDED,
@@ -985,6 +1015,7 @@ stateDiagram-v2
 ```
 
 **Associated Appointment State:**
+
 ```typescript
 {
   slotsOfAppointment: [{
@@ -999,9 +1030,11 @@ stateDiagram-v2
 ```
 
 #### FAILED State
+
 **Final State:** No further transitions
 
 **Characteristics:**
+
 - Payment failed/declined in gateway
 - Webhook received failure event, OR timeout occurred
 - Tentative slots removed
@@ -1009,6 +1042,7 @@ stateDiagram-v2
 - User notified of failure
 
 **Database State:**
+
 ```typescript
 {
   paymentStatus: PaymentStatus.FAILED,
@@ -1018,6 +1052,7 @@ stateDiagram-v2
 ```
 
 **Associated Appointment State:**
+
 ```typescript
 // Either deleted, or:
 {
@@ -1033,6 +1068,7 @@ stateDiagram-v2
 ### 7.1 30-Minute Timeout Policy
 
 **Why 30 minutes?**
+
 - Balance between user convenience and slot availability
 - Matches Stripe Checkout Session default
 - Prevents indefinite slot reservation
@@ -1099,6 +1135,7 @@ const abandonedAppointments = await prisma.appointment.findMany({
 ```
 
 **Query Logic:**
+
 1. Payment status is PENDING
 2. AND (expiresAt in past OR created more than 30 minutes ago)
 3. AND has tentative slots
@@ -1133,9 +1170,11 @@ const abandonedAppointments = await prisma.appointment.findMany({
 ### 8.2 Script Implementations
 
 #### Local Script
+
 **File:** `/scripts/cleanup-abandoned-payments.ts`
 
 **Usage:**
+
 ```bash
 npm run scripts:cleanup-abandoned-payments
 # or
@@ -1143,29 +1182,33 @@ node scripts/cleanup-abandoned-payments.ts
 ```
 
 **Features:**
+
 - Manual execution for testing
 - Detailed console logging
 - Exit codes for success/failure
 - No external dependencies
 
 #### GitHub Actions Job
+
 **File:** `/jobs/cleanup-abandoned-payments.ts`
 
 **Usage:**
 Automated via GitHub Actions workflow (runs every 15 minutes)
 
 **Features:**
+
 - Optimized for CI/CD environment
 - Structured result reporting
 - GitHub Actions output variables
 - Workflow integration
 
 **Example Workflow:**
+
 ```yaml
 name: Cleanup Abandoned Payments
 on:
   schedule:
-    - cron: '*/15 * * * *'  # Every 15 minutes
+    - cron: "*/15 * * * *" # Every 15 minutes
 jobs:
   cleanup:
     runs-on: ubuntu-latest
@@ -1273,6 +1316,7 @@ async function cancelPaymentIntent(
 ```
 
 **Cancellation Logic:**
+
 - **Stripe:** Expire checkout session or cancel payment intent
 - **Razorpay:** Check for payments, skip if none exist
 - **Mock:** No-op (no actual gateway to cancel)
@@ -1327,6 +1371,7 @@ async function cancelPaymentIntent(
 ### 9.2 Gateway Error Handling
 
 #### Stripe Error Handling
+
 **File:** `/lib/payments/core/stripe.ts` (lines 449-482)
 
 ```typescript
@@ -1367,6 +1412,7 @@ function handleStripeError(error: unknown): PaymentError {
 ```
 
 #### Razorpay Error Handling
+
 **File:** `/lib/payments/core/razorpay.ts` (lines 299-336)
 
 ```typescript
@@ -1377,7 +1423,8 @@ function handleRazorpayError(error: unknown): PaymentError {
     };
 
     const code = razorpayError.error.code || "UNKNOWN_ERROR";
-    const description = razorpayError.error.description || "Failed to create order";
+    const description =
+      razorpayError.error.description || "Failed to create order";
 
     if (code.includes("BAD_REQUEST_ERROR")) {
       return new PaymentError(
@@ -1412,17 +1459,16 @@ function handleRazorpayError(error: unknown): PaymentError {
 ### 9.3 Webhook Error Handling
 
 #### Signature Verification Failures
+
 ```typescript
 // Return 400 immediately for invalid signatures
 if (!isValid) {
-  return NextResponse.json(
-    { error: "Invalid signature" },
-    { status: 400 }
-  );
+  return NextResponse.json({ error: "Invalid signature" }, { status: 400 });
 }
 ```
 
 **Why?** Invalid signatures indicate:
+
 - Forged webhook attempts
 - Misconfigured webhook secrets
 - Man-in-the-middle attacks
@@ -1430,6 +1476,7 @@ if (!isValid) {
 **Response:** Reject immediately without processing.
 
 #### Payment Not Found
+
 ```typescript
 if (!payment) {
   console.warn(`Payment record not found for intent: ${paymentIntentId}`);
@@ -1438,6 +1485,7 @@ if (!payment) {
 ```
 
 **Why?** Payment record might:
+
 - Not exist yet (race condition)
 - Be deleted (manual intervention)
 - Have wrong ID (data corruption)
@@ -1445,6 +1493,7 @@ if (!payment) {
 **Response:** Log warning, return 200 OK to prevent webhook retry.
 
 #### Idempotency Protection
+
 ```typescript
 if (payment.paymentStatus === PaymentStatus.SUCCEEDED) {
   console.log(`Payment ${paymentIntentId} has already been processed.`);
@@ -1453,6 +1502,7 @@ if (payment.paymentStatus === PaymentStatus.SUCCEEDED) {
 ```
 
 **Why?** Webhooks can be:
+
 - Delivered multiple times
 - Retried by gateway
 - Replayed during testing
@@ -1464,18 +1514,21 @@ if (payment.paymentStatus === PaymentStatus.SUCCEEDED) {
 All webhook processing uses Prisma transactions:
 
 ```typescript
-return await prisma.$transaction(async (tx) => {
-  // All database operations
-  // ...
-
-  // If any operation fails, entire transaction rolls back
-}, {
-  isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-  timeout: 10000, // 10 seconds
-});
+return await prisma.$transaction(
+  async (tx) => {
+    // All database operations
+    // ...
+    // If any operation fails, entire transaction rolls back
+  },
+  {
+    isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+    timeout: 10000, // 10 seconds
+  },
+);
 ```
 
 **Benefits:**
+
 - **Atomicity:** All-or-nothing guarantee
 - **Consistency:** Database remains in valid state
 - **Isolation:** No partial updates visible
@@ -1484,6 +1537,7 @@ return await prisma.$transaction(async (tx) => {
 ### 9.5 Recovery Strategies
 
 #### Metadata Recovery
+
 If server crashes during payment, metadata enables full recovery:
 
 ```typescript
@@ -1503,6 +1557,7 @@ appointment = await createAppointmentFromWebhook(tx, metadata, payment);
 ```
 
 #### Manual Intervention
+
 For failed cleanups or edge cases:
 
 ```sql
@@ -1524,6 +1579,7 @@ WHERE appointmentId = '<appointment-id>'
 ```
 
 #### Monitoring & Alerts
+
 Recommended monitoring:
 
 ```typescript

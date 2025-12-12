@@ -91,6 +91,7 @@ stateDiagram-v2
 ### 1.4 Refund Data Model
 
 **Prisma Schema:**
+
 ```prisma
 model Refund {
   id             String         @id @default(uuid())
@@ -115,6 +116,7 @@ model Refund {
 ```
 
 **Key Fields:**
+
 - `amount`: Refund amount (can be less than original payment for partial refunds)
 - `refundId`: Gateway-specific ID (e.g., `re_...` for Stripe, `rfnd_...` for Razorpay)
 - `paymentId`: Links back to original payment
@@ -136,7 +138,7 @@ export async function createStripeRefund({
     throw new RefundError(
       "Stripe client not initialized",
       "STRIPE_NOT_INITIALIZED",
-      "STRIPE"
+      "STRIPE",
     );
   }
 
@@ -158,13 +160,11 @@ export async function createStripeRefund({
 ```
 
 **Refund Reasons (Stripe):**
-```typescript
-function mapRefundReason(reason?: string):
-  | "duplicate"
-  | "fraudulent"
-  | "requested_by_customer"
-  | undefined {
 
+```typescript
+function mapRefundReason(
+  reason?: string,
+): "duplicate" | "fraudulent" | "requested_by_customer" | undefined {
   if (!reason) return "requested_by_customer";
   if (reason.includes("duplicate")) return "duplicate";
   if (reason.includes("fraud")) return "fraudulent";
@@ -173,14 +173,20 @@ function mapRefundReason(reason?: string):
 ```
 
 **Status Mapping:**
+
 ```typescript
 function mapStripeRefundStatus(status: string | null): RefundStatus {
   switch (status) {
-    case "succeeded": return "SUCCEEDED";
-    case "pending":   return "PENDING";
-    case "failed":    return "FAILED";
-    case "canceled":  return "CANCELLED";
-    default:          return "PENDING";
+    case "succeeded":
+      return "SUCCEEDED";
+    case "pending":
+      return "PENDING";
+    case "failed":
+      return "FAILED";
+    case "canceled":
+      return "CANCELLED";
+    default:
+      return "PENDING";
   }
 }
 ```
@@ -200,7 +206,7 @@ export async function createRazorpayRefund({
     throw new RefundError(
       "Razorpay client not initialized",
       "RAZORPAY_NOT_INITIALIZED",
-      "RAZORPAY"
+      "RAZORPAY",
     );
   }
 
@@ -211,7 +217,7 @@ export async function createRazorpayRefund({
     throw new RefundError(
       "No payment found for this order",
       "NO_PAYMENT_FOUND",
-      "RAZORPAY"
+      "RAZORPAY",
     );
   }
 
@@ -219,7 +225,9 @@ export async function createRazorpayRefund({
 
   // Step 2: Create refund on the payment
   const refund = await razorpayClient.payments.refund(payment.id, {
-    amount: amount ? toSmallestUnit(amount, payment.currency || "INR") : undefined,
+    amount: amount
+      ? toSmallestUnit(amount, payment.currency || "INR")
+      : undefined,
     notes: {
       reason: reason || "requested_by_customer",
       ...metadata,
@@ -239,13 +247,18 @@ export async function createRazorpayRefund({
 **Key Difference:** Razorpay requires fetching payment ID from order first, then refunding the payment (not the order directly).
 
 **Status Mapping:**
+
 ```typescript
 function mapRazorpayRefundStatus(status: string | null): RefundStatus {
   switch (status) {
-    case "processed": return "SUCCEEDED";
-    case "pending":   return "PENDING";
-    case "failed":    return "FAILED";
-    default:          return "PENDING";
+    case "processed":
+      return "SUCCEEDED";
+    case "pending":
+      return "PENDING";
+    case "failed":
+      return "FAILED";
+    default:
+      return "PENDING";
   }
 }
 ```
@@ -270,7 +283,7 @@ export async function createMockRefund(
   const mockRefundId = `rfnd_mock_${Math.random().toString(36).substring(2, 15)}`;
 
   console.log(
-    `✅ Mock refund created: ${mockRefundId} for payment ${paymentIntentId}`
+    `✅ Mock refund created: ${mockRefundId} for payment ${paymentIntentId}`,
   );
 
   return {
@@ -394,6 +407,7 @@ sequenceDiagram
 ### 1.10 Refund Business Rules
 
 **Full Refund vs Partial Refund:**
+
 ```typescript
 // Full refund (omit amount parameter)
 await createStripeRefund({
@@ -405,18 +419,20 @@ await createStripeRefund({
 // Partial refund (specify amount)
 await createStripeRefund({
   paymentIntentId: "pi_123",
-  amount: 50.00, // Refund $50 of original $150
+  amount: 50.0, // Refund $50 of original $150
   reason: "partial_cancellation",
 });
 ```
 
 **Refund Eligibility:**
+
 - Payment must be in SUCCEEDED status
 - Refund cannot exceed original payment amount
 - Total refunds (if multiple) cannot exceed original amount
 - Some gateways have time limits (e.g., 180 days for Stripe)
 
 **Refund Timeline:**
+
 - **Stripe:** 5-10 business days to customer's account
 - **Razorpay:** 5-7 business days to customer's account
 - **Mock:** Instant (development only)
@@ -529,6 +545,7 @@ stateDiagram-v2
 ### 2.4 Dispute Data Model
 
 **Prisma Schema:**
+
 ```prisma
 model Dispute {
   id             String         @id @default(uuid())
@@ -556,6 +573,7 @@ model Dispute {
 ```
 
 **Key Fields:**
+
 - `disputeId`: Gateway-specific ID (e.g., `dp_...` for Stripe)
 - `reason`: Dispute reason (e.g., "fraudulent", "product_not_received")
 - `dueBy`: Deadline to submit evidence (critical for admin alerts)
@@ -575,7 +593,7 @@ export async function getStripeDispute(
     throw new DisputeError(
       "Stripe client not initialized",
       "STRIPE_NOT_INITIALIZED",
-      "STRIPE"
+      "STRIPE",
     );
   }
 
@@ -605,7 +623,7 @@ export async function submitStripeDisputeEvidence({
     throw new DisputeError(
       "Stripe client not initialized",
       "STRIPE_NOT_INITIALIZED",
-      "STRIPE"
+      "STRIPE",
     );
   }
 
@@ -645,6 +663,7 @@ export async function submitStripeDisputeEvidence({
 ```
 
 **Evidence Fields (Stripe):**
+
 - `customer_name`: Customer's name
 - `customer_email_address`: Customer's email
 - `customer_purchase_ip`: IP address used for purchase
@@ -659,18 +678,28 @@ export async function submitStripeDisputeEvidence({
 - `uncategorized_file`: Additional file evidence
 
 **Status Mapping:**
+
 ```typescript
 function mapStripeDisputeStatus(status: string): DisputeStatus {
   switch (status) {
-    case "warning_needs_response": return "WARNING_NEEDS_RESPONSE";
-    case "warning_under_review":   return "WARNING_UNDER_REVIEW";
-    case "warning_closed":         return "WARNING_CLOSED";
-    case "needs_response":         return "NEEDS_RESPONSE";
-    case "under_review":           return "UNDER_REVIEW";
-    case "charge_refunded":        return "CHARGE_REFUNDED";
-    case "won":                    return "WON";
-    case "lost":                   return "LOST";
-    default:                       return "NEEDS_RESPONSE";
+    case "warning_needs_response":
+      return "WARNING_NEEDS_RESPONSE";
+    case "warning_under_review":
+      return "WARNING_UNDER_REVIEW";
+    case "warning_closed":
+      return "WARNING_CLOSED";
+    case "needs_response":
+      return "NEEDS_RESPONSE";
+    case "under_review":
+      return "UNDER_REVIEW";
+    case "charge_refunded":
+      return "CHARGE_REFUNDED";
+    case "won":
+      return "WON";
+    case "lost":
+      return "LOST";
+    default:
+      return "NEEDS_RESPONSE";
   }
 }
 ```
@@ -680,6 +709,7 @@ function mapStripeDisputeStatus(status: string): DisputeStatus {
 **Note:** Razorpay does not provide a direct API for submitting evidence. Disputes are managed through the Razorpay Dashboard.
 
 **Webhook Events:**
+
 - `payment.dispute.created`: New dispute created
 - `payment.dispute.won`: Dispute resolved in merchant's favor
 - `payment.dispute.lost`: Dispute resolved in customer's favor
@@ -700,7 +730,7 @@ switch (eventType) {
       disputeCreatedEvent.status,
       disputeCreatedEvent.respond_by || null,
       disputeCreatedEvent.deduct_at_onset === false,
-      "RAZORPAY"
+      "RAZORPAY",
     );
     break;
   }
@@ -722,7 +752,7 @@ switch (eventType) {
     await handleDisputeUpdated(
       disputeClosedEvent.id,
       disputeClosedEvent.status,
-      null
+      null,
     );
     break;
   }
@@ -755,9 +785,10 @@ export async function handleDisputeCreated(
       if (charge.payment_intent) {
         payment = await tx.payment.findUnique({
           where: {
-            paymentIntent: typeof charge.payment_intent === "string"
-              ? charge.payment_intent
-              : charge.payment_intent.id,
+            paymentIntent:
+              typeof charge.payment_intent === "string"
+                ? charge.payment_intent
+                : charge.payment_intent.id,
           },
         });
       }
@@ -897,6 +928,7 @@ sequenceDiagram
 **Authentication:** Admin role required
 
 **Query Parameters:**
+
 ```typescript
 {
   page?: number,        // Page number (default: 1)
@@ -908,6 +940,7 @@ sequenceDiagram
 ```
 
 **Response:**
+
 ```json
 {
   "refunds": [
@@ -935,6 +968,7 @@ sequenceDiagram
 ```
 
 **Implementation (lines 7-84):**
+
 ```typescript
 export async function GET(req: NextRequest) {
   // 1. Authenticate user
@@ -1002,6 +1036,7 @@ export async function GET(req: NextRequest) {
 **Purpose:** List disputes with urgency indicators
 
 **Query Parameters:**
+
 ```typescript
 {
   page?: number,
@@ -1013,6 +1048,7 @@ export async function GET(req: NextRequest) {
 ```
 
 **Response:**
+
 ```json
 {
   "disputes": [
@@ -1034,7 +1070,7 @@ export async function GET(req: NextRequest) {
     }
   ],
   "total": 10,
-  "urgentDisputes": 3,  // Disputes due within 3 days
+  "urgentDisputes": 3, // Disputes due within 3 days
   "page": 1,
   "limit": 20,
   "totalPages": 1
@@ -1042,6 +1078,7 @@ export async function GET(req: NextRequest) {
 ```
 
 **Urgent Disputes Query (lines 68-79):**
+
 ```typescript
 // Count disputes due within 3 days
 const urgentDisputes = await prisma.dispute.count({
@@ -1066,6 +1103,7 @@ const urgentDisputes = await prisma.dispute.count({
 **Purpose:** Get full details of a specific dispute
 
 **Response:**
+
 ```json
 {
   "id": "uuid",
@@ -1103,6 +1141,7 @@ const urgentDisputes = await prisma.dispute.count({
 ### 4.1 Refund Webhook Events
 
 **Stripe:**
+
 ```typescript
 // Event: charge.refunded
 {
@@ -1127,6 +1166,7 @@ const urgentDisputes = await prisma.dispute.count({
 ```
 
 **Razorpay:**
+
 ```typescript
 // Event: refund.created
 {
@@ -1151,6 +1191,7 @@ const urgentDisputes = await prisma.dispute.count({
 ### 4.2 Dispute Webhook Events
 
 **Stripe:**
+
 ```typescript
 // Event: charge.dispute.created
 {
@@ -1187,6 +1228,7 @@ const urgentDisputes = await prisma.dispute.count({
 ```
 
 **Razorpay:**
+
 ```typescript
 // Event: payment.dispute.created
 {
@@ -1222,6 +1264,7 @@ const urgentDisputes = await prisma.dispute.count({
 After successful payment, several post-payment operations occur automatically:
 
 **1. Slot Confirmation (Tentative → Confirmed):**
+
 ```typescript
 // File: /app/api/webhooks/utils.ts (line 340)
 await tx.slotOfAppointment.updateMany({
@@ -1231,6 +1274,7 @@ await tx.slotOfAppointment.updateMany({
 ```
 
 **2. Event Status Update:**
+
 ```typescript
 // File: /app/api/webhooks/utils.ts (lines 355-378)
 if (appointment?.consultation) {
@@ -1263,6 +1307,7 @@ if (appointment?.class) {
 ```
 
 **3. Payment Record Update:**
+
 ```typescript
 // Link appointment to payment
 await tx.payment.update({
@@ -1277,7 +1322,10 @@ Post-payment notifications (not yet implemented):
 
 ```typescript
 // Proposed notification flow
-async function sendPaymentConfirmation(payment: Payment, appointment: Appointment) {
+async function sendPaymentConfirmation(
+  payment: Payment,
+  appointment: Appointment,
+) {
   // Email notification
   await sendEmail({
     to: payment.user.email,
@@ -1377,21 +1425,22 @@ graph TB
 
 ### 6.2 Timeline Summary
 
-| Event | Typical Timeline | Notes |
-|-------|-----------------|-------|
-| **Payment Intent Creation** | < 1 second | Synchronous |
-| **User Completes Payment** | 0-30 minutes | Expires after 30 min |
-| **Webhook Delivery** | 1-5 seconds | Asynchronous |
-| **Appointment Confirmation** | < 1 second | Database transaction |
-| **Refund Initiation** | < 1 second | Admin action |
-| **Refund Processing** | 5-10 business days | Gateway dependent |
-| **Dispute Creation** | Varies | Customer initiates with bank |
-| **Evidence Deadline** | 7-21 days | Varies by reason |
-| **Dispute Resolution** | 60-75 days | Bank review time |
+| Event                        | Typical Timeline   | Notes                        |
+| ---------------------------- | ------------------ | ---------------------------- |
+| **Payment Intent Creation**  | < 1 second         | Synchronous                  |
+| **User Completes Payment**   | 0-30 minutes       | Expires after 30 min         |
+| **Webhook Delivery**         | 1-5 seconds        | Asynchronous                 |
+| **Appointment Confirmation** | < 1 second         | Database transaction         |
+| **Refund Initiation**        | < 1 second         | Admin action                 |
+| **Refund Processing**        | 5-10 business days | Gateway dependent            |
+| **Dispute Creation**         | Varies             | Customer initiates with bank |
+| **Evidence Deadline**        | 7-21 days          | Varies by reason             |
+| **Dispute Resolution**       | 60-75 days         | Bank review time             |
 
 ### 6.3 Admin Action Checklist
 
 **For Disputes:**
+
 - [ ] Check dispute dashboard daily
 - [ ] Prioritize disputes due within 3 days
 - [ ] Gather evidence immediately:
@@ -1403,6 +1452,7 @@ graph TB
 - [ ] Monitor status updates via dashboard
 
 **For Refunds:**
+
 - [ ] Verify refund eligibility
 - [ ] Check if dispute exists (may need to refund to close dispute)
 - [ ] Document refund reason

@@ -241,9 +241,7 @@ export default function DisputeDetailsPage({ params }: PageProps) {
             {dispute.dueBy && (
               <div>
                 <Label className="text-gray-500">Response Due By</Label>
-                <p
-                  className={isUrgent ? "text-red-600 font-medium" : ""}
-                >
+                <p className={isUrgent ? "text-red-600 font-medium" : ""}>
                   {new Date(dispute.dueBy).toLocaleString()}
                 </p>
               </div>
@@ -262,7 +260,9 @@ export default function DisputeDetailsPage({ params }: PageProps) {
           <CardContent className="space-y-4">
             <div>
               <Label className="text-gray-500">Payment ID</Label>
-              <p className="font-mono text-sm">{dispute.payment?.paymentIntent}</p>
+              <p className="font-mono text-sm">
+                {dispute.payment?.paymentIntent}
+              </p>
             </div>
             <div>
               <Label className="text-gray-500">Payment Status</Label>
@@ -328,7 +328,9 @@ export default function DisputeDetailsPage({ params }: PageProps) {
             </div>
 
             <div>
-              <Label htmlFor="productDescription">Product/Service Description</Label>
+              <Label htmlFor="productDescription">
+                Product/Service Description
+              </Label>
               <Textarea
                 id="productDescription"
                 value={productDescription}
@@ -338,7 +340,9 @@ export default function DisputeDetailsPage({ params }: PageProps) {
             </div>
 
             <div>
-              <Label htmlFor="customerSignature">Customer Signature/Acknowledgment</Label>
+              <Label htmlFor="customerSignature">
+                Customer Signature/Acknowledgment
+              </Label>
               <Textarea
                 id="customerSignature"
                 value={customerSignature}
@@ -380,7 +384,9 @@ export default function DisputeDetailsPage({ params }: PageProps) {
             </div>
 
             <div>
-              <Label htmlFor="cancellationRebuttal">Cancellation Rebuttal</Label>
+              <Label htmlFor="cancellationRebuttal">
+                Cancellation Rebuttal
+              </Label>
               <Textarea
                 id="cancellationRebuttal"
                 value={cancellationRebuttal}
@@ -429,11 +435,12 @@ export default function DisputeDetailsPage({ params }: PageProps) {
         </CardHeader>
         <CardContent className="space-y-2 text-sm text-gray-600">
           <p>
-            • Stripe disputes: You can submit evidence directly through this form.
+            • Stripe disputes: You can submit evidence directly through this
+            form.
           </p>
           <p>
-            • Razorpay disputes: Evidence submission is handled automatically via
-            webhooks. Contact Razorpay support for manual intervention.
+            • Razorpay disputes: Evidence submission is handled automatically
+            via webhooks. Contact Razorpay support for manual intervention.
           </p>
           <p>
             • Always respond before the due date to avoid automatic loss of the

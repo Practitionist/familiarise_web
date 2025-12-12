@@ -8,17 +8,20 @@ import {
   getActualUpcomingSlots,
 } from "../../utils/scheduleHelpers";
 import { MonthlySection, UpcomingSection } from "./Sections";
+import { PendingPaymentsWidget } from "./PendingPaymentsWidget";
 
 interface HomeTabProps {
   userDetails: User | null;
   eventsData: any; // Events data passed from parent
   isRefreshing?: boolean;
+  consulteeId: string;
 }
 
 export default function HomeTab({
   userDetails,
   eventsData,
   isRefreshing = false,
+  consulteeId,
 }: Readonly<HomeTabProps>) {
   const [currentMonth, setCurrentMonth] = useState(new Date());
 
@@ -82,6 +85,9 @@ export default function HomeTab({
           Here's what's coming up in your learning journey
         </p>
       </div>
+
+      {/* Pending Payments Widget */}
+      <PendingPaymentsWidget consulteeId={consulteeId} />
 
       {/* Upcoming Sessions */}
       <UpcomingSection slots={upcomingSlots} />

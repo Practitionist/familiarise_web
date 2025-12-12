@@ -21,6 +21,7 @@ export async function createConsultationPlans(consultants: UserWithProfiles[]) {
             description: faker.lorem.paragraph(),
             durationInHours: 1,
             price: faker.number.int({ min: 2000, max: 5000 }), // $20 to $50
+            priceCurrency: "INR",
             language: faker.helpers.arrayElement([
               "English",
               "Spanish",
@@ -50,6 +51,7 @@ export async function createConsultationPlans(consultants: UserWithProfiles[]) {
             description: faker.lorem.paragraph(),
             durationInHours: 2,
             price: faker.number.int({ min: 4000, max: 10000 }), // $40 to $100
+            priceCurrency: "INR",
             language: faker.helpers.arrayElement([
               "English",
               "Spanish",
@@ -79,6 +81,7 @@ export async function createConsultationPlans(consultants: UserWithProfiles[]) {
             description: faker.lorem.paragraph(),
             durationInHours: 4,
             price: faker.number.int({ min: 7500, max: 20000 }), // $75 to $200
+            priceCurrency: "INR",
             language: faker.helpers.arrayElement([
               "English",
               "Spanish",

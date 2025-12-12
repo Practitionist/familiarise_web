@@ -12,6 +12,9 @@ import {
   RequestStatus,
 } from "@prisma/client";
 import { calculateSubscriptionEndDate } from "@/utils/dateUtils";
+import { validateWebhookMetadata } from "@/schemas/webhooks/metadata";
+import { ZodError } from "zod";
+import { sendPaymentSuccessEmail, sendPaymentFailedEmail } from "@/lib/email";
 
 // ============================================================================
 // Type Definitions
@@ -66,7 +69,19 @@ interface EventData {
 // ============================================================================
 
 /**
- * Handle successful payment - creates or confirms appointments
+ * Handle successful payment - confirms or creates appointments
+ *
+ * TWO FLOWS SUPPORTED:
+ * 1. NEW FLOW (Race Condition Fix): Appointment created during checkout (tentative)
+ *    - payment.appointmentId exists
+ *    - Just confirm appointment by setting isTentative = false
+ *    - This prevents race conditions by making validation see tentative bookings
+ *
+ * 2. LEGACY FLOW: Appointment NOT created during checkout
+ *    - payment.appointmentId is null
+ *    - Create appointment from webhook metadata
+ *    - Used for backwards compatibility and older payment flows
+ *
  * Used by both webhook handlers and mock payment flows
  */
 export async function handlePaymentSuccess(
@@ -90,6 +105,78 @@ export async function handlePaymentSuccess(
       return;
     }
 
+    // VALIDATION: Check metadata before processing
+    try {
+      validateWebhookMetadata(metadata);
+    } catch (validationError) {
+      const errorMessage =
+        validationError instanceof ZodError
+          ? validationError.errors
+              .map((e) => `${e.path.join(".")}: ${e.message}`)
+              .join("; ")
+          : validationError instanceof Error
+            ? validationError.message
+            : String(validationError);
+
+      console.error(
+        `❌ Metadata validation failed for payment ${paymentIntentId}:`,
+        errorMessage,
+      );
+
+      // FIX Issue #8: Enhanced alerting for metadata validation failures
+      // This is a CRITICAL condition - customer charged but no appointment created!
+      await tx.payment.update({
+        where: { id: payment.id },
+        data: {
+          paymentStatus: PaymentStatus.SUCCEEDED,
+          // Store error in description for manual recovery - prefixed for easy searching
+          description: `REQUIRES_MANUAL_RECOVERY: Metadata validation failed: ${errorMessage}. Customer charged but appointment NOT created.`,
+        },
+      });
+
+      // CRITICAL ALERT - Log in structured format for monitoring systems
+      // This should trigger PagerDuty/Slack alerts via log monitoring
+      console.error(
+        JSON.stringify({
+          event: "CRITICAL_PAYMENT_WITHOUT_APPOINTMENT",
+          alert_priority: "P1",
+          payment_id: payment.id,
+          payment_intent: paymentIntentId,
+          user_id: payment.userId,
+          user_email: payment.user.email,
+          amount: payment.amount,
+          currency: payment.currency,
+          error: errorMessage,
+          action_required:
+            "IMMEDIATE: Manual appointment creation or full refund required",
+          dashboard_url: `${process.env.NEXT_PUBLIC_APP_URL}/admin/payments/${payment.id}`,
+          timestamp: new Date().toISOString(),
+        }),
+      );
+
+      // Also log in human-readable format for direct log viewing
+      console.error(
+        `
+================================================================================
+                    CRITICAL ALERT: PAYMENT WITHOUT APPOINTMENT
+================================================================================
+Payment ID:      ${payment.id}
+Payment Intent:  ${paymentIntentId}
+User ID:         ${payment.userId}
+User Email:      ${payment.user.email || "N/A"}
+Amount:          ${payment.currency} ${payment.amount / 100}
+Error:           ${errorMessage}
+
+ACTION REQUIRED: Customer was charged but appointment was NOT created!
+                 Either create appointment manually or issue full refund.
+================================================================================
+        `,
+      );
+
+      // Exit early - appointment not created, requires manual intervention
+      return;
+    }
+
     await tx.payment.update({
       where: { id: payment.id },
       data: { paymentStatus: PaymentStatus.SUCCEEDED },
@@ -97,18 +184,51 @@ export async function handlePaymentSuccess(
 
     let appointment;
     if (payment.appointmentId) {
+      // NEW FLOW: Appointment already created during checkout (tentative)
+      // Just confirm it by setting isTentative = false
       appointment = await tx.appointment.findUnique({
         where: { id: payment.appointmentId },
       });
+
+      console.log(
+        JSON.stringify({
+          event: "webhook_confirming_existing_appointment",
+          paymentIntent: paymentIntentId,
+          appointmentId: payment.appointmentId,
+          timestamp: new Date().toISOString(),
+        }),
+      );
     } else {
+      // LEGACY FLOW: Appointment not created during checkout
+      // Create it now from webhook metadata
       appointment = await createAppointmentFromWebhook(tx, metadata, payment);
+
+      console.log(
+        JSON.stringify({
+          event: "webhook_creating_new_appointment",
+          paymentIntent: paymentIntentId,
+          appointmentId: appointment.id,
+          appointmentType: metadata.appointmentType,
+          timestamp: new Date().toISOString(),
+        }),
+      );
     }
 
     if (!appointment) {
       throw new Error("Failed to create or find appointment");
     }
 
-    await confirmExistingAppointment(tx, appointment.id);
+    // Confirm appointment: set isTentative = false and update status to APPROVED
+    // FIX Issue #1 & #3: Pass userId to confirm only this user's slots for multi-user events
+    await confirmExistingAppointment(tx, appointment.id, payment.userId);
+
+    // Send payment success email
+    await sendPaymentSuccessNotification(
+      tx,
+      payment,
+      appointment.id,
+      metadata.appointmentType,
+    );
 
     console.log(
       `✅ Payment ${paymentIntentId} processed successfully. Appointment ID: ${appointment.id}`,
@@ -123,12 +243,52 @@ export async function handlePaymentFailure(paymentIntentId: string) {
   return await prisma.$transaction(async (tx) => {
     const payment = await tx.payment.findUnique({
       where: { paymentIntent: paymentIntentId },
-      include: { appointment: true },
+      include: {
+        user: true,
+        appointment: {
+          include: {
+            consultation: {
+              include: {
+                consultationPlan: {
+                  include: {
+                    consultantProfile: {
+                      include: {
+                        user: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            subscription: {
+              include: {
+                subscriptionPlan: {
+                  include: {
+                    consultantProfile: {
+                      include: {
+                        user: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
     });
 
     if (!payment) {
       console.warn(
         `Payment record not found for failed intent: ${paymentIntentId}`,
+      );
+      return;
+    }
+
+    // FIX Issue #8: Idempotency check - prevent duplicate processing
+    if (payment.paymentStatus === PaymentStatus.FAILED) {
+      console.log(
+        `Payment ${paymentIntentId} has already been marked as failed.`,
       );
       return;
     }
@@ -141,6 +301,13 @@ export async function handlePaymentFailure(paymentIntentId: string) {
     if (payment.appointment) {
       await cleanupFailedPaymentAppointment(tx, payment.appointment.id);
     }
+
+    // Send payment failure email
+    await sendPaymentFailureNotification(tx, payment);
+
+    console.log(
+      `📧 Payment failure notification sent for payment ${paymentIntentId}`,
+    );
   });
 }
 
@@ -187,6 +354,18 @@ async function createAppointmentFromWebhook(
       });
       break;
     case AppointmentsType.SUBSCRIPTION:
+      // LEGACY FLOW WARNING: This should only happen for old payments
+      // New subscriptions create placeholder appointment during checkout
+      console.warn(
+        JSON.stringify({
+          event: "legacy_subscription_creation",
+          warning:
+            "Creating subscription via webhook - expected only for old payments",
+          paymentId: payment.id,
+          planId,
+          timestamp: new Date().toISOString(),
+        }),
+      );
       appointment = await createSubscription(tx, {
         planId,
         slotStartTimeInUTC,
@@ -296,7 +475,11 @@ async function createSubscription(
   };
 
   // Only add slots if NOT a scheduling period request
-  if (!isSchedulingPeriodRequest && data.slotStartTimeInUTC && data.slotEndTimeInUTC) {
+  if (
+    !isSchedulingPeriodRequest &&
+    data.slotStartTimeInUTC &&
+    data.slotEndTimeInUTC
+  ) {
     appointmentData.slotsOfAppointment = {
       create: {
         startsAt: new Date(data.slotStartTimeInUTC),
@@ -315,15 +498,17 @@ async function createSubscription(
   });
 }
 
-async function createWebinar(
-  tx: Prisma.TransactionClient,
-  data: EventData,
-) {
+async function createWebinar(tx: Prisma.TransactionClient, data: EventData) {
   const webinar = await tx.webinar.findUnique({
     where: { id: data.eventId },
     include: { appointment: { include: { slotsOfAppointment: true } } },
   });
   if (!webinar) throw new Error("Webinar not found");
+
+  // FIX Issue #5: Validate webinar is scheduled before allowing booking
+  if (!webinar.appointment?.slotsOfAppointment?.[0]) {
+    throw new Error("Webinar has not been scheduled. Cannot create booking.");
+  }
 
   let appointment = webinar.appointment;
   if (!appointment) {
@@ -359,10 +544,7 @@ async function createWebinar(
   return createdAppointment;
 }
 
-async function createClass(
-  tx: Prisma.TransactionClient,
-  data: EventData,
-) {
+async function createClass(tx: Prisma.TransactionClient, data: EventData) {
   const classInstance = await tx.class.findUnique({
     where: { id: data.eventId },
     include: { classPlan: true },
@@ -399,17 +581,84 @@ async function createClass(
 // ============================================================================
 
 /**
+ * Confirm consultation or subscription status after successful payment
+ * Transitions APPROVED_PENDING_PAYMENT → APPROVED
+ */
+async function confirmApprovalStatus(
+  tx: Prisma.TransactionClient,
+  entityType: "consultation" | "subscription",
+  entityId: string,
+): Promise<void> {
+  if (entityType === "consultation") {
+    const consultation = await tx.consultation.findUnique({
+      where: { id: entityId },
+    });
+
+    if (!consultation) {
+      throw new Error(`Consultation ${entityId} not found`);
+    }
+
+    // If status is APPROVED_PENDING_PAYMENT, confirm the appointment
+    if (consultation.requestStatus === RequestStatus.APPROVED_PENDING_PAYMENT) {
+      await tx.consultation.update({
+        where: { id: entityId },
+        data: { requestStatus: RequestStatus.APPROVED },
+      });
+      console.log(
+        `✅ Consultation ${entityId} payment completed - moving from APPROVED_PENDING_PAYMENT to APPROVED`,
+      );
+    } else if (consultation.requestStatus !== RequestStatus.APPROVED) {
+      // Only update if not already approved
+      await tx.consultation.update({
+        where: { id: entityId },
+        data: { requestStatus: RequestStatus.APPROVED },
+      });
+    }
+  } else {
+    const subscription = await tx.subscription.findUnique({
+      where: { id: entityId },
+    });
+
+    if (!subscription) {
+      throw new Error(`Subscription ${entityId} not found`);
+    }
+
+    // For subscriptions: Only transition APPROVED_PENDING_PAYMENT → APPROVED
+    // Do NOT change PENDING → APPROVED here!
+    // Subscription stays PENDING until consultant allocates slots via Requests tab
+    // SlotAllocationService.allocate() will set status to APPROVED when slots are allocated
+    if (subscription.requestStatus === RequestStatus.APPROVED_PENDING_PAYMENT) {
+      await tx.subscription.update({
+        where: { id: entityId },
+        data: { requestStatus: RequestStatus.APPROVED },
+      });
+      console.log(
+        `✅ Subscription ${entityId} payment completed - moving from APPROVED_PENDING_PAYMENT to APPROVED`,
+      );
+    } else {
+      console.log(
+        `ℹ️ Subscription ${entityId} payment received - keeping status as ${subscription.requestStatus} (consultant will allocate slots)`,
+      );
+    }
+  }
+}
+
+/**
  * Confirm appointment by making slots non-tentative and updating status
+ *
+ * FIX Issue #1 & #3: For multi-user events (WEBINAR, CLASS), only confirm
+ * the paying user's slots, not all slots for the shared appointment.
+ *
+ * @param tx - Prisma transaction client
+ * @param appointmentId - The appointment ID to confirm
+ * @param userId - The paying user's ID (required for WEBINAR/CLASS to prevent confirming other users' slots)
  */
 async function confirmExistingAppointment(
   tx: Prisma.TransactionClient,
   appointmentId: string,
+  userId?: string,
 ) {
-  await tx.slotOfAppointment.updateMany({
-    where: { appointmentId },
-    data: { isTentative: false },
-  });
-
+  // First fetch appointment to determine type
   const appointment = await tx.appointment.findUnique({
     where: { id: appointmentId },
     include: {
@@ -420,25 +669,86 @@ async function confirmExistingAppointment(
     },
   });
 
-  if (appointment?.consultation) {
-    await tx.consultation.update({
-      where: { id: appointment.consultation.id },
-      data: { requestStatus: RequestStatus.APPROVED },
+  if (!appointment) {
+    console.warn(`Appointment ${appointmentId} not found for confirmation`);
+    return;
+  }
+
+  // FIX Issue #3: For CLASS, confirm ALL user's slots across all sessions
+  // Classes have multiple appointments (one per session), but payment only links to first
+  if (appointment.class && userId) {
+    await tx.slotOfAppointment.updateMany({
+      where: {
+        appointment: { classId: appointment.class.id },
+        user: { some: { id: userId } },
+      },
+      data: { isTentative: false },
+    });
+
+    console.log(
+      JSON.stringify({
+        event: "class_all_sessions_confirmed",
+        classId: appointment.class.id,
+        userId,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+  }
+  // FIX Issue #1: For WEBINAR, confirm only the paying user's slot
+  // Webinars share one appointment among all participants
+  else if (appointment.webinar && userId) {
+    await tx.slotOfAppointment.updateMany({
+      where: {
+        appointmentId,
+        user: { some: { id: userId } },
+      },
+      data: { isTentative: false },
+    });
+
+    console.log(
+      JSON.stringify({
+        event: "webinar_user_slot_confirmed",
+        webinarId: appointment.webinar.id,
+        userId,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+  }
+  // For CONSULTATION and SUBSCRIPTION: original behavior (single user per appointment)
+  else {
+    await tx.slotOfAppointment.updateMany({
+      where: { appointmentId },
+      data: { isTentative: false },
     });
   }
-  if (appointment?.subscription) {
-    await tx.subscription.update({
-      where: { id: appointment.subscription.id },
-      data: { requestStatus: RequestStatus.APPROVED },
-    });
+
+  // Update status for consultation and subscription
+  if (appointment.consultation) {
+    await confirmApprovalStatus(
+      tx,
+      "consultation",
+      appointment.consultation.id,
+    );
   }
-  if (appointment?.webinar) {
+
+  if (appointment.subscription) {
+    await confirmApprovalStatus(
+      tx,
+      "subscription",
+      appointment.subscription.id,
+    );
+  }
+
+  // Update webinar status
+  if (appointment.webinar) {
     await tx.webinar.update({
       where: { id: appointment.webinar.id },
       data: { status: "SCHEDULED" },
     });
   }
-  if (appointment?.class) {
+
+  // Update class status
+  if (appointment.class) {
     await tx.class.update({
       where: { id: appointment.class.id },
       data: { status: "SCHEDULED" },
@@ -491,5 +801,220 @@ async function cleanupFailedPaymentAppointment(
         await tx.appointment.delete({ where: { id: appointmentId } });
       }
     }
+  }
+}
+
+// ============================================================================
+// Email Notification Helpers
+// ============================================================================
+
+/**
+ * Send payment success email notification
+ */
+async function sendPaymentSuccessNotification(
+  tx: Prisma.TransactionClient,
+  payment: PaymentWithUser,
+  appointmentId: string,
+  appointmentType: string,
+) {
+  try {
+    const appointment = await tx.appointment.findUnique({
+      where: { id: appointmentId },
+      include: {
+        consultation: {
+          include: {
+            consultationPlan: {
+              include: {
+                consultantProfile: {
+                  include: {
+                    user: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+        subscription: {
+          include: {
+            subscriptionPlan: {
+              include: {
+                consultantProfile: {
+                  include: {
+                    user: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!appointment) {
+      console.error(
+        `Cannot send payment success email: appointment ${appointmentId} not found`,
+      );
+      return;
+    }
+
+    let consultantName = "Consultant";
+    let amount = payment.amount;
+    let currency = payment.currency;
+
+    // Get consultant name based on appointment type
+    if (appointment.consultation?.consultationPlan?.consultantProfile?.user) {
+      consultantName =
+        appointment.consultation.consultationPlan.consultantProfile.user.name ||
+        "Consultant";
+    } else if (
+      appointment.subscription?.subscriptionPlan?.consultantProfile?.user
+    ) {
+      consultantName =
+        appointment.subscription.subscriptionPlan.consultantProfile.user.name ||
+        "Consultant";
+    }
+
+    // Send email
+    await sendPaymentSuccessEmail({
+      email: payment.user.email || "",
+      name: payment.user.name || "User",
+      consultantName,
+      appointmentType:
+        appointmentType === "CONSULTATION" ? "consultation" : "subscription",
+      amount,
+      currency,
+      dashboardUrl: `${process.env.NEXT_PUBLIC_APP_URL}/dashboard`,
+    });
+
+    console.log(
+      `📧 Payment success email sent to ${payment.user.email} for ${appointmentType}`,
+    );
+  } catch (error) {
+    // Don't throw - email failures shouldn't block payment processing
+    console.error("Failed to send payment success email:", error);
+  }
+}
+
+/**
+ * Send payment failure email notification
+ */
+async function sendPaymentFailureNotification(
+  tx: Prisma.TransactionClient,
+  payment: Prisma.PaymentGetPayload<{
+    include: {
+      user: true;
+      appointment: {
+        include: {
+          consultation: {
+            include: {
+              consultationPlan: {
+                include: {
+                  consultantProfile: {
+                    include: {
+                      user: true;
+                    };
+                  };
+                };
+              };
+            };
+          };
+          subscription: {
+            include: {
+              subscriptionPlan: {
+                include: {
+                  consultantProfile: {
+                    include: {
+                      user: true;
+                    };
+                  };
+                };
+              };
+            };
+          };
+        };
+      };
+    };
+  }>,
+) {
+  try {
+    const appointment = await tx.appointment.findUnique({
+      where: { id: payment.appointmentId || "" },
+      include: {
+        consultation: {
+          include: {
+            consultationPlan: {
+              include: {
+                consultantProfile: {
+                  include: {
+                    user: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+        subscription: {
+          include: {
+            subscriptionPlan: {
+              include: {
+                consultantProfile: {
+                  include: {
+                    user: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!appointment) {
+      console.error(
+        `Cannot send payment failure email: appointment not found for payment ${payment.id}`,
+      );
+      return;
+    }
+
+    let consultantName = "Consultant";
+    let appointmentType: "consultation" | "subscription" = "consultation";
+    let retryUrl = `${process.env.NEXT_PUBLIC_APP_URL}/dashboard`;
+
+    // Get consultant name and appointment type
+    if (appointment.consultation?.consultationPlan?.consultantProfile?.user) {
+      consultantName =
+        appointment.consultation.consultationPlan.consultantProfile.user.name ||
+        "Consultant";
+      appointmentType = "consultation";
+      retryUrl = `${process.env.NEXT_PUBLIC_APP_URL}/consultations/${appointment.consultation.id}/payment`;
+    } else if (
+      appointment.subscription?.subscriptionPlan?.consultantProfile?.user
+    ) {
+      consultantName =
+        appointment.subscription.subscriptionPlan.consultantProfile.user.name ||
+        "Consultant";
+      appointmentType = "subscription";
+      retryUrl = `${process.env.NEXT_PUBLIC_APP_URL}/subscriptions/${appointment.subscription.id}/payment`;
+    }
+
+    // Send email
+    await sendPaymentFailedEmail({
+      email: payment.user.email || "",
+      name: payment.user.name || "User",
+      consultantName,
+      appointmentType,
+      amount: payment.amount,
+      currency: payment.currency,
+      retryUrl,
+      failureReason: payment.description || "Payment could not be processed",
+      expiresAt: new Date(Date.now() + 48 * 60 * 60 * 1000), // 48 hours from now
+    });
+
+    console.log(
+      `📧 Payment failure email sent to ${payment.user.email} for ${appointmentType}`,
+    );
+  } catch (error) {
+    // Don't throw - email failures shouldn't block payment processing
+    console.error("Failed to send payment failure email:", error);
   }
 }

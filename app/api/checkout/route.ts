@@ -55,10 +55,12 @@ export async function POST(req: NextRequest) {
         errorMessage = error.message;
         errorType = "NOT_FOUND_ERROR";
       }
-      // Slot availability errors
+      // Slot availability errors (including lock acquisition failures)
       else if (
         error.message.includes("slot") ||
-        error.message.includes("availability")
+        error.message.includes("availability") ||
+        error.message.includes("currently booking") ||
+        error.message.includes("currently checking out")
       ) {
         errorMessage = error.message;
         errorType = "AVAILABILITY_ERROR";

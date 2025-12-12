@@ -3,6 +3,7 @@
 > Complete guide to implementing Stream Video calls with meeting architecture
 
 ## Table of Contents
+
 - [Meeting Architecture](#meeting-architecture)
 - [Meeting Join Flow](#meeting-join-flow)
 - [Meeting Components](#meeting-components)
@@ -21,6 +22,7 @@
 The video implementation uses a dual-ID system to link appointments with Stream calls:
 
 **Database Layer**: `MeetingSession` model
+
 ```prisma
 model MeetingSession {
   id                   String              @id @default(cuid())
@@ -34,10 +36,12 @@ model MeetingSession {
 ```
 
 **ID Mapping**:
+
 - `slotOfAppointmentId` - Your database's appointment slot ID
 - `streamCallId` - Stream's call ID (format: `{meetingType}_{timestamp}_{random}`)
 
 **Call Types**:
+
 - `default` - Standard 1:1 or group calls
 - Custom types can be configured in Stream dashboard
 
@@ -102,7 +106,7 @@ export const findDbMeetingSessionBySlot = async (
 
     if (meetingSession) {
       console.log(
-        `Found existing DB meeting session ${meetingSession.id} for slot ${slotId}`
+        `Found existing DB meeting session ${meetingSession.id} for slot ${slotId}`,
       );
     } else {
       console.log(`No existing DB session found for slot ${slotId}`);
@@ -111,7 +115,7 @@ export const findDbMeetingSessionBySlot = async (
   } catch (error) {
     console.error(
       `Error finding DB meeting session for slot ${slotId}:`,
-      error
+      error,
     );
     return null;
   }
@@ -127,7 +131,7 @@ export const createDbMeetingSession = async (
 ): Promise<MeetingSession> => {
   try {
     console.log(
-      `Creating new DB session for slot ${slot.id} with Stream ID ${streamCallId}`
+      `Creating new DB session for slot ${slot.id} with Stream ID ${streamCallId}`,
     );
 
     const meetingSession = await prisma.meetingSession.create({
@@ -141,13 +145,13 @@ export const createDbMeetingSession = async (
     });
 
     console.log(
-      `Stored new meeting session ${meetingSession.id} in DB linking slot ${slot.id}`
+      `Stored new meeting session ${meetingSession.id} in DB linking slot ${slot.id}`,
     );
     return meetingSession;
   } catch (error) {
     console.error(
       `Error creating DB meeting session for slot ${slot.id}:`,
-      error
+      error,
     );
     throw new Error(`Failed to create DB meeting session: ${error.message}`);
   }
@@ -313,6 +317,7 @@ const MeetingPage = () => {
 ```
 
 **Key Features**:
+
 - Session-based authentication
 - Loading states for call initialization
 - Error handling with user-friendly messages
@@ -324,6 +329,7 @@ const MeetingPage = () => {
 **Purpose**: Pre-call configuration (camera, microphone, speaker testing)
 
 **Features**:
+
 - Device selection (camera, microphone, speaker)
 - Preview of video/audio
 - Permission requests
@@ -435,6 +441,7 @@ const MeetingRoom = () => {
 ```
 
 **Key Features**:
+
 - Multiple layout options (grid, speaker-left, speaker-right)
 - Participant list management
 - Call statistics monitoring
@@ -516,6 +523,7 @@ export const useGetCallById = (callId: string) => {
 ```
 
 **Key Features**:
+
 - Automatic call query/creation
 - Comprehensive error handling
 - Loading state management
@@ -530,10 +538,10 @@ export const useGetCallById = (callId: string) => {
 import { useCallStateHooks } from "@stream-io/video-react-sdk";
 
 const {
-  useCallCallingState,    // Current call state
-  useCallEndedAt,         // Call end timestamp
-  useLocalParticipant,    // Current user's participant object
-  useParticipantCount,    // Number of participants
+  useCallCallingState, // Current call state
+  useCallEndedAt, // Call end timestamp
+  useLocalParticipant, // Current user's participant object
+  useParticipantCount, // Number of participants
   useIsCallRecordingInProgress, // Recording status
 } = useCallStateHooks();
 ```
@@ -545,6 +553,7 @@ const {
 ### Component Unmount Cleanup
 
 **MeetingPage cleanup**:
+
 ```typescript
 useEffect(() => {
   return () => {
@@ -715,6 +724,7 @@ const MeetingFlow = () => {
 ### 1. Always Clean Up Calls
 
 **Good**:
+
 ```typescript
 useEffect(() => {
   return () => {
@@ -728,6 +738,7 @@ useEffect(() => {
 ### 2. Handle All States
 
 **Good**:
+
 ```typescript
 if (isCallLoading) return <Loader />;
 if (error) return <Error message={error.message} />;
@@ -738,6 +749,7 @@ if (callEndedAt && !isCallOwner) return <CallEnded />;
 ### 3. Graceful Error Handling
 
 **Good**:
+
 ```typescript
 try {
   await call.leave();
@@ -752,6 +764,7 @@ try {
 ### 4. Monitor Call State Changes
 
 **Good**:
+
 ```typescript
 useEffect(() => {
   if (callEndedAt) {
@@ -764,6 +777,7 @@ useEffect(() => {
 ### 5. Use Error Boundaries
 
 **Good**:
+
 ```typescript
 <StreamVideoErrorBoundary>
   <MeetingRoom />

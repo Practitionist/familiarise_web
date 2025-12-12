@@ -28,6 +28,7 @@ Stream uses JWT (JSON Web Tokens) for authentication. The application implements
 **Validity:** 1 hour (default, no explicit expiration set)
 
 **Use Cases:**
+
 - User authentication in chat channels
 - Direct messaging between users
 - Group chat participation
@@ -44,6 +45,7 @@ Stream uses JWT (JSON Web Tokens) for authentication. The application implements
 **Validity:** 1 hour (3600 seconds)
 
 **Token Claims:**
+
 ```typescript
 {
   user_id: string,  // User identifier
@@ -53,6 +55,7 @@ Stream uses JWT (JSON Web Tokens) for authentication. The application implements
 ```
 
 **Use Cases:**
+
 - Video call authentication
 - Meeting room access
 - Screen sharing sessions
@@ -60,13 +63,13 @@ Stream uses JWT (JSON Web Tokens) for authentication. The application implements
 
 ### Token Comparison
 
-| Feature | Chat Token | Video Token |
-|---------|-----------|-------------|
-| SDK | `stream-chat` | `@stream-io/node-sdk` |
-| Function | `chatTokenProvider` | `tokenProvider` |
-| Explicit Expiry | No | Yes (1 hour) |
-| Issued At Claim | No | Yes (1 min ago) |
-| Use Case | Messaging | Video calls |
+| Feature         | Chat Token          | Video Token           |
+| --------------- | ------------------- | --------------------- |
+| SDK             | `stream-chat`       | `@stream-io/node-sdk` |
+| Function        | `chatTokenProvider` | `tokenProvider`       |
+| Explicit Expiry | No                  | Yes (1 hour)          |
+| Issued At Claim | No                  | Yes (1 min ago)       |
+| Use Case        | Messaging           | Video calls           |
 
 ---
 
@@ -79,11 +82,13 @@ All tokens MUST be generated server-side to protect API secrets. Client-side tok
 ### Video Token Provider
 
 **Function Signature:**
+
 ```typescript
 export const tokenProvider = async (userId: string): Promise<string>
 ```
 
 **Implementation:**
+
 ```typescript
 export const tokenProvider = async (userId: string) => {
   try {
@@ -106,7 +111,9 @@ export const tokenProvider = async (userId: string) => {
 
     // 6. Map user role
     const streamRole = mapRoleToStream(userDetails.role);
-    console.log(`Generating token for user ${userDetails.id} with role ${streamRole}`);
+    console.log(
+      `Generating token for user ${userDetails.id} with role ${streamRole}`,
+    );
 
     // 7. Generate JWT token
     const token = client.generateUserToken({
@@ -124,6 +131,7 @@ export const tokenProvider = async (userId: string) => {
 ```
 
 **Example Usage:**
+
 ```typescript
 import { tokenProvider } from "@/actions/stream/chat/stream.action";
 
@@ -147,11 +155,13 @@ The `iat` is set to 1 minute in the past to account for clock skew between clien
 ### Chat Token Provider
 
 **Function Signature:**
+
 ```typescript
 export const chatTokenProvider = async (userId: string): Promise<string>
 ```
 
 **Implementation:**
+
 ```typescript
 export const chatTokenProvider = async (userId: string) => {
   try {
@@ -178,6 +188,7 @@ export const chatTokenProvider = async (userId: string) => {
 ```
 
 **Example Usage:**
+
 ```typescript
 import { chatTokenProvider } from "@/actions/stream/chat/stream.action";
 
@@ -191,6 +202,7 @@ try {
 ```
 
 **Key Differences from Video Token:**
+
 - No explicit expiration time
 - No issued-at claim
 - Simpler generation using `createToken()`
@@ -216,6 +228,7 @@ Implementing token caching reduces server load and improves performance by avoid
 ```
 
 **Rationale:**
+
 - Cache for 50 minutes to avoid using expired tokens
 - 10-minute buffer ensures fresh token before expiration
 - Prevents edge cases where cached token expires during use
@@ -230,7 +243,10 @@ class TokenCache {
   // Cache duration: 50 minutes (3000 seconds)
   private readonly CACHE_DURATION = 50 * 60 * 1000;
 
-  async getToken(userId: string, provider: (id: string) => Promise<string>): Promise<string> {
+  async getToken(
+    userId: string,
+    provider: (id: string) => Promise<string>,
+  ): Promise<string> {
     const cached = this.cache.get(userId);
     const now = Date.now();
 
@@ -266,16 +282,10 @@ class TokenCache {
 const tokenCache = new TokenCache();
 
 // Get video token (cached)
-const videoToken = await tokenCache.getToken(
-  "user-123",
-  tokenProvider
-);
+const videoToken = await tokenCache.getToken("user-123", tokenProvider);
 
 // Get chat token (cached)
-const chatToken = await tokenCache.getToken(
-  "user-123",
-  chatTokenProvider
-);
+const chatToken = await tokenCache.getToken("user-123", chatTokenProvider);
 ```
 
 ### Server-Side Caching (Redis Example)
@@ -287,7 +297,7 @@ const redis = new Redis(process.env.REDIS_URL);
 
 async function getCachedToken(
   userId: string,
-  tokenType: "video" | "chat"
+  tokenType: "video" | "chat",
 ): Promise<string | null> {
   const cacheKey = `stream:token:${tokenType}:${userId}`;
   return await redis.get(cacheKey);
@@ -296,7 +306,7 @@ async function getCachedToken(
 async function setCachedToken(
   userId: string,
   tokenType: "video" | "chat",
-  token: string
+  token: string,
 ): Promise<void> {
   const cacheKey = `stream:token:${tokenType}:${userId}`;
   // Cache for 50 minutes (3000 seconds)
@@ -324,12 +334,14 @@ export const cachedTokenProvider = async (userId: string): Promise<string> => {
 ### Cache Invalidation
 
 **When to Invalidate:**
+
 1. User logout
 2. User role changes
 3. Manual token revocation
 4. Security incidents
 
 **Example:**
+
 ```typescript
 // Clear cache on logout
 async function handleLogout(userId: string) {
@@ -355,6 +367,7 @@ The token provider pattern is used by Stream SDKs to fetch authentication tokens
 ### Client-Side Integration
 
 **Stream Video Client:**
+
 ```typescript
 import { StreamVideoClient } from "@stream-io/video-react-sdk";
 
@@ -379,11 +392,12 @@ const videoClient = new StreamVideoClient({
 ```
 
 **Stream Chat Client:**
+
 ```typescript
 import { StreamChat } from "stream-chat";
 
 const chatClient = StreamChat.getInstance(
-  process.env.NEXT_PUBLIC_STREAM_API_KEY!
+  process.env.NEXT_PUBLIC_STREAM_API_KEY!,
 );
 
 await chatClient.connectUser(
@@ -400,7 +414,7 @@ await chatClient.connectUser(
     });
     const data = await response.json();
     return data.token;
-  }
+  },
 );
 ```
 
@@ -417,10 +431,7 @@ export async function POST(req: NextRequest) {
     // 1. Verify user is authenticated
     const session = await getServerSession();
     if (!session?.user?.id) {
-      return NextResponse.json(
-        { error: "Unauthorized" },
-        { status: 401 }
-      );
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     // 2. Get userId from request
@@ -430,7 +441,7 @@ export async function POST(req: NextRequest) {
     if (userId !== session.user.id) {
       return NextResponse.json(
         { error: "Cannot generate token for other users" },
-        { status: 403 }
+        { status: 403 },
       );
     }
 
@@ -443,7 +454,7 @@ export async function POST(req: NextRequest) {
     console.error("Token generation error:", error);
     return NextResponse.json(
       { error: "Failed to generate token" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -538,16 +549,19 @@ sequenceDiagram
 ### Token Lifecycle Phases
 
 **1. Request Phase**
+
 - Client requests token from API route
 - Session validation occurs
 - Authorization checks performed
 
 **2. Cache Check Phase**
+
 - Check if valid token exists in cache
 - Return cached token if available (cache hit)
 - Proceed to generation if not cached (cache miss)
 
 **3. Generation Phase**
+
 - Fetch user details from database
 - Validate Stream API credentials
 - Calculate expiration and issued-at times
@@ -555,17 +569,20 @@ sequenceDiagram
 - Generate JWT using Stream SDK
 
 **4. Caching Phase**
+
 - Store generated token in cache
 - Set TTL to 50 minutes
 - Return token to client
 
 **5. Authentication Phase**
+
 - Client uses token to connect to Stream
 - Stream validates JWT signature
 - Stream checks expiration claim
 - Connection established or rejected
 
 **6. Renewal Phase**
+
 - Client monitors token expiration
 - Requests new token before expiration (using cache buffer)
 - Old token naturally expires
@@ -577,19 +594,21 @@ sequenceDiagram
 ### Never Expose API Secrets
 
 **DO NOT:**
+
 ```typescript
 // ❌ WRONG: Client-side token generation
 const StreamClient = new StreamClient(
   publicApiKey,
-  secretApiKey  // NEVER expose secret on client!
+  secretApiKey, // NEVER expose secret on client!
 );
 ```
 
 **DO:**
+
 ```typescript
 // ✅ CORRECT: Server-side token generation
 // Client only receives the generated token
-const token = await fetch("/api/stream/token").then(r => r.json());
+const token = await fetch("/api/stream/token").then((r) => r.json());
 ```
 
 ### Validate User Identity
@@ -646,7 +665,9 @@ setInterval(async () => {
 Log token generation for security auditing:
 
 ```typescript
-console.log(`Token generated for user ${userId} at ${new Date().toISOString()}`);
+console.log(
+  `Token generated for user ${userId} at ${new Date().toISOString()}`,
+);
 
 // Advanced: Log to security monitoring service
 await logSecurityEvent({
@@ -684,7 +705,7 @@ import rateLimit from "express-rate-limit";
 const tokenLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 10, // 10 requests per window
-  message: "Too many token requests, please try again later"
+  message: "Too many token requests, please try again later",
 });
 
 // Apply to API route

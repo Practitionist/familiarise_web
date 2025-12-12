@@ -25,6 +25,7 @@ Webinars are **group live sessions** with one presenter and multiple participant
 - **No Slot Selection:** User registers for pre-determined time
 
 **Example:**
+
 - Consultant creates: "Introduction to React" webinar on Jan 15, 2025 at 2:00 PM
 - Max 50 participants
 - 1 Appointment record created when webinar is created
@@ -36,6 +37,7 @@ Webinars are **group live sessions** with one presenter and multiple participant
 **Frontend Page:** `/app/checkout/plans/webinar/[webinarPlanId]/page.tsx`
 
 **User Journey:**
+
 1. Browse webinar listings
 2. View webinar details (date, time, topic, capacity)
 3. Click "Register Now"
@@ -53,6 +55,7 @@ Webinars are **group live sessions** with one presenter and multiple participant
 ```
 
 **Key Difference from Consultation/Subscription:**
+
 - No slot selection needed (webinar time is fixed)
 - Only need eventId to identify which webinar instance
 
@@ -150,6 +153,7 @@ const plan = webinar.webinarPlan;
 ```
 
 **What's Included:**
+
 - Webinar details and schedule
 - Associated WebinarPlan (for pricing, capacity)
 - Existing Appointment with all registered participants
@@ -163,11 +167,13 @@ const currentParticipants =
 ```
 
 **Counting Logic:**
+
 - Each SlotOfAppointment = 1 participant
 - Includes both tentative (pending payment) and confirmed
 - Template slot (no user) also counted → May cause off-by-one error!
 
 **Potential Issue:**
+
 ```javascript
 // If appointment has template slot + 49 users = 50 slots
 // But only 49 actual participants
@@ -178,7 +184,8 @@ const currentParticipants =
 
 ```typescript
 if (currentParticipants >= plan.maxParticipants) {
-  if (skipPayment) {  // Only in mock/development mode
+  if (skipPayment) {
+    // Only in mock/development mode
     // Add to waitlist
     await tx.waitlist.create({
       data: {
@@ -196,14 +203,15 @@ if (currentParticipants >= plan.maxParticipants) {
 
 **Waitlist Behavior:**
 
-| Mode | Capacity Full | Action |
-|------|---------------|--------|
-| **Production** (`skipPayment=false`) | Yes | Error: "Webinar is full" |
-| **Development** (`skipPayment=true`) | Yes | Add to waitlist, throw error |
-| **Production** | No | Continue to payment |
-| **Development** | No | Continue (skip payment) |
+| Mode                                 | Capacity Full | Action                       |
+| ------------------------------------ | ------------- | ---------------------------- |
+| **Production** (`skipPayment=false`) | Yes           | Error: "Webinar is full"     |
+| **Development** (`skipPayment=true`) | Yes           | Add to waitlist, throw error |
+| **Production**                       | No            | Continue to payment          |
+| **Development**                      | No            | Continue (skip payment)      |
 
 **Why Waitlist Only in Dev Mode?**
+
 - Production flow requires payment upfront
 - Waitlist users can't pay until spot opens
 - Would need separate "Join Waitlist" API endpoint for production
@@ -245,6 +253,7 @@ await tx.slotOfAppointment.create({
 ```
 
 **Key Points:**
+
 - **Reuses existing appointment** (doesn't create new one)
 - Copies timing from first slot (template slot)
 - Links to user via `user: { connect: { id } }`
@@ -295,6 +304,7 @@ return { appointment, plan, amount: plan.price };
 ```
 
 **Schema Definition:**
+
 ```prisma
 model SlotOfAppointment {
   id String @id @default(uuid())
@@ -311,6 +321,7 @@ model SlotOfAppointment {
 ```
 
 **Why Many-to-Many?**
+
 - Theoretically allows multiple users per slot
 - In practice, webinar has 1 user per slot
 - Legacy design or future-proofing for group bookings
@@ -410,15 +421,18 @@ sequenceDiagram
 **Scenario:** Template slot causes off-by-one error in capacity check
 
 **Impact:**
+
 - System thinks webinar is full when 1 spot remains
 - Or allows 51 participants when max is 50
 
 **Solution:**
+
 ```typescript
 // Should filter out slots without users
-const currentParticipants = webinar.appointment?.slotsOfAppointment?.filter(
-  slot => slot.user && slot.user.length > 0
-).length || 0;
+const currentParticipants =
+  webinar.appointment?.slotsOfAppointment?.filter(
+    (slot) => slot.user && slot.user.length > 0,
+  ).length || 0;
 ```
 
 #### What if user tries to register twice?
@@ -426,20 +440,22 @@ const currentParticipants = webinar.appointment?.slotsOfAppointment?.filter(
 **Current Behavior:** No duplicate check!
 
 **Impact:**
+
 - Same user can register multiple times
 - Takes up multiple spots
 - Pays multiple times
 
 **Solution Needed:**
+
 ```typescript
 // Before creating slot, check if user already registered
 const existingSlot = await tx.slotOfAppointment.findFirst({
   where: {
     appointmentId: appointment.id,
     user: {
-      some: { id: userId }
-    }
-  }
+      some: { id: userId },
+    },
+  },
 });
 
 if (existingSlot) {
@@ -452,6 +468,7 @@ if (existingSlot) {
 **Current Implementation:** No cancellation flow
 
 **Expected Behavior:**
+
 - Consultant cancels webinar
 - System automatically refunds all participants
 - Sends notification emails
@@ -486,6 +503,7 @@ Classes are **multi-session group courses** taught by a consultant to multiple s
 - **Enrollment Creates Slots in ALL Sessions:** One payment = access to all sessions
 
 **Example:**
+
 - Consultant creates: "Python Bootcamp" - 10 weeks, 1 session/week
 - Max 20 students
 - 10 Appointment records created upfront (one per session)
@@ -497,6 +515,7 @@ Classes are **multi-session group courses** taught by a consultant to multiple s
 **Frontend Page:** `/app/checkout/plans/class/[classPlanId]/page.tsx`
 
 **User Journey:**
+
 1. Browse class listings
 2. View class details (schedule, syllabus, capacity)
 3. Click "Enroll Now"
@@ -601,7 +620,7 @@ const classInstance = await tx.class.findUnique({
       include: {
         slotsOfAppointment: {
           include: {
-            user: true,  // Include user info for counting
+            user: true, // Include user info for counting
           },
         },
       },
@@ -617,6 +636,7 @@ const plan = classInstance.classPlan;
 ```
 
 **What's Loaded:**
+
 - Class details and schedule
 - All 10+ appointment records (one per session)
 - All slots in each appointment (all students in each session)
@@ -656,6 +676,7 @@ Correct Approach (Current):
 ```
 
 **Example:**
+
 ```javascript
 // Class with 3 sessions, 2 students
 
@@ -698,6 +719,7 @@ if (uniqueUserIds.has(userId)) {
 **This is important!** Prevents same student from enrolling twice.
 
 **Why Needed:**
+
 - Student might click "Enroll" multiple times
 - Or try to re-enroll after payment failure
 - Without this check, would create duplicate slots in all sessions
@@ -731,6 +753,7 @@ for (const appointment of classInstance.appointments) {
 ```
 
 **What Happens:**
+
 1. Loop through all 10 appointments (sessions)
 2. For each session:
    - Copy timing from template slot
@@ -771,7 +794,7 @@ return {
   appointment: firstAppointment,
   plan,
   amount: plan.price,
-  slotsCreated: createdSlots.length  // e.g., 10
+  slotsCreated: createdSlots.length, // e.g., 10
 };
 ```
 
@@ -848,15 +871,15 @@ sequenceDiagram
 
 ### Class vs Webinar Comparison
 
-| Aspect | Webinar | Class |
-|--------|---------|-------|
-| **Sessions** | 1 session | Multiple sessions (10+) |
-| **Appointments** | 1 appointment | Multiple appointments (1 per session) |
-| **User Registration** | Creates 1 slot | Creates N slots (1 per session) |
-| **Capacity Count** | Simple: count slots | Complex: count unique users |
-| **Payment** | Pays for 1 session | Pays for all sessions |
-| **Confirmation** | 1 slot confirmed | All N slots confirmed together |
-| **Duplicate Check** | ❌ Missing | ✅ Implemented |
+| Aspect                | Webinar             | Class                                 |
+| --------------------- | ------------------- | ------------------------------------- |
+| **Sessions**          | 1 session           | Multiple sessions (10+)               |
+| **Appointments**      | 1 appointment       | Multiple appointments (1 per session) |
+| **User Registration** | Creates 1 slot      | Creates N slots (1 per session)       |
+| **Capacity Count**    | Simple: count slots | Complex: count unique users           |
+| **Payment**           | Pays for 1 session  | Pays for all sessions                 |
+| **Confirmation**      | 1 slot confirmed    | All N slots confirmed together        |
+| **Duplicate Check**   | ❌ Missing          | ✅ Implemented                        |
 
 ### Edge Cases
 
@@ -865,15 +888,18 @@ sequenceDiagram
 **Scenario:** Consultant extends 10-week class to 12 weeks after students enrolled
 
 **Current Behavior:**
+
 - Old students have 10 slots (weeks 1-10)
 - New appointments created for weeks 11-12
 - Old students don't automatically get slots for new sessions
 
 **Impact:**
+
 - Old students can't access new sessions
 - Would need manual slot creation or re-enrollment
 
 **Solution Needed:**
+
 - When adding sessions, automatically create slots for enrolled students
 - Or implement "sync enrollment" function
 
@@ -882,8 +908,9 @@ sequenceDiagram
 **Current Implementation:** No drop-out mechanism
 
 **Expected Behavior:**
+
 - Student requests refund for remaining sessions
-- Prorate refund: (remainingSessions / totalSessions) * price
+- Prorate refund: (remainingSessions / totalSessions) \* price
 - Mark future slots as CANCELLED
 - Free up capacity for new enrollments
 
@@ -892,11 +919,13 @@ sequenceDiagram
 **Scenario:** Consultant reschedules Week 5 from Monday to Wednesday
 
 **Current Implementation:**
+
 - Appointment dates are fixed when created
 - No rescheduling logic
 - Students wouldn't be notified
 
 **Solution Needed:**
+
 - Update appointment dates
 - Notify all enrolled students
 - Allow students to withdraw if new time doesn't work
@@ -925,24 +954,24 @@ sequenceDiagram
 
 ### High-Level Overview
 
-| Event Type | Use Case | Duration | Participants | Appointment Pattern | Payment Model |
-|------------|----------|----------|--------------|---------------------|---------------|
-| **Consultation** | 1:1 expert advice | Single session | 1 consultee + 1 consultant | 1 appointment | One-time |
-| **Subscription** | Regular 1:1 coaching | Multiple sessions (weeks/months) | 1 consultee + 1 consultant | Multiple appointments (one per session) | One-time for all |
-| **Webinar** | Group presentation | Single session | Many participants + 1 presenter | 1 shared appointment | One-time per participant |
-| **Class** | Multi-week course | Multiple sessions | Many students + 1 instructor | Multiple shared appointments (one per session) | One-time per student |
+| Event Type       | Use Case             | Duration                         | Participants                    | Appointment Pattern                            | Payment Model            |
+| ---------------- | -------------------- | -------------------------------- | ------------------------------- | ---------------------------------------------- | ------------------------ |
+| **Consultation** | 1:1 expert advice    | Single session                   | 1 consultee + 1 consultant      | 1 appointment                                  | One-time                 |
+| **Subscription** | Regular 1:1 coaching | Multiple sessions (weeks/months) | 1 consultee + 1 consultant      | Multiple appointments (one per session)        | One-time for all         |
+| **Webinar**      | Group presentation   | Single session                   | Many participants + 1 presenter | 1 shared appointment                           | One-time per participant |
+| **Class**        | Multi-week course    | Multiple sessions                | Many students + 1 instructor    | Multiple shared appointments (one per session) | One-time per student     |
 
 ### Detailed Comparison Matrix
 
 #### 1. Database Records Created
 
-| Aspect | Consultation | Subscription | Webinar | Class |
-|--------|-------------|--------------|---------|-------|
-| **Plan Records** | ConsultationPlan | SubscriptionPlan | WebinarPlan | ClassPlan |
-| **Event Records** | Consultation (1) | Subscription (1) | Webinar (1) | Class (1) |
-| **Appointments Per Booking** | 1 | N (e.g., 26) | 1 (shared) | N (shared, pre-created) |
-| **Slots Per User** | 1 | N (1 per session) | 1 | N (1 per session) |
-| **Payment Records** | 1 | 1 | 1 per participant | 1 per student |
+| Aspect                       | Consultation     | Subscription      | Webinar           | Class                   |
+| ---------------------------- | ---------------- | ----------------- | ----------------- | ----------------------- |
+| **Plan Records**             | ConsultationPlan | SubscriptionPlan  | WebinarPlan       | ClassPlan               |
+| **Event Records**            | Consultation (1) | Subscription (1)  | Webinar (1)       | Class (1)               |
+| **Appointments Per Booking** | 1                | N (e.g., 26)      | 1 (shared)        | N (shared, pre-created) |
+| **Slots Per User**           | 1                | N (1 per session) | 1                 | N (1 per session)       |
+| **Payment Records**          | 1                | 1                 | 1 per participant | 1 per student           |
 
 **Example Calculations:**
 
@@ -962,48 +991,48 @@ Class (10 weeks, 20 students):
 
 #### 2. Slot Selection vs Pre-scheduled
 
-| Event Type | User Selects Time? | Slots Available? | Schedule Determined By |
-|------------|-------------------|------------------|----------------------|
-| **Consultation** | ✅ Yes | Consultant's availability slots | User choice from available slots |
-| **Subscription** | ✅ First session only | Consultant's availability | User choice for first, auto-scheduled rest |
-| **Webinar** | ❌ No | N/A | Consultant (fixed when created) |
-| **Class** | ❌ No | N/A | Consultant (all sessions pre-scheduled) |
+| Event Type       | User Selects Time?    | Slots Available?                | Schedule Determined By                     |
+| ---------------- | --------------------- | ------------------------------- | ------------------------------------------ |
+| **Consultation** | ✅ Yes                | Consultant's availability slots | User choice from available slots           |
+| **Subscription** | ✅ First session only | Consultant's availability       | User choice for first, auto-scheduled rest |
+| **Webinar**      | ❌ No                 | N/A                             | Consultant (fixed when created)            |
+| **Class**        | ❌ No                 | N/A                             | Consultant (all sessions pre-scheduled)    |
 
 #### 3. Capacity Management
 
-| Event Type | Capacity Type | Capacity Check | Enforced At | Waitlist Support |
-|------------|---------------|----------------|-------------|------------------|
-| **Consultation** | Slot-based | No overlap with confirmed bookings | Slot level | ❌ No |
-| **Subscription** | Slot-based | No overlap for any session | First slot only | ❌ No |
-| **Webinar** | Participant-based | Total participants < maxParticipants | Event level | ⚠️ Dev only |
-| **Class** | Participant-based | Unique users < maxParticipants | Event level | ⚠️ Dev only |
+| Event Type       | Capacity Type     | Capacity Check                       | Enforced At     | Waitlist Support |
+| ---------------- | ----------------- | ------------------------------------ | --------------- | ---------------- |
+| **Consultation** | Slot-based        | No overlap with confirmed bookings   | Slot level      | ❌ No            |
+| **Subscription** | Slot-based        | No overlap for any session           | First slot only | ❌ No            |
+| **Webinar**      | Participant-based | Total participants < maxParticipants | Event level     | ⚠️ Dev only      |
+| **Class**        | Participant-based | Unique users < maxParticipants       | Event level     | ⚠️ Dev only      |
 
 #### 4. Race Condition Protection
 
-| Event Type | Protection Level | Mechanism | Layers |
-|------------|-----------------|-----------|--------|
-| **Consultation** | ⭐⭐⭐ Strong | 3-layer validation + transaction | Confirmed, User duplicate, Rate limit |
-| **Subscription** | ⭐⭐⭐ Strong | 3-layer validation (first session) | Same as consultation |
-| **Webinar** | ⭐⭐ Moderate | Transaction-based capacity check | Database lock only |
-| **Class** | ⭐⭐ Moderate | Transaction-based capacity check + duplicate prevention | Database lock + Set check |
+| Event Type       | Protection Level | Mechanism                                               | Layers                                |
+| ---------------- | ---------------- | ------------------------------------------------------- | ------------------------------------- |
+| **Consultation** | ⭐⭐⭐ Strong    | 3-layer validation + transaction                        | Confirmed, User duplicate, Rate limit |
+| **Subscription** | ⭐⭐⭐ Strong    | 3-layer validation (first session)                      | Same as consultation                  |
+| **Webinar**      | ⭐⭐ Moderate    | Transaction-based capacity check                        | Database lock only                    |
+| **Class**        | ⭐⭐ Moderate    | Transaction-based capacity check + duplicate prevention | Database lock + Set check             |
 
 #### 5. Payment and Confirmation Flow
 
-| Event Type | Payment Timing | What Payment Covers | Confirmation Effect |
-|------------|---------------|---------------------|---------------------|
-| **Consultation** | Before session | 1 session | 1 slot confirmed |
-| **Subscription** | Before first session | All sessions upfront | All N slots confirmed together |
-| **Webinar** | Before event | 1 event access | User's 1 slot confirmed |
-| **Class** | Before course starts | Full course | User's N slots confirmed (1 per session) |
+| Event Type       | Payment Timing       | What Payment Covers  | Confirmation Effect                      |
+| ---------------- | -------------------- | -------------------- | ---------------------------------------- |
+| **Consultation** | Before session       | 1 session            | 1 slot confirmed                         |
+| **Subscription** | Before first session | All sessions upfront | All N slots confirmed together           |
+| **Webinar**      | Before event         | 1 event access       | User's 1 slot confirmed                  |
+| **Class**        | Before course starts | Full course          | User's N slots confirmed (1 per session) |
 
 #### 6. Code Complexity
 
-| Event Type | Validation Complexity | Booking Logic Complexity | Confirmation Complexity |
-|------------|---------------------|------------------------|----------------------|
-| **Consultation** | ⭐⭐⭐ Complex (3-layer) | ⭐ Simple (1 record) | ⭐ Simple (1 slot) |
-| **Subscription** | ⭐⭐⭐ Complex (3-layer) | ⭐⭐⭐ Complex (N appointments) | ⭐⭐ Moderate (batch update) |
-| **Webinar** | ⭐ Simple (capacity check) | ⭐ Simple (add to existing) | ⭐ Simple (1 slot) |
-| **Class** | ⭐⭐ Moderate (capacity + duplicate) | ⭐⭐⭐ Complex (N slots) | ⭐⭐ Moderate (batch update) |
+| Event Type       | Validation Complexity                | Booking Logic Complexity        | Confirmation Complexity      |
+| ---------------- | ------------------------------------ | ------------------------------- | ---------------------------- |
+| **Consultation** | ⭐⭐⭐ Complex (3-layer)             | ⭐ Simple (1 record)            | ⭐ Simple (1 slot)           |
+| **Subscription** | ⭐⭐⭐ Complex (3-layer)             | ⭐⭐⭐ Complex (N appointments) | ⭐⭐ Moderate (batch update) |
+| **Webinar**      | ⭐ Simple (capacity check)           | ⭐ Simple (add to existing)     | ⭐ Simple (1 slot)           |
+| **Class**        | ⭐⭐ Moderate (capacity + duplicate) | ⭐⭐⭐ Complex (N slots)        | ⭐⭐ Moderate (batch update) |
 
 ### Common Patterns
 
@@ -1020,6 +1049,7 @@ UPDATE SlotOfAppointment SET isTentative = false WHERE id = slotId
 ```
 
 **Benefits:**
+
 - Protects time slot/capacity during payment
 - Allows automatic cleanup if payment fails/times out
 - Clear audit trail
@@ -1053,18 +1083,19 @@ UPDATE SlotOfAppointment SET isTentative = false WHERE id = slotId
 
 ### Unique Characteristics
 
-| Event Type | Unique Feature | Why Different |
-|------------|---------------|---------------|
-| **Consultation** | 3-layer race condition protection | Most prone to double-booking (time slots) |
-| **Subscription** | All sessions scheduled upfront | Ensures full schedule available before payment |
-| **Webinar** | Shared appointment model | Efficient for large group events |
-| **Class** | Unique participant counting | Must count across multiple sessions correctly |
+| Event Type       | Unique Feature                    | Why Different                                  |
+| ---------------- | --------------------------------- | ---------------------------------------------- |
+| **Consultation** | 3-layer race condition protection | Most prone to double-booking (time slots)      |
+| **Subscription** | All sessions scheduled upfront    | Ensures full schedule available before payment |
+| **Webinar**      | Shared appointment model          | Efficient for large group events               |
+| **Class**        | Unique participant counting       | Must count across multiple sessions correctly  |
 
 ---
 
 ## Next: Part 3 - Payment Processing
 
 Continue to [CHECKOUT_FLOW_PART3.md](./CHECKOUT_FLOW_PART3.md) for:
+
 - Unified checkout API flow
 - Payment gateway integration (Stripe, Razorpay, Mock)
 - Payment success/failure flows

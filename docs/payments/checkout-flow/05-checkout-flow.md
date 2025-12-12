@@ -111,11 +111,14 @@ const allPendingCount = await tx.slotOfAppointment.count({
 });
 
 if (allPendingCount >= 3) {
-  throw new Error("This time slot is currently being booked by other users. Please try again in a few minutes.");
+  throw new Error(
+    "This time slot is currently being booked by other users. Please try again in a few minutes.",
+  );
 }
 ```
 
 **Resolution:**
+
 - First confirmed payment wins
 - Other attempts fail during slot availability check
 - Cleanup job removes expired tentative slots
@@ -158,6 +161,7 @@ if (!payment) {
 ```
 
 **Resolution:**
+
 - Webhook returns success even if payment not found
 - Gateway will retry webhook (up to 3 days)
 - Eventually payment record will exist and process
@@ -188,6 +192,7 @@ if (uniqueUserIds.has(userId)) {
 ### 2.1 Payment Intent Timeout
 
 **Timeline:**
+
 ```
 t=0:00 → Payment intent created
 t=0:01 → User redirected to gateway
@@ -198,6 +203,7 @@ t=30:01 → User clicks "Pay" → FAILS
 ```
 
 **Handling:**
+
 ```typescript
 // Stripe automatically expires checkout sessions
 expires_at: Math.floor(Date.now() / 1000) + 30 * 60, // 30 minutes
@@ -207,6 +213,7 @@ expiresAt: new Date(Date.now() + 30 * 60 * 1000),
 ```
 
 **User Experience:**
+
 - Gateway shows "Session expired" error
 - User must restart checkout process
 - Tentative slot is released by cleanup job
@@ -218,26 +225,33 @@ expiresAt: new Date(Date.now() + 30 * 60 * 1000),
 **Scenario:** Webhook takes too long to process (> 10 seconds).
 
 **Gateway Behavior:**
+
 - Stripe: Retries webhook with exponential backoff (up to 3 days)
 - Razorpay: Retries webhook (similar pattern)
 
 **Protection:**
+
 ```typescript
 // Transaction timeout
-await prisma.$transaction(async (tx) => {
-  // ... operations
-}, {
-  timeout: 10000, // 10 seconds max
-});
+await prisma.$transaction(
+  async (tx) => {
+    // ... operations
+  },
+  {
+    timeout: 10000, // 10 seconds max
+  },
+);
 ```
 
 **If Timeout Occurs:**
+
 1. Transaction rolls back
 2. Payment status remains PENDING
 3. Gateway retries webhook
 4. Eventually succeeds or requires manual intervention
 
 **Monitoring Recommendation:**
+
 ```typescript
 // Alert if webhooks taking > 5 seconds
 if (processingTime > 5000) {
@@ -266,6 +280,7 @@ const prisma = new PrismaClient({
 ```
 
 **Mitigation:**
+
 - Use database indexes (see Prisma schema)
 - Optimize queries (limit, select specific fields)
 - Connection pooling (configured in DATABASE_URL)
@@ -279,11 +294,13 @@ const prisma = new PrismaClient({
 **Scenario:** Payment succeeded in gateway but webhook never processed.
 
 **Causes:**
+
 - Server downtime during webhook delivery
 - Webhook endpoint misconfigured
 - Gateway failure to deliver webhook
 
 **Detection:**
+
 ```sql
 -- Find succeeded payments without appointments
 SELECT p.id, p.paymentIntent, p.createdAt
@@ -294,6 +311,7 @@ WHERE p.paymentStatus = 'SUCCEEDED'
 ```
 
 **Resolution:**
+
 ```typescript
 // Manual recovery script
 async function recoverOrphanedPayment(paymentId: string) {
@@ -304,14 +322,14 @@ async function recoverOrphanedPayment(paymentId: string) {
 
   // Fetch metadata from gateway
   const gatewayPayment = await stripeClient.checkout.sessions.retrieve(
-    payment.paymentIntent
+    payment.paymentIntent,
   );
 
   // Recreate appointment from metadata
   const appointment = await createAppointmentFromWebhook(
     prisma,
     gatewayPayment.metadata,
-    payment
+    payment,
   );
 
   // Link payment to appointment
@@ -327,11 +345,13 @@ async function recoverOrphanedPayment(paymentId: string) {
 **Scenario:** Payment status in database doesn't match gateway status.
 
 **Causes:**
+
 - Webhook failure
 - Database transaction rollback
 - Manual status change in gateway
 
 **Detection:**
+
 ```typescript
 async function auditPaymentStatuses() {
   const recentPayments = await prisma.payment.findMany({
@@ -343,7 +363,7 @@ async function auditPaymentStatuses() {
   for (const payment of recentPayments) {
     const gatewayStatus = await getGatewayPaymentStatus(
       payment.paymentIntent,
-      payment.paymentGateway
+      payment.paymentGateway,
     );
 
     if (gatewayStatus !== payment.paymentStatus) {
@@ -362,11 +382,13 @@ async function auditPaymentStatuses() {
 **Scenario:** Same user has multiple tentative slots for same time.
 
 **Causes:**
+
 - Race condition bypass
 - Failed cleanup
 - Manual database manipulation
 
 **Detection:**
+
 ```sql
 -- Find duplicate tentative slots
 SELECT u.id, u.email, COUNT(*) as slot_count
@@ -380,6 +402,7 @@ HAVING COUNT(*) > 1;
 ```
 
 **Resolution:**
+
 ```typescript
 // Keep oldest, remove others
 async function cleanupDuplicateTentativeSlots(userId: string) {
@@ -415,6 +438,7 @@ async function cleanupDuplicateTentativeSlots(userId: string) {
 **Scenario:** Capacity is 10, but 11 people enrolled due to race condition.
 
 **Root Cause:**
+
 ```typescript
 // Non-atomic check-then-act
 const currentCount = webinar.appointment?.slotsOfAppointment?.length || 0;
@@ -428,11 +452,13 @@ await tx.slotOfAppointment.create({...});
 ```
 
 **Mitigation (Current):**
+
 - Three-layer race condition protection
 - Tentative slots counted during check
 - Cleanup job removes expired slots
 
 **Better Solution (Recommendation):**
+
 ```typescript
 // Use database constraint
 model Webinar {
@@ -457,16 +483,18 @@ await tx.webinar.update({
 **Issue:** Before fix (Part 1), class capacity was counted incorrectly.
 
 **Old Logic (Incorrect):**
+
 ```typescript
 // Counted total slots across all sessions
 const currentParticipants = classInstance.appointments.reduce(
   (total, apt) => total + apt.slotsOfAppointment.length,
-  0
+  0,
 );
 // For 10 students × 10 sessions = 100 slots (wrong!)
 ```
 
 **New Logic (Correct):**
+
 ```typescript
 // Count unique users across all sessions
 const uniqueUserIds = new Set<string>();
@@ -488,10 +516,12 @@ const currentParticipants = uniqueUserIds.size;
 **Scenario:** Waitlist is enabled, capacity is 10, 30 people want to join.
 
 **Current Behavior:**
+
 - First 10 get confirmed enrollment
 - Next 20 should join waitlist (functionality not in payment code)
 
 **Integration Point (Hypothetical):**
+
 ```typescript
 // Check if waitlist exists for this event
 if (currentParticipants >= plan.capacity) {
@@ -527,6 +557,7 @@ if (currentParticipants >= plan.capacity) {
 **Issue:** No validation for slot time in the past.
 
 **Current Code:**
+
 ```typescript
 // Allows booking slots in the past
 slotStartTimeInUTC: z.string().datetime(),
@@ -534,6 +565,7 @@ slotEndTimeInUTC: z.string().datetime(),
 ```
 
 **Recommendation:**
+
 ```typescript
 // Add custom validation
 slotStartTimeInUTC: z.string().datetime().refine(
@@ -557,6 +589,7 @@ slotStartTimeInUTC: z.string().datetime().refine(
 **Issue:** Plan in USD, user tries to pay in INR.
 
 **Current Behavior:**
+
 ```typescript
 // Currency is determined by plan
 const currency = plan.currency; // e.g., "USD"
@@ -566,6 +599,7 @@ const gateway = selectPaymentGateway(currency, isMockPayment);
 ```
 
 **Edge Case:**
+
 ```typescript
 // User is in India, plan is in USD
 // Stripe (USD) will charge in USD
@@ -584,12 +618,14 @@ if (userCurrency !== planCurrency) {
 **Issue:** No min/max amount validation in checkout.
 
 **Current Code:**
+
 ```typescript
 // Any amount accepted
 amount: z.number().positive(),
 ```
 
 **Recommendation:**
+
 ```typescript
 // Gateway minimums
 const STRIPE_MIN_USD = 0.50;  // $0.50
@@ -612,18 +648,22 @@ amount: z.number()
 **Purpose:** Development and testing without actual payment gateway calls.
 
 **Activation:**
+
 ```typescript
 // Environment-based
-process.env.NODE_ENV === "development"
+process.env.NODE_ENV === "development";
 
 // Or explicit flag
-process.env.ENABLE_MOCK_PAYMENTS === "true"
+process.env.ENABLE_MOCK_PAYMENTS === "true";
 
 // Or request parameter
-{ isMockPayment: true }
+{
+  isMockPayment: true;
+}
 ```
 
 **Characteristics:**
+
 ```typescript
 export async function createMockPaymentIntent({
   amount,
@@ -647,11 +687,13 @@ export async function createMockPaymentIntent({
 ```
 
 **Mock Payment IDs:**
+
 - Stripe: `cs_mock_abc123_1699123456789`
 - Razorpay: `order_mock_xyz789_1699123456789`
 - Contains `_mock_` substring for identification
 
 **Detection:**
+
 ```typescript
 export function isMockPaymentId(paymentIntentId: string): boolean {
   return paymentIntentId.includes("_mock_");
@@ -680,6 +722,7 @@ sequenceDiagram
 ```
 
 **Key Differences from Real Payments:**
+
 - No redirect to gateway
 - No webhook processing
 - Instant success (no PENDING state)
@@ -689,6 +732,7 @@ sequenceDiagram
 ### 6.3 Mock Payment Limitations
 
 **What Mock Payments DON'T Test:**
+
 - Gateway authentication errors
 - Card decline errors
 - Webhook signature verification
@@ -698,12 +742,14 @@ sequenceDiagram
 - Dispute handling
 
 **When to Use Mock Payments:**
+
 - Local development
 - Frontend integration testing
 - Flow testing without costs
 - Automated test suites
 
 **When NOT to Use Mock Payments:**
+
 - Staging environment
 - Pre-production testing
 - Integration testing with real gateways
@@ -856,6 +902,7 @@ for (let i = 0; i < totalSessions; i++) {
 ```
 
 **Session Calculation Formula:**
+
 ```typescript
 // Example: 3-month subscription, 2 calls/week
 const durationInMonths = 3;
@@ -908,6 +955,7 @@ Array.from({
 ### 8.3 Edge Cases in Multi-Session
 
 **1. Session Overlap:**
+
 ```typescript
 // Issue: Sessions scheduled too close together
 // callsPerWeek = 7, only 1 day per week = 7 sessions in 1 day!
@@ -919,6 +967,7 @@ if (callsPerWeek > 7) {
 ```
 
 **2. Timezone Handling:**
+
 ```typescript
 // Issue: Slots stored in UTC, user in different timezone
 // 10:00 AM EST → 15:00 UTC → Shows as 8:30 PM IST (wrong!)
@@ -937,12 +986,13 @@ const localTime = moment(session.startsAt)
 ```
 
 **3. Daylight Saving Time:**
+
 ```typescript
 // Issue: DST changes affect recurring sessions
 // March 10 DST starts → 10 AM becomes 11 AM
 
 // Solution: Use timezone-aware library
-import { zonedTimeToUtc, utcToZonedTime } from 'date-fns-tz';
+import { zonedTimeToUtc, utcToZonedTime } from "date-fns-tz";
 
 const zonedDate = utcToZonedTime(sessionStart, subscription.timezone);
 // This handles DST transitions automatically
@@ -955,6 +1005,7 @@ const zonedDate = utcToZonedTime(sessionStart, subscription.timezone);
 ### 9.1 Core Files
 
 **Checkout Operations:**
+
 - `/lib/payments/operations/checkout.ts` - Main checkout logic for all event types
   - Lines 118-258: Consultation checkout
   - Lines 260-568: Subscription checkout
@@ -962,6 +1013,7 @@ const zonedDate = utcToZonedTime(sessionStart, subscription.timezone);
   - Lines 638-728: Class checkout
 
 **Payment Gateway Integrations:**
+
 - `/lib/payments/core/stripe.ts` - Stripe integration
   - Lines 76-123: Checkout session creation
   - Lines 174-207: Refund operations
@@ -972,6 +1024,7 @@ const zonedDate = utcToZonedTime(sessionStart, subscription.timezone);
 - `/lib/payments/operations/mock.ts` - Mock payment handling
 
 **Webhook Handlers:**
+
 - `/app/api/webhooks/stripe/route.ts` - Stripe webhook endpoint
 - `/app/api/webhooks/razorpay/route.ts` - Razorpay webhook endpoint
 - `/app/api/webhooks/utils.ts` - Shared webhook logic
@@ -981,30 +1034,36 @@ const zonedDate = utcToZonedTime(sessionStart, subscription.timezone);
   - Lines 513-618: Dispute webhook handlers
 
 **API Routes:**
+
 - `/app/api/checkout/route.ts` - Unified checkout API
 - `/app/api/admin/refunds/route.ts` - Admin refunds API
 - `/app/api/admin/disputes/route.ts` - Admin disputes API
 
 **Cleanup:**
+
 - `/scripts/cleanup-abandoned-payments.ts` - Local cleanup script
 - `/jobs/cleanup-abandoned-payments.ts` - CI/CD cleanup job
 
 ### 9.2 Key Line References
 
 **Race Condition Protection:**
+
 - Consultation: `/lib/payments/operations/checkout.ts:196-248`
 - Subscription: Same protection mechanism
 - Class enrollment check: `/lib/payments/operations/checkout.ts:675-678`
 
 **Capacity Counting:**
+
 - Webinar: `/lib/payments/operations/checkout.ts:595-597`
 - Class: `/lib/payments/operations/checkout.ts:647-656` (unique user counting)
 
 **Session Calculations:**
+
 - Subscription: `/lib/payments/operations/checkout.ts:512-514`
 - Class: `/app/api/events/classes/crud-with-plan/route.ts:162-164`
 
 **Error Handling:**
+
 - Checkout API: `/app/api/checkout/route.ts:28-83`
 - Stripe errors: `/lib/payments/core/stripe.ts:449-482`
 - Razorpay errors: `/lib/payments/core/razorpay.ts:299-336`
@@ -1014,6 +1073,7 @@ const zonedDate = utcToZonedTime(sessionStart, subscription.timezone);
 **Prisma Schema:** `/prisma/schema.prisma`
 
 Key models:
+
 - `Payment` - Payment records
 - `Appointment` - Appointment records
 - `SlotOfAppointment` - Time slots
@@ -1028,6 +1088,7 @@ Key models:
 ### 10.1 Frontend Integration
 
 **Checkout Pages:**
+
 ```typescript
 // Consultation: /app/checkout/plans/consultation/[consultationPlanId]/page.tsx
 // Subscription: /app/checkout/plans/subscription/[subscriptionPlanId]/page.tsx
@@ -1036,6 +1097,7 @@ Key models:
 ```
 
 **API Calls:**
+
 ```typescript
 // Initiate checkout
 const response = await fetch("/api/checkout", {
@@ -1058,6 +1120,7 @@ window.location.href = checkoutUrl;
 ```
 
 **Success/Failure Pages:**
+
 ```typescript
 // Success: /app/checkout/checkout-success/page.tsx
 // Failure: /app/checkout/checkout-failure/page.tsx
@@ -1066,6 +1129,7 @@ window.location.href = checkoutUrl;
 ### 10.2 External Integrations
 
 **Payment Gateways:**
+
 ```
 Stripe:
 - API: stripe.com/docs/api
@@ -1079,6 +1143,7 @@ Razorpay:
 ```
 
 **Environment Variables Required:**
+
 ```bash
 # Stripe
 STRIPE_SECRET_KEY=sk_test_...
@@ -1102,6 +1167,7 @@ ENABLE_MOCK_PAYMENTS="true" # Optional: Force mock payments
 ### 10.3 Monitoring & Logging
 
 **Recommended Monitoring:**
+
 ```typescript
 // Key metrics to track
 {
@@ -1129,30 +1195,35 @@ ENABLE_MOCK_PAYMENTS="true" # Optional: Force mock payments
 ```
 
 **Logging Best Practices:**
+
 ```typescript
 // Structured logging
-console.log(JSON.stringify({
-  level: "info",
-  event: "payment_succeeded",
-  paymentIntent: paymentIntentId,
-  amount: amount,
-  currency: currency,
-  gateway: gateway,
-  userId: userId,
-  appointmentType: appointmentType,
-  timestamp: new Date().toISOString(),
-}));
+console.log(
+  JSON.stringify({
+    level: "info",
+    event: "payment_succeeded",
+    paymentIntent: paymentIntentId,
+    amount: amount,
+    currency: currency,
+    gateway: gateway,
+    userId: userId,
+    appointmentType: appointmentType,
+    timestamp: new Date().toISOString(),
+  }),
+);
 
 // Error logging
-console.error(JSON.stringify({
-  level: "error",
-  event: "payment_failed",
-  paymentIntent: paymentIntentId,
-  error: error.message,
-  errorType: error.type,
-  gateway: gateway,
-  timestamp: new Date().toISOString(),
-}));
+console.error(
+  JSON.stringify({
+    level: "error",
+    event: "payment_failed",
+    paymentIntent: paymentIntentId,
+    error: error.message,
+    errorType: error.type,
+    gateway: gateway,
+    timestamp: new Date().toISOString(),
+  }),
+);
 ```
 
 ---
@@ -1411,18 +1482,21 @@ curl -X POST http://localhost:3000/api/checkout \
 ### Environment Checklist
 
 **Development:**
+
 - [ ] `NODE_ENV=development`
 - [ ] Mock payments enabled
 - [ ] Test gateway credentials
 - [ ] Local database
 
 **Staging:**
+
 - [ ] `NODE_ENV=production`
 - [ ] Test gateway credentials
 - [ ] Webhooks configured
 - [ ] Staging database
 
 **Production:**
+
 - [ ] `NODE_ENV=production`
 - [ ] Live gateway credentials
 - [ ] Webhooks verified
@@ -1433,18 +1507,21 @@ curl -X POST http://localhost:3000/api/checkout \
 ### Emergency Procedures
 
 **Webhook Not Processing:**
+
 1. Check webhook secret configuration
 2. Verify endpoint is publicly accessible
 3. Check gateway webhook logs
 4. Manually trigger webhook replay
 
 **Payment Stuck in PENDING:**
+
 1. Check payment status in gateway dashboard
 2. If succeeded in gateway, manually run `handlePaymentSuccess()`
 3. If failed in gateway, manually run `handlePaymentFailure()`
 4. Run cleanup script if beyond 30 minutes
 
 **Database Mismatch:**
+
 1. Export payment data from gateway
 2. Compare with database records
 3. Use recovery scripts to fix inconsistencies

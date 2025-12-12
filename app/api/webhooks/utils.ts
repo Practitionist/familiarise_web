@@ -114,7 +114,9 @@ export async function handleRefundCreated(
   });
 }
 
-function mapRefundStatus(status: string): "PENDING" | "SUCCEEDED" | "FAILED" | "CANCELLED" {
+function mapRefundStatus(
+  status: string,
+): "PENDING" | "SUCCEEDED" | "FAILED" | "CANCELLED" {
   switch (status.toLowerCase()) {
     case "succeeded":
     case "processed":

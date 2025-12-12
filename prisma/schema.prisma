@@ -519,6 +519,7 @@ model ConsultationPlan {
   description      String?  @db.Text
   durationInHours  Float    @default(1)
   price            Int
+  priceCurrency    String   @default("INR")
   language         String   @default("English")
   level            String   @default("Beginner")
   prerequisites    String?  @default("None")
@@ -544,6 +545,7 @@ model Consultation {
   requestedById          String
   requestedAt            DateTime         @default(now()) @db.Timestamptz()
   requestNotes           String?
+  pendingPaymentUrl      String? // Payment link while awaiting payment (cleared after payment)
   bookingSource          BookingSource    @default(REQUEST_SUBMITTED)
   feedbackFromConsultee  String?
   feedbackFromConsultant String?
@@ -561,6 +563,7 @@ model SubscriptionPlan {
   description            String?          @db.Text
   durationInMonths       Int              @default(1)
   price                  Int
+  priceCurrency          String           @default("INR")
   callsPerWeek           Int              @default(1)
   sessionDurationInHours Float            @default(1.0) // Duration of each session in hours
   videoMeetings          Int              @default(1)
@@ -591,6 +594,7 @@ model Subscription {
   requestedById          String
   requestedAt            DateTime         @default(now()) @db.Timestamptz()
   requestNotes           String?
+  pendingPaymentUrl      String? // Payment link while awaiting payment (cleared after payment)
   bookingSource          BookingSource    @default(REQUEST_SUBMITTED)
   feedbackFromConsultee  String?
   feedbackFromConsultant String?
@@ -608,6 +612,7 @@ model Subscription {
 enum RequestStatus {
   PENDING
   APPROVED
+  APPROVED_PENDING_PAYMENT // Approved by consultant but awaiting payment
   SCHEDULED
   REJECTED
   CANCELLED
@@ -868,6 +873,9 @@ model SlotOfAppointment {
 
   @@index([appointmentId])
   @@index([isTentative, appointmentId])
+  // OPT-3: Additional indexes for time range queries in validateSlotAvailability
+  @@index([startsAt, endsAt])
+  @@index([isTentative, startsAt, endsAt])
 }
 
 ////////////////////////////////////////////// MEETINGS FOR STREAM ////////////////////////////////////////////////////

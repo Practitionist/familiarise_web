@@ -47,11 +47,7 @@ export async function GET() {
       prisma.dispute.count({
         where: {
           status: {
-            in: [
-              "WARNING_NEEDS_RESPONSE",
-              "NEEDS_RESPONSE",
-              "UNDER_REVIEW",
-            ],
+            in: ["WARNING_NEEDS_RESPONSE", "NEEDS_RESPONSE", "UNDER_REVIEW"],
           },
         },
       }),

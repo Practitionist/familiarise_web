@@ -43,6 +43,9 @@ jobs:
       - name: Run Jest Unit Tests
         run: npm run test
 
+      # - name: Run TypeScript Tests
+      #   run: npx ts-node tests/typescript/test-storage-setup.ts TODO: Add other TypeScript tests here
+
       # - name: Run Cypress Tests
       #   uses: cypress-io/github-action@v6
       #   env:

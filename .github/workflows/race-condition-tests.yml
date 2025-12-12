@@ -1,0 +1,57 @@
+name: Race Condition Tests
+
+on:
+  push:
+    branches: [dev] # Only run when merged to dev
+  workflow_dispatch: # Allow manual trigger for testing
+    inputs:
+      use_real_redis:
+        description: "Use real Upstash Redis instead of mock"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+jobs:
+  race-condition-tests:
+    if: github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    env:
+      # Use mock Redis by default to save Upstash quota
+      # Set use_real_redis to 'true' in workflow_dispatch to test with real Redis
+      USE_MOCK_REDIS: ${{ github.event.inputs.use_real_redis == 'true' && 'false' || 'true' }}
+      # Real Redis credentials (only used when USE_MOCK_REDIS=false)
+      UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
+      UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DIRECT_URL: ${{ secrets.DIRECT_URL }}
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run Race Condition Tests
+        run: npm run test:race
+        timeout-minutes: 20
+
+      - name: Upload Test Reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: race-condition-test-reports
+          path: tests/typescript/race-conditions/results/reports/
+          retention-days: 30
