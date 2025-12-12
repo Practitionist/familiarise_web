@@ -509,6 +509,7 @@ Phase 3 (No Transaction):
 **Why This Prevents Double Refunds**:
 
 If two concurrent requests try to refund the same payment:
+
 1. Request A enters Phase 1, creates PENDING refund for $100
 2. Request B enters Phase 1, sees PENDING refund, available balance = $0
 3. Request B fails validation (insufficient balance)
@@ -541,7 +542,10 @@ HAVING COUNT(*) > 1;
 // Manual reconciliation:
 await prisma.refund.update({
   where: { id: stuckRefundId },
-  data: { status: 'FAILED', metadata: { error: 'Manual reconciliation - gateway call failed' } }
+  data: {
+    status: "FAILED",
+    metadata: { error: "Manual reconciliation - gateway call failed" },
+  },
 });
 ```
 
@@ -574,6 +578,7 @@ grep "Evidence submission error" /var/log/application.log
 ```
 
 **Important Notes**:
+
 - Only Stripe supports direct evidence submission via API
 - Razorpay disputes must be handled via their dashboard
 - Evidence submission deadlines are strict (7-14 days typically)

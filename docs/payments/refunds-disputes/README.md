@@ -9,27 +9,28 @@ Documentation for the Familiarise refund and dispute handling system.
 ## Overview
 
 The refunds and disputes system handles:
+
 - **Refunds**: Processing full or partial refunds for payments
 - **Disputes**: Managing chargebacks and evidence submission
 
 ### Supported Payment Gateways
 
-| Gateway | Refunds | Disputes |
-|---------|---------|----------|
-| Stripe | Full API support | Full API support |
+| Gateway  | Refunds          | Disputes                              |
+| -------- | ---------------- | ------------------------------------- |
+| Stripe   | Full API support | Full API support                      |
 | Razorpay | Full API support | Webhook-only (dashboard for evidence) |
 
 ---
 
 ## Quick Links
 
-| Document | Description |
-|----------|-------------|
-| [Architecture](./01-architecture.md) | System components, database models, gateway integration |
-| [Refund Flow](./02-refund-flow.md) | Two-phase refund pattern, race condition prevention |
-| [Dispute Flow](./03-dispute-flow.md) | Dispute lifecycle, evidence submission |
-| [API Reference](./04-api-reference.md) | Endpoint specifications, request/response schemas |
-| [Troubleshooting](./05-troubleshooting.md) | Common issues and solutions |
+| Document                                   | Description                                             |
+| ------------------------------------------ | ------------------------------------------------------- |
+| [Architecture](./01-architecture.md)       | System components, database models, gateway integration |
+| [Refund Flow](./02-refund-flow.md)         | Two-phase refund pattern, race condition prevention     |
+| [Dispute Flow](./03-dispute-flow.md)       | Dispute lifecycle, evidence submission                  |
+| [API Reference](./04-api-reference.md)     | Endpoint specifications, request/response schemas       |
+| [Troubleshooting](./05-troubleshooting.md) | Common issues and solutions                             |
 
 ---
 
@@ -100,14 +101,14 @@ model Dispute {
 
 ## API Endpoints
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/payments/refunds` | Create a refund |
-| GET | `/api/payments/refunds` | List refunds |
-| GET | `/api/payments/disputes` | List disputes |
-| POST | `/api/payments/disputes` | Submit dispute evidence |
-| GET | `/api/admin/disputes` | Admin disputes dashboard |
-| GET | `/api/admin/disputes/[id]` | Get dispute details |
+| Method | Endpoint                   | Description              |
+| ------ | -------------------------- | ------------------------ |
+| POST   | `/api/payments/refunds`    | Create a refund          |
+| GET    | `/api/payments/refunds`    | List refunds             |
+| GET    | `/api/payments/disputes`   | List disputes            |
+| POST   | `/api/payments/disputes`   | Submit dispute evidence  |
+| GET    | `/api/admin/disputes`      | Admin disputes dashboard |
+| GET    | `/api/admin/disputes/[id]` | Get dispute details      |
 
 ---
 

@@ -600,7 +600,8 @@ export async function PATCH(
       }
 
       // Return success response (exclude emailData from response)
-      const { emailData: _emailData, ...responseData } = result as typeof result & { emailData?: unknown };
+      const { emailData: _emailData, ...responseData } =
+        result as typeof result & { emailData?: unknown };
       return NextResponse.json(responseData);
     } catch (error) {
       console.error(

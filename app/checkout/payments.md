@@ -449,11 +449,13 @@ sequenceDiagram
 ```
 
 **Why Two-Phase?**
+
 - **Problem**: External API calls (Stripe/Razorpay) can take 500ms-5s+. Keeping them inside a database transaction holds connections and can cause pool exhaustion.
 - **Naive fix risk**: Moving API calls outside transactions without protection creates race conditions (double refunds).
 - **Solution**: Create a PENDING refund record first (atomically claims the amount), then call external API, then update status.
 
 **Race Condition Prevention:**
+
 ```
 Request A: Validates balance = $100 → Creates PENDING refund → Commits
 Request B: Validates balance = $0 (sees PENDING) → FAILS validation
@@ -471,6 +473,7 @@ The disputes API uses a simpler pattern since evidence submission doesn't have r
 ```
 
 **Key differences from refunds:**
+
 - No financial risk from submitting evidence multiple times
 - No "claiming" mechanism needed
 - External API call can safely be outside any transaction

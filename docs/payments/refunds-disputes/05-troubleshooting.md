@@ -7,6 +7,7 @@
 **Symptom**: Refund record shows PENDING status for more than 5 minutes
 
 **Possible Causes**:
+
 - Gateway API call failed but error handling didn't update status
 - Server crashed between Phase 2 and Phase 3
 - Network timeout during gateway call
@@ -54,6 +55,7 @@ WHERE status = 'PENDING'
 **Symptom**: Refund request fails even though payment seems fully available
 
 **Possible Causes**:
+
 - Another PENDING refund is claiming the balance
 - Previously successful refunds not visible in UI
 
@@ -82,6 +84,7 @@ GROUP BY p.id, p.amount;
 ```
 
 **Resolution**:
+
 1. If PENDING refund is stuck, resolve it first (see above)
 2. Request smaller refund amount if partial refunds already exist
 
@@ -119,6 +122,7 @@ ORDER BY r."createdAt";
 ```
 
 **Root Cause Analysis**:
+
 - If refunds have different `refundId` from gateway: Likely a bug in two-phase pattern or gateway processed twice
 - If same `refundId`: Duplicate database records (shouldn't happen with unique constraint)
 
@@ -131,6 +135,7 @@ ORDER BY r."createdAt";
 **Symptom**: Refund fails with timeout error
 
 **Possible Causes**:
+
 - Stripe/Razorpay API experiencing issues
 - Network connectivity problems
 - Request payload too large
@@ -159,6 +164,7 @@ ORDER BY r."createdAt";
 **Explanation**: Razorpay does not provide an API for evidence submission. Evidence must be submitted through their dashboard.
 
 **Resolution**:
+
 1. Log in to Razorpay Dashboard
 2. Navigate to Disputes section
 3. Find the dispute by ID
@@ -171,6 +177,7 @@ ORDER BY r."createdAt";
 **Symptom**: Stripe returns error when submitting evidence
 
 **Possible Causes**:
+
 - Invalid file URLs in evidence
 - Dispute already resolved
 - Evidence deadline passed
@@ -178,6 +185,7 @@ ORDER BY r."createdAt";
 **Diagnostic Steps**:
 
 1. Check dispute status:
+
    ```sql
    SELECT
      id,
@@ -190,6 +198,7 @@ ORDER BY r."createdAt";
    ```
 
 2. Verify deadline hasn't passed:
+
    ```sql
    SELECT
      id,
@@ -202,6 +211,7 @@ ORDER BY r."createdAt";
 3. Check Stripe Dashboard for detailed error
 
 **Resolution**:
+
 - If deadline passed: Dispute is automatically lost
 - If status is terminal (WON/LOST): Cannot submit more evidence
 - If file URL invalid: Re-upload file and get valid URL
@@ -237,6 +247,7 @@ ORDER BY "dueBy";
 **Symptom**: Dispute exists in Stripe but not in database
 
 **Possible Causes**:
+
 - Webhook endpoint not configured
 - Webhook signature verification failing
 - Database error during creation
@@ -247,6 +258,7 @@ ORDER BY "dueBy";
    - Dashboard → Developers → Webhooks → Recent events
 
 2. Verify webhook configuration:
+
    ```bash
    # Check webhook secret is set
    echo $STRIPE_WEBHOOK_SECRET

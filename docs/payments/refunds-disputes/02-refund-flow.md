@@ -25,6 +25,7 @@ await prisma.$transaction(async (tx) => {
 ```
 
 **Issues:**
+
 - Database connection held for 500ms-5s+ during API call
 - Connection pool exhaustion under load
 - Increased deadlock risk
@@ -47,6 +48,7 @@ await prisma.refund.create({ ... });  // Double refund recorded!
 ```
 
 **Issues:**
+
 - Two concurrent requests can both pass validation
 - Both trigger refunds at the gateway level
 - Results in double refund (money loss!)
@@ -146,6 +148,7 @@ const phase1Result = await prisma.$transaction(async (tx) => {
 ```
 
 **Key Points:**
+
 - PENDING refunds are counted in available balance
 - Transaction is short (no external API calls)
 - Creates a "claim" on the refund amount
@@ -168,9 +171,10 @@ try {
     data: {
       status: "FAILED",
       metadata: {
-        error: gatewayError instanceof Error
-          ? gatewayError.message
-          : "Gateway call failed",
+        error:
+          gatewayError instanceof Error
+            ? gatewayError.message
+            : "Gateway call failed",
       },
     },
   });
@@ -179,6 +183,7 @@ try {
 ```
 
 **Key Points:**
+
 - No database transaction held during API call
 - If gateway fails, PENDING record is updated to FAILED
 - Connection pool not affected by slow API calls
@@ -249,6 +254,7 @@ try {
 ### Database Update Fails After Gateway Success
 
 If Phase 3 fails but Phase 2 succeeded:
+
 - Gateway has processed the refund
 - Database shows PENDING status
 - **Solution:** Reconciliation job to sync with gateway
@@ -277,6 +283,7 @@ POST /api/payments/refunds
 ```
 
 Available balance is calculated as:
+
 ```
 availableBalance = payment.amount - SUM(SUCCEEDED refunds) - SUM(PENDING refunds)
 ```
@@ -285,13 +292,13 @@ availableBalance = payment.amount - SUM(SUCCEEDED refunds) - SUM(PENDING refunds
 
 ## Code References
 
-| Component | File | Lines |
-|-----------|------|-------|
-| Refund API | `app/api/payments/refunds/route.ts` | POST handler |
-| Two-phase pattern | `app/api/payments/refunds/route.ts` | Lines 70-175 |
-| Gateway abstraction | `lib/payments/index.ts` | `createRefund()` |
-| Stripe implementation | `lib/payments/core/stripe.ts` | `createStripeRefund()` |
-| Razorpay implementation | `lib/payments/core/razorpay.ts` | `createRazorpayRefund()` |
+| Component               | File                                | Lines                    |
+| ----------------------- | ----------------------------------- | ------------------------ |
+| Refund API              | `app/api/payments/refunds/route.ts` | POST handler             |
+| Two-phase pattern       | `app/api/payments/refunds/route.ts` | Lines 70-175             |
+| Gateway abstraction     | `lib/payments/index.ts`             | `createRefund()`         |
+| Stripe implementation   | `lib/payments/core/stripe.ts`       | `createStripeRefund()`   |
+| Razorpay implementation | `lib/payments/core/razorpay.ts`     | `createRazorpayRefund()` |
 
 ---
 
@@ -310,9 +317,9 @@ availableBalance = payment.amount - SUM(SUCCEEDED refunds) - SUM(PENDING refunds
     └───────────┘  └───────────┘  └───────────┘
 ```
 
-| Status | Description |
-|--------|-------------|
-| `PENDING` | Refund claimed, gateway call in progress |
-| `SUCCEEDED` | Gateway confirmed refund processed |
-| `FAILED` | Gateway rejected or error occurred |
+| Status      | Description                                  |
+| ----------- | -------------------------------------------- |
+| `PENDING`   | Refund claimed, gateway call in progress     |
+| `SUCCEEDED` | Gateway confirmed refund processed           |
+| `FAILED`    | Gateway rejected or error occurred           |
 | `CANCELLED` | Refund cancelled (rare, manual intervention) |

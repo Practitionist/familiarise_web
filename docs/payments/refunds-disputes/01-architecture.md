@@ -50,20 +50,20 @@
 
 ### API Routes
 
-| Route | File | Description |
-|-------|------|-------------|
-| `/api/payments/refunds` | `app/api/payments/refunds/route.ts` | Create and list refunds |
-| `/api/payments/disputes` | `app/api/payments/disputes/route.ts` | List disputes, submit evidence |
-| `/api/admin/disputes` | `app/api/admin/disputes/route.ts` | Admin disputes list with filtering |
-| `/api/admin/disputes/[id]` | `app/api/admin/disputes/[disputeId]/route.ts` | Single dispute details |
+| Route                      | File                                          | Description                        |
+| -------------------------- | --------------------------------------------- | ---------------------------------- |
+| `/api/payments/refunds`    | `app/api/payments/refunds/route.ts`           | Create and list refunds            |
+| `/api/payments/disputes`   | `app/api/payments/disputes/route.ts`          | List disputes, submit evidence     |
+| `/api/admin/disputes`      | `app/api/admin/disputes/route.ts`             | Admin disputes list with filtering |
+| `/api/admin/disputes/[id]` | `app/api/admin/disputes/[disputeId]/route.ts` | Single dispute details             |
 
 ### Core Payment Libraries
 
-| File | Functions |
-|------|-----------|
-| `lib/payments/index.ts` | Gateway abstraction: `createRefund()`, `listRefunds()`, `listDisputes()`, `submitDisputeEvidence()` |
-| `lib/payments/core/stripe.ts` | Stripe implementation: `createStripeRefund()`, `listStripeRefunds()`, `submitStripeDisputeEvidence()` |
-| `lib/payments/core/razorpay.ts` | Razorpay implementation: `createRazorpayRefund()`, `listRazorpayRefunds()` |
+| File                            | Functions                                                                                             |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `lib/payments/index.ts`         | Gateway abstraction: `createRefund()`, `listRefunds()`, `listDisputes()`, `submitDisputeEvidence()`   |
+| `lib/payments/core/stripe.ts`   | Stripe implementation: `createStripeRefund()`, `listStripeRefunds()`, `submitStripeDisputeEvidence()` |
+| `lib/payments/core/razorpay.ts` | Razorpay implementation: `createRazorpayRefund()`, `listRazorpayRefunds()`                            |
 
 ---
 
@@ -133,11 +133,13 @@ enum DisputeStatus {
 ### Stripe
 
 **Refunds:**
+
 - Full API support via `stripe.refunds.create()`
 - Supports partial refunds
 - Immediate status feedback
 
 **Disputes:**
+
 - Full API support via `stripe.disputes.update()`
 - Evidence submission via API
 - Webhook notifications for status changes
@@ -145,11 +147,13 @@ enum DisputeStatus {
 ### Razorpay
 
 **Refunds:**
+
 - Full API support via `razorpay.payments.refund()`
 - Supports partial refunds
 - Status via webhooks
 
 **Disputes:**
+
 - NO API support for evidence submission
 - Must handle via Razorpay Dashboard
 - Webhook notifications only

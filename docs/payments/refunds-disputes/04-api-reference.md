@@ -6,7 +6,7 @@ All endpoints require authentication with admin or staff role:
 
 ```typescript
 // Required headers
-Authorization: Bearer <session_token>
+Authorization: Bearer<session_token>;
 
 // Session validation
 const session = await getServerSession(authOptions);
@@ -68,15 +68,15 @@ const createRefundSchema = z.object({
 
 **Error Responses:**
 
-| Status | Error | Cause |
-|--------|-------|-------|
-| 400 | "Only successful payments can be refunded" | Payment status is not SUCCEEDED |
-| 400 | "Payment has already been fully refunded" | No remaining balance |
-| 400 | "Refund amount exceeds available balance" | Requested amount too high |
-| 401 | "Unauthorized" | No valid session |
-| 403 | "Forbidden - Admin access required" | User is not admin/staff |
-| 404 | "Payment not found" | Invalid payment ID |
-| 500 | Gateway error message | Payment gateway failure |
+| Status | Error                                      | Cause                           |
+| ------ | ------------------------------------------ | ------------------------------- |
+| 400    | "Only successful payments can be refunded" | Payment status is not SUCCEEDED |
+| 400    | "Payment has already been fully refunded"  | No remaining balance            |
+| 400    | "Refund amount exceeds available balance"  | Requested amount too high       |
+| 401    | "Unauthorized"                             | No valid session                |
+| 403    | "Forbidden - Admin access required"        | User is not admin/staff         |
+| 404    | "Payment not found"                        | Invalid payment ID              |
+| 500    | Gateway error message                      | Payment gateway failure         |
 
 **Example:**
 
@@ -100,10 +100,10 @@ List refunds, optionally filtered by payment.
 
 **Query Parameters:**
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `paymentId` | string | - | Filter by payment ID |
-| `limit` | number | 10 | Max results (1-100) |
+| Parameter   | Type   | Default | Description          |
+| ----------- | ------ | ------- | -------------------- |
+| `paymentId` | string | -       | Filter by payment ID |
+| `limit`     | number | 10      | Max results (1-100)  |
 
 **Success Response (200):**
 
@@ -166,10 +166,10 @@ List all disputes from the database.
 
 **Query Parameters:**
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `gateway` | string | - | Filter by gateway (STRIPE only for API) |
-| `limit` | number | 10 | Max results |
+| Parameter | Type   | Default | Description                             |
+| --------- | ------ | ------- | --------------------------------------- |
+| `gateway` | string | -       | Filter by gateway (STRIPE only for API) |
+| `limit`   | number | 10      | Max results                             |
 
 **Success Response (200):**
 
@@ -278,14 +278,14 @@ const submitEvidenceSchema = z.object({
 
 **Error Responses:**
 
-| Status | Error | Cause |
-|--------|-------|-------|
-| 400 | "Dispute is already resolved..." | Status is WON/LOST/CHARGE_REFUNDED |
-| 400 | "Only Stripe supports direct evidence submission..." | Gateway is RAZORPAY |
-| 401 | "Unauthorized" | No valid session |
-| 403 | "Forbidden - Admin access required" | User is not admin/staff |
-| 404 | "Dispute not found" | Invalid dispute ID |
-| 500 | Gateway error message | Stripe API failure |
+| Status | Error                                                | Cause                              |
+| ------ | ---------------------------------------------------- | ---------------------------------- |
+| 400    | "Dispute is already resolved..."                     | Status is WON/LOST/CHARGE_REFUNDED |
+| 400    | "Only Stripe supports direct evidence submission..." | Gateway is RAZORPAY                |
+| 401    | "Unauthorized"                                       | No valid session                   |
+| 403    | "Forbidden - Admin access required"                  | User is not admin/staff            |
+| 404    | "Dispute not found"                                  | Invalid dispute ID                 |
+| 500    | Gateway error message                                | Stripe API failure                 |
 
 ---
 
@@ -297,13 +297,13 @@ List disputes with pagination and filtering (admin dashboard).
 
 **Query Parameters:**
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `page` | number | 1 | Page number |
-| `limit` | number | 20 | Results per page |
-| `status` | DisputeStatus | - | Filter by status |
-| `gateway` | PaymentGateway | - | Filter by gateway |
-| `search` | string | - | Search by dispute ID |
+| Parameter | Type           | Default | Description          |
+| --------- | -------------- | ------- | -------------------- |
+| `page`    | number         | 1       | Page number          |
+| `limit`   | number         | 20      | Results per page     |
+| `status`  | DisputeStatus  | -       | Filter by status     |
+| `gateway` | PaymentGateway | -       | Filter by gateway    |
+| `search`  | string         | -       | Search by dispute ID |
 
 **Success Response (200):**
 
@@ -326,8 +326,8 @@ Get detailed information about a specific dispute.
 
 **Path Parameters:**
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
+| Parameter   | Type   | Description         |
+| ----------- | ------ | ------------------- |
 | `disputeId` | string | Database dispute ID |
 
 **Success Response (200):**
@@ -360,11 +360,11 @@ Get detailed information about a specific dispute.
 
 **Error Responses:**
 
-| Status | Error | Cause |
-|--------|-------|-------|
-| 401 | "Unauthorized" | No valid session |
-| 403 | "Forbidden" | User is not admin |
-| 404 | "Dispute not found" | Invalid dispute ID |
+| Status | Error               | Cause              |
+| ------ | ------------------- | ------------------ |
+| 401    | "Unauthorized"      | No valid session   |
+| 403    | "Forbidden"         | User is not admin  |
+| 404    | "Dispute not found" | Invalid dispute ID |
 
 ---
 

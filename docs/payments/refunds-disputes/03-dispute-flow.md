@@ -33,21 +33,21 @@ stateDiagram-v2
 
 ### Early Warning Statuses
 
-| Status | Description | Action Required |
-|--------|-------------|-----------------|
+| Status                   | Description                      | Action Required         |
+| ------------------------ | -------------------------------- | ----------------------- |
 | `WARNING_NEEDS_RESPONSE` | Early fraud warning from gateway | Respond within deadline |
-| `WARNING_UNDER_REVIEW` | Response submitted, under review | Wait for decision |
-| `WARNING_CLOSED` | Early warning resolved | None (terminal) |
+| `WARNING_UNDER_REVIEW`   | Response submitted, under review | Wait for decision       |
+| `WARNING_CLOSED`         | Early warning resolved           | None (terminal)         |
 
 ### Formal Dispute Statuses
 
-| Status | Description | Action Required |
-|--------|-------------|-----------------|
-| `NEEDS_RESPONSE` | Formal dispute filed | Submit evidence within deadline |
-| `UNDER_REVIEW` | Evidence submitted, awaiting decision | Wait (7-90 days) |
-| `WON` | Merchant won the dispute | None (terminal) |
-| `LOST` | Customer won, funds returned | None (terminal) |
-| `CHARGE_REFUNDED` | Merchant voluntarily refunded | None (terminal) |
+| Status            | Description                           | Action Required                 |
+| ----------------- | ------------------------------------- | ------------------------------- |
+| `NEEDS_RESPONSE`  | Formal dispute filed                  | Submit evidence within deadline |
+| `UNDER_REVIEW`    | Evidence submitted, awaiting decision | Wait (7-90 days)                |
+| `WON`             | Merchant won the dispute              | None (terminal)                 |
+| `LOST`            | Customer won, funds returned          | None (terminal)                 |
+| `CHARGE_REFUNDED` | Merchant voluntarily refunded         | None (terminal)                 |
 
 ---
 
@@ -122,7 +122,10 @@ if (
 // Check gateway support
 if (dispute.paymentGateway !== "STRIPE") {
   return NextResponse.json(
-    { error: "Only Stripe supports direct evidence submission. For Razorpay, use the dashboard." },
+    {
+      error:
+        "Only Stripe supports direct evidence submission. For Razorpay, use the dashboard.",
+    },
     { status: 400 },
   );
 }
@@ -144,6 +147,7 @@ await prisma.dispute.update({
 ```
 
 **Key Points:**
+
 - No transaction wrapping (unlike refunds)
 - External API call is outside any transaction
 - Evidence submission doesn't have race condition risks
@@ -155,11 +159,13 @@ await prisma.dispute.update({
 ### Stripe
 
 **Full API Support:**
+
 - List disputes: `GET /v1/disputes`
 - Submit evidence: `POST /v1/disputes/{id}`
 - Close dispute: `POST /v1/disputes/{id}/close`
 
 **Webhook Events:**
+
 - `charge.dispute.created`
 - `charge.dispute.updated`
 - `charge.dispute.closed`
@@ -167,11 +173,13 @@ await prisma.dispute.update({
 ### Razorpay
 
 **Limited API Support:**
+
 - NO direct dispute API
 - Disputes handled via Razorpay Dashboard
 - Only webhook notifications available
 
 **Webhook Events:**
+
 - `payment.dispute.created`
 - `payment.dispute.won`
 - `payment.dispute.lost`
@@ -214,15 +222,15 @@ const evidence = {
 
 ## Dispute Reasons
 
-| Reason | Description | Common Evidence |
-|--------|-------------|-----------------|
-| `fraudulent` | Customer claims unauthorized use | Customer communication, IP address |
-| `product_not_received` | Service not delivered | Proof of delivery, service records |
-| `product_unacceptable` | Service quality issues | Service agreement, communication |
-| `duplicate` | Charged multiple times | Transaction IDs showing different charges |
-| `subscription_canceled` | Charged after cancellation | Cancellation policy, records |
-| `credit_not_processed` | Refund promised but not received | Refund records or explanation |
-| `general` | Other reasons | Varies |
+| Reason                  | Description                      | Common Evidence                           |
+| ----------------------- | -------------------------------- | ----------------------------------------- |
+| `fraudulent`            | Customer claims unauthorized use | Customer communication, IP address        |
+| `product_not_received`  | Service not delivered            | Proof of delivery, service records        |
+| `product_unacceptable`  | Service quality issues           | Service agreement, communication          |
+| `duplicate`             | Charged multiple times           | Transaction IDs showing different charges |
+| `subscription_canceled` | Charged after cancellation       | Cancellation policy, records              |
+| `credit_not_processed`  | Refund promised but not received | Refund records or explanation             |
+| `general`               | Other reasons                    | Varies                                    |
 
 ---
 
@@ -281,10 +289,10 @@ The admin dashboard provides:
 
 **Critical:** Disputes have strict evidence submission deadlines.
 
-| Gateway | Evidence Deadline | Typical Range |
-|---------|------------------|---------------|
-| Stripe | Provided in `evidence_details.due_by` | 7-21 days |
-| Razorpay | Varies by bank | 7-14 days |
+| Gateway  | Evidence Deadline                     | Typical Range |
+| -------- | ------------------------------------- | ------------- |
+| Stripe   | Provided in `evidence_details.due_by` | 7-21 days     |
+| Razorpay | Varies by bank                        | 7-14 days     |
 
 **Missed Deadline = Automatic Loss**
 
@@ -293,7 +301,7 @@ The admin dashboard provides:
 const urgentDisputes = await prisma.dispute.count({
   where: {
     dueBy: {
-      lte: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000),  // Within 3 days
+      lte: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000), // Within 3 days
       gte: new Date(),
     },
     status: {
@@ -307,13 +315,13 @@ const urgentDisputes = await prisma.dispute.count({
 
 ## Code References
 
-| Component | File |
-|-----------|------|
-| Disputes API | `app/api/payments/disputes/route.ts` |
-| Admin list | `app/api/admin/disputes/route.ts` |
-| Admin details | `app/api/admin/disputes/[disputeId]/route.ts` |
-| Stripe implementation | `lib/payments/core/stripe.ts` |
-| Webhook handlers | `app/api/webhooks/stripe/route.ts` |
+| Component             | File                                          |
+| --------------------- | --------------------------------------------- |
+| Disputes API          | `app/api/payments/disputes/route.ts`          |
+| Admin list            | `app/api/admin/disputes/route.ts`             |
+| Admin details         | `app/api/admin/disputes/[disputeId]/route.ts` |
+| Stripe implementation | `lib/payments/core/stripe.ts`                 |
+| Webhook handlers      | `app/api/webhooks/stripe/route.ts`            |
 
 ---
 
