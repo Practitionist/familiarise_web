@@ -286,7 +286,7 @@ class LuaExecutor {
     }
 
     // Handle variables
-    if (variables.hasOwnProperty(trimmed)) {
+    if (Object.hasOwn(variables, trimmed)) {
       return variables[trimmed];
     }
 
