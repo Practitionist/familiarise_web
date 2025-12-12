@@ -7,13 +7,18 @@ import { sendWelcomeEmail } from "@/lib/email";
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { name, email, password } = body;
+    const { name, email, password, role } = body;
 
     if (!name || !email || !password) {
       return new NextResponse("Missing name, email, or password", {
         status: 400,
       });
     }
+
+    // Validate role if provided, default to CONSULTEE
+    const userRole = role && (role === UserRole.CONSULTANT || role === UserRole.CONSULTEE)
+      ? role
+      : UserRole.CONSULTEE;
 
     // Check if user exists with this email
     const existingUser = await prisma.user.findUnique({
@@ -116,28 +121,39 @@ export async function POST(req: Request) {
     try {
       const hashedPassword = await bcrypt.hash(password, 10);
 
-      const user = await prisma.user.create({
-        data: {
-          name,
-          email,
-          password: hashedPassword,
-          role: UserRole.CONSULTEE, // Default role, adjust as needed
-          // Initialize other required profiles or preferences if necessary
-          cookiePreferences: {
-            create: {},
-          },
-          notificationPreferences: {
-            create: {},
-          },
-          consulteeProfile: {
-            create: {}, // Automatically create a consultee profile
-          },
+      // Prepare user data based on role
+      const userData: any = {
+        name,
+        email,
+        password: hashedPassword,
+        role: userRole,
+        cookiePreferences: {
+          create: {},
         },
+        notificationPreferences: {
+          create: {},
+        },
+      };
+
+      // Create appropriate profile based on role
+      if (userRole === UserRole.CONSULTANT) {
+        userData.consultantProfile = {
+          create: {},
+        };
+      } else {
+        userData.consulteeProfile = {
+          create: {},
+        };
+      }
+
+      const user = await prisma.user.create({
+        data: userData,
         // Include related models if needed upon creation
         include: {
           cookiePreferences: true,
           notificationPreferences: true,
           consulteeProfile: true,
+          consultantProfile: true,
         },
       });
 

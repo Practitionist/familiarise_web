@@ -17,6 +17,7 @@ export default function SignUp() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [role, setRole] = useState<"CONSULTANT" | "CONSULTEE">("CONSULTEE");
   const [isLoading, setIsLoading] = useState(false);
 
   const handleSignUp = async (e: React.FormEvent) => {
@@ -34,6 +35,7 @@ export default function SignUp() {
         name,
         email,
         password,
+        role,
       });
 
       // Check if we got a message about linking accounts
@@ -150,6 +152,19 @@ export default function SignUp() {
                 required
                 disabled={isLoading}
               />
+            </div>
+            <div className="grid gap-2 mt-4">
+              <Label htmlFor="role">I am a</Label>
+              <select
+                id="role"
+                value={role}
+                onChange={(e) => setRole(e.target.value as "CONSULTANT" | "CONSULTEE")}
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={isLoading}
+              >
+                <option value="CONSULTEE">Consultee (seeking mentorship)</option>
+                <option value="CONSULTANT">Consultant (offering mentorship)</option>
+              </select>
             </div>
             <div className="grid gap-2 mt-4">
               <Label htmlFor="email">Email</Label>
