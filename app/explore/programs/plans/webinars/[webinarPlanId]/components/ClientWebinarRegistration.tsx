@@ -18,15 +18,17 @@ type SessionStatus =
   | "To be announced";
 
 type ClientWebinarRegistrationProps = {
-  webinarPlanId: string; // Renamed from webinarId
+  webinarPlanId: string; // The WebinarPlan ID (for URL path)
+  webinarId?: string; // The actual Webinar instance ID (for eventId query param)
   price: number;
-  currency?: string | null; // Added
-  nextSessionDate?: Date; // Renamed from nextSession
-  sessionStatus: SessionStatus; // Added
+  currency?: string | null;
+  nextSessionDate?: Date;
+  sessionStatus: SessionStatus;
 };
 
 export function ClientWebinarRegistration({
   webinarPlanId,
+  webinarId,
   price,
   currency,
   nextSessionDate,
@@ -40,9 +42,9 @@ export function ClientWebinarRegistration({
       window.location.href = `/auth/signin?callbackUrl=${encodeURIComponent(window.location.href)}`;
       return;
     }
-    // Ensure we only redirect to checkout if the session is upcoming
-    if (sessionStatus === "Upcoming") {
-      window.location.href = `/checkout/plans/webinar/${webinarPlanId}`;
+    // Ensure we only redirect to checkout if the session is upcoming AND we have a webinar instance ID
+    if (sessionStatus === "Upcoming" && webinarId) {
+      window.location.href = `/checkout/plans/webinar/${webinarPlanId}?eventId=${webinarId}`;
     }
   };
 
@@ -82,19 +84,27 @@ export function ClientWebinarRegistration({
   } else if (sessionStatus === "Happening Now") {
     buttonText = "Session in Progress";
     buttonDisabled = true;
+  } else if (sessionStatus === "To be announced" || !webinarId) {
+    // Disable registration when no session is scheduled or no webinar instance exists
+    buttonText = "Registration Opening Soon";
+    buttonDisabled = true;
   }
-  // Note: If sessionStatus is "To be announced" and there's no nextSessionDate,
-  // the button will still say "Pay & Register Now" and be enabled by default.
-  // Additional logic could be added here if registration should be disabled for "To be announced" status.
 
   if (!isLoggedIn) {
     // For non-logged in users, the button primarily serves to redirect to sign-in.
     // We can still reflect the session status in the button text and disable it if not upcoming.
     let signInButtonText = "Sign in to Register";
+    let signInButtonDisabled = false;
+
     if (sessionStatus === "Completed") {
       signInButtonText = "Session Ended";
+      signInButtonDisabled = true;
     } else if (sessionStatus === "Happening Now") {
       signInButtonText = "Session in Progress";
+      signInButtonDisabled = true;
+    } else if (sessionStatus === "To be announced" || !webinarId) {
+      signInButtonText = "Registration Opening Soon";
+      signInButtonDisabled = true;
     }
 
     return (
@@ -106,15 +116,15 @@ export function ClientWebinarRegistration({
           <p className="text-gray-600 mb-4">
             {sessionInfoText} {/* Show current session status info */}
           </p>
-          <p className="text-gray-600 mb-4">
-            Please sign in to register for this webinar.
-          </p>
+          {!signInButtonDisabled && (
+            <p className="text-gray-600 mb-4">
+              Please sign in to register for this webinar.
+            </p>
+          )}
           <Button
             onClick={handleRegistration} // This redirects to sign-in
             className="w-full bg-black hover:bg-gray-800"
-            disabled={
-              sessionStatus === "Completed" || sessionStatus === "Happening Now"
-            } // Disable if not upcoming
+            disabled={signInButtonDisabled}
           >
             {signInButtonText}
           </Button>

@@ -72,9 +72,10 @@ type SessionStatus =
 interface WebinarDetailsProps {
   readonly plan: WebinarPlanData; // This is webinarData.webinarPlan
   readonly nextSession: Date | string | undefined; // Allow string for initial prop
+  readonly webinarId?: string; // The actual Webinar instance ID (not plan ID) - required for checkout
 }
 
-export function WebinarDetails({ plan, nextSession }: WebinarDetailsProps) {
+export function WebinarDetails({ plan, nextSession, webinarId }: WebinarDetailsProps) {
   let sessionStatus: SessionStatus = "To be announced";
   let formattedNextSessionDisplay = "To be announced"; // Used for display under FeatureItem
 
@@ -275,11 +276,11 @@ export function WebinarDetails({ plan, nextSession }: WebinarDetailsProps) {
 
             <ClientWebinarRegistration
               webinarPlanId={plan.id} // This is the WebinarPlan ID
+              webinarId={webinarId} // This is the actual Webinar instance ID - required for checkout
               price={plan.price}
               currency={plan.priceCurrency}
               nextSessionDate={nextSession ? new Date(nextSession) : undefined}
               sessionStatus={sessionStatus} // Pass the calculated status
-              // consultantUserId={plan.consultantProfile.userId}
             />
           </div>
         </div>

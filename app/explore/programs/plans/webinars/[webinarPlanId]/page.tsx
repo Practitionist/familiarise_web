@@ -51,8 +51,12 @@ export default function WebinarDetailsPage({
     firstWebinarInstance?.appointment?.slotsOfAppointment?.[0]?.startsAt;
 
   // Pass the entire webinarData (WebinarPlanData) as the 'plan' prop.
-  // 'webinarInstanceId' is currently the WebinarPlan.id.
-  // This is used by ClientWebinarRegistration; it might need re-evaluation if registration
-  // becomes specific to a distinct Webinar *instance* ID rather than the plan's ID.
-  return <WebinarDetails plan={webinarData} nextSession={nextSession} />;
+  // webinarId is the actual Webinar instance ID (not the plan ID) - required for checkout.
+  return (
+    <WebinarDetails
+      plan={webinarData}
+      nextSession={nextSession}
+      webinarId={firstWebinarInstance?.id}
+    />
+  );
 }
