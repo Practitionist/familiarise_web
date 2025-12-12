@@ -7,7 +7,7 @@ import { sendWelcomeEmail } from "@/lib/email";
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { name, email, password, role } = body;
+    const { name, email, password } = body;
 
     if (!name || !email || !password) {
       return new NextResponse("Missing name, email, or password", {
@@ -15,10 +15,8 @@ export async function POST(req: Request) {
       });
     }
 
-    // Validate role if provided, default to CONSULTEE
-    const userRole = role && (role === UserRole.CONSULTANT || role === UserRole.CONSULTEE)
-      ? role
-      : UserRole.CONSULTEE;
+    // Always default to CONSULTEE - role selection happens during onboarding
+    const userRole = UserRole.CONSULTEE;
 
     // Check if user exists with this email
     const existingUser = await prisma.user.findUnique({
@@ -135,16 +133,10 @@ export async function POST(req: Request) {
         },
       };
 
-      // Create appropriate profile based on role
-      if (userRole === UserRole.CONSULTANT) {
-        userData.consultantProfile = {
-          create: {},
-        };
-      } else {
-        userData.consulteeProfile = {
-          create: {},
-        };
-      }
+      // Always create consultee profile - role can be changed during onboarding
+      userData.consulteeProfile = {
+        create: {},
+      };
 
       const user = await prisma.user.create({
         data: userData,
@@ -157,29 +149,24 @@ export async function POST(req: Request) {
         },
       });
 
-      // Send welcome email to the new user
-      try {
-        console.log("Sending welcome email to:", email);
-        const emailResult = await sendWelcomeEmail({
-          email,
-          name,
+      // Send welcome email to the new user (fire and forget - don't block registration)
+      sendWelcomeEmail({ email, name })
+        .then((emailResult) => {
+          if (!emailResult.success) {
+            console.error(
+              "[REGISTER_POST] Welcome email failed:",
+              emailResult.error,
+            );
+          } else {
+            console.log(
+              "[REGISTER_POST] Welcome email sent successfully:",
+              emailResult.data,
+            );
+          }
+        })
+        .catch((emailError) => {
+          console.error("[REGISTER_POST] Welcome email error:", emailError);
         });
-
-        if (!emailResult.success) {
-          console.error(
-            "[REGISTER_POST] Welcome email failed:",
-            emailResult.error,
-          );
-        } else {
-          console.log(
-            "[REGISTER_POST] Welcome email sent successfully:",
-            emailResult.data,
-          );
-        }
-      } catch (emailError) {
-        console.error("[REGISTER_POST] Welcome email error:", emailError);
-        // Continue despite email failure - don't block registration
-      }
 
       // Return only necessary user info, exclude password
       const { password: _, ...userWithoutPassword } = user;
