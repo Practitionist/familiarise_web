@@ -127,7 +127,7 @@ async function acquireSlotLock(
 ): Promise<boolean> {
   const lockKey = `slot_lock:${slotId}`;
   const lockValue = userId;
-  const lockTTL = 30; // seconds
+  const lockTTL = 60; // seconds (allows for slow DB operations)
 
   return await redis.set(lockKey, lockValue, "NX", "EX", lockTTL);
 }

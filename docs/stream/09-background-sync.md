@@ -20,12 +20,14 @@ The Stream user background sync job maintains data consistency between your Pris
 ### Purpose
 
 **Primary Goals:**
+
 1. Remove users from Stream Chat who no longer exist in the Prisma database
 2. Prevent orphaned user accounts in Stream
 3. Maintain data consistency across systems
 4. Clean up test accounts and deleted users
 
 **Business Impact:**
+
 - Reduces Stream user count (affects billing)
 - Improves channel member accuracy
 - Prevents messaging to deleted users
@@ -36,6 +38,7 @@ The Stream user background sync job maintains data consistency between your Pris
 **Execution Time:** Daily at 03:30 UTC (9:00 AM IST)
 
 **Trigger Methods:**
+
 1. **Automatic:** GitHub Actions cron schedule
 2. **Manual:** GitHub Actions workflow_dispatch
 3. **Manual:** API endpoint trigger (see [API Endpoints](./10-api-endpoints.md))
@@ -94,13 +97,14 @@ jobs:
 
 Navigate to: **Repository Settings > Secrets and variables > Actions > New repository secret**
 
-| Secret Name | Description | Example |
-|-------------|-------------|---------|
-| `DATABASE_URL` | Prisma database connection string | `postgresql://user:pass@host:5432/db` |
-| `NEXT_PUBLIC_STREAM_API_KEY` | Stream Chat public API key | `abc123xyz...` |
-| `STREAM_API_SECRET` | Stream Chat secret API key | `secret456...` |
+| Secret Name                  | Description                       | Example                               |
+| ---------------------------- | --------------------------------- | ------------------------------------- |
+| `DATABASE_URL`               | Prisma database connection string | `postgresql://user:pass@host:5432/db` |
+| `NEXT_PUBLIC_STREAM_API_KEY` | Stream Chat public API key        | `abc123xyz...`                        |
+| `STREAM_API_SECRET`          | Stream Chat secret API key        | `secret456...`                        |
 
 **Package.json Script:**
+
 ```json
 {
   "scripts": {
@@ -114,11 +118,13 @@ Navigate to: **Repository Settings > Secrets and variables > Actions > New repos
 **Runtime:** Node.js 20
 
 **Dependencies:**
+
 - `stream-chat`: Stream Chat SDK
 - `@prisma/client`: Database access
 - `tsx`: TypeScript execution
 
 **Timeout:**
+
 - Default GitHub Actions timeout: 360 minutes (6 hours)
 - Stream client timeout: 30 seconds per request
 - Typical execution time: 2-10 minutes (depends on user count)
@@ -134,11 +140,13 @@ The sync job uses pagination to process all Stream users efficiently, checking e
 **Location:** `/jobs/stream-sync.ts`
 
 **Function Signature:**
+
 ```typescript
-export async function performStreamUserSync(): Promise<SyncSummary>
+export async function performStreamUserSync(): Promise<SyncSummary>;
 ```
 
 **Return Type:**
+
 ```typescript
 interface SyncSummary {
   totalStreamUsersProcessed: number;
@@ -165,7 +173,7 @@ function getStreamClient() {
 
   if (!streamApiKey || !streamApiSecret) {
     console.error(
-      "[Stream Sync Job] Critical: Stream API Key or Secret is not defined."
+      "[Stream Sync Job] Critical: Stream API Key or Secret is not defined.",
     );
     throw new Error("Stream API Key or Secret not configured for sync job.");
   }
@@ -177,6 +185,7 @@ function getStreamClient() {
 ```
 
 **Key Points:**
+
 - Validates environment variables before proceeding
 - Sets 30-second timeout for API calls
 - Throws error if credentials are missing
@@ -189,13 +198,13 @@ let lastStreamUserId: string | undefined = undefined;
 
 while (true) {
   console.log(
-    `[Stream Sync Job] Fetching next page of Stream users (after ID: ${lastStreamUserId || "start"})...`
+    `[Stream Sync Job] Fetching next page of Stream users (after ID: ${lastStreamUserId || "start"})...`,
   );
 
   const streamUsersResponse = await serverStreamClient.queryUsers(
     lastStreamUserId ? { id: { $gt: lastStreamUserId } } : {},
     { id: 1 }, // Sort by ID for consistent pagination
-    { limit: streamPageLimit, presence: false }
+    { limit: streamPageLimit, presence: false },
   );
 
   const currentStreamPageUsers = streamUsersResponse.users;
@@ -207,13 +216,15 @@ while (true) {
   }
 
   totalStreamUsersProcessed += currentStreamPageUsers.length;
-  lastStreamUserId = currentStreamPageUsers[currentStreamPageUsers.length - 1].id;
+  lastStreamUserId =
+    currentStreamPageUsers[currentStreamPageUsers.length - 1].id;
 
   // Process this page...
 }
 ```
 
 **Pagination Strategy:**
+
 - Fetches 100 users per page
 - Uses cursor-based pagination with `$gt` (greater than)
 - Sorts by ID for consistent ordering
@@ -225,7 +236,9 @@ while (true) {
 For each page of Stream users, query Prisma to find active users:
 
 ```typescript
-const currentStreamUserIdsOnPage = currentStreamPageUsers.map(user => user.id);
+const currentStreamUserIdsOnPage = currentStreamPageUsers.map(
+  (user) => user.id,
+);
 
 const activePrismaUsersOnPage = await prisma.user.findMany({
   where: {
@@ -235,15 +248,16 @@ const activePrismaUsersOnPage = await prisma.user.findMany({
 });
 
 const activePrismaUserIdsOnPageSet = new Set(
-  activePrismaUsersOnPage.map(user => user.id)
+  activePrismaUsersOnPage.map((user) => user.id),
 );
 
 console.log(
-  `[Stream Sync Job] Found ${activePrismaUserIdsOnPageSet.size} active Prisma users among the current Stream page.`
+  `[Stream Sync Job] Found ${activePrismaUserIdsOnPageSet.size} active Prisma users among the current Stream page.`,
 );
 ```
 
 **Query Optimization:**
+
 - Only fetches `id` field (minimal data)
 - Uses `IN` clause for batch lookup
 - Converts to Set for O(1) lookup performance
@@ -269,12 +283,13 @@ for (const streamUserId of currentStreamUserIdsOnPage) {
 if (staleUsersInPage.length > 0) {
   totalStaleUsersIdentified += staleUsersInPage.length;
   console.log(
-    `[Stream Sync Job] Identified ${staleUsersInPage.length} stale users in this page.`
+    `[Stream Sync Job] Identified ${staleUsersInPage.length} stale users in this page.`,
   );
 }
 ```
 
 **Stale User Criteria:**
+
 1. User exists in Stream but NOT in Prisma database
 2. User ID does NOT start with `system-`
 3. User ID does NOT start with `recording-egress-`
@@ -287,21 +302,21 @@ if (staleUsersInPage.length > 0) {
   try {
     const deleteResponse = await serverStreamClient.deleteUsers(
       staleUsersInPage,
-      { user: "hard", messages: "hard" }
+      { user: "hard", messages: "hard" },
     );
 
     // Check for failed deletions
     const sdkFailedDeletions = deleteResponse.failed_delete_users || [];
 
     if (sdkFailedDeletions.length > 0) {
-      const failures = sdkFailedDeletions.map(f => ({
+      const failures = sdkFailedDeletions.map((f) => ({
         id: f.user_id,
         error: f.message || "Unknown error",
       }));
       allFailedDeletions.push(...failures);
       console.warn(
         `[Stream Sync Job] Failed to delete ${failures.length} users in this batch:`,
-        failures
+        failures,
       );
     }
 
@@ -310,14 +325,14 @@ if (staleUsersInPage.length > 0) {
     totalStaleUsersDeleted += successfullyDeletedInBatch;
 
     console.log(
-      `[Stream Sync Job] Deletion task for batch completed. Targeted: ${staleUsersInPage.length}, Successful: ${successfullyDeletedInBatch}, Failed: ${sdkFailedDeletions.length}`
+      `[Stream Sync Job] Deletion task for batch completed. Targeted: ${staleUsersInPage.length}, Successful: ${successfullyDeletedInBatch}, Failed: ${sdkFailedDeletions.length}`,
     );
   } catch (error) {
     console.error(
       `[Stream Sync Job] Error during batch deletion of Stream users:`,
-      error.message
+      error.message,
     );
-    const failures = staleUsersInPage.map(id => ({
+    const failures = staleUsersInPage.map((id) => ({
       id,
       error: error.message || "Batch deletion API call failed",
     }));
@@ -327,6 +342,7 @@ if (staleUsersInPage.length > 0) {
 ```
 
 **Deletion Strategy:**
+
 - **Hard delete users:** Permanently removes user from Stream
 - **Hard delete messages:** Removes all messages from deleted users
 - Batch deletion for efficiency
@@ -335,6 +351,7 @@ if (staleUsersInPage.length > 0) {
 ### Performance Characteristics
 
 **Scalability:**
+
 - Processes 100 users per page
 - Memory-efficient (doesn't load all users at once)
 - Can handle thousands of users without issues
@@ -348,6 +365,7 @@ if (staleUsersInPage.length > 0) {
 | 50,000 users | 20-30 minutes |
 
 **API Calls:**
+
 - 1 call per 100 Stream users (pagination)
 - 1 Prisma query per page
 - 1 deletion call per page (if stale users found)
@@ -361,6 +379,7 @@ Certain users are protected from deletion to maintain system functionality.
 ### Pattern-Based Exclusions
 
 **System Users:**
+
 ```typescript
 if (!streamUserId.startsWith("system-")) {
   // User may be deleted
@@ -368,6 +387,7 @@ if (!streamUserId.startsWith("system-")) {
 ```
 
 **Examples:**
+
 - `system-notifications`
 - `system-admin`
 - `system-bot`
@@ -375,6 +395,7 @@ if (!streamUserId.startsWith("system-")) {
 **Purpose:** These accounts are used for automated messages, system notifications, and internal operations.
 
 **Recording Egress Users:**
+
 ```typescript
 if (!streamUserId.startsWith("recording-egress-")) {
   // User may be deleted
@@ -382,6 +403,7 @@ if (!streamUserId.startsWith("recording-egress-")) {
 ```
 
 **Examples:**
+
 - `recording-egress-abc123`
 - `recording-egress-session-456`
 
@@ -396,21 +418,24 @@ const EXCLUDED_USER_IDS = new Set(["system", "teetangh"]);
 ```
 
 **Currently Excluded Users:**
+
 1. `system` - Core system account
 2. `teetangh` - Administrator account
 
 **Adding New Exclusions:**
+
 ```typescript
 const EXCLUDED_USER_IDS = new Set([
   "system",
   "teetangh",
   "admin",
   "support-bot",
-  "demo-user"
+  "demo-user",
 ]);
 ```
 
 **When to Add Exclusions:**
+
 - Critical administrator accounts
 - Demo or showcase accounts
 - Service accounts for integrations
@@ -423,7 +448,6 @@ const EXCLUDED_USER_IDS = new Set([
 for (const streamUserId of currentStreamUserIdsOnPage) {
   // Check 1: Does user exist in Prisma?
   if (!activePrismaUserIdsOnPageSet.has(streamUserId)) {
-
     // Check 2: Is it a system user?
     if (streamUserId.startsWith("system-")) {
       continue; // Skip deletion
@@ -456,23 +480,25 @@ The sync job implements comprehensive error handling to ensure robustness.
 #### 1. Configuration Errors
 
 **Missing Environment Variables:**
+
 ```typescript
 if (!process.env.DATABASE_URL) {
   console.error(
-    "[Stream Sync Script] Critical: DATABASE_URL environment variable is not set."
+    "[Stream Sync Script] Critical: DATABASE_URL environment variable is not set.",
   );
   process.exit(1);
 }
 
 if (!streamApiKey || !streamApiSecret) {
   console.error(
-    "[Stream Sync Job] Critical: Stream API Key or Secret is not defined."
+    "[Stream Sync Job] Critical: Stream API Key or Secret is not defined.",
   );
   throw new Error("Stream API Key or Secret not configured for sync job.");
 }
 ```
 
 **Exit Behavior:**
+
 - Script exits with code `1` (failure)
 - GitHub Actions marks job as failed
 - No partial deletion occurs
@@ -480,20 +506,21 @@ if (!streamApiKey || !streamApiSecret) {
 #### 2. Batch Deletion Errors
 
 **Entire Batch Fails:**
+
 ```typescript
 try {
   const deleteResponse = await serverStreamClient.deleteUsers(
     staleUsersInPage,
-    { user: "hard", messages: "hard" }
+    { user: "hard", messages: "hard" },
   );
 } catch (error) {
   console.error(
     `[Stream Sync Job] Error during batch deletion of Stream users:`,
-    error.message
+    error.message,
   );
 
   // Mark all users in batch as failed
-  const failures = staleUsersInPage.map(id => ({
+  const failures = staleUsersInPage.map((id) => ({
     id,
     error: error.message || "Batch deletion API call failed",
   }));
@@ -502,12 +529,14 @@ try {
 ```
 
 **Common Causes:**
+
 - Network timeout
 - Stream API rate limiting
 - Invalid API credentials
 - Temporary service outage
 
 **Impact:**
+
 - Failed deletions are tracked
 - Job continues to next page
 - Summary includes all failures
@@ -515,29 +544,32 @@ try {
 #### 3. Individual Deletion Failures
 
 **Partial Batch Success:**
+
 ```typescript
 const sdkFailedDeletions = deleteResponse.failed_delete_users || [];
 
 if (sdkFailedDeletions.length > 0) {
-  const failures = sdkFailedDeletions.map(f => ({
+  const failures = sdkFailedDeletions.map((f) => ({
     id: f.user_id,
     error: f.message || "Unknown error",
   }));
   allFailedDeletions.push(...failures);
   console.warn(
     `[Stream Sync Job] Failed to delete ${failures.length} users in this batch:`,
-    failures
+    failures,
   );
 }
 ```
 
 **Common Causes:**
+
 - User is channel owner (must transfer ownership first)
 - User has active connections
 - User in protected channel
 - Rate limiting for specific user
 
 **Response Structure:**
+
 ```typescript
 interface FailedDeletionFromSDK {
   user_id: string;
@@ -548,6 +580,7 @@ interface FailedDeletionFromSDK {
 ### Error Reporting
 
 **Summary Report:**
+
 ```typescript
 return {
   totalStreamUsersProcessed: 1247,
@@ -557,13 +590,14 @@ return {
   failedDeletionDetails: [
     {
       id: "user-xyz",
-      error: "User is owner of channel 'consulting-room-123'"
-    }
+      error: "User is owner of channel 'consulting-room-123'",
+    },
   ],
 };
 ```
 
 **Console Output:**
+
 ```
 [Stream Sync Job] Synchronization completed successfully.
 --- Summary ---
@@ -579,21 +613,24 @@ Total Failed Deletions:       1
 ### Exit Codes
 
 **Success (Exit 0):**
+
 - All users processed
 - All deletions successful OR documented failures
 - No fatal errors
 
 **Failure (Exit 1):**
+
 - Missing environment variables
 - Fatal database connection error
 - Stream client initialization failure
 - Unhandled exceptions
 
 **Partial Success:**
+
 ```typescript
 if (summary.totalFailedDeletions > 0) {
   console.warn(
-    "[Stream Sync Script] Process completed with some failed deletions."
+    "[Stream Sync Script] Process completed with some failed deletions.",
   );
   // Optionally, exit with code 2 for partial success
   // process.exit(2);
@@ -605,10 +642,11 @@ if (summary.totalFailedDeletions > 0) {
 **Current Behavior:** No automatic retries
 
 **Recommended Enhancement:**
+
 ```typescript
 async function deleteUsersWithRetry(
   userIds: string[],
-  maxRetries: number = 3
+  maxRetries: number = 3,
 ): Promise<DeleteUsersResponse> {
   let lastError;
 
@@ -617,7 +655,7 @@ async function deleteUsersWithRetry(
       console.log(`Deletion attempt ${attempt}/${maxRetries}`);
       return await serverStreamClient.deleteUsers(userIds, {
         user: "hard",
-        messages: "hard"
+        messages: "hard",
       });
     } catch (error) {
       lastError = error;
@@ -626,7 +664,7 @@ async function deleteUsersWithRetry(
       // Exponential backoff
       if (attempt < maxRetries) {
         const delay = Math.pow(2, attempt) * 1000;
-        await new Promise(resolve => setTimeout(resolve, delay));
+        await new Promise((resolve) => setTimeout(resolve, delay));
       }
     }
   }
@@ -744,41 +782,27 @@ flowchart TD
 ### Flow Explanation
 
 **Phase 1: Initialization**
+
 1. GitHub Actions triggers workflow at scheduled time
 2. Environment variables are validated
 3. Stream client is initialized with 30-second timeout
 4. Tracking variables are initialized
 
-**Phase 2: Pagination Loop**
-5. Fetch next page of 100 Stream users (sorted by ID)
-6. Update total processed count
-7. Extract user IDs from current page
-8. Query Prisma for active users matching these IDs
+**Phase 2: Pagination Loop** 5. Fetch next page of 100 Stream users (sorted by ID) 6. Update total processed count 7. Extract user IDs from current page 8. Query Prisma for active users matching these IDs
 
-**Phase 3: Stale User Identification**
-9. For each Stream user ID in page:
-   - Check if user exists in Prisma
-   - Apply system prefix exclusion
-   - Apply recording egress exclusion
-   - Apply hardcoded exclusions
-   - Add to stale list if all checks pass
+**Phase 3: Stale User Identification** 9. For each Stream user ID in page:
 
-**Phase 4: Deletion**
-10. If stale users found in page:
-    - Attempt batch deletion with hard delete
-    - Handle partial failures (some succeed, some fail)
-    - Handle complete batch failures (all fail)
-    - Update counters and track failures
+- Check if user exists in Prisma
+- Apply system prefix exclusion
+- Apply recording egress exclusion
+- Apply hardcoded exclusions
+- Add to stale list if all checks pass
 
-**Phase 5: Loop Continuation**
-11. Update pagination cursor to last user ID
-12. Return to step 5 if more users exist
+**Phase 4: Deletion** 10. If stale users found in page: - Attempt batch deletion with hard delete - Handle partial failures (some succeed, some fail) - Handle complete batch failures (all fail) - Update counters and track failures
 
-**Phase 6: Completion**
-13. Generate comprehensive summary report
-14. Log summary to console
-15. Log individual failure details if any
-16. Exit with appropriate code (0 = success, 1 = failure)
+**Phase 5: Loop Continuation** 11. Update pagination cursor to last user ID 12. Return to step 5 if more users exist
+
+**Phase 6: Completion** 13. Generate comprehensive summary report 14. Log summary to console 15. Log individual failure details if any 16. Exit with appropriate code (0 = success, 1 = failure)
 
 ---
 
@@ -789,12 +813,14 @@ flowchart TD
 #### 1. GitHub Actions Logs
 
 **Accessing Logs:**
+
 1. Navigate to your repository on GitHub
 2. Click "Actions" tab
 3. Select "Sync Stale Stream Users" workflow
 4. Click on specific run to view logs
 
 **Key Metrics to Monitor:**
+
 ```
 [Stream Sync Job] Total processed so far: 1247
 [Stream Sync Job] Found 1195 active Prisma users among the current Stream page
@@ -808,25 +834,28 @@ flowchart TD
 GitHub Settings > Notifications > Actions > Email notifications for workflow failures
 
 **Slack Integration:**
+
 ```yaml
 - name: Notify Slack on Failure
   if: failure()
   uses: 8398a7/action-slack@v3
   with:
     status: ${{ job.status }}
-    text: 'Stream sync job failed!'
+    text: "Stream sync job failed!"
     webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
 ```
 
 #### 3. Metrics Dashboard
 
 **Track Over Time:**
+
 - Total users processed per run
 - Stale users identified per run
 - Deletion success rate
 - Failed deletions trend
 
 **Example Tracking:**
+
 ```typescript
 // Store metrics in database or monitoring service
 await metrics.record({
@@ -835,7 +864,8 @@ await metrics.record({
   totalStale: summary.totalStaleUsersIdentified,
   totalDeleted: summary.totalStaleUsersDeleted,
   totalFailed: summary.totalFailedDeletions,
-  successRate: (summary.totalStaleUsersDeleted / summary.totalStaleUsersIdentified) * 100
+  successRate:
+    (summary.totalStaleUsersDeleted / summary.totalStaleUsersIdentified) * 100,
 });
 ```
 
@@ -844,16 +874,20 @@ await metrics.record({
 #### Issue: Sync Job Times Out
 
 **Symptoms:**
+
 - GitHub Actions job exceeds time limit
 - Incomplete processing of users
 
 **Solutions:**
+
 1. **Reduce Page Size:**
+
    ```typescript
    const streamPageLimit = 50; // Reduced from 100
    ```
 
 2. **Increase Timeout:**
+
    ```yaml
    jobs:
      sync_stream_users:
@@ -870,30 +904,35 @@ await metrics.record({
 #### Issue: High Failure Rate
 
 **Symptoms:**
+
 - Many users in `failedDeletionDetails`
 - Consistent failure messages
 
 **Solutions:**
+
 1. **Check Error Messages:**
+
    ```
    User ID: user-123, Error: User is owner of channel 'room-456'
    ```
 
 2. **Transfer Channel Ownership:**
+
    ```typescript
    // Before running sync, transfer channel ownership
    await channel.updatePartial({
      set: {
-       created_by_id: 'new-owner-id'
-     }
+       created_by_id: "new-owner-id",
+     },
    });
    ```
 
 3. **Implement Pre-deletion Checks:**
+
    ```typescript
    // Check if user owns channels before deleting
    const channels = await serverStreamClient.queryChannels({
-     created_by_id: userId
+     created_by_id: userId,
    });
 
    if (channels.length > 0) {
@@ -905,10 +944,12 @@ await metrics.record({
 #### Issue: Missing Environment Variables
 
 **Symptoms:**
+
 - Job fails immediately
 - Error: "DATABASE_URL environment variable is not set"
 
 **Solutions:**
+
 1. **Verify Secrets:**
    - Go to Repository Settings > Secrets and variables > Actions
    - Ensure all required secrets are set
@@ -918,6 +959,7 @@ await metrics.record({
    - Must match exactly: `DATABASE_URL`, not `database_url`
 
 3. **Test Locally:**
+
    ```bash
    # Load environment variables
    export DATABASE_URL="postgresql://..."
@@ -931,11 +973,14 @@ await metrics.record({
 #### Issue: Database Connection Failures
 
 **Symptoms:**
+
 - Prisma query errors
 - "Can't reach database server" messages
 
 **Solutions:**
+
 1. **Check Connection String:**
+
    ```typescript
    console.log("Testing database connection...");
    await prisma.$connect();
@@ -955,26 +1000,29 @@ await metrics.record({
 #### Issue: Rate Limiting from Stream API
 
 **Symptoms:**
+
 - Error: "Too many requests"
 - 429 HTTP status codes
 
 **Solutions:**
+
 1. **Add Rate Limit Handling:**
+
    ```typescript
    async function deleteWithRateLimit(userIds: string[]) {
      try {
        return await serverStreamClient.deleteUsers(userIds, {
          user: "hard",
-         messages: "hard"
+         messages: "hard",
        });
      } catch (error) {
        if (error.status === 429) {
-         const retryAfter = error.response?.headers?.['retry-after'] || 60;
+         const retryAfter = error.response?.headers?.["retry-after"] || 60;
          console.log(`Rate limited. Waiting ${retryAfter}s...`);
-         await new Promise(resolve => setTimeout(resolve, retryAfter * 1000));
+         await new Promise((resolve) => setTimeout(resolve, retryAfter * 1000));
          return await serverStreamClient.deleteUsers(userIds, {
            user: "hard",
-           messages: "hard"
+           messages: "hard",
          });
        }
        throw error;
@@ -983,6 +1031,7 @@ await metrics.record({
    ```
 
 2. **Reduce Batch Size:**
+
    ```typescript
    // Delete in smaller batches
    const maxBatchSize = 25; // Reduced from 100
@@ -991,7 +1040,7 @@ await metrics.record({
 3. **Add Delays Between Batches:**
    ```typescript
    await deleteUsers(staleUsersInPage);
-   await new Promise(resolve => setTimeout(resolve, 1000)); // 1 second delay
+   await new Promise((resolve) => setTimeout(resolve, 1000)); // 1 second delay
    ```
 
 ### Testing the Sync Job
@@ -1013,23 +1062,28 @@ npm run scripts:stream-sync
 #### Dry Run Mode
 
 **Recommended Enhancement:**
+
 ```typescript
 // Add DRY_RUN environment variable
-const DRY_RUN = process.env.DRY_RUN === 'true';
+const DRY_RUN = process.env.DRY_RUN === "true";
 
 if (DRY_RUN) {
-  console.log(`[DRY RUN] Would delete ${staleUsersInPage.length} users:`, staleUsersInPage);
+  console.log(
+    `[DRY RUN] Would delete ${staleUsersInPage.length} users:`,
+    staleUsersInPage,
+  );
   // Don't actually delete
 } else {
   // Perform actual deletion
   await serverStreamClient.deleteUsers(staleUsersInPage, {
     user: "hard",
-    messages: "hard"
+    messages: "hard",
   });
 }
 ```
 
 **Usage:**
+
 ```bash
 DRY_RUN=true npm run scripts:stream-sync
 ```

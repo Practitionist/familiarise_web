@@ -12,8 +12,11 @@ import {
   Prisma,
 } from "@prisma/client";
 import Stripe from "stripe";
-import { validateRazorpayWebhook, type RazorpayWebhookEvent } from "@/schemas/webhook";
-import { validateWebhookSignature } from 'razorpay/dist/utils/razorpay-utils';
+import {
+  validateRazorpayWebhook,
+  type RazorpayWebhookEvent,
+} from "@/schemas/webhook";
+import { validateWebhookSignature } from "razorpay/dist/utils/razorpay-utils";
 
 type WebhookVerificationResult = {
   isValid: boolean;
@@ -26,13 +29,13 @@ type WebhookVerificationResult = {
 async function withTimeout<T>(
   operation: Promise<T>,
   timeoutMs: number = 25000,
-  errorMessage: string = "Operation timed out"
+  errorMessage: string = "Operation timed out",
 ): Promise<T> {
   return Promise.race([
     operation,
     new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error(errorMessage)), timeoutMs)
-    )
+      setTimeout(() => reject(new Error(errorMessage)), timeoutMs),
+    ),
   ]);
 }
 
@@ -40,13 +43,16 @@ async function withTimeout<T>(
 function verifyRazorpayWebhookSignature(
   body: string,
   signature: string,
-  secret: string
+  secret: string,
 ): boolean {
   try {
     // First try Razorpay's built-in verification
     return validateWebhookSignature(body, signature, secret);
   } catch (error) {
-    console.warn("[Razorpay] Built-in verification failed, falling back to manual HMAC:", error);
+    console.warn(
+      "[Razorpay] Built-in verification failed, falling back to manual HMAC:",
+      error,
+    );
 
     // Fallback to manual HMAC verification
     try {
@@ -86,7 +92,10 @@ export async function verifyAndParseWebhook(
         return {
           isValid: false,
           gateway: "STRIPE",
-          error: error instanceof Error ? error.message : "Unknown verification error"
+          error:
+            error instanceof Error
+              ? error.message
+              : "Unknown verification error",
         };
       }
     }
@@ -96,14 +105,16 @@ export async function verifyAndParseWebhook(
       try {
         const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET;
         if (!webhookSecret) {
-          throw new Error("RAZORPAY_WEBHOOK_SECRET environment variable is not set");
+          throw new Error(
+            "RAZORPAY_WEBHOOK_SECRET environment variable is not set",
+          );
         }
 
         // Verify signature using enhanced method
         const isSignatureValid = verifyRazorpayWebhookSignature(
           body,
           razorpaySignature,
-          webhookSecret
+          webhookSecret,
         );
 
         if (!isSignatureValid) {
@@ -111,7 +122,7 @@ export async function verifyAndParseWebhook(
           return {
             isValid: false,
             gateway: "RAZORPAY",
-            error: "Invalid webhook signature"
+            error: "Invalid webhook signature",
           };
         }
 
@@ -124,37 +135,44 @@ export async function verifyAndParseWebhook(
           return {
             isValid: false,
             gateway: "RAZORPAY",
-            error: "Invalid JSON payload"
+            error: "Invalid JSON payload",
           };
         }
 
         // Validate webhook structure using Zod schema
         const validation = validateRazorpayWebhook(parsedEvent);
         if (!validation.isValid) {
-          console.error("[Razorpay Webhook] Schema validation failed:", validation.error);
+          console.error(
+            "[Razorpay Webhook] Schema validation failed:",
+            validation.error,
+          );
           return {
             isValid: false,
             gateway: "RAZORPAY",
-            error: `Schema validation failed: ${validation.error}`
+            error: `Schema validation failed: ${validation.error}`,
           };
         }
 
-        console.log(`[Razorpay Webhook] Successfully verified event: ${validation.event?.event}`);
+        console.log(
+          `[Razorpay Webhook] Successfully verified event: ${validation.event?.event}`,
+        );
         return {
           isValid: true,
           gateway: "RAZORPAY",
-          event: validation.event
+          event: validation.event,
         };
-
       } catch (error) {
         console.error("[Razorpay Webhook] Verification process failed:", error);
         return {
           isValid: false,
           gateway: "RAZORPAY",
-          error: error instanceof Error ? error.message : "Unknown verification error"
+          error:
+            error instanceof Error
+              ? error.message
+              : "Unknown verification error",
         };
-            }
       }
+    }
 
     // Lemon Squeezy webhook verification
     if (lemonSqueezySignature) {
@@ -175,15 +193,21 @@ export async function verifyAndParseWebhook(
           return {
             isValid: false,
             gateway: "LEMON_SQUEEZY",
-            error: "Invalid webhook signature"
+            error: "Invalid webhook signature",
           };
         }
       } catch (error) {
-        console.error("[Lemon Squeezy Webhook] Verification process failed:", error);
+        console.error(
+          "[Lemon Squeezy Webhook] Verification process failed:",
+          error,
+        );
         return {
           isValid: false,
           gateway: "LEMON_SQUEEZY",
-          error: error instanceof Error ? error.message : "Unknown verification error"
+          error:
+            error instanceof Error
+              ? error.message
+              : "Unknown verification error",
         };
       }
     }
@@ -203,7 +227,7 @@ export async function verifyAndParseWebhook(
           return {
             isValid: false,
             gateway: "XFLOW",
-            error: "Invalid webhook signature"
+            error: "Invalid webhook signature",
           };
         }
       } catch (error) {
@@ -211,26 +235,45 @@ export async function verifyAndParseWebhook(
         return {
           isValid: false,
           gateway: "XFLOW",
-          error: error instanceof Error ? error.message : "Unknown verification error"
+          error:
+            error instanceof Error
+              ? error.message
+              : "Unknown verification error",
         };
       }
     }
 
-    return { isValid: false, gateway: null, error: "No supported webhook signature found" };
+    return {
+      isValid: false,
+      gateway: null,
+      error: "No supported webhook signature found",
+    };
   } catch (error) {
     console.error("[Webhook] Global verification error:", error);
-    console.error("[Webhook] Headers:", Object.fromEntries(req.headers.entries()));
+    console.error(
+      "[Webhook] Headers:",
+      Object.fromEntries(req.headers.entries()),
+    );
     console.error("[Webhook] Body length:", body.length);
     return {
       isValid: false,
       gateway: null,
-      error: error instanceof Error ? error.message : "Unknown webhook processing error"
+      error:
+        error instanceof Error
+          ? error.message
+          : "Unknown webhook processing error",
     };
   }
 }
 
 type StandardizedEvent = {
-  eventType: "payment.succeeded" | "payment.failed" | "payment.authorized" | "payment.disputed" | "refund.created" | "settlement.processed";
+  eventType:
+    | "payment.succeeded"
+    | "payment.failed"
+    | "payment.authorized"
+    | "payment.disputed"
+    | "refund.created"
+    | "settlement.processed";
   paymentIntentId: string;
   metadata: any;
   amount?: number;
@@ -338,14 +381,16 @@ export function standardizeWebhookEvent(
     if (event.meta.event_name === "order_created") {
       return {
         eventType: "payment.succeeded",
-        paymentIntentId: event.data.attributes.first_order_item.order_id.toString(),
+        paymentIntentId:
+          event.data.attributes.first_order_item.order_id.toString(),
         metadata: event.meta.custom_data ?? {},
       };
     }
     if (event.meta.event_name === "order_refunded") {
       return {
         eventType: "payment.failed",
-        paymentIntentId: event.data.attributes.first_order_item.order_id.toString(),
+        paymentIntentId:
+          event.data.attributes.first_order_item.order_id.toString(),
         metadata: event.meta.custom_data ?? {},
       };
     }
@@ -376,16 +421,21 @@ export async function processWebhookEvent(event: StandardizedEvent) {
     await withTimeout(
       processEventInternal(event),
       25000,
-      `Webhook processing timeout for event: ${event.eventType}`
+      `Webhook processing timeout for event: ${event.eventType}`,
     );
   } catch (error) {
-    console.error(`[Webhook] Processing failed for event ${event.eventType}:`, error);
+    console.error(
+      `[Webhook] Processing failed for event ${event.eventType}:`,
+      error,
+    );
     throw error;
   }
 }
 
 async function processEventInternal(event: StandardizedEvent) {
-  console.log(`[Webhook] Processing event: ${event.eventType} for payment: ${event.paymentIntentId}`);
+  console.log(
+    `[Webhook] Processing event: ${event.eventType} for payment: ${event.paymentIntentId}`,
+  );
 
   switch (event.eventType) {
     case "payment.succeeded":
@@ -395,13 +445,25 @@ async function processEventInternal(event: StandardizedEvent) {
       await handleFailedPayment(event.paymentIntentId);
       break;
     case "payment.authorized":
-      await handleAuthorizedPayment(event.paymentIntentId, event.metadata, event.amount);
+      await handleAuthorizedPayment(
+        event.paymentIntentId,
+        event.metadata,
+        event.amount,
+      );
       break;
     case "payment.disputed":
-      await handleDisputedPayment(event.paymentIntentId, event.disputeId, event.amount);
+      await handleDisputedPayment(
+        event.paymentIntentId,
+        event.disputeId,
+        event.amount,
+      );
       break;
     case "refund.created":
-      await handleRefundCreated(event.paymentIntentId, event.refundId, event.amount);
+      await handleRefundCreated(
+        event.paymentIntentId,
+        event.refundId,
+        event.amount,
+      );
       break;
     case "settlement.processed":
       await handleSettlementProcessed(event.settlementId, event.amount);
@@ -411,10 +473,7 @@ async function processEventInternal(event: StandardizedEvent) {
   }
 }
 
-async function handleSuccessfulPayment(
-  paymentIntentId: string,
-  metadata: any,
-) {
+async function handleSuccessfulPayment(paymentIntentId: string, metadata: any) {
   await prisma.$transaction(async (tx) => {
     const payment = await tx.payment.findUnique({
       where: { paymentIntent: paymentIntentId },
@@ -426,9 +485,7 @@ async function handleSuccessfulPayment(
     }
 
     if (payment.paymentStatus === "SUCCEEDED") {
-      console.log(
-        `Payment ${paymentIntentId} has already been processed.`,
-      );
+      console.log(`Payment ${paymentIntentId} has already been processed.`);
       return;
     }
 
@@ -738,7 +795,9 @@ async function handleAuthorizedPayment(
     });
 
     if (!payment) {
-      console.warn(`Payment not found for authorized intent: ${paymentIntentId}`);
+      console.warn(
+        `Payment not found for authorized intent: ${paymentIntentId}`,
+      );
       return;
     }
 
@@ -755,7 +814,9 @@ async function handleAuthorizedPayment(
       },
     });
 
-    console.log(`Payment ${paymentIntentId} authorized successfully. Amount: ${amount}`);
+    console.log(
+      `Payment ${paymentIntentId} authorized successfully. Amount: ${amount}`,
+    );
   });
 }
 
@@ -788,7 +849,9 @@ async function handleDisputedPayment(
       await cleanupFailedPaymentAppointment(tx, payment.appointmentId);
     }
 
-    console.log(`Payment ${paymentIntentId} marked as disputed. Dispute ID: ${disputeId}, Amount: ${amount}`);
+    console.log(
+      `Payment ${paymentIntentId} marked as disputed. Dispute ID: ${disputeId}, Amount: ${amount}`,
+    );
   });
 }
 
@@ -810,7 +873,9 @@ async function handleRefundCreated(
     // Log refund information (no payment status change needed for successful refunds)
     // Note: If you need to track refund information, consider adding a refunds table
 
-    console.log(`Refund created for payment ${paymentIntentId}. Refund ID: ${refundId}, Amount: ${amount}`);
+    console.log(
+      `Refund created for payment ${paymentIntentId}. Refund ID: ${refundId}, Amount: ${amount}`,
+    );
   });
 }
 
@@ -820,7 +885,9 @@ async function handleSettlementProcessed(
 ) {
   // Settlement processing is usually for informational purposes
   // You might want to update financial records or send notifications
-  console.log(`Settlement processed. Settlement ID: ${settlementId}, Amount: ${amount}`);
+  console.log(
+    `Settlement processed. Settlement ID: ${settlementId}, Amount: ${amount}`,
+  );
 
   // Optional: Store settlement information in database
   // This would require a settlements table in your schema

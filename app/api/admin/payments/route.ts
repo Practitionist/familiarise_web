@@ -2,7 +2,12 @@ import { getServerSession } from "next-auth";
 import { NextRequest, NextResponse } from "next/server";
 import authOptions from "../../auth/[...nextauth]/options";
 import prisma from "@/lib/prisma";
-import { UserRole, PaymentStatus, PaymentGateway, AppointmentsType } from "@prisma/client";
+import {
+  UserRole,
+  PaymentStatus,
+  PaymentGateway,
+  AppointmentsType,
+} from "@prisma/client";
 
 export async function GET(req: NextRequest) {
   try {

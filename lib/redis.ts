@@ -1,80 +1,299 @@
-import { Redis } from "ioredis";
-import { Ratelimit } from "@upstash/ratelimit";
-import { Redis as UpstashRedis } from "@upstash/redis";
+/**
+ * Upstash Redis Client
+ *
+ * This module provides:
+ * - Redis client for distributed locking (used by appointmentlock.ts)
+ * - Circuit breaker pattern to handle Redis failures gracefully
+ * - Simple lock/unlock utilities
+ *
+ * NOTE: API rate limiting is handled by Arcjet at the route level.
+ * This module focuses on Redis operations for distributed state management.
+ *
+ * Mock Mode:
+ * - Set USE_MOCK_REDIS=true for local development without Upstash credentials
+ * - Automatically enabled when NODE_ENV=test
+ * - Mock provides in-memory Redis with full Lua script support
+ */
 
-let redis: Redis | null = null;
-let upstashRedis: UpstashRedis | null = null;
-let ratelimit: Ratelimit | null = null;
+import { Redis } from "@upstash/redis";
+import crypto from "crypto";
+import { getMockRedis, MockRedis } from "./redis-mock";
 
-// Initialize Redis client based on environment
-if (
-  process.env.UPSTASH_REDIS_REST_URL &&
-  process.env.UPSTASH_REDIS_REST_TOKEN
-) {
-  // Use Upstash Redis
-  upstashRedis = new UpstashRedis({
+// Check if we should use mock Redis
+const USE_MOCK_REDIS =
+  process.env.USE_MOCK_REDIS === "true" || process.env.NODE_ENV === "test";
+
+// Type that represents either real Redis or MockRedis
+type RedisClient = Redis | MockRedis;
+
+let redis: RedisClient;
+
+if (USE_MOCK_REDIS) {
+  // Use mock Redis for local dev and tests
+  console.log(
+    JSON.stringify({
+      event: "redis_mock_enabled",
+      reason:
+        process.env.NODE_ENV === "test"
+          ? "NODE_ENV=test"
+          : "USE_MOCK_REDIS=true",
+      timestamp: new Date().toISOString(),
+    }),
+  );
+  redis = getMockRedis();
+} else {
+  // Validate environment variables for real Redis
+  if (
+    !process.env.UPSTASH_REDIS_REST_URL ||
+    !process.env.UPSTASH_REDIS_REST_TOKEN
+  ) {
+    throw new Error(
+      "UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN must be set (or use USE_MOCK_REDIS=true for local dev)",
+    );
+  }
+
+  // Initialize real Upstash Redis client
+  redis = new Redis({
     url: process.env.UPSTASH_REDIS_REST_URL,
     token: process.env.UPSTASH_REDIS_REST_TOKEN,
   });
-
-  // Create rate limiter - 5 requests per 10 seconds
-  ratelimit = new Ratelimit({
-    redis: upstashRedis,
-    limiter: Ratelimit.slidingWindow(5, "10 s"),
-  });
-} else {
-  // Use normal Redis
-  redis = new Redis(process.env.REDIS_URL || "redis://localhost:6379");
 }
 
-// Rate limiting function
-export async function checkRateLimit(identifier: string): Promise<boolean> {
-  if (ratelimit) {
-    // Using Upstash rate limiter
-    const result = await ratelimit.limit(identifier);
-    return result.success;
-  } else if (redis) {
-    // Simple rate limiting with normal Redis
-    const key = `ratelimit:${identifier}`;
-    const limit = 5; // requests
-    const window = 10; // seconds
+// ============================================================================
+// Circuit Breaker Pattern
+// Prevents cascading failures when Redis is unavailable
+// ============================================================================
 
-    const current = await redis.incr(key);
-    if (current === 1) {
-      await redis.expire(key, window);
+interface CircuitBreakerState {
+  failures: number;
+  lastFailure: number;
+  state: "CLOSED" | "OPEN" | "HALF_OPEN";
+  halfOpenSuccesses: number;
+}
+
+const circuitBreaker: CircuitBreakerState = {
+  failures: 0,
+  lastFailure: 0,
+  state: "CLOSED",
+  halfOpenSuccesses: 0,
+};
+
+const CIRCUIT_CONFIG = {
+  failureThreshold: 5, // Open after 5 consecutive failures
+  resetTimeout: 30000, // Try again after 30 seconds
+  halfOpenSuccessThreshold: 3, // Close after 3 successful half-open requests
+};
+
+/**
+ * Execute Redis operation with circuit breaker protection
+ *
+ * Circuit Breaker States:
+ * - CLOSED: Normal operation, all requests go through
+ * - OPEN: Redis is failing, fail fast without attempting
+ * - HALF_OPEN: Testing if Redis is back, limited requests
+ *
+ * @param operation - The Redis operation to execute
+ * @param fallback - Optional fallback value if circuit is open
+ * @returns Result of operation or fallback
+ */
+export async function withCircuitBreaker<T>(
+  operation: () => Promise<T>,
+  fallback?: () => T,
+): Promise<T> {
+  // Check circuit state
+  if (circuitBreaker.state === "OPEN") {
+    const timeSinceFailure = Date.now() - circuitBreaker.lastFailure;
+
+    if (timeSinceFailure > CIRCUIT_CONFIG.resetTimeout) {
+      // Transition to HALF_OPEN for testing
+      circuitBreaker.state = "HALF_OPEN";
+      circuitBreaker.halfOpenSuccesses = 0;
+      console.log(
+        JSON.stringify({
+          event: "circuit_breaker_half_open",
+          timestamp: new Date().toISOString(),
+        }),
+      );
+    } else {
+      // Circuit is still open, fail fast
+      console.warn(
+        JSON.stringify({
+          event: "circuit_breaker_rejected",
+          remaining_ms: CIRCUIT_CONFIG.resetTimeout - timeSinceFailure,
+          timestamp: new Date().toISOString(),
+        }),
+      );
+
+      if (fallback) return fallback();
+      throw new Error("Redis circuit breaker is OPEN - service unavailable");
+    }
+  }
+
+  try {
+    const result = await operation();
+
+    // Success handling based on state
+    if (circuitBreaker.state === "HALF_OPEN") {
+      circuitBreaker.halfOpenSuccesses++;
+
+      if (
+        circuitBreaker.halfOpenSuccesses >=
+        CIRCUIT_CONFIG.halfOpenSuccessThreshold
+      ) {
+        // Enough successes, close the circuit
+        circuitBreaker.state = "CLOSED";
+        circuitBreaker.failures = 0;
+        circuitBreaker.halfOpenSuccesses = 0;
+        console.log(
+          JSON.stringify({
+            event: "circuit_breaker_closed",
+            reason: "successful_half_open_tests",
+            timestamp: new Date().toISOString(),
+          }),
+        );
+      }
+    } else if (
+      circuitBreaker.state === "CLOSED" &&
+      circuitBreaker.failures > 0
+    ) {
+      // Reset failure count on success
+      circuitBreaker.failures = 0;
     }
 
-    return current <= limit;
+    return result;
+  } catch (error) {
+    // Failure handling
+    circuitBreaker.failures++;
+    circuitBreaker.lastFailure = Date.now();
+
+    if (circuitBreaker.state === "HALF_OPEN") {
+      // Failed during half-open, back to open
+      circuitBreaker.state = "OPEN";
+      circuitBreaker.halfOpenSuccesses = 0;
+      console.error(
+        JSON.stringify({
+          event: "circuit_breaker_reopened",
+          reason: "half_open_failure",
+          timestamp: new Date().toISOString(),
+        }),
+      );
+    } else if (circuitBreaker.failures >= CIRCUIT_CONFIG.failureThreshold) {
+      // Too many failures, open the circuit
+      circuitBreaker.state = "OPEN";
+      console.error(
+        JSON.stringify({
+          event: "circuit_breaker_opened",
+          failures: circuitBreaker.failures,
+          timestamp: new Date().toISOString(),
+        }),
+      );
+    }
+
+    if (fallback) return fallback();
+    throw error;
   }
-  return true; // No rate limiting if Redis is not configured
 }
 
-// Distributed locking
+/**
+ * Check Redis health (for monitoring and health endpoints)
+ * @returns True if Redis is healthy, false otherwise
+ */
+export async function checkRedisHealth(): Promise<boolean> {
+  try {
+    const result = await redis.ping();
+    return result === "PONG";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Get circuit breaker status (for monitoring dashboards)
+ * @returns Current circuit breaker state
+ */
+export function getCircuitBreakerStatus(): {
+  state: string;
+  failures: number;
+  lastFailure: number | null;
+} {
+  return {
+    state: circuitBreaker.state,
+    failures: circuitBreaker.failures,
+    lastFailure:
+      circuitBreaker.lastFailure > 0 ? circuitBreaker.lastFailure : null,
+  };
+}
+
+/**
+ * Manually reset circuit breaker (for admin operations)
+ */
+export function resetCircuitBreaker(): void {
+  circuitBreaker.state = "CLOSED";
+  circuitBreaker.failures = 0;
+  circuitBreaker.lastFailure = 0;
+  circuitBreaker.halfOpenSuccesses = 0;
+  console.log(
+    JSON.stringify({
+      event: "circuit_breaker_reset",
+      reason: "manual_reset",
+      timestamp: new Date().toISOString(),
+    }),
+  );
+}
+
+// ============================================================================
+// Simple Lock/Unlock (for distributed locking)
+// ============================================================================
+
+/**
+ * Acquire a simple lock
+ * @param key - The lock key
+ * @param ttl - Time to live in milliseconds
+ * @returns Lock token if acquired, null if already locked
+ */
 export async function acquireLock(
-  lockKey: string,
-  ttl: number = 30000,
-): Promise<boolean> {
-  if (upstashRedis) {
-    // Using Upstash Redis
-    return (
-      (await upstashRedis.set(lockKey, "locked", {
-        nx: true,
-        px: ttl,
-      })) === "OK"
-    );
-  } else if (redis) {
-    // Using normal Redis
-    return (await redis.set(lockKey, "locked", "PX", ttl, "NX")) === "OK";
-  }
-  return true; // No locking if Redis is not configured
+  key: string,
+  ttl: number,
+): Promise<string | null> {
+  const token = crypto.randomUUID();
+  const result = await redis.set(key, token, { nx: true, px: ttl });
+  return result === "OK" ? token : null;
 }
 
-export async function releaseLock(lockKey: string): Promise<void> {
-  if (upstashRedis) {
-    await upstashRedis.del(lockKey);
-  } else if (redis) {
-    await redis.del(lockKey);
+/**
+ * Release a simple lock (atomic version using Lua script)
+ * Uses atomic check-and-delete to prevent releasing another client's lock
+ * @param key - The lock key
+ * @param token - The lock token (for safe release)
+ */
+export async function releaseLock(key: string, token: string): Promise<void> {
+  // Atomic release using Lua script
+  const script = `
+    if redis.call("get", KEYS[1]) == ARGV[1] then
+      return redis.call("del", KEYS[1])
+    else
+      return 0
+    end
+  `;
+
+  await redis.eval(script, [key], [token]);
+}
+
+/**
+ * Check if mock Redis is being used
+ */
+export function isMockRedis(): boolean {
+  return USE_MOCK_REDIS;
+}
+
+/**
+ * Reset mock Redis state (for testing)
+ * No-op if using real Redis
+ */
+export function resetRedisForTesting(): void {
+  if (USE_MOCK_REDIS && redis instanceof MockRedis) {
+    redis.clear();
   }
 }
 
-export default redis || upstashRedis;
+export default redis;

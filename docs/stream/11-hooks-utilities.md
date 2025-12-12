@@ -41,17 +41,17 @@ The `useGetCallById` hook fetches or creates a Stream Video call by its ID. It h
 
 #### Parameters
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `callId` | `string` | Yes | Unique identifier for the call |
+| Parameter | Type     | Required | Description                    |
+| --------- | -------- | -------- | ------------------------------ |
+| `callId`  | `string` | Yes      | Unique identifier for the call |
 
 #### Return Values
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `call` | `Call \| null` | Stream Video call instance or null if not loaded |
-| `isCallLoading` | `boolean` | Loading state indicator |
-| `error` | `Error \| null` | Error object if call fetch/creation failed |
+| Property        | Type            | Description                                      |
+| --------------- | --------------- | ------------------------------------------------ |
+| `call`          | `Call \| null`  | Stream Video call instance or null if not loaded |
+| `isCallLoading` | `boolean`       | Loading state indicator                          |
+| `error`         | `Error \| null` | Error object if call fetch/creation failed       |
 
 #### Implementation
 
@@ -86,6 +86,7 @@ The hook performs the following steps:
    - Validates that `callId` is provided
 
 2. **Query First Approach**
+
    ```typescript
    // First, attempts to find existing call
    const { calls } = await client.queryCalls({
@@ -94,10 +95,11 @@ The hook performs the following steps:
    ```
 
 3. **Fallback Creation**
+
    ```typescript
    // If no call found, creates new call with default type
    if (calls.length === 0) {
-     const callInstance = client.call('default', callId);
+     const callInstance = client.call("default", callId);
      await callInstance.getOrCreate();
    }
    ```
@@ -109,11 +111,11 @@ The hook performs the following steps:
 
 #### Error States
 
-| Error Condition | Error Message | Description |
-|----------------|---------------|-------------|
-| No client | "Video client not available" | StreamProvider not initialized |
-| No call ID | "Call ID is required" | Invalid or missing callId parameter |
-| Query/Create failure | Varies | Network, permission, or API errors |
+| Error Condition      | Error Message                | Description                         |
+| -------------------- | ---------------------------- | ----------------------------------- |
+| No client            | "Video client not available" | StreamProvider not initialized      |
+| No call ID           | "Call ID is required"        | Invalid or missing callId parameter |
+| Query/Create failure | Varies                       | Network, permission, or API errors  |
 
 #### Usage Example with Error Handling
 
@@ -172,13 +174,13 @@ The `useStreamConnection` hook provides access to the Stream connection state an
 
 #### Return Values
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `chatConnected` | `boolean` | Chat client connection status |
-| `videoConnected` | `boolean` | Video client connection status |
-| `isConnecting` | `boolean` | Connection in progress indicator |
-| `error` | `string \| null` | Current connection error message |
-| `retryConnection` | `() => void` | Function to retry failed connection |
+| Property          | Type             | Description                         |
+| ----------------- | ---------------- | ----------------------------------- |
+| `chatConnected`   | `boolean`        | Chat client connection status       |
+| `videoConnected`  | `boolean`        | Video client connection status      |
+| `isConnecting`    | `boolean`        | Connection in progress indicator    |
+| `error`           | `string \| null` | Current connection error message    |
+| `retryConnection` | `() => void`     | Function to retry failed connection |
 
 #### Implementation
 
@@ -304,19 +306,19 @@ The `useUserData` hook fetches comprehensive user details including profile and 
 
 #### Parameters
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `userId` | `string` | Yes | User ID to fetch details for |
+| Parameter | Type     | Required | Description                  |
+| --------- | -------- | -------- | ---------------------------- |
+| `userId`  | `string` | Yes      | User ID to fetch details for |
 
 #### Return Values
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `userDetails` | `User \| null` | Core user object with auth data |
-| `profileDetails` | `TConsultantProfile \| TConsulteeProfile \| TStaffProfile \| null` | Role-specific profile data |
-| `reviews` | `ConsultantReview[]` | Reviews array (consultants only) |
-| `isLoading` | `boolean` | Loading state indicator |
-| `error` | `Error \| null` | Error object if fetch failed |
+| Property         | Type                                                               | Description                      |
+| ---------------- | ------------------------------------------------------------------ | -------------------------------- |
+| `userDetails`    | `User \| null`                                                     | Core user object with auth data  |
+| `profileDetails` | `TConsultantProfile \| TConsulteeProfile \| TStaffProfile \| null` | Role-specific profile data       |
+| `reviews`        | `ConsultantReview[]`                                               | Reviews array (consultants only) |
+| `isLoading`      | `boolean`                                                          | Loading state indicator          |
+| `error`          | `Error \| null`                                                    | Error object if fetch failed     |
 
 #### Implementation
 
@@ -364,9 +366,9 @@ The hook automatically fetches appropriate profile data based on user role:
 // - User details
 // - Consultant profile
 // - Consultant reviews
-if (userData.role === 'CONSULTANT' && userData.consultantProfileId) {
+if (userData.role === "CONSULTANT" && userData.consultantProfileId) {
   const consultantData = await fetchConsultantDetails(
-    userData.consultantProfileId
+    userData.consultantProfileId,
   );
   const reviewsData = await fetchReviews(userData.consultantProfileId);
 }
@@ -378,9 +380,9 @@ if (userData.role === 'CONSULTANT' && userData.consultantProfileId) {
 // Fetches:
 // - User details
 // - Consultee profile
-if (userData.role === 'CONSULTEE' && userData.consulteeProfileId) {
+if (userData.role === "CONSULTEE" && userData.consulteeProfileId) {
   const consulteeData = await fetchConsulteeDetails(
-    userData.consulteeProfileId
+    userData.consulteeProfileId,
   );
 }
 ```
@@ -391,7 +393,7 @@ if (userData.role === 'CONSULTEE' && userData.consulteeProfileId) {
 // Fetches:
 // - User details
 // - Staff profile
-if (userData.role === 'STAFF' && userData.staffProfileId) {
+if (userData.role === "STAFF" && userData.staffProfileId) {
   const staffData = await fetchStaffDetails(userData.staffProfileId);
 }
 ```
@@ -549,13 +551,15 @@ function useTokenRefresh(userId: string) {
 function useCallState(callId: string) {
   const { call, isCallLoading, error } = useGetCallById(callId);
   const [participants, setParticipants] = useState<Participant[]>([]);
-  const [callState, setCallState] = useState<'idle' | 'ringing' | 'joined'>('idle');
+  const [callState, setCallState] = useState<"idle" | "ringing" | "joined">(
+    "idle",
+  );
 
   useEffect(() => {
     if (!call) return;
 
-    const unsubscribe = call.on('call.session_participant_joined', (event) => {
-      console.log('Participant joined:', event.participant);
+    const unsubscribe = call.on("call.session_participant_joined", (event) => {
+      console.log("Participant joined:", event.participant);
       setParticipants(call.state.participants);
     });
 
@@ -577,15 +581,17 @@ function useCallState(callId: string) {
 ```typescript
 function useConnectionHealth() {
   const { chatConnected, videoConnected, error } = useStreamConnection();
-  const [health, setHealth] = useState<'healthy' | 'degraded' | 'offline'>('healthy');
+  const [health, setHealth] = useState<"healthy" | "degraded" | "offline">(
+    "healthy",
+  );
 
   useEffect(() => {
     if (error) {
-      setHealth('offline');
+      setHealth("offline");
     } else if (chatConnected && videoConnected) {
-      setHealth('healthy');
+      setHealth("healthy");
     } else {
-      setHealth('degraded');
+      setHealth("degraded");
     }
   }, [chatConnected, videoConnected, error]);
 
@@ -614,7 +620,7 @@ function useStreamOperation<T>(operation: () => Promise<T>) {
       setData(result);
       return result;
     } catch (err) {
-      const error = err instanceof Error ? err : new Error('Operation failed');
+      const error = err instanceof Error ? err : new Error("Operation failed");
       setError(error);
       throw error;
     } finally {
@@ -629,10 +635,7 @@ function useStreamOperation<T>(operation: () => Promise<T>) {
 ### Pattern 2: Retry Logic
 
 ```typescript
-function useStreamRetry<T>(
-  operation: () => Promise<T>,
-  maxRetries = 3
-) {
+function useStreamRetry<T>(operation: () => Promise<T>, maxRetries = 3) {
   const [attempts, setAttempts] = useState(0);
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<Error | null>(null);
@@ -647,12 +650,12 @@ function useStreamRetry<T>(
       } catch (err) {
         setAttempts(i + 1);
         if (i === maxRetries - 1) {
-          setError(err instanceof Error ? err : new Error('Failed'));
+          setError(err instanceof Error ? err : new Error("Failed"));
           throw err;
         }
         // Exponential backoff
-        await new Promise(resolve =>
-          setTimeout(resolve, Math.pow(2, i) * 1000)
+        await new Promise((resolve) =>
+          setTimeout(resolve, Math.pow(2, i) * 1000),
         );
       }
     }
@@ -669,13 +672,13 @@ function useStreamErrorHandler() {
   const [error, setError] = useState<Error | null>(null);
 
   const handleError = useCallback((err: unknown) => {
-    const error = err instanceof Error ? err : new Error('Unknown error');
+    const error = err instanceof Error ? err : new Error("Unknown error");
 
-    console.error('Stream error:', error);
+    console.error("Stream error:", error);
     setError(error);
 
     // Log to monitoring service
-    if (process.env.NODE_ENV === 'production') {
+    if (process.env.NODE_ENV === "production") {
       // Sentry, LogRocket, etc.
       logError(error);
     }
@@ -740,8 +743,8 @@ function useCallEvents(call: Call | null) {
   useEffect(() => {
     if (!call) return;
 
-    const unsubscribe = call.on('*', (event) => {
-      console.log('Call event:', event);
+    const unsubscribe = call.on("*", (event) => {
+      console.log("Call event:", event);
     });
 
     // Always cleanup
@@ -756,14 +759,20 @@ function useCallEvents(call: Call | null) {
 function useFilteredChannels(userId: string) {
   const { client } = useChatContext();
 
-  const filters = useMemo(() => ({
-    type: 'messaging',
-    members: { $in: [userId] },
-  }), [userId]);
+  const filters = useMemo(
+    () => ({
+      type: "messaging",
+      members: { $in: [userId] },
+    }),
+    [userId],
+  );
 
-  const sort = useMemo(() => ({
-    last_message_at: -1,
-  }), []);
+  const sort = useMemo(
+    () => ({
+      last_message_at: -1,
+    }),
+    [],
+  );
 
   return { filters, sort };
 }
@@ -774,16 +783,12 @@ function useFilteredChannels(userId: string) {
 ```typescript
 function useStreamSetup(userId: string) {
   const { userDetails, isLoading: userLoading } = useUserData(userId);
-  const {
-    chatConnected,
-    videoConnected,
-    isConnecting,
-    error
-  } = useStreamConnection();
+  const { chatConnected, videoConnected, isConnecting, error } =
+    useStreamConnection();
 
   const isReady = useMemo(
     () => !userLoading && !isConnecting && chatConnected && videoConnected,
-    [userLoading, isConnecting, chatConnected, videoConnected]
+    [userLoading, isConnecting, chatConnected, videoConnected],
   );
 
   return {
@@ -798,13 +803,13 @@ function useStreamSetup(userId: string) {
 ### 6. Type Safety
 
 ```typescript
-import { Call, StreamVideoClient } from '@stream-io/video-react-sdk';
-import { StreamChat } from 'stream-chat';
+import { Call, StreamVideoClient } from "@stream-io/video-react-sdk";
+import { StreamChat } from "stream-chat";
 
 function useTypedStreamClients() {
   const videoClient = useStreamVideoClient() as StreamVideoClient | undefined;
   const { client: chatClient } = useChatContext() as {
-    client: StreamChat | undefined
+    client: StreamChat | undefined;
   };
 
   return { videoClient, chatClient };
@@ -820,7 +825,7 @@ function useStreamWithErrorContext(userId: string) {
 
   const error = useMemo(
     () => userError || connectionError,
-    [userError, connectionError]
+    [userError, connectionError],
   );
 
   return { userDetails, error };

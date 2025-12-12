@@ -1,5 +1,8 @@
 # Dashboard Prefetching Strategy
 
+> **Related**: This doc covers client-side prefetching for fast navigation.
+> For server-side caching and real-time updates, see [`realtime-caching-strategy.md`](./realtime-caching-strategy.md).
+
 ## Overview
 
 This document outlines the enhanced prefetching strategy implemented for both consultant and consultee dashboards, providing lightning-fast navigation and improved user experience.

@@ -5,10 +5,30 @@ on:
     # Run every 15 minutes
     - cron: "*/15 * * * *"
   workflow_dispatch: # Allow manual triggering
+  push:
+    branches:
+      - dev
+  pull_request:
+    branches:
+      - dev
+    types: [opened, synchronize, reopened]
 
 jobs:
   cleanup-abandoned-payments:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      # Database connection (required for Prisma)
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DIRECT_URL: ${{ secrets.DIRECT_URL }}
+
+      # Payment gateway credentials for cancelling abandoned payment intents
+      STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+      RAZORPAY_KEY_ID: ${{ secrets.RAZORPAY_KEY_ID }}
+      RAZORPAY_SECRET: ${{ secrets.RAZORPAY_SECRET }}
+      LEMON_SQUEEZY_API_KEY: ${{ secrets.LEMON_SQUEEZY_API_KEY }}
+      XFLOW_SECRET_KEY: ${{ secrets.XFLOW_SECRET_KEY }}
 
     steps:
       - name: Checkout code
@@ -23,11 +43,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Create .env file from secret
-        run: echo "${{ secrets.ENV_FILE }}" | base64 -d > .env
+      - name: Generate Prisma client
+        run: npx prisma generate
 
       - name: Run abandoned payment cleanup
-        run: npx ts-node --esm jobs/cleanup-abandoned-payments.ts
+        run: npx tsx jobs/cleanup-abandoned-payments.ts
 
       - name: Notify on failure
         if: failure()

@@ -7,10 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
 import { fetchReviews } from "@/lib/user";
-import {
-  searchParamsSchema,
-  createCheckoutData
-} from "@/schemas/checkout";
+import { searchParamsSchema, createCheckoutData } from "@/schemas/checkout";
 import { PaymentGateway } from "@prisma/client";
 import { CreditCard as CreditCardIcon } from "lucide-react";
 import { use, useCallback, useEffect, useState } from "react";
@@ -112,11 +109,13 @@ export default function ClassCheckoutPage({
 
         // Find the first SCHEDULED or IN_PROGRESS class instance
         const availableClass = planData.data.classes?.find(
-          (c) => c.status === "SCHEDULED" || c.status === "IN_PROGRESS"
+          (c) => c.status === "SCHEDULED" || c.status === "IN_PROGRESS",
         );
 
         if (!availableClass?.id) {
-          throw new Error("No available class sessions. All sessions may be full, cancelled, or completed.");
+          throw new Error(
+            "No available class sessions. All sessions may be full, cancelled, or completed.",
+          );
         }
 
         const firstClassId = availableClass.id;
@@ -151,7 +150,10 @@ export default function ClassCheckoutPage({
             errorTitle = "Class Not Found";
             errorDescription =
               "This class could not be found or may no longer be available. Please go back and select a different class, or contact support if you believe this is an error.";
-          } else if (error.message.includes("network") || error.message.includes("fetch")) {
+          } else if (
+            error.message.includes("network") ||
+            error.message.includes("fetch")
+          ) {
             errorTitle = "Connection Error";
             errorDescription =
               "Unable to connect to the server. Please check your internet connection and try again.";
@@ -248,7 +250,8 @@ export default function ClassCheckoutPage({
   const planDetails = planData?.data;
   const consultantDetails = planDetails?.consultantProfile;
   const userDetails = consultantDetails?.user;
-  const nextClassSession = planDetails?.classes?.[0]?.appointments?.[0]?.slotsOfAppointment?.[0];
+  const nextClassSession =
+    planDetails?.classes?.[0]?.appointments?.[0]?.slotsOfAppointment?.[0];
 
   if (!planData || !planDetails || !consultantDetails || !userDetails) {
     return (
@@ -297,27 +300,34 @@ export default function ClassCheckoutPage({
                 <div className="flex items-center justify-between">
                   <div className="text-muted-foreground">First Session</div>
                   <div>
-                    {new Date(nextClassSession.startsAt).toLocaleDateString(undefined, {
-                      weekday: "long",
-                      year: "numeric",
-                      month: "long",
-                      day: "numeric",
-                    })}
+                    {new Date(nextClassSession.startsAt).toLocaleDateString(
+                      undefined,
+                      {
+                        weekday: "long",
+                        year: "numeric",
+                        month: "long",
+                        day: "numeric",
+                      },
+                    )}
                   </div>
                 </div>
                 <div className="flex items-center justify-between">
                   <div className="text-muted-foreground">Time</div>
                   <div>
                     {new Date(nextClassSession.startsAt).toLocaleTimeString()} -{" "}
-                    {new Date(nextClassSession.endsAt).toLocaleTimeString()}{" "}
-                    ({Intl.DateTimeFormat().resolvedOptions().timeZone})
+                    {new Date(nextClassSession.endsAt).toLocaleTimeString()} (
+                    {Intl.DateTimeFormat().resolvedOptions().timeZone})
                   </div>
                 </div>
               </>
             )}
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Duration</div>
-              <div>{planDetails?.durationInMonths ? `${Math.ceil(planDetails.durationInMonths * 4.33)} weeks` : '4 weeks'}</div>
+              <div>
+                {planDetails?.durationInMonths
+                  ? `${Math.ceil(planDetails.durationInMonths * 4.33)} weeks`
+                  : "4 weeks"}
+              </div>
             </div>
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Sessions per Week</div>
@@ -391,7 +401,12 @@ export default function ClassCheckoutPage({
                 </div>
                 <div className="font-semibold">
                   <ul className="list-disc">
-                    <li>{planDetails?.durationInMonths ? `${Math.ceil(planDetails.durationInMonths * 4.33)} weeks` : '4 weeks'} of classes</li>
+                    <li>
+                      {planDetails?.durationInMonths
+                        ? `${Math.ceil(planDetails.durationInMonths * 4.33)} weeks`
+                        : "4 weeks"}{" "}
+                      of classes
+                    </li>
                     <li>{planDetails?.callsPerWeek || 2} sessions per week</li>
                     <li>Course materials</li>
                     <li>Certificate of completion</li>
@@ -513,8 +528,7 @@ export default function ClassCheckoutPage({
                         disabled={isCheckoutProcessing}
                       >
                         {isCheckoutProcessing &&
-                        processingGateway ===
-                          `${gateway.gateway}-mock` ? (
+                        processingGateway === `${gateway.gateway}-mock` ? (
                           <>
                             <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-current mr-2"></div>
                             Processing...

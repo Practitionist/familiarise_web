@@ -71,6 +71,15 @@ export async function createRazorpayOrder({
     );
   }
 
+  // BUG-C: Validate amount is positive before creating payment order
+  if (amount <= 0) {
+    throw new PaymentError(
+      "Payment amount must be greater than zero",
+      "INVALID_AMOUNT",
+      "RAZORPAY",
+    );
+  }
+
   try {
     const order = await razorpayClient.orders.create({
       amount: toSmallestUnit(amount, currency),
@@ -105,7 +114,9 @@ export async function cancelRazorpayOrder(orderId: string): Promise<void> {
     // Check if there are any payments for this order
     const payments = await razorpayClient.orders.fetchPayments(orderId);
     if (payments.count === 0) {
-      console.log(`✅ Razorpay order had no payments, safe to ignore: ${orderId}`);
+      console.log(
+        `✅ Razorpay order had no payments, safe to ignore: ${orderId}`,
+      );
       return;
     }
     console.warn(
@@ -113,7 +124,9 @@ export async function cancelRazorpayOrder(orderId: string): Promise<void> {
     );
   } catch {
     // If we can't fetch payments, assume it's safe to ignore
-    console.log(`✅ Razorpay order fetch failed (likely safe to ignore): ${orderId}`);
+    console.log(
+      `✅ Razorpay order fetch failed (likely safe to ignore): ${orderId}`,
+    );
   }
 }
 
@@ -141,9 +154,7 @@ export async function createRazorpayRefund({
 
   try {
     // First, get the payment ID from the order
-    const payments = await razorpayClient.orders.fetchPayments(
-      paymentIntentId,
-    );
+    const payments = await razorpayClient.orders.fetchPayments(paymentIntentId);
 
     if (payments.count === 0) {
       throw new RefundError(
@@ -168,13 +179,12 @@ export async function createRazorpayRefund({
 
     return {
       refundId: refund.id,
-      amount: fromSmallestUnit(
-        Number(refund.amount),
-        refund.currency || "INR",
-      ),
+      amount: fromSmallestUnit(Number(refund.amount), refund.currency || "INR"),
       currency: refund.currency?.toUpperCase() || "INR",
       status: mapRazorpayRefundStatus(refund.status),
-      metadata: refund.notes ? (refund.notes as Record<string, unknown>) : undefined,
+      metadata: refund.notes
+        ? (refund.notes as Record<string, unknown>)
+        : undefined,
     };
   } catch (error) {
     console.error("Razorpay refund creation failed:", error);
@@ -201,13 +211,12 @@ export async function getRazorpayRefund(
 
     return {
       refundId: refund.id,
-      amount: fromSmallestUnit(
-        Number(refund.amount),
-        refund.currency || "INR",
-      ),
+      amount: fromSmallestUnit(Number(refund.amount), refund.currency || "INR"),
       currency: refund.currency?.toUpperCase() || "INR",
       status: mapRazorpayRefundStatus(refund.status),
-      metadata: refund.notes ? (refund.notes as Record<string, unknown>) : undefined,
+      metadata: refund.notes
+        ? (refund.notes as Record<string, unknown>)
+        : undefined,
     };
   } catch (error) {
     console.error("Razorpay refund retrieval failed:", error);
@@ -249,10 +258,7 @@ export async function listRazorpayRefunds(
 
     return refundsResponse.items.map((refund) => ({
       refundId: refund.id,
-      amount: fromSmallestUnit(
-        Number(refund.amount),
-        refund.currency || "INR",
-      ),
+      amount: fromSmallestUnit(Number(refund.amount), refund.currency || "INR"),
       currency: refund.currency?.toUpperCase() || "INR",
       status: mapRazorpayRefundStatus(refund.status),
       metadata: refund.notes || undefined,

@@ -27,6 +27,7 @@ import { AppointmentsType, RequestStatus } from "@prisma/client";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { RequestedSlotsDialog } from "./components/RequestedSlotsDialog";
+import { PaymentRequiredBadge } from "./components/PaymentRequiredBadge";
 import { SafeUnifiedCalendar } from "../shared/components/SafeUnifiedCalendar";
 import {
   ConsultationApiResponse,
@@ -474,9 +475,17 @@ export function RequestSlotAllocationTab({
                 </TableCell>
                 <TableCell>{request.requiredSlots}</TableCell>
                 <TableCell>
-                  <Badge variant={getRequestStatusBadgeVariant(request.status)}>
-                    {request.status}
-                  </Badge>
+                  <div className="flex flex-col gap-1">
+                    <Badge
+                      variant={getRequestStatusBadgeVariant(request.status)}
+                    >
+                      {request.status}
+                    </Badge>
+                    {request.status ===
+                      RequestStatus.APPROVED_PENDING_PAYMENT && (
+                      <PaymentRequiredBadge variant="full" />
+                    )}
+                  </div>
                 </TableCell>
                 <TableCell>
                   {request.status === RequestStatus.PENDING && (
