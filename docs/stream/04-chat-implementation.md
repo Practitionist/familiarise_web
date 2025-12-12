@@ -3,6 +3,7 @@
 > Complete guide to implementing Stream Chat channels with best practices
 
 ## Table of Contents
+
 - [Channel Types](#channel-types)
 - [Channel ID Conventions](#channel-id-conventions)
 - [Creating Channels](#creating-channels)
@@ -22,11 +23,13 @@ Stream Chat supports multiple channel types, each optimized for different use ca
 **Purpose**: One-on-one private conversations
 
 **Use Cases**:
+
 - Direct messages between users
 - Consultations (consultant-consultee)
 - Subscriptions (consultant-consultee)
 
 **Characteristics**:
+
 - Private by default
 - Only accessible to members
 - Optimized for 1:1 communication
@@ -38,11 +41,13 @@ Stream Chat supports multiple channel types, each optimized for different use ca
 **Purpose**: Group conversations with multiple participants
 
 **Use Cases**:
+
 - Webinars (host + multiple participants)
 - Classes (instructor + students)
 - Group events
 
 **Characteristics**:
+
 - Support for many members
 - Role-based permissions
 - Participant list management
@@ -59,6 +64,7 @@ Consistent channel ID naming ensures predictable behavior and prevents duplicate
 **Format**: `{userId1}-{userId2}` (alphabetically sorted)
 
 **Implementation**:
+
 ```typescript
 // Alphabetically sort user IDs using localeCompare
 const channelId = [currentUserId, targetUserId]
@@ -67,11 +73,13 @@ const channelId = [currentUserId, targetUserId]
 ```
 
 **Example**:
+
 - User A: `user_abc123`
 - User B: `user_xyz789`
 - Channel ID: `user_abc123-user_xyz789`
 
 **Why Alphabetical Sorting?**
+
 - Prevents duplicate channels for same conversation
 - Ensures same channel ID regardless of who initiates
 - Enables consistent channel lookup
@@ -83,6 +91,7 @@ const channelId = [currentUserId, targetUserId]
 **Example**: `consultation-clr4h8x0j0000ab1cdcdef123`
 
 **Data**:
+
 ```typescript
 {
   channelType: "messaging",
@@ -100,6 +109,7 @@ const channelId = [currentUserId, targetUserId]
 **Example**: `subscription-clr4h8x0j0000ab1cdcdef456`
 
 **Data**:
+
 ```typescript
 {
   channelType: "messaging",
@@ -117,6 +127,7 @@ const channelId = [currentUserId, targetUserId]
 **Example**: `webinar-clr4h8x0j0000ab1cdcdef789`
 
 **Data**:
+
 ```typescript
 {
   channelType: "team",
@@ -135,6 +146,7 @@ const channelId = [currentUserId, targetUserId]
 **Example**: `class-clr4h8x0j0000ab1cdcdef012`
 
 **Data**:
+
 ```typescript
 {
   channelType: "team",
@@ -155,6 +167,7 @@ const channelId = [currentUserId, targetUserId]
 All channel creation operations are performed server-side using Stream's Node SDK.
 
 **Why Server-Side?**
+
 - Secure API secret management
 - Atomic member addition during creation
 - Centralized error handling
@@ -190,7 +203,7 @@ export async function createChannel({
   // Ensure creator is always included in members list
   const allMembers = Array.from(new Set([createdById, ...members]));
   console.log(
-    `Creating ${channelType} channel ${channelId} with ${allMembers.length} members`
+    `Creating ${channelType} channel ${channelId} with ${allMembers.length} members`,
   );
 
   // Create the channel with members atomically
@@ -214,6 +227,7 @@ export async function createChannel({
 ```
 
 **Key Features**:
+
 - Deduplicates members (creator + specified members)
 - Atomic creation with members
 - Post-creation verification
@@ -288,8 +302,8 @@ export async function createWebinarChannel(webinarId: string) {
 
   console.log(
     `Webinar ${webinarId} participants: ${waitlistParticipantIds.length} ` +
-    `from waitlist, ${appointmentParticipantIds.length} from appointments, ` +
-    `${allParticipantIds.length} total unique`
+      `from waitlist, ${appointmentParticipantIds.length} from appointments, ` +
+      `${allParticipantIds.length} total unique`,
   );
 
   return createChannel({
@@ -342,7 +356,10 @@ export async function addMemberToChannel(channelId: string, userId: string) {
 
     return { success: true, response };
   } catch (error) {
-    console.error(`Error adding member ${userId} to channel ${channelId}:`, error);
+    console.error(
+      `Error adding member ${userId} to channel ${channelId}:`,
+      error,
+    );
     throw error;
   }
 }
@@ -360,16 +377,16 @@ await channel.removeMembers([userId]);
 Stream Chat uses role-based permissions:
 
 **Default Roles**:
+
 - `owner` - Full control over channel
 - `moderator` - Can moderate content and members
 - `member` - Can send and receive messages
 - `guest` - Limited read-only access
 
 **Assigning Roles**:
+
 ```typescript
-await channel.addMembers([
-  { user_id: userId, role: "moderator" }
-]);
+await channel.addMembers([{ user_id: userId, role: "moderator" }]);
 ```
 
 ---
@@ -532,6 +549,7 @@ export function useUserChannels(userId: string) {
 ### 1. Always Use Server-Side Creation
 
 **Good**:
+
 ```typescript
 // Server action
 export async function createChannel(...) {
@@ -541,6 +559,7 @@ export async function createChannel(...) {
 ```
 
 **Bad**:
+
 ```typescript
 // Client component - NEVER do this!
 const channel = client.channel("messaging", channelId);
@@ -550,6 +569,7 @@ await channel.create(); // API secret exposed!
 ### 2. Atomic Member Addition
 
 **Good**:
+
 ```typescript
 // Add members during creation
 const channel = serverClient.channel(channelType, channelId, {
@@ -559,6 +579,7 @@ await channel.create();
 ```
 
 **Bad**:
+
 ```typescript
 // Create then add members separately - race condition!
 await channel.create();
@@ -568,6 +589,7 @@ await channel.addMembers(members); // Separate operation
 ### 3. Consistent ID Formatting
 
 **Good**:
+
 ```typescript
 const channelId = [userId1, userId2]
   .sort((a, b) => a.localeCompare(b))
@@ -575,6 +597,7 @@ const channelId = [userId1, userId2]
 ```
 
 **Bad**:
+
 ```typescript
 const channelId = `${userId1}-${userId2}`; // Not sorted!
 ```
@@ -582,6 +605,7 @@ const channelId = `${userId1}-${userId2}`; // Not sorted!
 ### 4. Proper Error Handling
 
 **Good**:
+
 ```typescript
 try {
   await createChannel({ ... });
@@ -598,6 +622,7 @@ try {
 ### 5. Verify Membership
 
 **Good**:
+
 ```typescript
 await channel.create();
 const channelData = await channel.query();
@@ -608,11 +633,13 @@ console.log(`Expected: ${members.length}, Actual: ${actualMembers.length}`);
 ### 6. Deduplicate Members
 
 **Good**:
+
 ```typescript
 const allMembers = Array.from(new Set([createdById, ...members]));
 ```
 
 **Bad**:
+
 ```typescript
 const allMembers = [createdById, ...members]; // Possible duplicates
 ```
@@ -620,6 +647,7 @@ const allMembers = [createdById, ...members]; // Possible duplicates
 ### 7. Use Meaningful Custom Data
 
 **Good**:
+
 ```typescript
 additionalData: {
   webinar_id: webinarId,

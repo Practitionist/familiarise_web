@@ -27,15 +27,15 @@ PostHog is an all-in-one product analytics platform that replaces multiple tools
 
 ### What It Replaces
 
-| Tool | Purpose | PostHog Feature |
-|------|---------|-----------------|
-| **Mixpanel** | Product analytics | ✅ Built-in |
-| **Amplitude** | Funnels, cohorts | ✅ Built-in |
-| **LogRocket** | Session replay | ✅ Built-in |
-| **LaunchDarkly** | Feature flags | ✅ Built-in |
-| **Optimizely** | A/B testing | ✅ Built-in |
-| **Hotjar** | Heatmaps | ✅ Built-in |
-| **Typeform** | Surveys | ✅ Built-in |
+| Tool             | Purpose           | PostHog Feature |
+| ---------------- | ----------------- | --------------- |
+| **Mixpanel**     | Product analytics | ✅ Built-in     |
+| **Amplitude**    | Funnels, cohorts  | ✅ Built-in     |
+| **LogRocket**    | Session replay    | ✅ Built-in     |
+| **LaunchDarkly** | Feature flags     | ✅ Built-in     |
+| **Optimizely**   | A/B testing       | ✅ Built-in     |
+| **Hotjar**       | Heatmaps          | ✅ Built-in     |
+| **Typeform**     | Surveys           | ✅ Built-in     |
 
 ### Cost Comparison
 
@@ -307,7 +307,7 @@ export const consultationEvents = {
     planId: string,
     planType: string,
     amount: number,
-    paymentMethod: string
+    paymentMethod: string,
   ) => {
     posthog.capture("checkout_completed", {
       plan_id: planId,
@@ -338,7 +338,11 @@ export const consultationEvents = {
 
 // Search Events
 export const searchEvents = {
-  searched: (query: string, filters: Record<string, any>, resultCount: number) => {
+  searched: (
+    query: string,
+    filters: Record<string, any>,
+    resultCount: number,
+  ) => {
     posthog.capture("search_performed", {
       query,
       filters,
@@ -538,7 +542,7 @@ const posthog = new PostHog(process.env.POSTHOG_PERSONAL_API_KEY!, {
 export async function getFeatureFlag(
   flagKey: string,
   userId: string,
-  properties?: Record<string, any>
+  properties?: Record<string, any>,
 ): Promise<boolean | string | undefined> {
   return posthog.getFeatureFlag(flagKey, userId, {
     personProperties: properties,
@@ -561,7 +565,7 @@ export async function POST(req: NextRequest) {
   const useNewPricing = await getFeatureFlag(
     "new-pricing-model",
     session!.user.id,
-    { plan: session!.user.plan }
+    { plan: session!.user.plan },
   );
 
   if (useNewPricing) {

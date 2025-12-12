@@ -26,86 +26,87 @@ This document outlines critical security vulnerabilities identified in the appli
 
 ### 1.1 Overview
 
-| Metric | Value |
-|--------|-------|
-| Total API Endpoints | 83 |
-| Protected Endpoints | 6 |
-| Unprotected Endpoints | 77 |
-| **Risk Level** | CRITICAL |
+| Metric                | Value    |
+| --------------------- | -------- |
+| Total API Endpoints   | 83       |
+| Protected Endpoints   | 6        |
+| Unprotected Endpoints | 77       |
+| **Risk Level**        | CRITICAL |
 
 ### 1.2 Critical Unprotected Endpoints
 
 #### User Data Endpoints
 
-| Endpoint | Method | Risk | Impact |
-|----------|--------|------|--------|
-| `/api/user/[id]` | GET | CRITICAL | Auth commented out - any user's profile accessible |
-| `/api/user/consultants` | GET | HIGH | User enumeration, data scraping |
-| `/api/user/consultees` | GET | HIGH | User enumeration, PII exposure |
-| `/api/user/consultees/[id]` | GET/POST | CRITICAL | Read/create any consultee profile |
-| `/api/user/consultants/[id]` | GET | HIGH | Auth commented out (lines 86-89) |
-| `/api/user/reviews` | POST | HIGH | Create fake reviews without auth |
-| `/api/user/staff` | GET | MEDIUM | Staff enumeration |
+| Endpoint                     | Method   | Risk     | Impact                                             |
+| ---------------------------- | -------- | -------- | -------------------------------------------------- |
+| `/api/user/[id]`             | GET      | CRITICAL | Auth commented out - any user's profile accessible |
+| `/api/user/consultants`      | GET      | HIGH     | User enumeration, data scraping                    |
+| `/api/user/consultees`       | GET      | HIGH     | User enumeration, PII exposure                     |
+| `/api/user/consultees/[id]`  | GET/POST | CRITICAL | Read/create any consultee profile                  |
+| `/api/user/consultants/[id]` | GET      | HIGH     | Auth commented out (lines 86-89)                   |
+| `/api/user/reviews`          | POST     | HIGH     | Create fake reviews without auth                   |
+| `/api/user/staff`            | GET      | MEDIUM   | Staff enumeration                                  |
 
 **File References:**
+
 - `app/api/user/[id]/route.ts` - Lines 13-16 (commented auth)
 - `app/api/user/consultants/[id]/route.ts` - Lines 86-89 (commented auth)
 - `app/api/user/consultees/[id]/route.ts` - Lines 4-40
 
 #### Event & Plan Endpoints
 
-| Endpoint | Method | Risk | Impact |
-|----------|--------|------|--------|
-| `/api/events/classes` | GET/POST | HIGH | Enumerate/create classes |
-| `/api/events/consultations` | GET/PATCH | HIGH | Query any consultation |
-| `/api/events/subscriptions` | GET | HIGH | View all subscriptions |
-| `/api/events/webinars` | GET | HIGH | View all webinars |
-| `/api/plans/classes` | GET/POST | HIGH | Create plans for any consultant |
-| `/api/plans/consultations` | GET/POST | HIGH | Create plans for any consultant |
-| `/api/plans/subscriptions` | GET/POST | HIGH | Create plans for any consultant |
-| `/api/plans/webinars` | GET/POST | HIGH | Create plans for any consultant |
+| Endpoint                    | Method    | Risk | Impact                          |
+| --------------------------- | --------- | ---- | ------------------------------- |
+| `/api/events/classes`       | GET/POST  | HIGH | Enumerate/create classes        |
+| `/api/events/consultations` | GET/PATCH | HIGH | Query any consultation          |
+| `/api/events/subscriptions` | GET       | HIGH | View all subscriptions          |
+| `/api/events/webinars`      | GET       | HIGH | View all webinars               |
+| `/api/plans/classes`        | GET/POST  | HIGH | Create plans for any consultant |
+| `/api/plans/consultations`  | GET/POST  | HIGH | Create plans for any consultant |
+| `/api/plans/subscriptions`  | GET/POST  | HIGH | Create plans for any consultant |
+| `/api/plans/webinars`       | GET/POST  | HIGH | Create plans for any consultant |
 
 #### Participant Management
 
-| Endpoint | Method | Risk | Impact |
-|----------|--------|------|--------|
-| `/api/participants/subscriptions/[id]` | GET/DELETE | CRITICAL | Delete any participant |
-| `/api/participants/class/[id]` | GET | MEDIUM | View participant lists |
-| `/api/participants/consultations/[id]` | GET | MEDIUM | View participant details |
-| `/api/participants/webinar/[id]` | GET | MEDIUM | View participant lists |
+| Endpoint                               | Method     | Risk     | Impact                   |
+| -------------------------------------- | ---------- | -------- | ------------------------ |
+| `/api/participants/subscriptions/[id]` | GET/DELETE | CRITICAL | Delete any participant   |
+| `/api/participants/class/[id]`         | GET        | MEDIUM   | View participant lists   |
+| `/api/participants/consultations/[id]` | GET        | MEDIUM   | View participant details |
+| `/api/participants/webinar/[id]`       | GET        | MEDIUM   | View participant lists   |
 
 #### Slots & Appointments
 
-| Endpoint | Method | Risk | Impact |
-|----------|--------|------|--------|
-| `/api/slots/appointments` | GET/POST | CRITICAL | View/create any appointments |
-| `/api/slots/availability/[consultantId]` | GET | MEDIUM | Query any availability |
-| `/api/slots/unallocated/*` | GET | LOW | View unallocated slots |
+| Endpoint                                 | Method   | Risk     | Impact                       |
+| ---------------------------------------- | -------- | -------- | ---------------------------- |
+| `/api/slots/appointments`                | GET/POST | CRITICAL | View/create any appointments |
+| `/api/slots/availability/[consultantId]` | GET      | MEDIUM   | Query any availability       |
+| `/api/slots/unallocated/*`               | GET      | LOW      | View unallocated slots       |
 
 #### Dashboard Endpoints
 
-| Endpoint | Method | Risk | Impact |
-|----------|--------|------|--------|
-| `/api/dashboard/consultant/[id]` | GET | CRITICAL | Full consultant data access |
-| `/api/dashboard/consultant/[id]/requests` | GET | HIGH | View all requests |
-| `/api/dashboard/consultant/[id]/planner` | GET | HIGH | View schedule |
-| `/api/dashboard/consultee/[id]` | GET | CRITICAL | Full consultee data access |
-| `/api/dashboard/consultee/[id]/events` | GET | HIGH | View all events |
+| Endpoint                                  | Method | Risk     | Impact                      |
+| ----------------------------------------- | ------ | -------- | --------------------------- |
+| `/api/dashboard/consultant/[id]`          | GET    | CRITICAL | Full consultant data access |
+| `/api/dashboard/consultant/[id]/requests` | GET    | HIGH     | View all requests           |
+| `/api/dashboard/consultant/[id]/planner`  | GET    | HIGH     | View schedule               |
+| `/api/dashboard/consultee/[id]`           | GET    | CRITICAL | Full consultee data access  |
+| `/api/dashboard/consultee/[id]/events`    | GET    | HIGH     | View all events             |
 
 #### Stream/Chat Endpoints
 
-| Endpoint | Method | Risk | Impact |
-|----------|--------|------|--------|
-| `/api/stream/debug` | GET | CRITICAL | Full user data dump |
-| `/api/stream/channels/create` | POST | CRITICAL | Create channels as anyone |
-| `/api/stream/sync/background` | GET | MEDIUM | Trigger sync operations |
-| `/api/stream/sync/manual` | GET | MEDIUM | Trigger sync operations |
+| Endpoint                      | Method | Risk     | Impact                    |
+| ----------------------------- | ------ | -------- | ------------------------- |
+| `/api/stream/debug`           | GET    | CRITICAL | Full user data dump       |
+| `/api/stream/channels/create` | POST   | CRITICAL | Create channels as anyone |
+| `/api/stream/sync/background` | GET    | MEDIUM   | Trigger sync operations   |
+| `/api/stream/sync/manual`     | GET    | MEDIUM   | Trigger sync operations   |
 
 #### Form Endpoints
 
-| Endpoint | Method | Risk | Impact |
-|----------|--------|------|--------|
-| `/api/form/onboarding/[id]` | PATCH | CRITICAL | Modify any user's onboarding |
+| Endpoint                    | Method | Risk     | Impact                       |
+| --------------------------- | ------ | -------- | ---------------------------- |
+| `/api/form/onboarding/[id]` | PATCH  | CRITICAL | Modify any user's onboarding |
 
 ### 1.3 Remediation
 
@@ -120,10 +121,7 @@ export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
 
   if (!session?.user) {
-    return NextResponse.json(
-      { error: "Unauthorized" },
-      { status: 401 }
-    );
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   // Continue with authenticated logic
@@ -133,15 +131,17 @@ export async function GET(req: NextRequest) {
 #### Uncomment Existing Auth
 
 **File:** `app/api/user/[id]/route.ts`
+
 ```typescript
 // UNCOMMENT THESE LINES (13-16):
 const session = await getServerSession(authOptions);
-if (!session || (session.user.id !== id && session.user.role !== 'ADMIN')) {
+if (!session || (session.user.id !== id && session.user.role !== "ADMIN")) {
   return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 }
 ```
 
 **File:** `app/api/user/consultants/[id]/route.ts`
+
 ```typescript
 // UNCOMMENT THESE LINES (86-89):
 const session = await getServerSession(authOptions);
@@ -162,12 +162,12 @@ Even when authentication exists, many endpoints don't verify the user has permis
 
 #### Resource Ownership Not Verified
 
-| Endpoint | Issue | File Location |
-|----------|-------|---------------|
-| `/api/appointments/[id]/cancel` | Any user can cancel any appointment | `app/api/appointments/[appointmentId]/cancel/route.ts:6-16` |
-| `/api/events/classes` | Can query by any `consulteeProfileId` | `app/api/events/classes/route.ts` |
-| `/api/slots/appointments` | Accepts any `consultantProfileId` | `app/api/slots/appointments/route.ts` |
-| `/api/user/consultants/[id]` | PUT doesn't verify ownership | `app/api/user/consultants/[id]/route.ts:172` |
+| Endpoint                        | Issue                                 | File Location                                               |
+| ------------------------------- | ------------------------------------- | ----------------------------------------------------------- |
+| `/api/appointments/[id]/cancel` | Any user can cancel any appointment   | `app/api/appointments/[appointmentId]/cancel/route.ts:6-16` |
+| `/api/events/classes`           | Can query by any `consulteeProfileId` | `app/api/events/classes/route.ts`                           |
+| `/api/slots/appointments`       | Accepts any `consultantProfileId`     | `app/api/slots/appointments/route.ts`                       |
+| `/api/user/consultants/[id]`    | PUT doesn't verify ownership          | `app/api/user/consultants/[id]/route.ts:172`                |
 
 ### 2.3 Remediation
 
@@ -176,7 +176,7 @@ Even when authentication exists, many endpoints don't verify the user has permis
 ```typescript
 export async function POST(
   request: NextRequest,
-  { params }: { params: { appointmentId: string } }
+  { params }: { params: { appointmentId: string } },
 ) {
   const session = await getServerSession(authOptions);
   if (!session?.user) {
@@ -188,17 +188,19 @@ export async function POST(
     where: { id: appointmentId },
     include: {
       consultation: { include: { requestedBy: true } },
-      subscription: { include: { requestedBy: true } }
-    }
+      subscription: { include: { requestedBy: true } },
+    },
   });
 
   // AUTHORIZATION CHECK - Verify ownership
   const isOwner =
     appointment?.consultation?.requestedBy?.userId === session.user.id ||
     appointment?.subscription?.requestedBy?.userId === session.user.id ||
-    session.user.consultantProfileId === appointment?.consultation?.consultationPlan?.consultantProfileId;
+    session.user.consultantProfileId ===
+      appointment?.consultation?.consultationPlan?.consultantProfileId;
 
-  const isAdmin = session.user.role === 'ADMIN' || session.user.role === 'STAFF';
+  const isAdmin =
+    session.user.role === "ADMIN" || session.user.role === "STAFF";
 
   if (!isOwner && !isAdmin) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -230,6 +232,7 @@ user: {
 ```
 
 **Fix:**
+
 ```typescript
 // SECURE CODE
 user: {
@@ -269,6 +272,7 @@ catch (error: unknown) {
 **File:** `app/api/stream/debug/route.ts`
 
 This endpoint returns comprehensive user data without authentication:
+
 - All chat channels
 - All consultations with full details
 - All subscriptions
@@ -283,11 +287,11 @@ This endpoint returns comprehensive user data without authentication:
 
 ### 4.1 Missing Validation
 
-| Endpoint | Issue | Risk |
-|----------|-------|------|
-| `/api/user/[id]` PUT | No length limits on name, phone, address | Data corruption |
-| `/api/plans/consultations` POST | Only existence check, no type validation | Invalid data |
-| Multiple endpoints | No pagination limits | Resource exhaustion |
+| Endpoint                        | Issue                                    | Risk                |
+| ------------------------------- | ---------------------------------------- | ------------------- |
+| `/api/user/[id]` PUT            | No length limits on name, phone, address | Data corruption     |
+| `/api/plans/consultations` POST | Only existence check, no type validation | Invalid data        |
+| Multiple endpoints              | No pagination limits                     | Resource exhaustion |
 
 ### 4.2 Integer Overflow Risk
 
@@ -298,7 +302,10 @@ const page = parseInt(searchParams.get("page") || "1");
 const skip = (page - 1) * limit; // Could overflow
 
 // FIXED - Add bounds
-const limit = Math.min(Math.max(parseInt(searchParams.get("limit") || "10"), 1), 100);
+const limit = Math.min(
+  Math.max(parseInt(searchParams.get("limit") || "10"), 1),
+  100,
+);
 const page = Math.max(parseInt(searchParams.get("page") || "1"), 1);
 const skip = (page - 1) * limit;
 ```
@@ -331,13 +338,16 @@ if (isNaN(parsedEndDate.getTime())) {
 const usersWithToken = await prisma.user.findMany({
   where: {
     passwordResetToken: { not: null },
-    passwordResetExpires: { gte: new Date() }
-  }
+    passwordResetExpires: { gte: new Date() },
+  },
 });
 
 let user = null;
 for (const potentialUser of usersWithToken) {
-  const tokenMatch = await bcrypt.compare(token, potentialUser.passwordResetToken!);
+  const tokenMatch = await bcrypt.compare(
+    token,
+    potentialUser.passwordResetToken!,
+  );
   if (tokenMatch) {
     user = potentialUser;
     break;
@@ -346,21 +356,23 @@ for (const potentialUser of usersWithToken) {
 ```
 
 **Issues:**
+
 - Fetches ALL users with reset tokens
 - Not constant-time comparison
 - Allows enumeration
 
 **Fix:**
+
 ```typescript
 // Better approach: Hash token and query directly
-import crypto from 'crypto';
+import crypto from "crypto";
 
-const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
 const user = await prisma.user.findFirst({
   where: {
     passwordResetToken: tokenHash,
-    passwordResetExpires: { gte: new Date() }
-  }
+    passwordResetExpires: { gte: new Date() },
+  },
 });
 ```
 
@@ -370,7 +382,9 @@ const user = await prisma.user.findFirst({
 
 ```typescript
 // VULNERABLE - Exposed test user
-export function getEffectiveUserId(session: Session | null): string | undefined {
+export function getEffectiveUserId(
+  session: Session | null,
+): string | undefined {
   if (session?.user?.id) {
     return session.user.id;
   } else if (

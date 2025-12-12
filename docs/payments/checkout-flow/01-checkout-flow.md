@@ -19,12 +19,12 @@ This application implements a sophisticated payment and checkout system supporti
 
 ### Supported Event Types
 
-| Event Type | Description | Appointment Pattern | Payment Model |
-|------------|-------------|---------------------|---------------|
-| **Consultation** | One-on-one session with consultant | 1 appointment per booking | One-time payment |
-| **Subscription** | Recurring sessions over time | Multiple appointments (one per session) | One-time payment for all sessions |
-| **Webinar** | Group session (scheduled event) | 1 shared appointment for all participants | One-time payment per participant |
-| **Class** | Multi-session group course | Multiple appointments (pre-created sessions) | One-time payment for all sessions |
+| Event Type       | Description                        | Appointment Pattern                          | Payment Model                     |
+| ---------------- | ---------------------------------- | -------------------------------------------- | --------------------------------- |
+| **Consultation** | One-on-one session with consultant | 1 appointment per booking                    | One-time payment                  |
+| **Subscription** | Recurring sessions over time       | Multiple appointments (one per session)      | One-time payment for all sessions |
+| **Webinar**      | Group session (scheduled event)    | 1 shared appointment for all participants    | One-time payment per participant  |
+| **Class**        | Multi-session group course         | Multiple appointments (pre-created sessions) | One-time payment for all sessions |
 
 ### Payment Gateways
 
@@ -55,6 +55,7 @@ User → Create Payment Intent → Process Payment → Create Appointment via We
 ```
 
 **Benefits:**
+
 - No orphaned appointments if payment fails
 - No rollback complexity
 - Idempotent webhook handling
@@ -80,6 +81,7 @@ WHERE id = slotId
 ```
 
 **Benefits:**
+
 - Prevents double-booking during payment process
 - Allows cleanup of abandoned checkouts
 - Clear distinction between confirmed vs pending
@@ -103,6 +105,7 @@ All checkout data is stored in payment intent metadata:
 ```
 
 **Benefits:**
+
 - Webhook can recreate appointment even if frontend crashes
 - No data loss scenarios
 - Easy manual recovery if needed
@@ -155,6 +158,7 @@ if (pendingAttempts >= 3) {
 ### Overview
 
 Consultations are **one-on-one sessions** between a consultee (user) and a consultant. Each consultation requires:
+
 - Selecting a specific time slot from consultant's availability
 - One appointment record with one slot per booking
 - Immediate payment before confirmation
@@ -164,6 +168,7 @@ Consultations are **one-on-one sessions** between a consultee (user) and a consu
 **Frontend Page:** `/app/checkout/plans/consultation/[planId]/page.tsx`
 
 **User Journey:**
+
 1. Browse consultant profile
 2. View available time slots
 3. Click on desired slot
@@ -188,27 +193,28 @@ Consultations are **one-on-one sessions** between a consultee (user) and a consu
 **Validation Schema:** `/schemas/checkout.ts` - `consultationSearchParamsSchema` (Lines 32-54)
 
 ```typescript
-export const consultationSearchParamsSchema = z.object({
-  slotStartTimeInUTC: z.string().datetime(),
-  slotEndTimeInUTC: z.string().datetime(),
-  slotOfAvailabilityWeeklyId: z.string().optional(),
-  slotOfAvailabilityCustomId: z.string().optional(),
-  discountCode: z.string().optional(),
-  notes: z.string().optional(),
-})
-.refine(
-  (data) =>
-    data.slotOfAvailabilityWeeklyId || data.slotOfAvailabilityCustomId,
-  { message: "Either weekly or custom slot ID required" }
-)
-.refine(
-  (data) => {
-    const start = new Date(data.slotStartTimeInUTC);
-    const end = new Date(data.slotEndTimeInUTC);
-    return start < end;
-  },
-  { message: "Start time must be before end time" }
-);
+export const consultationSearchParamsSchema = z
+  .object({
+    slotStartTimeInUTC: z.string().datetime(),
+    slotEndTimeInUTC: z.string().datetime(),
+    slotOfAvailabilityWeeklyId: z.string().optional(),
+    slotOfAvailabilityCustomId: z.string().optional(),
+    discountCode: z.string().optional(),
+    notes: z.string().optional(),
+  })
+  .refine(
+    (data) =>
+      data.slotOfAvailabilityWeeklyId || data.slotOfAvailabilityCustomId,
+    { message: "Either weekly or custom slot ID required" },
+  )
+  .refine(
+    (data) => {
+      const start = new Date(data.slotStartTimeInUTC);
+      const end = new Date(data.slotEndTimeInUTC);
+      return start < end;
+    },
+    { message: "Start time must be before end time" },
+  );
 ```
 
 ### API Request Flow
@@ -216,6 +222,7 @@ export const consultationSearchParamsSchema = z.object({
 **Endpoint:** `POST /api/checkout`
 
 **Request Body:**
+
 ```typescript
 {
   appointmentType: "CONSULTATION",
@@ -290,7 +297,7 @@ This is the most critical part - **three-layer protection** against race conditi
 const overlappingConfirmed = await tx.slotOfAppointment.findFirst({
   where: {
     AND: [
-      { isTentative: false },  // Only confirmed bookings
+      { isTentative: false }, // Only confirmed bookings
       {
         startsAt: {
           lt: new Date(data.slotEndTimeInUTC!),
@@ -318,12 +325,13 @@ const overlappingConfirmed = await tx.slotOfAppointment.findFirst({
 
 if (overlappingConfirmed) {
   throw new Error(
-    "This time slot is already booked. Please choose another time."
+    "This time slot is already booked. Please choose another time.",
   );
 }
 ```
 
 **Overlap Detection Logic:**
+
 ```
 New booking: [10:00 AM - 11:00 AM]
 Existing booking: [10:30 AM - 11:30 AM]
@@ -372,10 +380,7 @@ const userTentativeBookings = await tx.slotOfAppointment.findMany({
             payment: {
               where: {
                 paymentStatus: "PENDING",
-                OR: [
-                  { expiresAt: { gt: now } },
-                  { expiresAt: null },
-                ],
+                OR: [{ expiresAt: { gt: now } }, { expiresAt: null }],
               },
             },
           },
@@ -393,8 +398,8 @@ for (const booking of userTentativeBookings) {
     if (expiry > now) {
       throw new Error(
         `You already have a pending booking for this time slot. ` +
-        `Please complete your current payment or wait for it to expire ` +
-        `(expires at ${expiry.toLocaleTimeString()}).`
+          `Please complete your current payment or wait for it to expire ` +
+          `(expires at ${expiry.toLocaleTimeString()}).`,
       );
     }
   }
@@ -402,6 +407,7 @@ for (const booking of userTentativeBookings) {
 ```
 
 **Why This Check?**
+
 - Prevents same user from initiating multiple checkouts for same slot
 - Gives user 5 minutes to complete payment before allowing another attempt
 - If payment has `expiresAt`, uses that; otherwise 5-minute window
@@ -452,12 +458,13 @@ const pendingAttempts = await tx.slotOfAppointment.count({
 if (pendingAttempts >= 3) {
   throw new Error(
     "This time slot is currently experiencing high demand. " +
-    "Please try again in a few minutes or choose a different time."
+      "Please try again in a few minutes or choose a different time.",
   );
 }
 ```
 
 **Why Rate Limiting?**
+
 - Prevents slot hoarding by multiple users clicking simultaneously
 - Allows max 3 users to hold tentative bookings
 - First to complete payment wins
@@ -480,6 +487,7 @@ const consultation = await tx.consultation.create({
 ```
 
 **Key Fields:**
+
 - `requestStatus: PENDING` → Will become `APPROVED` after payment
 - `requestedById` → Consultee profile ID
 - `bookingSource: "DIRECT_CHECKOUT"` → Distinguish from admin-created bookings
@@ -496,7 +504,7 @@ const appointment = await tx.appointment.create({
       create: {
         startsAt: new Date(data.slotStartTimeInUTC!),
         endsAt: new Date(data.slotEndTimeInUTC!),
-        isTentative: !skipPayment,  // true for real payments, false for mock
+        isTentative: !skipPayment, // true for real payments, false for mock
         user: {
           connect: { id: userId },
         },
@@ -510,6 +518,7 @@ const appointment = await tx.appointment.create({
 ```
 
 **Database Relationships:**
+
 ```
 Consultation (1)
   ↓
@@ -531,6 +540,7 @@ return {
 ```
 
 This data is used by `handleCheckout()` to:
+
 1. Calculate final amount (with discounts)
 2. Create payment intent
 3. Store metadata for webhook recovery
@@ -604,6 +614,7 @@ sequenceDiagram
 ### Key Takeaways
 
 ✅ **Consultation = 1:1 relationship** at all levels
+
 - 1 Consultation → 1 Appointment → 1 SlotOfAppointment → 1 User
 
 ✅ **Three-layer protection** prevents race conditions and double-booking
@@ -628,6 +639,7 @@ Subscriptions are **recurring one-on-one sessions** between a consultee and cons
 - All appointments confirmed together after payment
 
 **Example:**
+
 - Plan: 3-month subscription, 2 calls/week
 - Result: 26 pre-scheduled appointments created during checkout
 - User pays once, gets access to all 26 sessions
@@ -637,6 +649,7 @@ Subscriptions are **recurring one-on-one sessions** between a consultee and cons
 **Frontend Page:** `/app/checkout/plans/subscription/[planId]/page.tsx`
 
 **User Journey:**
+
 1. Browse subscription plans
 2. View plan details (duration, frequency, price)
 3. Select first session time from consultant's availability
@@ -659,6 +672,7 @@ Subscriptions are **recurring one-on-one sessions** between a consultee and cons
 ```
 
 **Key Difference from Consultation:**
+
 - Only first session timing is selected by user
 - Subsequent sessions calculated automatically based on frequency
 
@@ -684,6 +698,7 @@ if (!plan) {
 ```
 
 **Plan Contains:**
+
 - `durationInMonths`: How many months the subscription lasts (e.g., 3)
 - `callsPerWeek`: Number of sessions per week (e.g., 2)
 - `sessionDurationInHours`: Duration of each session (e.g., 1.0)
@@ -696,6 +711,7 @@ await validateSlotAvailability(tx, data, consulteeProfileId);
 ```
 
 **Same 3-layer validation** as consultation:
+
 1. No confirmed overlap
 2. No user duplicate pending
 3. Rate limiting (max 3 pending)
@@ -705,10 +721,7 @@ await validateSlotAvailability(tx, data, consulteeProfileId);
 ```typescript
 // Lines 506-519
 const startDate = new Date();
-const endDate = calculateSubscriptionEndDate(
-  startDate,
-  plan.durationInMonths
-);
+const endDate = calculateSubscriptionEndDate(startDate, plan.durationInMonths);
 
 // Calculate total sessions for the subscription
 const totalWeeks = Math.ceil(plan.durationInMonths * 4.33);
@@ -717,10 +730,12 @@ const totalSessions = totalWeeks * plan.callsPerWeek;
 // Get first session timing
 const firstSessionStart = new Date(data.slotStartTimeInUTC!);
 const firstSessionEnd = new Date(data.slotEndTimeInUTC!);
-const sessionDurationMs = firstSessionEnd.getTime() - firstSessionStart.getTime();
+const sessionDurationMs =
+  firstSessionEnd.getTime() - firstSessionStart.getTime();
 ```
 
 **Example Calculation:**
+
 ```javascript
 // Plan: 3 months, 2 calls/week
 durationInMonths = 3
@@ -734,6 +749,7 @@ totalSessions = 13 * 2 = 26 sessions
 ```
 
 **Why 4.33 weeks per month?**
+
 - Average month = 30.44 days
 - 30.44 / 7 days = 4.35 weeks
 - Rounded to 4.33 for simplicity
@@ -744,9 +760,7 @@ totalSessions = 13 * 2 = 26 sessions
 const subscription = await tx.subscription.create({
   data: {
     subscriptionPlanId: plan.id,
-    requestStatus: skipPayment
-      ? RequestStatus.APPROVED
-      : RequestStatus.PENDING,
+    requestStatus: skipPayment ? RequestStatus.APPROVED : RequestStatus.PENDING,
     requestedById: consulteeProfileId,
     requestNotes: data.notes,
     bookingSource: "DIRECT_CHECKOUT",
@@ -811,6 +825,7 @@ Session 5: weekOffset = floor(5/2) = 2, date = Mon + 2 weeks = Mon Week 3
 ```
 
 **Important Note:**
+
 - All sessions scheduled for same day of week as first session
 - Multiple sessions per week will have same date
 - Consultant must ensure different times for same-day sessions
@@ -823,7 +838,7 @@ return {
   appointment: appointments[0],
   plan,
   amount: plan.price,
-  totalAppointmentsCreated: appointments.length
+  totalAppointmentsCreated: appointments.length,
 };
 ```
 
@@ -875,6 +890,7 @@ WHERE id = 'sub_123'
 ```
 
 **Result:**
+
 - 26 SlotOfAppointment records: isTentative `true` → `false`
 - Subscription: requestStatus `PENDING` → `APPROVED`
 - User immediately sees all 26 sessions in their dashboard
@@ -941,14 +957,14 @@ sequenceDiagram
 
 ### Key Differences from Consultation
 
-| Aspect | Consultation | Subscription |
-|--------|-------------|--------------|
-| **Appointments Created** | 1 | Multiple (26 in example) |
-| **When Created** | During checkout | During checkout (all upfront) |
-| **Slot Validation** | Full validation | Only first session validated |
-| **Payment** | One-time for 1 session | One-time for all sessions |
-| **Confirmation** | 1 slot confirmed | All slots confirmed together |
-| **Database Records** | 1 Appointment, 1 Slot | 26 Appointments, 26 Slots |
+| Aspect                   | Consultation           | Subscription                  |
+| ------------------------ | ---------------------- | ----------------------------- |
+| **Appointments Created** | 1                      | Multiple (26 in example)      |
+| **When Created**         | During checkout        | During checkout (all upfront) |
+| **Slot Validation**      | Full validation        | Only first session validated  |
+| **Payment**              | One-time for 1 session | One-time for all sessions     |
+| **Confirmation**         | 1 slot confirmed       | All slots confirmed together  |
+| **Database Records**     | 1 Appointment, 1 Slot  | 26 Appointments, 26 Slots     |
 
 ### Edge Cases
 
@@ -957,6 +973,7 @@ sequenceDiagram
 **Current Implementation:** No skip mechanism exists
 
 **Expected Behavior:**
+
 - User should be able to mark session as "skipped"
 - Consultant may allow rescheduling
 - Would need additional status field on SlotOfAppointment
@@ -966,6 +983,7 @@ sequenceDiagram
 **Current Implementation:** No partial refund logic
 
 **Expected Behavior:**
+
 - Calculate attended vs remaining sessions
 - Prorate refund based on remaining sessions
 - Mark remaining appointments as CANCELLED
@@ -975,6 +993,7 @@ sequenceDiagram
 **Current Implementation:** Sessions scheduled at checkout time
 
 **Potential Issue:**
+
 - If consultant blocks that time slot later
 - Would need rescheduling workflow
 - Current system doesn't detect conflicts
@@ -1000,6 +1019,7 @@ sequenceDiagram
 ## Next: Part 2 - Webinar & Class Flows
 
 Continue to [CHECKOUT_FLOW_PART2.md](./CHECKOUT_FLOW_PART2.md) for:
+
 - Webinar checkout flow (shared appointment model)
 - Class checkout flow (pre-existing appointments)
 - Comparison tables between all 4 event types

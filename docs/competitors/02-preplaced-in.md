@@ -8,17 +8,17 @@
 
 ## 1. Company Overview
 
-| Attribute | Details |
-|-----------|---------|
-| **Company Name** | Preplaced |
-| **Website** | preplaced.in, preplaced.dev |
-| **Founded** | ~2020 |
-| **Headquarters** | India |
-| **Funding** | Undisclosed (Backed by Smile Group) |
-| **Key Investor** | Smile Group |
-| **Mentor Base** | 600+ vetted mentors |
-| **Focus** | Tech career mentorship & interview preparation |
-| **Success Rate** | 96% placement rate (claimed) |
+| Attribute        | Details                                        |
+| ---------------- | ---------------------------------------------- |
+| **Company Name** | Preplaced                                      |
+| **Website**      | preplaced.in, preplaced.dev                    |
+| **Founded**      | ~2020                                          |
+| **Headquarters** | India                                          |
+| **Funding**      | Undisclosed (Backed by Smile Group)            |
+| **Key Investor** | Smile Group                                    |
+| **Mentor Base**  | 600+ vetted mentors                            |
+| **Focus**        | Tech career mentorship & interview preparation |
+| **Success Rate** | 96% placement rate (claimed)                   |
 
 ---
 
@@ -41,17 +41,18 @@ Preplaced is an open marketplace mentorship platform focused on job preparation,
 
 ### 2.3 Service Offerings
 
-| Service | Description | Duration |
-|---------|-------------|----------|
-| **Long-term Mentorship** | Ongoing 1:1 guidance | 3-6 months |
-| **Trial Session** | Free introductory call | Single session |
-| **Mock Interviews** | Interview simulation | Part of mentorship |
-| **Resume Review** | Document feedback | Part of mentorship |
-| **Career Roadmapping** | Goal setting & planning | Part of mentorship |
+| Service                  | Description             | Duration           |
+| ------------------------ | ----------------------- | ------------------ |
+| **Long-term Mentorship** | Ongoing 1:1 guidance    | 3-6 months         |
+| **Trial Session**        | Free introductory call  | Single session     |
+| **Mock Interviews**      | Interview simulation    | Part of mentorship |
+| **Resume Review**        | Document feedback       | Part of mentorship |
+| **Career Roadmapping**   | Goal setting & planning | Part of mentorship |
 
 ### 2.4 Feature Breakdown
 
 #### For Mentees:
+
 - **Mentor Discovery**: Browse 600+ mentors with filters
 - **Trial Sessions**: Free trial to test mentor fit
 - **Planner Doc**: Shared document for tracking progress
@@ -61,6 +62,7 @@ Preplaced is an open marketplace mentorship platform focused on job preparation,
 - **Job Referrals**: Access to mentor's network
 
 #### Mentor Filters:
+
 - Domain/expertise
 - Target company
 - Working experience
@@ -69,29 +71,29 @@ Preplaced is an open marketplace mentorship platform focused on job preparation,
 
 ### 2.5 Domains Covered
 
-| Category | Specializations |
-|----------|-----------------|
-| **Engineering** | Frontend, Backend, Full Stack, DevOps/SRE, Cybersecurity, QA/Automation |
-| **Data Science** | Data Engineer, Data Scientist, Data Analyst, Big Data, AI/ML |
-| **Business** | Sales, Marketing, Business Analyst, Finance, HR/Behavioural |
+| Category         | Specializations                                                         |
+| ---------------- | ----------------------------------------------------------------------- |
+| **Engineering**  | Frontend, Backend, Full Stack, DevOps/SRE, Cybersecurity, QA/Automation |
+| **Data Science** | Data Engineer, Data Scientist, Data Analyst, Big Data, AI/ML            |
+| **Business**     | Sales, Marketing, Business Analyst, Finance, HR/Behavioural             |
 
 ### 2.6 Feature Comparison vs. Familiarise
 
-| Feature | Preplaced | Familiarise | Advantage |
-|---------|:---------:|:-----------:|-----------|
-| 1:1 Mentorship | ✅ | ✅ | Tie |
-| Long-term Programs | ✅ (3-6 mo) | ✅ (Subscriptions) | Tie |
-| Trial Sessions | ✅ (Free) | ❌ | **Preplaced** |
-| Mock Interviews | ✅ | ❌ | **Preplaced** |
-| Resume/Doc Review | ✅ | ✅ | Tie |
-| Job Referrals | ✅ | ❌ | **Preplaced** |
-| Certification | ✅ | ❌ | **Preplaced** |
-| Webinars | ❌ | ✅ | **Familiarise** |
-| Classes | ❌ | ✅ | **Familiarise** |
-| Integrated Video | ❌ | ✅ | **Familiarise** |
-| Integrated Chat | ❌ | ✅ | **Familiarise** |
-| Multi-domain | ❌ (Tech only) | ✅ (All domains) | **Familiarise** |
-| Chat Support | ✅ | ✅ | Tie |
+| Feature            |   Preplaced    |    Familiarise     | Advantage       |
+| ------------------ | :------------: | :----------------: | --------------- |
+| 1:1 Mentorship     |       ✅       |         ✅         | Tie             |
+| Long-term Programs |  ✅ (3-6 mo)   | ✅ (Subscriptions) | Tie             |
+| Trial Sessions     |   ✅ (Free)    |         ❌         | **Preplaced**   |
+| Mock Interviews    |       ✅       |         ❌         | **Preplaced**   |
+| Resume/Doc Review  |       ✅       |         ✅         | Tie             |
+| Job Referrals      |       ✅       |         ❌         | **Preplaced**   |
+| Certification      |       ✅       |         ❌         | **Preplaced**   |
+| Webinars           |       ❌       |         ✅         | **Familiarise** |
+| Classes            |       ❌       |         ✅         | **Familiarise** |
+| Integrated Video   |       ❌       |         ✅         | **Familiarise** |
+| Integrated Chat    |       ❌       |         ✅         | **Familiarise** |
+| Multi-domain       | ❌ (Tech only) |  ✅ (All domains)  | **Familiarise** |
+| Chat Support       |       ✅       |         ✅         | Tie             |
 
 ---
 
@@ -99,11 +101,11 @@ Preplaced is an open marketplace mentorship platform focused on job preparation,
 
 ### 3.1 Pricing Structure
 
-| Plan Type | Price Range | Sessions |
-|-----------|-------------|----------|
-| **Entry Level** | ₹2,500/month | 2 sessions/week |
-| **Mid-range** | ₹5,000/month | Variable |
-| **Premium** | ₹7,500-25,000/month | Intensive |
+| Plan Type       | Price Range         | Sessions        |
+| --------------- | ------------------- | --------------- |
+| **Entry Level** | ₹2,500/month        | 2 sessions/week |
+| **Mid-range**   | ₹5,000/month        | Variable        |
+| **Premium**     | ₹7,500-25,000/month | Intensive       |
 
 **USD Equivalent:** $60 (2 sessions/week) to $120 (session every 3 days)
 
@@ -115,11 +117,11 @@ Preplaced is an open marketplace mentorship platform focused on job preparation,
 
 ### 3.3 Typical Mentorship Duration
 
-| Duration | Popularity | Use Case |
-|----------|------------|----------|
-| 3 months | Most Popular | Standard interview prep |
-| 4 months | Popular | Comprehensive preparation |
-| 6 months | Extended | Career transition |
+| Duration | Popularity   | Use Case                  |
+| -------- | ------------ | ------------------------- |
+| 3 months | Most Popular | Standard interview prep   |
+| 4 months | Popular      | Comprehensive preparation |
+| 6 months | Extended     | Career transition         |
 
 ---
 
@@ -151,6 +153,7 @@ Preplaced is an open marketplace mentorship platform focused on job preparation,
 ### 4.3 User Testimonials
 
 **Positive Feedback:**
+
 - "Provided a clear roadmap to crack the top companies"
 - "Mentor made himself available around the clock"
 - "Flexible mentorship plan, encouragement, and constructive feedback"
@@ -158,12 +161,12 @@ Preplaced is an open marketplace mentorship platform focused on job preparation,
 
 ### 4.4 Success Metrics (Claimed)
 
-| Metric | Value |
-|--------|-------|
-| Placement Success Rate | 96% |
-| Mentee Consistency Improvement | 90% |
-| Course Completion Rate (Industry avg) | 10% |
-| Mentorship Completion Rate | ~90% |
+| Metric                                | Value |
+| ------------------------------------- | ----- |
+| Placement Success Rate                | 96%   |
+| Mentee Consistency Improvement        | 90%   |
+| Course Completion Rate (Industry avg) | 10%   |
+| Mentorship Completion Rate            | ~90%  |
 
 ---
 
@@ -176,6 +179,7 @@ Preplaced is an open marketplace mentorship platform focused on job preparation,
 ### 5.2 Mentor Companies
 
 Mentors work at top-tier companies including:
+
 - **FAANG**: Google, Amazon, Facebook (Meta), Apple
 - **Tech Giants**: Microsoft, Intel, Uber
 - **Consulting**: Deloitte, Target
@@ -195,26 +199,26 @@ Mentors work at top-tier companies including:
 
 ### 6.1 Strengths
 
-| Strength | Impact | Lesson for Familiarise |
-|----------|--------|------------------------|
-| **Long-term focus** | HIGH | Emphasize subscription value |
-| **96% placement rate** | HIGH | Track & publish success metrics |
-| **Free trial sessions** | HIGH | Consider trial offering |
-| **Job referrals** | HIGH | Partner with companies |
-| **Rigorous mentor vetting** | MEDIUM | Quality control process |
-| **Tech specialization** | MEDIUM | Consider vertical focus |
-| **Certification** | MEDIUM | Add completion certificates |
+| Strength                    | Impact | Lesson for Familiarise          |
+| --------------------------- | ------ | ------------------------------- |
+| **Long-term focus**         | HIGH   | Emphasize subscription value    |
+| **96% placement rate**      | HIGH   | Track & publish success metrics |
+| **Free trial sessions**     | HIGH   | Consider trial offering         |
+| **Job referrals**           | HIGH   | Partner with companies          |
+| **Rigorous mentor vetting** | MEDIUM | Quality control process         |
+| **Tech specialization**     | MEDIUM | Consider vertical focus         |
+| **Certification**           | MEDIUM | Add completion certificates     |
 
 ### 6.2 Weaknesses
 
-| Weakness | Impact | Familiarise Opportunity |
-|----------|--------|-------------------------|
-| **Tech-only focus** | HIGH | Multi-domain advantage |
-| **No webinars** | MEDIUM | Group learning option |
-| **No classes** | MEDIUM | Extended programs |
-| **No integrated video** | HIGH | Seamless experience |
-| **Long commitment required** | MEDIUM | Flexible options |
-| **Limited scalability** | HIGH | One-to-many offerings |
+| Weakness                     | Impact | Familiarise Opportunity |
+| ---------------------------- | ------ | ----------------------- |
+| **Tech-only focus**          | HIGH   | Multi-domain advantage  |
+| **No webinars**              | MEDIUM | Group learning option   |
+| **No classes**               | MEDIUM | Extended programs       |
+| **No integrated video**      | HIGH   | Seamless experience     |
+| **Long commitment required** | MEDIUM | Flexible options        |
+| **Limited scalability**      | HIGH   | One-to-many offerings   |
 
 ---
 
@@ -222,13 +226,13 @@ Mentors work at top-tier companies including:
 
 ### 7.1 Target Segments
 
-| Segment | Priority | Description |
-|---------|----------|-------------|
-| **Job Seekers** | HIGH | Interview preparation |
-| **Career Switchers** | HIGH | Tech transition |
-| **Fresh Graduates** | HIGH | First job placement |
-| **Working Professionals** | MEDIUM | Upskilling for promotion |
-| **MAANG Aspirants** | HIGH | Target company prep |
+| Segment                   | Priority | Description              |
+| ------------------------- | -------- | ------------------------ |
+| **Job Seekers**           | HIGH     | Interview preparation    |
+| **Career Switchers**      | HIGH     | Tech transition          |
+| **Fresh Graduates**       | HIGH     | First job placement      |
+| **Working Professionals** | MEDIUM   | Upskilling for promotion |
+| **MAANG Aspirants**       | HIGH     | Target company prep      |
 
 ### 7.2 Geographic Focus
 
@@ -245,18 +249,19 @@ Mentors work at top-tier companies including:
 
 ### 8.1 Features to Consider
 
-| Feature | Priority | Implementation |
-|---------|----------|----------------|
-| **Free Trial Sessions** | HIGH | Allow 1 free intro call |
-| **Certification System** | MEDIUM | Issue completion certs |
-| **Mentor Vetting Process** | HIGH | Quality control |
-| **Job Placement Tracking** | MEDIUM | Success metrics |
-| **Mock Interview Feature** | LOW | Specialized offering |
-| **Planner Doc Integration** | LOW | Shared progress tracking |
+| Feature                     | Priority | Implementation           |
+| --------------------------- | -------- | ------------------------ |
+| **Free Trial Sessions**     | HIGH     | Allow 1 free intro call  |
+| **Certification System**    | MEDIUM   | Issue completion certs   |
+| **Mentor Vetting Process**  | HIGH     | Quality control          |
+| **Job Placement Tracking**  | MEDIUM   | Success metrics          |
+| **Mock Interview Feature**  | LOW      | Specialized offering     |
+| **Planner Doc Integration** | LOW      | Shared progress tracking |
 
 ### 8.2 Positioning Against Preplaced
 
 **Key Differentiators:**
+
 1. **Multi-domain**: Not just tech - business, wellness, creative
 2. **Flexible commitment**: One-off to long-term options
 3. **Group offerings**: Webinars, classes beyond 1:1
@@ -265,14 +270,14 @@ Mentors work at top-tier companies including:
 
 ### 8.3 Target Overlap
 
-| User Type | Preplaced | Familiarise |
-|-----------|:---------:|:-----------:|
-| Tech job seekers | ✅ Primary | Secondary |
-| Career coaches | ❌ | ✅ Primary |
-| Business mentors | ❌ | ✅ Primary |
-| Wellness experts | ❌ | ✅ Primary |
-| Educators | ❌ | ✅ Primary |
-| Course creators | ❌ | ✅ Primary |
+| User Type        | Preplaced  | Familiarise |
+| ---------------- | :--------: | :---------: |
+| Tech job seekers | ✅ Primary |  Secondary  |
+| Career coaches   |     ❌     | ✅ Primary  |
+| Business mentors |     ❌     | ✅ Primary  |
+| Wellness experts |     ❌     | ✅ Primary  |
+| Educators        |     ❌     | ✅ Primary  |
+| Course creators  |     ❌     | ✅ Primary  |
 
 ---
 
@@ -288,18 +293,19 @@ Mentors work at top-tier companies including:
 ### 9.2 Potential Partnership
 
 Consider **non-compete partnership** with Preplaced:
+
 - Preplaced handles tech interview prep
 - Familiarise handles other domains
 - Cross-referral arrangement
 
 ### 9.3 Feature Priorities
 
-| Feature | Priority | Effort |
-|---------|----------|--------|
-| Free trial sessions | HIGH | Low |
-| Certification system | MEDIUM | Medium |
-| Success tracking | MEDIUM | Medium |
-| Mentor vetting process | HIGH | Medium |
+| Feature                | Priority | Effort |
+| ---------------------- | -------- | ------ |
+| Free trial sessions    | HIGH     | Low    |
+| Certification system   | MEDIUM   | Medium |
+| Success tracking       | MEDIUM   | Medium |
+| Mentor vetting process | HIGH     | Medium |
 
 ---
 
@@ -307,19 +313,20 @@ Consider **non-compete partnership** with Preplaced:
 
 ### Against Preplaced, emphasize:
 
-| Message | Rationale |
-|---------|-----------|
-| "Beyond just tech careers" | Multi-domain vs. tech-only |
-| "Flexible commitment options" | Not locked into 3-6 months |
-| "Webinars and classes too" | Group learning options |
-| "All-in-one platform" | No external tools needed |
-| "For experts, not just mentees" | Creator tools |
+| Message                         | Rationale                  |
+| ------------------------------- | -------------------------- |
+| "Beyond just tech careers"      | Multi-domain vs. tech-only |
+| "Flexible commitment options"   | Not locked into 3-6 months |
+| "Webinars and classes too"      | Group learning options     |
+| "All-in-one platform"           | No external tools needed   |
+| "For experts, not just mentees" | Creator tools              |
 
 ---
 
 ## 11. Key Takeaways
 
 ### What Preplaced Does Well:
+
 1. Long-term relationship building
 2. Clear outcome focus (job placement)
 3. Quality mentor curation
@@ -327,6 +334,7 @@ Consider **non-compete partnership** with Preplaced:
 5. Job referral network effect
 
 ### Where Familiarise Wins:
+
 1. Multi-domain flexibility
 2. Group offering scalability
 3. Integrated technology
@@ -334,6 +342,7 @@ Consider **non-compete partnership** with Preplaced:
 5. Subscription + one-off options
 
 ### Strategic Priority:
+
 **LOW competition** - Different focus (tech interview prep vs. general expertise marketplace). Consider complementary positioning rather than direct competition.
 
 ---

@@ -65,7 +65,9 @@ export default function AdminRefundsPage() {
           </CardHeader>
           <CardContent>
             <p className="text-gray-700">
-              {error instanceof Error ? error.message : "Failed to load refunds"}
+              {error instanceof Error
+                ? error.message
+                : "Failed to load refunds"}
             </p>
           </CardContent>
         </Card>
@@ -101,7 +103,9 @@ export default function AdminRefundsPage() {
             <Select
               value={status}
               onValueChange={(value) => {
-                setStatus(value === "all" ? undefined : (value as RefundStatus));
+                setStatus(
+                  value === "all" ? undefined : (value as RefundStatus),
+                );
                 handleFilterChange();
               }}
             >

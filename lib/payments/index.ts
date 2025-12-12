@@ -111,10 +111,7 @@ export async function cancelPaymentIntent(
   }
 
   // Route based on payment ID format
-  if (
-    paymentIntentId.startsWith("cs_") ||
-    paymentIntentId.startsWith("pi_")
-  ) {
+  if (paymentIntentId.startsWith("cs_") || paymentIntentId.startsWith("pi_")) {
     return cancelStripePayment(paymentIntentId, reason);
   }
 
@@ -159,7 +156,10 @@ export async function createRefund(
     return createStripeRefund(params);
   }
 
-  if (paymentIntentId.startsWith("order_") || paymentIntentId.startsWith("pay_")) {
+  if (
+    paymentIntentId.startsWith("order_") ||
+    paymentIntentId.startsWith("pay_")
+  ) {
     return createRazorpayRefund(params);
   }
 
@@ -323,7 +323,10 @@ export function getPaymentGateway(paymentIntentId: string): PaymentGateway {
     return "STRIPE";
   }
 
-  if (paymentIntentId.startsWith("order_") || paymentIntentId.startsWith("pay_")) {
+  if (
+    paymentIntentId.startsWith("order_") ||
+    paymentIntentId.startsWith("pay_")
+  ) {
     return "RAZORPAY";
   }
 

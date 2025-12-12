@@ -27,13 +27,13 @@ Sentry provides real-time error tracking, crash reports, and performance monitor
 
 ### Problems It Solves
 
-| Problem | Sentry Solution |
-|---------|-----------------|
-| Users report vague errors | Full stack traces with context |
-| Can't reproduce bugs | Session replay shows what happened |
-| Don't know about errors until users complain | Real-time alerts |
-| No visibility into API failures | Request/response tracking |
-| Performance issues go unnoticed | Performance monitoring |
+| Problem                                      | Sentry Solution                    |
+| -------------------------------------------- | ---------------------------------- |
+| Users report vague errors                    | Full stack traces with context     |
+| Can't reproduce bugs                         | Session replay shows what happened |
+| Don't know about errors until users complain | Real-time alerts                   |
+| No visibility into API failures              | Request/response tracking          |
+| Performance issues go unnoticed              | Performance monitoring             |
 
 ### What You Get
 
@@ -69,6 +69,7 @@ npx @sentry/wizard@latest -i nextjs
 ```
 
 This wizard will:
+
 - Install `@sentry/nextjs`
 - Create configuration files
 - Set up source maps
@@ -434,7 +435,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(
       { error: "Internal server error" },
-      { status: 500 }
+      { status: 500 },
     );
   } finally {
     transaction.finish();
@@ -449,6 +450,7 @@ export async function POST(req: NextRequest) {
 ### Automatic Instrumentation
 
 Sentry automatically tracks:
+
 - Page loads
 - API routes
 - Database queries (with Prisma integration)
@@ -555,12 +557,10 @@ Sentry.init({
 ```yaml
 # vercel.json
 {
-  "build": {
-    "env": {
-      "SENTRY_ORG": "@your-org",
-      "SENTRY_PROJECT": "familiarise-web"
-    }
-  }
+  "build":
+    {
+      "env": { "SENTRY_ORG": "@your-org", "SENTRY_PROJECT": "familiarise-web" },
+    },
 }
 ```
 
@@ -618,7 +618,7 @@ Threshold: Sustained for 10 minutes
 // Assign issues based on tags
 Sentry.captureException(error, {
   tags: {
-    team: "payments",  // Routes to payments team
+    team: "payments", // Routes to payments team
   },
 });
 ```

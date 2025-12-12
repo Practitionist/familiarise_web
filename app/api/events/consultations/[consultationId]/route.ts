@@ -1,7 +1,51 @@
 import prisma from "@/lib/prisma";
-import { AppointmentsType, Prisma, RequestStatus } from "@prisma/client";
+import {
+  AppointmentsType,
+  PaymentGateway,
+  PaymentStatus,
+  Prisma,
+  RequestStatus,
+} from "@prisma/client";
 import { addHours } from "date-fns";
 import { NextRequest, NextResponse } from "next/server";
+import { createApprovalPaymentIntent } from "@/lib/payments/operations/approval-payment";
+import { APPROVAL_PAYMENT_EXPIRATION_MS } from "@/lib/payments/constants";
+import {
+  lockConsultationApproval,
+  unlockApproval,
+} from "@/utils/appointmentlock";
+import { sendPaymentLinkEmail } from "@/lib/email";
+
+/**
+ * Type for consultation with all related details needed for payment processing
+ */
+type ConsultationWithDetails = Prisma.ConsultationGetPayload<{
+  include: {
+    consultationPlan: {
+      include: {
+        consultantProfile: {
+          include: {
+            user: true;
+          };
+        };
+      };
+    };
+    requestedBy: {
+      include: {
+        user: true;
+      };
+    };
+    appointment: {
+      include: {
+        slotsOfAppointment: {
+          include: {
+            user: true;
+          };
+        };
+      };
+    };
+  };
+}>;
 
 export async function GET(
   request: Request,
@@ -296,52 +340,253 @@ export async function PATCH(
       );
     }
 
-    try {
-      // Update consultation status
-      const consultation = await prisma.consultation.update({
-        where: { id: consultationId },
-        data: {
-          requestStatus: status,
-        },
-        include: {
-          consultationPlan: {
-            include: {
-              consultantProfile: {
-                include: {
-                  user: true,
-                },
-              },
-            },
+    // LAYER 1: Distributed lock (only for APPROVED status changes)
+    let lock;
+    if (status === RequestStatus.APPROVED) {
+      try {
+        lock = await lockConsultationApproval(consultationId, 30000); // 30-second TTL
+      } catch (error) {
+        return NextResponse.json(
+          {
+            error:
+              error instanceof Error ? error.message : "Failed to acquire lock",
           },
-          requestedBy: {
-            include: {
-              user: true,
-            },
-          },
-          appointment: {
-            include: {
-              slotsOfAppointment: {
-                include: {
-                  user: true,
-                },
-              },
-            },
-          },
-        },
-      });
+          { status: 409 }, // Conflict - another approval in progress
+        );
+      }
+    }
 
-      // If approved, create an appointment
-      if (status === RequestStatus.APPROVED) {
-        await createAppointmentForConsultation(consultation);
+    try {
+      // LAYER 2: Serializable transaction with idempotency checks
+      const result = await prisma.$transaction(
+        async (tx) => {
+          // Fetch current state inside transaction
+          const currentConsultation = await tx.consultation.findUnique({
+            where: { id: consultationId },
+            include: {
+              consultationPlan: {
+                include: {
+                  consultantProfile: {
+                    include: {
+                      user: true,
+                    },
+                  },
+                },
+              },
+              requestedBy: {
+                include: {
+                  user: true,
+                },
+              },
+              appointment: {
+                include: {
+                  slotsOfAppointment: {
+                    include: {
+                      user: true,
+                    },
+                  },
+                },
+              },
+            },
+          });
+
+          if (!currentConsultation) {
+            throw new Error("Consultation not found");
+          }
+
+          // IDEMPOTENCY: Check if already in target state or processing
+          if (status === RequestStatus.APPROVED) {
+            if (
+              currentConsultation.requestStatus ===
+              RequestStatus.APPROVED_PENDING_PAYMENT
+            ) {
+              // Already processing, return existing state
+              return {
+                data: currentConsultation,
+                message: "Approval already in progress",
+                duplicate: true,
+              };
+            }
+
+            if (currentConsultation.requestStatus === RequestStatus.APPROVED) {
+              return {
+                data: currentConsultation,
+                message: "Already approved",
+                duplicate: true,
+              };
+            }
+          }
+
+          // Update consultation status
+          const consultation = await tx.consultation.update({
+            where: { id: consultationId },
+            data: {
+              requestStatus: status,
+            },
+            include: {
+              consultationPlan: {
+                include: {
+                  consultantProfile: {
+                    include: {
+                      user: true,
+                    },
+                  },
+                },
+              },
+              requestedBy: {
+                include: {
+                  user: true,
+                },
+              },
+              appointment: {
+                include: {
+                  slotsOfAppointment: {
+                    include: {
+                      user: true,
+                    },
+                  },
+                },
+              },
+            },
+          });
+
+          // If approved, check if payment exists
+          if (status === RequestStatus.APPROVED) {
+            const hasPayment = await checkConsultationPayment(
+              tx,
+              consultation.id,
+            );
+
+            if (hasPayment) {
+              // Payment already exists - check if tentative appointment exists
+              if (consultation.appointment) {
+                // Confirm existing tentative appointment by setting slots to non-tentative
+                await tx.slotOfAppointment.updateMany({
+                  where: { appointmentId: consultation.appointment.id },
+                  data: { isTentative: false },
+                });
+              } else {
+                // Only create new appointment if none exists (direct checkout flow)
+                await createAppointmentForConsultation(consultation);
+              }
+              return { data: consultation, duplicate: false };
+            } else {
+              // No payment - generate payment link
+              const paymentResult = await generatePaymentLink(consultation);
+
+              // Update status to APPROVED_PENDING_PAYMENT
+              const updatedConsultation = await tx.consultation.update({
+                where: { id: consultationId },
+                data: {
+                  requestStatus: RequestStatus.APPROVED_PENDING_PAYMENT,
+                  pendingPaymentUrl: paymentResult.checkoutUrl,
+                  requestNotes: consultation.requestNotes
+                    ? `${consultation.requestNotes}\n\n[System] Payment link generated and sent to user.`
+                    : `[System] Payment link generated and sent to user.`,
+                },
+                include: {
+                  consultationPlan: {
+                    include: {
+                      consultantProfile: {
+                        include: {
+                          user: true,
+                        },
+                      },
+                    },
+                  },
+                  requestedBy: {
+                    include: {
+                      user: true,
+                    },
+                  },
+                  appointment: {
+                    include: {
+                      slotsOfAppointment: {
+                        include: {
+                          user: true,
+                        },
+                      },
+                    },
+                  },
+                },
+              });
+
+              // Return email data to send AFTER transaction commits
+              // This prevents holding serializable locks during slow email network calls
+              return {
+                data: updatedConsultation,
+                message: "Consultation approved. Payment link sent to user.",
+                paymentUrl: paymentResult.checkoutUrl,
+                requiresPayment: true,
+                paymentAmount: paymentResult.amount,
+                paymentCurrency: paymentResult.currency,
+                duplicate: false,
+                emailData: {
+                  email: updatedConsultation.requestedBy.user.email || "",
+                  name: updatedConsultation.requestedBy.user.name || "User",
+                  consultantName:
+                    updatedConsultation.consultationPlan.consultantProfile.user
+                      .name || "Consultant",
+                  appointmentType: "consultation" as const,
+                  amount: paymentResult.amount,
+                  currency: paymentResult.currency,
+                  paymentUrl: paymentResult.checkoutUrl,
+                  expiresAt: new Date(
+                    Date.now() + APPROVAL_PAYMENT_EXPIRATION_MS,
+                  ),
+                },
+              };
+            }
+          }
+
+          return { data: consultation, duplicate: false };
+        },
+        {
+          isolationLevel: Prisma.TransactionIsolationLevel.Serializable, // LAYER 2: Highest isolation
+          maxWait: 10000, // 10 seconds
+          timeout: 30000, // 30 seconds
+        },
+      );
+
+      // If duplicate, return early
+      if (result.duplicate) {
+        return NextResponse.json({
+          data: result.data,
+          message: result.message,
+        });
       }
 
-      return NextResponse.json({ data: consultation });
+      // Send email AFTER transaction commits - prevents holding locks during slow network calls
+      // User can still find the payment link on their dashboard via pendingPaymentUrl if email fails
+      if ("emailData" in result && result.emailData) {
+        try {
+          await sendPaymentLinkEmail(result.emailData);
+          console.log(
+            `📧 Payment link email sent for consultation ${consultationId}`,
+          );
+        } catch (emailError) {
+          console.error(
+            `⚠️ Failed to send payment link email for consultation ${consultationId}:`,
+            emailError instanceof Error ? emailError.message : "Unknown error",
+          );
+        }
+      }
+
+      // Return success response (exclude emailData from response)
+      const { emailData: _emailData, ...responseData } =
+        result as typeof result & { emailData?: unknown };
+      return NextResponse.json(responseData);
     } catch (error) {
       console.error(
         "Transaction error:",
         error instanceof Error ? error.message : "Unknown error",
       );
       throw error;
+    } finally {
+      // LAYER 1: Always release lock
+      if (lock) {
+        await unlockApproval(lock);
+      }
     }
   } catch (error) {
     console.error(
@@ -355,7 +600,60 @@ export async function PATCH(
   }
 }
 
-async function createAppointmentForConsultation(consultation: any) {
+/**
+ * Check if payment exists for this consultation
+ * Uses transaction client to maintain serializable isolation
+ */
+async function checkConsultationPayment(
+  tx: Prisma.TransactionClient,
+  consultationId: string,
+): Promise<boolean> {
+  const consultation = await tx.consultation.findUnique({
+    where: { id: consultationId },
+    include: {
+      appointment: {
+        include: {
+          payment: {
+            where: {
+              paymentStatus: {
+                in: [PaymentStatus.SUCCEEDED, PaymentStatus.PENDING],
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+
+  return (consultation?.appointment?.payment?.length ?? 0) > 0;
+}
+
+/**
+ * Generate payment link for approved consultation
+ */
+async function generatePaymentLink(consultation: ConsultationWithDetails) {
+  const { consultationPlan, requestedBy, appointment } = consultation;
+
+  // Extract slot times if appointment/slots exist
+  const slot = appointment?.slotsOfAppointment?.[0];
+  const slotStartTimeInUTC = slot?.startsAt?.toISOString();
+  const slotEndTimeInUTC = slot?.endsAt?.toISOString();
+
+  return await createApprovalPaymentIntent({
+    userId: requestedBy.user.id,
+    appointmentType: "CONSULTATION",
+    consultationId: consultation.id,
+    planId: consultationPlan.id,
+    paymentGateway: PaymentGateway.STRIPE, // Default to Stripe, could be made configurable
+    slotStartTimeInUTC,
+    slotEndTimeInUTC,
+    notes: consultation.requestNotes ?? undefined,
+  });
+}
+
+async function createAppointmentForConsultation(
+  consultation: ConsultationWithDetails,
+) {
   const { consultationPlan, requestedBy } = consultation;
 
   if (!consultationPlan?.durationInHours) {

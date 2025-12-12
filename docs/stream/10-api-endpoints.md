@@ -21,11 +21,13 @@ All Stream API endpoints are located under the `/api/stream/*` path and follow R
 ### Base URL
 
 **Development:**
+
 ```
 http://localhost:3000/api/stream
 ```
 
 **Production:**
+
 ```
 https://your-domain.com/api/stream
 ```
@@ -33,6 +35,7 @@ https://your-domain.com/api/stream
 ### Common Response Format
 
 **Success Response:**
+
 ```typescript
 {
   success: true,
@@ -42,6 +45,7 @@ https://your-domain.com/api/stream
 ```
 
 **Error Response:**
+
 ```typescript
 {
   success: false,
@@ -52,15 +56,15 @@ https://your-domain.com/api/stream
 
 ### HTTP Status Codes
 
-| Code | Meaning | Usage |
-|------|---------|-------|
-| 200 | OK | Successful GET request |
-| 201 | Created | Successful POST creation |
-| 400 | Bad Request | Invalid request parameters |
-| 401 | Unauthorized | Missing or invalid authentication |
-| 403 | Forbidden | Insufficient permissions |
-| 404 | Not Found | Resource doesn't exist |
-| 500 | Internal Server Error | Server-side error |
+| Code | Meaning               | Usage                             |
+| ---- | --------------------- | --------------------------------- |
+| 200  | OK                    | Successful GET request            |
+| 201  | Created               | Successful POST creation          |
+| 400  | Bad Request           | Invalid request parameters        |
+| 401  | Unauthorized          | Missing or invalid authentication |
+| 403  | Forbidden             | Insufficient permissions          |
+| 404  | Not Found             | Resource doesn't exist            |
+| 500  | Internal Server Error | Server-side error                 |
 
 ---
 
@@ -71,6 +75,7 @@ Most endpoints require authentication via NextAuth session.
 ### Session-Based Authentication
 
 **How it Works:**
+
 ```typescript
 import { getServerSession } from "next-auth";
 import authOptions from "@/app/api/auth/[...nextauth]/options";
@@ -81,12 +86,13 @@ const session = await getServerSession(authOptions);
 if (!session?.user?.id) {
   return NextResponse.json(
     { success: false, error: "Unauthorized" },
-    { status: 401 }
+    { status: 401 },
   );
 }
 ```
 
 **Client-Side Request:**
+
 ```typescript
 // NextAuth automatically includes session cookie
 const response = await fetch("/api/stream/search?term=john");
@@ -97,6 +103,7 @@ const response = await fetch("/api/stream/search?term=john");
 Some endpoints use a secret query parameter for server-to-server authentication.
 
 **Example:**
+
 ```typescript
 const secret = searchParams.get("secret");
 if (secret !== process.env.STREAM_SYNC_SECRET) {
@@ -105,6 +112,7 @@ if (secret !== process.env.STREAM_SYNC_SECRET) {
 ```
 
 **Usage:**
+
 ```bash
 curl -X POST "https://your-domain.com/api/stream/sync/background?secret=your-secret-here"
 ```
@@ -122,6 +130,7 @@ Creates a new Stream Chat channel for events or custom purposes.
 **Authentication:** Required (Session)
 
 **Request Body (Event-Based):**
+
 ```typescript
 {
   channelType: "team" | "messaging",
@@ -132,6 +141,7 @@ Creates a new Stream Chat channel for events or custom purposes.
 ```
 
 **Request Body (Custom Channel):**
+
 ```typescript
 {
   channelType: "team" | "messaging",
@@ -143,6 +153,7 @@ Creates a new Stream Chat channel for events or custom purposes.
 ```
 
 **Response (Success - 200):**
+
 ```typescript
 {
   success: true,
@@ -164,6 +175,7 @@ Creates a new Stream Chat channel for events or custom purposes.
 ```
 
 **Response (Error - 400/500):**
+
 ```typescript
 {
   success: false,
@@ -174,6 +186,7 @@ Creates a new Stream Chat channel for events or custom purposes.
 #### Example: Create Webinar Channel
 
 **Request:**
+
 ```typescript
 const response = await fetch("/api/stream/channels/create", {
   method: "POST",
@@ -184,7 +197,7 @@ const response = await fetch("/api/stream/channels/create", {
     channelType: "team",
     eventType: "webinar",
     eventId: "webinar-123",
-    createdById: "user-456"
+    createdById: "user-456",
   }),
 });
 
@@ -193,6 +206,7 @@ console.log(result);
 ```
 
 **Response:**
+
 ```json
 {
   "success": true,
@@ -216,6 +230,7 @@ console.log(result);
 #### Example: Create Custom Channel
 
 **Request:**
+
 ```typescript
 const response = await fetch("/api/stream/channels/create", {
   method: "POST",
@@ -229,8 +244,8 @@ const response = await fetch("/api/stream/channels/create", {
     createdById: "user-123",
     additionalData: {
       custom: true,
-      project: "new-feature"
-    }
+      project: "new-feature",
+    },
   }),
 });
 
@@ -238,6 +253,7 @@ const result = await response.json();
 ```
 
 **Response:**
+
 ```json
 {
   "success": true,
@@ -259,6 +275,7 @@ const result = await response.json();
 #### Error Cases
 
 **Missing Required Fields:**
+
 ```json
 {
   "success": false,
@@ -267,6 +284,7 @@ const result = await response.json();
 ```
 
 **Invalid Event Type:**
+
 ```json
 {
   "success": false,
@@ -275,6 +293,7 @@ const result = await response.json();
 ```
 
 **Custom Channel Missing Name:**
+
 ```json
 {
   "success": false,
@@ -295,10 +314,12 @@ Searches for users in the database and optionally checks relationship status.
 **Authentication:** Required for relationship search
 
 **Query Parameters:**
+
 - `term` (required): Search term to match against name or email
 - `relationships` (optional): Set to "true" to include relationship status
 
 **Response (Success - 200):**
+
 ```typescript
 {
   success: true,
@@ -314,6 +335,7 @@ Searches for users in the database and optionally checks relationship status.
 ```
 
 **Response (Error - 400/401/500):**
+
 ```typescript
 {
   success: false,
@@ -324,16 +346,16 @@ Searches for users in the database and optionally checks relationship status.
 #### Example: Basic User Search
 
 **Request:**
+
 ```typescript
-const response = await fetch(
-  "/api/stream/search?term=john"
-);
+const response = await fetch("/api/stream/search?term=john");
 
 const result = await response.json();
 console.log(result);
 ```
 
 **Response:**
+
 ```json
 {
   "success": true,
@@ -359,15 +381,15 @@ console.log(result);
 #### Example: Search with Relationships
 
 **Request:**
+
 ```typescript
-const response = await fetch(
-  "/api/stream/search?term=jane&relationships=true"
-);
+const response = await fetch("/api/stream/search?term=jane&relationships=true");
 
 const result = await response.json();
 ```
 
 **Response:**
+
 ```json
 {
   "success": true,
@@ -397,6 +419,7 @@ const result = await response.json();
 #### Error Cases
 
 **Missing Search Term:**
+
 ```json
 {
   "success": false,
@@ -405,6 +428,7 @@ const result = await response.json();
 ```
 
 **Unauthorized (Relationship Search):**
+
 ```json
 {
   "success": false,
@@ -445,9 +469,11 @@ Provides comprehensive debugging information about a user's Stream Chat connecti
 **Authentication:** Required (implicitly via API keys)
 
 **Query Parameters:**
+
 - `userId` (required): The user ID to debug
 
 **Response (Success - 200):**
+
 ```typescript
 {
   success: true,
@@ -519,6 +545,7 @@ Provides comprehensive debugging information about a user's Stream Chat connecti
 ```
 
 **Response (Error - 400/404/500):**
+
 ```typescript
 {
   success: false,
@@ -529,16 +556,16 @@ Provides comprehensive debugging information about a user's Stream Chat connecti
 #### Example Request
 
 **Request:**
+
 ```typescript
-const response = await fetch(
-  "/api/stream/debug?userId=user-123"
-);
+const response = await fetch("/api/stream/debug?userId=user-123");
 
 const result = await response.json();
 console.log(result);
 ```
 
 **Response:**
+
 ```json
 {
   "success": true,
@@ -600,6 +627,7 @@ console.log(result);
 #### Error Cases
 
 **Missing User ID:**
+
 ```json
 {
   "success": false,
@@ -608,6 +636,7 @@ console.log(result);
 ```
 
 **User Not Found:**
+
 ```json
 {
   "success": false,
@@ -616,6 +645,7 @@ console.log(result);
 ```
 
 **Stream API Not Configured:**
+
 ```json
 {
   "success": false,
@@ -643,9 +673,11 @@ Manually triggers Stream user synchronization (same logic as background job).
 **Authentication:** Secret-based (query parameter)
 
 **Query Parameters:**
+
 - `secret` (required): Must match `STREAM_SYNC_SECRET` environment variable
 
 **Response (Success - 200):**
+
 ```typescript
 {
   message: string,
@@ -664,6 +696,7 @@ Manually triggers Stream user synchronization (same logic as background job).
 ```
 
 **Response (Error - 401/500):**
+
 ```typescript
 {
   error: string,
@@ -674,24 +707,26 @@ Manually triggers Stream user synchronization (same logic as background job).
 #### Example Request
 
 **Request:**
+
 ```bash
 curl -X POST "https://your-domain.com/api/stream/sync/manual?secret=your-sync-secret"
 ```
 
 **Request (JavaScript):**
+
 ```typescript
 const secret = process.env.STREAM_SYNC_SECRET;
 
-const response = await fetch(
-  `/api/stream/sync/manual?secret=${secret}`,
-  { method: "POST" }
-);
+const response = await fetch(`/api/stream/sync/manual?secret=${secret}`, {
+  method: "POST",
+});
 
 const result = await response.json();
 console.log(result);
 ```
 
 **Response:**
+
 ```json
 {
   "message": "Stream user synchronization process initiated.",
@@ -719,6 +754,7 @@ console.log(result);
 #### Error Cases
 
 **Unauthorized:**
+
 ```json
 {
   "error": "Unauthorized"
@@ -726,6 +762,7 @@ console.log(result);
 ```
 
 **Internal Error:**
+
 ```json
 {
   "error": "Internal Server Error",
@@ -736,12 +773,14 @@ console.log(result);
 #### Differences from Background Sync
 
 **Manual Sync (`/api/stream/sync/manual`):**
+
 - Fetches ALL users at once (not paginated)
 - Faster for small user bases
 - May timeout on large datasets
 - Returns detailed results immediately
 
 **Background Sync (`/api/stream/sync/background`):**
+
 - Uses pagination (100 users per page)
 - Scalable for large user bases
 - More robust error handling
@@ -756,9 +795,11 @@ Triggers the paginated background sync process (used by GitHub Actions cron job)
 **Authentication:** Secret-based (query parameter)
 
 **Query Parameters:**
+
 - `secret` (required): Must match `STREAM_SYNC_SECRET` environment variable
 
 **Response (Success - 200):**
+
 ```typescript
 {
   message: string,
@@ -776,6 +817,7 @@ Triggers the paginated background sync process (used by GitHub Actions cron job)
 ```
 
 **Response (Error - 401/500):**
+
 ```typescript
 {
   error: string,
@@ -786,24 +828,26 @@ Triggers the paginated background sync process (used by GitHub Actions cron job)
 #### Example Request
 
 **Request:**
+
 ```bash
 curl -X POST "https://your-domain.com/api/stream/sync/background?secret=your-sync-secret"
 ```
 
 **Request (JavaScript):**
+
 ```typescript
 const secret = process.env.STREAM_SYNC_SECRET;
 
-const response = await fetch(
-  `/api/stream/sync/background?secret=${secret}`,
-  { method: "POST" }
-);
+const response = await fetch(`/api/stream/sync/background?secret=${secret}`, {
+  method: "POST",
+});
 
 const result = await response.json();
 console.log(result);
 ```
 
 **Response:**
+
 ```json
 {
   "message": "Stream user background synchronization triggered and completed.",
@@ -829,6 +873,7 @@ console.log(result);
 #### Error Cases
 
 **Unauthorized:**
+
 ```json
 {
   "error": "Unauthorized"
@@ -836,6 +881,7 @@ console.log(result);
 ```
 
 **Internal Error:**
+
 ```json
 {
   "error": "Internal Server Error during background sync via API call",
@@ -857,6 +903,7 @@ console.log(result);
 **The script directly executes `/jobs/stream-sync.ts`, not the API endpoint.**
 
 **API Endpoint Use Case:**
+
 - External cron services (Vercel Cron, AWS EventBridge)
 - Manual triggering from external systems
 - Monitoring/alerting integrations
@@ -882,6 +929,7 @@ All endpoints follow a consistent error format:
 #### 400 Bad Request
 
 **Missing Parameters:**
+
 ```json
 {
   "success": false,
@@ -890,6 +938,7 @@ All endpoints follow a consistent error format:
 ```
 
 **Invalid Parameters:**
+
 ```json
 {
   "success": false,
@@ -900,6 +949,7 @@ All endpoints follow a consistent error format:
 #### 401 Unauthorized
 
 **Missing Session:**
+
 ```json
 {
   "success": false,
@@ -908,6 +958,7 @@ All endpoints follow a consistent error format:
 ```
 
 **Invalid Secret:**
+
 ```json
 {
   "error": "Unauthorized"
@@ -917,6 +968,7 @@ All endpoints follow a consistent error format:
 #### 403 Forbidden
 
 **Permission Denied:**
+
 ```json
 {
   "success": false,
@@ -927,6 +979,7 @@ All endpoints follow a consistent error format:
 #### 404 Not Found
 
 **Resource Missing:**
+
 ```json
 {
   "success": false,
@@ -937,6 +990,7 @@ All endpoints follow a consistent error format:
 #### 500 Internal Server Error
 
 **Configuration Error:**
+
 ```json
 {
   "success": false,
@@ -945,6 +999,7 @@ All endpoints follow a consistent error format:
 ```
 
 **Database Error:**
+
 ```json
 {
   "error": "Internal Server Error",
@@ -953,6 +1008,7 @@ All endpoints follow a consistent error format:
 ```
 
 **Stream API Error:**
+
 ```json
 {
   "success": false,
@@ -964,6 +1020,7 @@ All endpoints follow a consistent error format:
 ### Client-Side Error Handling
 
 **Example:**
+
 ```typescript
 async function createChannel(channelData: ChannelData) {
   try {
@@ -998,11 +1055,12 @@ async function createChannel(channelData: ChannelData) {
 ### Retry Strategy
 
 **Example with Exponential Backoff:**
+
 ```typescript
 async function fetchWithRetry(
   url: string,
   options: RequestInit,
-  maxRetries: number = 3
+  maxRetries: number = 3,
 ): Promise<Response> {
   let lastError;
 
@@ -1028,7 +1086,7 @@ async function fetchWithRetry(
       if (attempt < maxRetries) {
         // Exponential backoff: 1s, 2s, 4s
         const delay = Math.pow(2, attempt - 1) * 1000;
-        await new Promise(resolve => setTimeout(resolve, delay));
+        await new Promise((resolve) => setTimeout(resolve, delay));
       }
     }
   }
@@ -1038,13 +1096,14 @@ async function fetchWithRetry(
 
 // Usage
 const response = await fetchWithRetry("/api/stream/search?term=john", {
-  method: "GET"
+  method: "GET",
 });
 ```
 
 ### Rate Limiting
 
 **Recommended Client-Side Rate Limiting:**
+
 ```typescript
 class RateLimiter {
   private queue: Array<() => Promise<any>> = [];
@@ -1082,7 +1141,7 @@ class RateLimiter {
     while (this.queue.length > 0) {
       const fn = this.queue.shift()!;
       await fn();
-      await new Promise(resolve => setTimeout(resolve, this.delay));
+      await new Promise((resolve) => setTimeout(resolve, this.delay));
     }
 
     this.processing = false;
@@ -1093,9 +1152,9 @@ class RateLimiter {
 const limiter = new RateLimiter(5); // 5 requests per second
 
 const results = await Promise.all(
-  userIds.map(userId =>
-    limiter.add(() => fetch(`/api/stream/search?term=${userId}`))
-  )
+  userIds.map((userId) =>
+    limiter.add(() => fetch(`/api/stream/search?term=${userId}`)),
+  ),
 );
 ```
 

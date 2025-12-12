@@ -36,6 +36,13 @@ jobs:
       - name: Create .env file from secret
         run: echo "${{ secrets.ENV_FILE }}" | base64 -d > .env
 
+      - name: TypeScript Check
+        if: github.actor != 'dependabot[bot]'
+        run: npx tsc --noEmit
+
+      - name: Build Check
+        run: npm run build
+
       - name: Prettier Check
         if: github.actor != 'dependabot[bot]'
         run: npm run format:check
@@ -43,10 +50,3 @@ jobs:
       - name: ESLint Check
         if: github.actor != 'dependabot[bot]'
         run: npx eslint .
-
-      - name: TypeScript Check
-        if: github.actor != 'dependabot[bot]'
-        run: npx tsc --noEmit
-
-      - name: Build Check
-        run: npm run build

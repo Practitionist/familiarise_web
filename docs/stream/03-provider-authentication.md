@@ -3,6 +3,7 @@
 > Deep dive into StreamProvider architecture, connection lifecycle, token management, and error recovery
 
 ## Table of Contents
+
 - [Provider Architecture](#provider-architecture)
 - [Initialization Sequence](#initialization-sequence)
 - [Connection State Management](#connection-state-management)
@@ -44,11 +45,12 @@ await client.connectUser(
     image: userImage,
     role: streamRole,
   },
-  () => getCachedToken("chat")
+  () => getCachedToken("chat"),
 );
 ```
 
 **Features:**
+
 - 1-on-1 messaging
 - Group channels
 - Read receipts
@@ -77,6 +79,7 @@ const client = new StreamVideoClient({
 ```
 
 **Features:**
+
 - 1-on-1 video calls
 - Group meetings
 - Screen sharing
@@ -85,13 +88,13 @@ const client = new StreamVideoClient({
 
 ### Why Separate Clients?
 
-| Aspect | Chat Client | Video Client |
-|--------|-------------|--------------|
-| **Protocol** | WebSocket | WebRTC |
-| **Connection** | Long-lived persistent | On-demand per call |
-| **Token Provider** | One-time | Callback function |
-| **Initialization** | `connectUser()` | Constructor |
-| **Disconnect** | `disconnectUser()` | No explicit method |
+| Aspect             | Chat Client           | Video Client       |
+| ------------------ | --------------------- | ------------------ |
+| **Protocol**       | WebSocket             | WebRTC             |
+| **Connection**     | Long-lived persistent | On-demand per call |
+| **Token Provider** | One-time              | Callback function  |
+| **Initialization** | `connectUser()`       | Constructor        |
+| **Disconnect**     | `disconnectUser()`    | No explicit method |
 
 ### Component Structure
 
@@ -152,6 +155,7 @@ export default function StreamProvider({
 ```
 
 **Nested Provider Pattern:**
+
 - Outermost: `StreamErrorBoundary` (error handling)
 - Middle: `StreamConnectionContext` (connection state)
 - Inner: `StreamVideo` → `Chat` → `children` (SDK providers)
@@ -250,11 +254,13 @@ const { userDetails, isLoading } = useUserData(userId);
 ```
 
 **What happens:**
+
 - Hook fetches user from database
 - Retrieves: `id`, `name`, `image`, `role`
 - Waits until `!isLoading` before proceeding
 
 **Database Query:**
+
 ```typescript
 // Inside useUserData hook
 const user = await prisma.user.findUnique({
@@ -279,7 +285,8 @@ const [tokenCache, setTokenCache] = useState<{
 
 const isTokenValid = useCallback(
   (type: "chat" | "video") => {
-    const token = type === "chat" ? tokenCache.chatToken : tokenCache.videoToken;
+    const token =
+      type === "chat" ? tokenCache.chatToken : tokenCache.videoToken;
     const expiresAt = tokenCache.expiresAt;
 
     if (!token || !expiresAt) return false;
@@ -287,7 +294,7 @@ const isTokenValid = useCallback(
     // Check if token expires within next 5 minutes
     return Date.now() < expiresAt - 5 * 60 * 1000;
   },
-  [tokenCache]
+  [tokenCache],
 );
 
 const getCachedToken = useCallback(
@@ -313,7 +320,7 @@ const getCachedToken = useCallback(
 
     return newToken;
   },
-  [userId, tokenCache, isTokenValid]
+  [userId, tokenCache, isTokenValid],
 );
 ```
 
@@ -373,7 +380,7 @@ const connectChat = useCallback(async () => {
         image: userDetails.image ?? undefined,
         role: streamRole, // ⚠️ Currently always "admin"
       },
-      () => getCachedToken("chat")
+      () => getCachedToken("chat"),
     );
 
     setChatClient(client);
@@ -382,12 +389,17 @@ const connectChat = useCallback(async () => {
     // Initial channel sync only once
     if (!hasInitialSyncCompleted) {
       try {
-        console.log(`Performing initial channel sync for user ${userDetails.id}`);
+        console.log(
+          `Performing initial channel sync for user ${userDetails.id}`,
+        );
         await syncUserEventChannels(userDetails.id);
         setHasInitialSyncCompleted(true);
         console.log(`Completed initial sync for user ${userDetails.id}`);
       } catch (syncError) {
-        console.warn(`Channel sync failed for user ${userDetails.id}:`, syncError);
+        console.warn(
+          `Channel sync failed for user ${userDetails.id}:`,
+          syncError,
+        );
       }
     }
 
@@ -397,10 +409,18 @@ const connectChat = useCallback(async () => {
     setChatConnected(false);
     throw error;
   }
-}, [enableChat, userDetails, apiKey, chatConnected, hasInitialSyncCompleted, getCachedToken]);
+}, [
+  enableChat,
+  userDetails,
+  apiKey,
+  chatConnected,
+  hasInitialSyncCompleted,
+  getCachedToken,
+]);
 ```
 
 **Key Points:**
+
 - Singleton pattern: `StreamChat.getInstance()` returns same instance
 - User upserted to Stream database before connection
 - Role mapping via `mapRoleToStream()` (currently always returns "admin")
@@ -439,6 +459,7 @@ const connectVideo = useCallback(async () => {
 ```
 
 **Key Differences from Chat:**
+
 - New instance created (no singleton)
 - Token provider as callback (called when needed)
 - No explicit connection method
@@ -461,7 +482,8 @@ const connectServices = useCallback(async () => {
     await Promise.all(promises); // Parallel execution
     setConnectionAttempts(0); // Reset on success
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : "Connection failed";
+    const errorMessage =
+      error instanceof Error ? error.message : "Connection failed";
     setError(errorMessage);
 
     // Implement exponential backoff retry
@@ -498,6 +520,7 @@ const connectServices = useCallback(async () => {
 ```
 
 **Performance Benefit:**
+
 ```
 Sequential: chat (2-3s) + video (2-3s) = 4-6s total
 Parallel:   max(2-3s, 2-3s) = 2-3s total
@@ -513,17 +536,20 @@ Speed improvement: ~50% faster
 
 ```typescript
 interface StreamConnectionState {
-  chatConnected: boolean;      // Chat WebSocket active
-  videoConnected: boolean;     // Video client initialized
-  isConnecting: boolean;       // Connection in progress
-  error: string | null;        // Last error message
+  chatConnected: boolean; // Chat WebSocket active
+  videoConnected: boolean; // Video client initialized
+  isConnecting: boolean; // Connection in progress
+  error: string | null; // Last error message
   retryConnection: () => void; // Manual retry function
 }
 ```
 
 **Implementation (Lines 28-46):**
+
 ```typescript
-const StreamConnectionContext = createContext<StreamConnectionState | null>(null);
+const StreamConnectionContext = createContext<StreamConnectionState | null>(
+  null,
+);
 
 export const useStreamConnection = () => {
   const context = useContext(StreamConnectionContext);
@@ -643,12 +669,14 @@ if (error && connectionAttempts >= 5) {
 ### Why Cache Tokens?
 
 **Problem without caching:**
+
 - ❌ API call on every render
 - ❌ Slow (200-500ms per token)
 - ❌ Expensive (counts toward API limits)
 - ❌ Unnecessary (tokens valid for 1 hour)
 
 **Solution with caching:**
+
 - ✅ Generate token once
 - ✅ Reuse for 50 minutes
 - ✅ Auto-refresh before expiry
@@ -665,7 +693,8 @@ const [tokenCache, setTokenCache] = useState<{
 
 const isTokenValid = useCallback(
   (type: "chat" | "video") => {
-    const token = type === "chat" ? tokenCache.chatToken : tokenCache.videoToken;
+    const token =
+      type === "chat" ? tokenCache.chatToken : tokenCache.videoToken;
     const expiresAt = tokenCache.expiresAt;
 
     if (!token || !expiresAt) return false;
@@ -673,7 +702,7 @@ const isTokenValid = useCallback(
     // Check if token expires within next 5 minutes
     return Date.now() < expiresAt - 5 * 60 * 1000;
   },
-  [tokenCache]
+  [tokenCache],
 );
 
 const getCachedToken = useCallback(
@@ -701,7 +730,7 @@ const getCachedToken = useCallback(
 
     return newToken;
   },
-  [userId, tokenCache, isTokenValid]
+  [userId, tokenCache, isTokenValid],
 );
 ```
 
@@ -727,6 +756,7 @@ Time    Event                     Token State
 **Safety Buffer:** 10 minutes (600 seconds)
 
 **Reasoning:**
+
 1. **Prevents mid-operation expiry**
    - Token refreshed before critical operations
    - No connection drops during long sessions
@@ -755,7 +785,7 @@ const disconnect = useCallback(async () => {
         console.log("Chat client disconnected");
         setChatClient(null);
         setChatConnected(false);
-      })
+      }),
     );
   }
 
@@ -771,6 +801,7 @@ const disconnect = useCallback(async () => {
 ```
 
 **Cache cleared on:**
+
 - User logout
 - Component unmount
 - Manual disconnect
@@ -812,7 +843,9 @@ export class StreamErrorBoundary extends React.Component<
   private retryCount = 0;
   private maxRetries = 3;
 
-  static getDerivedStateFromError(error: Error): Partial<StreamErrorBoundaryState> {
+  static getDerivedStateFromError(
+    error: Error,
+  ): Partial<StreamErrorBoundaryState> {
     // Determine error type based on error message
     let errorType: "chat" | "video" | "general" = "general";
 
@@ -858,7 +891,9 @@ export class StreamErrorBoundary extends React.Component<
   handleRetry = () => {
     if (this.retryCount < this.maxRetries) {
       this.retryCount++;
-      console.log(`Retrying Stream component (attempt ${this.retryCount}/${this.maxRetries})`);
+      console.log(
+        `Retrying Stream component (attempt ${this.retryCount}/${this.maxRetries})`,
+      );
 
       this.setState({
         hasError: false,
@@ -875,13 +910,13 @@ export class StreamErrorBoundary extends React.Component<
 
 ### Error Types Handled
 
-| Error Type | Detection | Recovery |
-|------------|-----------|----------|
+| Error Type         | Detection                 | Recovery                    |
+| ------------------ | ------------------------- | --------------------------- |
 | **Authentication** | "token", "authentication" | Regenerate token, reconnect |
-| **Network** | "network", "connection" | Exponential backoff retry |
-| **Permission** | "permission" | Log error, notify user |
-| **API Error** | HTTP status codes | Retry with delay |
-| **Unknown** | Catchall | Single retry attempt |
+| **Network**        | "network", "connection"   | Exponential backoff retry   |
+| **Permission**     | "permission"              | Log error, notify user      |
+| **API Error**      | HTTP status codes         | Retry with delay            |
+| **Unknown**        | Catchall                  | Single retry attempt        |
 
 ### Custom Error Messages
 
@@ -889,11 +924,17 @@ export class StreamErrorBoundary extends React.Component<
 const getErrorMessage = () => {
   if (!error) return "An unknown error occurred";
 
-  if (error.message.includes("token") || error.message.includes("authentication")) {
+  if (
+    error.message.includes("token") ||
+    error.message.includes("authentication")
+  ) {
     return "Authentication failed. Please refresh the page to reconnect.";
   }
 
-  if (error.message.includes("network") || error.message.includes("connection")) {
+  if (
+    error.message.includes("network") ||
+    error.message.includes("connection")
+  ) {
     return "Network connection failed. Please check your internet and try again.";
   }
 
@@ -912,6 +953,7 @@ const getErrorMessage = () => {
 ### Why Exponential Backoff?
 
 **Linear Retry Issues:**
+
 ```
 Attempt 1: 1s delay  → Server still down
 Attempt 2: 1s delay  → Server still down
@@ -921,6 +963,7 @@ Result: Wasted retries, server overloaded
 ```
 
 **Exponential Backoff Benefits:**
+
 ```
 Attempt 1: 1s delay   → Server recovering
 Attempt 2: 2s delay   → Server recovering
@@ -940,14 +983,14 @@ const getRetryDelay = useCallback((attempt: number) => {
 
 **Delay Progression:**
 
-| Attempt | Calculation | Delay | Cumulative Wait |
-|---------|-------------|-------|-----------------|
-| 1 | 1000 × 2^0 | 1s | 1s |
-| 2 | 1000 × 2^1 | 2s | 3s |
-| 3 | 1000 × 2^2 | 4s | 7s |
-| 4 | 1000 × 2^3 | 8s | 15s |
-| 5 | 1000 × 2^4 | 16s | 31s |
-| 6+ | min(32s, 30s) | 30s | (max cap) |
+| Attempt | Calculation   | Delay | Cumulative Wait |
+| ------- | ------------- | ----- | --------------- |
+| 1       | 1000 × 2^0    | 1s    | 1s              |
+| 2       | 1000 × 2^1    | 2s    | 3s              |
+| 3       | 1000 × 2^2    | 4s    | 7s              |
+| 4       | 1000 × 2^3    | 8s    | 15s             |
+| 5       | 1000 × 2^4    | 16s   | 31s             |
+| 6+      | min(32s, 30s) | 30s   | (max cap)       |
 
 ### Retry Logic in connectServices
 
@@ -966,7 +1009,8 @@ const connectServices = useCallback(async () => {
     await Promise.all(promises);
     setConnectionAttempts(0); // Reset on success
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : "Connection failed";
+    const errorMessage =
+      error instanceof Error ? error.message : "Connection failed";
     setError(errorMessage);
 
     // Implement exponential backoff retry
@@ -1015,6 +1059,7 @@ const retryConnection = useCallback(() => {
 ```
 
 **Usage:**
+
 ```typescript
 const { retryConnection } = useStreamConnection();
 
@@ -1040,6 +1085,7 @@ useEffect(() => {
 ```
 
 **Cleanup Process:**
+
 1. Disconnect chat client (`chatClient.disconnectUser()`)
 2. Nullify video client (no explicit disconnect method)
 3. Clear token cache
@@ -1050,6 +1096,7 @@ useEffect(() => {
 **Problem:** Page reload loses connection state
 
 **Solution:** Reconnect on mount (Lines 301-309)
+
 ```typescript
 useEffect(() => {
   if (userId && !chatConnected) {
@@ -1059,6 +1106,7 @@ useEffect(() => {
 ```
 
 **Security Note:**
+
 - Tokens are NOT persisted
 - No localStorage/sessionStorage
 - Memory-only cache (cleared on unmount)
@@ -1074,6 +1122,7 @@ console.log(client1 === client2); // true (same instance)
 ```
 
 **Implications:**
+
 - Multiple `StreamProvider` instances share same chat client
 - Only one provider should exist in component tree
 - Place provider at root layout level
@@ -1081,6 +1130,7 @@ console.log(client1 === client2); // true (same instance)
 ### Debugging Tips
 
 **Enable Debug Logging:**
+
 ```typescript
 const DEBUG = process.env.NODE_ENV === "development";
 
@@ -1097,6 +1147,7 @@ if (DEBUG) {
 ```
 
 **Monitor Connection State:**
+
 ```typescript
 useEffect(() => {
   console.log("Connection state changed:", {
@@ -1110,6 +1161,7 @@ useEffect(() => {
 ```
 
 **Test Token Expiry:**
+
 ```typescript
 // Temporarily change cache duration for testing
 const TOKEN_CACHE_DURATION = 60 * 1000; // 1 minute instead of 50
@@ -1122,6 +1174,7 @@ setTimeout(() => {
 ### Performance Optimizations
 
 **1. Lazy Initialization**
+
 ```typescript
 // Only initialize when user is authenticated
 {session?.user?.id ? (
@@ -1134,17 +1187,22 @@ setTimeout(() => {
 ```
 
 **2. Memoization**
+
 ```typescript
 const connectToStream = useCallback(async (userId: string) => {
   // Connection logic
 }, []); // No dependencies = created once
 
-const getCachedToken = useCallback(async (type) => {
-  // Token logic
-}, [userId]); // Only recreate if userId changes
+const getCachedToken = useCallback(
+  async (type) => {
+    // Token logic
+  },
+  [userId],
+); // Only recreate if userId changes
 ```
 
 **3. Parallel Connection**
+
 ```typescript
 await Promise.all([connectChat(), connectVideo()]);
 // ~50% faster than sequential
@@ -1159,6 +1217,7 @@ await Promise.all([connectChat(), connectVideo()]);
 **Cause:** Duplicate `connectUser()` calls
 
 **Fix:** Check `isConnecting` flag before connecting
+
 ```typescript
 if (isConnecting) {
   console.log("Already connecting, skipping...");
@@ -1175,6 +1234,7 @@ setIsConnecting(false);
 **Cause:** Server time mismatch
 
 **Fix:** Ensure server time is synchronized
+
 ```bash
 # Check server time
 date
@@ -1186,6 +1246,7 @@ sudo ntpdate pool.ntp.org
 ### Issue: Connection works locally, fails in production
 
 **Causes:**
+
 1. Wrong environment variables
 2. HTTP instead of HTTPS
 3. CORS configuration
@@ -1197,11 +1258,13 @@ sudo ntpdate pool.ntp.org
 ## Next Steps
 
 **Understand specific implementations:**
+
 - [04. Chat Implementation](./04-chat-implementation.md) - Messaging features
 - [05. Video Implementation](./05-video-implementation.md) - Video calls
 - [08. Token Management](./08-token-management.md) - Token deep dive
 
 **Handle errors:**
+
 - [12. Error Handling](./12-error-handling.md) - Error boundaries and recovery
 - [13. Known Issues](./13-known-issues.md) - Known bugs and workarounds
 

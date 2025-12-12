@@ -41,6 +41,7 @@ echo $STREAM_API_SECRET
 ```
 
 Required variables:
+
 - `NEXT_PUBLIC_STREAM_API_KEY` - Stream API key (public)
 - `STREAM_API_SECRET` - Stream API secret (server-side only)
 
@@ -85,6 +86,7 @@ curl -X GET "https://chat.stream-io-api.com/health"
 ### Issue: "Chat connection failed"
 
 #### Symptoms
+
 - Error message: "Chat connection failed"
 - Chat features not loading
 - Infinite loading spinner
@@ -92,6 +94,7 @@ curl -X GET "https://chat.stream-io-api.com/health"
 #### Possible Causes
 
 1. **Missing or invalid API key**
+
    ```typescript
    // Check in browser console
    console.log(process.env.NEXT_PUBLIC_STREAM_API_KEY);
@@ -99,6 +102,7 @@ curl -X GET "https://chat.stream-io-api.com/health"
    ```
 
 2. **Token generation failure**
+
    ```typescript
    // Check server logs for token generation
    const token = await chatTokenProvider(userId);
@@ -106,6 +110,7 @@ curl -X GET "https://chat.stream-io-api.com/health"
    ```
 
 3. **User not upserted to Stream**
+
    ```typescript
    // Verify user exists in Stream
    await upsertUserToStream(userId);
@@ -128,6 +133,7 @@ STREAM_API_SECRET=your_api_secret_here
 ```
 
 Restart your development server after changing env vars:
+
 ```bash
 npm run dev
 ```
@@ -151,7 +157,7 @@ export async function chatTokenProvider(userId: string) {
 **Solution 3: Manual User Upsert**
 
 ```typescript
-import { upsertUserToStream } from '@/actions/stream/chat/user.action';
+import { upsertUserToStream } from "@/actions/stream/chat/user.action";
 
 // In your component or effect
 useEffect(() => {
@@ -190,6 +196,7 @@ const connectChat = async () => {
 ### Issue: "Video client not available"
 
 #### Symptoms
+
 - Error from `useGetCallById`: "Video client not available"
 - Video features not rendering
 - Meeting page shows error
@@ -286,6 +293,7 @@ const connectVideo = async () => {
 ### Issue: Network Timeouts
 
 #### Symptoms
+
 - Requests hanging or timing out
 - "Network request failed" errors
 - Slow connection establishment
@@ -306,10 +314,10 @@ ping video.stream-io-api.com
 // Custom timeout for operations
 const connectWithTimeout = async (
   connectFn: () => Promise<void>,
-  timeoutMs = 30000
+  timeoutMs = 30000,
 ) => {
   const timeoutPromise = new Promise((_, reject) =>
-    setTimeout(() => reject(new Error("Connection timeout")), timeoutMs)
+    setTimeout(() => reject(new Error("Connection timeout")), timeoutMs),
   );
 
   return Promise.race([connectFn(), timeoutPromise]);
@@ -326,6 +334,7 @@ try {
 **Solution 3: Retry with Exponential Backoff**
 
 Already implemented in `StreamProvider`:
+
 ```typescript
 // Automatic retry on failure
 if (newAttempts < 5) {
@@ -342,6 +351,7 @@ if (newAttempts < 5) {
 ### Issue: "Token expired"
 
 #### Symptoms
+
 - Error: "Token expired"
 - Sudden disconnection after ~1 hour
 - Re-authentication required
@@ -365,6 +375,7 @@ const isTokenValid = (type: "chat" | "video") => {
 **Solution 2: Automatic Token Refresh**
 
 Already implemented in `StreamProvider`:
+
 ```typescript
 const getCachedToken = async (type: "chat" | "video") => {
   if (isTokenValid(type)) {
@@ -372,9 +383,10 @@ const getCachedToken = async (type: "chat" | "video") => {
   }
 
   // Generate new token
-  const newToken = type === "chat"
-    ? await chatTokenProvider(userId)
-    : await tokenProvider(userId);
+  const newToken =
+    type === "chat"
+      ? await chatTokenProvider(userId)
+      : await tokenProvider(userId);
 
   // Cache with 50-minute expiry
   const expiresAt = Date.now() + 50 * 60 * 1000;
@@ -416,6 +428,7 @@ function useTokenRefresh(userId: string) {
 ### Issue: "Invalid token"
 
 #### Symptoms
+
 - Error: "Invalid token" or "Authentication failed"
 - Cannot connect to Stream services
 - Token validation fails
@@ -426,7 +439,7 @@ function useTokenRefresh(userId: string) {
 
 ```typescript
 // Server-side token generation
-import { StreamChat } from 'stream-chat';
+import { StreamChat } from "stream-chat";
 
 const serverClient = StreamChat.getInstance(apiKey, apiSecret);
 
@@ -475,7 +488,7 @@ function validateUserId(userId: string) {
   if (!validPattern.test(userId)) {
     throw new Error(
       `Invalid user ID format: ${userId}. ` +
-      `Must contain only letters, numbers, hyphens, and underscores.`
+        `Must contain only letters, numbers, hyphens, and underscores.`,
     );
   }
 
@@ -494,6 +507,7 @@ const token = await chatTokenProvider(userId);
 ### Issue: "Channel not found"
 
 #### Symptoms
+
 - Error: "Channel not found" or "Channel does not exist"
 - Cannot load chat channel
 - 404 error on channel query
@@ -507,7 +521,7 @@ async function getOrCreateChannel(
   client: StreamChat,
   channelType: string,
   channelId: string,
-  members: string[]
+  members: string[],
 ) {
   try {
     // Try to get existing channel
@@ -541,7 +555,7 @@ async function getOrCreateChannel(
 
 ```typescript
 // Ensure channel is synced from database
-import { syncUserEventChannels } from '@/actions/stream/chat/event-channel.action';
+import { syncUserEventChannels } from "@/actions/stream/chat/event-channel.action";
 
 useEffect(() => {
   const syncChannels = async () => {
@@ -563,10 +577,10 @@ useEffect(() => {
 async function verifyChannelMembership(
   client: StreamChat,
   channelId: string,
-  userId: string
+  userId: string,
 ) {
   try {
-    const channel = client.channel('messaging', channelId);
+    const channel = client.channel("messaging", channelId);
     const state = await channel.watch();
 
     const isMember = Object.keys(state.members).includes(userId);
@@ -591,6 +605,7 @@ async function verifyChannelMembership(
 ### Issue: "Permission denied"
 
 #### Symptoms
+
 - Error: "Permission denied"
 - Cannot send messages
 - Cannot access channel
@@ -601,7 +616,7 @@ async function verifyChannelMembership(
 
 ```typescript
 // Verify user has correct Stream role
-import { mapRoleToStream } from '@/lib/user';
+import { mapRoleToStream } from "@/lib/user";
 
 const userRole = userDetails.role; // "CONSULTANT", "CONSULTEE", etc.
 const streamRole = mapRoleToStream(userRole);
@@ -615,12 +630,9 @@ console.log("Stream role:", streamRole);
 **Solution 2: Update Channel Permissions**
 
 ```typescript
-async function updateChannelPermissions(
-  channelId: string,
-  userId: string
-) {
+async function updateChannelPermissions(channelId: string, userId: string) {
   try {
-    const channel = client.channel('messaging', channelId);
+    const channel = client.channel("messaging", channelId);
 
     // Add user as moderator if needed
     await channel.addModerators([userId]);
@@ -638,7 +650,7 @@ Different channel types have different permissions. Check your channel type conf
 
 ```typescript
 // Use correct channel type
-const channel = client.channel('messaging', channelId); // Not 'livestream', etc.
+const channel = client.channel("messaging", channelId); // Not 'livestream', etc.
 ```
 
 ---
@@ -646,6 +658,7 @@ const channel = client.channel('messaging', channelId); // Not 'livestream', etc
 ### Issue: Missing Members
 
 #### Symptoms
+
 - Expected members not showing in channel
 - User cannot see channel messages
 - Channel appears empty
@@ -658,10 +671,10 @@ const channel = client.channel('messaging', channelId); // Not 'livestream', etc
 async function addMembersToChannel(
   client: StreamChat,
   channelId: string,
-  memberIds: string[]
+  memberIds: string[],
 ) {
   try {
-    const channel = client.channel('messaging', channelId);
+    const channel = client.channel("messaging", channelId);
     await channel.addMembers(memberIds);
 
     console.log(`Added ${memberIds.length} members to channel ${channelId}`);
@@ -672,9 +685,9 @@ async function addMembersToChannel(
 }
 
 // Usage
-await addMembersToChannel(client, 'consultation-123', [
-  'consultant-user-id',
-  'consultee-user-id'
+await addMembersToChannel(client, "consultation-123", [
+  "consultant-user-id",
+  "consultee-user-id",
 ]);
 ```
 
@@ -685,14 +698,14 @@ await addMembersToChannel(client, 'consultation-123', [
 async function verifyMembers(
   client: StreamChat,
   channelId: string,
-  expectedMembers: string[]
+  expectedMembers: string[],
 ) {
-  const channel = client.channel('messaging', channelId);
+  const channel = client.channel("messaging", channelId);
   const state = await channel.watch();
 
   const actualMembers = Object.keys(state.members);
   const missingMembers = expectedMembers.filter(
-    id => !actualMembers.includes(id)
+    (id) => !actualMembers.includes(id),
   );
 
   if (missingMembers.length > 0) {
@@ -712,6 +725,7 @@ async function verifyMembers(
 ### Issue: Cannot Join Meeting
 
 #### Symptoms
+
 - "Failed to join call" error
 - Call not loading
 - Stuck on joining screen
@@ -729,7 +743,7 @@ if (error) {
   if (error.message.includes("not found")) {
     // Call doesn't exist, create it
     try {
-      const newCall = client.call('default', callId);
+      const newCall = client.call("default", callId);
       await newCall.getOrCreate();
       console.log("Call created:", callId);
     } catch (createError) {
@@ -789,6 +803,7 @@ async function joinCallSafely(call: Call) {
 ### Issue: Call Not Found
 
 #### Symptoms
+
 - "Call not found" error from `useGetCallById`
 - Call query returns empty array
 - Cannot retrieve existing call
@@ -820,7 +835,7 @@ if (calls.length === 0) {
   console.log(`Creating new call with ID: ${callId}`);
 
   try {
-    const callInstance = client.call('default', callId);
+    const callInstance = client.call("default", callId);
     await callInstance.getOrCreate();
     console.log(`Successfully created/retrieved call: ${callInstance.id}`);
     setCall(callInstance);
@@ -845,7 +860,7 @@ if (calls.length > 0) {
   setCall(calls[0]);
 } else {
   // Create with correct type
-  const callInstance = client.call('default', callId);
+  const callInstance = client.call("default", callId);
   await callInstance.getOrCreate();
 }
 ```
@@ -855,6 +870,7 @@ if (calls.length > 0) {
 ### Issue: Audio/Video Not Working
 
 #### Symptoms
+
 - Microphone not capturing audio
 - Camera not showing video
 - Permissions denied
@@ -878,15 +894,15 @@ async function checkMediaPermissions() {
     console.log("Video tracks:", stream.getVideoTracks().length);
 
     // Clean up
-    stream.getTracks().forEach(track => track.stop());
+    stream.getTracks().forEach((track) => track.stop());
 
     return true;
   } catch (error) {
     console.error("Media permission denied:", error);
 
-    if (error.name === 'NotAllowedError') {
+    if (error.name === "NotAllowedError") {
       alert("Please allow camera and microphone access");
-    } else if (error.name === 'NotFoundError') {
+    } else if (error.name === "NotFoundError") {
       alert("No camera or microphone found");
     }
 
@@ -908,18 +924,18 @@ async function listMediaDevices() {
   try {
     const devices = await navigator.mediaDevices.enumerateDevices();
 
-    const audioInputs = devices.filter(d => d.kind === 'audioinput');
-    const videoInputs = devices.filter(d => d.kind === 'videoinput');
+    const audioInputs = devices.filter((d) => d.kind === "audioinput");
+    const videoInputs = devices.filter((d) => d.kind === "videoinput");
 
     console.log("Audio inputs:", audioInputs.length);
     console.log("Video inputs:", videoInputs.length);
 
-    audioInputs.forEach(device => {
-      console.log(`Microphone: ${device.label || 'Unknown'}`);
+    audioInputs.forEach((device) => {
+      console.log(`Microphone: ${device.label || "Unknown"}`);
     });
 
-    videoInputs.forEach(device => {
-      console.log(`Camera: ${device.label || 'Unknown'}`);
+    videoInputs.forEach((device) => {
+      console.log(`Camera: ${device.label || "Unknown"}`);
     });
 
     return { audioInputs, videoInputs };
@@ -964,6 +980,7 @@ async function enableMediaDevices(call: Call) {
 **Cause:** `useStreamVideoClient` called outside of `StreamVideo` provider.
 
 **Solution:**
+
 ```typescript
 // Ensure component is wrapped
 <StreamProvider userId={userId} enableVideo={true}>
@@ -978,6 +995,7 @@ async function enableMediaDevices(call: Call) {
 **Cause:** Hook called outside provider context.
 
 **Solution:**
+
 ```typescript
 // Move component inside provider
 <StreamProvider userId={userId}>
@@ -992,6 +1010,7 @@ async function enableMediaDevices(call: Call) {
 **Cause:** `useGetCallById` called with empty or undefined `callId`.
 
 **Solution:**
+
 ```typescript
 // Validate callId before using hook
 function MeetingPage({ params }: { params: { id: string } }) {
@@ -1013,6 +1032,7 @@ function MeetingPage({ params }: { params: { id: string } }) {
 **Cause:** Connection failed after 5 retry attempts.
 
 **Solution:**
+
 ```typescript
 const { error, retryConnection } = useStreamConnection();
 
@@ -1041,6 +1061,7 @@ curl -X GET "http://localhost:3000/api/stream/debug?userId=USER_ID"
 ```
 
 **Response includes:**
+
 - User details
 - All channels user is member of
 - Consultations, subscriptions, webinars, classes
@@ -1048,6 +1069,7 @@ curl -X GET "http://localhost:3000/api/stream/debug?userId=USER_ID"
 - Message counts
 
 **Example:**
+
 ```json
 {
   "success": true,
@@ -1080,7 +1102,7 @@ Add these debugging helpers to your components:
 
 ```typescript
 // Add to window in development mode
-if (process.env.NODE_ENV === 'development') {
+if (process.env.NODE_ENV === "development") {
   window.debugStream = {
     // Get current connection state
     getConnectionState: () => {
@@ -1114,7 +1136,7 @@ if (process.env.NODE_ENV === 'development') {
       const client = useStreamVideoClient();
       const { calls } = await client.queryCalls({});
       console.log(`Found ${calls.length} calls`);
-      calls.forEach(call => {
+      calls.forEach((call) => {
         console.log(`- ${call.id} (${call.type})`);
       });
     },
@@ -1122,11 +1144,11 @@ if (process.env.NODE_ENV === 'development') {
     // List user channels
     listChannels: async () => {
       const { client } = useChatContext();
-      const channels = await client.queryChannels(
-        { members: { $in: [client.userID] } }
-      );
+      const channels = await client.queryChannels({
+        members: { $in: [client.userID] },
+      });
       console.log(`Found ${channels.length} channels`);
-      channels.forEach(channel => {
+      channels.forEach((channel) => {
         console.log(`- ${channel.id} (${channel.type})`);
       });
     },
@@ -1135,15 +1157,16 @@ if (process.env.NODE_ENV === 'development') {
 ```
 
 **Usage in console:**
+
 ```javascript
 // Check connection state
-window.debugStream.getConnectionState()
+window.debugStream.getConnectionState();
 
 // List all channels
-await window.debugStream.listChannels()
+await window.debugStream.listChannels();
 
 // List all calls
-await window.debugStream.listCalls()
+await window.debugStream.listCalls();
 ```
 
 ---
@@ -1157,11 +1180,13 @@ npm install -g stream-cli
 ```
 
 **Login:**
+
 ```bash
 stream-cli auth:login
 ```
 
 **Useful commands:**
+
 ```bash
 # List users
 stream-cli chat:user:list
@@ -1216,12 +1241,15 @@ const connectChat = async () => {
     console.log("Token length:", token.length);
 
     console.log("Connecting user...");
-    await client.connectUser({
-      id: userDetails.id,
-      name: userDetails.name ?? userDetails.id,
-      image: userDetails.image ?? undefined,
-      role: mapRoleToStream(userDetails.role),
-    }, token);
+    await client.connectUser(
+      {
+        id: userDetails.id,
+        name: userDetails.name ?? userDetails.id,
+        image: userDetails.image ?? undefined,
+        role: mapRoleToStream(userDetails.role),
+      },
+      token,
+    );
 
     console.log("=== CHAT CONNECTION SUCCESS ===");
   } catch (error) {
@@ -1236,6 +1264,7 @@ const connectChat = async () => {
 ### Log Patterns to Watch
 
 **Success pattern:**
+
 ```
 === CHAT CONNECTION START ===
 User ID: user_123
@@ -1249,6 +1278,7 @@ Connecting user...
 ```
 
 **Failure pattern - Token:**
+
 ```
 === CHAT CONNECTION START ===
 User ID: user_123
@@ -1261,6 +1291,7 @@ Error: Token generation failed
 ```
 
 **Failure pattern - Network:**
+
 ```
 === CHAT CONNECTION START ===
 User ID: user_123
@@ -1285,6 +1316,7 @@ Error: Network request failed
 3. **Filter by "stream"**
 
 Look for:
+
 - WebSocket connections to `wss://chat.stream-io-api.com`
 - API requests to `https://chat.stream-io-api.com`
 - Failed requests (red)
@@ -1295,18 +1327,21 @@ Look for:
 Common console error patterns:
 
 **Token expiry:**
+
 ```
 Error: TokenExpired: token expired
   at StreamChat.connectUser
 ```
 
 **Network issues:**
+
 ```
 Error: NetworkError: Failed to fetch
   at StreamChat.queryCalls
 ```
 
 **Permission issues:**
+
 ```
 Error: PermissionDenied: User does not have permission
   at Channel.sendMessage
@@ -1342,11 +1377,11 @@ Check stored data:
 ### Enable Stream Debug Mode
 
 ```typescript
-import { StreamChat } from 'stream-chat';
+import { StreamChat } from "stream-chat";
 
 const client = StreamChat.getInstance(apiKey, {
   enableInsights: true,
-  logLevel: 'debug',
+  logLevel: "debug",
 });
 ```
 
@@ -1360,16 +1395,16 @@ function ConnectionMonitor() {
     if (!client) return;
 
     const handleConnectionChange = (event: any) => {
-      console.log('Connection changed:', event);
+      console.log("Connection changed:", event);
     };
 
-    client.on('connection.changed', handleConnectionChange);
-    client.on('connection.recovered', () => {
-      console.log('Connection recovered');
+    client.on("connection.changed", handleConnectionChange);
+    client.on("connection.recovered", () => {
+      console.log("Connection recovered");
     });
 
     return () => {
-      client.off('connection.changed', handleConnectionChange);
+      client.off("connection.changed", handleConnectionChange);
     };
   }, [client]);
 
@@ -1388,7 +1423,7 @@ function EventLogger() {
 
     // Log all events
     const unsubscribe = client.on((event) => {
-      console.log('Stream event:', event.type, event);
+      console.log("Stream event:", event.type, event);
     });
 
     return unsubscribe;

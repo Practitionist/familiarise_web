@@ -27,13 +27,13 @@ Upstash Redis provides serverless Redis for caching, reducing database load and 
 
 ### Problems It Solves
 
-| Current Issue | Redis Solution |
-|---------------|----------------|
-| Session callback queries DB every request | Cache user data |
-| Consultant profiles fetched repeatedly | Cache for 30 minutes |
-| Domain/subdomain lists fetched every load | Cache for 24 hours |
-| Availability calculated repeatedly | Cache for 5 minutes |
-| N+1 queries on list pages | Cache aggregated data |
+| Current Issue                             | Redis Solution        |
+| ----------------------------------------- | --------------------- |
+| Session callback queries DB every request | Cache user data       |
+| Consultant profiles fetched repeatedly    | Cache for 30 minutes  |
+| Domain/subdomain lists fetched every load | Cache for 24 hours    |
+| Availability calculated repeatedly        | Cache for 5 minutes   |
+| N+1 queries on list pages                 | Cache aggregated data |
 
 ### Performance Impact
 
@@ -107,7 +107,7 @@ export async function getFromCache<T>(key: string): Promise<T | null> {
 export async function setInCache<T>(
   key: string,
   data: T,
-  ttlSeconds: number
+  ttlSeconds: number,
 ): Promise<void> {
   await redis.setex(key, ttlSeconds, JSON.stringify(data));
 }
@@ -131,16 +131,16 @@ export async function deleteByPattern(pattern: string): Promise<void> {
 export const CACHE_CONFIG = {
   // TTL in seconds
   TTL: {
-    USER_PROFILE: 3600,         // 1 hour
-    CONSULTANT_PROFILE: 1800,   // 30 minutes
-    CONSULTEE_PROFILE: 1800,    // 30 minutes
-    AVAILABILITY: 300,          // 5 minutes
-    PLAN_DETAILS: 3600,         // 1 hour
-    DOMAIN_LIST: 86400,         // 24 hours
-    SUBDOMAIN_LIST: 86400,      // 24 hours
-    TAG_LIST: 86400,            // 24 hours
-    SESSION_DATA: 3600,         // 1 hour
-    SEARCH_RESULTS: 300,        // 5 minutes
+    USER_PROFILE: 3600, // 1 hour
+    CONSULTANT_PROFILE: 1800, // 30 minutes
+    CONSULTEE_PROFILE: 1800, // 30 minutes
+    AVAILABILITY: 300, // 5 minutes
+    PLAN_DETAILS: 3600, // 1 hour
+    DOMAIN_LIST: 86400, // 24 hours
+    SUBDOMAIN_LIST: 86400, // 24 hours
+    TAG_LIST: 86400, // 24 hours
+    SESSION_DATA: 3600, // 1 hour
+    SEARCH_RESULTS: 300, // 5 minutes
   },
 
   // Key prefixes
@@ -161,8 +161,7 @@ export const CACHE_KEYS = {
   // User keys
   userProfile: (userId: string) =>
     `${CACHE_CONFIG.PREFIX.USER}:${userId}:profile`,
-  userSession: (userId: string) =>
-    `${CACHE_CONFIG.PREFIX.SESSION}:${userId}`,
+  userSession: (userId: string) => `${CACHE_CONFIG.PREFIX.SESSION}:${userId}`,
 
   // Consultant keys
   consultantProfile: (consultantId: string) =>
@@ -217,7 +216,7 @@ import { CACHE_CONFIG, CACHE_KEYS } from "./config";
 export async function withCache<T>(
   key: string,
   ttl: number,
-  fetchFn: () => Promise<T>
+  fetchFn: () => Promise<T>,
 ): Promise<T> {
   // Try to get from cache
   const cached = await redis.get<T>(key);
@@ -239,7 +238,7 @@ export async function withCache<T>(
 const profile = await withCache(
   CACHE_KEYS.consultantProfile(consultantId),
   CACHE_CONFIG.TTL.CONSULTANT_PROFILE,
-  () => prisma.consultantProfile.findUnique({ where: { id: consultantId } })
+  () => prisma.consultantProfile.findUnique({ where: { id: consultantId } }),
 );
 ```
 
@@ -249,7 +248,7 @@ const profile = await withCache(
 // Update cache when data changes
 export async function updateConsultantProfile(
   consultantId: string,
-  data: UpdateData
+  data: UpdateData,
 ) {
   // Update database
   const updated = await prisma.consultantProfile.update({
@@ -261,7 +260,7 @@ export async function updateConsultantProfile(
   await redis.setex(
     CACHE_KEYS.consultantProfile(consultantId),
     CACHE_CONFIG.TTL.CONSULTANT_PROFILE,
-    JSON.stringify(updated)
+    JSON.stringify(updated),
   );
 
   return updated;
@@ -282,7 +281,7 @@ export async function invalidateConsultantCache(consultantId: string) {
 
 export async function updateConsultantProfile(
   consultantId: string,
-  data: UpdateData
+  data: UpdateData,
 ) {
   const updated = await prisma.consultantProfile.update({
     where: { id: consultantId },
@@ -303,7 +302,7 @@ export async function withSWR<T>(
   key: string,
   ttl: number,
   staleTime: number, // How long stale data is acceptable
-  fetchFn: () => Promise<T>
+  fetchFn: () => Promise<T>,
 ): Promise<T> {
   const cacheKey = key;
   const timestampKey = `${key}:ts`;
@@ -321,12 +320,14 @@ export async function withSWR<T>(
   if (cached !== null) {
     // If stale, revalidate in background
     if (isStale) {
-      fetchFn().then(async (data) => {
-        await Promise.all([
-          redis.setex(cacheKey, ttl, JSON.stringify(data)),
-          redis.setex(timestampKey, ttl, now),
-        ]);
-      }).catch(console.error);
+      fetchFn()
+        .then(async (data) => {
+          await Promise.all([
+            redis.setex(cacheKey, ttl, JSON.stringify(data)),
+            redis.setex(timestampKey, ttl, now),
+          ]);
+        })
+        .catch(console.error);
     }
     return cached;
   }
@@ -418,7 +419,7 @@ export async function getConsultantProfile(consultantId: string) {
           tags: true,
         },
       });
-    }
+    },
   );
 }
 
@@ -427,29 +428,30 @@ export async function getConsultantPlans(consultantId: string) {
     CACHE_KEYS.consultantPlans(consultantId),
     CACHE_CONFIG.TTL.PLAN_DETAILS,
     async () => {
-      const [consultations, subscriptions, webinars, classes] = await Promise.all([
-        prisma.consultationPlan.findMany({
-          where: { consultantProfileId: consultantId, isActive: true },
-        }),
-        prisma.subscriptionPlan.findMany({
-          where: { consultantProfileId: consultantId, isActive: true },
-        }),
-        prisma.webinarPlan.findMany({
-          where: { consultantProfileId: consultantId, isActive: true },
-        }),
-        prisma.classPlan.findMany({
-          where: { consultantProfileId: consultantId, isActive: true },
-        }),
-      ]);
+      const [consultations, subscriptions, webinars, classes] =
+        await Promise.all([
+          prisma.consultationPlan.findMany({
+            where: { consultantProfileId: consultantId, isActive: true },
+          }),
+          prisma.subscriptionPlan.findMany({
+            where: { consultantProfileId: consultantId, isActive: true },
+          }),
+          prisma.webinarPlan.findMany({
+            where: { consultantProfileId: consultantId, isActive: true },
+          }),
+          prisma.classPlan.findMany({
+            where: { consultantProfileId: consultantId, isActive: true },
+          }),
+        ]);
 
       return { consultations, subscriptions, webinars, classes };
-    }
+    },
   );
 }
 
 export async function getConsultantAvailability(
   consultantId: string,
-  date: string
+  date: string,
 ) {
   return withCache(
     CACHE_KEYS.consultantAvailability(consultantId, date),
@@ -463,7 +465,7 @@ export async function getConsultantAvailability(
           endTime: true,
         },
       });
-    }
+    },
   );
 }
 ```
@@ -484,7 +486,7 @@ export async function getDomainList() {
       return prisma.domain.findMany({
         orderBy: { name: "asc" },
       });
-    }
+    },
   );
 }
 
@@ -497,7 +499,7 @@ export async function getSubdomains(domainId: string) {
         where: { domainId },
         orderBy: { name: "asc" },
       });
-    }
+    },
   );
 }
 
@@ -510,7 +512,7 @@ export async function getTags(domainId: string) {
         where: { domainId },
         orderBy: { name: "asc" },
       });
-    }
+    },
   );
 }
 ```
@@ -554,7 +556,7 @@ export async function getSessionData(userId: string) {
     await redis.setex(
       cacheKey,
       CACHE_CONFIG.TTL.SESSION_DATA,
-      JSON.stringify(user)
+      JSON.stringify(user),
     );
   }
 
@@ -684,7 +686,7 @@ export const cleanupExpiredCache = inngest.createFunction(
     });
 
     return { memoryInfo: info };
-  }
+  },
 );
 ```
 
@@ -747,7 +749,7 @@ export async function reportMetrics() {
 export async function withCacheMetrics<T>(
   key: string,
   ttl: number,
-  fetchFn: () => Promise<T>
+  fetchFn: () => Promise<T>,
 ): Promise<T> {
   const cached = await redis.get<T>(key);
 
@@ -767,6 +769,7 @@ export async function withCacheMetrics<T>(
 ### Upstash Dashboard
 
 Upstash provides:
+
 - Request count
 - Data transfer
 - Memory usage
@@ -801,7 +804,7 @@ export async function GET() {
         status: "unhealthy",
         error: error instanceof Error ? error.message : "Unknown error",
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

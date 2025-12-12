@@ -5,6 +5,7 @@
 ⚠️ **IMPORTANT:** This document tracks known issues that need to be addressed. Review before deploying to production.
 
 ## Table of Contents
+
 - [Critical Issues](#critical-issues)
 - [Medium Priority Issues](#medium-priority-issues)
 - [Low Priority Issues](#low-priority-issues)
@@ -40,9 +41,9 @@ export function mapRoleToStream(role: string | null | undefined): string {
     case "ADMIN":
       return "admin";
     case "CONSULTANT":
-      return "admin";  // ⚠️ Should be custom role or "channel_moderator"
+      return "admin"; // ⚠️ Should be custom role or "channel_moderator"
     case "CONSULTEE":
-      return "admin";  // ⚠️ Should be "user" or "channel_member"
+      return "admin"; // ⚠️ Should be "user" or "channel_member"
     case "USER":
       return "admin";
     default:
@@ -75,8 +76,8 @@ export function mapRoleToStream(role: string | null | undefined): string {
 
 ```typescript
 // Check user role in Stream
-const response = await chatClient.queryUsers({ id: userId })
-console.log(response.users[0].role) // Always "admin"
+const response = await chatClient.queryUsers({ id: userId });
+console.log(response.users[0].role); // Always "admin"
 ```
 
 #### Why This Exists
@@ -86,6 +87,7 @@ console.log(response.users[0].role) // Always "admin"
 **Problem:** Team channel access doesn't require admin role - can be granted via custom roles or channel-level permissions
 
 **Comment in Code:**
+
 ```typescript
 // TODO: Consider implementing custom roles for more granular permissions
 // For now, all users are admins to ensure they can access team channels
@@ -94,6 +96,7 @@ console.log(response.users[0].role) // Always "admin"
 #### Recommended Fix
 
 **Option 1: Custom Roles** (Recommended)
+
 ```typescript
 export function mapRoleToStream(role: string | null | undefined): string {
   if (!role) return "user";
@@ -114,14 +117,15 @@ export function mapRoleToStream(role: string | null | undefined): string {
 ```
 
 **Option 2: Custom Permission Sets**
+
 ```typescript
 // Define custom permissions per role
 const CONSULTANT_PERMISSIONS = {
-  'create-channel': true,
-  'delete-any-message': false,
-  'update-channel-members': true,
+  "create-channel": true,
+  "delete-any-message": false,
+  "update-channel-members": true,
   // ... other permissions
-}
+};
 ```
 
 #### Workaround
@@ -129,6 +133,7 @@ const CONSULTANT_PERMISSIONS = {
 **None currently available.** This requires code changes.
 
 **Temporary Mitigation:**
+
 - Application-level permission checks (don't rely on Stream roles)
 - Audit logging for sensitive operations
 - User education about not abusing permissions
@@ -138,6 +143,7 @@ const CONSULTANT_PERMISSIONS = {
 **Priority:** HIGH
 **Estimated Effort:** 4-8 hours
 **Tasks:**
+
 1. Define role mapping strategy
 2. Update `mapRoleToStream()` function
 3. Test team channel access for all roles
@@ -165,19 +171,19 @@ Tokens are cached for 50 minutes but have a 1-hour validity. There's a 10-minute
 #### Current Implementation
 
 ```typescript
-const TOKEN_CACHE_DURATION = 50 * 60 * 1000 // 50 minutes
+const TOKEN_CACHE_DURATION = 50 * 60 * 1000; // 50 minutes
 
 const getCachedToken = useCallback(async (type: "chat" | "video") => {
-  const cached = tokenCache.current[type]
+  const cached = tokenCache.current[type];
 
   if (cached && Date.now() - cached.timestamp < TOKEN_CACHE_DURATION) {
-    return cached.token // ⚠️ Token might expire soon
+    return cached.token; // ⚠️ Token might expire soon
   }
 
   // Generate new token
-  const newToken = await generateToken(type)
-  return newToken
-}, [])
+  const newToken = await generateToken(type);
+  return newToken;
+}, []);
 ```
 
 #### Impact
@@ -206,33 +212,36 @@ const getCachedToken = useCallback(async (type: "chat" | "video") => {
 #### Recommended Fix
 
 **Option 1: Proactive Token Refresh** (Recommended)
+
 ```typescript
-const TOKEN_REFRESH_THRESHOLD = 45 * 60 * 1000 // Refresh at 45 minutes
+const TOKEN_REFRESH_THRESHOLD = 45 * 60 * 1000; // Refresh at 45 minutes
 
 useEffect(() => {
   const interval = setInterval(async () => {
     // Proactively refresh token before it expires
-    await refreshAllTokens()
-  }, TOKEN_REFRESH_THRESHOLD)
+    await refreshAllTokens();
+  }, TOKEN_REFRESH_THRESHOLD);
 
-  return () => clearInterval(interval)
-}, [])
+  return () => clearInterval(interval);
+}, []);
 ```
 
 **Option 2: Token Expiry Listeners**
+
 ```typescript
-chatClient.on('token.expired', async () => {
-  const newToken = await chatTokenProvider(userId)
-  await chatClient.setToken(newToken)
-})
+chatClient.on("token.expired", async () => {
+  const newToken = await chatTokenProvider(userId);
+  await chatClient.setToken(newToken);
+});
 ```
 
 #### Workaround
 
 **Current:** 5-minute safety buffer in cache check
+
 ```typescript
 // Check if token will expire soon
-const willExpireSoon = (Date.now() - cached.timestamp) > (55 * 60 * 1000)
+const willExpireSoon = Date.now() - cached.timestamp > 55 * 60 * 1000;
 if (willExpireSoon) {
   // Generate new token
 }
@@ -310,49 +319,55 @@ sequenceDiagram
 #### Recommended Fix
 
 **Option 1: Idempotency Pattern** (Recommended)
+
 ```typescript
 export async function getOrCreateWebinarChannel(webinarId: string) {
   try {
     // Try to get existing channel
-    const channel = chatClient.channel('team', `webinar-${webinarId}`)
-    await channel.watch() // Will fail if doesn't exist
-    return channel
+    const channel = chatClient.channel("team", `webinar-${webinarId}`);
+    await channel.watch(); // Will fail if doesn't exist
+    return channel;
   } catch (error) {
     // Channel doesn't exist, create it
-    return await createWebinarChannel(webinarId)
+    return await createWebinarChannel(webinarId);
   }
 }
 ```
 
 **Option 2: Server-Side Locking**
+
 ```typescript
 // Use Redis lock
-const lock = await redlock.acquire([`channel:webinar:${webinarId}`], 5000)
+const lock = await redlock.acquire([`channel:webinar:${webinarId}`], 5000);
 try {
   // Only one server can create at a time
-  await createWebinarChannel(webinarId)
+  await createWebinarChannel(webinarId);
 } finally {
-  await lock.release()
+  await lock.release();
 }
 ```
 
 **Option 3: Eager Creation**
+
 ```typescript
 // Create channel when webinar is scheduled (not on first access)
 export async function handleWebinarScheduled(webinar: Webinar) {
-  await createWebinarChannel(webinar.id)
+  await createWebinarChannel(webinar.id);
 }
 ```
 
 #### Workaround
 
 **Current:** Atomic creation with members
+
 ```typescript
 // Create channel AND add members in one call (reduces race window)
 await channel.create({
   members: allParticipants,
-  data: { /* metadata */ }
-})
+  data: {
+    /* metadata */
+  },
+});
 ```
 
 **Limitation:** Race window still exists between existence check and creation
@@ -388,7 +403,7 @@ for (const streamUser of staleUsers) {
   await chatClient.deleteUser(streamUser.id, {
     delete_conversation_channels: true, // ⚠️ Deletes ALL messages
     hard_delete: true, // ⚠️ Permanent deletion
-  })
+  });
 }
 ```
 
@@ -411,38 +426,42 @@ for (const streamUser of staleUsers) {
 #### Recommended Fix
 
 **Option 1: Grace Period** (Recommended)
+
 ```typescript
 // Add "deletedAt" timestamp to Stream user metadata
 await chatClient.upsertUser({
   id: userId,
-  deleted_at: new Date().toISOString()
-})
+  deleted_at: new Date().toISOString(),
+});
 
 // Delete only after 7 days
-const gracePeriod = 7 * 24 * 60 * 60 * 1000
+const gracePeriod = 7 * 24 * 60 * 60 * 1000;
 if (Date.now() - deletedAt > gracePeriod) {
-  await deleteUser(userId)
+  await deleteUser(userId);
 }
 ```
 
 **Option 2: Soft Delete**
+
 ```typescript
 // Mark as deleted but don't remove from Stream
 await chatClient.upsertUser({
   id: userId,
   banned: true,
-  invisible: true
-})
+  invisible: true,
+});
 ```
 
 #### Workaround
 
 **Current:** Exclusion list
+
 ```typescript
-const EXCLUDED_USERS = ['system', 'teetangh', /* others */]
-const shouldSkip = EXCLUDED_USERS.includes(streamUser.id) ||
-                   streamUser.id.startsWith('system-') ||
-                   streamUser.id.startsWith('recording-egress-')
+const EXCLUDED_USERS = ["system", "teetangh" /* others */];
+const shouldSkip =
+  EXCLUDED_USERS.includes(streamUser.id) ||
+  streamUser.id.startsWith("system-") ||
+  streamUser.id.startsWith("recording-egress-");
 ```
 
 #### Timeline
@@ -465,7 +484,7 @@ Error logs don't include sufficient context for debugging Stream issues.
 
 ```typescript
 // Current
-console.log("Chat connection failed:", error)
+console.log("Chat connection failed:", error);
 
 // Better
 console.log("Chat connection failed:", {
@@ -473,21 +492,24 @@ console.log("Chat connection failed:", {
   error: error.message,
   code: error.code,
   timestamp: new Date().toISOString(),
-  retryAttempt: attemptNumber
-})
+  retryAttempt: attemptNumber,
+});
 ```
 
 #### Recommended Fix
 
 Implement structured logging:
-```typescript
-import { logger } from '@/lib/logger'
 
-logger.error('stream.chat.connection_failed', {
+```typescript
+import { logger } from "@/lib/logger";
+
+logger.error("stream.chat.connection_failed", {
   userId,
   error,
-  context: { /* additional context */ }
-})
+  context: {
+    /* additional context */
+  },
+});
 ```
 
 ---
@@ -496,12 +518,12 @@ logger.error('stream.chat.connection_failed', {
 
 ### Current Workarounds in Production
 
-| Issue | Workaround | Effectiveness | Notes |
-|-------|------------|---------------|-------|
-| Admin role bug | Application-level checks | Partial | Doesn't prevent Stream API abuse |
-| Token expiry | 50-min cache (10-min buffer) | Good | Still occasional drops |
-| Race conditions | Atomic creation | Moderate | Race window still exists |
-| User cleanup | Exclusion list | Good | Manual maintenance required |
+| Issue           | Workaround                   | Effectiveness | Notes                            |
+| --------------- | ---------------------------- | ------------- | -------------------------------- |
+| Admin role bug  | Application-level checks     | Partial       | Doesn't prevent Stream API abuse |
+| Token expiry    | 50-min cache (10-min buffer) | Good          | Still occasional drops           |
+| Race conditions | Atomic creation              | Moderate      | Race window still exists         |
+| User cleanup    | Exclusion list               | Good          | Manual maintenance required      |
 
 ### Recommended User Education
 
@@ -524,6 +546,7 @@ logger.error('stream.chat.connection_failed', {
 **Why:** Critical security issue
 
 **Steps:**
+
 1. Define role mapping (see bug #1)
 2. Update `mapRoleToStream()` function
 3. Test with all user types
@@ -531,6 +554,7 @@ logger.error('stream.chat.connection_failed', {
 5. Verify Stream dashboard permissions
 
 **Testing Checklist:**
+
 - [ ] Consultants can moderate their own channels
 - [ ] Consultees cannot delete others' messages
 - [ ] Admin has full access
@@ -542,6 +566,7 @@ logger.error('stream.chat.connection_failed', {
 **Why:** Prevents disconnections
 
 **Steps:**
+
 1. Add token refresh interval
 2. Implement `refreshAllTokens()` function
 3. Add token expiry listeners
@@ -549,6 +574,7 @@ logger.error('stream.chat.connection_failed', {
 5. Monitor error rates
 
 **Testing Checklist:**
+
 - [ ] Tokens refresh before expiry
 - [ ] No disconnections during refresh
 - [ ] Video calls uninterrupted
@@ -559,12 +585,14 @@ logger.error('stream.chat.connection_failed', {
 **Why:** Improves reliability
 
 **Steps:**
+
 1. Implement idempotent channel creation
 2. Add retry logic for failures
 3. Test concurrent access
 4. Monitor success rates
 
 **Testing Checklist:**
+
 - [ ] Multiple users can join simultaneously
 - [ ] No "already exists" errors
 - [ ] All users added as members
@@ -576,13 +604,13 @@ logger.error('stream.chat.connection_failed', {
 
 ### Opened Issues
 
-| ID | Title | Severity | Status | Assignee |
-|----|-------|----------|--------|----------|
-| STREAM-1 | Universal admin role | CRITICAL | Open | TBD |
-| STREAM-2 | Token expiry race | MEDIUM | Open | TBD |
-| STREAM-3 | Channel creation races | MEDIUM | Open | TBD |
-| STREAM-4 | Aggressive user cleanup | LOW | Open | TBD |
-| STREAM-5 | Missing error context | LOW | Open | TBD |
+| ID       | Title                   | Severity | Status | Assignee |
+| -------- | ----------------------- | -------- | ------ | -------- |
+| STREAM-1 | Universal admin role    | CRITICAL | Open   | TBD      |
+| STREAM-2 | Token expiry race       | MEDIUM   | Open   | TBD      |
+| STREAM-3 | Channel creation races  | MEDIUM   | Open   | TBD      |
+| STREAM-4 | Aggressive user cleanup | LOW      | Open   | TBD      |
+| STREAM-5 | Missing error context   | LOW      | Open   | TBD      |
 
 ### Resolution Tracking
 
@@ -600,12 +628,13 @@ logger.error('stream.chat.connection_failed', {
 ### Before Fixing Bugs
 
 1. **Create comprehensive tests:**
+
    ```typescript
-   describe('Role Mapping', () => {
-     it('maps consultant to channel_moderator', () => {
-       expect(mapRoleToStream('CONSULTANT')).toBe('channel_moderator')
-     })
-   })
+   describe("Role Mapping", () => {
+     it("maps consultant to channel_moderator", () => {
+       expect(mapRoleToStream("CONSULTANT")).toBe("channel_moderator");
+     });
+   });
    ```
 
 2. **Test current behavior:**

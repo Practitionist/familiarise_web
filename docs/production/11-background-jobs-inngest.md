@@ -29,25 +29,25 @@ Inngest provides serverless background job processing with TypeScript-first deve
 
 ### Problems It Solves
 
-| Current Issue | Inngest Solution |
-|---------------|------------------|
-| Webhook processing blocks response | Async processing with immediate 200 |
-| No retry on failure | Automatic retries with backoff |
-| Cleanup jobs run via GitHub Actions | Native cron scheduling |
-| Email sending blocks API routes | Background email jobs |
-| No visibility into job status | Full dashboard and logging |
+| Current Issue                       | Inngest Solution                    |
+| ----------------------------------- | ----------------------------------- |
+| Webhook processing blocks response  | Async processing with immediate 200 |
+| No retry on failure                 | Automatic retries with backoff      |
+| Cleanup jobs run via GitHub Actions | Native cron scheduling              |
+| Email sending blocks API routes     | Background email jobs               |
+| No visibility into job status       | Full dashboard and logging          |
 
 ### Inngest vs QStash Comparison
 
-| Feature | Inngest | QStash |
-|---------|---------|--------|
-| TypeScript Support | ✅ First-class | ⚠️ Basic |
-| Local Development | ✅ Built-in server | ❌ Needs ngrok |
-| Step Functions | ✅ Yes | ❌ No |
-| Automatic Retries | ✅ Customizable | ✅ Built-in |
-| Dashboard | ✅ Full UI | ❌ None |
-| Debugging | ✅ Excellent | ⚠️ Limited |
-| Durable Execution | ✅ Yes | ❌ No |
+| Feature            | Inngest            | QStash         |
+| ------------------ | ------------------ | -------------- |
+| TypeScript Support | ✅ First-class     | ⚠️ Basic       |
+| Local Development  | ✅ Built-in server | ❌ Needs ngrok |
+| Step Functions     | ✅ Yes             | ❌ No          |
+| Automatic Retries  | ✅ Customizable    | ✅ Built-in    |
+| Dashboard          | ✅ Full UI         | ❌ None        |
+| Debugging          | ✅ Excellent       | ⚠️ Limited     |
+| Durable Execution  | ✅ Yes             | ❌ No          |
 
 ### Use Cases for Your App
 
@@ -197,7 +197,10 @@ import { inngest } from "@/lib/inngest/client";
 import { processPaymentWebhook } from "@/lib/inngest/functions/payment";
 import { sendEmail } from "@/lib/inngest/functions/email";
 import { syncStreamChannels } from "@/lib/inngest/functions/stream";
-import { cleanupAbandonedPayments, cleanupExpiredSlots } from "@/lib/inngest/functions/cleanup";
+import {
+  cleanupAbandonedPayments,
+  cleanupExpiredSlots,
+} from "@/lib/inngest/functions/cleanup";
 
 export const { GET, POST, PUT } = serve({
   client: inngest,
@@ -229,7 +232,7 @@ export const myFunction = inngest.createFunction(
     // Process event
     console.log("Received:", event.data);
     return { success: true };
-  }
+  },
 );
 ```
 
@@ -245,7 +248,7 @@ export const myFunction = inngest.createFunction(
   async ({ event }) => {
     // This will retry on failure
     await riskyOperation();
-  }
+  },
 );
 ```
 
@@ -257,7 +260,7 @@ export const myScheduledFunction = inngest.createFunction(
   { cron: "*/15 * * * *" }, // Every 15 minutes
   async () => {
     // Runs on schedule
-  }
+  },
 );
 ```
 
@@ -275,7 +278,7 @@ export const myRateLimitedFunction = inngest.createFunction(
   { event: "my/event" },
   async ({ event }) => {
     // Rate limited
-  }
+  },
 );
 ```
 
@@ -350,14 +353,10 @@ export const processPaymentWebhook = inngest.createFunction(
       default:
         return { status: "unhandled", eventType };
     }
-  }
+  },
 );
 
-async function processPaymentSuccess(
-  step: any,
-  payload: any,
-  gateway: string
-) {
+async function processPaymentSuccess(step: any, payload: any, gateway: string) {
   const paymentIntentId = payload.id || payload.payment_id;
 
   // Get payment record
@@ -405,8 +404,11 @@ async function processPaymentSuccess(
     data: {
       appointmentId: payment.appointmentId!,
       userId: payment.userId!,
-      consultantId: payment.appointment?.consultation?.consultationPlan?.consultantProfileId
-        || payment.appointment?.subscription?.subscriptionPlan?.consultantProfileId,
+      consultantId:
+        payment.appointment?.consultation?.consultationPlan
+          ?.consultantProfileId ||
+        payment.appointment?.subscription?.subscriptionPlan
+          ?.consultantProfileId,
     },
   });
 
@@ -434,7 +436,7 @@ export async function POST(req: NextRequest) {
     event = stripe.webhooks.constructEvent(
       body,
       signature,
-      process.env.STRIPE_WEBHOOK_SECRET!
+      process.env.STRIPE_WEBHOOK_SECRET!,
     );
   } catch (error) {
     console.error("Webhook signature verification failed:", error);
@@ -494,7 +496,7 @@ export const sendEmail = inngest.createFunction(
     });
 
     return { messageId: result.data?.id };
-  }
+  },
 );
 
 export const sendBookingConfirmation = inngest.createFunction(
@@ -546,7 +548,9 @@ export const sendBookingConfirmation = inngest.createFunction(
         template: "booking-confirmation" as const,
         variables: {
           userName: user.name,
-          consultantName: appointment.consultation?.consultationPlan?.consultantProfile?.user?.name,
+          consultantName:
+            appointment.consultation?.consultationPlan?.consultantProfile?.user
+              ?.name,
           dateTime: appointment.slotsOfAppointment[0]?.startsAt,
           duration: appointment.consultation?.consultationPlan?.durationInHours,
         },
@@ -554,7 +558,7 @@ export const sendBookingConfirmation = inngest.createFunction(
     });
 
     return { sent: true };
-  }
+  },
 );
 
 // Scheduled reminder
@@ -586,7 +590,9 @@ export const sendBookingReminders = inngest.createFunction(
         },
         include: {
           slotsOfAppointment: true,
-          consultation: { include: { requestedBy: { include: { user: true } } } },
+          consultation: {
+            include: { requestedBy: { include: { user: true } } },
+          },
         },
       });
     });
@@ -603,7 +609,7 @@ export const sendBookingReminders = inngest.createFunction(
     }
 
     return { reminded: upcomingAppointments.length };
-  }
+  },
 );
 ```
 
@@ -640,7 +646,11 @@ export const cleanupAbandonedPayments = inngest.createFunction(
                     {
                       AND: [
                         { expiresAt: null },
-                        { createdAt: { lt: new Date(Date.now() - 30 * 60 * 1000) } },
+                        {
+                          createdAt: {
+                            lt: new Date(Date.now() - 30 * 60 * 1000),
+                          },
+                        },
                       ],
                     },
                   ],
@@ -693,7 +703,7 @@ export const cleanupAbandonedPayments = inngest.createFunction(
     }
 
     return { found: abandoned.length, cleaned };
-  }
+  },
 );
 
 export const cleanupExpiredSlots = inngest.createFunction(
@@ -715,7 +725,7 @@ export const cleanupExpiredSlots = inngest.createFunction(
     });
 
     return { deleted: result.count };
-  }
+  },
 );
 ```
 
@@ -799,7 +809,7 @@ export const onboardingWorkflow = inngest.createFunction(
     }
 
     return { completed: true };
-  }
+  },
 );
 ```
 
@@ -852,7 +862,7 @@ export const bookingFollowUp = inngest.createFunction(
     });
 
     return { reviewRequested: true };
-  }
+  },
 );
 ```
 
@@ -870,8 +880,8 @@ export const myFunction = inngest.createFunction(
     // Custom backoff
     backoff: {
       type: "exponential",
-      minDelay: 1000,    // 1 second
-      maxDelay: 300000,  // 5 minutes
+      minDelay: 1000, // 1 second
+      maxDelay: 300000, // 5 minutes
       factor: 2,
     },
   },
@@ -885,7 +895,7 @@ export const myFunction = inngest.createFunction(
     }
 
     return await normalProcessing(event);
-  }
+  },
 );
 ```
 
@@ -913,7 +923,7 @@ export const myFunction = inngest.createFunction(
     }
 
     return { completed: true };
-  }
+  },
 );
 ```
 
@@ -942,7 +952,7 @@ export const handleFailedJobs = inngest.createFunction(
       message: `Job failed: ${function_id}`,
       error: error.message,
     });
-  }
+  },
 );
 ```
 
@@ -953,6 +963,7 @@ export const handleFailedJobs = inngest.createFunction(
 ### Inngest Dashboard
 
 The Inngest dashboard provides:
+
 - Function execution history
 - Event timeline
 - Step-by-step execution view
@@ -999,7 +1010,7 @@ export const myFunction = inngest.createFunction(
 
       throw error;
     }
-  }
+  },
 );
 ```
 

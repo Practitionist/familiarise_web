@@ -27,13 +27,13 @@ The payment system supports multiple gateways (Stripe, Razorpay, LemonSqueezy) w
 
 ### 1.1 Supported Gateways
 
-| Gateway | Status | Implementation |
-|---------|--------|----------------|
-| Stripe | Complete | Full feature support |
-| Razorpay | Complete | Full feature support |
-| LemonSqueezy | Partial | Missing appointment creation |
-| XFlow | Unknown | Limited documentation |
-| Mock | Development | Testing only |
+| Gateway      | Status      | Implementation               |
+| ------------ | ----------- | ---------------------------- |
+| Stripe       | Complete    | Full feature support         |
+| Razorpay     | Complete    | Full feature support         |
+| LemonSqueezy | Partial     | Missing appointment creation |
+| XFlow        | Unknown     | Limited documentation        |
+| Mock         | Development | Testing only                 |
 
 ### 1.2 File Structure
 
@@ -95,11 +95,12 @@ app/api/webhooks/
 export async function verifyWebhookSignature(
   req: NextRequest,
   secret: string,
-  gateway: "stripe" | "razorpay"
+  gateway: "stripe" | "razorpay",
 ): Promise<{ isValid: boolean; body: string }> {
-  const signature = req.headers.get(
-    gateway === "stripe" ? "stripe-signature" : "x-razorpay-signature"
-  ) || "";
+  const signature =
+    req.headers.get(
+      gateway === "stripe" ? "stripe-signature" : "x-razorpay-signature",
+    ) || "";
 
   const body = await req.text();
 
@@ -123,12 +124,14 @@ export async function verifyWebhookSignature(
 **Issue:** No mechanism to prevent webhook replay attacks.
 
 **Current Flow:**
+
 ```
 Webhook 1 (event: abc123) → Process → Success
 Webhook 2 (event: abc123) → Process → DUPLICATE PROCESSING
 ```
 
 **Attack Vector:**
+
 1. Attacker intercepts webhook
 2. Replays webhook multiple times
 3. Each replay is processed
@@ -159,31 +162,31 @@ export async function handleWebhook(
   eventId: string,
   gateway: string,
   eventType: string,
-  handler: () => Promise<void>
+  handler: () => Promise<void>,
 ): Promise<{ status: string }> {
   // Check for existing processing
   const existing = await prisma.webhookLog.findUnique({
-    where: { eventId_gateway: { eventId, gateway } }
+    where: { eventId_gateway: { eventId, gateway } },
   });
 
   if (existing) {
-    return { status: 'already_processed' };
+    return { status: "already_processed" };
   }
 
   // Create log entry (acts as lock)
   try {
     await prisma.webhookLog.create({
-      data: { eventId, gateway, eventType }
+      data: { eventId, gateway, eventType },
     });
   } catch (error) {
     // Unique constraint violation = concurrent processing
-    return { status: 'already_processing' };
+    return { status: "already_processing" };
   }
 
   // Process webhook
   await handler();
 
-  return { status: 'processed' };
+  return { status: "processed" };
 }
 ```
 
@@ -214,6 +217,7 @@ await tx.payment.update({...});
 ```
 
 **Attack Scenario:**
+
 ```
 T0: Webhook A queries payment (status: PENDING)
 T1: Webhook B queries payment (status: PENDING)
@@ -319,13 +323,13 @@ model SlotOfAppointment {
 ```typescript
 // CURRENT CODE - VULNERABLE
 const totalRefunded = payment.refunds
-  .filter((r) => r.status === "SUCCEEDED")  // BUG: Missing PENDING
+  .filter((r) => r.status === "SUCCEEDED") // BUG: Missing PENDING
   .reduce((sum, r) => sum + r.amount, 0);
 
 if (totalRefunded >= payment.amount) {
   return NextResponse.json(
     { error: "Payment has already been fully refunded" },
-    { status: 400 }
+    { status: 400 },
   );
 }
 
@@ -334,12 +338,13 @@ const refundAmount = amount || payment.amount - totalRefunded;
 if (refundAmount > payment.amount - totalRefunded) {
   return NextResponse.json(
     { error: "Refund amount exceeds available balance" },
-    { status: 400 }
+    { status: 400 },
   );
 }
 ```
 
 **Attack Scenario:**
+
 ```
 Original Payment: $100
 Request 1: Refund $50 → PENDING (not counted)
@@ -363,7 +368,10 @@ import { Redis } from "@upstash/redis";
 
 const redis = Redis.fromEnv();
 
-async function acquireLock(key: string, ttlSeconds: number = 30): Promise<boolean> {
+async function acquireLock(
+  key: string,
+  ttlSeconds: number = 30,
+): Promise<boolean> {
   // SET with NX (only if not exists) and EX (expiry)
   const result = await redis.set(key, "locked", { nx: true, ex: ttlSeconds });
   return result === "OK";
@@ -391,10 +399,14 @@ async function processRefundWithLock(paymentId: string, amount: number) {
     }
 
     // Wait before retrying
-    await new Promise((resolve) => setTimeout(resolve, retryDelayMs * (attempt + 1)));
+    await new Promise((resolve) =>
+      setTimeout(resolve, retryDelayMs * (attempt + 1)),
+    );
   }
 
-  throw new Error("Could not acquire lock for refund processing. Please try again.");
+  throw new Error(
+    "Could not acquire lock for refund processing. Please try again.",
+  );
 }
 ```
 
@@ -406,8 +418,8 @@ async function validateRefundRequest(userId: string, paymentId: string) {
   const recentRefunds = await prisma.refund.count({
     where: {
       payment: { userId },
-      createdAt: { gte: subDays(new Date(), 30) }
-    }
+      createdAt: { gte: subDays(new Date(), 30) },
+    },
   });
 
   if (recentRefunds > 5) {
@@ -415,11 +427,11 @@ async function validateRefundRequest(userId: string, paymentId: string) {
     await prisma.refundReview.create({
       data: {
         paymentId,
-        reason: 'HIGH_REFUND_VELOCITY',
-        status: 'PENDING_REVIEW'
-      }
+        reason: "HIGH_REFUND_VELOCITY",
+        status: "PENDING_REVIEW",
+      },
     });
-    throw new Error('Refund requires manual approval');
+    throw new Error("Refund requires manual approval");
   }
 }
 ```
@@ -432,11 +444,11 @@ async function validateRefundRequest(userId: string, paymentId: string) {
 
 **File:** `app/api/payments/disputes/route.ts`
 
-| Feature | Stripe | Razorpay |
-|---------|--------|----------|
-| View disputes | ✅ | ✅ |
-| Submit evidence | ✅ | ❌ (webhook only) |
-| Update status | ✅ | ❌ |
+| Feature         | Stripe | Razorpay          |
+| --------------- | ------ | ----------------- |
+| View disputes   | ✅     | ✅                |
+| Submit evidence | ✅     | ❌ (webhook only) |
+| Update status   | ✅     | ❌                |
 
 ### 5.2 Dispute Status Mapping Gap
 
@@ -455,7 +467,7 @@ function mapStripeDisputeStatus(status: string): DisputeStatus {
     case "lost":
       return "LOST";
     default:
-      return "NEEDS_RESPONSE";  // Fallback hides unknown statuses
+      return "NEEDS_RESPONSE"; // Fallback hides unknown statuses
   }
 }
 
@@ -471,20 +483,20 @@ function mapStripeDisputeStatus(status: string): DisputeStatus {
 ```typescript
 function mapStripeDisputeStatus(status: string): DisputeStatus {
   const mapping: Record<string, DisputeStatus> = {
-    'needs_response': 'NEEDS_RESPONSE',
-    'warning_needs_response': 'NEEDS_RESPONSE',
-    'under_review': 'UNDER_REVIEW',
-    'warning_under_review': 'UNDER_REVIEW',
-    'won': 'WON',
-    'warning_closed': 'WON',
-    'lost': 'LOST',
-    'charge_refunded': 'LOST',
+    needs_response: "NEEDS_RESPONSE",
+    warning_needs_response: "NEEDS_RESPONSE",
+    under_review: "UNDER_REVIEW",
+    warning_under_review: "UNDER_REVIEW",
+    won: "WON",
+    warning_closed: "WON",
+    lost: "LOST",
+    charge_refunded: "LOST",
   };
 
   const mapped = mapping[status];
   if (!mapped) {
     console.warn(`Unknown dispute status: ${status}`);
-    return 'NEEDS_RESPONSE';
+    return "NEEDS_RESPONSE";
   }
   return mapped;
 }
@@ -508,15 +520,22 @@ const existingBooking = await tx.slotOfAppointment.findFirst({
       {
         OR: [
           // Case 1: Existing slot starts during new slot
-          { AND: [{ startsAt: { lte: slotStart } }, { endsAt: { gt: slotStart } }] },
+          {
+            AND: [
+              { startsAt: { lte: slotStart } },
+              { endsAt: { gt: slotStart } },
+            ],
+          },
           // Case 2: Existing slot ends during new slot
-          { AND: [{ startsAt: { lt: slotEnd } }, { endsAt: { gte: slotEnd } }] },
+          {
+            AND: [{ startsAt: { lt: slotEnd } }, { endsAt: { gte: slotEnd } }],
+          },
           // MISSING: Case 3: New slot completely contains existing slot
-        ]
+        ],
       },
-      { isTentative: false }
-    ]
-  }
+      { isTentative: false },
+    ],
+  },
 });
 
 // EXAMPLE OF MISSING CASE:
@@ -537,9 +556,9 @@ const existingBooking = await tx.slotOfAppointment.findFirst({
       { startsAt: { lt: slotEnd } },
       { endsAt: { gt: slotStart } },
       { consultantProfileId: consultantId },
-      { isTentative: false }
-    ]
-  }
+      { isTentative: false },
+    ],
+  },
 });
 ```
 
@@ -565,7 +584,7 @@ function usePaymentExpiration(payment: Payment) {
 
     const interval = setInterval(() => {
       const remaining = Math.floor(
-        (new Date(payment.expiresAt).getTime() - Date.now()) / 1000 / 60
+        (new Date(payment.expiresAt).getTime() - Date.now()) / 1000 / 60,
       );
       setTimeRemaining(remaining);
 
@@ -587,9 +606,7 @@ function usePaymentExpiration(payment: Payment) {
 
 ```typescript
 // TODO: Implement appointment creation based on stored payment data
-console.warn(
-  "Lemon Squeezy appointment creation needs implementation..."
-);
+console.warn("Lemon Squeezy appointment creation needs implementation...");
 ```
 
 **Impact:** LemonSqueezy payments succeed but appointments are not created.
@@ -600,14 +617,14 @@ console.warn(
 
 ### 7.1 Current State
 
-| Control | Status |
-|---------|--------|
+| Control                | Status         |
+| ---------------------- | -------------- |
 | Signature verification | ✅ Implemented |
-| Amount validation | ✅ Implemented |
-| User verification | ⚠️ Partial |
-| Velocity checks | ❌ Missing |
-| Device fingerprinting | ❌ Missing |
-| IP reputation | ❌ Missing |
+| Amount validation      | ✅ Implemented |
+| User verification      | ⚠️ Partial     |
+| Velocity checks        | ❌ Missing     |
+| Device fingerprinting  | ❌ Missing     |
+| IP reputation          | ❌ Missing     |
 
 ### 7.2 Recommended Fraud Checks
 
@@ -622,9 +639,9 @@ interface FraudSignals {
 }
 
 interface FraudScore {
-  score: number;  // 0-100, higher = more risky
+  score: number; // 0-100, higher = more risky
   flags: string[];
-  action: 'ALLOW' | 'REVIEW' | 'BLOCK';
+  action: "ALLOW" | "REVIEW" | "BLOCK";
 }
 
 async function calculateFraudScore(signals: FraudSignals): Promise<FraudScore> {
@@ -634,49 +651,49 @@ async function calculateFraudScore(signals: FraudSignals): Promise<FraudScore> {
   // Check 1: High-value transaction
   if (signals.amount > 500) {
     score += 10;
-    flags.push('HIGH_VALUE');
+    flags.push("HIGH_VALUE");
   }
 
   // Check 2: New user
   const user = await prisma.user.findUnique({
     where: { id: signals.userId },
-    select: { createdAt: true }
+    select: { createdAt: true },
   });
   if (user && differenceInDays(new Date(), user.createdAt) < 7) {
     score += 15;
-    flags.push('NEW_ACCOUNT');
+    flags.push("NEW_ACCOUNT");
   }
 
   // Check 3: Multiple cards
   const recentPayments = await prisma.payment.count({
     where: {
       userId: signals.userId,
-      createdAt: { gte: subDays(new Date(), 30) }
-    }
+      createdAt: { gte: subDays(new Date(), 30) },
+    },
   });
   if (recentPayments > 10) {
     score += 20;
-    flags.push('HIGH_VELOCITY');
+    flags.push("HIGH_VELOCITY");
   }
 
   // Check 4: Refund rate
   const refundRate = await calculateRefundRate(signals.userId);
   if (refundRate > 0.3) {
     score += 30;
-    flags.push('HIGH_REFUND_RATE');
+    flags.push("HIGH_REFUND_RATE");
   }
 
   // Check 5: IP reputation (integrate with service like MaxMind)
   // const ipRisk = await checkIpReputation(signals.ipAddress);
 
   // Determine action
-  let action: 'ALLOW' | 'REVIEW' | 'BLOCK';
+  let action: "ALLOW" | "REVIEW" | "BLOCK";
   if (score >= 50) {
-    action = 'BLOCK';
+    action = "BLOCK";
   } else if (score >= 25) {
-    action = 'REVIEW';
+    action = "REVIEW";
   } else {
-    action = 'ALLOW';
+    action = "ALLOW";
   }
 
   return { score, flags, action };
@@ -688,15 +705,15 @@ export async function processCheckout(data: CheckoutData) {
     userId: data.userId,
     ipAddress: data.ipAddress,
     amount: data.amount,
-    paymentMethod: data.paymentMethod
+    paymentMethod: data.paymentMethod,
   });
 
-  if (fraudScore.action === 'BLOCK') {
+  if (fraudScore.action === "BLOCK") {
     await logFraudAttempt(data, fraudScore);
-    throw new Error('Transaction declined');
+    throw new Error("Transaction declined");
   }
 
-  if (fraudScore.action === 'REVIEW') {
+  if (fraudScore.action === "REVIEW") {
     await createFraudReview(data, fraudScore);
     // Allow transaction but flag for review
   }
@@ -716,10 +733,10 @@ async function detectDisputePatterns(userId: string): Promise<{
 
   // Pattern 1: Multiple disputes
   const disputeCount = await prisma.dispute.count({
-    where: { payment: { userId } }
+    where: { payment: { userId } },
   });
   if (disputeCount >= 2) {
-    patterns.push('MULTIPLE_DISPUTES');
+    patterns.push("MULTIPLE_DISPUTES");
   }
 
   // Pattern 2: Dispute after refund denial
@@ -727,12 +744,12 @@ async function detectDisputePatterns(userId: string): Promise<{
     where: {
       payment: {
         userId,
-        refunds: { some: { status: 'FAILED' } }
-      }
-    }
+        refunds: { some: { status: "FAILED" } },
+      },
+    },
   });
   if (refundThenDispute) {
-    patterns.push('REFUND_DENIAL_DISPUTE');
+    patterns.push("REFUND_DENIAL_DISPUTE");
   }
 
   // Pattern 3: Disputes near end of service
@@ -740,7 +757,7 @@ async function detectDisputePatterns(userId: string): Promise<{
 
   return {
     isHighRisk: patterns.length >= 2,
-    patterns
+    patterns,
   };
 }
 ```
@@ -819,34 +836,34 @@ Complete the TODO implementation for appointment creation.
 // Metrics to track
 const PAYMENT_METRICS = {
   // Volume
-  'payment.created': 'Counter',
-  'payment.succeeded': 'Counter',
-  'payment.failed': 'Counter',
+  "payment.created": "Counter",
+  "payment.succeeded": "Counter",
+  "payment.failed": "Counter",
 
   // Errors
-  'webhook.duplicate': 'Counter',
-  'webhook.invalid_signature': 'Counter',
-  'webhook.processing_error': 'Counter',
+  "webhook.duplicate": "Counter",
+  "webhook.invalid_signature": "Counter",
+  "webhook.processing_error": "Counter",
 
   // Fraud
-  'fraud.score.high': 'Counter',
-  'fraud.blocked': 'Counter',
-  'fraud.reviewed': 'Counter',
+  "fraud.score.high": "Counter",
+  "fraud.blocked": "Counter",
+  "fraud.reviewed": "Counter",
 
   // Refunds
-  'refund.requested': 'Counter',
-  'refund.approved': 'Counter',
-  'refund.denied': 'Counter',
-  'refund.overrefund_attempt': 'Counter',
+  "refund.requested": "Counter",
+  "refund.approved": "Counter",
+  "refund.denied": "Counter",
+  "refund.overrefund_attempt": "Counter",
 
   // Disputes
-  'dispute.created': 'Counter',
-  'dispute.won': 'Counter',
-  'dispute.lost': 'Counter',
+  "dispute.created": "Counter",
+  "dispute.won": "Counter",
+  "dispute.lost": "Counter",
 
   // Latency
-  'checkout.duration': 'Histogram',
-  'webhook.processing_duration': 'Histogram',
+  "checkout.duration": "Histogram",
+  "webhook.processing_duration": "Histogram",
 };
 ```
 
@@ -873,16 +890,18 @@ curl -X POST http://localhost:3000/api/webhooks/stripe \
 ```typescript
 // Concurrent booking test
 async function testConcurrentBooking() {
-  const slotStart = new Date('2024-01-15T10:00:00Z');
-  const slotEnd = new Date('2024-01-15T11:00:00Z');
+  const slotStart = new Date("2024-01-15T10:00:00Z");
+  const slotEnd = new Date("2024-01-15T11:00:00Z");
 
   // Simulate 10 concurrent bookings for same slot
-  const promises = Array(10).fill(null).map(() =>
-    bookSlot({ slotStart, slotEnd, consultantId: 'test-consultant' })
-  );
+  const promises = Array(10)
+    .fill(null)
+    .map(() =>
+      bookSlot({ slotStart, slotEnd, consultantId: "test-consultant" }),
+    );
 
   const results = await Promise.allSettled(promises);
-  const successes = results.filter(r => r.status === 'fulfilled');
+  const successes = results.filter((r) => r.status === "fulfilled");
 
   // Only 1 should succeed
   expect(successes.length).toBe(1);
@@ -898,12 +917,12 @@ async function testOverRefund() {
   const payment = await createPayment({ amount: 100 });
 
   // Request $50 refund 3 times concurrently
-  const promises = Array(3).fill(null).map(() =>
-    requestRefund({ paymentId: payment.id, amount: 50 })
-  );
+  const promises = Array(3)
+    .fill(null)
+    .map(() => requestRefund({ paymentId: payment.id, amount: 50 }));
 
   const results = await Promise.allSettled(promises);
-  const successes = results.filter(r => r.status === 'fulfilled');
+  const successes = results.filter((r) => r.status === "fulfilled");
 
   // Only 2 should succeed ($100 total)
   expect(successes.length).toBe(2);

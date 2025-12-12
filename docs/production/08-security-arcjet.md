@@ -27,14 +27,14 @@ Arcjet provides comprehensive security for Next.js applications including rate l
 
 ### Problems It Solves
 
-| Current Issue | Arcjet Solution |
-|---------------|-----------------|
-| 77 unprotected API endpoints | Middleware-based protection |
-| No rate limiting on auth endpoints | Built-in rate limiting |
-| No bot detection | AI-powered bot detection |
-| No SQL injection protection | Shield WAF |
-| No DDoS protection | Built-in DDoS mitigation |
-| Custom rate limit code complexity | Declarative configuration |
+| Current Issue                      | Arcjet Solution             |
+| ---------------------------------- | --------------------------- |
+| 77 unprotected API endpoints       | Middleware-based protection |
+| No rate limiting on auth endpoints | Built-in rate limiting      |
+| No bot detection                   | AI-powered bot detection    |
+| No SQL injection protection        | Shield WAF                  |
+| No DDoS protection                 | Built-in DDoS mitigation    |
+| Custom rate limit code complexity  | Declarative configuration   |
 
 ### Performance
 
@@ -68,30 +68,30 @@ AFTER (Arcjet only):
 
 ### Core Features
 
-| Feature | Description | Use Case |
-|---------|-------------|----------|
-| **Rate Limiting** | Token bucket & sliding window | API abuse prevention |
-| **Bot Detection** | AI-powered bot identification | Scraping prevention |
-| **Shield WAF** | SQL injection, XSS protection | Attack prevention |
-| **Email Validation** | Disposable/invalid email detection | Signup protection |
-| **Sensitive Info** | PII detection and redaction | Data protection |
+| Feature              | Description                        | Use Case             |
+| -------------------- | ---------------------------------- | -------------------- |
+| **Rate Limiting**    | Token bucket & sliding window      | API abuse prevention |
+| **Bot Detection**    | AI-powered bot identification      | Scraping prevention  |
+| **Shield WAF**       | SQL injection, XSS protection      | Attack prevention    |
+| **Email Validation** | Disposable/invalid email detection | Signup protection    |
+| **Sensitive Info**   | PII detection and redaction        | Data protection      |
 
 ### Bot Categories
 
 ```typescript
 // Arcjet categorizes bots into types
 type BotCategory =
-  | "AUTOMATED"           // Generic automation
-  | "LIKELY_AUTOMATED"    // Probably a bot
-  | "LIKELY_NOT_A_BOT"    // Probably human
-  | "VERIFIED_BOT"        // Known good bot (Googlebot, etc.)
+  | "AUTOMATED" // Generic automation
+  | "LIKELY_AUTOMATED" // Probably a bot
+  | "LIKELY_NOT_A_BOT" // Probably human
+  | "VERIFIED_BOT"; // Known good bot (Googlebot, etc.)
 
 // You can allow/deny by category
 allow: [
-  "CATEGORY:SEARCH_ENGINE",  // Google, Bing, etc.
-  "CATEGORY:MONITOR",        // Uptime monitors
-  "CATEGORY:PREVIEW",        // Link previews (Slack, etc.)
-]
+  "CATEGORY:SEARCH_ENGINE", // Google, Bing, etc.
+  "CATEGORY:MONITOR", // Uptime monitors
+  "CATEGORY:PREVIEW", // Link previews (Slack, etc.)
+];
 ```
 
 ---
@@ -153,9 +153,9 @@ export const aj = arcjet({
     // Global rate limit
     rateLimit({
       mode: "LIVE",
-      refillRate: 100,    // 100 requests
-      interval: 60,       // per 60 seconds
-      capacity: 100,      // bucket size
+      refillRate: 100, // 100 requests
+      interval: 60, // per 60 seconds
+      capacity: 100, // bucket size
     }),
   ],
 });
@@ -170,9 +170,9 @@ export const ajAuth = arcjet({
     // Very strict rate limit for auth
     rateLimit({
       mode: "LIVE",
-      refillRate: 5,      // 5 requests
-      interval: 60,       // per minute
-      capacity: 10,       // max burst of 10
+      refillRate: 5, // 5 requests
+      interval: 60, // per minute
+      capacity: 10, // max burst of 10
     }),
 
     // Bot detection
@@ -199,11 +199,7 @@ export const ajApi = arcjet({
 
     detectBot({
       mode: "LIVE",
-      allow: [
-        "CATEGORY:SEARCH_ENGINE",
-        "CATEGORY:MONITOR",
-        "CATEGORY:PREVIEW",
-      ],
+      allow: ["CATEGORY:SEARCH_ENGINE", "CATEGORY:MONITOR", "CATEGORY:PREVIEW"],
     }),
   ],
 });
@@ -272,28 +268,19 @@ export async function middleware(request: NextRequest) {
     if (decision.reason.isRateLimit()) {
       return NextResponse.json(
         { error: "Too many requests", retryAfter: 60 },
-        { status: 429 }
+        { status: 429 },
       );
     }
 
     if (decision.reason.isBot()) {
-      return NextResponse.json(
-        { error: "Bot detected" },
-        { status: 403 }
-      );
+      return NextResponse.json({ error: "Bot detected" }, { status: 403 });
     }
 
     if (decision.reason.isShield()) {
-      return NextResponse.json(
-        { error: "Request blocked" },
-        { status: 403 }
-      );
+      return NextResponse.json({ error: "Request blocked" }, { status: 403 });
     }
 
-    return NextResponse.json(
-      { error: "Forbidden" },
-      { status: 403 }
-    );
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
   return NextResponse.next();
@@ -322,7 +309,7 @@ const aj = ajAuth.withRule(
   validateEmail({
     mode: "LIVE",
     deny: ["DISPOSABLE", "INVALID", "NO_MX_RECORDS"],
-  })
+  }),
 );
 
 export async function POST(req: NextRequest) {
@@ -336,20 +323,20 @@ export async function POST(req: NextRequest) {
     if (decision.reason.isEmail()) {
       return NextResponse.json(
         { error: "Invalid email address" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     if (decision.reason.isRateLimit()) {
       return NextResponse.json(
         { error: "Too many registration attempts" },
-        { status: 429 }
+        { status: 429 },
       );
     }
 
     return NextResponse.json(
       { error: "Registration blocked" },
-      { status: 403 }
+      { status: 403 },
     );
   }
 
@@ -374,8 +361,8 @@ const aj = arcjet({
     shield({ mode: "LIVE" }),
     rateLimit({
       mode: "LIVE",
-      refillRate: 10,     // 10 checkouts
-      interval: 3600,     // per hour
+      refillRate: 10, // 10 checkouts
+      interval: 3600, // per hour
       capacity: 10,
     }),
   ],
@@ -396,7 +383,7 @@ export async function POST(req: NextRequest) {
   if (decision.isDenied()) {
     return NextResponse.json(
       { error: "Too many checkout attempts" },
-      { status: 429 }
+      { status: 429 },
     );
   }
 
@@ -431,7 +418,7 @@ export async function POST(req: NextRequest) {
     if (decision.reason.isSensitiveInfo()) {
       return NextResponse.json(
         { error: "Please do not include sensitive information" },
-        { status: 400 }
+        { status: 400 },
       );
     }
   }
@@ -446,23 +433,28 @@ export async function POST(req: NextRequest) {
 
 ### Recommended Configuration
 
-| Endpoint Pattern | Rate Limit | Bot Detection | Shield | Notes |
-|------------------|------------|---------------|--------|-------|
-| `/api/auth/register` | 3/hour | Block all | ✅ | + Email validation |
-| `/api/auth/login` | 10/15min | Block all | ✅ | Per IP+email |
-| `/api/auth/forgot-password` | 3/15min | Block all | ✅ | Per email |
-| `/api/auth/reset-password` | 5/hour | Block all | ✅ | Per token |
-| `/api/webhooks/*` | 200/min | Allow automated | ✅ | High limit for providers |
-| `/api/checkout/*` | 10/hour | Block all | ✅ | Per user ID |
-| `/api/user/*` | 60/min | Allow search engines | ✅ | Standard API limit |
-| `/api/events/*` | 60/min | Allow search engines | ✅ | Standard API limit |
-| `/api/admin/*` | 200/min | Block all | ✅ | Higher for admin |
+| Endpoint Pattern            | Rate Limit | Bot Detection        | Shield | Notes                    |
+| --------------------------- | ---------- | -------------------- | ------ | ------------------------ |
+| `/api/auth/register`        | 3/hour     | Block all            | ✅     | + Email validation       |
+| `/api/auth/login`           | 10/15min   | Block all            | ✅     | Per IP+email             |
+| `/api/auth/forgot-password` | 3/15min    | Block all            | ✅     | Per email                |
+| `/api/auth/reset-password`  | 5/hour     | Block all            | ✅     | Per token                |
+| `/api/webhooks/*`           | 200/min    | Allow automated      | ✅     | High limit for providers |
+| `/api/checkout/*`           | 10/hour    | Block all            | ✅     | Per user ID              |
+| `/api/user/*`               | 60/min     | Allow search engines | ✅     | Standard API limit       |
+| `/api/events/*`             | 60/min     | Allow search engines | ✅     | Standard API limit       |
+| `/api/admin/*`              | 200/min    | Block all            | ✅     | Higher for admin         |
 
 ### Implementation
 
 ```typescript
 // lib/arcjet/rules.ts
-import arcjet, { shield, rateLimit, detectBot, validateEmail } from "@arcjet/next";
+import arcjet, {
+  shield,
+  rateLimit,
+  detectBot,
+  validateEmail,
+} from "@arcjet/next";
 
 const baseKey = process.env.ARCJET_KEY!;
 
@@ -560,7 +552,7 @@ import { ArcjetDecision } from "@arcjet/next";
 
 export function logArcjetDecision(
   decision: ArcjetDecision,
-  context: { path: string; method: string; ip?: string }
+  context: { path: string; method: string; ip?: string },
 ) {
   const log = {
     timestamp: new Date().toISOString(),
@@ -649,11 +641,13 @@ const ratelimit = new Ratelimit({
 ### Migration Steps
 
 1. **Install Arcjet**
+
    ```bash
    npm install @arcjet/next
    ```
 
 2. **Add Environment Variable**
+
    ```env
    ARCJET_KEY=ajkey_xxx
    ```
@@ -702,25 +696,25 @@ const ratelimit = new Ratelimit({
 ### Decision Types
 
 ```typescript
-decision.isDenied()           // Request should be blocked
-decision.isAllowed()          // Request should proceed
+decision.isDenied(); // Request should be blocked
+decision.isAllowed(); // Request should proceed
 
-decision.reason.isRateLimit() // Blocked due to rate limit
-decision.reason.isBot()       // Blocked as bot
-decision.reason.isShield()    // Blocked by WAF
-decision.reason.isEmail()     // Invalid email
-decision.reason.isSensitiveInfo() // Contains PII
+decision.reason.isRateLimit(); // Blocked due to rate limit
+decision.reason.isBot(); // Blocked as bot
+decision.reason.isShield(); // Blocked by WAF
+decision.reason.isEmail(); // Invalid email
+decision.reason.isSensitiveInfo(); // Contains PII
 ```
 
 ### Response Codes
 
-| Reason | HTTP Status | Response |
-|--------|-------------|----------|
-| Rate Limit | 429 | Too Many Requests |
-| Bot | 403 | Forbidden |
-| Shield (attack) | 403 | Forbidden |
-| Invalid Email | 400 | Bad Request |
-| Sensitive Info | 400 | Bad Request |
+| Reason          | HTTP Status | Response          |
+| --------------- | ----------- | ----------------- |
+| Rate Limit      | 429         | Too Many Requests |
+| Bot             | 403         | Forbidden         |
+| Shield (attack) | 403         | Forbidden         |
+| Invalid Email   | 400         | Bad Request       |
+| Sensitive Info  | 400         | Bad Request       |
 
 ### Useful Links
 

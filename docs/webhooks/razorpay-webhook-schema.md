@@ -30,13 +30,25 @@ const razorpayPaymentEntitySchema = z.object({
   amount: z.number(),
   currency: z.string(),
   status: z.enum([
-    "created", "authorized", "captured", "refunded",
-    "failed", "disputed", "partially_refunded"
+    "created",
+    "authorized",
+    "captured",
+    "refunded",
+    "failed",
+    "disputed",
+    "partially_refunded",
   ]),
   order_id: z.string().optional(),
   invoice_id: z.string().optional(),
   international: z.boolean(),
-  method: z.enum(["card", "netbanking", "wallet", "emi", "upi", "bank_transfer"]),
+  method: z.enum([
+    "card",
+    "netbanking",
+    "wallet",
+    "emi",
+    "upi",
+    "bank_transfer",
+  ]),
   amount_refunded: z.number(),
   refund_status: z.enum(["null", "partial", "full"]).optional(),
   captured: z.boolean(),
@@ -133,7 +145,14 @@ const razorpayInvoiceEntitySchema = z.object({
   order_id: z.string().optional(),
   line_items: z.array(z.record(z.any())).optional(),
   payment_id: z.string().optional(),
-  status: z.enum(["draft", "issued", "partially_paid", "paid", "cancelled", "expired"]),
+  status: z.enum([
+    "draft",
+    "issued",
+    "partially_paid",
+    "paid",
+    "cancelled",
+    "expired",
+  ]),
   expire_by: z.number().optional(),
   issued_at: z.number().optional(),
   paid_at: z.number().optional(),
@@ -312,7 +331,7 @@ export function validateRazorpayWebhook(data: unknown): {
     if (error instanceof z.ZodError) {
       return {
         isValid: false,
-        error: `Validation failed: ${error.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(', ')}`,
+        error: `Validation failed: ${error.errors.map((e) => `${e.path.join(".")}: ${e.message}`).join(", ")}`,
       };
     }
     return {

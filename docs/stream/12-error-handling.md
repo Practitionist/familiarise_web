@@ -298,45 +298,51 @@ const getRetryDelay = (attempt: number) => {
 ### Implementation
 
 ```typescript
-const connectServices = useCallback(async () => {
-  if (isLoading || !userDetails || isConnecting) return;
+const connectServices = useCallback(
+  async () => {
+    if (isLoading || !userDetails || isConnecting) return;
 
-  setIsConnecting(true);
-  setError(null);
+    setIsConnecting(true);
+    setError(null);
 
-  try {
-    const promises = [];
-    if (enableChat && !chatConnected) promises.push(connectChat());
-    if (enableVideo && !videoConnected) promises.push(connectVideo());
+    try {
+      const promises = [];
+      if (enableChat && !chatConnected) promises.push(connectChat());
+      if (enableVideo && !videoConnected) promises.push(connectVideo());
 
-    await Promise.all(promises);
-    setConnectionAttempts(0); // Reset on success
-  } catch (error) {
-    const errorMessage =
-      error instanceof Error ? error.message : "Connection failed";
-    setError(errorMessage);
+      await Promise.all(promises);
+      setConnectionAttempts(0); // Reset on success
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Connection failed";
+      setError(errorMessage);
 
-    // Implement exponential backoff retry
-    const newAttempts = connectionAttempts + 1;
-    setConnectionAttempts(newAttempts);
+      // Implement exponential backoff retry
+      const newAttempts = connectionAttempts + 1;
+      setConnectionAttempts(newAttempts);
 
-    if (newAttempts < 5) { // Max 5 attempts
-      const delay = getRetryDelay(newAttempts);
-      console.log(
-        `Retrying connection in ${delay}ms (attempt ${newAttempts})`
-      );
-      setTimeout(() => {
-        setIsConnecting(false);
-        connectServices();
-      }, delay);
-      return;
-    } else {
-      console.error("Max connection attempts reached");
+      if (newAttempts < 5) {
+        // Max 5 attempts
+        const delay = getRetryDelay(newAttempts);
+        console.log(
+          `Retrying connection in ${delay}ms (attempt ${newAttempts})`,
+        );
+        setTimeout(() => {
+          setIsConnecting(false);
+          connectServices();
+        }, delay);
+        return;
+      } else {
+        console.error("Max connection attempts reached");
+      }
+    } finally {
+      setIsConnecting(false);
     }
-  } finally {
-    setIsConnecting(false);
-  }
-}, [/* dependencies */]);
+  },
+  [
+    /* dependencies */
+  ],
+);
 ```
 
 ### Manual Retry
@@ -391,11 +397,11 @@ Errors related to tokens and user authentication.
 
 #### Common Errors
 
-| Error | Cause | Solution |
-|-------|-------|----------|
-| "Token expired" | JWT token past expiration | Refresh token automatically |
-| "Invalid token" | Malformed or wrong token | Regenerate token with correct data |
-| "Authentication failed" | User credentials invalid | Re-authenticate user |
+| Error                   | Cause                     | Solution                           |
+| ----------------------- | ------------------------- | ---------------------------------- |
+| "Token expired"         | JWT token past expiration | Refresh token automatically        |
+| "Invalid token"         | Malformed or wrong token  | Regenerate token with correct data |
+| "Authentication failed" | User credentials invalid  | Re-authenticate user               |
 
 #### Detection
 
@@ -431,11 +437,11 @@ Connection and network-related failures.
 
 #### Common Errors
 
-| Error | Cause | Solution |
-|-------|-------|----------|
+| Error                    | Cause                  | Solution                    |
+| ------------------------ | ---------------------- | --------------------------- |
 | "Network request failed" | No internet connection | Wait and retry with backoff |
-| "Connection timeout" | Slow network | Increase timeout, retry |
-| "WebSocket closed" | Network interruption | Reconnect automatically |
+| "Connection timeout"     | Slow network           | Increase timeout, retry     |
+| "WebSocket closed"       | Network interruption   | Reconnect automatically     |
 
 #### Detection
 
@@ -455,7 +461,7 @@ if (
 ```typescript
 async function handleNetworkError(
   operation: () => Promise<void>,
-  maxRetries = 5
+  maxRetries = 5,
 ) {
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
@@ -466,7 +472,7 @@ async function handleNetworkError(
 
       const delay = Math.min(1000 * Math.pow(2, attempt), 30000);
       console.log(`Network error, retrying in ${delay}ms...`);
-      await new Promise(resolve => setTimeout(resolve, delay));
+      await new Promise((resolve) => setTimeout(resolve, delay));
     }
   }
 }
@@ -480,11 +486,11 @@ Access control and authorization failures.
 
 #### Common Errors
 
-| Error | Cause | Solution |
-|-------|-------|----------|
-| "Permission denied" | User lacks required role | Check user permissions |
-| "Channel access denied" | Not a member | Add user to channel |
-| "Action not allowed" | Insufficient privileges | Verify user role |
+| Error                   | Cause                    | Solution               |
+| ----------------------- | ------------------------ | ---------------------- |
+| "Permission denied"     | User lacks required role | Check user permissions |
+| "Channel access denied" | Not a member             | Add user to channel    |
+| "Action not allowed"    | Insufficient privileges  | Verify user role       |
 
 #### Detection
 
@@ -498,10 +504,7 @@ if (error.message.includes("permission")) {
 #### Recovery Pattern
 
 ```typescript
-async function handlePermissionError(
-  userId: string,
-  channelId: string
-) {
+async function handlePermissionError(userId: string, channelId: string) {
   try {
     // Check if user should have access
     const hasAccess = await checkUserAccess(userId, channelId);
@@ -557,9 +560,10 @@ const getCachedToken = async (type: "chat" | "video"): Promise<string> => {
   }
 
   // Generate new token
-  const newToken = type === "chat"
-    ? await chatTokenProvider(userId)
-    : await tokenProvider(userId);
+  const newToken =
+    type === "chat"
+      ? await chatTokenProvider(userId)
+      : await tokenProvider(userId);
 
   // Cache with 50-minute expiry (tokens usually last 1 hour)
   const expiresAt = Date.now() + 50 * 60 * 1000;
@@ -584,7 +588,7 @@ await client.connectUser(
     image: userDetails.image ?? undefined,
     role: streamRole,
   },
-  () => getCachedToken("chat") // Function, not value
+  () => getCachedToken("chat"), // Function, not value
 );
 ```
 
@@ -603,7 +607,7 @@ async function automaticRetry<T>(
     maxAttempts: 5,
     baseDelay: 1000,
     maxDelay: 30000,
-  }
+  },
 ): Promise<T> {
   let lastError: Error;
 
@@ -624,15 +628,15 @@ async function automaticRetry<T>(
       // Calculate delay with exponential backoff
       const delay = Math.min(
         options.baseDelay * Math.pow(2, attempt),
-        options.maxDelay
+        options.maxDelay,
       );
 
       console.log(
         `Attempt ${attempt + 1}/${options.maxAttempts} failed, ` +
-        `retrying in ${delay}ms...`
+          `retrying in ${delay}ms...`,
       );
 
-      await new Promise(resolve => setTimeout(resolve, delay));
+      await new Promise((resolve) => setTimeout(resolve, delay));
     }
   }
 
@@ -641,7 +645,7 @@ async function automaticRetry<T>(
 
 // Usage
 const call = await automaticRetry(() =>
-  client.call('default', callId).getOrCreate()
+  client.call("default", callId).getOrCreate(),
 );
 ```
 
