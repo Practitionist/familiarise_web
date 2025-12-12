@@ -511,37 +511,8 @@ export async function PATCH(
                 },
               });
 
-              // Send payment link email to user
-              // Wrapped in try-catch to prevent email failures from rolling back the transaction
-              // User can still find the payment link on their dashboard via pendingPaymentUrl
-              try {
-                await sendPaymentLinkEmail({
-                  email: updatedConsultation.requestedBy.user.email || "",
-                  name: updatedConsultation.requestedBy.user.name || "User",
-                  consultantName:
-                    updatedConsultation.consultationPlan.consultantProfile.user
-                      .name || "Consultant",
-                  appointmentType: "consultation",
-                  amount: paymentResult.amount,
-                  currency: paymentResult.currency,
-                  paymentUrl: paymentResult.checkoutUrl,
-                  expiresAt: new Date(
-                    Date.now() + APPROVAL_PAYMENT_EXPIRATION_MS,
-                  ),
-                });
-                console.log(
-                  `📧 Payment link email sent for consultation ${consultation.id}`,
-                );
-              } catch (emailError) {
-                // Log error but don't fail the transaction - user can find payment link in dashboard
-                console.error(
-                  `⚠️ Failed to send payment link email for consultation ${consultation.id}:`,
-                  emailError instanceof Error
-                    ? emailError.message
-                    : "Unknown error",
-                );
-              }
-
+              // Return email data to send AFTER transaction commits
+              // This prevents holding serializable locks during slow email network calls
               return {
                 data: updatedConsultation,
                 message: "Consultation approved. Payment link sent to user.",
@@ -550,6 +521,20 @@ export async function PATCH(
                 paymentAmount: paymentResult.amount,
                 paymentCurrency: paymentResult.currency,
                 duplicate: false,
+                emailData: {
+                  email: updatedConsultation.requestedBy.user.email || "",
+                  name: updatedConsultation.requestedBy.user.name || "User",
+                  consultantName:
+                    updatedConsultation.consultationPlan.consultantProfile.user
+                      .name || "Consultant",
+                  appointmentType: "consultation" as const,
+                  amount: paymentResult.amount,
+                  currency: paymentResult.currency,
+                  paymentUrl: paymentResult.checkoutUrl,
+                  expiresAt: new Date(
+                    Date.now() + APPROVAL_PAYMENT_EXPIRATION_MS,
+                  ),
+                },
               };
             }
           }
@@ -571,8 +556,25 @@ export async function PATCH(
         });
       }
 
-      // Return success response
-      return NextResponse.json(result);
+      // Send email AFTER transaction commits - prevents holding locks during slow network calls
+      // User can still find the payment link on their dashboard via pendingPaymentUrl if email fails
+      if ("emailData" in result && result.emailData) {
+        try {
+          await sendPaymentLinkEmail(result.emailData);
+          console.log(
+            `📧 Payment link email sent for consultation ${consultationId}`,
+          );
+        } catch (emailError) {
+          console.error(
+            `⚠️ Failed to send payment link email for consultation ${consultationId}:`,
+            emailError instanceof Error ? emailError.message : "Unknown error",
+          );
+        }
+      }
+
+      // Return success response (exclude emailData from response)
+      const { emailData: _emailData, ...responseData } = result as typeof result & { emailData?: unknown };
+      return NextResponse.json(responseData);
     } catch (error) {
       console.error(
         "Transaction error:",
