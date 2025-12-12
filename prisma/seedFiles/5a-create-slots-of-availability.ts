@@ -1,7 +1,7 @@
 import { faker } from "@faker-js/faker";
 import { DayOfWeek, ScheduleType } from "@prisma/client";
 import prisma from "../../lib/prisma";
-import { UserWithProfiles } from "./createUsers";
+import { UserWithProfiles } from "./1a-create-users";
 
 const MAX_SLOT_DURATION = 6 * 2; // In 30-min intervals (12)
 const MIN_SLOT_DURATION = 1; // In 30-min intervals (1 = 30 mins)

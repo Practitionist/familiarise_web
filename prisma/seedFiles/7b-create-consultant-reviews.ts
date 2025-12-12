@@ -1,7 +1,7 @@
 import { faker } from "@faker-js/faker";
 import { Prisma } from "@prisma/client";
 import prisma from "../../lib/prisma";
-import { UserWithProfiles } from "./createUsers";
+import { UserWithProfiles } from "./1a-create-users";
 
 type CompletedAppointment = Prisma.AppointmentGetPayload<{
   include: {

@@ -6,9 +6,9 @@ import {
   DiscountType,
 } from "@prisma/client";
 import prisma from "../../lib/prisma";
-import { UserWithProfiles } from "./createUsers";
+import { UserWithProfiles } from "./1a-create-users";
 
-const NUM_PAYMENTS = 100;
+const NUM_PAYMENTS = 200; // Medium data volume
 
 type AppointmentWithPlans = Prisma.AppointmentGetPayload<{
   include: {

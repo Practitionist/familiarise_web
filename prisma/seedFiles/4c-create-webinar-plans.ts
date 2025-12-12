@@ -1,6 +1,6 @@
 import { faker } from "@faker-js/faker";
 import prisma from "../../lib/prisma";
-import { UserWithProfiles } from "./createUsers";
+import { UserWithProfiles } from "./1a-create-users";
 
 export async function createWebinarPlans(consultants: UserWithProfiles[]) {
   console.log(

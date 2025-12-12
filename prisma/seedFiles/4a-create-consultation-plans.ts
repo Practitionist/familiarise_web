@@ -1,4 +1,4 @@
-import { UserWithProfiles } from "./createUsers";
+import { UserWithProfiles } from "./1a-create-users";
 import prisma from "../../lib/prisma";
 import { faker } from "@faker-js/faker";
 

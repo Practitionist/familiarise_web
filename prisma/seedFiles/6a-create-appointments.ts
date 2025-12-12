@@ -11,17 +11,18 @@ import {
   WebinarStatus,
 } from "@prisma/client";
 import prisma from "../../lib/prisma";
-import { UserWithProfiles } from "./createUsers";
+import { UserWithProfiles } from "./1a-create-users";
 
-const NUM_APPOINTMENTS = 500;
+const NUM_APPOINTMENTS = 750; // Medium data volume
 const BATCH_SIZE = 10; // Process appointments in smaller batches
 
-// Distribution helpers
+// Distribution helpers (adjusted for 750 appointments)
 const getAppointmentType = (index: number): AppointmentsType => {
   // More realistic distribution with more subscriptions for testing validation
-  if (index < 100) return AppointmentsType.CONSULTATION;
-  if (index < 300) return AppointmentsType.SUBSCRIPTION; // More subscriptions for testing
-  if (index < 400) return AppointmentsType.WEBINAR;
+  // 150 consultations, 300 subscriptions, 150 webinars, 150 classes
+  if (index < 150) return AppointmentsType.CONSULTATION;
+  if (index < 450) return AppointmentsType.SUBSCRIPTION; // More subscriptions for testing
+  if (index < 600) return AppointmentsType.WEBINAR;
   return AppointmentsType.CLASS;
 };
 

@@ -1,23 +1,52 @@
 import * as dotenv from "dotenv";
 import prisma from "../lib/prisma";
-import {
-  createUsers,
-  createWorkExperiences,
-  createCertifications,
-  createConsultantEducation,
-  createConsulteeEducation,
-} from "./seedFiles/createUsers";
-import { createConsultationPlans } from "./seedFiles/createConsultationPlans";
-import { createSubscriptionPlans } from "./seedFiles/createSubscriptionPlans";
-import { createWebinarPlans } from "./seedFiles/createWebinarPlans";
-import { createClassPlans } from "./seedFiles/createClassPlans";
-import { createSlotsOfAvailability } from "./seedFiles/createSlotsOfAvailability";
-import { createTopics } from "./seedFiles/createTopics";
-import { createAppointments } from "./seedFiles/createAppointments";
-import { createNewsletters } from "./seedFiles/createNewsletters";
-import { createConsultantReviews } from "./seedFiles/createConsultantReviews";
-import { createDiscountCodes } from "./seedFiles/createDiscountCodes";
-import { createPayments } from "./seedFiles/createPayments";
+
+// Phase 1: Core entities
+import { createUsers } from "./seedFiles/1a-create-users";
+
+// Phase 2: Professional background
+import { createWorkExperiences } from "./seedFiles/2a-create-work-experiences";
+import { createCertifications } from "./seedFiles/2b-create-certifications";
+import { createConsultantEducation } from "./seedFiles/2c-create-consultant-education";
+import { createConsulteeEducation } from "./seedFiles/2d-create-consultee-education";
+
+// Phase 3: Topics
+import { createTopics } from "./seedFiles/3a-create-topics";
+
+// Phase 4: Plans
+import { createConsultationPlans } from "./seedFiles/4a-create-consultation-plans";
+import { createSubscriptionPlans } from "./seedFiles/4b-create-subscription-plans";
+import { createWebinarPlans } from "./seedFiles/4c-create-webinar-plans";
+import { createClassPlans } from "./seedFiles/4d-create-class-plans";
+
+// Phase 5: Availability
+import { createSlotsOfAvailability } from "./seedFiles/5a-create-slots-of-availability";
+
+// Phase 6: Appointments
+import { createAppointments } from "./seedFiles/6a-create-appointments";
+
+// Phase 7: Engagement
+import { createNewsletters } from "./seedFiles/7a-create-newsletters";
+import { createConsultantReviews } from "./seedFiles/7b-create-consultant-reviews";
+
+// Phase 8: Payments
+import { createDiscountCodes } from "./seedFiles/8a-create-discount-codes";
+import { createPayments } from "./seedFiles/8b-create-payments";
+
+// Phase 9: Support & Feedback
+import { createFeedbacks } from "./seedFiles/9a-create-feedbacks";
+import { createSupportTickets } from "./seedFiles/9b-create-support-tickets";
+
+// Phase 10: Waitlists
+import { createWaitlists } from "./seedFiles/10a-create-waitlists";
+
+// Phase 11: Documents & Meetings
+import { createAppointmentDocuments } from "./seedFiles/11a-create-appointment-documents";
+import { createMeetingSessions } from "./seedFiles/11b-create-meeting-sessions";
+
+// Phase 12: Payment Extensions
+import { createRefunds } from "./seedFiles/12a-create-refunds";
+import { createDisputes } from "./seedFiles/12b-create-disputes";
 
 dotenv.config({ path: ".env" });
 
@@ -95,6 +124,34 @@ async function seed() {
 
     console.log("Creating payments...");
     await createPayments(users);
+
+    // Phase 9: Support & Feedback
+    console.log("\n[Phase 9] Creating support & feedback data...");
+    console.log("Creating feedbacks...");
+    await createFeedbacks(users);
+
+    console.log("Creating support tickets...");
+    await createSupportTickets(users);
+
+    // Phase 10: Waitlists
+    console.log("\n[Phase 10] Creating waitlists...");
+    await createWaitlists(users);
+
+    // Phase 11: Documents & Meetings
+    console.log("\n[Phase 11] Creating documents & meeting sessions...");
+    console.log("Creating appointment documents...");
+    await createAppointmentDocuments();
+
+    console.log("Creating meeting sessions...");
+    await createMeetingSessions();
+
+    // Phase 12: Payment Extensions
+    console.log("\n[Phase 12] Creating payment extensions...");
+    console.log("Creating refunds...");
+    await createRefunds();
+
+    console.log("Creating disputes...");
+    await createDisputes();
 
     // Summary
     const endTime = Date.now();
