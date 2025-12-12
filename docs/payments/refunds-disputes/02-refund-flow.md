@@ -136,7 +136,7 @@ const phase1Result = await prisma.$transaction(async (tx) => {
       currency: payment.currency,
       reason,
       status: "PENDING",
-      refundId: `pending_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+      refundId: `pending_${crypto.randomUUID()}`,
       paymentGateway: payment.paymentGateway,
       metadata: {},
       paymentId: payment.id,

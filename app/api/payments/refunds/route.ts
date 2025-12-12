@@ -7,6 +7,7 @@ import authOptions from "@/app/api/auth/[...nextauth]/options";
 import { createRefund, listRefunds } from "@/lib/payments";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
+import crypto from "crypto";
 import { getServerSession } from "next-auth";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
@@ -113,7 +114,7 @@ export async function POST(req: NextRequest) {
           currency: payment.currency,
           reason,
           status: "PENDING",
-          refundId: `pending_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+          refundId: `pending_${crypto.randomUUID()}`,
           paymentGateway: payment.paymentGateway,
           metadata: {},
           paymentId: payment.id,
