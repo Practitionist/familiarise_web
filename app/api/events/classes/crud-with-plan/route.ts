@@ -78,14 +78,18 @@ export async function POST(request: NextRequest) {
       consultantProfileId,
       topics: topicIds, // Use validated 'topics' as 'topicIds' for connect logic
       certificateProvided,
-      callsPerWeek,
-      videoMeetings,
+      meetingsPerWeek,
       emailSupport,
       classContents,
       status,
       startDate,
     } = validatedData;
     // --- End Zod Validation ---
+
+    // Compute derived metrics
+    const sessionDurationInHours = 1.0; // Default session duration for classes
+    const totalSessions = meetingsPerWeek * durationInMonths * 4;
+    const totalHours = totalSessions * sessionDurationInHours;
 
     // Calculate end date only if startDate is provided and valid
     let start: Date | undefined = startDate ? new Date(startDate) : undefined;
@@ -122,8 +126,10 @@ export async function POST(request: NextRequest) {
           materialProvided,
           learningOutcomes,
           certificateProvided,
-          callsPerWeek,
-          videoMeetings,
+          meetingsPerWeek,
+          sessionDurationInHours,
+          totalSessions,
+          totalHours,
           emailSupport,
           consultantProfile: { connect: { id: consultantProfileId } },
           topics: topicIds // Use validated topics here
@@ -161,12 +167,12 @@ export async function POST(request: NextRequest) {
             create: start
               ? Array.from({
                   // Calculate total sessions based on duration
-                  length: Math.ceil(durationInMonths * 4.33) * callsPerWeek,
+                  length: Math.ceil(durationInMonths * 4.33) * meetingsPerWeek,
                 }).map((_, index) => {
                   const appointmentDate = new Date(start!);
                   appointmentDate.setDate(
                     appointmentDate.getDate() +
-                      Math.floor(index / callsPerWeek) * 7,
+                      Math.floor(index / meetingsPerWeek) * 7,
                   );
                   const slotStart = new Date(appointmentDate);
                   const slotEnd = new Date(appointmentDate);
@@ -274,8 +280,7 @@ export async function PATCH(request: NextRequest) {
       price,
       priceCurrency,
       certificateProvided,
-      callsPerWeek,
-      videoMeetings,
+      meetingsPerWeek,
       emailSupport,
       maxParticipants,
       language,
@@ -394,10 +399,24 @@ export async function PATCH(request: NextRequest) {
           updateData.priceCurrency = priceCurrency;
         if (certificateProvided !== undefined)
           updateData.certificateProvided = certificateProvided;
-        if (callsPerWeek !== undefined) updateData.callsPerWeek = callsPerWeek;
-        if (videoMeetings !== undefined)
-          updateData.videoMeetings = videoMeetings;
+        if (meetingsPerWeek !== undefined)
+          updateData.meetingsPerWeek = meetingsPerWeek;
         if (emailSupport !== undefined) updateData.emailSupport = emailSupport;
+
+        // Recompute derived metrics if base fields are being updated
+        if (meetingsPerWeek !== undefined || durationInMonths !== undefined) {
+          const finalMeetingsPerWeek =
+            meetingsPerWeek ?? existingPlan.meetingsPerWeek;
+          const finalDurationInMonths =
+            durationInMonths ?? existingPlan.durationInMonths;
+          const finalSessionDurationInHours =
+            existingPlan.sessionDurationInHours ?? 1.0;
+
+          updateData.totalSessions =
+            finalMeetingsPerWeek * finalDurationInMonths * 4;
+          updateData.totalHours =
+            updateData.totalSessions * finalSessionDurationInHours;
+        }
         if (maxParticipants !== undefined)
           updateData.maxParticipants = maxParticipants;
         if (language !== undefined) updateData.language = language;

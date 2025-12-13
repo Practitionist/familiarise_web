@@ -604,8 +604,7 @@ export class PlannerService {
             materialProvided: classData.classPlan.materialProvided,
             learningOutcomes: classData.classPlan.learningOutcomes,
             emailSupport: classData.classPlan.emailSupport,
-            callsPerWeek: classData.classPlan.callsPerWeek,
-            videoMeetings: classData.classPlan.videoMeetings,
+            meetingsPerWeek: classData.classPlan.meetingsPerWeek,
             classContents: classData.classPlan.classContents, // Send updated contents if provided
             consultantProfileId: consultantId, // Keep for now, API might require it
             // API expects 'topics' (containing IDs) for Class PATCH
@@ -1095,15 +1094,52 @@ export class PlannerService {
           typeof classDataForm.durationInMonths === "number"
             ? classDataForm.durationInMonths
             : 1,
-        callsPerWeek:
-          typeof classDataForm.callsPerWeek === "number"
-            ? classDataForm.callsPerWeek
-            : 1,
-        videoMeetings:
-          typeof classDataForm.videoMeetings === "number"
-            ? classDataForm.videoMeetings
+        meetingsPerWeek:
+          typeof classDataForm.meetingsPerWeek === "number"
+            ? classDataForm.meetingsPerWeek
             : 1,
         emailSupport: classDataForm.emailSupport ?? "GENERAL",
+        // Computed derived metrics
+        totalSessions: (() => {
+          const meetings =
+            typeof classDataForm.meetingsPerWeek === "number"
+              ? classDataForm.meetingsPerWeek
+              : 1;
+          const duration =
+            typeof classDataForm.durationInMonths === "number"
+              ? classDataForm.durationInMonths
+              : 1;
+          return meetings * duration * 4;
+        })(),
+        totalHours: (() => {
+          const meetings =
+            typeof classDataForm.meetingsPerWeek === "number"
+              ? classDataForm.meetingsPerWeek
+              : 1;
+          const duration =
+            typeof classDataForm.durationInMonths === "number"
+              ? classDataForm.durationInMonths
+              : 1;
+          const contents = classDataForm.classContents ?? [];
+          let sessionDuration = 1;
+          if (Array.isArray(contents) && contents.length > 0) {
+            const valid = contents.filter(
+              (c: any) =>
+                typeof c.hoursAllotted === "number" && c.hoursAllotted > 0,
+            );
+            if (valid.length > 0) {
+              const total = valid.reduce(
+                (sum: number, c: any) => sum + c.hoursAllotted,
+                0,
+              );
+              sessionDuration = total / valid.length;
+            }
+          } else if (initialData && this.isClassEvent(initialData)) {
+            sessionDuration =
+              (initialData.classPlan as any).sessionDurationInHours ?? 1;
+          }
+          return meetings * duration * 4 * sessionDuration;
+        })(),
         // Timestamps
         createdAt: createdAt,
         updatedAt: now,

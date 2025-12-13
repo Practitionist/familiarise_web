@@ -93,16 +93,9 @@ export async function PUT(
       );
     }
 
-    if (body.callsPerWeek && body.callsPerWeek < 0) {
+    if (body.meetingsPerWeek && body.meetingsPerWeek < 0) {
       return NextResponse.json(
-        { error: "Calls per week must be a non-negative number" },
-        { status: 400 },
-      );
-    }
-
-    if (body.videoMeetings && body.videoMeetings < 0) {
-      return NextResponse.json(
-        { error: "Video meetings must be a non-negative number" },
+        { error: "Meetings per week must be a non-negative number" },
         { status: 400 },
       );
     }
@@ -131,8 +124,7 @@ export async function PUT(
         description: body.description,
         durationInMonths: body.durationInMonths,
         price: body.price,
-        callsPerWeek: body.callsPerWeek,
-        videoMeetings: body.videoMeetings,
+        meetingsPerWeek: body.meetingsPerWeek,
         emailSupport: body.emailSupport as PlanEmailSupport,
         maxParticipants: body.maxParticipants,
         language: body.language,

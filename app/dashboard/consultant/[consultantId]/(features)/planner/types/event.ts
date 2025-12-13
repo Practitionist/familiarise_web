@@ -76,7 +76,7 @@ export type FormData = {
   durationInHours?: number;
   durationInMonths?: number;
   callsPerWeek?: number;
-  videoMeetings?: number;
+  meetingsPerWeek?: number;
   emailSupport?: PlanEmailSupport;
   certificateProvided?: boolean;
   classContents?: ClassContentInput[];
@@ -88,8 +88,7 @@ export type FormData = {
     }
   | {
       durationInMonths: number;
-      callsPerWeek: number;
-      videoMeetings: number;
+      meetingsPerWeek: number;
       emailSupport: "GENERAL" | "PRIORITY" | "DEDICATED";
       certificateProvided: boolean;
       classContents: {

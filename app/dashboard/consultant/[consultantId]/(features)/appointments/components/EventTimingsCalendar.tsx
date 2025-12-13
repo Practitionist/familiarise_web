@@ -69,10 +69,12 @@ export function EventTimingsCalendar({
       case "CLASS": {
         const plan = (appointment.class as any)?.classPlan || {};
         const defaults = getClassPlanDefaults(plan);
+        // Use meetingsPerWeek for classes (distinct from callsPerWeek for subscriptions)
+        const meetingsPerWeek = defaults.classesPerWeek;
         return {
           eventType: "class" as const,
           eventId: appointment.class?.id || "",
-          callsPerWeek: defaults.classesPerWeek,
+          meetingsPerWeek, // Classes use meetingsPerWeek terminology
           durationInMonths: defaults.durationInMonths,
           durationInHours: defaults.sessionDurationInHours,
           title: plan?.title || "Class",
@@ -118,7 +120,8 @@ export function EventTimingsCalendar({
         const sessionDuration = eventDetails.sessionDurationInHours || 1;
         const durationText =
           sessionDuration === 1 ? "1 hour" : `${sessionDuration} hours`;
-        return `Schedule ${eventDetails.callsPerWeek || 1} session${(eventDetails.callsPerWeek || 1) !== 1 ? "s" : ""} per week. Each session is ${durationText}.`;
+        const meetingsPerWeek = (eventDetails as any).meetingsPerWeek || 1;
+        return `Schedule ${meetingsPerWeek} meeting${meetingsPerWeek !== 1 ? "s" : ""} per week. Each session is ${durationText}.`;
       default:
         return "Select time slots for your event.";
     }
@@ -140,7 +143,7 @@ export function EventTimingsCalendar({
                 Plan: {(eventDetails as any).planType || "Custom"}
               </Badge>
               <span>
-                {(eventDetails as any).callsPerWeek} classes/week ·{" "}
+                {(eventDetails as any).meetingsPerWeek} meetings/week ·{" "}
                 {eventDetails.durationInMonths} month
                 {eventDetails.durationInMonths !== 1 ? "s" : ""} ·{" "}
                 {eventDetails.durationInHours || 1}h/session
@@ -163,7 +166,12 @@ export function EventTimingsCalendar({
           eventType={eventDetails.eventType}
           eventId={eventDetails.eventId}
           durationInMonths={eventDetails.durationInMonths}
-          callsPerWeek={eventDetails.callsPerWeek}
+          callsPerWeek={
+            // Map domain-specific terminology to generic calendar prop
+            eventDetails.eventType === "class"
+              ? (eventDetails as any).meetingsPerWeek
+              : eventDetails.callsPerWeek
+          }
           durationInHours={
             eventDetails.eventType === "webinar" ||
             eventDetails.eventType === "consultation"

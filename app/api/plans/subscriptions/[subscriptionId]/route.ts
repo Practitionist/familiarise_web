@@ -8,7 +8,7 @@ interface UpdateSubscriptionPlanRequest {
   durationInMonths?: number;
   price?: number;
   callsPerWeek?: number;
-  videoMeetings?: number;
+  sessionDurationInHours?: number;
   emailSupport?: PlanEmailSupport;
   language?: string;
   level?: string;
@@ -107,13 +107,6 @@ export async function PUT(
       );
     }
 
-    if (body.videoMeetings && body.videoMeetings < 0) {
-      return NextResponse.json(
-        { error: "Video meetings must be a non-negative number" },
-        { status: 400 },
-      );
-    }
-
     if (
       body.emailSupport &&
       !Object.values(PlanEmailSupport).includes(body.emailSupport)
@@ -124,6 +117,37 @@ export async function PUT(
       );
     }
 
+    // Recompute derived metrics if base fields are being updated
+    let totalSessions: number | undefined;
+    let totalHours: number | undefined;
+
+    if (
+      body.callsPerWeek !== undefined ||
+      body.durationInMonths !== undefined ||
+      body.sessionDurationInHours !== undefined
+    ) {
+      // Fetch existing plan to get current values for fields not being updated
+      const existingPlan = await prisma.subscriptionPlan.findUnique({
+        where: { id: subscriptionId },
+        select: {
+          callsPerWeek: true,
+          durationInMonths: true,
+          sessionDurationInHours: true,
+        },
+      });
+
+      if (existingPlan) {
+        const callsPerWeek = body.callsPerWeek ?? existingPlan.callsPerWeek;
+        const durationInMonths =
+          body.durationInMonths ?? existingPlan.durationInMonths;
+        const sessionDurationInHours =
+          body.sessionDurationInHours ?? existingPlan.sessionDurationInHours;
+
+        totalSessions = callsPerWeek * durationInMonths * 4;
+        totalHours = totalSessions * sessionDurationInHours;
+      }
+    }
+
     const subscriptionPlan = await prisma.subscriptionPlan.update({
       where: { id: subscriptionId },
       data: {
@@ -132,7 +156,9 @@ export async function PUT(
         durationInMonths: body.durationInMonths,
         price: body.price ? Math.round(body.price) : undefined, // Ensure price is an integer
         callsPerWeek: body.callsPerWeek,
-        videoMeetings: body.videoMeetings,
+        sessionDurationInHours: body.sessionDurationInHours,
+        totalSessions,
+        totalHours,
         emailSupport: body.emailSupport,
         language: body.language,
         level: body.level,

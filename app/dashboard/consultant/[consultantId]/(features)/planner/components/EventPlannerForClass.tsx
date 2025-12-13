@@ -95,8 +95,7 @@ export function EventPlannerForClass({
               typeof topic === "string" ? topic : topic.name,
             ) || [],
           certificateProvided: initialData.classPlan.certificateProvided,
-          callsPerWeek: initialData.classPlan.callsPerWeek,
-          videoMeetings: initialData.classPlan.videoMeetings,
+          meetingsPerWeek: initialData.classPlan.meetingsPerWeek,
           emailSupport: initialData.classPlan.emailSupport,
           consultantProfileId: initialData.classPlan.consultantProfileId,
           classContents: initialData.classPlan.classContents ?? [],
@@ -116,8 +115,7 @@ export function EventPlannerForClass({
           learningOutcomes: [],
           topics: [],
           certificateProvided: false,
-          callsPerWeek: 1,
-          videoMeetings: 1,
+          meetingsPerWeek: 1,
           emailSupport: "GENERAL" as const,
           classContents: [],
           planType: "class",
@@ -146,8 +144,7 @@ export function EventPlannerForClass({
             typeof topic === "string" ? topic : topic.name,
           ) || [],
         certificateProvided: initialData.classPlan.certificateProvided,
-        callsPerWeek: initialData.classPlan.callsPerWeek,
-        videoMeetings: initialData.classPlan.videoMeetings,
+        meetingsPerWeek: initialData.classPlan.meetingsPerWeek,
         emailSupport: initialData.classPlan.emailSupport,
         consultantProfileId: initialData.classPlan.consultantProfileId,
         classContents: initialData.classPlan.classContents ?? [],
@@ -265,8 +262,14 @@ export function EventPlannerForClass({
             certificateProvided: formData.certificateProvided,
             sessionDurationInHours:
               initialData?.classPlan?.sessionDurationInHours ?? 1,
-            callsPerWeek: formData.callsPerWeek,
-            videoMeetings: formData.videoMeetings,
+            meetingsPerWeek: formData.meetingsPerWeek,
+            // Compute derived metrics
+            totalSessions: formData.meetingsPerWeek * formData.durationInMonths * 4,
+            totalHours:
+              formData.meetingsPerWeek *
+              formData.durationInMonths *
+              4 *
+              (initialData?.classPlan?.sessionDurationInHours ?? 1),
             emailSupport: formData.emailSupport,
             classContents: (formData.classContents ?? []).map((content) => ({
               ...content,
@@ -703,33 +706,10 @@ export function EventPlannerForClass({
             <div className="grid grid-cols-2 gap-4">
               <FormField
                 control={form.control}
-                name="callsPerWeek"
+                name="meetingsPerWeek"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Calls Per Week</FormLabel>
-                    <FormControl>
-                      <Input
-                        type="number"
-                        {...field}
-                        onChange={(e) => {
-                          const value = e.target.value;
-                          field.onChange(
-                            value === "" ? 0 : Number.parseInt(value, 10),
-                          );
-                        }}
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-
-              <FormField
-                control={form.control}
-                name="videoMeetings"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Video Meetings</FormLabel>
+                    <FormLabel>Meetings Per Week</FormLabel>
                     <FormControl>
                       <Input
                         type="number"

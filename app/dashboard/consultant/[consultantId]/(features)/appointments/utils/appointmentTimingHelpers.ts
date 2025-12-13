@@ -3,7 +3,8 @@ import { TAppointment } from "@/types/appointment";
 export interface AppointmentTimingDetails {
   eventType: "consultation" | "subscription" | "webinar" | "class";
   eventId: string;
-  callsPerWeek: number;
+  /** Generic sessions per week - maps to callsPerWeek for subscriptions, meetingsPerWeek for classes */
+  sessionsPerWeek: number;
   durationInMonths: number;
   durationInHours: number;
   title: string;
@@ -21,7 +22,7 @@ export function getAppointmentTimingDetails(
       return {
         eventType: "consultation",
         eventId: appointment.consultation?.id || "",
-        callsPerWeek: 1, // Consultations are one-time events
+        sessionsPerWeek: 1, // Consultations are one-time events
         durationInMonths: 1, // Consultations are one-time events
         durationInHours:
           appointment.consultation?.consultationPlan?.durationInHours || 1,
@@ -29,12 +30,14 @@ export function getAppointmentTimingDetails(
           appointment.consultation?.consultationPlan?.title || "Consultation",
         canManageTimings: !!appointment.consultation?.id,
       };
-    case "SUBSCRIPTION":
+    case "SUBSCRIPTION": {
+      // Subscriptions use callsPerWeek terminology
+      const callsPerWeek =
+        appointment.subscription?.subscriptionPlan?.callsPerWeek || 1;
       return {
         eventType: "subscription",
         eventId: appointment.subscription?.id || "",
-        callsPerWeek:
-          appointment.subscription?.subscriptionPlan?.callsPerWeek || 1,
+        sessionsPerWeek: callsPerWeek,
         durationInMonths:
           appointment.subscription?.subscriptionPlan?.durationInMonths || 1,
         durationInHours:
@@ -44,20 +47,21 @@ export function getAppointmentTimingDetails(
           appointment.subscription?.subscriptionPlan?.title || "Subscription",
         canManageTimings: !!appointment.subscription?.id,
       };
+    }
     case "WEBINAR":
       return {
         eventType: "webinar",
         eventId: appointment.webinar?.id || "",
-        callsPerWeek: 1, // Webinars are one-time events
+        sessionsPerWeek: 1, // Webinars are one-time events
         durationInMonths: 1, // Webinars are one-time events
         durationInHours: appointment.webinar?.webinarPlan?.durationInHours || 1,
         title: appointment.webinar?.webinarPlan?.title || "Webinar",
         canManageTimings: !!appointment.webinar?.id,
       };
     case "CLASS": {
-      // Calculate session duration for classes since ClassPlan doesn't have sessionDurationInHours
+      // Calculate session duration for classes
       const classPlan = appointment.class?.classPlan;
-      const callsPerWeek = classPlan?.callsPerWeek || 1;
+      const meetingsPerWeek = classPlan?.meetingsPerWeek || 1;
       const durationInMonths = classPlan?.durationInMonths || 1;
 
       // Use a reasonable default session duration
@@ -65,7 +69,7 @@ export function getAppointmentTimingDetails(
       let sessionDurationInHours = 1.5; // Default for classes
 
       // For classes, we can estimate based on duration and frequency
-      if (durationInMonths > 1 && callsPerWeek > 1) {
+      if (durationInMonths > 1 && meetingsPerWeek > 1) {
         // For longer, more frequent classes, use slightly longer sessions
         sessionDurationInHours = 2.0;
       } else if (durationInMonths > 6) {
@@ -76,7 +80,7 @@ export function getAppointmentTimingDetails(
       return {
         eventType: "class",
         eventId: appointment.class?.id || "",
-        callsPerWeek,
+        sessionsPerWeek: meetingsPerWeek, // Classes use meetingsPerWeek terminology
         durationInMonths,
         durationInHours: sessionDurationInHours,
         title: appointment.class?.classPlan?.title || "Class",
@@ -87,7 +91,7 @@ export function getAppointmentTimingDetails(
       return {
         eventType: "consultation",
         eventId: "",
-        callsPerWeek: 1,
+        sessionsPerWeek: 1,
         durationInMonths: 1,
         durationInHours: 1,
         title: "Event",

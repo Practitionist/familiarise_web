@@ -108,7 +108,7 @@ export async function POST(
         },
         {
           durationInMonths: classPlan.durationInMonths || 1,
-          callsPerWeek: classPlan.callsPerWeek || 2,
+          callsPerWeek: classPlan.meetingsPerWeek || 2,
           sessionDurationInHours: classPlan.sessionDurationInHours || 1,
           schedulingPeriodStartsAt:
             classEntity.schedulingPeriodStartsAt ?? undefined,
@@ -178,7 +178,7 @@ export async function POST(
             result.weeklyDistributionErrors.push({
               week: new Date(weekMatch[1]).toLocaleDateString(),
               slotsCount: parseInt(countMatch[1]),
-              maxAllowed: classPlan.callsPerWeek || 2,
+              maxAllowed: classPlan.meetingsPerWeek || 2,
             });
           }
         }

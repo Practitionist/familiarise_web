@@ -964,7 +964,7 @@ export class SlotAllocationService {
 
         config = {
           durationInMonths: event.classPlan?.durationInMonths,
-          callsPerWeek: event.classPlan?.callsPerWeek,
+          callsPerWeek: event.classPlan?.meetingsPerWeek,
           sessionDurationInHours: sessionDuration,
           schedulingPeriodStartsAt: event.schedulingPeriodStartsAt,
           schedulingPeriodEndsAt: event.schedulingPeriodEndsAt,
