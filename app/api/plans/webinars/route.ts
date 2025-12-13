@@ -7,17 +7,38 @@ export async function GET(request: NextRequest) {
     const consultantId = searchParams.get("consultantId");
     const page = parseInt(searchParams.get("page") || "1");
     const limit = parseInt(searchParams.get("limit") || "10");
+    const includeRegistration = searchParams.get("includeRegistration") === "true";
     const skip = (page - 1) * limit;
 
     const where = consultantId ? { consultantProfileId: consultantId } : {};
 
+    // Build include object based on whether registration data is requested
+    const include: Record<string, unknown> = {
+      consultantProfile: true,
+      topics: true,
+    };
+
+    // Include webinar instances with appointment/slot/user data for registration checks
+    if (includeRegistration) {
+      include.webinars = {
+        include: {
+          appointment: {
+            include: {
+              slotsOfAppointment: {
+                include: {
+                  user: { select: { id: true } }, // Only fetch user IDs for registration check
+                },
+              },
+            },
+          },
+        },
+      };
+    }
+
     const [webinarPlans, total] = await Promise.all([
       prisma.webinarPlan.findMany({
         where,
-        include: {
-          consultantProfile: true,
-          topics: true,
-        },
+        include,
         skip,
         take: limit,
       }),

@@ -30,7 +30,13 @@ export async function GET(
           include: {
             appointments: {
               include: {
-                slotsOfAppointment: true,
+                slotsOfAppointment: {
+                  include: {
+                    user: {
+                      select: { id: true },
+                    },
+                  },
+                },
               },
             },
           },

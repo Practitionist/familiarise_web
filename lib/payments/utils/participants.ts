@@ -79,3 +79,32 @@ export function isUserEnrolled(
   }
   return false;
 }
+
+/**
+ * Check if user is already registered for a webinar
+ * Used for WEBINAR registration validation
+ *
+ * @param webinars - Array of webinar instances with appointments
+ * @param userId - User ID to check
+ * @returns True if user is already registered
+ */
+export function isUserRegisteredForWebinar(
+  webinars: Array<{
+    appointment?: {
+      slotsOfAppointment?: Array<{ user?: Array<{ id: string }> | unknown }>;
+    } | null;
+  }>,
+  userId: string,
+): boolean {
+  for (const webinar of webinars) {
+    if (!webinar.appointment?.slotsOfAppointment) continue;
+    for (const slot of webinar.appointment.slotsOfAppointment) {
+      if (Array.isArray(slot.user)) {
+        if (slot.user.filter(isUserWithId).some((u) => u.id === userId)) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
