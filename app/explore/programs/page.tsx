@@ -3,6 +3,7 @@
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { RegistrationBadge } from "@/components/ui/registration-badge";
 import {
   Select,
   SelectContent,
@@ -11,6 +12,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { LayoutGrid, List } from "lucide-react";
+import { useSession } from "next-auth/react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useCallback, useRef, useState } from "react";
@@ -25,6 +27,9 @@ import {
 
 export default function Programs() {
   const router = useRouter();
+  const { data: session } = useSession();
+  const userId = session?.user?.id;
+
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [sortBy, setSortBy] = useState("");
@@ -32,7 +37,10 @@ export default function Programs() {
   const [programType, setProgramType] = useState<ProgramType>("all");
   const observer = useRef<IntersectionObserver>();
 
-  const { programs, isLoading, hasMore, loadMore } = usePrograms(programType);
+  // Pass userId to fetch registration status when user is logged in
+  const { programs, isLoading, hasMore, loadMore } = usePrograms(programType, {
+    userId,
+  });
 
   const lastElementRef = useCallback(
     (node: HTMLDivElement) => {
@@ -267,12 +275,20 @@ export default function Programs() {
                   <h3 className="text-lg font-semibold text-gray-900">
                     {item.title}
                   </h3>
-                  <output
-                    className="bg-gray-100 text-gray-600 text-xs px-2.5 py-1 rounded-full font-medium inline-block"
-                    aria-label={`Program type: ${item.type}`}
-                  >
-                    {item.type}
-                  </output>
+                  <div className="flex items-center gap-2">
+                    {item.isRegistered && (
+                      <RegistrationBadge
+                        type={isClassProgram(item) ? "class" : "webinar"}
+                        compact
+                      />
+                    )}
+                    <output
+                      className="bg-gray-100 text-gray-600 text-xs px-2.5 py-1 rounded-full font-medium inline-block"
+                      aria-label={`Program type: ${item.type}`}
+                    >
+                      {item.type}
+                    </output>
+                  </div>
                 </div>
                 <p className="text-gray-600 text-sm mb-4 line-clamp-2">
                   {item.description}
@@ -332,12 +348,20 @@ export default function Programs() {
                   <h3 className="text-lg font-semibold text-gray-900">
                     {item.title}
                   </h3>
-                  <output
-                    className="bg-gray-100 text-gray-600 text-xs px-2.5 py-1 rounded-full font-medium inline-block"
-                    aria-label={`Program type: ${item.type}`}
-                  >
-                    {item.type}
-                  </output>
+                  <div className="flex items-center gap-2">
+                    {item.isRegistered && (
+                      <RegistrationBadge
+                        type={isClassProgram(item) ? "class" : "webinar"}
+                        compact
+                      />
+                    )}
+                    <output
+                      className="bg-gray-100 text-gray-600 text-xs px-2.5 py-1 rounded-full font-medium inline-block"
+                      aria-label={`Program type: ${item.type}`}
+                    >
+                      {item.type}
+                    </output>
+                  </div>
                 </div>
                 <p className="text-gray-600 text-sm mb-4 line-clamp-2">
                   {item.description}

@@ -9,7 +9,7 @@ import { useToast } from "@/hooks/use-toast";
 import { fetchReviews } from "@/lib/user";
 import {
   createCheckoutData,
-  webinarSearchParamsSchema
+  webinarSearchParamsSchema,
 } from "@/schemas/checkout";
 import { PaymentGateway } from "@prisma/client";
 import { CreditCard as CreditCardIcon } from "lucide-react";
@@ -120,7 +120,7 @@ export default function WebinarCheckoutPage({
         const checkoutData = createCheckoutData({
           appointmentType: "WEBINAR",
           planId: planData.data.id,
-          eventId: resolvedParams.webinarPlanId,
+          eventId: searchParamsValidation.data.eventId,
           discountCode: searchParamsValidation.data.discountCode,
           paymentGateway: gateway,
         });
@@ -148,7 +148,10 @@ export default function WebinarCheckoutPage({
             errorTitle = "Webinar Not Found";
             errorDescription =
               "This webinar could not be found or may no longer be available. Please go back and select a different webinar, or contact support if you believe this is an error.";
-          } else if (error.message.includes("network") || error.message.includes("fetch")) {
+          } else if (
+            error.message.includes("network") ||
+            error.message.includes("fetch")
+          ) {
             errorTitle = "Connection Error";
             errorDescription =
               "Unable to connect to the server. Please check your internet connection and try again.";
@@ -171,7 +174,6 @@ export default function WebinarCheckoutPage({
       isCheckoutProcessing,
       resolvedSearchParams,
       planData?.data?.id,
-      resolvedParams.webinarPlanId,
       handleApiError,
       handleCheckoutSuccess,
       toast,
@@ -246,7 +248,8 @@ export default function WebinarCheckoutPage({
   const planDetails = planData?.data;
   const consultantDetails = planDetails?.consultantProfile;
   const userDetails = consultantDetails?.user;
-  const nextSession = planDetails?.webinars?.[0]?.appointment?.slotsOfAppointment?.[0];
+  const nextSession =
+    planDetails?.webinars?.[0]?.appointment?.slotsOfAppointment?.[0];
 
   if (!planData || !planDetails || !consultantDetails || !userDetails) {
     return (
@@ -295,20 +298,23 @@ export default function WebinarCheckoutPage({
                 <div className="flex items-center justify-between">
                   <div className="text-muted-foreground">Date</div>
                   <div>
-                    {new Date(nextSession.startsAt).toLocaleDateString(undefined, {
-                      weekday: "long",
-                      year: "numeric",
-                      month: "long",
-                      day: "numeric",
-                    })}
+                    {new Date(nextSession.startsAt).toLocaleDateString(
+                      undefined,
+                      {
+                        weekday: "long",
+                        year: "numeric",
+                        month: "long",
+                        day: "numeric",
+                      },
+                    )}
                   </div>
                 </div>
                 <div className="flex items-center justify-between">
                   <div className="text-muted-foreground">Time</div>
                   <div>
                     {new Date(nextSession.startsAt).toLocaleTimeString()} -{" "}
-                    {new Date(nextSession.endsAt).toLocaleTimeString()}{" "}
-                    ({Intl.DateTimeFormat().resolvedOptions().timeZone})
+                    {new Date(nextSession.endsAt).toLocaleTimeString()} (
+                    {Intl.DateTimeFormat().resolvedOptions().timeZone})
                   </div>
                 </div>
               </>
@@ -510,8 +516,7 @@ export default function WebinarCheckoutPage({
                         disabled={isCheckoutProcessing}
                       >
                         {isCheckoutProcessing &&
-                        processingGateway ===
-                          `${gateway.gateway}-mock` ? (
+                        processingGateway === `${gateway.gateway}-mock` ? (
                           <>
                             <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-current mr-2"></div>
                             Processing...

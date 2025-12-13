@@ -6,7 +6,7 @@ import {
   sortSlotsByTime,
 } from "@/utils/dateTimeUtils";
 import { isValidTimeRange } from "@/utils/timeSlotValidation";
-import { DayOfWeek, ScheduleType } from "@prisma/client";
+import { DayOfWeek, ScheduleType, SessionType } from "@prisma/client";
 export interface SlotType {
   startTime: string;
   endTime: string;
@@ -25,6 +25,16 @@ export interface FormData {
   domainId: string;
   subDomainIds: string[];
   tagIds: string[];
+  // New fields
+  headline: string;
+  websiteUrl: string;
+  twitterUrl: string;
+  githubUrl: string;
+  videoIntroUrl: string;
+  languages: string[];
+  toolsAndTechnologies: string[];
+  mentoringStyle: string;
+  sessionTypes: SessionType[];
 }
 
 export interface Domain {
@@ -69,6 +79,16 @@ export const getInitialFormData = (
   domainId: consultant?.domain?.id ?? "",
   subDomainIds: consultant?.subDomains?.map((sd) => sd.id) ?? [],
   tagIds: consultant?.tags?.map((t) => t.id) ?? [],
+  // New fields
+  headline: consultant?.headline ?? "",
+  websiteUrl: consultant?.websiteUrl ?? "",
+  twitterUrl: consultant?.twitterUrl ?? "",
+  githubUrl: consultant?.githubUrl ?? "",
+  videoIntroUrl: consultant?.videoIntroUrl ?? "",
+  languages: consultant?.languages ?? [],
+  toolsAndTechnologies: consultant?.toolsAndTechnologies ?? [],
+  mentoringStyle: consultant?.mentoringStyle ?? "",
+  sessionTypes: consultant?.sessionTypes ?? [],
 });
 
 export const getInitialWeeklySlots = (

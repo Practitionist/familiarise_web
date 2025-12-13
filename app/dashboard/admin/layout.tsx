@@ -13,6 +13,7 @@ import { UserRole } from "@prisma/client";
 const NAV_ITEMS = [
   { name: "Overview", path: "home", icon: "📊" },
   { name: "Payments", path: "payments", icon: "💳" },
+  { name: "Approval Payments", path: "approval-payments", icon: "⏳" },
   { name: "Refunds", path: "refunds", icon: "↩️" },
   { name: "Disputes", path: "disputes", icon: "⚠️" },
   { name: "Analytics", path: "analytics", icon: "📈" },
@@ -49,11 +50,12 @@ function MessageContainer({
 
 // Fetch admin user data
 async function fetchAdminData(userId: string) {
-  const response = await fetch(`/api/users/${userId}`);
+  const response = await fetch(`/api/user/${userId}`);
   if (!response.ok) {
     throw new Error("Failed to fetch admin data");
   }
-  return response.json();
+  const result = await response.json();
+  return result.data; // API returns { data: user }
 }
 
 // Main layout component

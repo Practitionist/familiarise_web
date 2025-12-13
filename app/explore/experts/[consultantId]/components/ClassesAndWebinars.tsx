@@ -1,6 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { RegistrationBadge } from "@/components/ui/registration-badge";
 import { ClassPlan, WebinarPlan } from "@prisma/client";
 import {
   CalendarIcon,
@@ -12,27 +13,42 @@ import {
   GraduationCapIcon,
   PackageIcon,
 } from "lucide-react";
+import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import React from "react";
 
 interface ClassesAndWebinarsProps {
   classPlans: ClassPlan[];
   webinarPlans: WebinarPlan[];
+  /** Optional: Set of class plan IDs the user is enrolled in */
+  enrolledClassPlanIds?: Set<string>;
+  /** Optional: Set of webinar plan IDs the user is registered for */
+  registeredWebinarPlanIds?: Set<string>;
 }
 
 export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
   classPlans,
   webinarPlans,
+  enrolledClassPlanIds = new Set(),
+  registeredWebinarPlanIds = new Set(),
 }) => {
   const router = useRouter();
-  const renderClassPlanCard = (classPlan: ClassPlan) => (
-    <Card
-      key={classPlan.id}
-      className="hover:shadow-lg transition-shadow duration-300 flex flex-col h-full"
-    >
-      <CardContent className="p-6 flex flex-col h-full">
-        <h3 className="text-xl font-semibold mb-3">{classPlan.title}</h3>
-        <div className="flex flex-wrap gap-2 mb-4">
+  const { data: session } = useSession();
+  const isLoggedIn = !!session?.user;
+  const renderClassPlanCard = (classPlan: ClassPlan) => {
+    const isEnrolled = isLoggedIn && enrolledClassPlanIds.has(classPlan.id);
+
+    return (
+      <Card
+        key={classPlan.id}
+        className="hover:shadow-lg transition-shadow duration-300 flex flex-col h-full"
+      >
+        <CardContent className="p-6 flex flex-col h-full">
+          <div className="flex justify-between items-start mb-3">
+            <h3 className="text-xl font-semibold">{classPlan.title}</h3>
+            {isEnrolled && <RegistrationBadge type="class" compact />}
+          </div>
+          <div className="flex flex-wrap gap-2 mb-4">
           <Badge variant="secondary" className="flex items-center gap-1">
             <GlobeIcon className="w-3 h-3" />
             {classPlan.language}
@@ -96,20 +112,28 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
             router.push(`/explore/programs/plans/classes/${classPlan.id}`)
           }
         >
-          Register Now
+          {isEnrolled ? "View Details" : "Register Now"}
         </Button>
       </CardContent>
     </Card>
-  );
+    );
+  };
 
-  const renderWebinarPlanCard = (webinarPlan: WebinarPlan) => (
-    <Card
-      key={webinarPlan.id}
-      className="hover:shadow-lg transition-shadow duration-300 flex flex-col h-full"
-    >
-      <CardContent className="p-6 flex flex-col h-full">
-        <h3 className="text-xl font-semibold mb-3">{webinarPlan.title}</h3>
-        <div className="flex flex-wrap gap-2 mb-4">
+  const renderWebinarPlanCard = (webinarPlan: WebinarPlan) => {
+    const isRegistered =
+      isLoggedIn && registeredWebinarPlanIds.has(webinarPlan.id);
+
+    return (
+      <Card
+        key={webinarPlan.id}
+        className="hover:shadow-lg transition-shadow duration-300 flex flex-col h-full"
+      >
+        <CardContent className="p-6 flex flex-col h-full">
+          <div className="flex justify-between items-start mb-3">
+            <h3 className="text-xl font-semibold">{webinarPlan.title}</h3>
+            {isRegistered && <RegistrationBadge type="webinar" compact />}
+          </div>
+          <div className="flex flex-wrap gap-2 mb-4">
           <Badge variant="secondary" className="flex items-center gap-1">
             <GlobeIcon className="w-3 h-3" />
             {webinarPlan.language}
@@ -170,11 +194,12 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
             router.push(`/explore/programs/plans/webinars/${webinarPlan.id}`)
           }
         >
-          Register Now
+          {isRegistered ? "View Details" : "Register Now"}
         </Button>
       </CardContent>
     </Card>
-  );
+    );
+  };
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-12 space-y-12">

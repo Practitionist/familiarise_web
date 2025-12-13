@@ -55,10 +55,20 @@ export async function POST(req: NextRequest) {
         errorMessage = error.message;
         errorType = "NOT_FOUND_ERROR";
       }
-      // Slot availability errors
+      // Duplicate registration errors (webinars: "already registered", classes: "already enrolled")
+      else if (
+        error.message.includes("already registered") ||
+        error.message.includes("already enrolled")
+      ) {
+        errorMessage = error.message;
+        errorType = "DUPLICATE_REGISTRATION_ERROR";
+      }
+      // Slot availability errors (including lock acquisition failures)
       else if (
         error.message.includes("slot") ||
-        error.message.includes("availability")
+        error.message.includes("availability") ||
+        error.message.includes("currently booking") ||
+        error.message.includes("currently checking out")
       ) {
         errorMessage = error.message;
         errorType = "AVAILABILITY_ERROR";

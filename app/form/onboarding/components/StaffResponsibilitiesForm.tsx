@@ -5,21 +5,12 @@ import {
   AccordionTrigger,
 } from "@/components/ui/accordion";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { responsibilitiesAndPermissions } from "@/schemas/responsibbilities-permissions";
 import { StaffProfile, PersonalInfoAndRole } from "@/schemas/user";
 import React, { useEffect, useState } from "react";
 import { useFormContext } from "react-hook-form";
-import { useThemeClasses } from "../useTheme";
 
 interface Props {
   onNext: (data: any) => void;
@@ -32,7 +23,6 @@ const StaffResponsibilitiesForm: React.FC<Props> = ({
   onBack,
   initialData,
 }) => {
-  const { classes, colors } = useThemeClasses();
   const [department, setDepartment] = useState<string | null>(null);
   const [position, setPosition] = useState<string | null>(null);
 
@@ -75,10 +65,8 @@ const StaffResponsibilitiesForm: React.FC<Props> = ({
 
   if (!department || !position) {
     return (
-      <div
-        className={`glassmorphism2 rounded-2xl p-6 ${colors.glassBorder} shadow-2xl w-full`}
-      >
-        <p className={`text-center ${colors.textPrimary}`}>
+      <div className="bg-muted/50 rounded-lg p-6 text-center">
+        <p className="text-muted-foreground">
           Please complete the Staff Profile form first.
         </p>
       </div>
@@ -90,12 +78,9 @@ const StaffResponsibilitiesForm: React.FC<Props> = ({
 
   if (!departmentData || !positionData) {
     return (
-      <div
-        className={`glassmorphism2 rounded-2xl p-6 ${colors.glassBorder} shadow-2xl w-full`}
-      >
-        <p className={`text-center ${colors.textPrimary}`}>
-          Invalid department or position. Please go back and select valid
-          options.
+      <div className="bg-destructive/10 rounded-lg p-6 text-center">
+        <p className="text-destructive">
+          Invalid department or position. Please go back and select valid options.
         </p>
       </div>
     );
@@ -122,139 +107,124 @@ const StaffResponsibilitiesForm: React.FC<Props> = ({
   };
 
   return (
-    <div
-      className={`glassmorphism2 rounded-2xl p-6 ${colors.glassBorder} shadow-2xl w-full space-y-6`}
-    >
-      <div>
-        <h3 className={`text-2xl font-bold ${colors.textPrimary} mb-2`}>
-          Staff Responsibilities
+    <div className="space-y-6">
+      <div className="space-y-2">
+        <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
+          Responsibilities & Permissions
         </h3>
-        <p className={colors.textSecondary}>
-          Select your responsibilities and permissions
+        <p className="text-sm text-muted-foreground">
+          Select your responsibilities and permissions for the {position} role in {department}
         </p>
       </div>
-      <div>
-        <form onSubmit={handleSubmit} className="space-y-6">
-          <Accordion type="single" collapsible className="w-full">
-            <AccordionItem value="responsibilities" className="border-white/20">
-              <AccordionTrigger className="text-white font-medium hover:text-purple-300 transition-colors">
-                📼 Responsibilities
-              </AccordionTrigger>
-              <AccordionContent className="pb-4">
-                <div className="space-y-4">
-                  {Object.entries(positionData.responsibilities).map(
-                    ([category, items]) => (
-                      <div
-                        key={category}
-                        className="space-y-3 p-3 rounded-lg bg-white/5 border border-white/10"
-                      >
-                        <Label className="font-semibold text-white text-sm">
-                          {category}
-                        </Label>
-                        {items.map((item, index) => (
-                          <div
-                            key={index}
-                            className="flex items-center space-x-3 p-2 rounded-lg hover:bg-white/5 transition-colors"
-                          >
-                            <Checkbox
-                              id={`responsibility-${category}-${index}`}
-                              checked={!!responsibilities[item]}
-                              onCheckedChange={(checked) =>
-                                handleResponsibilityChange(
-                                  item,
-                                  checked as boolean,
-                                )
-                              }
-                              className="border-white/30 data-[state=checked]:bg-purple-500 data-[state=checked]:border-purple-500"
-                            />
-                            <Label
-                              htmlFor={`responsibility-${category}-${index}`}
-                              className="text-sm text-white cursor-pointer"
-                            >
-                              {item}
-                            </Label>
-                          </div>
-                        ))}
-                      </div>
-                    ),
-                  )}
-                </div>
-                {errors.responsibilities && (
-                  <p className="text-red-400 text-sm mt-2">
-                    Please select at least one responsibility
-                  </p>
-                )}
-              </AccordionContent>
-            </AccordionItem>
 
-            <AccordionItem value="permissions" className="border-white/20">
-              <AccordionTrigger className="text-white font-medium hover:text-purple-300 transition-colors">
-                🔐 Permissions
-              </AccordionTrigger>
-              <AccordionContent className="pb-4">
-                <div className="space-y-4">
-                  {Object.entries(positionData.permissions).map(
-                    ([category, items]) => (
-                      <div
-                        key={category}
-                        className="space-y-3 p-3 rounded-lg bg-white/5 border border-white/10"
-                      >
-                        <Label className="font-semibold text-white text-sm">
-                          {category}
-                        </Label>
-                        {items.map((item, index) => (
-                          <div
-                            key={index}
-                            className="flex items-center space-x-3 p-2 rounded-lg hover:bg-white/5 transition-colors"
+      <form onSubmit={handleSubmit} className="space-y-6">
+        <Accordion type="single" collapsible className="w-full">
+          <AccordionItem value="responsibilities" className="border rounded-lg">
+            <AccordionTrigger className="px-4 font-medium hover:no-underline">
+              Responsibilities
+            </AccordionTrigger>
+            <AccordionContent className="px-4 pb-4">
+              <div className="space-y-4">
+                {Object.entries(positionData.responsibilities).map(
+                  ([category, items]) => (
+                    <div
+                      key={category}
+                      className="space-y-3 p-3 rounded-lg bg-muted/50"
+                    >
+                      <Label className="font-semibold text-sm">{category}</Label>
+                      {items.map((item, index) => (
+                        <div
+                          key={index}
+                          className="flex items-center space-x-3 p-2 rounded-lg hover:bg-muted transition-colors"
+                        >
+                          <Checkbox
+                            id={`responsibility-${category}-${index}`}
+                            checked={!!responsibilities[item]}
+                            onCheckedChange={(checked) =>
+                              handleResponsibilityChange(item, checked as boolean)
+                            }
+                          />
+                          <Label
+                            htmlFor={`responsibility-${category}-${index}`}
+                            className="text-sm cursor-pointer"
                           >
-                            <Checkbox
-                              id={`permission-${category}-${index}`}
-                              checked={!!permissions[item]}
-                              onCheckedChange={(checked) =>
-                                handlePermissionChange(item, checked as boolean)
-                              }
-                              className="border-white/30 data-[state=checked]:bg-purple-500 data-[state=checked]:border-purple-500"
-                            />
-                            <Label
-                              htmlFor={`permission-${category}-${index}`}
-                              className="text-sm text-white cursor-pointer"
-                            >
-                              {item}
-                            </Label>
-                          </div>
-                        ))}
-                      </div>
-                    ),
-                  )}
-                </div>
-                {errors.permissions && (
-                  <p className="text-red-400 text-sm mt-2">
-                    Please select at least one permission
-                  </p>
+                            {item}
+                          </Label>
+                        </div>
+                      ))}
+                    </div>
+                  )
                 )}
-              </AccordionContent>
-            </AccordionItem>
-          </Accordion>
-        </form>
-      </div>
-      <div
-        className={`flex justify-between gap-4 pt-6 border-t ${colors.glassBorder}`}
-      >
-        <Button
-          type="button"
-          onClick={onBack}
-          className={`flex-1 h-12 ${classes.secondaryButton}`}
-        >
-          ← Back
-        </Button>
-        <Button
-          type="submit"
-          onClick={handleSubmit}
-          className={`flex-1 h-12 ${classes.primaryButton}`}
-        >
-          Next Step →
-        </Button>
-      </div>
+              </div>
+              {errors.responsibilities && (
+                <p className="text-destructive text-sm mt-2">
+                  Please select at least one responsibility
+                </p>
+              )}
+            </AccordionContent>
+          </AccordionItem>
+
+          <AccordionItem value="permissions" className="border rounded-lg mt-4">
+            <AccordionTrigger className="px-4 font-medium hover:no-underline">
+              Permissions
+            </AccordionTrigger>
+            <AccordionContent className="px-4 pb-4">
+              <div className="space-y-4">
+                {Object.entries(positionData.permissions).map(
+                  ([category, items]) => (
+                    <div
+                      key={category}
+                      className="space-y-3 p-3 rounded-lg bg-muted/50"
+                    >
+                      <Label className="font-semibold text-sm">{category}</Label>
+                      {items.map((item, index) => (
+                        <div
+                          key={index}
+                          className="flex items-center space-x-3 p-2 rounded-lg hover:bg-muted transition-colors"
+                        >
+                          <Checkbox
+                            id={`permission-${category}-${index}`}
+                            checked={!!permissions[item]}
+                            onCheckedChange={(checked) =>
+                              handlePermissionChange(item, checked as boolean)
+                            }
+                          />
+                          <Label
+                            htmlFor={`permission-${category}-${index}`}
+                            className="text-sm cursor-pointer"
+                          >
+                            {item}
+                          </Label>
+                        </div>
+                      ))}
+                    </div>
+                  )
+                )}
+              </div>
+              {errors.permissions && (
+                <p className="text-destructive text-sm mt-2">
+                  Please select at least one permission
+                </p>
+              )}
+            </AccordionContent>
+          </AccordionItem>
+        </Accordion>
+
+        {/* Navigation */}
+        <div className="flex gap-4 pt-4">
+          <Button
+            type="button"
+            onClick={onBack}
+            variant="outline"
+            className="flex-1"
+          >
+            Back
+          </Button>
+          <Button type="submit" className="flex-1">
+            Continue
+          </Button>
+        </div>
+      </form>
     </div>
   );
 };

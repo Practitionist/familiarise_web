@@ -1,9 +1,6 @@
 "use client";
 
-import type {
-  IAppointment,
-  ISlotOfAppointment,
-} from "@/app/dashboard/consultant/[consultantId]/types";
+import type { TAppointment, TSlotOfAppointment } from "@/types/appointment";
 import type { SlotOfAppointment } from "@prisma/client";
 import { ArrowLeftIcon, ArrowRightIcon } from "assets/icons";
 import { Button } from "components/ui/button";
@@ -13,8 +10,8 @@ import { MonthlyEventCard, SlotCard } from "./SessionCards";
 
 interface UpcomingSectionProps {
   readonly slots: {
-    appointment: IAppointment;
-    slot: ISlotOfAppointment;
+    appointment: TAppointment;
+    slot: TSlotOfAppointment;
     isTentative: boolean;
   }[];
 }

@@ -2,7 +2,6 @@ import { Button } from "@/components/ui/button";
 import { formatDate, formatTime } from "@/utils/dateTimeUtils";
 import { OnboardingFormData } from "@/utils/onboarding";
 import React from "react";
-import { useThemeClasses } from "../useTheme";
 
 interface Props {
   onSubmit: (data: OnboardingFormData) => void;
@@ -15,7 +14,6 @@ const ConsultantReviewForm: React.FC<Props> = ({
   onBack,
   formData,
 }) => {
-  const { classes, colors } = useThemeClasses();
   const handleSubmit = () => {
     onSubmit({
       ...formData,
@@ -38,219 +36,169 @@ const ConsultantReviewForm: React.FC<Props> = ({
 
     return (
       <div className="space-y-3">
-        <h3 className="text-lg font-semibold text-white">Schedule</h3>
-        <p className="text-sm text-white/70">
-          Schedule Type:{" "}
-          <span className="font-medium text-white">
-            {formData.scheduleType}
-          </span>
-        </p>
-        {formData.scheduleType === "WEEKLY" && formData.weeklySlots && (
-          <div className="space-y-2">
-            <h4 className="text-md font-medium text-white">Weekly Slots</h4>
-            <ul className="space-y-2 list-none pl-0">
-              {formData.weeklySlots.filter(isValidSlot).map((slot, index) => {
-                const startTime = formatTime(slot.availabilityStartsAt, "12h");
-                const endTime = formatTime(slot.availabilityEndsAt, "12h");
-                const isSameDay =
-                  slot.dayOfWeekForStartsAt === slot.dayOfWeekForEndsAt;
+        <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
+          Schedule
+        </h3>
+        <div className="bg-muted/50 rounded-lg p-4 space-y-3">
+          <div className="flex justify-between py-2 border-b">
+            <span className="text-sm text-muted-foreground">Schedule Type</span>
+            <span className="text-sm font-medium">{formData.scheduleType}</span>
+          </div>
 
-                return (
-                  <li
-                    key={index}
-                    className="px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white"
-                  >
-                    <span className="font-medium">
-                      {slot.dayOfWeekForStartsAt}
-                    </span>{" "}
-                    <span className="text-white/70">{startTime}</span>
-                    {" to "}
-                    {!isSameDay && (
+          {formData.scheduleType === "WEEKLY" && formData.weeklySlots && (
+            <div className="space-y-2">
+              <p className="text-sm font-medium">Weekly Slots</p>
+              <div className="space-y-1">
+                {formData.weeklySlots.filter(isValidSlot).map((slot, index) => {
+                  const startTime = formatTime(slot.availabilityStartsAt, "12h");
+                  const endTime = formatTime(slot.availabilityEndsAt, "12h");
+                  const isSameDay =
+                    slot.dayOfWeekForStartsAt === slot.dayOfWeekForEndsAt;
+
+                  return (
+                    <div
+                      key={index}
+                      className="px-3 py-2 bg-background border rounded-lg text-sm"
+                    >
                       <span className="font-medium">
-                        {slot.dayOfWeekForEndsAt}{" "}
-                      </span>
-                    )}
-                    <span className="text-white/70">{endTime}</span>
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
-        )}
-        {formData.scheduleType === "CUSTOM" && formData.customSlots && (
-          <div className="space-y-2">
-            <h4 className="text-md font-medium text-white">Custom Slots</h4>
-            <ul className="space-y-2 list-none pl-0">
-              {formData.customSlots.filter(isValidSlot).map((slot, index) => {
-                const startDate = formatDate(slot.availabilityStartsAt);
-                const endDate = formatDate(slot.availabilityEndsAt);
-                const startTime = formatTime(slot.availabilityStartsAt, "12h");
-                const endTime = formatTime(slot.availabilityEndsAt, "12h");
-                const isSameDay = startDate === endDate;
+                        {slot.dayOfWeekForStartsAt}
+                      </span>{" "}
+                      <span className="text-muted-foreground">{startTime}</span>
+                      {" to "}
+                      {!isSameDay && (
+                        <span className="font-medium">
+                          {slot.dayOfWeekForEndsAt}{" "}
+                        </span>
+                      )}
+                      <span className="text-muted-foreground">{endTime}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
-                return (
-                  <li
-                    key={index}
-                    className="px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white"
-                  >
-                    <span className="font-medium">{startDate}</span>{" "}
-                    <span className="text-white/70">{startTime}</span>
-                    {" to "}
-                    {!isSameDay && (
-                      <span className="font-medium">{endDate} </span>
-                    )}
-                    <span className="text-white/70">{endTime}</span>
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
-        )}
+          {formData.scheduleType === "CUSTOM" && formData.customSlots && (
+            <div className="space-y-2">
+              <p className="text-sm font-medium">Custom Slots</p>
+              <div className="space-y-1">
+                {formData.customSlots.filter(isValidSlot).map((slot, index) => {
+                  const startDate = formatDate(slot.availabilityStartsAt);
+                  const endDate = formatDate(slot.availabilityEndsAt);
+                  const startTime = formatTime(slot.availabilityStartsAt, "12h");
+                  const endTime = formatTime(slot.availabilityEndsAt, "12h");
+                  const isSameDay = startDate === endDate;
+
+                  return (
+                    <div
+                      key={index}
+                      className="px-3 py-2 bg-background border rounded-lg text-sm"
+                    >
+                      <span className="font-medium">{startDate}</span>{" "}
+                      <span className="text-muted-foreground">{startTime}</span>
+                      {" to "}
+                      {!isSameDay && (
+                        <span className="font-medium">{endDate} </span>
+                      )}
+                      <span className="text-muted-foreground">{endTime}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     );
   };
 
-  const renderSection = (
-    title: string,
-    content: React.ReactNode,
-    className: string = "",
-  ) => (
-    <div className={`space-y-3 ${className}`}>
-      <h3 className="text-lg font-semibold text-white">{title}</h3>
+  const renderSection = (title: string, content: React.ReactNode) => (
+    <div className="space-y-3">
+      <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
+        {title}
+      </h3>
       {content}
+    </div>
+  );
+
+  const renderField = (label: string, value: string | number | undefined) => (
+    <div className="flex justify-between py-2 border-b last:border-0">
+      <span className="text-sm text-muted-foreground">{label}</span>
+      <span className="text-sm">{value || "Not provided"}</span>
     </div>
   );
 
   const renderList = (
     items: { id: string; name: string }[] | undefined,
-    emptyMessage: string,
+    emptyMessage: string
   ) => (
-    <ul className="list-none pl-0 space-y-1">
+    <div className="flex flex-wrap gap-2">
       {items?.map((item) => (
-        <li
+        <span
           key={item.id}
-          className="px-3 py-1.5 bg-white/5 border border-white/10 rounded-md text-sm text-white"
+          className="px-2 py-1 bg-primary/10 text-primary rounded text-sm"
         >
           {item.name}
-        </li>
+        </span>
       ))}
       {(!items || items.length === 0) && (
-        <li className="text-sm text-white/50 italic">{emptyMessage}</li>
+        <span className="text-sm text-muted-foreground italic">{emptyMessage}</span>
       )}
-    </ul>
+    </div>
   );
 
   return (
-    <div className="w-full space-y-6">
-      <div
-        className={`glassmorphism2 rounded-2xl p-6 ${colors.glassBorder} shadow-2xl`}
-      >
-        <div className="mb-6">
-          <h3 className={`text-2xl font-bold ${colors.textPrimary} mb-2`}>
-            Review Your Information
-          </h3>
-          <p className={colors.textSecondary}>
-            Please review your details before submitting
-          </p>
+    <div className="space-y-6">
+      {renderSection(
+        "Personal Information",
+        <div className="bg-muted/50 rounded-lg p-4">
+          {renderField("Name", formData.name)}
+          {renderField("Email", formData.email)}
+          {renderField("Phone", formData.phone)}
+          {renderField("City", formData.city)}
+          {renderField("Country", formData.country)}
         </div>
-        <div className="space-y-6">
-          {renderSection(
-            "Personal Information",
-            <div className="grid gap-2 text-sm">
-              <div className="grid grid-cols-3 items-center py-3 border-b border-white/10">
-                <span className="font-medium text-white/70">Name</span>
-                <span className="col-span-2 text-white">{formData.name}</span>
-              </div>
-              <div className="grid grid-cols-3 items-center py-3 border-b border-white/10">
-                <span className="font-medium text-white/70">Email</span>
-                <span className="col-span-2 text-white">{formData.email}</span>
-              </div>
-              <div className="grid grid-cols-3 items-center py-3 border-b border-white/10">
-                <span className="font-medium text-white/70">Phone</span>
-                <span className="col-span-2 text-white">
-                  {formData.phone || "Not provided"}
-                </span>
-              </div>
-              <div className="grid grid-cols-3 items-center py-3">
-                <span className="font-medium text-white/70">Address</span>
-                <span className="col-span-2 text-white">
-                  {formData.address || "Not provided"}
-                </span>
-              </div>
-            </div>,
-          )}
+      )}
 
-          {renderSection(
-            "Professional Details",
-            <div className="grid gap-2 text-sm">
-              <div className="grid grid-cols-3 items-center py-3 border-b border-white/10">
-                <span className="font-medium text-white/70">Description</span>
-                <span className="col-span-2 text-white">
-                  {formData.description || "Not provided"}
-                </span>
-              </div>
-              <div className="grid grid-cols-3 items-center py-3 border-b border-white/10">
-                <span className="font-medium text-white/70">
-                  Qualifications
-                </span>
-                <span className="col-span-2 text-white">
-                  {formData.qualifications || "Not provided"}
-                </span>
-              </div>
-              <div className="grid grid-cols-3 items-center py-3 border-b border-white/10">
-                <span className="font-medium text-white/70">
-                  Specialization
-                </span>
-                <span className="col-span-2 text-white">
-                  {formData.specialization || "Not provided"}
-                </span>
-              </div>
-              <div className="grid grid-cols-3 items-center py-3">
-                <span className="font-medium text-white/70">Experience</span>
-                <span className="col-span-2 text-white">
-                  {formData.experience || "Not provided"}
-                </span>
-              </div>
-            </div>,
-          )}
-
-          {renderSection(
-            "Domain & Tags",
-            <div className="space-y-4">
-              <div className="grid grid-cols-3 items-center py-3 border-b border-white/10">
-                <span className="font-medium text-white/70">Domain</span>
-                <span className="col-span-2 text-white">
-                  {formData.domain?.name || "Not selected"}
-                </span>
-              </div>
-              <div className="space-y-2">
-                <h4 className="text-sm font-medium text-white">Sub-Domains</h4>
-                {renderList(formData.subDomains, "No sub-domains selected")}
-              </div>
-              <div className="space-y-2">
-                <h4 className="text-sm font-medium text-white">Tags</h4>
-                {renderList(formData.tags, "No tags selected")}
-              </div>
-            </div>,
-          )}
-
-          {renderSchedule()}
+      {renderSection(
+        "Professional Details",
+        <div className="bg-muted/50 rounded-lg p-4">
+          {renderField("Description", formData.description)}
+          {renderField("Qualifications", formData.qualifications)}
+          {renderField("Specialization", formData.specialization)}
+          {renderField("Experience", formData.experience ? `${formData.experience} years` : undefined)}
         </div>
-      </div>
-      <div className="flex justify-between gap-4">
+      )}
+
+      {renderSection(
+        "Domain & Tags",
+        <div className="bg-muted/50 rounded-lg p-4 space-y-4">
+          {renderField("Domain", formData.domain?.name)}
+          <div>
+            <p className="text-sm text-muted-foreground mb-2">Sub-Domains</p>
+            {renderList(formData.subDomains, "No sub-domains selected")}
+          </div>
+          <div>
+            <p className="text-sm text-muted-foreground mb-2">Tags</p>
+            {renderList(formData.tags, "No tags selected")}
+          </div>
+        </div>
+      )}
+
+      {renderSchedule()}
+
+      {/* Navigation */}
+      <div className="flex gap-4 pt-4">
         <Button
           type="button"
           onClick={onBack}
-          className={`flex-1 h-12 ${classes.secondaryButton}`}
+          variant="outline"
+          className="flex-1"
         >
-          ← Back
+          Back
         </Button>
-        <Button
-          type="button"
-          onClick={handleSubmit}
-          className={`flex-1 h-12 ${classes.primaryButton}`}
-        >
-          Complete Onboarding ✓
+        <Button type="button" onClick={handleSubmit} className="flex-1">
+          Complete Registration
         </Button>
       </div>
     </div>

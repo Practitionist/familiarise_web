@@ -5,11 +5,23 @@ import { Card, CardContent, CardHeader, CardTitle } from "components/ui/card";
 import { Input } from "components/ui/input";
 import { Label } from "components/ui/label";
 import { Textarea } from "components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "components/ui/select";
 import { useToast } from "hooks/use-toast";
 import React, { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { createConsulteeQueries } from "@/hooks/useConsulteePrefetchDashboard";
-import { ConsultationMode, ConsulteeProfile } from "@prisma/client";
+import {
+  ConsultationMode,
+  ConsulteeProfile,
+  CareerStage,
+  BudgetPreference,
+} from "@prisma/client";
 
 interface SettingsTabProps {
   consulteeId: string;
@@ -26,10 +38,18 @@ type ProfileFormData = Omit<
     | "specialRequirements"
     | "interests"
     | "goals"
+    | "careerStage"
+    | "currentCompany"
+    | "industry"
+    | "skillsToDevelop"
+    | "linkedinUrl"
+    | "budgetPreference"
   >,
-  "preferredCommunicationMethod"
+  "preferredCommunicationMethod" | "careerStage" | "budgetPreference"
 > & {
   preferredCommunicationMethod: ConsultationMode;
+  careerStage: CareerStage | null;
+  budgetPreference: BudgetPreference | null;
 };
 
 export default function SettingsTab({ consulteeId }: SettingsTabProps) {
@@ -55,6 +75,13 @@ export default function SettingsTab({ consulteeId }: SettingsTabProps) {
       specialRequirements: null,
       interests: null,
       goals: null,
+      // New fields
+      careerStage: null,
+      currentCompany: null,
+      industry: null,
+      skillsToDevelop: [],
+      linkedinUrl: null,
+      budgetPreference: null,
     },
   );
 
@@ -86,6 +113,13 @@ export default function SettingsTab({ consulteeId }: SettingsTabProps) {
         specialRequirements: consulteeData.specialRequirements,
         interests: consulteeData.interests,
         goals: consulteeData.goals,
+        // New fields
+        careerStage: consulteeData.careerStage ?? null,
+        currentCompany: consulteeData.currentCompany ?? null,
+        industry: consulteeData.industry ?? null,
+        skillsToDevelop: consulteeData.skillsToDevelop ?? [],
+        linkedinUrl: consulteeData.linkedinUrl ?? null,
+        budgetPreference: consulteeData.budgetPreference ?? null,
       });
     }
   }, [consulteeData]);
@@ -264,6 +298,111 @@ export default function SettingsTab({ consulteeId }: SettingsTabProps) {
               value={profileSettings.goals ?? ""}
               onChange={handleProfileChange}
               placeholder="What you hope to achieve"
+            />
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Career & Professional Section */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Career & Professional</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="currentCompany">Current Company</Label>
+              <Input
+                id="currentCompany"
+                name="currentCompany"
+                value={profileSettings.currentCompany ?? ""}
+                onChange={handleProfileChange}
+                placeholder="Your current company or organization"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="industry">Industry</Label>
+              <Input
+                id="industry"
+                name="industry"
+                value={profileSettings.industry ?? ""}
+                onChange={handleProfileChange}
+                placeholder="Your industry (e.g., Technology, Healthcare)"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="careerStage">Career Stage</Label>
+              <Select
+                value={profileSettings.careerStage ?? ""}
+                onValueChange={(value) =>
+                  setProfileSettings((prev) => ({
+                    ...prev,
+                    careerStage: value as CareerStage,
+                  }))
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select your career stage" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={CareerStage.STUDENT}>Student</SelectItem>
+                  <SelectItem value={CareerStage.EARLY_CAREER}>Early Career (0-3 years)</SelectItem>
+                  <SelectItem value={CareerStage.MID_CAREER}>Mid Career (3-10 years)</SelectItem>
+                  <SelectItem value={CareerStage.SENIOR}>Senior (10+ years)</SelectItem>
+                  <SelectItem value={CareerStage.EXECUTIVE}>Executive</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="budgetPreference">Budget Preference</Label>
+              <Select
+                value={profileSettings.budgetPreference ?? ""}
+                onValueChange={(value) =>
+                  setProfileSettings((prev) => ({
+                    ...prev,
+                    budgetPreference: value as BudgetPreference,
+                  }))
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select budget preference" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={BudgetPreference.BUDGET}>Budget</SelectItem>
+                  <SelectItem value={BudgetPreference.MODERATE}>Moderate</SelectItem>
+                  <SelectItem value={BudgetPreference.PREMIUM}>Premium</SelectItem>
+                  <SelectItem value={BudgetPreference.FLEXIBLE}>Flexible</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="linkedinUrl">LinkedIn Profile URL</Label>
+            <Input
+              id="linkedinUrl"
+              name="linkedinUrl"
+              type="url"
+              value={profileSettings.linkedinUrl ?? ""}
+              onChange={handleProfileChange}
+              placeholder="https://linkedin.com/in/yourprofile"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="skillsToDevelop">Skills to Develop</Label>
+            <Input
+              id="skillsToDevelop"
+              value={(profileSettings.skillsToDevelop ?? []).join(", ")}
+              onChange={(e) => {
+                const skills = e.target.value
+                  .split(",")
+                  .map((s) => s.trim())
+                  .filter(Boolean);
+                setProfileSettings((prev) => ({
+                  ...prev,
+                  skillsToDevelop: skills,
+                }));
+              }}
+              placeholder="React, Python, Leadership (comma-separated)"
             />
           </div>
         </CardContent>

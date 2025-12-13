@@ -1,7 +1,6 @@
 import React from "react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
-import { useThemeClasses } from "../useTheme";
 
 interface AgreementProps {
   id: string;
@@ -18,27 +17,21 @@ const Agreement: React.FC<AgreementProps> = ({
   label,
   link,
 }) => {
-  const { classes, colors } = useThemeClasses();
   return (
-    <div
-      className={`flex items-center space-x-3 p-4 rounded-lg ${colors.glassBg} ${colors.glassBorder} hover:${colors.secondaryBg} transition-colors`}
-    >
+    <div className="flex items-center space-x-3 p-4 rounded-lg bg-muted/50 border hover:bg-muted transition-colors">
       <Checkbox
         id={id}
         checked={checked}
         onCheckedChange={onCheckedChange}
-        className={`${classes.checkbox} h-5 w-5`}
+        className="h-5 w-5"
       />
-      <Label
-        htmlFor={id}
-        className={`text-sm ${colors.textPrimary} cursor-pointer`}
-      >
+      <Label htmlFor={id} className="text-sm cursor-pointer">
         I agree to the{" "}
         <a
           href={link}
           target="_blank"
           rel="noopener noreferrer"
-          className={`${colors.linkColor} ${colors.linkHover} underline transition-colors`}
+          className="text-primary hover:underline transition-colors"
         >
           {label}
         </a>

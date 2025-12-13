@@ -1,7 +1,7 @@
 import prisma from "@/lib/prisma";
 import { NextResponse } from "next/server";
 import bcrypt from "bcrypt";
-import { UserRole } from "@prisma/client"; // Import UserRole enum
+import { Prisma, UserRole } from "@prisma/client";
 import { sendWelcomeEmail } from "@/lib/email";
 
 export async function POST(req: Request) {
@@ -14,6 +14,9 @@ export async function POST(req: Request) {
         status: 400,
       });
     }
+
+    // Always default to CONSULTEE - role selection happens during onboarding
+    const userRole = UserRole.CONSULTEE;
 
     // Check if user exists with this email
     const existingUser = await prisma.user.findUnique({
@@ -116,54 +119,54 @@ export async function POST(req: Request) {
     try {
       const hashedPassword = await bcrypt.hash(password, 10);
 
-      const user = await prisma.user.create({
-        data: {
-          name,
-          email,
-          password: hashedPassword,
-          role: UserRole.CONSULTEE, // Default role, adjust as needed
-          // Initialize other required profiles or preferences if necessary
-          cookiePreferences: {
-            create: {},
-          },
-          notificationPreferences: {
-            create: {},
-          },
-          consulteeProfile: {
-            create: {}, // Automatically create a consultee profile
-          },
+      // Prepare user data based on role
+      const userData: Prisma.UserCreateInput = {
+        name,
+        email,
+        password: hashedPassword,
+        role: userRole,
+        cookiePreferences: {
+          create: {},
         },
+        notificationPreferences: {
+          create: {},
+        },
+      };
+
+      // Always create consultee profile - role can be changed during onboarding
+      userData.consulteeProfile = {
+        create: {},
+      };
+
+      const user = await prisma.user.create({
+        data: userData,
         // Include related models if needed upon creation
         include: {
           cookiePreferences: true,
           notificationPreferences: true,
           consulteeProfile: true,
+          consultantProfile: true,
         },
       });
 
-      // Send welcome email to the new user
-      try {
-        console.log("Sending welcome email to:", email);
-        const emailResult = await sendWelcomeEmail({
-          email,
-          name,
+      // Send welcome email to the new user (fire and forget - don't block registration)
+      sendWelcomeEmail({ email, name })
+        .then((emailResult) => {
+          if (!emailResult.success) {
+            console.error(
+              "[REGISTER_POST] Welcome email failed:",
+              emailResult.error,
+            );
+          } else {
+            console.log(
+              "[REGISTER_POST] Welcome email sent successfully:",
+              emailResult.data,
+            );
+          }
+        })
+        .catch((emailError) => {
+          console.error("[REGISTER_POST] Welcome email error:", emailError);
         });
-
-        if (!emailResult.success) {
-          console.error(
-            "[REGISTER_POST] Welcome email failed:",
-            emailResult.error,
-          );
-        } else {
-          console.log(
-            "[REGISTER_POST] Welcome email sent successfully:",
-            emailResult.data,
-          );
-        }
-      } catch (emailError) {
-        console.error("[REGISTER_POST] Welcome email error:", emailError);
-        // Continue despite email failure - don't block registration
-      }
 
       // Return only necessary user info, exclude password
       const { password: _, ...userWithoutPassword } = user;

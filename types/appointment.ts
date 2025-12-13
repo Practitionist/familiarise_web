@@ -199,3 +199,6 @@ export type TAppointment = Prisma.AppointmentGetPayload<{
 
 // Utility type for creating appointments
 export type TAppointmentCreateInput = Prisma.AppointmentCreateInput;
+
+// Extract slot type from TAppointment for reuse
+export type TSlotOfAppointment = TAppointment["slotsOfAppointment"][number];

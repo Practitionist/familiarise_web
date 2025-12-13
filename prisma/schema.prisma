@@ -9,7 +9,7 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
-////////////////////////////////////////// DO NOT EDIT //////////////////////////////////////////
+////////////////////////////////////////// USER MODEL //////////////////////////////////////////
 
 model User {
   id                   String    @id @default(cuid())
@@ -27,6 +27,14 @@ model User {
   onboardingCompleted  Boolean?  @default(false)
   role                 UserRole? @default(CONSULTEE)
 
+  // New fields for enhanced user profile
+  dateOfBirth DateTime?
+  gender      Gender?
+  city        String?
+  country     String?
+  linkedinUrl String?
+  bio         String?   @db.VarChar(160) // Short tagline, max 160 chars
+
   cookiePreferences       CookiePreference?
   notificationPreferences NotificationPreference?
   Payment                 Payment[]
@@ -38,6 +46,8 @@ model User {
   consulteeProfileId  String?            @unique
   staffProfile        StaffProfile?
   staffProfileId      String?            @unique
+  adminProfile        AdminProfile?
+  adminProfileId      String?            @unique
 
   slotsOfAppointment SlotOfAppointment[] @relation("SlotOfAppointmentToUser")
   Waitlist           Waitlist[]
@@ -50,8 +60,12 @@ model User {
   accounts Account[] // NextAuth Accounts
   sessions Session[] // NextAuth Sessions
 
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
   @@index([consultantProfileId])
   @@index([consulteeProfileId])
+  @@index([adminProfileId])
   @@map("users")
 }
 
@@ -199,10 +213,28 @@ model VerificationToken {
 model ConsultantProfile {
   id             String  @id @default(uuid())
   description    String? @db.Text
-  qualifications String?
-  specialization String?
   experience     Float?
   rating         Float   @default(0)
+
+  // New fields for enhanced consultant profile
+  headline              String?       @db.VarChar(120) // Professional headline, max 120 chars
+  websiteUrl            String?
+  twitterUrl            String?
+  githubUrl             String?
+  videoIntroUrl         String?
+  languages             String[]      @default([])
+  toolsAndTechnologies  String[]      @default([])
+  mentoringStyle        String?       @db.Text
+  sessionTypes          SessionType[] @default([])
+  profileCompletionPercentage Int     @default(0)
+  isVerified            Boolean       @default(false)
+  totalMenteesHelped    Int           @default(0)
+
+  // Deprecated fields - to be removed in Phase 6
+  // @deprecated Use Certification and Education models instead
+  qualifications String?
+  // @deprecated Use subDomains, tags, and headline instead
+  specialization String?
 
   domain     Domain      @relation(fields: [domainId], references: [id])
   domainId   String
@@ -220,6 +252,11 @@ model ConsultantProfile {
   webinarPlans      WebinarPlan[]
   classPlans        ClassPlan[]
 
+  // New relations for professional background
+  workExperiences WorkExperience[]
+  certifications  Certification[]
+  education       Education[]
+
   user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   userId String @unique
 
@@ -228,6 +265,7 @@ model ConsultantProfile {
 
   @@index([userId])
   @@index([domainId])
+  @@index([isVerified])
 }
 
 model Domain {
@@ -288,14 +326,30 @@ model ConsultantReview {
 
 model ConsulteeProfile {
   id                           String            @id @default(uuid())
-  education                    String?
   occupation                   String?
-  aboutMe                      String?
+  aboutMe                      String?           @db.Text
   preferredCommunicationMethod ConsultationMode? @default(VIDEO)
   preferredLanguage            String?
-  specialRequirements          String?
-  interests                    String?
-  goals                        String?
+  goals                        String?           @db.Text
+
+  // New fields for enhanced consultee profile
+  careerStage      CareerStage?
+  currentCompany   String?
+  industry         String?
+  skillsToDevelop  String[]          @default([])
+  linkedinUrl      String?
+  budgetPreference BudgetPreference?
+
+  // Deprecated fields - to be removed in Phase 6
+  // @deprecated Use Education model instead
+  education           String?
+  // @deprecated Merge into goals or aboutMe
+  specialRequirements String?
+  // @deprecated Use skillsToDevelop instead
+  interests           String?
+
+  // New relation for education background
+  educationHistory Education[]
 
   consultationRequests Consultation[]
   subscriptionRequests Subscription[]
@@ -308,6 +362,7 @@ model ConsulteeProfile {
   updatedAt DateTime @updatedAt
 
   @@index([userId])
+  @@index([careerStage])
 }
 
 enum ConsultationMode {
@@ -323,6 +378,13 @@ model StaffProfile {
   permissions      Json?
   responsibilities Json?
 
+  // New fields for enhanced staff profile
+  employeeId   String?
+  hireDate     DateTime?
+  reportsTo    String?   // Manager's user ID
+  skills       String[]  @default([])
+  workSchedule String?   // e.g., "9 AM - 5 PM", "Shift A", etc.
+
   user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   userId String @unique
 
@@ -330,7 +392,94 @@ model StaffProfile {
   updatedAt DateTime @updatedAt
 
   @@index([userId])
+  @@index([department])
+  @@index([reportsTo])
 }
+
+model AdminProfile {
+  id              String     @id @default(uuid())
+  adminLevel      AdminLevel
+  accessScope     Json?      // Granular permissions JSON
+  assignedRegions String[]   @default([]) // Geographic or domain regions
+  notes           String?    @db.Text
+
+  user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  userId String @unique
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([adminLevel])
+}
+
+//////////////////////////////////////////////////// PROFESSIONAL BACKGROUND MODELS ////////////////////////////////////////////////////
+
+model WorkExperience {
+  id          String    @id @default(uuid())
+  company     String
+  title       String
+  location    String?
+  startDate   DateTime
+  endDate     DateTime?
+  isCurrent   Boolean   @default(false)
+  description String?   @db.Text
+
+  consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  consultantProfileId String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([consultantProfileId])
+  @@index([isCurrent])
+}
+
+model Certification {
+  id                  String    @id @default(uuid())
+  name                String
+  issuingOrganization String
+  issueDate           DateTime
+  expiryDate          DateTime?
+  credentialId        String?
+  credentialUrl       String?
+
+  consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  consultantProfileId String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([consultantProfileId])
+}
+
+model Education {
+  id           String  @id @default(uuid())
+  institution  String
+  degree       String
+  fieldOfStudy String?
+  startYear    Int?
+  endYear      Int?
+  grade        String?
+  activities   String?
+  description  String? @db.Text
+
+  // NOTE: Application logic must ensure exactly one of consultantProfileId or
+  // consulteeProfileId is set, never both or neither (to prevent orphaned records).
+  consultantProfile   ConsultantProfile? @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  consultantProfileId String?
+
+  consulteeProfile   ConsulteeProfile? @relation(fields: [consulteeProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  consulteeProfileId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([consultantProfileId])
+  @@index([consulteeProfileId])
+}
+
+//////////////////////////////////////////////////// AVAILABILITY SLOTS ////////////////////////////////////////////////////
 
 model SlotOfAvailabilityWeekly {
   id                   String    @id @default(uuid())
@@ -371,6 +520,7 @@ model ConsultationPlan {
   description      String?  @db.Text
   durationInHours  Float    @default(1)
   price            Int
+  priceCurrency    String   @default("INR")
   language         String   @default("English")
   level            String   @default("Beginner")
   prerequisites    String?  @default("None")
@@ -396,6 +546,7 @@ model Consultation {
   requestedById          String
   requestedAt            DateTime         @default(now()) @db.Timestamptz()
   requestNotes           String?
+  pendingPaymentUrl      String? // Payment link while awaiting payment (cleared after payment)
   bookingSource          BookingSource    @default(REQUEST_SUBMITTED)
   feedbackFromConsultee  String?
   feedbackFromConsultant String?
@@ -413,6 +564,7 @@ model SubscriptionPlan {
   description            String?          @db.Text
   durationInMonths       Int              @default(1)
   price                  Int
+  priceCurrency          String           @default("INR")
   callsPerWeek           Int              @default(1)
   sessionDurationInHours Float            @default(1.0) // Duration of each session in hours
   emailSupport           PlanEmailSupport @default(GENERAL)
@@ -442,6 +594,7 @@ model Subscription {
   requestedById          String
   requestedAt            DateTime         @default(now()) @db.Timestamptz()
   requestNotes           String?
+  pendingPaymentUrl      String? // Payment link while awaiting payment (cleared after payment)
   bookingSource          BookingSource    @default(REQUEST_SUBMITTED)
   feedbackFromConsultee  String?
   feedbackFromConsultant String?
@@ -459,6 +612,7 @@ model Subscription {
 enum RequestStatus {
   PENDING
   APPROVED
+  APPROVED_PENDING_PAYMENT // Approved by consultant but awaiting payment
   SCHEDULED
   REJECTED
   CANCELLED
@@ -718,6 +872,9 @@ model SlotOfAppointment {
 
   @@index([appointmentId])
   @@index([isTentative, appointmentId])
+  // OPT-3: Additional indexes for time range queries in validateSlotAvailability
+  @@index([startsAt, endsAt])
+  @@index([isTentative, startsAt, endsAt])
 }
 
 ////////////////////////////////////////////// MEETINGS FOR STREAM ////////////////////////////////////////////////////
@@ -781,7 +938,7 @@ model Payment {
   user           User          @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   userId         String
   appointment    Appointment?  @relation(fields: [appointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  appointmentId  String?       @unique
+  appointmentId  String?
   discountCode   DiscountCode? @relation(fields: [discountCodeId], references: [id], onUpdate: Cascade, onDelete: SetNull)
   discountCodeId String?
 
@@ -793,6 +950,7 @@ model Payment {
 
   @@index([expiresAt, paymentStatus])
   @@index([isMockPayment])
+  @@unique([userId, appointmentId]) // Allow multiple users to pay for same appointment (webinars/classes)
 }
 
 enum PaymentGateway {
@@ -926,4 +1084,40 @@ enum DayOfWeek {
 enum ScheduleType {
   WEEKLY
   CUSTOM
+}
+
+//////////////////////////////////////////////////// NEW ENUMS FOR ENHANCED USER PROFILES ////////////////////////////////////////////////////
+
+enum Gender {
+  MALE
+  FEMALE
+  NON_BINARY
+  PREFER_NOT_TO_SAY
+}
+
+enum CareerStage {
+  STUDENT
+  EARLY_CAREER   // 0-3 years experience
+  MID_CAREER     // 3-10 years experience
+  SENIOR         // 10+ years experience
+  EXECUTIVE      // C-level or equivalent
+}
+
+enum AdminLevel {
+  SUPER_ADMIN    // Full system access
+  ADMIN          // High-level management
+  MODERATOR      // Day-to-day operations
+}
+
+enum BudgetPreference {
+  BUDGET         // Looking for affordable options
+  MODERATE       // Mid-range pricing
+  PREMIUM        // Willing to pay for premium
+  FLEXIBLE       // No specific preference
+}
+
+enum SessionType {
+  ONE_ON_ONE     // 1:1 video/audio sessions
+  GROUP          // Group sessions
+  ASYNC_REVIEW   // Asynchronous document/code review
 }

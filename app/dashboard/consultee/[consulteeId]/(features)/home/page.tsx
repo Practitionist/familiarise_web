@@ -70,6 +70,7 @@ export default function HomePage({ params }: Readonly<PageProps>) {
         eventsData={eventsData}
         userDetails={userDetails}
         isRefreshing={isLoading && !!eventsData}
+        consulteeId={consulteeId}
       />
     </DashboardErrorBoundary>
   );

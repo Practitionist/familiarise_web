@@ -3,6 +3,7 @@
 > Advanced channel management strategies including synchronization and race condition prevention
 
 ## Table of Contents
+
 - [Channel Creation Strategies](#channel-creation-strategies)
 - [User Channel Synchronization](#user-channel-synchronization)
 - [Channel Membership Rules](#channel-membership-rules)
@@ -21,21 +22,25 @@
 **Definition**: Create channels immediately when the entity (webinar, class, consultation, subscription) is created or approved.
 
 **When to Use**:
+
 - High-priority events (paid consultations, approved subscriptions)
 - Events with guaranteed participants
 - When chat availability is critical
 
 **Advantages**:
+
 - Channels ready immediately
 - No delay for first users
 - Predictable behavior
 
 **Disadvantages**:
+
 - May create unused channels
 - Higher initial API usage
 - Requires cleanup for canceled events
 
 **Implementation**:
+
 ```typescript
 // After consultation approval
 const consultation = await prisma.consultation.update({
@@ -52,21 +57,25 @@ await createConsultationChannel(consultation.id);
 **Definition**: Create channels on-demand when the first user attempts to access them.
 
 **When to Use**:
+
 - Events with uncertain participation
 - Low-priority or free events
 - When minimizing API usage is important
 
 **Advantages**:
+
 - Only creates channels that will be used
 - Lower API usage
 - Self-cleaning (no unused channels)
 
 **Disadvantages**:
+
 - Slight delay for first user
 - Race conditions possible
 - More complex error handling
 
 **Implementation**:
+
 ```typescript
 // In event channel component
 const ensureChannel = async () => {
@@ -75,7 +84,8 @@ const ensureChannel = async () => {
     const channel = client.channel("team", `webinar-${webinarId}`);
     await channel.watch();
   } catch (error) {
-    if (error.code === 16) { // Channel not found
+    if (error.code === 16) {
+      // Channel not found
       // Create channel server-side
       await createWebinarChannel(webinarId);
     }
@@ -108,6 +118,7 @@ if (webinar.waitlist.length === 1) {
 **Purpose**: Ensure a user is a member of all channels for events they're participating in.
 
 **When to Call**:
+
 - User login (ensure membership of all channels)
 - After joining an event (add to specific channel)
 - Periodic background job (fix any inconsistencies)
@@ -163,13 +174,13 @@ export const syncUserEventChannels = async (userId: string) => {
       new Set([
         ...webinarsFromWaitlist.map((w) => w.id),
         ...webinarsFromAppointments.map((w) => w.id),
-      ])
+      ]),
     );
 
     console.log(
       `User ${userId}: Found ${webinarsFromWaitlist.length} webinars from waitlist, ` +
-      `${webinarsFromAppointments.length} from appointments, ` +
-      `${allWebinarIds.length} total unique webinars`
+        `${webinarsFromAppointments.length} from appointments, ` +
+        `${allWebinarIds.length} total unique webinars`,
     );
 
     // Add user to all webinar channels
@@ -211,13 +222,13 @@ export const syncUserEventChannels = async (userId: string) => {
       new Set([
         ...classesFromWaitlist.map((c) => c.id),
         ...classesFromAppointments.map((c) => c.id),
-      ])
+      ]),
     );
 
     console.log(
       `User ${userId}: Found ${classesFromWaitlist.length} classes from waitlist, ` +
-      `${classesFromAppointments.length} from appointments, ` +
-      `${allClassIds.length} total unique classes`
+        `${classesFromAppointments.length} from appointments, ` +
+        `${allClassIds.length} total unique classes`,
     );
 
     // Add user to all class channels
@@ -321,19 +332,20 @@ graph TB
 ```typescript
 // Collect from all sources
 const waitlistIds = webinar.waitlist.map((entry) => entry.userId);
-const appointmentIds = webinar.appointment?.slotsOfAppointment?.flatMap(
-  (slot) => slot.user.map((user) => user.id)
-) || [];
+const appointmentIds =
+  webinar.appointment?.slotsOfAppointment?.flatMap((slot) =>
+    slot.user.map((user) => user.id),
+  ) || [];
 
 // Deduplicate using Set
 const allParticipantIds = Array.from(
-  new Set([...waitlistIds, ...appointmentIds])
+  new Set([...waitlistIds, ...appointmentIds]),
 );
 
 console.log(
   `Waitlist: ${waitlistIds.length}, ` +
-  `Appointments: ${appointmentIds.length}, ` +
-  `Unique: ${allParticipantIds.length}`
+    `Appointments: ${appointmentIds.length}, ` +
+    `Unique: ${allParticipantIds.length}`,
 );
 ```
 
@@ -342,9 +354,7 @@ console.log(
 **Rule**: Event host (consultant) is ALWAYS a member
 
 ```typescript
-const allMembers = Array.from(
-  new Set([consultantUserId, ...participantIds])
-);
+const allMembers = Array.from(new Set([consultantUserId, ...participantIds]));
 ```
 
 ---
@@ -589,7 +599,8 @@ export const addUserToEventChannel = async (
         channelName = webinar.webinarPlan.title;
 
         if (webinar.webinarPlan.consultantProfile?.user?.id) {
-          const consultantUserId = webinar.webinarPlan.consultantProfile.user.id;
+          const consultantUserId =
+            webinar.webinarPlan.consultantProfile.user.id;
           await upsertUserToStream(consultantUserId);
           channelCreatorId = consultantUserId;
         }
@@ -608,7 +619,7 @@ export const addUserToEventChannel = async (
       systemCreatedChannel = true;
       console.log(
         `Created channel ${channelId} with creator ${channelCreatorId} ` +
-        `and initial member ${userId}`
+          `and initial member ${userId}`,
       );
     } else {
       // Channel exists - update name if needed and add member
@@ -616,7 +627,9 @@ export const addUserToEventChannel = async (
       const existingChannelData = await channel.query();
 
       if (existingChannelData.channel?.name !== eventData.name) {
-        console.log(`Updating channel ${channelId} name to "${eventData.name}"`);
+        console.log(
+          `Updating channel ${channelId} name to "${eventData.name}"`,
+        );
         await channel.update({ name: eventData.name });
       }
 
@@ -629,7 +642,7 @@ export const addUserToEventChannel = async (
   } catch (error) {
     console.error(
       `Error in addUserToEventChannel for ${eventType} ${eventId}, user ${userId}:`,
-      error
+      error,
     );
     throw error;
   }
@@ -693,9 +706,7 @@ export async function syncAllUserChannels() {
     }
   }
 
-  console.log(
-    `Sync complete: ${successCount} succeeded, ${errorCount} failed`
-  );
+  console.log(`Sync complete: ${successCount} succeeded, ${errorCount} failed`);
 
   return { successCount, errorCount };
 }
@@ -733,13 +744,13 @@ async function handleJoinWebinar(userId: string, webinarId: string) {
 ### 1. Always Deduplicate Members
 
 **Good**:
+
 ```typescript
-const allIds = Array.from(
-  new Set([...waitlistIds, ...appointmentIds])
-);
+const allIds = Array.from(new Set([...waitlistIds, ...appointmentIds]));
 ```
 
 **Bad**:
+
 ```typescript
 const allIds = [...waitlistIds, ...appointmentIds]; // Duplicates possible
 ```
@@ -747,15 +758,15 @@ const allIds = [...waitlistIds, ...appointmentIds]; // Duplicates possible
 ### 2. Include Creator in Members
 
 **Good**:
+
 ```typescript
-const allMembers = Array.from(
-  new Set([createdById, ...members])
-);
+const allMembers = Array.from(new Set([createdById, ...members]));
 ```
 
 ### 3. Sync on Critical Events
 
 **When to Sync**:
+
 - User login
 - User joins event
 - User profile changes
@@ -764,6 +775,7 @@ const allMembers = Array.from(
 ### 4. Graceful Error Handling
 
 **Good**:
+
 ```typescript
 try {
   await syncUserEventChannels(userId);
@@ -777,6 +789,7 @@ try {
 ### 5. Use Idempotent Operations
 
 **Good**:
+
 ```typescript
 // Safe to call multiple times
 await channel.addMembers([userId]);
@@ -785,18 +798,20 @@ await channel.addMembers([userId]);
 ### 6. Log Membership Details
 
 **Good**:
+
 ```typescript
 console.log(
   `Webinar ${webinarId} participants: ` +
-  `${waitlistCount} from waitlist, ` +
-  `${appointmentCount} from appointments, ` +
-  `${uniqueCount} total unique`
+    `${waitlistCount} from waitlist, ` +
+    `${appointmentCount} from appointments, ` +
+    `${uniqueCount} total unique`,
 );
 ```
 
 ### 7. Verify Channel State
 
 **Good**:
+
 ```typescript
 await channel.create();
 const channelData = await channel.query();
@@ -807,6 +822,7 @@ console.log(`Expected: ${members.length}, Actual: ${actualMembers.length}`);
 ### 8. Update Channel Metadata
 
 **Good**:
+
 ```typescript
 // Check if name changed
 if (existingChannel.name !== expectedName) {

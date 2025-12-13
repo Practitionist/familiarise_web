@@ -31,7 +31,6 @@ import {
   canManageAppointmentTimings,
   canManageGroupTimings,
 } from "./utils/appointmentTimingHelpers";
-import { convertTAppointmentToIAppointment } from "./utils/appointmentTypeAdapter";
 import {
   getParticipantManagementUrl,
   supportsParticipantManagement,
@@ -147,7 +146,7 @@ export function AppointmentsTab({
     try {
       const meetingId = await getOrCreateAppointmentMeeting(
         client,
-        convertTAppointmentToIAppointment(appointment),
+        appointment,
         relevantSlot,
       );
       router.push(`/meetings/${meetingId}`);
@@ -252,7 +251,9 @@ export function AppointmentsTab({
                   {groupAppointments.length === 0 ? (
                     <div className="border rounded-lg p-8 bg-gray-50 text-center">
                       <p className="text-gray-500 text-sm">
-                        No {getAppointmentTypeDisplayName(groupType).toLowerCase()} scheduled
+                        No{" "}
+                        {getAppointmentTypeDisplayName(groupType).toLowerCase()}{" "}
+                        scheduled
                       </p>
                     </div>
                   ) : (
@@ -267,339 +268,356 @@ export function AppointmentsTab({
                           : ""
                       }`}
                     >
-                {/* Group Header */}
-                {isRecurring && (
-                  <div className="bg-gray-50 p-4 border-b border-gray-200">
-                    <div className="flex items-center justify-between mb-3">
-                      <div className="flex items-center space-x-3 sm:space-x-4 min-w-0">
-                        <Avatar className="w-10 h-10">
-                          <AvatarImage
-                            alt={getConsumeeName(firstAppointment)}
-                            src={getConsumeeImage(firstAppointment)}
-                          />
-                          <AvatarFallback>
-                            {getConsumeeName(firstAppointment)
-                              .split(" ")
-                              .map((n: string) => n[0])
-                              .join("")}
-                          </AvatarFallback>
-                        </Avatar>
-                        <div>
-                          <h3 className="font-semibold text-gray-800 text-sm">
-                            {getConsumeeName(firstAppointment)}
-                          </h3>
-                          <p className="text-xs text-gray-600">
-                            {groupTitle.split("(")[0].trim()}
-                          </p>
-                        </div>
+                      {/* Group Header */}
+                      {isRecurring && (
+                        <div className="bg-gray-50 p-4 border-b border-gray-200">
+                          <div className="flex items-center justify-between mb-3">
+                            <div className="flex items-center space-x-3 sm:space-x-4 min-w-0">
+                              <Avatar className="w-10 h-10">
+                                <AvatarImage
+                                  alt={getConsumeeName(firstAppointment)}
+                                  src={getConsumeeImage(firstAppointment)}
+                                />
+                                <AvatarFallback>
+                                  {getConsumeeName(firstAppointment)
+                                    .split(" ")
+                                    .map((n: string) => n[0])
+                                    .join("")}
+                                </AvatarFallback>
+                              </Avatar>
+                              <div>
+                                <h3 className="font-semibold text-gray-800 text-sm">
+                                  {getConsumeeName(firstAppointment)}
+                                </h3>
+                                <p className="text-xs text-gray-600">
+                                  {groupTitle.split("(")[0].trim()}
+                                </p>
+                              </div>
 
-                        {/* Management buttons inline with user name */}
-                        <div className="flex items-center gap-2 ml-4">
-                          {canManageGroupTimings(groupAppointments) && (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="h-8 text-xs px-3"
-                              onClick={() =>
-                                setSelectedAppointment(firstAppointment)
-                              }
+                              {/* Management buttons inline with user name */}
+                              <div className="flex items-center gap-2 ml-4">
+                                {canManageGroupTimings(groupAppointments) && (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-8 text-xs px-3"
+                                    onClick={() =>
+                                      setSelectedAppointment(firstAppointment)
+                                    }
+                                  >
+                                    <Clock className="w-3 h-3 mr-1" />
+                                    Timings
+                                  </Button>
+                                )}
+                                {supportsParticipantManagement(
+                                  firstAppointment,
+                                ) && (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-8 text-xs px-3"
+                                    onClick={() =>
+                                      router.push(
+                                        getParticipantManagementUrl(
+                                          firstAppointment,
+                                          getConsultantIdFromAppointment(
+                                            firstAppointment,
+                                          ),
+                                        ),
+                                      )
+                                    }
+                                  >
+                                    <Users className="w-3 h-3 mr-1" />
+                                    Participants
+                                  </Button>
+                                )}
+                              </div>
+                            </div>
+
+                            <Badge
+                              variant="secondary"
+                              className={`${getStyleFromBadgeData(groupStatus)} flex-shrink-0`}
                             >
-                              <Clock className="w-3 h-3 mr-1" />
-                              Timings
-                            </Button>
-                          )}
-                          {supportsParticipantManagement(firstAppointment) && (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="h-8 text-xs px-3"
-                              onClick={() =>
-                                router.push(
-                                  getParticipantManagementUrl(
-                                    firstAppointment,
-                                    getConsultantIdFromAppointment(
-                                      firstAppointment,
-                                    ),
-                                  ),
-                                )
-                              }
-                            >
-                              <Users className="w-3 h-3 mr-1" />
-                              Participants
-                            </Button>
-                          )}
+                              {groupStatus}
+                            </Badge>
+                          </div>
+
+                          {/* Progress Section */}
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="text-gray-600">
+                                <span className="font-semibold text-green-600">
+                                  {completedSessions}
+                                </span>{" "}
+                                completed
+                              </span>
+                              <span className="text-gray-600">
+                                <span className="font-semibold text-blue-600">
+                                  {remainingSessions}
+                                </span>{" "}
+                                remaining
+                              </span>
+                            </div>
+
+                            {/* Progress Bar */}
+                            <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
+                              <div
+                                className="bg-gradient-to-r from-green-500 to-blue-500 h-2 rounded-full transition-all duration-500"
+                                style={{ width: `${progressPercentage}%` }}
+                              />
+                            </div>
+
+                            <div className="text-xs text-center text-gray-500 font-medium">
+                              {completedSessions} of {totalSessions} sessions
+                            </div>
+                          </div>
                         </div>
-                      </div>
+                      )}
 
-                      <Badge
-                        variant="secondary"
-                        className={`${getStyleFromBadgeData(groupStatus)} flex-shrink-0`}
-                      >
-                        {groupStatus}
-                      </Badge>
-                    </div>
+                      {/* Appointments List */}
+                      <ul className="divide-y">
+                        {(() => {
+                          const paginationState = getPaginationState(groupKey);
+                          const shouldPaginate =
+                            groupAppointments.length > PAGE_SIZE;
+                          const totalPages = Math.ceil(
+                            groupAppointments.length / PAGE_SIZE,
+                          );
 
-                    {/* Progress Section */}
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="text-gray-600">
-                          <span className="font-semibold text-green-600">
-                            {completedSessions}
-                          </span>{" "}
-                          completed
-                        </span>
-                        <span className="text-gray-600">
-                          <span className="font-semibold text-blue-600">
-                            {remainingSessions}
-                          </span>{" "}
-                          remaining
-                        </span>
-                      </div>
-
-                      {/* Progress Bar */}
-                      <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
-                        <div
-                          className="bg-gradient-to-r from-green-500 to-blue-500 h-2 rounded-full transition-all duration-500"
-                          style={{ width: `${progressPercentage}%` }}
-                        />
-                      </div>
-
-                      <div className="text-xs text-center text-gray-500 font-medium">
-                        {completedSessions} of {totalSessions} sessions
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* Appointments List */}
-                <ul className="divide-y">
-                  {(() => {
-                    const paginationState = getPaginationState(groupKey);
-                    const shouldPaginate = groupAppointments.length > PAGE_SIZE;
-                    const totalPages = Math.ceil(
-                      groupAppointments.length / PAGE_SIZE,
-                    );
-
-                    let visibleAppointments = groupAppointments;
-                    if (shouldPaginate && !paginationState.showAll) {
-                      const startIndex =
-                        (paginationState.currentPage - 1) * PAGE_SIZE;
-                      const endIndex = startIndex + PAGE_SIZE;
-                      visibleAppointments = groupAppointments.slice(
-                        startIndex,
-                        endIndex,
-                      );
-                    }
-
-                    return (
-                      <>
-                        {visibleAppointments.map((appointment) => {
-                          const status = getAppointmentStatus(appointment);
-                          const isJoinable = status === "Meeting in 5 min";
-                          const joinButtonStyle = isJoinable
-                            ? "bg-black text-white hover:bg-gray-800"
-                            : "bg-gray-400 text-white cursor-not-allowed";
-
-                          // Check if this is a one-off event (consultation or webinar)
-                          const isOneOffEvent =
-                            !isRecurring &&
-                            (appointment.appointmentType === "CONSULTATION" ||
-                              appointment.appointmentType === "WEBINAR");
-
-                          const containerClasses = isOneOffEvent
-                            ? "flex items-center justify-between p-4 bg-gray-200 hover:bg-gray-250 border border-gray-300"
-                            : "flex items-center justify-between p-4 hover:bg-gray-100";
+                          let visibleAppointments = groupAppointments;
+                          if (shouldPaginate && !paginationState.showAll) {
+                            const startIndex =
+                              (paginationState.currentPage - 1) * PAGE_SIZE;
+                            const endIndex = startIndex + PAGE_SIZE;
+                            visibleAppointments = groupAppointments.slice(
+                              startIndex,
+                              endIndex,
+                            );
+                          }
 
                           return (
-                            <li
-                              key={appointment.id}
-                              className={containerClasses}
-                            >
-                              <div className="flex items-center justify-between w-full">
-                                {/* Left: Avatar and User info */}
-                                <div className="flex items-center space-x-3 min-w-0">
-                                  {!isRecurring && (
-                                    <Avatar className="flex-shrink-0">
-                                      <AvatarImage
-                                        alt={getConsumeeName(appointment)}
-                                        src={getConsumeeImage(appointment)}
-                                      />
-                                      <AvatarFallback>
-                                        {getConsumeeName(appointment)
-                                          .split(" ")
-                                          .map((n: string) => n[0])
-                                          .join("")}
-                                      </AvatarFallback>
-                                    </Avatar>
-                                  )}
-                                  <div className="min-w-0">
-                                    {!isRecurring && (
-                                      <>
-                                        <h3 className="font-semibold text-gray-800">
-                                          {getConsumeeName(appointment)}
-                                        </h3>
-                                        <p className="text-sm text-gray-600">
-                                          {getAppointmentTypeAndPlan(
-                                            appointment,
-                                          )}
-                                        </p>
-                                      </>
-                                    )}
-                                    <div className="text-sm text-gray-500">
-                                      Starts:{" "}
-                                      {(() => {
-                                        const startTime =
-                                          getStartTime(appointment);
-                                        return startTime ? (
-                                          formatAppointmentTime(
-                                            startTime.toISOString(),
-                                          )
-                                        ) : (
-                                          <span className="text-orange-600 font-medium">
-                                            Not Scheduled
-                                          </span>
-                                        );
-                                      })()}
-                                    </div>
-                                  </div>
+                            <>
+                              {visibleAppointments.map((appointment) => {
+                                const status =
+                                  getAppointmentStatus(appointment);
+                                const isJoinable =
+                                  status === "Meeting in 5 min";
+                                const joinButtonStyle = isJoinable
+                                  ? "bg-black text-white hover:bg-gray-800"
+                                  : "bg-gray-400 text-white cursor-not-allowed";
 
-                                  {/* Management buttons right after user info */}
-                                  <div className="flex items-center gap-2 ml-4">
-                                    {!isRecurring &&
-                                      canManageAppointmentTimings(
-                                        appointment,
-                                      ) && (
-                                        <Button
-                                          variant="outline"
-                                          size="sm"
-                                          className="h-8 text-xs px-3"
-                                          onClick={() =>
-                                            setSelectedAppointment(appointment)
-                                          }
-                                        >
-                                          <Clock className="w-3 h-3 mr-1" />
-                                          Timings
-                                        </Button>
-                                      )}
-                                    {!isRecurring &&
-                                      supportsParticipantManagement(
-                                        appointment,
-                                      ) && (
-                                        <Button
-                                          variant="outline"
-                                          size="sm"
-                                          className="h-8 text-xs px-3"
-                                          onClick={() =>
-                                            router.push(
-                                              getParticipantManagementUrl(
+                                // Check if this is a one-off event (consultation or webinar)
+                                const isOneOffEvent =
+                                  !isRecurring &&
+                                  (appointment.appointmentType ===
+                                    "CONSULTATION" ||
+                                    appointment.appointmentType === "WEBINAR");
+
+                                const containerClasses = isOneOffEvent
+                                  ? "flex items-center justify-between p-4 bg-gray-200 hover:bg-gray-250 border border-gray-300"
+                                  : "flex items-center justify-between p-4 hover:bg-gray-100";
+
+                                return (
+                                  <li
+                                    key={appointment.id}
+                                    className={containerClasses}
+                                  >
+                                    <div className="flex items-center justify-between w-full">
+                                      {/* Left: Avatar and User info */}
+                                      <div className="flex items-center space-x-3 min-w-0">
+                                        {!isRecurring && (
+                                          <Avatar className="flex-shrink-0">
+                                            <AvatarImage
+                                              alt={getConsumeeName(appointment)}
+                                              src={getConsumeeImage(
                                                 appointment,
-                                                getConsultantIdFromAppointment(
+                                              )}
+                                            />
+                                            <AvatarFallback>
+                                              {getConsumeeName(appointment)
+                                                .split(" ")
+                                                .map((n: string) => n[0])
+                                                .join("")}
+                                            </AvatarFallback>
+                                          </Avatar>
+                                        )}
+                                        <div className="min-w-0">
+                                          {!isRecurring && (
+                                            <>
+                                              <h3 className="font-semibold text-gray-800">
+                                                {getConsumeeName(appointment)}
+                                              </h3>
+                                              <p className="text-sm text-gray-600">
+                                                {getAppointmentTypeAndPlan(
                                                   appointment,
-                                                ),
-                                              ),
+                                                )}
+                                              </p>
+                                            </>
+                                          )}
+                                          <div className="text-sm text-gray-500">
+                                            Starts:{" "}
+                                            {(() => {
+                                              const startTime =
+                                                getStartTime(appointment);
+                                              return startTime ? (
+                                                formatAppointmentTime(
+                                                  startTime.toISOString(),
+                                                )
+                                              ) : (
+                                                <span className="text-orange-600 font-medium">
+                                                  Not Scheduled
+                                                </span>
+                                              );
+                                            })()}
+                                          </div>
+                                        </div>
+
+                                        {/* Management buttons right after user info */}
+                                        <div className="flex items-center gap-2 ml-4">
+                                          {!isRecurring &&
+                                            canManageAppointmentTimings(
+                                              appointment,
+                                            ) && (
+                                              <Button
+                                                variant="outline"
+                                                size="sm"
+                                                className="h-8 text-xs px-3"
+                                                onClick={() =>
+                                                  setSelectedAppointment(
+                                                    appointment,
+                                                  )
+                                                }
+                                              >
+                                                <Clock className="w-3 h-3 mr-1" />
+                                                Timings
+                                              </Button>
+                                            )}
+                                          {!isRecurring &&
+                                            supportsParticipantManagement(
+                                              appointment,
+                                            ) && (
+                                              <Button
+                                                variant="outline"
+                                                size="sm"
+                                                className="h-8 text-xs px-3"
+                                                onClick={() =>
+                                                  router.push(
+                                                    getParticipantManagementUrl(
+                                                      appointment,
+                                                      getConsultantIdFromAppointment(
+                                                        appointment,
+                                                      ),
+                                                    ),
+                                                  )
+                                                }
+                                              >
+                                                <Users className="w-3 h-3 mr-1" />
+                                                Participants
+                                              </Button>
+                                            )}
+                                        </div>
+                                      </div>
+
+                                      {/* Right side: Status and Join button */}
+                                      <div className="flex items-center gap-3 flex-shrink-0">
+                                        <Badge
+                                          variant="secondary"
+                                          className={getStyleFromBadgeData(
+                                            status,
+                                          )}
+                                        >
+                                          {status}
+                                        </Badge>
+                                        {status !== "Completed" &&
+                                          status !== "Not Scheduled" && (
+                                            <Button
+                                              variant="default"
+                                              size="sm"
+                                              className={`${joinButtonStyle} h-8 px-4 text-xs`}
+                                              disabled={
+                                                process.env.NODE_ENV ===
+                                                "production"
+                                                  ? !isJoinable
+                                                  : false
+                                              }
+                                              onClick={() =>
+                                                handleJoinMeeting(appointment)
+                                              }
+                                            >
+                                              {process.env.NODE_ENV ===
+                                              "production"
+                                                ? isJoinable
+                                                  ? "Join meet"
+                                                  : "Not available"
+                                                : "Join (Dev)"}
+                                            </Button>
+                                          )}
+                                      </div>
+                                    </div>
+                                  </li>
+                                );
+                              })}
+
+                              {/* Pagination Controls */}
+                              {shouldPaginate && (
+                                <li className="p-3 bg-gray-200 border-t border-gray-300">
+                                  <div className="flex justify-end gap-2">
+                                    {!paginationState.showAll && (
+                                      <>
+                                        <Button
+                                          variant="ghost"
+                                          size="sm"
+                                          className="text-xs"
+                                          onClick={() =>
+                                            setPage(
+                                              groupKey,
+                                              paginationState.currentPage - 1,
                                             )
                                           }
+                                          disabled={
+                                            paginationState.currentPage === 1
+                                          }
                                         >
-                                          <Users className="w-3 h-3 mr-1" />
-                                          Participants
+                                          <ChevronLeft className="w-4 h-4 mr-1" />
+                                          Previous
                                         </Button>
-                                      )}
-                                  </div>
-                                </div>
-
-                                {/* Right side: Status and Join button */}
-                                <div className="flex items-center gap-3 flex-shrink-0">
-                                  <Badge
-                                    variant="secondary"
-                                    className={getStyleFromBadgeData(status)}
-                                  >
-                                    {status}
-                                  </Badge>
-                                  {status !== "Completed" &&
-                                    status !== "Not Scheduled" && (
-                                      <Button
-                                        variant="default"
-                                        size="sm"
-                                        className={`${joinButtonStyle} h-8 px-4 text-xs`}
-                                        disabled={
-                                          process.env.NODE_ENV === "production"
-                                            ? !isJoinable
-                                            : false
-                                        }
-                                        onClick={() =>
-                                          handleJoinMeeting(appointment)
-                                        }
-                                      >
-                                        {process.env.NODE_ENV === "production"
-                                          ? isJoinable
-                                            ? "Join meet"
-                                            : "Not available"
-                                          : "Join (Dev)"}
-                                      </Button>
+                                        <Button
+                                          variant="ghost"
+                                          size="sm"
+                                          className="text-xs"
+                                          onClick={() =>
+                                            setPage(
+                                              groupKey,
+                                              paginationState.currentPage + 1,
+                                            )
+                                          }
+                                          disabled={
+                                            paginationState.currentPage ===
+                                            totalPages
+                                          }
+                                        >
+                                          Next
+                                          <ChevronRight className="w-4 h-4 ml-1" />
+                                        </Button>
+                                      </>
                                     )}
-                                </div>
-                              </div>
-                            </li>
-                          );
-                        })}
-
-                        {/* Pagination Controls */}
-                        {shouldPaginate && (
-                          <li className="p-3 bg-gray-200 border-t border-gray-300">
-                            <div className="flex justify-end gap-2">
-                              {!paginationState.showAll && (
-                                <>
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    className="text-xs"
-                                    onClick={() =>
-                                      setPage(
-                                        groupKey,
-                                        paginationState.currentPage - 1,
-                                      )
-                                    }
-                                    disabled={paginationState.currentPage === 1}
-                                  >
-                                    <ChevronLeft className="w-4 h-4 mr-1" />
-                                    Previous
-                                  </Button>
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    className="text-xs"
-                                    onClick={() =>
-                                      setPage(
-                                        groupKey,
-                                        paginationState.currentPage + 1,
-                                      )
-                                    }
-                                    disabled={
-                                      paginationState.currentPage === totalPages
-                                    }
-                                  >
-                                    Next
-                                    <ChevronRight className="w-4 h-4 ml-1" />
-                                  </Button>
-                                </>
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      className="text-xs"
+                                      onClick={() => toggleShowAll(groupKey)}
+                                    >
+                                      {paginationState.showAll
+                                        ? "Show Less"
+                                        : "Show All"}
+                                    </Button>
+                                  </div>
+                                </li>
                               )}
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="text-xs"
-                                onClick={() => toggleShowAll(groupKey)}
-                              >
-                                {paginationState.showAll
-                                  ? "Show Less"
-                                  : "Show All"}
-                              </Button>
-                            </div>
-                          </li>
-                        )}
-                      </>
-                    );
-                  })()}
-                </ul>
+                            </>
+                          );
+                        })()}
+                      </ul>
                     </div>
                   )}
                 </div>

@@ -9,6 +9,8 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { CheckCircle } from "lucide-react";
 
 // Redefine SessionStatus (or import if moved to a shared file)
 type SessionStatus =
@@ -18,31 +20,45 @@ type SessionStatus =
   | "To be announced";
 
 type ClientWebinarRegistrationProps = {
-  webinarPlanId: string; // Renamed from webinarId
+  webinarPlanId: string; // The WebinarPlan ID (for URL path)
+  webinarId?: string; // The actual Webinar instance ID (for eventId query param)
   price: number;
-  currency?: string | null; // Added
-  nextSessionDate?: Date; // Renamed from nextSession
-  sessionStatus: SessionStatus; // Added
+  currency?: string | null;
+  nextSessionDate?: Date;
+  sessionStatus: SessionStatus;
+  appointment?: {
+    slotsOfAppointment?: Array<{ user?: Array<{ id: string }> }>;
+  } | null;
 };
 
 export function ClientWebinarRegistration({
   webinarPlanId,
+  webinarId,
   price,
   currency,
   nextSessionDate,
   sessionStatus,
+  appointment,
 }: ClientWebinarRegistrationProps) {
   const { data: session } = useSession();
   const isLoggedIn = !!session?.user;
+  const userId = session?.user?.id;
+
+  // Check if user is already registered for this webinar
+  const isAlreadyRegistered =
+    userId &&
+    appointment?.slotsOfAppointment?.some((slot) =>
+      slot.user?.some((u) => u.id === userId),
+    );
 
   const handleRegistration = () => {
     if (!isLoggedIn) {
       window.location.href = `/auth/signin?callbackUrl=${encodeURIComponent(window.location.href)}`;
       return;
     }
-    // Ensure we only redirect to checkout if the session is upcoming
-    if (sessionStatus === "Upcoming") {
-      window.location.href = `/checkout/plans/webinar/${webinarPlanId}`;
+    // Ensure we only redirect to checkout if the session is upcoming AND we have a webinar instance ID
+    if (sessionStatus === "Upcoming" && webinarId) {
+      window.location.href = `/checkout/plans/webinar/${webinarPlanId}?eventId=${webinarId}`;
     }
   };
 
@@ -82,19 +98,27 @@ export function ClientWebinarRegistration({
   } else if (sessionStatus === "Happening Now") {
     buttonText = "Session in Progress";
     buttonDisabled = true;
+  } else if (sessionStatus === "To be announced" || !webinarId) {
+    // Disable registration when no session is scheduled or no webinar instance exists
+    buttonText = "Registration Opening Soon";
+    buttonDisabled = true;
   }
-  // Note: If sessionStatus is "To be announced" and there's no nextSessionDate,
-  // the button will still say "Pay & Register Now" and be enabled by default.
-  // Additional logic could be added here if registration should be disabled for "To be announced" status.
 
   if (!isLoggedIn) {
     // For non-logged in users, the button primarily serves to redirect to sign-in.
     // We can still reflect the session status in the button text and disable it if not upcoming.
     let signInButtonText = "Sign in to Register";
+    let signInButtonDisabled = false;
+
     if (sessionStatus === "Completed") {
       signInButtonText = "Session Ended";
+      signInButtonDisabled = true;
     } else if (sessionStatus === "Happening Now") {
       signInButtonText = "Session in Progress";
+      signInButtonDisabled = true;
+    } else if (sessionStatus === "To be announced" || !webinarId) {
+      signInButtonText = "Registration Opening Soon";
+      signInButtonDisabled = true;
     }
 
     return (
@@ -106,18 +130,41 @@ export function ClientWebinarRegistration({
           <p className="text-gray-600 mb-4">
             {sessionInfoText} {/* Show current session status info */}
           </p>
-          <p className="text-gray-600 mb-4">
-            Please sign in to register for this webinar.
-          </p>
+          {!signInButtonDisabled && (
+            <p className="text-gray-600 mb-4">
+              Please sign in to register for this webinar.
+            </p>
+          )}
           <Button
             onClick={handleRegistration} // This redirects to sign-in
             className="w-full bg-black hover:bg-gray-800"
-            disabled={
-              sessionStatus === "Completed" || sessionStatus === "Happening Now"
-            } // Disable if not upcoming
+            disabled={signInButtonDisabled}
           >
             {signInButtonText}
           </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  // Show "Already Registered" state for logged-in users who are already registered
+  if (isAlreadyRegistered) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Webinar Registration</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center gap-2 mb-4">
+            <CheckCircle className="h-5 w-5 text-green-600" />
+            <Badge className="bg-green-100 text-green-800 border-green-300">
+              Already Registered
+            </Badge>
+          </div>
+          <p className="text-sm text-gray-600 mb-4">{sessionInfoText}</p>
+          <p className="text-sm text-gray-600">
+            Check your email for webinar details and join link.
+          </p>
         </CardContent>
       </Card>
     );

@@ -27,6 +27,19 @@ export async function GET(
             experience: true,
             rating: true,
             domainId: true,
+            // New fields
+            headline: true,
+            websiteUrl: true,
+            twitterUrl: true,
+            githubUrl: true,
+            videoIntroUrl: true,
+            languages: true,
+            toolsAndTechnologies: true,
+            mentoringStyle: true,
+            sessionTypes: true,
+            profileCompletionPercentage: true,
+            isVerified: true,
+            totalMenteesHelped: true,
           },
         },
         consulteeProfile: {
@@ -40,6 +53,37 @@ export async function GET(
             specialRequirements: true,
             interests: true,
             goals: true,
+            // New fields
+            careerStage: true,
+            currentCompany: true,
+            industry: true,
+            skillsToDevelop: true,
+            linkedinUrl: true,
+            budgetPreference: true,
+          },
+        },
+        staffProfile: {
+          select: {
+            id: true,
+            department: true,
+            position: true,
+            permissions: true,
+            responsibilities: true,
+            // New fields
+            employeeId: true,
+            hireDate: true,
+            reportsTo: true,
+            skills: true,
+            workSchedule: true,
+          },
+        },
+        adminProfile: {
+          select: {
+            id: true,
+            adminLevel: true,
+            accessScope: true,
+            assignedRegions: true,
+            notes: true,
           },
         },
       },
@@ -88,6 +132,13 @@ export async function PUT(
       onboardingCompleted,
       role,
       currentTimezone,
+      // New user fields
+      dateOfBirth,
+      gender,
+      city,
+      country,
+      linkedinUrl,
+      bio,
     } = body;
 
     // Input validation
@@ -102,6 +153,14 @@ export async function PUT(
       return NextResponse.json({ error: "Invalid role" }, { status: 400 });
     }
 
+    // Validate bio length if provided
+    if (bio && bio.length > 160) {
+      return NextResponse.json(
+        { error: "Bio must be 160 characters or less" },
+        { status: 400 },
+      );
+    }
+
     const updatedUser = await prisma.user.update({
       where: { id: id },
       data: {
@@ -113,6 +172,13 @@ export async function PUT(
         onboardingCompleted,
         role: role as UserRole,
         timezone: currentTimezone,
+        // New user fields
+        dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : undefined,
+        gender,
+        city,
+        country,
+        linkedinUrl,
+        bio,
       },
       select: {
         id: true,
@@ -124,6 +190,13 @@ export async function PUT(
         onboardingCompleted: true,
         role: true,
         timezone: true,
+        // New fields
+        dateOfBirth: true,
+        gender: true,
+        city: true,
+        country: true,
+        linkedinUrl: true,
+        bio: true,
       },
     });
 

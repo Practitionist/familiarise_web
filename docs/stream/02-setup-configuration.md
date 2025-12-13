@@ -3,6 +3,7 @@
 > Complete guide for setting up Stream SDK integration in Familiarise
 
 ## Table of Contents
+
 - [Environment Variables](#environment-variables)
 - [Package Installation](#package-installation)
 - [Stream Dashboard Setup](#stream-dashboard-setup)
@@ -34,14 +35,15 @@ STREAM_SYNC_SECRET=your_secret_for_sync_endpoint
 
 ### Variable Breakdown
 
-| Variable | Scope | Purpose | Security |
-|----------|-------|---------|----------|
-| `NEXT_PUBLIC_STREAM_API_KEY` | Public (Client) | Identifies your Stream app | Public |
-| `STREAM_API_SECRET` | Private (Server) | Authenticates server operations | **SECRET** |
-| `DATABASE_URL` | Private (Server) | User data for token generation | **SECRET** |
-| `STREAM_SYNC_SECRET` | Private (Server) | Protects sync API endpoint | **SECRET** |
+| Variable                     | Scope            | Purpose                         | Security   |
+| ---------------------------- | ---------------- | ------------------------------- | ---------- |
+| `NEXT_PUBLIC_STREAM_API_KEY` | Public (Client)  | Identifies your Stream app      | Public     |
+| `STREAM_API_SECRET`          | Private (Server) | Authenticates server operations | **SECRET** |
+| `DATABASE_URL`               | Private (Server) | User data for token generation  | **SECRET** |
+| `STREAM_SYNC_SECRET`         | Private (Server) | Protects sync API endpoint      | **SECRET** |
 
 ⚠️ **Security Warning:**
+
 - `NEXT_PUBLIC_` prefix makes variables accessible to the browser
 - **NEVER** prefix `STREAM_API_SECRET` with `NEXT_PUBLIC_`
 - Keep secrets in server-side code only
@@ -73,6 +75,7 @@ STREAM_SYNC_SECRET=your_secret_for_sync_endpoint
 #### Step 4: Add to Environment File
 
 **For Development:**
+
 ```bash
 # .env.local (never commit this file!)
 NEXT_PUBLIC_STREAM_API_KEY=your_key_here
@@ -81,6 +84,7 @@ DATABASE_URL=postgresql://...
 ```
 
 **For Production:**
+
 ```bash
 # Set in Vercel/Railway/hosting platform
 NEXT_PUBLIC_STREAM_API_KEY=prod_key
@@ -160,12 +164,12 @@ npm install stream-chat-react
 
 ### Package Purposes
 
-| Package | Purpose | Used In |
-|---------|---------|---------|
-| `@stream-io/node-sdk` | Server-side token generation | `actions/stream/chat/stream.action.ts` |
-| `@stream-io/video-react-sdk` | Video client & UI | `providers/StreamProvider.tsx` |
-| `stream-chat` | Chat client core | `providers/StreamProvider.tsx` |
-| `stream-chat-react` | Chat UI components | Chat components |
+| Package                      | Purpose                      | Used In                                |
+| ---------------------------- | ---------------------------- | -------------------------------------- |
+| `@stream-io/node-sdk`        | Server-side token generation | `actions/stream/chat/stream.action.ts` |
+| `@stream-io/video-react-sdk` | Video client & UI            | `providers/StreamProvider.tsx`         |
+| `stream-chat`                | Chat client core             | `providers/StreamProvider.tsx`         |
+| `stream-chat-react`          | Chat UI components           | Chat components                        |
 
 ### Peer Dependencies
 
@@ -191,6 +195,7 @@ npm list stream-chat-react
 ```
 
 **Expected Output:**
+
 ```
 familiarise_web@0.2.0 /path/to/project
 ├── @stream-io/node-sdk@0.4.17
@@ -205,8 +210,8 @@ Add Stream's default styles to your root layout:
 
 ```typescript
 // app/layout.tsx
-import "@stream-io/video-react-sdk/dist/css/styles.css"
-import "stream-chat-react/dist/css/v2/index.css"
+import "@stream-io/video-react-sdk/dist/css/styles.css";
+import "stream-chat-react/dist/css/v2/index.css";
 ```
 
 ⚠️ **Important:** Import CSS **before** your custom styles to allow overrides.
@@ -223,32 +228,34 @@ Stream provides default channel types. For Familiarise, configure:
 
 #### messaging (1-on-1 Chats)
 
-| Setting | Value | Purpose |
-|---------|-------|---------|
-| Type Name | `messaging` | Built-in type |
-| Max Members | 10 | Small group chats |
-| Read Events | ✅ Enabled | Show read receipts |
-| Reactions | ✅ Enabled | Message reactions |
-| Replies | ✅ Enabled | Threaded replies |
-| Typing Indicators | ✅ Enabled | "User is typing..." |
+| Setting           | Value       | Purpose             |
+| ----------------- | ----------- | ------------------- |
+| Type Name         | `messaging` | Built-in type       |
+| Max Members       | 10          | Small group chats   |
+| Read Events       | ✅ Enabled  | Show read receipts  |
+| Reactions         | ✅ Enabled  | Message reactions   |
+| Replies           | ✅ Enabled  | Threaded replies    |
+| Typing Indicators | ✅ Enabled  | "User is typing..." |
 
 **Use Cases:**
+
 - Direct consultations
 - 1-on-1 subscription chats
 - Private conversations
 
 #### team (Group Channels)
 
-| Setting | Value | Purpose |
-|---------|-------|---------|
-| Type Name | `team` | Built-in type |
-| Max Members | Unlimited | Large events |
-| Read Events | ✅ Enabled | Track attendance |
-| Reactions | ✅ Enabled | Engagement |
-| Replies | ✅ Enabled | Discussions |
-| Push Notifications | ✅ Enabled | Event updates |
+| Setting            | Value      | Purpose          |
+| ------------------ | ---------- | ---------------- |
+| Type Name          | `team`     | Built-in type    |
+| Max Members        | Unlimited  | Large events     |
+| Read Events        | ✅ Enabled | Track attendance |
+| Reactions          | ✅ Enabled | Engagement       |
+| Replies            | ✅ Enabled | Discussions      |
+| Push Notifications | ✅ Enabled | Event updates    |
 
 **Use Cases:**
+
 - Webinars (broadcast + Q&A)
 - Online classes (instructor + students)
 - Group events
@@ -307,12 +314,12 @@ Stream provides these default roles:
 
 **Once bug is fixed**, roles should map as follows:
 
-| App Role | Stream Role | Permissions |
-|----------|-------------|-------------|
-| `ADMIN` | `admin` | Full system access |
+| App Role     | Stream Role         | Permissions               |
+| ------------ | ------------------- | ------------------------- |
+| `ADMIN`      | `admin`             | Full system access        |
 | `CONSULTANT` | `channel_moderator` | Create channels, moderate |
-| `CONSULTEE` | `user` | Read, send messages |
-| `USER` | `user` | Standard permissions |
+| `CONSULTEE`  | `user`              | Read, send messages       |
+| `USER`       | `user`              | Standard permissions      |
 
 **Implementation Location:** `lib/user.ts:98-115` (`mapRoleToStream` function)
 
@@ -322,41 +329,41 @@ Stream provides these default roles:
 
 Enable these features:
 
-| Feature | Status | Purpose |
-|---------|--------|---------|
-| Message Search | ✅ Enable | Search chat history |
+| Feature            | Status    | Purpose                      |
+| ------------------ | --------- | ---------------------------- |
+| Message Search     | ✅ Enable | Search chat history          |
 | Push Notifications | ✅ Enable | Mobile/browser notifications |
-| Typing Indicators | ✅ Enable | Real-time typing status |
-| Read Receipts | ✅ Enable | Message read status |
-| Reactions | ✅ Enable | Emoji reactions |
-| Threads | ✅ Enable | Reply threading |
-| URL Enrichment | ✅ Enable | Link previews |
-| File Uploads | ✅ Enable | Image/document sharing |
+| Typing Indicators  | ✅ Enable | Real-time typing status      |
+| Read Receipts      | ✅ Enable | Message read status          |
+| Reactions          | ✅ Enable | Emoji reactions              |
+| Threads            | ✅ Enable | Reply threading              |
+| URL Enrichment     | ✅ Enable | Link previews                |
+| File Uploads       | ✅ Enable | Image/document sharing       |
 
 ### 4. Configure Video Settings
 
 **Navigation:** Dashboard → Video → Settings
 
-| Setting | Recommended Value | Notes |
-|---------|------------------|-------|
-| Default Call Type | `default` | Basic video calls |
-| Max Participants | 100 | Adjust per needs |
-| Recording | Optional | Enable if needed |
-| Screen Sharing | ✅ Enable | For presentations |
-| Picture-in-Picture | ✅ Enable | Multitasking |
-| Video Quality | Auto | Adapts to bandwidth |
-| Backstage Mode | ✅ Enable | Pre-call prep for hosts |
+| Setting            | Recommended Value | Notes                   |
+| ------------------ | ----------------- | ----------------------- |
+| Default Call Type  | `default`         | Basic video calls       |
+| Max Participants   | 100               | Adjust per needs        |
+| Recording          | Optional          | Enable if needed        |
+| Screen Sharing     | ✅ Enable         | For presentations       |
+| Picture-in-Picture | ✅ Enable         | Multitasking            |
+| Video Quality      | Auto              | Adapts to bandwidth     |
+| Backstage Mode     | ✅ Enable         | Pre-call prep for hosts |
 
 ### 5. Security Settings
 
 **Navigation:** Dashboard → Security
 
-| Setting | Value | Purpose |
-|---------|-------|---------|
-| Token Validity | 1 hour | Automatic token expiry |
-| API Rate Limits | Default | Prevent abuse |
+| Setting            | Value     | Purpose                     |
+| ------------------ | --------- | --------------------------- |
+| Token Validity     | 1 hour    | Automatic token expiry      |
+| API Rate Limits    | Default   | Prevent abuse               |
 | Webhook Signatures | ✅ Enable | Verify webhook authenticity |
-| IP Allowlist | Optional | Restrict server IPs |
+| IP Allowlist       | Optional  | Restrict server IPs         |
 
 ---
 
@@ -406,7 +413,7 @@ export const tokenProvider = async (userId: string) => {
     const streamRole = mapRoleToStream(userDetails.role);
 
     console.log(
-      `Generating token for user ${userDetails.id} with role ${streamRole}`
+      `Generating token for user ${userDetails.id} with role ${streamRole}`,
     );
 
     // Generate user token with the correct payload structure
@@ -443,6 +450,7 @@ export const chatTokenProvider = async (userId: string) => {
 ```
 
 **Key Points:**
+
 - Server actions (must have `"use server"` directive)
 - Tokens valid for 1 hour
 - Separate providers for chat and video
@@ -455,6 +463,7 @@ export const chatTokenProvider = async (userId: string) => {
 This provider manages both chat and video client connections. See the actual implementation in the file for complete details.
 
 **Key Features:**
+
 - Dual-client pattern (chat + video)
 - Token caching (50-minute cache for 1-hour tokens)
 - Connection state management
@@ -498,6 +507,7 @@ export default async function RootLayout({
 ```
 
 **Props:**
+
 - `userId` - Authenticated user ID (required)
 - `enableChat` - Enable chat client (default: true)
 - `enableVideo` - Enable video client (default: true)
@@ -582,6 +592,7 @@ export default function StreamTestPage() {
 4. Open browser console for debug logs
 
 **Expected Console Output:**
+
 ```
 Connecting user user_123 to Stream Chat
 Chat connection successful for user user_123
@@ -626,7 +637,9 @@ export function validateStreamEnv() {
   }
 
   if (errors.length > 0) {
-    throw new Error(`Stream environment validation failed:\n${errors.join("\n")}`);
+    throw new Error(
+      `Stream environment validation failed:\n${errors.join("\n")}`,
+    );
   }
 
   return {
@@ -677,6 +690,7 @@ try {
 ```
 
 Run before deployment:
+
 ```bash
 npx ts-node scripts/check-stream-env.ts
 ```
@@ -688,6 +702,7 @@ npx ts-node scripts/check-stream-env.ts
 ### Error 1: "API Key Not Defined"
 
 **Full Error:**
+
 ```
 Error: NEXT_PUBLIC_STREAM_API_KEY is not set
 ```
@@ -697,11 +712,13 @@ Error: NEXT_PUBLIC_STREAM_API_KEY is not set
 **Solutions:**
 
 1. **Check file exists:**
+
    ```bash
    ls -la .env.local
    ```
 
 2. **Verify variable name:**
+
    ```env
    # ✅ Correct (with NEXT_PUBLIC_ prefix)
    NEXT_PUBLIC_STREAM_API_KEY=abc123
@@ -711,6 +728,7 @@ Error: NEXT_PUBLIC_STREAM_API_KEY is not set
    ```
 
 3. **Restart dev server:**
+
    ```bash
    # Kill existing process
    # Restart
@@ -726,6 +744,7 @@ Error: NEXT_PUBLIC_STREAM_API_KEY is not set
 ### Error 2: "Invalid API Secret"
 
 **Full Error:**
+
 ```
 StreamChat error: Invalid API secret
 ```
@@ -740,6 +759,7 @@ StreamChat error: Invalid API secret
    - Copy secret exactly (no spaces)
 
 2. **Check for quotes/spaces:**
+
    ```env
    # ❌ Wrong (has quotes)
    STREAM_API_SECRET="abc123"
@@ -755,6 +775,7 @@ StreamChat error: Invalid API secret
 ### Error 3: "Module Not Found"
 
 **Full Error:**
+
 ```
 Cannot find module 'stream-chat'
 ```
@@ -764,17 +785,20 @@ Cannot find module 'stream-chat'
 **Solutions:**
 
 1. **Reinstall packages:**
+
    ```bash
    rm -rf node_modules package-lock.json
    npm install
    ```
 
 2. **Verify installation:**
+
    ```bash
    npm list stream-chat
    ```
 
 3. **Check package.json:**
+
    ```json
    {
      "dependencies": {
@@ -792,6 +816,7 @@ Cannot find module 'stream-chat'
 ### Error 4: "User Not Found"
 
 **Full Error:**
+
 ```
 Error: User not found
 ```
@@ -801,11 +826,13 @@ Error: User not found
 **Solutions:**
 
 1. **Check DATABASE_URL is set:**
+
    ```bash
    echo $DATABASE_URL
    ```
 
 2. **Verify user exists in database:**
+
    ```sql
    SELECT id, name FROM "User" WHERE id = 'user_id';
    ```
@@ -818,6 +845,7 @@ Error: User not found
 ### Error 5: CORS Errors
 
 **Full Error:**
+
 ```
 Access to fetch at 'https://stream-io-api.com' from origin 'http://localhost:3000'
 has been blocked by CORS policy
@@ -828,6 +856,7 @@ has been blocked by CORS policy
 **Solutions:**
 
 1. **Ensure server actions have directive:**
+
    ```typescript
    "use server"; // Must be at top of file
 
@@ -837,17 +866,19 @@ has been blocked by CORS policy
    ```
 
 2. **Don't call server actions from client imports:**
+
    ```typescript
    // ❌ Wrong (importing server code in client)
    import { tokenProvider } from "@/actions/stream.action";
 
    // ✅ Correct (use as callback)
-   tokenProvider: () => tokenProvider(userId)
+   tokenProvider: () => tokenProvider(userId);
    ```
 
 ### Error 6: "Token Expired"
 
 **Full Error:**
+
 ```
 StreamChat error: Token expired
 ```
@@ -857,12 +888,14 @@ StreamChat error: Token expired
 **Solutions:**
 
 1. **Check system time:**
+
    ```bash
    date
    # Should match current time
    ```
 
 2. **Synchronize time (Linux):**
+
    ```bash
    sudo ntpdate pool.ntp.org
    ```
@@ -882,6 +915,7 @@ StreamChat error: Token expired
 Stream SDK works with Next.js 13+ App Router.
 
 **File Structure:**
+
 ```
 app/
 ├── layout.tsx          # Wrap with StreamProvider
@@ -910,6 +944,7 @@ export async function tokenProvider(userId: string) {
 ```
 
 **Why Server Actions?**
+
 - Keeps API secret secure
 - No CORS issues
 - Better performance
@@ -932,12 +967,13 @@ export function ChatComponent() {
 
 ### Environment Variables in Next.js
 
-| Prefix | Access | Example |
-|--------|--------|---------|
+| Prefix         | Access          | Example                      |
+| -------------- | --------------- | ---------------------------- |
 | `NEXT_PUBLIC_` | Client + Server | `NEXT_PUBLIC_STREAM_API_KEY` |
-| *(none)* | Server only | `STREAM_API_SECRET` |
+| _(none)_       | Server only     | `STREAM_API_SECRET`          |
 
 **Loading Order:**
+
 1. `.env.local` (local development, gitignored)
 2. `.env.development` (development defaults)
 3. `.env.production` (production defaults)
@@ -989,6 +1025,7 @@ DATABASE_URL=postgresql://localhost:5432/familiarise_dev
 ```
 
 **Best Practices:**
+
 - Use separate Stream app for development
 - Shorter token expiry for testing (e.g., 10 minutes)
 - Enable debug logging
@@ -1005,6 +1042,7 @@ STREAM_SYNC_SECRET=random_secure_64_char_string
 ```
 
 **Security Checklist:**
+
 - [ ] Different API keys for dev/prod
 - [ ] API secret never exposed to client
 - [ ] HTTPS enforced

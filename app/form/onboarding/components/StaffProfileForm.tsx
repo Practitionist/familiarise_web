@@ -11,7 +11,6 @@ import { responsibilitiesAndPermissions } from "@/schemas/responsibbilities-perm
 import { StaffProfile, PersonalInfoAndRole } from "@/schemas/user";
 import React, { useEffect, useState } from "react";
 import { Controller, useFormContext } from "react-hook-form";
-import { useThemeClasses } from "../useTheme";
 
 interface Props {
   onNext: (data: any) => void;
@@ -20,7 +19,6 @@ interface Props {
 }
 
 const StaffProfileForm: React.FC<Props> = ({ onNext, onBack, initialData }) => {
-  const { classes, colors } = useThemeClasses();
   const [departments, setDepartments] = useState<string[]>([]);
   const [positions, setPositions] = useState<string[]>([]);
 
@@ -72,112 +70,107 @@ const StaffProfileForm: React.FC<Props> = ({ onNext, onBack, initialData }) => {
   };
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="w-full space-y-6">
-      <div className="space-y-3">
-        <Label
-          htmlFor="department"
-          className={`${colors.textPrimary} font-medium`}
-        >
-          Department
-        </Label>
-        <Controller
-          name="department"
-          control={control}
-          rules={{ required: "Department is required" }}
-          render={({ field }) => (
-            <Select onValueChange={field.onChange} value={field.value}>
-              <SelectTrigger
-                className={`${colors.inputBg} ${colors.inputBorder} ${colors.textPrimary} h-12 rounded-lg ${colors.inputFocus}`}
-              >
-                <SelectValue
-                  placeholder="Select a department"
-                  className={colors.textSecondary}
-                />
-              </SelectTrigger>
-              <SelectContent className={classes.dropdown}>
-                {departments.map((department) => (
-                  <SelectItem
-                    key={department}
-                    value={department}
-                    className={classes.dropdownItem}
-                  >
-                    {department}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+    <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+      <div className="space-y-4">
+        <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
+          Staff Role Details
+        </h3>
+
+        <div className="space-y-2">
+          <Label htmlFor="department">
+            Department <span className="text-destructive">*</span>
+          </Label>
+          <Controller
+            name="department"
+            control={control}
+            rules={{ required: "Department is required" }}
+            render={({ field }) => (
+              <Select onValueChange={field.onChange} value={field.value}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select a department" />
+                </SelectTrigger>
+                <SelectContent>
+                  {departments.map((department) => (
+                    <SelectItem key={department} value={department}>
+                      {department}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          />
+          {errors.department && (
+            <p className="text-sm text-destructive">
+              {errors.department.message as string}
+            </p>
           )}
-        />
-        {errors.department && (
-          <p className={`${colors.error} text-sm`}>
-            {errors.department.message as string}
-          </p>
-        )}
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="position">
+            Position <span className="text-destructive">*</span>
+          </Label>
+          <Controller
+            name="position"
+            control={control}
+            rules={{ required: "Position is required" }}
+            render={({ field }) => (
+              <Select
+                onValueChange={field.onChange}
+                value={field.value}
+                disabled={!watchDepartment}
+              >
+                <SelectTrigger
+                  className={!watchDepartment ? "opacity-50 cursor-not-allowed" : ""}
+                >
+                  <SelectValue
+                    placeholder={
+                      !watchDepartment
+                        ? "Select a department first"
+                        : "Select a position"
+                    }
+                  />
+                </SelectTrigger>
+                <SelectContent>
+                  {positions.map((position) => (
+                    <SelectItem key={position} value={position}>
+                      {position}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          />
+          {errors.position && (
+            <p className="text-sm text-destructive">
+              {errors.position.message as string}
+            </p>
+          )}
+        </div>
       </div>
 
-      <div className="space-y-3">
-        <Label
-          htmlFor="position"
-          className={`${colors.textPrimary} font-medium`}
-        >
-          Position
-        </Label>
-        <Controller
-          name="position"
-          control={control}
-          rules={{ required: "Position is required" }}
-          render={({ field }) => (
-            <Select
-              onValueChange={field.onChange}
-              value={field.value}
-              disabled={!watchDepartment}
-            >
-              <SelectTrigger
-                className={`${colors.inputBg} ${colors.inputBorder} ${colors.textPrimary} h-12 rounded-lg ${colors.inputFocus} ${!watchDepartment ? "opacity-50 cursor-not-allowed" : ""}`}
-              >
-                <SelectValue
-                  placeholder={
-                    !watchDepartment
-                      ? "Select a department first"
-                      : "Select a position"
-                  }
-                  className={colors.textSecondary}
-                />
-              </SelectTrigger>
-              <SelectContent className={classes.dropdown}>
-                {positions.map((position) => (
-                  <SelectItem
-                    key={position}
-                    value={position}
-                    className={classes.dropdownItem}
-                  >
-                    {position}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
-        />
-        {errors.position && (
-          <p className={`${colors.error} text-sm`}>
-            {errors.position.message as string}
+      {/* Help text */}
+      {watchDepartment && (
+        <div className="bg-muted/50 rounded-lg p-4 text-sm text-muted-foreground">
+          <p>
+            After selecting your department and position, you'll be able to choose
+            your specific responsibilities and permissions in the next step.
           </p>
-        )}
-      </div>
+        </div>
+      )}
 
-      <div className="flex justify-between gap-4 pt-6">
+      {/* Navigation */}
+      <div className="flex gap-4 pt-4">
         <Button
           type="button"
           onClick={onBack}
-          className={`flex-1 h-12 ${classes.secondaryButton}`}
+          variant="outline"
+          className="flex-1"
         >
-          ← Back
+          Back
         </Button>
-        <Button
-          type="submit"
-          className={`flex-1 h-12 ${classes.primaryButton}`}
-        >
-          Next Step →
+        <Button type="submit" className="flex-1">
+          Continue
         </Button>
       </div>
     </form>

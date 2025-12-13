@@ -6,7 +6,6 @@
 
 import authOptions from "@/app/api/auth/[...nextauth]/options";
 import { listDisputes, submitDisputeEvidence } from "@/lib/payments";
-import { updateDisputeStatus, withPaymentTransaction } from "@/lib/payments/core/transactions";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { getServerSession } from "next-auth";
@@ -69,7 +68,8 @@ export async function GET(req: NextRequest) {
     if (gateway && gateway !== "STRIPE") {
       return NextResponse.json(
         {
-          error: "Only Stripe supports direct dispute API. Razorpay disputes are webhook-only.",
+          error:
+            "Only Stripe supports direct dispute API. Razorpay disputes are webhook-only.",
         },
         { status: 400 },
       );
@@ -160,9 +160,10 @@ export async function POST(req: NextRequest) {
 
     // Validate request
     const body = await req.json();
-    const { disputeId: dbDisputeId, evidence } = submitEvidenceSchema.parse(body);
+    const { disputeId: dbDisputeId, evidence } =
+      submitEvidenceSchema.parse(body);
 
-    // Get dispute from database
+    // STEP 1: Get dispute and validate OUTSIDE transaction
     const dispute = await prisma.dispute.findUnique({
       where: { id: dbDisputeId },
       include: {
@@ -175,10 +176,7 @@ export async function POST(req: NextRequest) {
     });
 
     if (!dispute) {
-      return NextResponse.json(
-        { error: "Dispute not found" },
-        { status: 404 },
-      );
+      return NextResponse.json({ error: "Dispute not found" }, { status: 404 });
     }
 
     // Check if dispute can still accept evidence
@@ -204,36 +202,35 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Submit evidence with transaction safety
-    const result = await withPaymentTransaction(async (tx) => {
-      // Submit to Stripe
-      const disputeResult = await submitDisputeEvidence(
-        {
-          disputeId: dispute.disputeId,
-          evidence,
-        },
-        dispute.paymentGateway,
-      );
+    // STEP 2: Submit to Stripe OUTSIDE transaction
+    // This prevents holding DB connections during potentially slow API calls
+    const disputeResult = await submitDisputeEvidence(
+      {
+        disputeId: dispute.disputeId,
+        evidence,
+      },
+      dispute.paymentGateway,
+    );
 
-      // Update database
-      await updateDisputeStatus(
-        tx,
-        dispute.disputeId,
-        disputeResult.status,
-        disputeResult.evidence as Prisma.InputJsonValue,
-      );
-
-      return disputeResult;
+    // STEP 3: Update database in a small, focused transaction
+    await prisma.dispute.update({
+      where: { disputeId: dispute.disputeId },
+      data: {
+        status: disputeResult.status,
+        evidence: disputeResult.evidence as Prisma.InputJsonValue,
+      },
     });
+
+    const result = { dispute, disputeResult };
 
     return NextResponse.json({
       success: true,
       dispute: {
-        id: dispute.id,
-        disputeId: result.disputeId,
-        status: result.status,
-        isChargeRefundable: result.isChargeRefundable,
-        dueBy: result.dueBy,
+        id: result.dispute.id,
+        disputeId: result.disputeResult.disputeId,
+        status: result.disputeResult.status,
+        isChargeRefundable: result.disputeResult.isChargeRefundable,
+        dueBy: result.disputeResult.dueBy,
       },
       message: "Evidence submitted successfully",
     });
@@ -250,9 +247,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       {
         error:
-          error instanceof Error
-            ? error.message
-            : "Failed to submit evidence",
+          error instanceof Error ? error.message : "Failed to submit evidence",
       },
       { status: 500 },
     );

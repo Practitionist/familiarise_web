@@ -3,10 +3,7 @@
 import { useToast } from "@/hooks/use-toast";
 import { isDevelopmentEnvironment } from "@/utils/env";
 import type { SlotOfAppointment } from "@prisma/client";
-import type {
-  IAppointment,
-  ISlotOfAppointment,
-} from "@/app/dashboard/consultant/[consultantId]/types";
+import type { TAppointment, TSlotOfAppointment } from "@/types/appointment";
 import { useStreamVideoClient } from "@stream-io/video-react-sdk";
 import { Avatar, AvatarFallback, AvatarImage } from "components/ui/avatar";
 import { Badge } from "components/ui/badge";
@@ -27,8 +24,8 @@ import { formatTimeUntil } from "../../utils/scheduleHelpers";
 import { formatDateTime, formatTimeString } from "./utils";
 
 interface SlotCardProps {
-  appointment: IAppointment;
-  slot: ISlotOfAppointment;
+  appointment: TAppointment;
+  slot: TSlotOfAppointment;
   isTentative: boolean;
   isFirst?: boolean;
 }
@@ -66,9 +63,7 @@ export function SlotCard({
 
       const meetingId = await getOrCreateAppointmentMeeting(
         client,
-        {
-          ...appointment,
-        } as any,
+        appointment,
         slot,
       );
 

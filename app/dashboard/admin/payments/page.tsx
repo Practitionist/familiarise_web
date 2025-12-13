@@ -14,7 +14,11 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { useState } from "react";
-import { PaymentGateway, PaymentStatus, AppointmentsType } from "@prisma/client";
+import {
+  PaymentGateway,
+  PaymentStatus,
+  AppointmentsType,
+} from "@prisma/client";
 
 // Fetch payments with filters
 async function fetchPayments(params: {
@@ -52,7 +56,14 @@ export default function AdminPaymentsPage() {
   const limit = 20;
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ["admin-payments", page, status, gateway, appointmentType, search],
+    queryKey: [
+      "admin-payments",
+      page,
+      status,
+      gateway,
+      appointmentType,
+      search,
+    ],
     queryFn: () =>
       fetchPayments({ page, limit, status, gateway, appointmentType, search }),
     staleTime: 30 * 1000, // 30 seconds

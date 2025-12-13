@@ -1,6 +1,6 @@
 "use client";
 
-import { ScheduleType } from "@prisma/client";
+import { ScheduleType, SessionType } from "@prisma/client";
 import { TrashIcon } from "assets/icons";
 import { Button } from "components/ui/button";
 import { Input } from "components/ui/input";
@@ -16,6 +16,7 @@ import {
 import { Separator } from "components/ui/separator";
 import { Textarea } from "components/ui/textarea";
 import { useToast } from "components/ui/use-toast";
+import { Checkbox } from "components/ui/checkbox";
 import React, { useCallback, useEffect, useState } from "react";
 import { TConsultantProfile } from "types/consultant";
 import { MultiSelect } from "../../components/MultiSelect";
@@ -447,6 +448,16 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
           scheduleType === ScheduleType.CUSTOM
             ? formatSlotsForApi(customSlots, false, timezone || "UTC")
             : [],
+        // Include new fields
+        headline: formData.headline || null,
+        websiteUrl: formData.websiteUrl || null,
+        twitterUrl: formData.twitterUrl || null,
+        githubUrl: formData.githubUrl || null,
+        videoIntroUrl: formData.videoIntroUrl || null,
+        languages: formData.languages || [],
+        toolsAndTechnologies: formData.toolsAndTechnologies || [],
+        mentoringStyle: formData.mentoringStyle || null,
+        sessionTypes: formData.sessionTypes || [],
       };
 
       const response = await fetch(`/api/user/consultants/${consultant.id}`, {
@@ -648,6 +659,193 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
               placeholder="Share your professional journey, achievements, and what clients can expect when working with you..."
               className="h-[calc(100%-6rem)] resize-none"
             />
+          </div>
+        </div>
+      </div>
+
+      <Separator />
+
+      {/* Enhanced Profile Section */}
+      <div>
+        <h2 className="text-2xl font-bold mb-3">Enhanced Profile</h2>
+        <p className="text-sm text-gray-600 mb-8">
+          Add more details to help mentees find and connect with you
+        </p>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          {/* Left Column - Headlines and Bio */}
+          <div className="space-y-6">
+            <div className="bg-gray-50 p-6 rounded-lg">
+              <Label className="text-lg font-semibold mb-4 block">
+                Profile Highlights
+              </Label>
+              <div className="space-y-4">
+                <div>
+                  <Label className="text-sm text-gray-600">
+                    Professional Headline
+                  </Label>
+                  <Input
+                    name="headline"
+                    value={formData.headline}
+                    onChange={handleInputChange}
+                    placeholder="e.g., Senior Software Engineer | 10+ Years in AI/ML"
+                    className="mt-1"
+                    maxLength={120}
+                  />
+                  <p className="text-xs text-gray-400 mt-1">
+                    {formData.headline?.length || 0}/120 characters
+                  </p>
+                </div>
+
+                <div>
+                  <Label className="text-sm text-gray-600">
+                    Mentoring Style
+                  </Label>
+                  <Textarea
+                    name="mentoringStyle"
+                    value={formData.mentoringStyle}
+                    onChange={handleInputChange}
+                    placeholder="Describe how you approach mentoring sessions (e.g., hands-on, structured, conversational...)"
+                    className="mt-1 resize-none h-24"
+                  />
+                </div>
+
+                <div>
+                  <Label className="text-sm text-gray-600">
+                    Video Introduction URL
+                  </Label>
+                  <Input
+                    name="videoIntroUrl"
+                    value={formData.videoIntroUrl}
+                    onChange={handleInputChange}
+                    placeholder="https://youtube.com/watch?v=..."
+                    className="mt-1"
+                    type="url"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-gray-50 p-6 rounded-lg">
+              <Label className="text-lg font-semibold mb-4 block">
+                Session Types
+              </Label>
+              <p className="text-sm text-gray-600 mb-4">
+                Select the types of sessions you offer
+              </p>
+              <div className="space-y-3">
+                {Object.values(SessionType).map((type) => (
+                  <div key={type} className="flex items-center space-x-3">
+                    <Checkbox
+                      id={`session-${type}`}
+                      checked={formData.sessionTypes?.includes(type)}
+                      onCheckedChange={(checked) => {
+                        setFormData((prev) => ({
+                          ...prev,
+                          sessionTypes: checked
+                            ? [...(prev.sessionTypes || []), type]
+                            : (prev.sessionTypes || []).filter((t) => t !== type),
+                        }));
+                      }}
+                    />
+                    <Label htmlFor={`session-${type}`} className="text-sm cursor-pointer">
+                      {type === "ONE_ON_ONE" && "1:1 Sessions"}
+                      {type === "GROUP" && "Group Sessions"}
+                      {type === "ASYNC_REVIEW" && "Async Review (Code/Document)"}
+                    </Label>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Right Column - Social Links and Skills */}
+          <div className="space-y-6">
+            <div className="bg-gray-50 p-6 rounded-lg">
+              <Label className="text-lg font-semibold mb-4 block">
+                Social & Professional Links
+              </Label>
+              <div className="space-y-4">
+                <div>
+                  <Label className="text-sm text-gray-600">Website</Label>
+                  <Input
+                    name="websiteUrl"
+                    value={formData.websiteUrl}
+                    onChange={handleInputChange}
+                    placeholder="https://your-portfolio.com"
+                    className="mt-1"
+                    type="url"
+                  />
+                </div>
+
+                <div>
+                  <Label className="text-sm text-gray-600">GitHub</Label>
+                  <Input
+                    name="githubUrl"
+                    value={formData.githubUrl}
+                    onChange={handleInputChange}
+                    placeholder="https://github.com/username"
+                    className="mt-1"
+                    type="url"
+                  />
+                </div>
+
+                <div>
+                  <Label className="text-sm text-gray-600">Twitter/X</Label>
+                  <Input
+                    name="twitterUrl"
+                    value={formData.twitterUrl}
+                    onChange={handleInputChange}
+                    placeholder="https://twitter.com/username"
+                    className="mt-1"
+                    type="url"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-gray-50 p-6 rounded-lg">
+              <Label className="text-lg font-semibold mb-4 block">
+                Skills & Languages
+              </Label>
+              <div className="space-y-4">
+                <div>
+                  <Label className="text-sm text-gray-600">
+                    Languages Spoken
+                  </Label>
+                  <Input
+                    value={(formData.languages || []).join(", ")}
+                    onChange={(e) => {
+                      const languages = e.target.value
+                        .split(",")
+                        .map((l) => l.trim())
+                        .filter(Boolean);
+                      setFormData((prev) => ({ ...prev, languages }));
+                    }}
+                    placeholder="English, Hindi, Spanish (comma-separated)"
+                    className="mt-1"
+                  />
+                </div>
+
+                <div>
+                  <Label className="text-sm text-gray-600">
+                    Tools & Technologies
+                  </Label>
+                  <Input
+                    value={(formData.toolsAndTechnologies || []).join(", ")}
+                    onChange={(e) => {
+                      const toolsAndTechnologies = e.target.value
+                        .split(",")
+                        .map((t) => t.trim())
+                        .filter(Boolean);
+                      setFormData((prev) => ({ ...prev, toolsAndTechnologies }));
+                    }}
+                    placeholder="React, Python, AWS (comma-separated)"
+                    className="mt-1"
+                  />
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
