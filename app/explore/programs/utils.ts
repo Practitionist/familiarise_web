@@ -3,20 +3,50 @@ import {
   ClassPlan as PrismaClassPlan,
   WebinarPlan as PrismaWebinarPlan,
 } from "@prisma/client";
+import {
+  isUserEnrolled,
+  isUserRegisteredForWebinar,
+} from "@/lib/payments/utils/participants";
 
 export const ITEMS_PER_PAGE = 12;
 
 export type ProgramType = "all" | "class" | "webinar";
 
+// Type for registration data from API
+interface SlotUser {
+  id: string;
+}
+
+interface SlotWithUser {
+  user?: SlotUser[];
+}
+
+interface AppointmentWithSlots {
+  slotsOfAppointment: SlotWithUser[];
+}
+
+interface WebinarWithAppointment {
+  appointment?: {
+    slotsOfAppointment?: SlotWithUser[];
+  } | null;
+}
+
+interface ClassWithAppointments {
+  appointments: AppointmentWithSlots[];
+}
+
 export type ClassPlanProgram = PrismaClassPlan & {
-  classes: any[]; // Add the classes array that components expect
+  classes: any[]; // Classes array - structure varies by context
   type: "class";
   imageUrl: string;
+  isRegistered?: boolean; // Added for registration status
 };
 
 export type WebinarPlanProgram = PrismaWebinarPlan & {
+  webinars?: WebinarWithAppointment[]; // Added for registration data
   type: "webinar";
   imageUrl: string;
+  isRegistered?: boolean; // Added for registration status
 };
 
 export type Program = ClassPlanProgram | WebinarPlanProgram;
@@ -90,7 +120,17 @@ export function getUniqueLevels(programs: Program[]): string[] {
 // React Query fetcher function for programs
 const fetchProgramsData = (url: string) => fetch(url).then((res) => res.json());
 
-export function usePrograms(programType: ProgramType) {
+interface UseProgramsOptions {
+  userId?: string | null; // Optional user ID for registration status check
+}
+
+export function usePrograms(
+  programType: ProgramType,
+  options: UseProgramsOptions = {},
+) {
+  const { userId } = options;
+  const includeRegistration = !!userId;
+
   const {
     data,
     error,
@@ -99,18 +139,23 @@ export function usePrograms(programType: ProgramType) {
     isLoading,
     isFetchingNextPage,
   } = useInfiniteQuery({
-    queryKey: ["programs", programType],
+    queryKey: ["programs", programType, userId],
     queryFn: async ({ pageParam = 0 }) => {
       const requests = [];
 
+      // Add includeRegistration param when user is logged in
+      const registrationParam = includeRegistration
+        ? "&includeRegistration=true"
+        : "";
+
       if (programType === "all" || programType === "class") {
         requests.push(
-          `/api/plans/classes?page=${pageParam + 1}&limit=${ITEMS_PER_PAGE}&include=classes`,
+          `/api/plans/classes?page=${pageParam + 1}&limit=${ITEMS_PER_PAGE}&include=classes${registrationParam}`,
         );
       }
       if (programType === "all" || programType === "webinar") {
         requests.push(
-          `/api/plans/webinars?page=${pageParam + 1}&limit=${ITEMS_PER_PAGE}`,
+          `/api/plans/webinars?page=${pageParam + 1}&limit=${ITEMS_PER_PAGE}${registrationParam}`,
         );
       }
 
@@ -126,12 +171,25 @@ export function usePrograms(programType: ProgramType) {
         classMeta = classResponse.meta;
         if (classResponse.data) {
           const formattedClasses = classResponse.data.map(
-            (plan: any): ClassPlanProgram => ({
-              ...plan,
-              classes: plan.classes || [], // Ensure classes array is populated
-              type: "class",
-              imageUrl: generateProgramImageUrl(plan.id, 600, 400),
-            }),
+            (plan: any): ClassPlanProgram => {
+              // Check if user is enrolled in any class instance
+              const classes = plan.classes || [];
+              const appointments = classes.flatMap(
+                (c: ClassWithAppointments) => c.appointments ?? [],
+              );
+              const isRegistered =
+                userId && appointments.length > 0
+                  ? isUserEnrolled(appointments, userId)
+                  : false;
+
+              return {
+                ...plan,
+                classes,
+                type: "class",
+                imageUrl: generateProgramImageUrl(plan.id, 600, 400),
+                isRegistered,
+              };
+            },
           );
           combinedPrograms = [...combinedPrograms, ...formattedClasses];
         }
@@ -144,11 +202,22 @@ export function usePrograms(programType: ProgramType) {
           webinarMeta = webinarResponse.meta;
           if (webinarResponse.data) {
             const formattedWebinars = webinarResponse.data.map(
-              (plan: PrismaWebinarPlan): WebinarPlanProgram => ({
-                ...(plan as WebinarPlanProgram),
-                type: "webinar",
-                imageUrl: generateProgramImageUrl(plan.id, 600, 400),
-              }),
+              (plan: any): WebinarPlanProgram => {
+                // Check if user is registered for any webinar instance
+                const webinars = plan.webinars || [];
+                const isRegistered =
+                  userId && webinars.length > 0
+                    ? isUserRegisteredForWebinar(webinars, userId)
+                    : false;
+
+                return {
+                  ...plan,
+                  webinars,
+                  type: "webinar",
+                  imageUrl: generateProgramImageUrl(plan.id, 600, 400),
+                  isRegistered,
+                };
+              },
             );
             combinedPrograms = [...combinedPrograms, ...formattedWebinars];
           }
