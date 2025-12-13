@@ -464,7 +464,8 @@ model Education {
   activities   String?
   description  String? @db.Text
 
-  // Can belong to either consultant or consultee
+  // NOTE: Application logic must ensure exactly one of consultantProfileId or
+  // consulteeProfileId is set, never both or neither (to prevent orphaned records).
   consultantProfile   ConsultantProfile? @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultantProfileId String?
 

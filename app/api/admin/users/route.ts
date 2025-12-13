@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import prisma from "@/lib/prisma";
-import { UserRole } from "@prisma/client";
+import { Prisma, UserRole } from "@prisma/client";
 import authOptions from "../../auth/[...nextauth]/options";
 
 export async function GET(req: NextRequest) {
@@ -30,10 +30,15 @@ export async function GET(req: NextRequest) {
     const limit = 20;
     const skip = (page - 1) * limit;
 
-    // Build where clause
-    const where: any = {};
+    // Build where clause with proper typing
+    const where: Prisma.UserWhereInput = {};
 
-    if (role && role !== "all") {
+    // Validate role against UserRole enum before using
+    if (
+      role &&
+      role !== "all" &&
+      Object.values(UserRole).includes(role as UserRole)
+    ) {
       where.role = role as UserRole;
     }
 

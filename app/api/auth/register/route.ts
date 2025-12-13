@@ -1,7 +1,7 @@
 import prisma from "@/lib/prisma";
 import { NextResponse } from "next/server";
 import bcrypt from "bcrypt";
-import { UserRole } from "@prisma/client"; // Import UserRole enum
+import { Prisma, UserRole } from "@prisma/client";
 import { sendWelcomeEmail } from "@/lib/email";
 
 export async function POST(req: Request) {
@@ -120,7 +120,7 @@ export async function POST(req: Request) {
       const hashedPassword = await bcrypt.hash(password, 10);
 
       // Prepare user data based on role
-      const userData: any = {
+      const userData: Prisma.UserCreateInput = {
         name,
         email,
         password: hashedPassword,

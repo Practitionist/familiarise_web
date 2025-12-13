@@ -79,56 +79,62 @@ export async function GET() {
       consultantCount: domain._count.consultantProfiles,
     }));
 
-    // Session stats (appointments)
-    // Count appointments based on their slots' time status
-    const totalSessions = await prisma.appointment.count();
-
-    // Get completed sessions (slots that have ended)
-    const completedSessions = await prisma.appointment.count({
-      where: {
-        slotsOfAppointment: {
-          some: {
-            endsAt: { lt: now },
+    // Session stats and payment stats - run in parallel for better performance
+    const [
+      totalSessions,
+      completedSessions,
+      upcomingSessions,
+      cancelledSessions,
+      paymentStats,
+      revenueThisMonth,
+      refundTotal,
+    ] = await Promise.all([
+      // Total appointments
+      prisma.appointment.count(),
+      // Completed sessions (slots that have ended)
+      prisma.appointment.count({
+        where: {
+          slotsOfAppointment: {
+            some: {
+              endsAt: { lt: now },
+            },
           },
         },
-      },
-    });
-
-    // Get upcoming sessions (slots that haven't started yet)
-    const upcomingSessions = await prisma.appointment.count({
-      where: {
-        slotsOfAppointment: {
-          some: {
-            startsAt: { gt: now },
+      }),
+      // Upcoming sessions (slots that haven't started yet)
+      prisma.appointment.count({
+        where: {
+          slotsOfAppointment: {
+            some: {
+              startsAt: { gt: now },
+            },
           },
         },
-      },
-    });
-
-    // Cancelled sessions - count from related entities that have cancelled status
-    const cancelledSessions = await prisma.consultation.count({
-      where: { requestStatus: "CANCELLED" },
-    });
-
-    // Payment stats
-    const paymentStats = await prisma.payment.aggregate({
-      _sum: { amount: true },
-      _count: true,
-      where: { paymentStatus: "SUCCEEDED" },
-    });
-
-    const revenueThisMonth = await prisma.payment.aggregate({
-      _sum: { amount: true },
-      where: {
-        paymentStatus: "SUCCEEDED",
-        createdAt: { gte: startOfMonth },
-      },
-    });
-
-    const refundTotal = await prisma.refund.aggregate({
-      _sum: { amount: true },
-      where: { status: "SUCCEEDED" },
-    });
+      }),
+      // Cancelled sessions
+      prisma.consultation.count({
+        where: { requestStatus: "CANCELLED" },
+      }),
+      // Payment stats
+      prisma.payment.aggregate({
+        _sum: { amount: true },
+        _count: true,
+        where: { paymentStatus: "SUCCEEDED" },
+      }),
+      // Revenue this month
+      prisma.payment.aggregate({
+        _sum: { amount: true },
+        where: {
+          paymentStatus: "SUCCEEDED",
+          createdAt: { gte: startOfMonth },
+        },
+      }),
+      // Refund total
+      prisma.refund.aggregate({
+        _sum: { amount: true },
+        where: { status: "SUCCEEDED" },
+      }),
+    ]);
 
     const totalRevenue = paymentStats._sum.amount ?? 0;
     const avgSessionValue =
