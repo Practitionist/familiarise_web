@@ -49,6 +49,11 @@ export function createHandleApiError(
           errorMessage ||
           "This booking is no longer available. Someone else may have just booked it, or the schedule has changed. Please go back and select a different time slot or option.",
       },
+      DUPLICATE_REGISTRATION_ERROR: {
+        title: "Already Registered",
+        description:
+          "You're already registered for this event! Check your dashboard to view your registration details and upcoming sessions.",
+      },
       UNKNOWN_ERROR: {
         title: "Something Went Wrong",
         description:

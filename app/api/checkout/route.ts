@@ -55,8 +55,11 @@ export async function POST(req: NextRequest) {
         errorMessage = error.message;
         errorType = "NOT_FOUND_ERROR";
       }
-      // Duplicate registration errors
-      else if (error.message.includes("already registered")) {
+      // Duplicate registration errors (webinars: "already registered", classes: "already enrolled")
+      else if (
+        error.message.includes("already registered") ||
+        error.message.includes("already enrolled")
+      ) {
         errorMessage = error.message;
         errorType = "DUPLICATE_REGISTRATION_ERROR";
       }

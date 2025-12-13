@@ -1110,7 +1110,11 @@ export async function handleWebinarCheckout(
         webinarId: webinar.id,
       },
       include: {
-        slotsOfAppointment: true,
+        slotsOfAppointment: {
+          include: {
+            user: { select: { id: true } },
+          },
+        },
       },
     });
   }
