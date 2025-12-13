@@ -55,6 +55,11 @@ export async function POST(req: NextRequest) {
         errorMessage = error.message;
         errorType = "NOT_FOUND_ERROR";
       }
+      // Duplicate registration errors
+      else if (error.message.includes("already registered")) {
+        errorMessage = error.message;
+        errorType = "DUPLICATE_REGISTRATION_ERROR";
+      }
       // Slot availability errors (including lock acquisition failures)
       else if (
         error.message.includes("slot") ||

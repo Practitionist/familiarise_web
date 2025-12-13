@@ -1036,7 +1036,11 @@ export async function handleWebinarCheckout(
       waitlist: true,
       appointment: {
         include: {
-          slotsOfAppointment: true,
+          slotsOfAppointment: {
+            include: {
+              user: { select: { id: true } },
+            },
+          },
         },
       },
     },
@@ -1087,6 +1091,14 @@ export async function handleWebinarCheckout(
         ? "This webinar has already ended."
         : "This webinar has been cancelled.";
     throw new Error(message);
+  }
+
+  // Check if user is already registered for this webinar
+  const isAlreadyRegistered = webinar.appointment?.slotsOfAppointment?.some(
+    (slot) => slot.user?.some((u) => u.id === userId),
+  );
+  if (isAlreadyRegistered) {
+    throw new Error("You are already registered for this webinar");
   }
 
   // Create or reuse appointment
@@ -1416,6 +1428,21 @@ export async function handleCheckout(
           paymentResponse.id,
           "Database operation failed - preventing orphaned payment intent",
         );
+      }
+
+      // Preserve specific error messages (duplicate registration, full capacity, etc.)
+      if (dbError instanceof Error) {
+        const preservedMessages = [
+          "already registered",
+          "already enrolled",
+          "full",
+          "cancelled",
+          "ended",
+          "not been scheduled",
+        ];
+        if (preservedMessages.some((msg) => dbError.message.includes(msg))) {
+          throw dbError;
+        }
       }
 
       throw new Error(

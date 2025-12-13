@@ -939,7 +939,7 @@ model Payment {
   user           User          @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   userId         String
   appointment    Appointment?  @relation(fields: [appointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  appointmentId  String?       @unique
+  appointmentId  String?
   discountCode   DiscountCode? @relation(fields: [discountCodeId], references: [id], onUpdate: Cascade, onDelete: SetNull)
   discountCodeId String?
 
@@ -951,6 +951,7 @@ model Payment {
 
   @@index([expiresAt, paymentStatus])
   @@index([isMockPayment])
+  @@unique([userId, appointmentId]) // Allow multiple users to pay for same appointment (webinars/classes)
 }
 
 enum PaymentGateway {

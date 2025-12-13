@@ -120,7 +120,7 @@ export default function WebinarCheckoutPage({
         const checkoutData = createCheckoutData({
           appointmentType: "WEBINAR",
           planId: planData.data.id,
-          eventId: resolvedParams.webinarPlanId,
+          eventId: searchParamsValidation.data.eventId,
           discountCode: searchParamsValidation.data.discountCode,
           paymentGateway: gateway,
         });
@@ -174,7 +174,6 @@ export default function WebinarCheckoutPage({
       isCheckoutProcessing,
       resolvedSearchParams,
       planData?.data?.id,
-      resolvedParams.webinarPlanId,
       handleApiError,
       handleCheckoutSuccess,
       toast,
