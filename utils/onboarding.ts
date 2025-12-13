@@ -81,18 +81,18 @@ export const BaseConsulteeProfileCreateInputSchema = z.object({
     .nativeEnum(ConsultationMode)
     .default(ConsultationMode.VIDEO),
   preferredLanguage: z.string().optional(),
-  goals: z.union([z.array(z.string()), z.string()]).optional(),
+  goals: z.array(z.string()).optional(),
   // New fields
   careerStage: z.nativeEnum(CareerStage).optional().nullable(),
   currentCompany: z.string().optional(),
   industry: z.string().optional(),
-  skillsToDevelop: z.array(z.string()).default([]),
+  skillsToDevelop: z.array(z.string()).optional(),
   linkedinUrl: z.string().url().optional().or(z.literal("")),
   budgetPreference: z.nativeEnum(BudgetPreference).optional().nullable(),
   // Deprecated fields (kept for backward compatibility)
   education: z.string().optional(),
   specialRequirements: z.string().optional(),
-  interests: z.union([z.array(z.string()), z.string()]).optional(),
+  interests: z.array(z.string()).optional(),
 });
 
 export const ConsulteeProfileCreateObjectSchema = z.object({
@@ -233,7 +233,7 @@ export const FrontendConsulteeProfileSchema = z.object({
   careerStage: z.nativeEnum(CareerStage).optional().nullable(),
   currentCompany: z.string().optional(),
   industry: z.string().optional(),
-  skillsToDevelop: z.array(z.string()).default([]),
+  skillsToDevelop: z.array(z.string()).optional(),
   linkedinUrl: z.string().url().optional().or(z.literal("")),
   budgetPreference: z.nativeEnum(BudgetPreference).optional().nullable(),
   // Deprecated fields (kept for backward compatibility)
@@ -392,7 +392,7 @@ export const ConsulteeProfileFormSchema = z.object({
   careerStage: z.nativeEnum(CareerStage).optional().nullable(),
   currentCompany: z.string().optional(),
   industry: z.string().optional(),
-  skillsToDevelop: z.array(z.string()).default([]),
+  skillsToDevelop: z.array(z.string()).optional(),
   linkedinUrl: z.string().url().optional().or(z.literal("")),
   budgetPreference: z.nativeEnum(BudgetPreference).optional().nullable(),
   // Deprecated fields (kept for backward compatibility)

@@ -1,7 +1,7 @@
 "use server";
 
 import prisma from "@/lib/prisma";
-import { ISlotOfAppointment } from "@/app/dashboard/consultant/[consultantId]/types";
+import { TSlotOfAppointment } from "@/types/appointment";
 import { MeetingSession } from "@prisma/client"; // Assuming MeetingSession type exists
 
 /**
@@ -45,7 +45,7 @@ export const findDbMeetingSessionBySlot = async (
  * @returns The newly created MeetingSession object.
  */
 export const createDbMeetingSession = async (
-  slot: ISlotOfAppointment,
+  slot: TSlotOfAppointment,
   streamCallId: string,
 ): Promise<MeetingSession> => {
   try {

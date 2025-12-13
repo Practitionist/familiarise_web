@@ -29,7 +29,6 @@ import {
 import { IActivity, IApproval, BADGE_STYLES } from "../../types";
 import { TAppointment } from "@/types/appointment";
 import { RequestSlotAllocationTabMini } from "../requests/RequestSlotAllocationTabMini";
-import { convertTAppointmentToIAppointment } from "../appointments/utils/appointmentTypeAdapter";
 
 // Define the type for the badge styles object if not already defined/imported
 type BadgeStyleMap = typeof BADGE_STYLES; // Use typeof if BADGE_STYLES is an object constant
@@ -70,7 +69,7 @@ export function HomeTab({
     try {
       const meetingId = await getOrCreateAppointmentMeeting(
         client,
-        convertTAppointmentToIAppointment(appointment),
+        appointment,
         relevantSlot,
       );
       router.push(`/meetings/${meetingId}`);

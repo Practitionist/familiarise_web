@@ -80,26 +80,35 @@ export async function GET() {
     }));
 
     // Session stats (appointments)
-    const [
-      totalSessions,
-      completedSessions,
-      upcomingSessions,
-      cancelledSessions,
-    ] = await Promise.all([
-      prisma.appointment.count(),
-      prisma.appointment.count({
-        where: { status: "COMPLETED" },
-      }),
-      prisma.appointment.count({
-        where: {
-          status: "SCHEDULED",
-          scheduledAt: { gte: now },
+    // Count appointments based on their slots' time status
+    const totalSessions = await prisma.appointment.count();
+
+    // Get completed sessions (slots that have ended)
+    const completedSessions = await prisma.appointment.count({
+      where: {
+        slotsOfAppointment: {
+          some: {
+            endsAt: { lt: now },
+          },
         },
-      }),
-      prisma.appointment.count({
-        where: { status: "CANCELLED" },
-      }),
-    ]);
+      },
+    });
+
+    // Get upcoming sessions (slots that haven't started yet)
+    const upcomingSessions = await prisma.appointment.count({
+      where: {
+        slotsOfAppointment: {
+          some: {
+            startsAt: { gt: now },
+          },
+        },
+      },
+    });
+
+    // Cancelled sessions - count from related entities that have cancelled status
+    const cancelledSessions = await prisma.consultation.count({
+      where: { requestStatus: "CANCELLED" },
+    });
 
     // Payment stats
     const paymentStats = await prisma.payment.aggregate({
@@ -121,7 +130,7 @@ export async function GET() {
       where: { status: "SUCCEEDED" },
     });
 
-    const totalRevenue = paymentStats._sum.amount?.toNumber() || 0;
+    const totalRevenue = paymentStats._sum.amount ?? 0;
     const avgSessionValue =
       paymentStats._count > 0 ? totalRevenue / paymentStats._count : 0;
 
@@ -143,9 +152,9 @@ export async function GET() {
 
       // Revenue stats
       totalRevenue,
-      revenueThisMonth: revenueThisMonth._sum.amount?.toNumber() || 0,
+      revenueThisMonth: revenueThisMonth._sum.amount ?? 0,
       avgSessionValue,
-      totalRefunds: refundTotal._sum.amount?.toNumber() || 0,
+      totalRefunds: refundTotal._sum.amount ?? 0,
 
       // Top domains
       topDomains: formattedTopDomains,

@@ -350,7 +350,6 @@ export default function SettingsTab({ consulteeId }: SettingsTabProps) {
                   <SelectItem value={CareerStage.MID_CAREER}>Mid Career (3-10 years)</SelectItem>
                   <SelectItem value={CareerStage.SENIOR}>Senior (10+ years)</SelectItem>
                   <SelectItem value={CareerStage.EXECUTIVE}>Executive</SelectItem>
-                  <SelectItem value={CareerStage.CAREER_CHANGER}>Career Changer</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -369,7 +368,7 @@ export default function SettingsTab({ consulteeId }: SettingsTabProps) {
                   <SelectValue placeholder="Select budget preference" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value={BudgetPreference.BUDGET_FRIENDLY}>Budget Friendly</SelectItem>
+                  <SelectItem value={BudgetPreference.BUDGET}>Budget</SelectItem>
                   <SelectItem value={BudgetPreference.MODERATE}>Moderate</SelectItem>
                   <SelectItem value={BudgetPreference.PREMIUM}>Premium</SelectItem>
                   <SelectItem value={BudgetPreference.FLEXIBLE}>Flexible</SelectItem>

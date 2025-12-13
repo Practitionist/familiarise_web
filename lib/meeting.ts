@@ -2,10 +2,7 @@ import {
   createDbMeetingSession,
   findDbMeetingSessionBySlot,
 } from "@/actions/stream/meetings/meeting.action";
-import {
-  IAppointment,
-  ISlotOfAppointment,
-} from "@/app/dashboard/consultant/[consultantId]/types";
+import { TAppointment, TSlotOfAppointment } from "@/types/appointment";
 import type { Call } from "@stream-io/video-react-sdk";
 import { StreamVideoClient } from "@stream-io/video-react-sdk";
 
@@ -70,8 +67,8 @@ export const createMeeting = async (
  */
 export const getOrCreateAppointmentMeeting = async (
   client: StreamVideoClient,
-  appointment: IAppointment,
-  slot: ISlotOfAppointment,
+  appointment: TAppointment,
+  slot: TSlotOfAppointment,
 ): Promise<string> => {
   if (!client) {
     throw new Error("Stream client not initialized");

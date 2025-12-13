@@ -31,7 +31,6 @@ import {
   canManageAppointmentTimings,
   canManageGroupTimings,
 } from "./utils/appointmentTimingHelpers";
-import { convertTAppointmentToIAppointment } from "./utils/appointmentTypeAdapter";
 import {
   getParticipantManagementUrl,
   supportsParticipantManagement,
@@ -147,7 +146,7 @@ export function AppointmentsTab({
     try {
       const meetingId = await getOrCreateAppointmentMeeting(
         client,
-        convertTAppointmentToIAppointment(appointment),
+        appointment,
         relevantSlot,
       );
       router.push(`/meetings/${meetingId}`);

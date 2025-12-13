@@ -1,4 +1,4 @@
-import { IAppointment } from "@/app/dashboard/consultant/[consultantId]/types";
+import { TAppointment } from "@/types/appointment";
 import { EventWithType } from "@/app/dashboard/consultee/[consulteeId]/utils/getMetadata";
 import {
   formatTimeUntil,
@@ -30,7 +30,7 @@ describe("Schedule Data Consistency Tests", () => {
         ({
           appointment,
         }: {
-          appointment: IAppointment;
+          appointment: TAppointment;
           slot: any;
           isTentative: boolean;
         }) => {
@@ -123,7 +123,7 @@ describe("Schedule Data Consistency Tests", () => {
           appointment,
           slot,
         }: {
-          appointment: IAppointment;
+          appointment: TAppointment;
           slot: { startsAt: Date };
           isTentative: boolean;
         }) => {

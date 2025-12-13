@@ -1,10 +1,6 @@
 import { EventWithType } from "./getMetadata";
-// Import the specific types needed
-import type {
-  IAppointment,
-  ISlotOfAppointment,
-} from "@/app/dashboard/consultant/[consultantId]/types";
-import type { SlotOfAppointment } from "@prisma/client"; // Import Prisma types
+import type { TAppointment, TSlotOfAppointment } from "@/types/appointment";
+import type { SlotOfAppointment } from "@prisma/client";
 
 // Revert getActualSlots to return simple SlotOfAppointment[]
 export function getActualSlots(event: EventWithType): SlotOfAppointment[] {
@@ -52,14 +48,14 @@ export function getActualNextSlotTime(
 
 // getActualUpcomingSlots: Manually transform to the required structure
 export function getActualUpcomingSlots(events: EventWithType[]): Array<{
-  appointment: IAppointment;
-  slot: ISlotOfAppointment;
+  appointment: TAppointment;
+  slot: TSlotOfAppointment;
   isTentative: boolean;
 }> {
   const now = new Date();
   const allUpcomingItems: Array<{
-    appointment: IAppointment;
-    slot: ISlotOfAppointment;
+    appointment: TAppointment;
+    slot: TSlotOfAppointment;
     isTentative: boolean;
   }> = [];
 
@@ -70,22 +66,21 @@ export function getActualUpcomingSlots(events: EventWithType[]): Array<{
     );
 
     futureSlots.forEach((prismaSlot) => {
-      // 1. Construct ISlotOfAppointment
-      const iSlot: ISlotOfAppointment = {
+      // 1. Construct TSlotOfAppointment-compatible slot
+      // Note: We cast to TSlotOfAppointment since we're constructing from event data
+      const tSlot = {
         id: prismaSlot.id,
         startsAt: new Date(prismaSlot.startsAt),
         endsAt: prismaSlot.endsAt ? new Date(prismaSlot.endsAt) : null,
         isTentative: prismaSlot.isTentative,
-        // Explicitly set user to empty array as relation is likely missing
-        // TODO: Ensure user relation is included in upstream fetch if needed
-        user: [],
-        // user: ((prismaSlot as any).user || []).map((u: User) => ({ ... })), // Original attempt
-      };
+        appointmentId: prismaSlot.appointmentId,
+        user: (prismaSlot as any).user || [],
+      } as TSlotOfAppointment;
 
-      // 2. Construct IAppointment
-      let baseAppointment: Omit<IAppointment, "slotsOfAppointment">;
+      // 2. Construct TAppointment-compatible appointment
+      let baseAppointment: Partial<TAppointment>;
       const upperCaseEventType =
-        event.type.toUpperCase() as IAppointment["appointmentType"];
+        event.type.toUpperCase() as TAppointment["appointmentType"];
 
       switch (upperCaseEventType) {
         case "CONSULTATION":
@@ -134,15 +129,15 @@ export function getActualUpcomingSlots(events: EventWithType[]): Array<{
       }
 
       // baseAppointment is guaranteed to be assigned if we reach here
-      const iAppointment: IAppointment = {
+      const tAppointment = {
         ...baseAppointment,
-        slotsOfAppointment: [iSlot],
-      };
+        slotsOfAppointment: [tSlot],
+      } as TAppointment;
 
       allUpcomingItems.push({
-        appointment: iAppointment,
-        slot: iSlot,
-        isTentative: iSlot.isTentative,
+        appointment: tAppointment,
+        slot: tSlot,
+        isTentative: tSlot.isTentative,
       });
     });
   });
