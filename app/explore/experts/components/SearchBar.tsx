@@ -8,6 +8,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Search, SlidersHorizontal } from "lucide-react";
 
 export type SortOption = "nameAsc" | "nameDesc" | "reviewCount" | "rating";
 
@@ -19,19 +20,31 @@ interface SearchBarProps {
 
 export function SearchBar({ onSearch, onSort, sortBy }: SearchBarProps) {
   return (
-    <div className="border border-gray-200 rounded-lg grid grid-cols-[1fr,auto] items-center p-2 gap-4 dark:border-gray-800">
-      <Input
-        className="appearance-none border-0 focus:outline-none placeholder-gray-500 dark:placeholder-gray-400"
-        placeholder="Search for experts"
-        type="search"
-        onChange={(e) => onSearch(e.target.value)}
-      />
-      <div className="w-48">
+    <div className="flex flex-col sm:flex-row gap-4">
+      {/* Search Input */}
+      <div className="flex-1 relative">
+        <div className="absolute left-4 top-1/2 -translate-y-1/2">
+          <Search className="w-5 h-5 text-zinc-400" />
+        </div>
+        <Input
+          className="w-full h-12 pl-12 pr-4 bg-white border-zinc-200 rounded-xl focus:border-zinc-400 focus:ring-zinc-400 placeholder:text-zinc-400"
+          placeholder="Search experts by name, skill, or specialty..."
+          type="search"
+          onChange={(e) => onSearch(e.target.value)}
+        />
+      </div>
+
+      {/* Sort Dropdown */}
+      <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 px-4 h-12 bg-zinc-100 rounded-xl">
+          <SlidersHorizontal className="w-4 h-4 text-zinc-500" />
+          <span className="text-sm font-medium text-zinc-600 hidden sm:inline">Sort by</span>
+        </div>
         <Select
           value={sortBy}
           onValueChange={(value) => onSort(value as SortOption)}
         >
-          <SelectTrigger>
+          <SelectTrigger className="w-[180px] h-12 bg-white border-zinc-200 rounded-xl focus:ring-zinc-400">
             <SelectValue placeholder="Sort by" />
           </SelectTrigger>
           <SelectContent>

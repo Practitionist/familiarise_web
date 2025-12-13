@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/select";
 import { Domain, SubDomain, Tag } from "@prisma/client";
 import { useState } from "react";
+import { X, Filter, Layers, Tag as TagIcon, Clock } from "lucide-react";
 
 interface FiltersSectionProps {
   metadata: {
@@ -24,26 +25,6 @@ interface FiltersSectionProps {
   setSelectedTags: (tags: string[]) => void;
   experienceYears: number;
   setExperienceYears: (years: number) => void;
-}
-
-function XIcon(props: React.SVGProps<SVGSVGElement>) {
-  return (
-    <svg
-      {...props}
-      xmlns="http://www.w3.org/2000/svg"
-      width="24"
-      height="24"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M18 6 6 18" />
-      <path d="m6 6 12 12" />
-    </svg>
-  );
 }
 
 export function FiltersSection({
@@ -88,7 +69,6 @@ export function FiltersSection({
     setIsDropdownOpen(true);
   };
 
-  // Filter tags based on selected domain and search term
   const filteredTags =
     metadata?.tags.filter((tag) => {
       if (selectedDomain && tag.domainId !== selectedDomain) return false;
@@ -98,43 +78,48 @@ export function FiltersSection({
     }) || [];
 
   return (
-    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-      <div className="border border-gray-200 rounded-lg p-4 flex flex-col justify-between dark:border-gray-800">
+    <div className="bg-zinc-50 rounded-2xl p-6 border border-zinc-200">
+      <div className="flex items-center gap-2 mb-6">
+        <div className="w-10 h-10 rounded-xl bg-zinc-900 flex items-center justify-center">
+          <Filter className="w-5 h-5 text-white" />
+        </div>
         <div>
-          <label
-            className="block mb-2 text-sm font-medium text-black dark:text-black"
-            htmlFor="domain"
-          >
+          <h3 className="font-semibold text-zinc-900">Filter Experts</h3>
+          <p className="text-sm text-zinc-500">Refine your search</p>
+        </div>
+      </div>
+
+      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+        {/* Domain & Subdomain */}
+        <div className="bg-white rounded-xl p-4 border border-zinc-200">
+          <div className="flex items-center gap-2 mb-4">
+            <Layers className="w-4 h-4 text-zinc-500" />
+            <span className="text-sm font-medium text-zinc-700">Category</span>
+          </div>
+          <div className="space-y-3">
+            <div>
+              <label className="block mb-1.5 text-xs font-medium text-zinc-500 uppercase tracking-wide">
             Domain
           </label>
           <Select
             value={selectedDomain || "all"}
             onValueChange={handleDomainChange}
           >
-            <SelectTrigger id="domain" aria-label="Select domain">
+                <SelectTrigger className="w-full h-11 bg-zinc-50 border-zinc-200 rounded-lg focus:ring-zinc-900">
               <SelectValue placeholder="All Domains" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all" className="bg-slate-200 text-black">
-                All Domains
-              </SelectItem>
+                  <SelectItem value="all">All Domains</SelectItem>
               {metadata?.domains.map((domain) => (
-                <SelectItem
-                  key={domain.id}
-                  value={domain.id}
-                  className="bg-slate-200 text-black"
-                >
+                    <SelectItem key={domain.id} value={domain.id}>
                   {domain.name}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
         </div>
-        <div className="mt-4">
-          <label
-            className="block mb-2 text-sm font-medium text-black dark:text-black"
-            htmlFor="subdomain"
-          >
+            <div>
+              <label className="block mb-1.5 text-xs font-medium text-zinc-500 uppercase tracking-wide">
             Subdomain
           </label>
           <Select
@@ -142,25 +127,17 @@ export function FiltersSection({
             value={selectedSubdomain || "all"}
             onValueChange={handleSubdomainChange}
           >
-            <SelectTrigger id="subdomain" aria-label="Select subdomain">
+                <SelectTrigger className="w-full h-11 bg-zinc-50 border-zinc-200 rounded-lg focus:ring-zinc-900 disabled:opacity-50">
               <SelectValue
-                placeholder={
-                  selectedDomain ? "All Subdomains" : "Select a domain first"
-                }
+                    placeholder={selectedDomain ? "All Subdomains" : "Select domain first"}
               />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all" className="bg-slate-200 text-black">
-                All Subdomains
-              </SelectItem>
+                  <SelectItem value="all">All Subdomains</SelectItem>
               {metadata?.subdomains
                 .filter((subdomain) => subdomain.domainId === selectedDomain)
                 .map((subdomain) => (
-                  <SelectItem
-                    key={subdomain.id}
-                    value={subdomain.id}
-                    className="bg-slate-200 text-black"
-                  >
+                      <SelectItem key={subdomain.id} value={subdomain.id}>
                     {subdomain.name}
                   </SelectItem>
                 ))}
@@ -168,21 +145,22 @@ export function FiltersSection({
           </Select>
         </div>
       </div>
-      <div className="border border-gray-200 rounded-lg p-4 flex flex-col justify-between bg-white text-black dark:border-gray-800">
+        </div>
+
+        {/* Tags */}
+        <div className="bg-white rounded-xl p-4 border border-zinc-200">
+          <div className="flex items-center gap-2 mb-4">
+            <TagIcon className="w-4 h-4 text-zinc-500" />
+            <span className="text-sm font-medium text-zinc-700">Skills & Tags</span>
+          </div>
         <div>
-          <label
-            className="block mb-2 text-sm font-medium text-black"
-            htmlFor="tags"
-          >
-            Tags
+            <label className="block mb-1.5 text-xs font-medium text-zinc-500 uppercase tracking-wide">
+              Search Tags
           </label>
           <div className="relative">
             <input
-              className="bg-white border border-gray-300 text-black text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5"
-              id="tags"
-              placeholder={
-                selectedDomain ? "Search tags..." : "Select a domain first"
-              }
+                className="w-full h-11 px-4 bg-zinc-50 border border-zinc-200 text-zinc-900 text-sm rounded-lg focus:ring-2 focus:ring-zinc-900 focus:border-transparent transition-all disabled:opacity-50"
+                placeholder={selectedDomain ? "Search skills..." : "Select domain first"}
               type="text"
               value={searchTerm}
               onChange={handleInputChange}
@@ -190,62 +168,70 @@ export function FiltersSection({
               disabled={!selectedDomain}
             />
             {isDropdownOpen && filteredTags.length > 0 && (
-              <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg">
-                <ul className="py-1 overflow-auto max-h-60">
+                <div className="absolute z-20 w-full mt-2 bg-white border border-zinc-200 rounded-xl shadow-xl max-h-48 overflow-auto">
                   {filteredTags.map((tag) => (
-                    <li
+                    <button
                       key={tag.id}
-                      className="px-3 py-2 hover:bg-gray-100 cursor-pointer text-black"
+                      className="w-full px-4 py-2.5 text-left text-sm text-zinc-700 hover:bg-zinc-50 first:rounded-t-xl last:rounded-b-xl transition-colors"
                       onClick={() => handleTagSelect(tag.name)}
                     >
                       {tag.name}
-                    </li>
+                    </button>
                   ))}
-                </ul>
               </div>
             )}
           </div>
-          <div className="flex flex-wrap items-center gap-2 mt-2">
+            {selectedTags.length > 0 && (
+              <div className="flex flex-wrap gap-2 mt-3">
             {selectedTags.map((tag) => (
               <span
                 key={tag}
-                className="inline-flex items-center rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-black"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-zinc-900 text-white text-xs font-medium rounded-full"
               >
                 {tag}
                 <button
-                  className="ml-2 inline-flex h-4 w-4 items-center justify-center rounded-full text-gray-400 hover:text-gray-500"
+                      className="hover:bg-white/20 rounded-full p-0.5 transition-colors"
                   onClick={() => handleTagRemove(tag)}
                 >
-                  <XIcon className="h-3 w-3" />
+                      <X className="h-3 w-3" />
                 </button>
               </span>
             ))}
+              </div>
+            )}
           </div>
         </div>
+
+        {/* Experience */}
+        <div className="bg-white rounded-xl p-4 border border-zinc-200">
+          <div className="flex items-center gap-2 mb-4">
+            <Clock className="w-4 h-4 text-zinc-500" />
+            <span className="text-sm font-medium text-zinc-700">Experience</span>
       </div>
-      <div className="border border-gray-200 rounded-lg p-4 flex flex-col justify-between dark:border-gray-800">
         <div>
-          <label
-            className="block mb-2 text-sm font-medium text-black"
-            htmlFor="experience"
-          >
-            Experience Years
+            <label className="block mb-1.5 text-xs font-medium text-zinc-500 uppercase tracking-wide">
+              Minimum Years
           </label>
+            <div className="mt-2">
           <input
             type="range"
             min="0"
             max="30"
             value={experienceYears}
             onChange={(e) => setExperienceYears(Number(e.target.value))}
-            className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
+                className="w-full h-2 bg-zinc-200 rounded-full appearance-none cursor-pointer accent-zinc-900"
           />
-          <div className="flex justify-between mt-2 text-sm text-gray-600">
-            <span>0</span>
-            <span>15</span>
-            <span>30+</span>
+              <div className="flex justify-between mt-2 text-xs text-zinc-500">
+                <span>0 yrs</span>
+                <span>15 yrs</span>
+                <span>30+ yrs</span>
+              </div>
+              <div className="text-center mt-4">
+                <span className="inline-flex items-center px-4 py-2 bg-zinc-900 text-white rounded-full text-sm font-semibold">
+                  {experienceYears === 30 ? "30+" : experienceYears} years minimum
+                </span>
+              </div>
           </div>
-          <div className="text-center mt-2 font-semibold text-lg">
-            {experienceYears === 30 ? "30+" : experienceYears} years
           </div>
         </div>
       </div>

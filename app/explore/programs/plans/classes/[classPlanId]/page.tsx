@@ -2,6 +2,7 @@
 
 import { use, useEffect, useState } from "react";
 import { redirect } from "next/navigation";
+import { GraduationCap } from "lucide-react";
 import {
   ClassDetails,
   type ClassPlanDetailsData,
@@ -37,9 +38,17 @@ export default function ClassDetailsPage({
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-screen">
-        <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-blue-500"></div>
-      </div>
+      <main className="min-h-screen bg-zinc-50 flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <div className="relative">
+            <div className="w-16 h-16 border-4 border-zinc-200 border-t-zinc-900 rounded-full animate-spin" />
+            <div className="absolute inset-0 flex items-center justify-center">
+              <GraduationCap className="w-6 h-6 text-zinc-400" />
+            </div>
+          </div>
+          <p className="text-zinc-500 text-sm">Loading class details...</p>
+        </div>
+      </main>
     );
   }
 

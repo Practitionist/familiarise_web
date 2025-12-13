@@ -2,25 +2,16 @@
 
 import { Button } from "@/components/ui/button";
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-  DialogPortal,
-  DialogOverlay,
 } from "@/components/ui/dialog";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { motion } from "framer-motion";
-import { CalendarIcon } from "lucide-react";
+import { CalendarIcon, CheckCircle2 } from "lucide-react";
 import { useSession } from "next-auth/react";
 import { useState, useMemo } from "react";
 import { PricingOption } from "../defaults";
@@ -56,7 +47,6 @@ export default function SubscriptionPricingToggle({
   );
   const [schedulingEndDate, setSchedulingEndDate] = useState<Date | null>(null);
 
-  // Get the currently selected subscription option
   const selectedOption = useMemo(() => {
     return subscriptionOptions.find(
       (opt) =>
@@ -64,7 +54,6 @@ export default function SubscriptionPricingToggle({
     );
   }, [activeSubscriptionOption, subscriptionOptions]);
 
-  // Calculate suggested dates based on subscription duration
   const suggestedDates = useMemo(() => {
     if (!selectedOption?.durationInMonths) {
       return { start: new Date(), end: addMonths(new Date(), 1) };
@@ -74,7 +63,6 @@ export default function SubscriptionPricingToggle({
     return { start, end };
   }, [selectedOption]);
 
-  // Validate scheduling period
   const validatePeriod = (
     start: Date | null,
     end: Date | null,
@@ -96,9 +84,8 @@ export default function SubscriptionPricingToggle({
       return { valid: false, message: "Start date cannot be in the past" };
     }
 
-    // Check if period matches subscription duration (±7 days flexibility)
     const durationInDays = differenceInDays(end, start);
-    const expectedDays = (selectedOption?.durationInMonths || 1) * 30; // Approximate days per month
+    const expectedDays = (selectedOption?.durationInMonths || 1) * 30;
     const minDays = expectedDays - 7;
     const maxDays = expectedDays + 7;
 
@@ -117,7 +104,6 @@ export default function SubscriptionPricingToggle({
   }, [schedulingStartDate, schedulingEndDate]);
 
   const handleChoosePlan = () => {
-    // Set suggested dates when dialog opens
     setSchedulingStartDate(suggestedDates.start);
     setSchedulingEndDate(suggestedDates.end);
     setIsDialogOpen(true);
@@ -138,7 +124,6 @@ export default function SubscriptionPricingToggle({
       return;
     }
 
-    // Pass dates to handler
     handleSubscriptionBooking(selectedOption, {
       startDate: schedulingStartDate,
       endDate: schedulingEndDate,
@@ -149,7 +134,7 @@ export default function SubscriptionPricingToggle({
 
   if (subscriptionOptions.length === 0) {
     return (
-      <div className="w-full p-8 text-center text-gray-500">
+      <div className="w-full p-8 text-center text-zinc-400">
         <p>No subscription plans available at the moment.</p>
       </div>
     );
@@ -161,10 +146,10 @@ export default function SubscriptionPricingToggle({
   ) {
     return (
       <div className="w-full p-8 text-center space-y-3">
-        <h3 className="text-2xl font-medium tracking-tight text-gray-700">
+        <h3 className="text-2xl font-medium tracking-tight text-zinc-300">
           Consultee Access Required
         </h3>
-        <p className="text-gray-500">
+        <p className="text-zinc-500">
           To subscribe to services, please sign in with a consultee account.
         </p>
       </div>
@@ -175,9 +160,10 @@ export default function SubscriptionPricingToggle({
     <Tabs
       value={activeSubscriptionOption}
       onValueChange={setActiveSubscriptionOption}
-      className="w-full space-y-8"
+      className="w-full space-y-6"
     >
-      <TabsList className="inline-flex p-1 bg-gray-800/30 backdrop-blur-sm rounded-xl border border-gray-700/30 shadow-md">
+      {/* Duration Toggle - Black/Silver Theme */}
+      <TabsList className="inline-flex p-1 bg-zinc-800/50 backdrop-blur-sm rounded-xl border border-zinc-700/50">
         {subscriptionOptions.map((option) => (
           <TabsTrigger
             key={option.durationInMonths}
@@ -185,19 +171,20 @@ export default function SubscriptionPricingToggle({
             className={`${
               activeSubscriptionOption ===
               option.title.toLowerCase().replace(" ", "-")
-                ? "bg-white text-black shadow-sm"
-                : "text-gray-300 hover:text-white hover:bg-gray-700/30"
-            } px-5 py-2 rounded-lg font-medium transition-all duration-200 ease-out`}
+                ? "bg-white text-zinc-900 shadow-sm"
+                : "text-zinc-400 hover:text-white hover:bg-zinc-700/50"
+            } px-4 py-2 rounded-lg font-medium transition-all duration-200`}
           >
             {option.title}
           </TabsTrigger>
         ))}
       </TabsList>
-      <div className="grid grid-cols-1 gap-6">
+
+      <div className="grid grid-cols-1 gap-4">
         {subscriptionOptions.map((option) => (
           <motion.div
             key={option.durationInMonths}
-            initial={{ opacity: 0, y: 20 }}
+            initial={{ opacity: 0, y: 10 }}
             animate={{
               opacity:
                 activeSubscriptionOption ===
@@ -206,7 +193,7 @@ export default function SubscriptionPricingToggle({
                   : 0,
               y: 0,
             }}
-            transition={{ duration: 0.3 }}
+            transition={{ duration: 0.2 }}
             className={
               activeSubscriptionOption ===
               option.title.toLowerCase().replace(" ", "-")
@@ -214,187 +201,167 @@ export default function SubscriptionPricingToggle({
                 : "hidden"
             }
           >
-            <Card className="bg-gray-800/50 border-gray-700 shadow-lg hover:shadow-xl transition-all duration-300 backdrop-blur-sm">
-              <CardHeader>
-                <CardTitle className="text-2xl font-bold text-white">
-                  {option.title}
-                </CardTitle>
-                <CardDescription className="text-gray-300">
-                  {option.description}
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                <div className="text-5xl font-bold text-white">
-                  ${option.price}
-                </div>
-                <div className="space-y-2">
-                  <p className="text-white">Includes:</p>
-                  <ul className="space-y-1 pl-4">
+            {/* Pricing Card - Silver/Zinc Gradient */}
+            <div className="bg-gradient-to-br from-zinc-800/80 to-zinc-900/80 border border-zinc-700/50 rounded-xl p-6 backdrop-blur-sm">
+              <div className="mb-1">
+                <h3 className="text-xl font-bold text-white">{option.title}</h3>
+                <p className="text-sm text-zinc-400">{option.description}</p>
+              </div>
+              
+              <div className="my-4">
+                <span className="text-4xl font-bold text-white">${option.price}</span>
+              </div>
+
+              {option.features && option.features.length > 0 && (
+                <div className="space-y-2 mb-6">
+                  <p className="text-sm text-zinc-400">Includes:</p>
+                  <ul className="space-y-2">
                     {option.features?.map((feature, index) => (
                       <li
                         key={`feature-${index}`}
-                        className="text-gray-300 flex items-center"
+                        className="text-zinc-300 flex items-center text-sm"
                       >
-                        <svg
-                          className="w-4 h-4 mr-2 text-white"
-                          fill="none"
-                          stroke="currentColor"
-                          viewBox="0 0 24 24"
-                          xmlns="http://www.w3.org/2000/svg"
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={2}
-                            d="M5 13l4 4L19 7"
-                          />
-                        </svg>
+                        <CheckCircle2 className="w-4 h-4 mr-2 text-zinc-500" />
                         {feature}
                       </li>
                     ))}
                   </ul>
                 </div>
-                <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-                  <DialogTrigger asChild>
-                    <Button
-                      variant="outline"
-                      className="w-full bg-white text-black hover:bg-gray-100 transition-colors duration-300"
-                      onClick={handleChoosePlan}
-                    >
-                      Choose Plan
-                    </Button>
-                  </DialogTrigger>
-                  <DialogPortal>
-                    <DialogOverlay className="bg-black/30" />
-                    <DialogContent className="sm:max-w-[500px] bg-[#15171B] text-white p-0 border-0 rounded-lg">
-                      <DialogHeader className="p-6 border-b border-gray-800">
-                        <DialogTitle>Select Scheduling Period</DialogTitle>
-                        <DialogDescription className="text-gray-400">
-                          Choose when you'd like your {option.durationInMonths}{" "}
-                          month subscription to run
-                        </DialogDescription>
-                      </DialogHeader>
-                      <div className="p-8 space-y-8">
-                        {/* Elegant Date Inputs */}
-                        <div className="space-y-6">
-                          {/* Start Date */}
-                          <div className="space-y-3">
-                            <label className="text-sm font-medium flex items-center gap-2 text-gray-300">
-                              <CalendarIcon className="h-5 w-5" />
-                              Start Date
-                            </label>
-                            <input
-                              type="date"
-                              value={
-                                schedulingStartDate
-                                  ? format(schedulingStartDate, "yyyy-MM-dd")
-                                  : ""
-                              }
-                              onChange={(e) => {
-                                const date = e.target.value
-                                  ? new Date(e.target.value)
-                                  : null;
-                                setSchedulingStartDate(date);
-                              }}
-                              min={format(new Date(), "yyyy-MM-dd")}
-                              className="w-full px-6 py-4 bg-gray-800/60 border-2 border-gray-700/50 rounded-xl text-white text-lg font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-all hover:border-gray-600/50 cursor-pointer"
-                              style={{
-                                colorScheme: "dark",
-                              }}
-                            />
-                          </div>
+              )}
 
-                          {/* End Date */}
-                          <div className="space-y-3">
-                            <label className="text-sm font-medium flex items-center gap-2 text-gray-300">
-                              <CalendarIcon className="h-5 w-5" />
-                              End Date
-                            </label>
-                            <input
-                              type="date"
-                              value={
-                                schedulingEndDate
-                                  ? format(schedulingEndDate, "yyyy-MM-dd")
-                                  : ""
-                              }
-                              onChange={(e) => {
-                                const date = e.target.value
-                                  ? new Date(e.target.value)
-                                  : null;
-                                setSchedulingEndDate(date);
-                              }}
-                              min={
-                                schedulingStartDate
-                                  ? format(schedulingStartDate, "yyyy-MM-dd")
-                                  : format(new Date(), "yyyy-MM-dd")
-                              }
-                              className="w-full px-6 py-4 bg-gray-800/60 border-2 border-gray-700/50 rounded-xl text-white text-lg font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-all hover:border-gray-600/50 cursor-pointer"
-                              style={{
-                                colorScheme: "dark",
-                              }}
-                            />
-                          </div>
+              <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+                <DialogTrigger asChild>
+                  <Button
+                    className="w-full bg-white text-zinc-900 hover:bg-zinc-100 font-medium rounded-xl h-11"
+                    onClick={handleChoosePlan}
+                  >
+                    Choose Plan
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="sm:max-w-[550px] lg:max-w-[650px] bg-zinc-900 text-white p-0 border border-zinc-800 rounded-2xl shadow-2xl">
+                    <DialogHeader className="p-6 border-b border-zinc-800">
+                      <DialogTitle className="text-xl font-semibold">Select Scheduling Period</DialogTitle>
+                      <DialogDescription className="text-zinc-400">
+                        Choose when you&apos;d like your {option.durationInMonths}{" "}
+                        month subscription to run
+                      </DialogDescription>
+                    </DialogHeader>
+                    <div className="p-8 space-y-6">
+                      {/* Date Inputs */}
+                      <div className="space-y-5">
+                        {/* Start Date */}
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium flex items-center gap-2 text-zinc-400">
+                            <CalendarIcon className="h-4 w-4" />
+                            Start Date
+                          </label>
+                          <input
+                            type="date"
+                            value={
+                              schedulingStartDate
+                                ? format(schedulingStartDate, "yyyy-MM-dd")
+                                : ""
+                            }
+                            onChange={(e) => {
+                              const date = e.target.value
+                                ? new Date(e.target.value)
+                                : null;
+                              setSchedulingStartDate(date);
+                            }}
+                            min={format(new Date(), "yyyy-MM-dd")}
+                            className="w-full px-5 py-3.5 bg-zinc-800/60 border-2 border-zinc-700/50 rounded-xl text-white text-base font-medium focus:outline-none focus:ring-2 focus:ring-zinc-500/50 focus:border-zinc-500 transition-all hover:border-zinc-600 cursor-pointer"
+                            style={{ colorScheme: "dark" }}
+                          />
                         </div>
 
-                        {/* Period Summary */}
-                        {schedulingStartDate && schedulingEndDate && (
-                          <div className="p-5 bg-gray-800/40 rounded-xl border border-gray-700/30">
-                            <p className="text-sm text-gray-400 mb-2">
-                              Selected Period:
-                            </p>
-                            <p className="text-white font-semibold text-lg">
-                              {format(schedulingStartDate, "MMM dd, yyyy")} →{" "}
-                              {format(schedulingEndDate, "MMM dd, yyyy")}
-                            </p>
-                            <p className="text-sm text-gray-400 mt-2">
-                              Duration: ~
-                              {Math.round(
-                                differenceInDays(
-                                  schedulingEndDate,
-                                  schedulingStartDate,
-                                ) / 30,
-                              )}{" "}
-                              month(s)
-                            </p>
-                          </div>
-                        )}
+                        {/* End Date */}
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium flex items-center gap-2 text-zinc-400">
+                            <CalendarIcon className="h-4 w-4" />
+                            End Date
+                          </label>
+                          <input
+                            type="date"
+                            value={
+                              schedulingEndDate
+                                ? format(schedulingEndDate, "yyyy-MM-dd")
+                                : ""
+                            }
+                            onChange={(e) => {
+                              const date = e.target.value
+                                ? new Date(e.target.value)
+                                : null;
+                              setSchedulingEndDate(date);
+                            }}
+                            min={
+                              schedulingStartDate
+                                ? format(schedulingStartDate, "yyyy-MM-dd")
+                                : format(new Date(), "yyyy-MM-dd")
+                            }
+                            className="w-full px-5 py-3.5 bg-zinc-800/60 border-2 border-zinc-700/50 rounded-xl text-white text-base font-medium focus:outline-none focus:ring-2 focus:ring-zinc-500/50 focus:border-zinc-500 transition-all hover:border-zinc-600 cursor-pointer"
+                            style={{ colorScheme: "dark" }}
+                          />
+                        </div>
+                      </div>
 
-                        {/* Validation Message */}
-                        {!validation.valid && validation.message && (
-                          <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-xl">
-                            <p className="text-sm text-red-400">
-                              {validation.message}
-                            </p>
-                          </div>
-                        )}
-
-                        {/* Info Message */}
-                        <div className="p-4 bg-blue-500/10 border border-blue-500/20 rounded-xl">
-                          <p className="text-sm text-blue-300">
-                            💡 Timezone: {timezone} (Your local time)
+                      {/* Period Summary */}
+                      {schedulingStartDate && schedulingEndDate && (
+                        <div className="p-4 bg-zinc-800/50 rounded-xl border border-zinc-700/50">
+                          <p className="text-sm text-zinc-500 mb-1">
+                            Selected Period:
+                          </p>
+                          <p className="text-white font-semibold text-lg">
+                            {format(schedulingStartDate, "MMM dd, yyyy")} →{" "}
+                            {format(schedulingEndDate, "MMM dd, yyyy")}
+                          </p>
+                          <p className="text-sm text-zinc-500 mt-1">
+                            Duration: ~
+                            {Math.round(
+                              differenceInDays(
+                                schedulingEndDate,
+                                schedulingStartDate,
+                              ) / 30,
+                            )}{" "}
+                            month(s)
                           </p>
                         </div>
+                      )}
+
+                      {/* Validation Message */}
+                      {!validation.valid && validation.message && (
+                        <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-xl">
+                          <p className="text-sm text-red-400">
+                            {validation.message}
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Timezone Info */}
+                      <div className="p-4 bg-zinc-800/40 border border-zinc-700/50 rounded-xl">
+                        <p className="text-sm text-zinc-400">
+                          💡 Timezone: {timezone} (Your local time)
+                        </p>
                       </div>
-                      <div className="bg-gray-800/50 px-6 py-4 flex justify-end gap-3 rounded-b-lg">
-                        <Button
-                          variant="ghost"
-                          onClick={() => setIsDialogOpen(false)}
-                        >
-                          Cancel
-                        </Button>
-                        <Button
-                          onClick={handleContinueToCheckout}
-                          disabled={!validation.valid}
-                          className="bg-white text-black hover:bg-gray-100"
-                        >
-                          Continue to Checkout
-                        </Button>
-                      </div>
+                    </div>
+                    <div className="bg-zinc-800/50 px-6 py-4 flex justify-end gap-3 rounded-b-2xl border-t border-zinc-800">
+                      <Button
+                        variant="ghost"
+                        className="text-zinc-400 hover:text-white hover:bg-zinc-700/50"
+                        onClick={() => setIsDialogOpen(false)}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        onClick={handleContinueToCheckout}
+                        disabled={!validation.valid}
+                        className="bg-white text-zinc-900 hover:bg-zinc-100 font-medium px-6"
+                      >
+                        Continue to Checkout
+                      </Button>
+                    </div>
                     </DialogContent>
-                  </DialogPortal>
                 </Dialog>
-              </CardContent>
-            </Card>
+            </div>
           </motion.div>
         ))}
       </div>
