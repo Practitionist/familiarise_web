@@ -54,7 +54,7 @@ export async function POST(request: NextRequest) {
       durationInMonths,
       price,
       callsPerWeek,
-      videoMeetings,
+      sessionDurationInHours = 1.0,
       emailSupport,
       language,
       level,
@@ -64,6 +64,10 @@ export async function POST(request: NextRequest) {
       consultantProfileId,
     } = body;
 
+    // Compute derived metrics
+    const totalSessions = (callsPerWeek || 1) * durationInMonths * 4;
+    const totalHours = totalSessions * sessionDurationInHours;
+
     // Input validation
     if (!title || !durationInMonths || !price || !consultantProfileId) {
       return NextResponse.json(
@@ -72,12 +76,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (
-      durationInMonths <= 0 ||
-      price <= 0 ||
-      callsPerWeek < 0 ||
-      videoMeetings < 0
-    ) {
+    if (durationInMonths <= 0 || price <= 0 || callsPerWeek < 0) {
       return NextResponse.json(
         { error: "Invalid numeric values" },
         { status: 400 },
@@ -98,7 +97,9 @@ export async function POST(request: NextRequest) {
         durationInMonths,
         price,
         callsPerWeek,
-        videoMeetings,
+        sessionDurationInHours,
+        totalSessions,
+        totalHours,
         emailSupport,
         language,
         level,

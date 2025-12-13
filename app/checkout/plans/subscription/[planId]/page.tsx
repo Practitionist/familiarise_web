@@ -355,8 +355,16 @@ export default function SubscriptionCheckoutPage({
               <div>{planData?.data?.callsPerWeek || 1} calls</div>
             </div>
             <div className="flex items-center justify-between">
-              <div className="text-muted-foreground">Video Meetings</div>
-              <div>{planData?.data?.videoMeetings || 1} per month</div>
+              <div className="text-muted-foreground">Session Duration</div>
+              <div>{planData?.data?.sessionDurationInHours || 1} hour(s)</div>
+            </div>
+            <div className="flex items-center justify-between">
+              <div className="text-muted-foreground">Total Sessions</div>
+              <div>{planData?.data?.totalSessions || (planData?.data?.callsPerWeek || 1) * (planData?.data?.durationInMonths || 1) * 4} sessions</div>
+            </div>
+            <div className="flex items-center justify-between">
+              <div className="text-muted-foreground">Total Hours</div>
+              <div>{planData?.data?.totalHours || (planData?.data?.callsPerWeek || 1) * (planData?.data?.durationInMonths || 1) * 4 * (planData?.data?.sessionDurationInHours || 1)} hours</div>
             </div>
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Email Support</div>
@@ -426,8 +434,23 @@ export default function SubscriptionCheckoutPage({
                 </div>
                 <div className="font-semibold">
                   <ul className="list-disc">
+                    <li>
+                      {planData?.data?.totalSessions ||
+                        (planData?.data?.callsPerWeek || 1) *
+                          (planData?.data?.durationInMonths || 1) *
+                          4}{" "}
+                      total sessions (
+                      {planData?.data?.totalHours ||
+                        (planData?.data?.callsPerWeek || 1) *
+                          (planData?.data?.durationInMonths || 1) *
+                          4 *
+                          (planData?.data?.sessionDurationInHours || 1)}{" "}
+                      hours)
+                    </li>
                     <li>{planData?.data?.callsPerWeek || 1} calls per week</li>
-                    <li>{planData?.data?.videoMeetings || 1} video meetings</li>
+                    <li>
+                      {planData?.data?.sessionDurationInHours || 1} hour sessions
+                    </li>
                     <li>
                       {planData?.data?.emailSupport || "General"} email support
                     </li>

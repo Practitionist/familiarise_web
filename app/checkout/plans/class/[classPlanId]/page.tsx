@@ -324,14 +324,15 @@ export default function ClassCheckoutPage({
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Duration</div>
               <div>
-                {planDetails?.durationInMonths
-                  ? `${Math.ceil(planDetails.durationInMonths * 4.33)} weeks`
-                  : "4 weeks"}
+                {planDetails?.durationInMonths} month
+                {planDetails?.durationInMonths !== 1 ? "s" : ""} (
+                {planDetails?.totalSessions || planDetails?.durationInMonths * 4}{" "}
+                sessions)
               </div>
             </div>
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Sessions per Week</div>
-              <div>{planDetails?.callsPerWeek || 2}</div>
+              <div>{planDetails?.meetingsPerWeek || 2}</div>
             </div>
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Max Participants</div>
@@ -402,12 +403,18 @@ export default function ClassCheckoutPage({
                 <div className="font-semibold">
                   <ul className="list-disc">
                     <li>
-                      {planDetails?.durationInMonths
-                        ? `${Math.ceil(planDetails.durationInMonths * 4.33)} weeks`
-                        : "4 weeks"}{" "}
-                      of classes
+                      {planDetails?.totalSessions ||
+                        (planDetails?.meetingsPerWeek || 2) *
+                          (planDetails?.durationInMonths || 1) *
+                          4}{" "}
+                      total sessions (
+                      {planDetails?.totalHours ||
+                        (planDetails?.meetingsPerWeek || 2) *
+                          (planDetails?.durationInMonths || 1) *
+                          4}{" "}
+                      hours)
                     </li>
-                    <li>{planDetails?.callsPerWeek || 2} sessions per week</li>
+                    <li>{planDetails?.meetingsPerWeek || 2} sessions per week</li>
                     <li>Course materials</li>
                     <li>Certificate of completion</li>
                   </ul>

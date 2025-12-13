@@ -25,6 +25,9 @@ export async function createClassPlans(consultants: UserWithProfiles[]) {
             durationInMonths: 1,
             price: faker.number.int({ min: 19900, max: 39900 }), // $199 to $399
             meetingsPerWeek: 1,
+            sessionDurationInHours: 1.0,
+            totalSessions: 4, // 1 × 1 × 4
+            totalHours: 4.0, // 4 × 1.0
             emailSupport: PlanEmailSupport.GENERAL,
             maxParticipants: faker.number.int({ min: 5, max: 15 }),
             language: faker.helpers.arrayElement([
@@ -84,6 +87,9 @@ export async function createClassPlans(consultants: UserWithProfiles[]) {
             durationInMonths: 3,
             price: faker.number.int({ min: 34900, max: 69900 }), // $349 to $699
             meetingsPerWeek: 2,
+            sessionDurationInHours: 1.5,
+            totalSessions: 24, // 2 × 3 × 4
+            totalHours: 36.0, // 24 × 1.5
             emailSupport: PlanEmailSupport.PRIORITY,
             maxParticipants: faker.number.int({ min: 5, max: 12 }),
             language: faker.helpers.arrayElement([
@@ -143,6 +149,9 @@ export async function createClassPlans(consultants: UserWithProfiles[]) {
             durationInMonths: 6,
             price: faker.number.int({ min: 49900, max: 99900 }), // $499 to $999
             meetingsPerWeek: 3,
+            sessionDurationInHours: 2.0,
+            totalSessions: 72, // 3 × 6 × 4
+            totalHours: 144.0, // 72 × 2.0
             emailSupport: PlanEmailSupport.DEDICATED,
             maxParticipants: faker.number.int({ min: 3, max: 10 }),
             language: faker.helpers.arrayElement([

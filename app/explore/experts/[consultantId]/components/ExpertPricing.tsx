@@ -105,7 +105,7 @@ export function ExpertPricing({
           durationInMonths: plan.durationInMonths,
           features: [
             `${plan.callsPerWeek} call${plan.callsPerWeek > 1 ? "s" : ""} per week`,
-            `${plan.videoMeetings} video meeting${plan.videoMeetings > 1 ? "s" : ""}`,
+            `${plan.sessionDurationInHours} hour session${plan.sessionDurationInHours > 1 ? "s" : ""}`,
             `${plan.emailSupport} email support`,
           ],
         };

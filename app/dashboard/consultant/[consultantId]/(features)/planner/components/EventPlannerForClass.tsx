@@ -263,6 +263,13 @@ export function EventPlannerForClass({
             sessionDurationInHours:
               initialData?.classPlan?.sessionDurationInHours ?? 1,
             meetingsPerWeek: formData.meetingsPerWeek,
+            // Compute derived metrics
+            totalSessions: formData.meetingsPerWeek * formData.durationInMonths * 4,
+            totalHours:
+              formData.meetingsPerWeek *
+              formData.durationInMonths *
+              4 *
+              (initialData?.classPlan?.sessionDurationInHours ?? 1),
             emailSupport: formData.emailSupport,
             classContents: (formData.classContents ?? []).map((content) => ({
               ...content,

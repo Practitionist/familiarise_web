@@ -567,6 +567,8 @@ model SubscriptionPlan {
   priceCurrency          String           @default("INR")
   callsPerWeek           Int              @default(1)
   sessionDurationInHours Float            @default(1.0) // Duration of each session in hours
+  totalSessions          Int              @default(4)   // callsPerWeek × durationInMonths × 4
+  totalHours             Float            @default(4.0) // totalSessions × sessionDurationInHours
   emailSupport           PlanEmailSupport @default(GENERAL)
   language               String           @default("English")
   level                  String           @default("Beginner")
@@ -686,6 +688,8 @@ model ClassPlan {
   durationInMonths       Int              @default(1) // Duration in months
   meetingsPerWeek        Int              @default(1)
   sessionDurationInHours Float            @default(1.0) // Duration of each session in hours
+  totalSessions          Int              @default(4)   // meetingsPerWeek × durationInMonths × 4
+  totalHours             Float            @default(4.0) // totalSessions × sessionDurationInHours
   emailSupport           PlanEmailSupport @default(GENERAL)
   maxParticipants        Int              @default(1)
   language               String?          @default("English")

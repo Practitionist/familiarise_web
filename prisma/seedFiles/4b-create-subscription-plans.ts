@@ -26,6 +26,8 @@ export async function createSubscriptionPlans(consultants: UserWithProfiles[]) {
             priceCurrency: "INR",
             callsPerWeek: 1,
             sessionDurationInHours: 1.0,
+            totalSessions: 4, // 1 × 1 × 4
+            totalHours: 4.0, // 4 × 1.0
             emailSupport: PlanEmailSupport.GENERAL,
             language: faker.helpers.arrayElement([
               "English",
@@ -53,6 +55,8 @@ export async function createSubscriptionPlans(consultants: UserWithProfiles[]) {
             priceCurrency: "INR",
             callsPerWeek: 2,
             sessionDurationInHours: 1.0,
+            totalSessions: 48, // 2 × 6 × 4
+            totalHours: 48.0, // 48 × 1.0
             emailSupport: PlanEmailSupport.PRIORITY,
             language: faker.helpers.arrayElement([
               "English",
@@ -82,6 +86,8 @@ export async function createSubscriptionPlans(consultants: UserWithProfiles[]) {
             priceCurrency: "INR",
             callsPerWeek: 3,
             sessionDurationInHours: 1.0,
+            totalSessions: 144, // 3 × 12 × 4
+            totalHours: 144.0, // 144 × 1.0
             emailSupport: PlanEmailSupport.DEDICATED,
             language: faker.helpers.arrayElement([
               "English",
