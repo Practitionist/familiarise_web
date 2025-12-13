@@ -9,7 +9,10 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { CheckCircle } from "lucide-react";
 import { ClassPlanProgram } from "@/app/explore/programs/utils";
+import { isUserEnrolled } from "@/lib/payments/utils/participants";
 
 type ClientClassRegistrationProps = {
   readonly plan: ClassPlanProgram;
@@ -22,6 +25,11 @@ export function ClientClassRegistration({
   const startDate = classes?.[0]?.startDate; // Corrected to startDate
   const { data: session } = useSession();
   const isLoggedIn = !!session?.user;
+  const userId = session?.user?.id;
+
+  // Check if user is already enrolled in this class
+  const appointments = classes?.flatMap((c) => c.appointments ?? []) ?? [];
+  const isAlreadyEnrolled = userId ? isUserEnrolled(appointments, userId) : false;
 
   const handleRegistration = () => {
     if (!isLoggedIn) {
@@ -112,6 +120,37 @@ export function ClientClassRegistration({
           >
             Sign in to Register
           </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  // Show "Already Enrolled" state for logged-in users who are already enrolled
+  if (isAlreadyEnrolled) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Class Registration</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center gap-2 mb-4">
+            <CheckCircle className="h-5 w-5 text-green-600" />
+            <Badge className="bg-green-100 text-green-800 border-green-300">
+              Already Enrolled
+            </Badge>
+          </div>
+          <p className="text-sm text-gray-600 mb-4">
+            {startDate
+              ? `Class starts on ${new Date(startDate).toLocaleString(undefined, {
+                  dateStyle: "long",
+                  timeStyle: "short",
+                  timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                })}`
+              : "Start date to be announced"}
+          </p>
+          <p className="text-sm text-gray-600">
+            You are enrolled in this class. Check your dashboard for session details.
+          </p>
         </CardContent>
       </Card>
     );

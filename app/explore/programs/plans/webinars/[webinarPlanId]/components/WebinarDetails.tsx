@@ -281,6 +281,7 @@ export function WebinarDetails({ plan, nextSession, webinarId }: WebinarDetailsP
               currency={plan.priceCurrency}
               nextSessionDate={nextSession ? new Date(nextSession) : undefined}
               sessionStatus={sessionStatus} // Pass the calculated status
+              appointment={plan.webinars?.[0]?.appointment} // For enrollment check
             />
           </div>
         </div>

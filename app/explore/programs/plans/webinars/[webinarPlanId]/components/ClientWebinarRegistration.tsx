@@ -9,6 +9,8 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { CheckCircle } from "lucide-react";
 
 // Redefine SessionStatus (or import if moved to a shared file)
 type SessionStatus =
@@ -24,6 +26,9 @@ type ClientWebinarRegistrationProps = {
   currency?: string | null;
   nextSessionDate?: Date;
   sessionStatus: SessionStatus;
+  appointment?: {
+    slotsOfAppointment?: Array<{ user?: Array<{ id: string }> }>;
+  } | null;
 };
 
 export function ClientWebinarRegistration({
@@ -33,9 +38,18 @@ export function ClientWebinarRegistration({
   currency,
   nextSessionDate,
   sessionStatus,
+  appointment,
 }: ClientWebinarRegistrationProps) {
   const { data: session } = useSession();
   const isLoggedIn = !!session?.user;
+  const userId = session?.user?.id;
+
+  // Check if user is already registered for this webinar
+  const isAlreadyRegistered =
+    userId &&
+    appointment?.slotsOfAppointment?.some((slot) =>
+      slot.user?.some((u) => u.id === userId),
+    );
 
   const handleRegistration = () => {
     if (!isLoggedIn) {
@@ -128,6 +142,29 @@ export function ClientWebinarRegistration({
           >
             {signInButtonText}
           </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  // Show "Already Registered" state for logged-in users who are already registered
+  if (isAlreadyRegistered) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Webinar Registration</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center gap-2 mb-4">
+            <CheckCircle className="h-5 w-5 text-green-600" />
+            <Badge className="bg-green-100 text-green-800 border-green-300">
+              Already Registered
+            </Badge>
+          </div>
+          <p className="text-sm text-gray-600 mb-4">{sessionInfoText}</p>
+          <p className="text-sm text-gray-600">
+            Check your email for webinar details and join link.
+          </p>
         </CardContent>
       </Card>
     );
