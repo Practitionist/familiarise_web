@@ -1,15 +1,13 @@
 "use client";
 
-import { Card, CardHeader, CardContent } from "@/components/ui/card";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import Link from "next/link";
-import { useState } from "react";
+import { motion } from "framer-motion";
 import { useQuery } from "@tanstack/react-query";
-import { User, Star, StarHalf } from "lucide-react";
+import { User, Star, StarHalf, ArrowRight, Award } from "lucide-react";
 import { TConsultantProfile } from "@/types/consultant";
 
-// Fetcher function for the experts API
 const fetchFeaturedExperts = async (): Promise<TConsultantProfile[]> => {
   const response = await fetch("/api/user/consultants?limit=5");
   if (!response.ok) throw new Error("Failed to fetch experts");
@@ -21,8 +19,8 @@ export function FeaturedExperts() {
   const { data: experts = [], isLoading } = useQuery({
     queryKey: ["featured-experts"],
     queryFn: fetchFeaturedExperts,
-    staleTime: 5 * 60 * 1000, // 5 minutes
-    gcTime: 10 * 60 * 1000, // 10 minutes
+    staleTime: 5 * 60 * 1000,
+    gcTime: 10 * 60 * 1000,
     retry: 2,
   });
 
@@ -31,102 +29,135 @@ export function FeaturedExperts() {
     const hasHalfStar = rating % 1 >= 0.5;
 
     return (
-      <div className="flex items-center gap-0.5 justify-center">
+      <div className="flex items-center gap-1">
         {[...Array(fullStars)].map((_, i) => (
-          <Star key={i} className="w-4 h-4 fill-yellow-400 text-yellow-400" />
+          <Star key={i} className="w-4 h-4 fill-amber-400 text-amber-400" />
         ))}
         {hasHalfStar && (
-          <StarHalf className="w-4 h-4 fill-yellow-400 text-yellow-400" />
+          <StarHalf className="w-4 h-4 fill-amber-400 text-amber-400" />
         )}
-        <span className="text-sm text-gray-600 ml-1">{rating.toFixed(1)}</span>
+        <span className="text-sm font-medium text-zinc-700 ml-1">{rating.toFixed(1)}</span>
       </div>
     );
   };
 
   return (
-    <section className="w-full py-32">
-      <div className="space-y-8 px-4 md:px-6">
-        <div className="flex flex-col items-center justify-center space-y-4 text-center">
-          <div className="space-y-2">
-            <div className="inline-block rounded-lg bg-black px-3 py-1 text-sm text-white">
-              Featured Experts
-            </div>
-            <h2 className="text-3xl font-bold tracking-tighter sm:text-5xl">
-              Top Consultants
-            </h2>
-            <p className="max-w-[900px] text-gray-500 md:text-lg/relaxed lg:text-base/relaxed xl:text-lg/relaxed dark:text-gray-400">
-              Discover the best of the best. Our top consultants are ready to
-              help you with your business needs.
-            </p>
+    <section className="py-20 bg-gradient-to-b from-zinc-100 to-white relative overflow-hidden">
+      {/* Background Pattern */}
+      <div className="absolute inset-0 dot-pattern opacity-30" />
+
+      <div className="max-w-[1600px] mx-auto px-4 md:px-8 lg:px-12 relative z-10">
+        {/* Section Header */}
+        <motion.div 
+          className="text-center mb-16"
+          initial={{ opacity: 0, y: 20 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true }}
+          transition={{ duration: 0.5 }}
+        >
+          <div className="inline-flex items-center gap-2 px-4 py-2 bg-zinc-900 rounded-full mb-6">
+            <Award className="w-4 h-4 text-white" />
+            <span className="text-sm font-medium text-white">Featured Experts</span>
           </div>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-6 max-w-7xl mx-auto">
+          <h2 className="text-3xl md:text-4xl lg:text-5xl font-bold text-zinc-900 mb-4">
+            Top <span className="silver-text">Consultants</span>
+          </h2>
+          <p className="text-lg text-zinc-600 max-w-2xl mx-auto">
+            Discover the best of the best. Our top consultants are ready to 
+            help you achieve your goals.
+          </p>
+        </motion.div>
+
+        {/* Experts Grid */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-6">
           {isLoading
-            ? // Show loading skeletons
-              Array(5)
-                .fill(0)
-                .map((_, index) => (
-                  <Card
-                    key={index}
-                    className="hover:shadow-lg transition-shadow duration-300"
-                  >
-                    <CardHeader>
-                      <div className="w-16 h-16 rounded-full bg-gray-200 animate-pulse mx-auto mb-3" />
-                      <div className="h-5 bg-gray-200 rounded animate-pulse w-3/4 mx-auto" />
-                    </CardHeader>
-                    <CardContent>
-                      <div className="space-y-2">
-                        <div className="h-4 bg-gray-200 rounded animate-pulse w-1/2 mx-auto" />
-                        <div className="h-3 bg-gray-200 rounded animate-pulse w-1/3 mx-auto" />
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))
-            : experts.map((expert) => (
-                <Link
-                  key={expert.id}
-                  href={`/explore/experts/${expert.id}`}
-                  className="block hover:no-underline"
+            ? Array(5).fill(0).map((_, index) => (
+                <div
+                  key={index}
+                  className="bg-white rounded-2xl p-6 shadow-sm border border-zinc-200 animate-pulse"
                 >
-                  <Card className="hover:shadow-lg transition-shadow duration-300 hover:-translate-y-0.5 h-full flex flex-col">
-                    <CardHeader className="space-y-3 flex-shrink-0">
-                      <Avatar className="mx-auto h-16 w-16">
-                        <AvatarImage
-                          src={expert.user.image || "/placeholder-user.jpg"}
-                          alt={expert.user.name || "Expert"}
-                        />
-                        <AvatarFallback>
-                          <User className="h-8 w-8" />
-                        </AvatarFallback>
-                      </Avatar>
-                      <h3 className="text-lg font-semibold text-center line-clamp-1">
+                  <div className="w-20 h-20 rounded-full bg-zinc-200 mx-auto mb-4" />
+                  <div className="h-5 bg-zinc-200 rounded w-3/4 mx-auto mb-3" />
+                  <div className="h-4 bg-zinc-200 rounded w-1/2 mx-auto mb-4" />
+                  <div className="flex gap-2 justify-center">
+                    <div className="h-6 bg-zinc-200 rounded-full w-16" />
+                    <div className="h-6 bg-zinc-200 rounded-full w-16" />
+                  </div>
+                </div>
+              ))
+            : experts.map((expert, index) => (
+                <motion.div
+                  key={expert.id}
+                  initial={{ opacity: 0, y: 20 }}
+                  whileInView={{ opacity: 1, y: 0 }}
+                  viewport={{ once: true }}
+                  transition={{ duration: 0.4, delay: index * 0.1 }}
+                >
+                  <Link
+                    href={`/explore/experts/${expert.id}`}
+                    className="group block"
+                  >
+                    <div className="bg-white rounded-2xl p-6 shadow-sm border border-zinc-200 hover:border-zinc-300 hover:shadow-lg transition-all duration-300 h-full flex flex-col">
+                      {/* Avatar */}
+                      <div className="relative mb-4">
+                        <Avatar className="mx-auto h-20 w-20 ring-4 ring-zinc-100 group-hover:ring-zinc-200 transition-all">
+                          <AvatarImage
+                            src={expert.user.image || "/placeholder-user.jpg"}
+                            alt={expert.user.name || "Expert"}
+                            className="object-cover"
+                          />
+                          <AvatarFallback className="bg-zinc-900 text-white">
+                            <User className="h-10 w-10" />
+                          </AvatarFallback>
+                        </Avatar>
+                        {/* Top Expert Badge */}
+                        {index === 0 && (
+                          <div className="absolute -top-2 -right-2 w-8 h-8 bg-gradient-to-br from-amber-400 to-amber-600 rounded-full flex items-center justify-center shadow-lg">
+                            <Award className="w-4 h-4 text-white" />
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Name */}
+                      <h3 className="text-lg font-semibold text-zinc-900 text-center mb-2 line-clamp-1 group-hover:text-zinc-700 transition-colors">
                         {expert.user.name}
                       </h3>
-                      {renderRating(expert.rating)}
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-                      <div className="text-center">
-                        <p className="text-sm text-gray-600 font-medium line-clamp-1">
+
+                      {/* Rating */}
+                      <div className="flex justify-center mb-3">
+                        {renderRating(expert.rating)}
+                      </div>
+
+                      {/* Specialization */}
+                      <div className="text-center flex-1">
+                        <p className="text-sm text-zinc-600 font-medium line-clamp-1 mb-1">
                           {expert.specialization || expert.domain.name}
                         </p>
-                        <p className="text-xs text-gray-500 mt-1">
+                        <p className="text-xs text-zinc-500">
                           {expert.experience} experience
                         </p>
                       </div>
-                      <div className="flex flex-wrap gap-2 justify-center">
-                        {expert.tags?.slice(0, 3).map((tag) => (
+
+                      {/* Tags */}
+                      <div className="flex flex-wrap gap-1.5 justify-center mt-4">
+                        {expert.tags?.slice(0, 2).map((tag) => (
                           <Badge
                             key={tag.id}
-                            variant="secondary"
-                            className="text-xs px-2 py-0.5"
+                            className="text-xs px-2 py-0.5 bg-zinc-100 text-zinc-700 hover:bg-zinc-200 border-0"
                           >
                             {tag.name}
                           </Badge>
                         ))}
                       </div>
-                    </CardContent>
-                  </Card>
-                </Link>
+
+                      {/* View Profile */}
+                      <div className="mt-4 flex items-center justify-center gap-1 text-sm font-medium text-zinc-500 group-hover:text-zinc-900 transition-colors">
+                        <span>View Profile</span>
+                        <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+                      </div>
+                    </div>
+                  </Link>
+                </motion.div>
               ))}
         </div>
       </div>

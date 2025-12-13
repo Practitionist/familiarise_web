@@ -1,6 +1,9 @@
 "use client";
-import React from "react";
+
+import React, { useState } from "react";
 import Image from "next/image";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
 import {
   FaFacebook,
   FaInstagram,
@@ -8,12 +11,55 @@ import {
   FaLinkedin,
   FaTwitter,
 } from "react-icons/fa";
+import { ArrowUpRight, MessageSquare } from "lucide-react";
+
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import familiariseLogoWhite from "@/public/avif/static/assets/logos/images/logos/Familiarise-logos_white.avif";
-import Link from "next/link";
-import { usePathname } from "next/navigation";
+
+const FOOTER_LINKS = {
+  expertise: [
+    { label: "Technology", href: "/explore/experts?category=technology" },
+    { label: "Business", href: "/explore/experts?category=business" },
+    { label: "Design", href: "/explore/experts?category=design" },
+    { label: "Marketing", href: "/explore/experts?category=marketing" },
+    { label: "Education", href: "/explore/experts?category=education" },
+  ],
+  company: [
+    { label: "About", href: "/about" },
+    { label: "Careers", href: "/careers" },
+    { label: "Press", href: "/press" },
+    { label: "Contact", href: "/contactus" },
+    { label: "Blog", href: "/blog" },
+  ],
+  resources: [
+    { label: "Help Center", href: "/help" },
+    { label: "Community", href: "/explore/community" },
+    { label: "Become an Expert", href: "/form/onboarding" },
+    { label: "Pricing", href: "/pricing" },
+  ],
+  legal: [
+    { label: "Terms of Service", href: "/terms" },
+    { label: "Privacy Policy", href: "/privacy" },
+    { label: "Refund Policy", href: "/refund" },
+    { label: "Cookie Policy", href: "/cookies" },
+  ],
+};
+
+const SOCIAL_LINKS = [
+  { icon: FaTwitter, href: "https://twitter.com/familiarise", label: "Twitter" },
+  { icon: FaLinkedin, href: "https://linkedin.com/company/familiarise", label: "LinkedIn" },
+  { icon: FaInstagram, href: "https://instagram.com/familiarise", label: "Instagram" },
+  { icon: FaYoutube, href: "https://youtube.com/familiarise", label: "YouTube" },
+  { icon: FaFacebook, href: "https://facebook.com/familiarise", label: "Facebook" },
+];
 
 const Footer: React.FC = () => {
   const pathname = usePathname();
+  const [email, setEmail] = useState("");
+
+  // Check if we're on the home page
+  const isHomePage = pathname === "/";
 
   // Routes where footer should be hidden
   const excludeFooter =
@@ -26,141 +72,209 @@ const Footer: React.FC = () => {
 
   if (excludeFooter) return null;
 
+  const handleNewsletterSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    console.log("Newsletter signup:", email);
+    setEmail("");
+  };
+
   return (
-    <footer className="flex flex-col items-center justify-center p-5 bg-black text-white mt-auto">
-      <div className="w-full flex justify-center pb-5">
-        {/* Responsive company logo using fill */}
-        <div
-          className="relative h-[60px] w-auto"
-          style={{ minWidth: 120, maxWidth: 320 }}
-        >
+    <footer className="bg-black text-white mt-auto relative overflow-hidden">
+      {/* Animated background - only on home page for continuous effect */}
+      {isHomePage && (
+        <>
+          <div className="absolute inset-0">
+            <div className="absolute top-1/4 left-1/4 w-[500px] h-[500px] bg-zinc-800/30 rounded-full blur-[120px] animate-blob" />
+            <div className="absolute bottom-1/4 right-1/4 w-[400px] h-[400px] bg-zinc-700/20 rounded-full blur-[100px] animate-blob animation-delay-2000" />
+            <div className="absolute top-1/2 right-1/3 w-[300px] h-[300px] bg-zinc-600/15 rounded-full blur-[80px] animate-blob animation-delay-4000" />
+          </div>
+          <div className="absolute inset-0 grid-pattern opacity-20" />
+        </>
+      )}
+
+      {/* Newsletter Section - Only on home page, merged with footer */}
+      {isHomePage && (
+        <div className="relative z-10 border-b border-zinc-800">
+          <div className="container mx-auto px-4 md:px-6 py-20 md:py-28">
+            <div className="max-w-2xl mx-auto text-center">
+              <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-zinc-700 to-zinc-900 flex items-center justify-center mx-auto mb-6 shadow-lg">
+                <MessageSquare className="w-8 h-8 text-white" />
+              </div>
+              <h2 className="text-3xl md:text-4xl lg:text-5xl font-bold text-white mb-4">
+                Stay in the <span className="silver-text">loop</span>
+              </h2>
+              <p className="text-lg text-zinc-500 mb-8">
+                Get expert tips, career advice, and exclusive offers delivered to your inbox weekly.
+              </p>
+              
+              <form className="flex flex-col sm:flex-row gap-3 max-w-md mx-auto" onSubmit={handleNewsletterSubmit}>
+                <Input
+                  type="email"
+                  placeholder="Enter your email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="h-14 bg-zinc-900 border-zinc-800 text-white placeholder:text-zinc-600 rounded-xl focus:border-zinc-600 focus:ring-zinc-600"
+                />
+                <Button 
+                  type="submit"
+                  size="lg" 
+                  className="h-14 bg-white text-zinc-900 hover:bg-zinc-200 px-8 rounded-xl font-medium shrink-0"
+                >
+                  Subscribe
+                </Button>
+              </form>
+              
+              <p className="text-sm text-zinc-600 mt-4">
+                No spam, unsubscribe anytime.{" "}
+                <Link href="/privacy" className="underline hover:text-zinc-400 transition-colors">
+                  Privacy Policy
+                </Link>
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Main Footer Content */}
+      <div className="container mx-auto px-4 md:px-6 py-16 md:py-20 relative z-10">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-8 lg:gap-12">
+          {/* Brand Column */}
+          <div className="col-span-2 md:col-span-3 lg:col-span-2">
+            <Link href="/" className="inline-block mb-6">
+              <div className="relative h-10 w-36">
           <Image
             src={familiariseLogoWhite}
-            alt="Company Logo"
+                  alt="Familiarise"
             fill
-            className="object-contain"
-            sizes="(max-width: 320px) 100vw, 320px"
-          />
+                  className="object-contain object-left"
+                  sizes="144px"
+                />
+              </div>
+            </Link>
+            <p className="text-zinc-400 text-sm leading-relaxed mb-6 max-w-xs">
+              Connect with world-class experts for personalized mentorship, 
+              classes, and career guidance. Transform your career today.
+            </p>
+            
+            {/* Social Links */}
+            <div className="flex items-center gap-3">
+              {SOCIAL_LINKS.map((social) => (
+                <a
+                  key={social.label}
+                  href={social.href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={social.label}
+                  className="w-10 h-10 rounded-full bg-zinc-800 hover:bg-zinc-700 flex items-center justify-center transition-colors group"
+                >
+                  <social.icon className="w-4 h-4 text-zinc-400 group-hover:text-white transition-colors" />
+                </a>
+              ))}
         </div>
       </div>
-      <div className="flex justify-between w-full max-w-6xl">
-        <div className="flex flex-col w-1/5">
-          <h2 className="mb-2 text-lg font-bold">Explore Areas of Expertise</h2>
-          <ul className="list-none p-0 mb-5 space-y-1">
-            <li>Doctors</li>
-            <li>Lawyers</li>
-            <li>Engineers</li>
-            <li>Designers</li>
-            <li>Higher Education</li>
-          </ul>
-          <h2 className="mb-2 text-lg font-bold">Follow Us</h2>
-          <ul className="list-none p-0 flex space-x-2">
-            <li>
-              <FaFacebook />
+
+          {/* Expertise Column */}
+          <div>
+            <h3 className="font-semibold text-white mb-4">Expertise</h3>
+            <ul className="space-y-3">
+              {FOOTER_LINKS.expertise.map((link) => (
+                <li key={link.label}>
+                  <Link
+                    href={link.href}
+                    className="text-sm text-zinc-400 hover:text-white transition-colors"
+                  >
+                    {link.label}
+                  </Link>
             </li>
-            <li>
-              <FaInstagram />
-            </li>
-            <li>
-              <FaYoutube />
-            </li>
-            <li>
-              <FaLinkedin />
-            </li>
-            <li>
-              <FaTwitter />
-            </li>
+              ))}
           </ul>
         </div>
-        <div className="flex flex-col w-1/5">
-          <h2 className="mb-2 text-lg font-bold">Overview</h2>
-          <ul className="list-none p-0 mb-5 space-y-1">
-            <li>
-              <Link href="/about" className="hover:underline">
-                About
+
+          {/* Company Column */}
+          <div>
+            <h3 className="font-semibold text-white mb-4">Company</h3>
+            <ul className="space-y-3">
+              {FOOTER_LINKS.company.map((link) => (
+                <li key={link.label}>
+                  <Link
+                    href={link.href}
+                    className="text-sm text-zinc-400 hover:text-white transition-colors"
+                  >
+                    {link.label}
               </Link>
             </li>
-            <li>Career</li>
-            <li>Press</li>
-            <li>
-              <Link href="/contactus" className="hover:underline">
-                Contact
-              </Link>
-            </li>
-            <li>
-              <Link href="/pricing" className="hover:underline">
-                Pricing
-              </Link>
-            </li>
-            <li>
-              <Link href="/terms" className="hover:underline">
-                Terms of Service
-              </Link>
-            </li>
-            <li>
-              <Link href="/privacy" className="hover:underline">
-                Privacy Policy
-              </Link>
-            </li>
-            <li>
-              <Link href="/refund" className="hover:underline">
-                Refund Policy
-              </Link>
-            </li>
-            <li>Global Sitemap</li>
-            <li>Local Sitemap</li>
-          </ul>
-        </div>
-        <div className="flex flex-col w-1/5">
-          <h2 className="mb-2 text-lg font-bold">Community</h2>
-          <ul className="list-none p-0 mb-5 space-y-1">
-            <li>Community Central</li>
-            <li>Support</li>
-            <li>Help</li>
-            <li>Do not Sell my info</li>
-          </ul>
-          <h2 className="mb-2 text-lg font-bold">Advertise</h2>
-          <ul className="list-none p-0 mb-5 space-y-1">
-            <li>Media kit</li>
-            <li>Contact</li>
-          </ul>
-        </div>
-        <div className="flex flex-col w-1/5">
-          <h2 className="mb-2 text-lg font-bold">Familiarise Apps</h2>
-          <p>Stay in touch with us over other platforms</p>
-          <h2 className="mb-2 text-lg font-bold">Mobile App</h2>
-          <div className="grid grid-cols-3 gap-4">
-            {/* Replace with your app logo */}
-            {/* Replace with your app store logos */}
+              ))}
+            </ul>
           </div>
-          <h2 className="mb-2 text-lg font-bold">Familiarise Udemy Channel</h2>
-          {/* Replace with your Udemy logo */}
+
+          {/* Resources Column */}
+          <div>
+            <h3 className="font-semibold text-white mb-4">Resources</h3>
+            <ul className="space-y-3">
+              {FOOTER_LINKS.resources.map((link) => (
+                <li key={link.label}>
+                  <Link
+                    href={link.href}
+                    className="text-sm text-zinc-400 hover:text-white transition-colors inline-flex items-center gap-1"
+                  >
+                    {link.label}
+                    {link.label === "Become an Expert" && (
+                      <ArrowUpRight className="w-3 h-3" />
+                    )}
+              </Link>
+            </li>
+              ))}
+            </ul>
+          </div>
+
+          {/* Legal Column */}
+          <div>
+            <h3 className="font-semibold text-white mb-4">Legal</h3>
+            <ul className="space-y-3">
+              {FOOTER_LINKS.legal.map((link) => (
+                <li key={link.label}>
+                  <Link
+                    href={link.href}
+                    className="text-sm text-zinc-400 hover:text-white transition-colors"
+                  >
+                    {link.label}
+              </Link>
+            </li>
+              ))}
+          </ul>
+          </div>
         </div>
       </div>
-      <div className="flex flex-col gap-2 sm:flex-row py-6 w-full shrink-0 items-center px-4 md:px-6 border-t">
-        <p className="text-xs text-gray-500 dark:text-gray-400">
-          © Familiarise. All rights reserved.
+
+      {/* Bottom Bar */}
+      <div className="border-t border-zinc-800 relative z-10">
+        <div className="container mx-auto px-4 md:px-6 py-6">
+          <div className="flex flex-col md:flex-row items-center justify-between gap-4">
+            <p className="text-sm text-zinc-500">
+              © {new Date().getFullYear()} Familiarise. All rights reserved.
         </p>
-        <nav className="sm:ml-auto flex gap-4 sm:gap-6">
+            <div className="flex items-center gap-6">
           <Link
-            className="text-xs hover:underline underline-offset-4"
             href="/terms"
+                className="text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
           >
-            Terms of Service
+                Terms
           </Link>
           <Link
-            className="text-xs hover:underline underline-offset-4"
             href="/privacy"
+                className="text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
           >
             Privacy
           </Link>
           <Link
-            className="text-xs hover:underline underline-offset-4"
             href="/refund"
+                className="text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
           >
-            Refund Policy
+                Refunds
           </Link>
-        </nav>
+            </div>
+          </div>
+        </div>
       </div>
     </footer>
   );

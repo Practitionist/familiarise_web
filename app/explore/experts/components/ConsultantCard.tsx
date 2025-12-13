@@ -8,6 +8,7 @@ import { Domain, SubDomain, Tag } from "@prisma/client";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { TConsultantProfile } from "@/types/consultant";
+import { Star, MapPin, Clock, Briefcase, ArrowRight, CheckCircle2 } from "lucide-react";
 
 interface ConsultantCardProps {
   consultant: TConsultantProfile;
@@ -18,45 +19,20 @@ interface ConsultantCardProps {
   } | null;
 }
 
-function StarIcon(props: React.SVGProps<SVGSVGElement>) {
-  return (
-    <svg
-      {...props}
-      xmlns="http://www.w3.org/2000/svg"
-      width="24"
-      height="24"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
-    </svg>
-  );
-}
-
 const ConsultantInfo = ({
+  icon: Icon,
   label,
   value,
 }: {
+  icon: React.ElementType;
   label: string;
   value: string | null;
 }) => (
-  <div className="flex flex-wrap gap-2 items-center">
-    <span className="text-gray-600 font-medium">{label}:</span>
-    <span className="text-gray-800">{value || "Not specified"}</span>
+  <div className="flex items-center gap-2 text-sm">
+    <Icon className="w-4 h-4 text-zinc-400" />
+    <span className="text-zinc-500">{label}:</span>
+    <span className="text-zinc-800 font-medium">{value || "Not specified"}</span>
   </div>
-);
-
-const TagBadge = ({ children }: { children: React.ReactNode }) => (
-  <Badge
-    variant="outline"
-    className="px-3 py-1 text-sm bg-white hover:bg-gray-50 transition-colors"
-  >
-    {children}
-  </Badge>
 );
 
 const SubscriptionPlanCard = ({ plan }: { plan: any }) => {
@@ -76,34 +52,28 @@ const SubscriptionPlanCard = ({ plan }: { plan: any }) => {
   };
 
   return (
-    <Card className="rounded-lg border-0 shadow-md hover:shadow-lg transition-shadow">
-      <CardContent className="grid gap-4 p-6">
-        <div className="flex items-center justify-between">
-          <div className="text-3xl font-bold">${plan.price / 100}</div>
-          <div className="text-gray-500 font-medium">
-            {formatDuration(plan.durationInMonths)}
-          </div>
+    <div className="bg-white rounded-xl p-5 border border-zinc-200">
+      <div className="flex items-baseline justify-between mb-4">
+        <div className="text-3xl font-bold text-zinc-900">${plan.price / 100}</div>
+        <div className="text-sm text-zinc-500 font-medium bg-zinc-100 px-3 py-1 rounded-full">
+          {formatDuration(plan.durationInMonths)}
         </div>
-        <div className="space-y-3">
-          <div className="flex items-center justify-between text-sm">
-            <span className="text-gray-600">Calls per week</span>
-            <span className="font-semibold">{plan.callsPerWeek}</span>
-          </div>
-          <div className="flex items-center justify-between text-sm">
-            <span className="text-gray-600">Email support</span>
-            <span className="font-semibold capitalize">
-              {plan.emailSupport.toLowerCase()}
-            </span>
-          </div>
-          <div className="flex items-center justify-between text-sm">
-            <span className="text-gray-600">Video meetings</span>
-            <span className="font-semibold">
-              {plan.videoMeetings} per month
-            </span>
-          </div>
+      </div>
+      <div className="space-y-2.5">
+        <div className="flex items-center gap-2 text-sm">
+          <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+          <span className="text-zinc-600">{plan.callsPerWeek} calls/week</span>
         </div>
-      </CardContent>
-    </Card>
+        <div className="flex items-center gap-2 text-sm">
+          <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+          <span className="text-zinc-600 capitalize">{plan.emailSupport.toLowerCase()} email support</span>
+        </div>
+        <div className="flex items-center gap-2 text-sm">
+          <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+          <span className="text-zinc-600">{plan.videoMeetings} video meetings/month</span>
+        </div>
+      </div>
+    </div>
   );
 };
 
@@ -116,106 +86,115 @@ export function ConsultantCard({ consultant, metadata }: ConsultantCardProps) {
       .sort((a, b) => a.durationInMonths - b.durationInMonths) || [];
 
   return (
-    <div className="bg-white rounded-xl shadow-sm hover:shadow-md transition-shadow duration-300 overflow-hidden border-2 border-black">
-      <div className="p-6 flex flex-col lg:flex-row gap-6">
+    <div className="bg-white rounded-2xl border border-zinc-200 hover:border-zinc-300 hover:shadow-xl transition-all duration-300 overflow-hidden group">
+      <div className="p-6 md:p-8 lg:p-10 flex flex-col lg:flex-row gap-8 lg:gap-12">
         {/* Left Section: Consultant Info */}
         <div
-          className="flex-grow cursor-pointer space-y-4"
+          className="flex-grow cursor-pointer"
           onClick={() => router.push(`/explore/experts/${consultant.id}`)}
         >
-          <div className="flex items-center gap-4">
+          {/* Header */}
+          <div className="flex items-start gap-4 mb-6">
             <div className="relative h-20 w-20 flex-shrink-0">
               <Image
                 alt={`Portrait of ${consultant.user.name}`}
-                className="rounded-full"
+                className="rounded-2xl object-cover ring-2 ring-zinc-100"
                 src={consultant.user.image || "/placeholder-user.jpg"}
                 fill
-                style={{ objectFit: "cover" }}
               />
+              {/* Online indicator */}
+              <div className="absolute -bottom-1 -right-1 w-5 h-5 bg-emerald-500 rounded-full border-2 border-white" />
             </div>
-            <div>
-              <h3 className="text-xl font-semibold">{consultant.user.name}</h3>
+            <div className="flex-1 min-w-0">
+              <h3 className="text-xl font-bold text-zinc-900 group-hover:text-zinc-700 transition-colors">
+                {consultant.user.name}
+              </h3>
               {consultant.user.email && (
-                <span className="text-gray-500">
+                <span className="text-sm text-zinc-500">
                   @{consultant.user.email.split("@")[0]}
                 </span>
               )}
-              <div className="flex items-center gap-2 mt-1 text-sm">
-                <StarIcon className="w-4 h-4 text-yellow-400 fill-yellow-400" />
-                <span className="font-medium">
-                  {consultant.rating.toFixed(1)}
-                </span>
-                <span className="text-gray-500">
-                  ({consultant.reviews?.length || 0} reviews)
+              <div className="flex items-center gap-2 mt-2">
+                <div className="flex items-center gap-1">
+                  <Star className="w-4 h-4 text-amber-400 fill-amber-400" />
+                  <span className="font-semibold text-zinc-900">
+                    {consultant.rating.toFixed(1)}
+                  </span>
+                </div>
+                <span className="text-zinc-300">•</span>
+                <span className="text-sm text-zinc-500">
+                  {consultant.reviews?.length || 0} reviews
                 </span>
               </div>
             </div>
           </div>
 
-          <p className="text-gray-700 leading-relaxed">
+          {/* Description */}
+          <p className="text-zinc-600 leading-relaxed mb-6 line-clamp-2">
             {consultant.description}
           </p>
 
-          <div className="space-y-2">
+          {/* Meta Info */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
             <ConsultantInfo
+              icon={Clock}
               label="Experience"
-              value={
-                consultant.experience ? `${consultant.experience} years` : null
-              }
+              value={consultant.experience ? `${consultant.experience}` : null}
             />
             <ConsultantInfo
+              icon={Briefcase}
               label="Specialization"
               value={consultant.specialization}
             />
             <ConsultantInfo
-              label="Qualifications"
-              value={consultant.qualifications}
+              icon={MapPin}
+              label="Domain"
+              value={consultant.domain.name}
             />
           </div>
 
-          <div className="space-y-3">
-            <div className="flex flex-wrap gap-2 items-center">
-              <span className="text-gray-600 font-medium">Domain:</span>
-              <TagBadge>{consultant.domain.name}</TagBadge>
-            </div>
-
-            <div className="flex flex-wrap gap-2 items-center">
-              <span className="text-gray-600 font-medium">Subdomains:</span>
-              {consultant.subDomains.map((sd) => (
-                <TagBadge key={`${consultant.id}-subdomain-${sd.id}`}>
-                  {sd.name}
-                </TagBadge>
-              ))}
-            </div>
-
-            <div className="flex flex-wrap gap-2 items-center">
-              <span className="text-gray-600 font-medium">Tags:</span>
-              {consultant.tags.map((t) => (
-                <TagBadge key={`${consultant.id}-tag-${t.id}`}>
-                  {t.name}
-                </TagBadge>
-              ))}
-            </div>
+          {/* Tags */}
+          <div className="flex flex-wrap gap-2">
+            <Badge className="bg-zinc-900 text-white hover:bg-zinc-800 px-3 py-1">
+              {consultant.domain.name}
+            </Badge>
+            {consultant.subDomains.slice(0, 2).map((sd) => (
+              <Badge 
+                key={`${consultant.id}-subdomain-${sd.id}`}
+                variant="outline"
+                className="border-zinc-300 text-zinc-700 px-3 py-1"
+              >
+                {sd.name}
+              </Badge>
+            ))}
+            {consultant.tags.slice(0, 3).map((t) => (
+              <Badge 
+                key={`${consultant.id}-tag-${t.id}`}
+                className="bg-zinc-100 text-zinc-600 hover:bg-zinc-200 px-3 py-1"
+              >
+                {t.name}
+              </Badge>
+            ))}
           </div>
         </div>
 
         {/* Right Section: Subscription Plans & Actions */}
-        <div className="flex-shrink-0 lg:w-[400px] space-y-4">
-          <div className="bg-gray-50 rounded-lg p-4">
+        <div className="flex-shrink-0 lg:w-[380px] xl:w-[420px] space-y-4">
+          <div className="bg-zinc-50 rounded-xl p-4">
             {sortedPlans.length > 0 ? (
               <Tabs
                 defaultValue={sortedPlans[0].durationInMonths.toString()}
                 className="w-full"
               >
-                <TabsList className="w-full mb-4 bg-white p-1 rounded-lg">
+                <TabsList className="w-full mb-4 bg-white p-1 rounded-lg border border-zinc-200">
                   {sortedPlans.map((plan) => (
                     <TabsTrigger
                       key={`${consultant.id}-tab-trigger-${plan.id}`}
                       value={plan.durationInMonths.toString()}
-                      className="flex-1 data-[state=active]:bg-black data-[state=active]:text-white rounded-md transition-all duration-200"
+                      className="flex-1 data-[state=active]:bg-zinc-900 data-[state=active]:text-white rounded-md text-sm font-medium transition-all duration-200"
                     >
                       {plan.durationInMonths}{" "}
-                      {plan.durationInMonths === 1 ? "Month" : "Months"}
+                      {plan.durationInMonths === 1 ? "Mo" : "Mo"}
                     </TabsTrigger>
                   ))}
                 </TabsList>
@@ -229,28 +208,35 @@ export function ConsultantCard({ consultant, metadata }: ConsultantCardProps) {
                 ))}
               </Tabs>
             ) : (
-              <div className="text-center text-gray-500 py-6">
-                No subscription plans available at the moment.
+              <div className="text-center text-zinc-500 py-8">
+                <p className="text-sm">No subscription plans available</p>
               </div>
             )}
           </div>
 
+          {/* Action Buttons */}
           <div className="flex flex-col gap-2">
             <Button
-              variant="outline"
-              className="w-full bg-white hover:bg-gray-50 transition-colors border-gray-400"
+              className="w-full h-12 bg-zinc-900 hover:bg-zinc-800 text-white font-medium rounded-xl transition-all"
+              onClick={() => router.push(`/explore/experts/${consultant.id}`)}
             >
-              Book a Free Trial
+              <span>View Profile</span>
+              <ArrowRight className="w-4 h-4 ml-2" />
             </Button>
-            <Button className="w-full bg-black hover:bg-gray-800 text-white transition-colors">
-              Book a Session
-            </Button>
-            <Button
-              variant="outline"
-              className="w-full bg-white hover:bg-gray-50 transition-colors border-gray-400"
-            >
-              Book Mentorship
-            </Button>
+            <div className="grid grid-cols-2 gap-2">
+              <Button
+                variant="outline"
+                className="h-10 border-zinc-300 hover:bg-zinc-50 text-zinc-700 rounded-xl text-sm font-medium"
+              >
+                Free Trial
+              </Button>
+              <Button
+                variant="outline"
+                className="h-10 border-zinc-300 hover:bg-zinc-50 text-zinc-700 rounded-xl text-sm font-medium"
+              >
+                Book Session
+              </Button>
+            </div>
           </div>
         </div>
       </div>

@@ -1,6 +1,7 @@
 "use client";
 
 import { use, useEffect, useState } from "react";
+import { Video } from "lucide-react";
 import {
   WebinarDetails,
   type WebinarPlanData,
@@ -25,7 +26,6 @@ export default function WebinarDetailsPage({
         setWebinarData(resJson.data);
       } catch (error) {
         console.error("Error fetching webinar data:", error);
-        // redirect("/explore/programs/webinars");
       } finally {
         setIsLoading(false);
       }
@@ -36,22 +36,26 @@ export default function WebinarDetailsPage({
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-screen">
-        <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-blue-500"></div>
-      </div>
+      <main className="min-h-screen bg-zinc-50 flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <div className="relative">
+            <div className="w-16 h-16 border-4 border-zinc-200 border-t-zinc-900 rounded-full animate-spin" />
+            <div className="absolute inset-0 flex items-center justify-center">
+              <Video className="w-6 h-6 text-zinc-400" />
+            </div>
+          </div>
+          <p className="text-zinc-500 text-sm">Loading webinar details...</p>
+        </div>
+      </main>
     );
   }
 
   if (!webinarData) return null;
 
-  // Attempt to get the next session's start time from the first available webinar instance.
-  // This relies on the API response including nested: webinars > appointment > slotsOfAppointment.
   const firstWebinarInstance = webinarData.webinars?.[0];
   const nextSession =
     firstWebinarInstance?.appointment?.slotsOfAppointment?.[0]?.startsAt;
 
-  // Pass the entire webinarData (WebinarPlanData) as the 'plan' prop.
-  // webinarId is the actual Webinar instance ID (not the plan ID) - required for checkout.
   return (
     <WebinarDetails
       plan={webinarData}

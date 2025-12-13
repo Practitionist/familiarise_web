@@ -223,22 +223,22 @@ export default function ClassCheckoutPage({
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-screen">
-        <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-blue-500"></div>
+      <div className="flex items-center justify-center h-screen bg-zinc-50">
+        <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-zinc-900"></div>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="flex items-center justify-center h-screen">
+      <div className="flex items-center justify-center h-screen bg-zinc-50">
         <div
-          className="bg-red-100 border-l-4 border-red-500 text-red-700 p-4 max-w-lg mx-auto text-center"
+          className="bg-zinc-900 border border-zinc-800 text-white p-6 max-w-lg mx-auto text-center rounded-xl shadow-xl"
           role="alert"
         >
-          <p className="font-bold">Oops! Something went wrong</p>
-          <p>{error}</p>
-          <p className="mt-2">
+          <p className="font-bold text-lg mb-2">Oops! Something went wrong</p>
+          <p className="text-zinc-400">{error}</p>
+          <p className="mt-3 text-zinc-500 text-sm">
             Please check your selection and try again. If the problem persists,
             contact support.
           </p>
@@ -263,7 +263,7 @@ export default function ClassCheckoutPage({
 
   return (
     <>
-      <div className="flex flex-col gap-8 border-r bg-muted/40 p-8">
+      <div className="flex flex-col gap-6 border-r border-zinc-300 bg-gradient-to-br from-zinc-200 via-zinc-100 to-gray-200 p-8">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
             <Avatar className="w-12 h-12 border">
@@ -291,7 +291,7 @@ export default function ClassCheckoutPage({
             </div>
           </div>
         </div>
-        <Separator className="bg-gray-300" />
+        <Separator className="bg-zinc-200" />
         <div className="grid gap-2">
           <div className="font-semibold">Class Details</div>
           <div className="grid gap-2">
@@ -356,7 +356,7 @@ export default function ClassCheckoutPage({
             </div>
           </div>
         </div>
-        <Separator className="bg-gray-300" />
+        <Separator className="bg-zinc-200" />
         <div className="grid gap-4">
           <div className="font-semibold">Discount Codes</div>
           <div className="flex items-center gap-2">
@@ -385,10 +385,10 @@ export default function ClassCheckoutPage({
           </div>
         </div>
       </div>
-      <div className="flex flex-col gap-8 p-6">
-        <Card>
+      <div className="flex flex-col gap-8 p-8 bg-white">
+        <Card className="border-zinc-200 shadow-sm">
           <CardHeader>
-            <CardTitle>Class Pricing</CardTitle>
+            <CardTitle className="text-zinc-900">Class Pricing</CardTitle>
           </CardHeader>
           <CardContent className="grid gap-4">
             <div className="grid gap-2">
@@ -421,7 +421,7 @@ export default function ClassCheckoutPage({
                 </div>
               </div>
             </div>
-            <Separator className="bg-gray-300" />
+            <Separator className="bg-zinc-200" />
             <div className="grid gap-2">
               <div className="flex items-center justify-between">
                 <div>Subtotal</div>
@@ -438,7 +438,7 @@ export default function ClassCheckoutPage({
                   {((planDetails?.price || 0) * 0.15).toFixed(2)}
                 </div>
               </div>
-              <Separator className="bg-gray-300" />
+              <Separator className="bg-zinc-200" />
               <div className="flex items-center justify-between font-semibold">
                 <div>Net Amount</div>
                 <div>${((planDetails?.price || 0) * 0.95).toFixed(2)}</div>
@@ -479,17 +479,17 @@ export default function ClassCheckoutPage({
               isActive: false,
             },
           ].map((gateway) => (
-            <Card key={gateway.name}>
+            <Card key={gateway.name} className="border-zinc-200">
               <CardHeader>
-                <CardTitle>{gateway.name}</CardTitle>
+                <CardTitle className="text-zinc-900">{gateway.name}</CardTitle>
               </CardHeader>
               <CardContent className="grid gap-4">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-4">
-                    <CreditCardIcon className="w-8 h-8" />
+                    <CreditCardIcon className="w-8 h-8 text-zinc-600" />
                     <div>
-                      <div className="font-semibold">Credit/Debit Card</div>
-                      <div className="text-sm text-muted-foreground">
+                      <div className="font-semibold text-zinc-900">Credit/Debit Card</div>
+                      <div className="text-sm text-zinc-500">
                         {gateway.description}
                       </div>
                     </div>

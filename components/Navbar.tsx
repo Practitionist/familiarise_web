@@ -1,13 +1,18 @@
 "use client";
-import { motion } from "framer-motion";
 
+import { motion, AnimatePresence } from "framer-motion";
+import { Menu, X } from "lucide-react";
 import { signOut, useSession } from "next-auth/react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+
+import { Button } from "@/components/ui/button";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import familiariseLogoTransparent from "@/public/avif/static/assets/logos/images/logos/Familiarise-logos_transparent.avif";
-// Using public path for Next.js static asset
+import familiariseLogoWhite from "@/public/avif/static/assets/logos/images/logos/Familiarise-logos_white.avif";
+
 const defaultUserImage = "/avif/static/assets/default-profile.avif";
 
 const Navbar = () => {
@@ -18,48 +23,32 @@ const Navbar = () => {
   const [isScrolled, setIsScrolled] = useState(false);
   const [isAnnouncementVisible, setIsAnnouncementVisible] = useState(true);
 
+  // Check if we're on the home page (for transparent navbar)
+  const isHomePage = pathname === "/";
+
   useEffect(() => {
     const checkAnnouncementState = () => {
       const isClosed = localStorage.getItem("announcementBarClosed") === "true";
       setIsAnnouncementVisible(!isClosed);
     };
 
-    // Check initial state
     checkAnnouncementState();
-
-    // Listen for storage changes
     window.addEventListener("storage", checkAnnouncementState);
     return () => window.removeEventListener("storage", checkAnnouncementState);
   }, []);
 
-  const toggleMenu = () => {
-    setIsOpen(!isOpen);
-  };
-
-  const closeMenu = () => {
-    setIsOpen(false);
-  };
+  const toggleMenu = () => setIsOpen(!isOpen);
+  const closeMenu = () => setIsOpen(false);
 
   useEffect(() => {
-    const checkScroll = () => {
-      setIsScrolled(window.scrollY > 50);
-    };
-
+    const checkScroll = () => setIsScrolled(window.scrollY > 50);
     window.addEventListener("scroll", checkScroll);
-
-    // Cleanup after the effect:
-    return () => {
-      window.removeEventListener("scroll", checkScroll);
-    };
-  }, []); // Empty dependency array ensures this runs once on mount and unmount
+    return () => window.removeEventListener("scroll", checkScroll);
+  }, []);
 
   const handleNavigation = (path: string) => {
-    try {
       router.push(path);
       closeMenu();
-    } catch (e) {
-      console.log(e);
-    }
   };
 
   // Check if the current route should exclude navbar
@@ -73,225 +62,247 @@ const Navbar = () => {
 
   if (excludeNavbar) return null;
 
-  // Navigation links data
+  // Navigation links
   const navLinks = [
-    { path: "/explore/experts", label: "Experts", icon: "👨‍🏫" },
-    {
-      path: "/explore/programs",
-      label: "Programs",
-      icon: "🎥",
-    },
-    { path: "/explore/community", label: "Community", icon: "👥" },
-    { path: "/blog", label: "Blog", icon: "📝" },
+    { path: "/explore/experts", label: "Experts" },
+    { path: "/explore/programs", label: "Programs" },
+    { path: "/explore/community", label: "Community" },
+    { path: "/blog", label: "Blog" },
   ];
 
-  // Handle sign out
   const handleSignOut = () => {
     signOut();
     closeMenu();
   };
 
-  // Get user image with fallback
   const getUserImage = () => {
     return session?.user?.image && session.user.image !== ""
       ? session.user.image
       : defaultUserImage;
   };
 
-  // Render user section (profile or sign in/up buttons)
-  const renderUserSection = (isMobile = false) => {
-    if (session?.user) {
-      return isMobile ? (
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-3">
-            <Image
-              src={getUserImage()}
-              alt="Profile"
-              width={40}
-              height={40}
-              className="rounded-full"
-            />
-            <span className="text-sm font-medium">{session.user.name}</span>
-          </div>
-          <button
-            onClick={handleSignOut}
-            className="px-4 py-2 text-sm text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-          >
-            Sign out
-          </button>
-        </div>
-      ) : (
-        <>
-          <Link href="/profile">
-            <Image
-              src={getUserImage()}
-              alt="Profile"
-              width={50}
-              height={50}
-              className="rounded-full cursor-pointer"
-            />
-          </Link>
-          <button onClick={() => signOut()} className="ml-2">
-            Sign out
-          </button>
-        </>
-      );
-    }
-
-    return isMobile ? (
-      <div className="flex flex-col space-y-2">
-        <button
-          onClick={() => handleNavigation("/auth/signin")}
-          className="w-full py-2 bg-black text-white rounded-lg hover:bg-gray-800 transition-colors"
-        >
-          Sign in
-        </button>
-        <button
-          onClick={() => handleNavigation("/auth/signup")}
-          className="w-full py-2 border border-black rounded-lg hover:bg-gray-50 transition-colors"
-        >
-          Sign up
-        </button>
-      </div>
-    ) : (
-      <>
-        <button
-          className="mr-2 border border-black rounded px-2 py-1"
-          onClick={() => handleNavigation("/auth/signup")}
-        >
-          Sign up
-        </button>
-        <button
-          className="mr-2 bg-black text-white border border-black rounded px-2 py-1"
-          onClick={() => handleNavigation("/auth/signin")}
-        >
-          Sign in
-        </button>
-      </>
-    );
-  };
+  // Determine navbar style based on scroll and page
+  const showDarkStyle = isHomePage && !isScrolled;
 
   return (
     <>
       {/* Main Navbar */}
       <nav
-        className={`fixed w-full z-[1000] py-2 px-6 lg:px-0 transition-all duration-300 backdrop-blur-xl bg-white/40 ${
+        className={`fixed w-full z-[1000] transition-all duration-300 ${
           isAnnouncementVisible ? "top-[42px]" : "top-0"
-        } ${isScrolled ? "shadow-md" : ""}`}
+        } ${
+          showDarkStyle
+            ? "bg-transparent"
+            : "bg-white/90 backdrop-blur-xl border-b border-zinc-200 shadow-sm"
+        }`}
       >
-        <div className="flex justify-between items-center">
-          <Link href="/">
-            <div
-              className="relative h-[60px] w-auto"
-              style={{ minWidth: 120, maxWidth: 320 }}
-            >
+        <div className="container mx-auto px-4 md:px-6">
+          <div className="flex justify-between items-center h-16 md:h-20">
+            {/* Logo */}
+            <Link href="/" className="flex-shrink-0">
+              <div className="relative h-10 md:h-12 w-32 md:w-40">
               <Image
-                src={familiariseLogoTransparent}
+                  src={showDarkStyle ? familiariseLogoWhite : familiariseLogoTransparent}
                 alt="Familiarise Logo"
                 fill
-                className="object-contain"
-                sizes="(max-width: 320px) 100vw, 320px"
+                  className="object-contain object-left"
+                  sizes="160px"
+                  priority
               />
             </div>
           </Link>
-          <div className="lg:hidden">
+
+            {/* Desktop Navigation */}
+            <div className="hidden lg:flex items-center gap-1">
+              {session?.user && (
+                <Link href="/dashboard">
+                  <Button 
+                    variant="ghost" 
+                    className={`font-medium ${showDarkStyle ? "text-white hover:bg-white/10" : "text-zinc-700 hover:bg-zinc-100"}`}
+                  >
+                    Dashboard
+                  </Button>
+                </Link>
+              )}
+              {navLinks.map((link) => (
+                <Link key={link.path} href={link.path}>
+                  <Button 
+                    variant="ghost" 
+                    className={`font-medium ${showDarkStyle ? "text-white hover:bg-white/10" : "text-zinc-700 hover:bg-zinc-100"}`}
+                  >
+                    {link.label}
+                  </Button>
+                </Link>
+              ))}
+            </div>
+
+            {/* Desktop Auth Buttons */}
+            <div className="hidden lg:flex items-center gap-3">
+              {session?.user ? (
+                <div className="flex items-center gap-3">
+                  <Link href="/profile">
+                    <Avatar className="h-9 w-9 border-2 border-zinc-200 hover:border-zinc-400 transition-colors cursor-pointer">
+                      <AvatarImage src={getUserImage()} alt="Profile" />
+                      <AvatarFallback className="bg-zinc-900 text-white text-sm">
+                        {session.user.name?.charAt(0) ?? "U"}
+                      </AvatarFallback>
+                    </Avatar>
+                  </Link>
+                  <Button 
+                    variant="ghost" 
+                    onClick={handleSignOut}
+                    className={`text-sm ${showDarkStyle ? "text-zinc-300 hover:text-white hover:bg-white/10" : "text-zinc-600 hover:text-zinc-900"}`}
+                  >
+                    Sign out
+                  </Button>
+                </div>
+              ) : (
+                <>
+                  <Button
+                    variant="ghost"
+                    onClick={() => handleNavigation("/auth/signup")}
+                    className={`font-medium ${showDarkStyle ? "text-white hover:bg-white/10" : "text-zinc-700 hover:bg-zinc-100"}`}
+                  >
+                    Sign up
+                  </Button>
+                  <Button
+                    onClick={() => handleNavigation("/auth/signin")}
+                    className={showDarkStyle 
+                      ? "bg-white text-zinc-900 hover:bg-zinc-200" 
+                      : "bg-zinc-900 text-white hover:bg-zinc-800"
+                    }
+                  >
+                    Sign in
+                  </Button>
+                </>
+              )}
+            </div>
+
+            {/* Mobile Menu Toggle */}
             <button
               onClick={toggleMenu}
               aria-label="Toggle Navigation"
-              className="text-2xl hover:text-gray-600 transition-colors"
+              className={`lg:hidden p-2 rounded-lg transition-colors ${
+                showDarkStyle 
+                  ? "text-white hover:bg-white/10" 
+                  : "text-zinc-700 hover:bg-zinc-100"
+              }`}
             >
-              ☰
+              {isOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
             </button>
           </div>
-
-          <div className="hidden lg:flex gap-8">
-            {session?.user && (
-              <Link href="/dashboard">
-                <button>Dashboard</button>
-              </Link>
-            )}
-            {navLinks.map((link) => (
-              <Link key={link.path} href={link.path}>
-                <button>{link.label}</button>
-              </Link>
-            ))}
-          </div>
-
-          <div className="flex items-center">{renderUserSection()}</div>
         </div>
       </nav>
 
-      {/* Side Drawer */}
+      {/* Mobile Drawer */}
+      <AnimatePresence>
       {isOpen && (
         <>
           {/* Backdrop */}
-          <div
-            className="fixed inset-0 bg-black bg-opacity-50 z-40"
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[1001] lg:hidden"
             onClick={closeMenu}
           />
 
           {/* Drawer */}
           <motion.div
-            className="lg:hidden fixed top-0 left-0 h-full w-4/5 max-w-md bg-gradient-to-br from-white via-white to-gray-50 backdrop-blur-lg z-50 shadow-2xl"
             initial={{ x: "-100%" }}
             animate={{ x: 0 }}
             exit={{ x: "-100%" }}
-            transition={{ type: "spring", duration: 1 }}
+              transition={{ type: "spring", damping: 25, stiffness: 200 }}
+              className="lg:hidden fixed top-0 left-0 h-full w-[85%] max-w-sm bg-zinc-950 z-[1002] shadow-2xl"
           >
-            {/* Header */}
-            <div className="flex justify-between items-center p-6 border-b border-gray-100">
-              <div
-                className="relative h-[40px] w-auto"
-                style={{ minWidth: 80, maxWidth: 200 }}
-              >
+              {/* Drawer Header */}
+              <div className="flex justify-between items-center p-5 border-b border-zinc-800">
+                <div className="relative h-8 w-28">
                 <Image
-                  src={familiariseLogoTransparent}
+                    src={familiariseLogoWhite}
                   alt="Familiarise Logo"
                   fill
-                  className="object-contain"
-                  sizes="(max-width: 200px) 100vw, 200px"
+                    className="object-contain object-left"
+                    sizes="112px"
                 />
               </div>
               <button
                 onClick={closeMenu}
-                className="w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 hover:bg-gray-200 transition-colors"
+                  className="w-9 h-9 flex items-center justify-center rounded-full bg-zinc-800 hover:bg-zinc-700 transition-colors text-white"
               >
-                <span className="text-xl">&times;</span>
+                  <X className="w-5 h-5" />
               </button>
             </div>
 
             {/* Navigation Links */}
-            <div className="flex flex-col p-6 space-y-4">
+              <div className="flex flex-col p-5 space-y-1">
               {session?.user && (
                 <Link
                   href="/dashboard"
-                  className="flex items-center space-x-2 px-4 py-2 rounded-lg hover:bg-gray-100 transition-colors"
+                    className="flex items-center gap-3 px-4 py-3 rounded-xl text-white hover:bg-zinc-800 transition-colors"
                   onClick={closeMenu}
                 >
-                  <span>🎯</span>
-                  <span>Dashboard</span>
+                    <span className="text-zinc-400">🎯</span>
+                    <span className="font-medium">Dashboard</span>
                 </Link>
               )}
               {navLinks.map((link) => (
                 <Link
                   key={link.path}
                   href={link.path}
-                  className="flex items-center space-x-2 px-4 py-2 rounded-lg hover:bg-gray-100 transition-colors"
+                    className="flex items-center gap-3 px-4 py-3 rounded-xl text-white hover:bg-zinc-800 transition-colors"
                   onClick={closeMenu}
                 >
-                  <span>{link.icon}</span>
-                  <span>{link.label}</span>
+                    <span className="font-medium">{link.label}</span>
                 </Link>
               ))}
             </div>
 
             {/* User Section */}
-            <div className="absolute bottom-0 left-0 right-0 p-6 border-t border-gray-100">
-              {renderUserSection(true)}
+              <div className="absolute bottom-0 left-0 right-0 p-5 border-t border-zinc-800 bg-zinc-900">
+                {session?.user ? (
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <Avatar className="h-10 w-10 border border-zinc-700">
+                        <AvatarImage src={getUserImage()} alt="Profile" />
+                        <AvatarFallback className="bg-zinc-800 text-white">
+                          {session.user.name?.charAt(0) ?? "U"}
+                        </AvatarFallback>
+                      </Avatar>
+                      <span className="text-white font-medium text-sm truncate max-w-[140px]">
+                        {session.user.name}
+                      </span>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      onClick={handleSignOut}
+                      className="text-red-400 hover:text-red-300 hover:bg-red-500/10"
+                    >
+                      Sign out
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-3">
+                    <Button
+                      onClick={() => handleNavigation("/auth/signin")}
+                      className="w-full bg-white text-zinc-900 hover:bg-zinc-200"
+                    >
+                      Sign in
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => handleNavigation("/auth/signup")}
+                      className="w-full border-zinc-700 text-white hover:bg-zinc-800"
+                    >
+                      Sign up
+                    </Button>
+                  </div>
+                )}
             </div>
           </motion.div>
         </>
       )}
+      </AnimatePresence>
     </>
   );
 };
