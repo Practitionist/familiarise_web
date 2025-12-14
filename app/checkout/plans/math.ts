@@ -6,7 +6,7 @@
  */
 
 // Default tax rate (can be overridden via env or region config)
-const DEFAULT_TAX_RATE = parseFloat(process.env.CHECKOUT_TAX_RATE || "0.18"); // 18% GST default for India
+const DEFAULT_TAX_RATE = parseFloat(process.env.NEXT_PUBLIC_CHECKOUT_TAX_RATE || "0.18"); // 18% GST default for India
 
 export interface PricingConfig {
   taxRate?: number; // Override tax rate (0.18 = 18%)
