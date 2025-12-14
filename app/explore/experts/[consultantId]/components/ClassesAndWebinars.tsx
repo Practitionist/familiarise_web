@@ -65,13 +65,17 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
         <div className="flex items-center gap-3 text-sm text-gray-600 mb-4">
           <div className="flex items-center">
             <CalendarIcon className="w-4 h-4 mr-1" />
-            Schedule TBA
-          </div>
-          <div className="flex items-center">
-            <ClockIcon className="w-4 h-4 mr-1" />
             {classPlan.durationInMonths} month
             {classPlan.durationInMonths > 1 ? "s" : ""}
           </div>
+          <div className="flex items-center">
+            <ClockIcon className="w-4 h-4 mr-1" />
+            {classPlan.totalHours} total hour
+            {classPlan.totalHours > 1 ? "s" : ""}
+          </div>
+        </div>
+        <div className="text-xs text-gray-500 mb-4">
+          {classPlan.totalSessions} sessions · {classPlan.meetingsPerWeek}/week · {classPlan.sessionDurationInHours}h each
         </div>
         <p className="text-gray-700 mb-4 line-clamp-3">
           {classPlan.description}

@@ -21,9 +21,14 @@ import {
 } from "@prisma/client";
 import { loadStripe } from "@stripe/stripe-js";
 import { CreditCard as CreditCardIcon } from "lucide-react";
-import { use, useCallback, useEffect, useState } from "react";
+import { use, useCallback, useEffect, useMemo, useState } from "react";
 import RazorpayCheckout from "../../../components/RazorpayCheckout";
 import StripeCheckout from "../../../components/StripeCheckout";
+import {
+  calculatePricing,
+  formatCurrency,
+  formatPercentage,
+} from "../../math";
 
 type ConsultationPlanWithConsultant = ConsultationPlan & {
   consultantProfile: ConsultantProfile & {
@@ -391,6 +396,17 @@ export default function ConsultationCheckoutPage({
 
   const consultantDetails = eventData?.data.consultantProfile;
   const userDetails = eventData?.data.consultantProfile.user;
+  const currency = eventData?.data?.priceCurrency || "USD";
+
+  // Calculate pricing using the proper math functions
+  const pricing = useMemo(() => {
+    const basePrice = eventData?.data?.price || 0;
+    // TODO: Look up actual discount from discountCode via API
+    // For now, no automatic discount - user must apply a code
+    return calculatePricing(basePrice, {
+      discountPercent: 0, // Will be updated when discount code is applied
+    });
+  }, [eventData?.data?.price]);
 
   return (
     <>
@@ -512,7 +528,7 @@ export default function ConsultationCheckoutPage({
             <div className="grid gap-2">
               <div className="flex items-center justify-between">
                 <div>Session Fee</div>
-                <div>${eventData?.data?.price || 100}</div>
+                <div>{formatCurrency(eventData?.data?.price || 0, currency)}</div>
               </div>
               <div className="flex items-center justify-between">
                 <div className="flex items-center">
@@ -532,23 +548,26 @@ export default function ConsultationCheckoutPage({
             <div className="grid gap-2">
               <div className="flex items-center justify-between">
                 <div>Subtotal</div>
-                <div>${eventData?.data?.price || 100}</div>
+                <div>{formatCurrency(pricing.subtotal, currency)}</div>
               </div>
               <div className="flex items-center justify-between">
-                <div>Tax (10%)</div>
-                <div>${((eventData?.data?.price || 100) * 0.1).toFixed(2)}</div>
+                <div>Tax ({formatPercentage(pricing.taxRate)})</div>
+                <div>{formatCurrency(pricing.taxAmount, currency)}</div>
               </div>
-              <div className="flex items-center justify-between">
-                <div>Discount (10%)</div>
-                <div>
-                  -$
-                  {((eventData?.data?.price || 100) * 0.1).toFixed(2)}
+              {pricing.discountAmount > 0 && (
+                <div className="flex items-center justify-between text-green-600">
+                  <div>
+                    Discount{" "}
+                    {pricing.discountPercent > 0 &&
+                      `(${formatPercentage(pricing.discountPercent)})`}
+                  </div>
+                  <div>-{formatCurrency(pricing.discountAmount, currency)}</div>
                 </div>
-              </div>
+              )}
               <Separator className="bg-gray-300" />
               <div className="flex items-center justify-between font-semibold">
-                <div>Net Amount</div>
-                <div>${((eventData?.data?.price || 100) * 1).toFixed(2)}</div>
+                <div>Total</div>
+                <div>{formatCurrency(pricing.total, currency)}</div>
               </div>
             </div>
           </CardContent>

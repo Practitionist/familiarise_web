@@ -103,9 +103,15 @@ export function ExpertPricing({
           price: plan.price,
           duration: `${plan.durationInMonths}`,
           durationInMonths: plan.durationInMonths,
+          totalHours: plan.totalHours,
+          totalSessions: plan.totalSessions,
+          callsPerWeek: plan.callsPerWeek,
+          sessionDurationInHours: plan.sessionDurationInHours,
           features: [
+            `${plan.totalHours} total hours`,
+            `${plan.totalSessions} sessions`,
             `${plan.callsPerWeek} call${plan.callsPerWeek > 1 ? "s" : ""} per week`,
-            `${plan.sessionDurationInHours} hour session${plan.sessionDurationInHours > 1 ? "s" : ""}`,
+            `${plan.sessionDurationInHours}h per session`,
             `${plan.emailSupport} email support`,
           ],
         };
