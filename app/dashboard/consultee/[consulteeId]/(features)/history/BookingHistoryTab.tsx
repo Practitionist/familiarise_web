@@ -108,14 +108,14 @@ export function BookingHistoryTab({
                         </span>
                         {getPaymentStatus(event) && (
                           <Badge
-                            className={`${
+                            className={`text-xs font-medium ${
                               getPaymentStatus(event)?.toLowerCase() ===
                               "succeeded"
-                                ? "bg-green-100 text-green-800"
+                                ? "bg-teal-50 text-teal-600"
                                 : getPaymentStatus(event)?.toLowerCase() ===
                                     "failed"
-                                  ? "bg-red-100 text-red-800"
-                                  : "bg-yellow-100 text-yellow-800"
+                                  ? "bg-red-50 text-red-600"
+                                  : "bg-orange-50 text-orange-600"
                             }`}
                           >
                             {getPaymentStatus(event)}
@@ -125,17 +125,7 @@ export function BookingHistoryTab({
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-2">
-                        <Badge
-                          className={`${
-                            event.type === "Consultation"
-                              ? "bg-blue-100 text-blue-800"
-                              : event.type === "Class"
-                                ? "bg-purple-100 text-purple-800"
-                                : event.type === "Webinar"
-                                  ? "bg-green-100 text-green-800"
-                                  : "bg-gray-100 text-gray-800"
-                          }`}
-                        >
+                        <Badge className="text-xs font-medium bg-transparent border border-zinc-300 text-zinc-600 rounded-md">
                           {event.type}
                         </Badge>
                         <span className="font-medium">
@@ -161,19 +151,9 @@ export function BookingHistoryTab({
                     </TableCell>
                     <TableCell>
                       <Badge
-                        className={`${
-                          getEventStatus(event).toLowerCase() === "completed"
-                            ? "bg-green-100 text-green-800"
-                            : getEventStatus(event).toLowerCase() ===
-                                "cancelled"
-                              ? "bg-red-100 text-red-800"
-                              : getEventStatus(event).toLowerCase() ===
-                                  "pending"
-                                ? "bg-yellow-100 text-yellow-800"
-                                : "bg-gray-100 text-gray-800"
-                        }`}
+                        className={`text-xs font-medium ${getStatusStyle(getEventStatus(event))}`}
                       >
-                        {getEventStatus(event)}
+                        {getEventStatus(event).replace(/_/g, " ")}
                       </Badge>
                     </TableCell>
                     <TableCell className="text-gray-600">
@@ -210,6 +190,29 @@ function getEventStatus(event: EventWithType): string {
       return event.status;
     case "Class":
       return event.status;
+  }
+}
+
+// Status styling - refined professional colors
+function getStatusStyle(status: string): string {
+  const statusUpper = status?.toUpperCase();
+  switch (statusUpper) {
+    case "APPROVED":
+      return "bg-teal-50 text-teal-600";
+    case "PENDING":
+      return "bg-orange-50 text-orange-600";
+    case "SCHEDULED":
+      return "bg-indigo-50 text-indigo-600";
+    case "IN_PROGRESS":
+      return "bg-cyan-50 text-cyan-600";
+    case "COMPLETED":
+      return "bg-slate-100 text-slate-500";
+    case "CANCELLED":
+      return "bg-stone-100 text-stone-400";
+    case "REJECTED":
+      return "bg-red-50 text-red-600";
+    default:
+      return "bg-slate-100 text-slate-500";
   }
 }
 

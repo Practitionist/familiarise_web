@@ -43,23 +43,15 @@ function formatSlotTime(date: Date | string): string {
   return format(d, "h:mm a");
 }
 
-// Status configuration for consistent styling
+// Status configuration - refined professional colors
 const statusConfig: Record<string, { bg: string; text: string; dot: string }> = {
-  APPROVED: { bg: "bg-emerald-50", text: "text-emerald-700", dot: "bg-emerald-500" },
-  PENDING: { bg: "bg-amber-50", text: "text-amber-700", dot: "bg-amber-500" },
-  CANCELLED: { bg: "bg-zinc-100", text: "text-zinc-600", dot: "bg-zinc-400" },
-  REJECTED: { bg: "bg-red-50", text: "text-red-700", dot: "bg-red-500" },
-  SCHEDULED: { bg: "bg-blue-50", text: "text-blue-700", dot: "bg-blue-500" },
-  COMPLETED: { bg: "bg-zinc-100", text: "text-zinc-600", dot: "bg-zinc-400" },
-  IN_PROGRESS: { bg: "bg-cyan-50", text: "text-cyan-700", dot: "bg-cyan-500" },
-};
-
-// Type configuration
-const typeConfig: Record<string, { bg: string; text: string }> = {
-  Consultation: { bg: "bg-blue-500/10", text: "text-blue-600" },
-  Subscription: { bg: "bg-violet-500/10", text: "text-violet-600" },
-  Webinar: { bg: "bg-amber-500/10", text: "text-amber-600" },
-  Class: { bg: "bg-emerald-500/10", text: "text-emerald-600" },
+  APPROVED: { bg: "bg-teal-50", text: "text-teal-600", dot: "bg-teal-500" },              // Teal - sophisticated success
+  PENDING: { bg: "bg-orange-50", text: "text-orange-600", dot: "bg-orange-500" },         // Orange - warm urgency
+  SCHEDULED: { bg: "bg-indigo-50", text: "text-indigo-600", dot: "bg-indigo-500" },       // Indigo - elegant upcoming
+  IN_PROGRESS: { bg: "bg-cyan-50", text: "text-cyan-600", dot: "bg-cyan-500" },           // Cyan - bright active
+  COMPLETED: { bg: "bg-slate-100", text: "text-slate-500", dot: "bg-slate-400" },         // Slate - warm done
+  CANCELLED: { bg: "bg-stone-100", text: "text-stone-400", dot: "bg-stone-400" },         // Stone - neutral inactive
+  REJECTED: { bg: "bg-red-50", text: "text-red-600", dot: "bg-red-500" },                 // Red - clear negative
 };
 
 export function EventCard({
@@ -191,7 +183,6 @@ export function EventCard({
     isConfirmed;
 
   const statusStyle = statusConfig[status?.toUpperCase()] || statusConfig.PENDING;
-  const typeStyle = typeConfig[type] || typeConfig.Consultation;
   const displayStatus = isTentative ? "PENDING" : status?.toUpperCase();
   const displayStatusStyle = isTentative ? statusConfig.PENDING : statusStyle;
 
@@ -224,7 +215,7 @@ export function EventCard({
 
         {/* Badges */}
         <div className="flex items-center gap-2 mb-4">
-          <Badge className={cn("text-[10px] font-semibold px-2 py-0.5 border-0", typeStyle.bg, typeStyle.text)}>
+          <Badge className="text-[10px] font-medium px-2 py-0.5 bg-transparent border border-zinc-300 text-zinc-600 rounded-md">
             {type}
           </Badge>
           <Badge className={cn("text-[10px] font-semibold px-2 py-0.5 border-0 flex items-center gap-1", displayStatusStyle.bg, displayStatusStyle.text)}>

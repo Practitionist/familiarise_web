@@ -96,31 +96,33 @@ function UpcomingSessionCard({
 }) {
   const timeAway = getTimeAway(event.startsAt);
 
-  const typeConfig = {
-    consultation: { label: "CONSULT", bg: "bg-blue-500/10", text: "text-blue-400" },
-    subscription: { label: "SUBSCRIPTION", bg: "bg-violet-500/10", text: "text-violet-400" },
-    class: { label: "CLASS", bg: "bg-emerald-500/10", text: "text-emerald-400" },
-    webinar: { label: "WEBINAR", bg: "bg-amber-500/10", text: "text-amber-400" },
+  // Type badges - outline/border style only, no background colors
+  const typeLabels: Record<string, string> = {
+    consultation: "CONSULTATION",
+    subscription: "SUBSCRIPTION",
+    class: "CLASS",
+    webinar: "WEBINAR",
   };
 
+  // Status badges - refined professional colors
   const statusConfig: Record<string, { bg: string; text: string }> = {
-    APPROVED: { bg: "bg-emerald-500/10", text: "text-emerald-400" },
-    PENDING: { bg: "bg-amber-500/10", text: "text-amber-400" },
-    CANCELLED: { bg: "bg-zinc-500/10", text: "text-zinc-400" },
-    REJECTED: { bg: "bg-red-500/10", text: "text-red-400" },
-    SCHEDULED: { bg: "bg-blue-500/10", text: "text-blue-400" },
-    COMPLETED: { bg: "bg-zinc-500/10", text: "text-zinc-400" },
-    IN_PROGRESS: { bg: "bg-cyan-500/10", text: "text-cyan-400" },
+    APPROVED: { bg: "bg-teal-500/15", text: "text-teal-400" },            // Teal - sophisticated success
+    PENDING: { bg: "bg-orange-500/15", text: "text-orange-400" },         // Orange - warm urgency
+    SCHEDULED: { bg: "bg-indigo-500/15", text: "text-indigo-400" },       // Indigo - elegant upcoming
+    IN_PROGRESS: { bg: "bg-cyan-500/15", text: "text-cyan-400" },         // Cyan - bright active
+    COMPLETED: { bg: "bg-slate-500/15", text: "text-slate-400" },         // Slate - warm done
+    CANCELLED: { bg: "bg-stone-500/15", text: "text-stone-400" },         // Stone - neutral inactive
+    REJECTED: { bg: "bg-red-500/15", text: "text-red-400" },              // Red - clear negative
   };
 
-  const config = typeConfig[event.type];
+  const typeLabel = typeLabels[event.type] || "EVENT";
   const statusStyle = statusConfig[event.status] || statusConfig.PENDING;
 
   return (
     <motion.div
       whileHover={{ y: -2 }}
       onClick={onClick}
-      className="flex-shrink-0 w-[320px] h-[180px] bg-gradient-to-br from-zinc-900 via-zinc-900 to-zinc-800 rounded-xl border border-zinc-800 p-4 cursor-pointer hover:border-zinc-700 transition-all duration-200 shadow-lg flex flex-col"
+      className="flex-shrink-0 w-[340px] h-[180px] bg-gradient-to-br from-zinc-900 via-zinc-900 to-zinc-800 rounded-xl border border-zinc-800 p-4 cursor-pointer hover:border-zinc-700 transition-all duration-200 shadow-lg flex flex-col"
     >
       {/* Row 1: Avatar + Title/Name + Time Badge - Fixed height 48px */}
       <div className="flex items-center gap-3 h-12 shrink-0">
@@ -162,8 +164,8 @@ function UpcomingSessionCard({
       {/* Row 3: Badges and action - Fixed at bottom */}
       <div className="flex items-center justify-between gap-2 h-8 shrink-0">
         <div className="flex items-center gap-1.5 overflow-hidden">
-          <Badge className={cn("text-[10px] font-semibold px-2 py-0.5 border-0 shrink-0", config.bg, config.text)}>
-            {config.label}
+          <Badge className="text-[10px] font-medium px-2 py-0.5 bg-transparent border border-zinc-600 text-zinc-300 shrink-0 rounded-md">
+            {typeLabel}
           </Badge>
           <Badge className={cn("text-[10px] font-semibold px-2 py-0.5 border-0 shrink-0", statusStyle.bg, statusStyle.text)}>
             {event.status.replace(/_/g, " ")}
@@ -191,23 +193,26 @@ function MonthlyEventItem({
   isExpanded: boolean;
   onToggle: () => void;
 }) {
-  const typeConfig = {
-    consultation: { label: "Consultation", bg: "bg-blue-500/10", text: "text-blue-500" },
-    subscription: { label: "Subscription", bg: "bg-violet-500/10", text: "text-violet-500" },
-    class: { label: "Class", bg: "bg-emerald-500/10", text: "text-emerald-500" },
-    webinar: { label: "Webinar", bg: "bg-amber-500/10", text: "text-amber-500" },
+  // Type labels - border style
+  const typeLabels: Record<string, string> = {
+    consultation: "Consultation",
+    subscription: "Subscription",
+    class: "Class",
+    webinar: "Webinar",
   };
 
+  // Status badges - refined professional colors for light background
   const statusConfig: Record<string, { bg: string; text: string }> = {
-    APPROVED: { bg: "bg-emerald-50", text: "text-emerald-600" },
-    PENDING: { bg: "bg-amber-50", text: "text-amber-600" },
-    CANCELLED: { bg: "bg-zinc-100", text: "text-zinc-500" },
-    SCHEDULED: { bg: "bg-blue-50", text: "text-blue-600" },
-    COMPLETED: { bg: "bg-zinc-100", text: "text-zinc-500" },
-    IN_PROGRESS: { bg: "bg-cyan-50", text: "text-cyan-600" },
+    APPROVED: { bg: "bg-teal-50", text: "text-teal-600" },            // Teal - sophisticated success
+    PENDING: { bg: "bg-orange-50", text: "text-orange-600" },         // Orange - warm urgency
+    SCHEDULED: { bg: "bg-indigo-50", text: "text-indigo-600" },       // Indigo - elegant upcoming
+    IN_PROGRESS: { bg: "bg-cyan-50", text: "text-cyan-600" },         // Cyan - bright active
+    COMPLETED: { bg: "bg-slate-100", text: "text-slate-500" },        // Slate - warm done
+    CANCELLED: { bg: "bg-stone-100", text: "text-stone-400" },        // Stone - neutral inactive
+    REJECTED: { bg: "bg-red-50", text: "text-red-600" },              // Red - clear negative
   };
 
-  const config = typeConfig[event.type];
+  const typeLabel = typeLabels[event.type] || "Event";
   const statusStyle = statusConfig[event.status] || statusConfig.PENDING;
 
   return (
@@ -226,11 +231,11 @@ function MonthlyEventItem({
           <h4 className="font-medium text-zinc-900 text-sm">{event.title}</h4>
           <p className="text-xs text-zinc-500">{event.consultantName}</p>
         </div>
-        <Badge className={cn("text-[10px] font-medium border-0", config.bg, config.text)}>
-          {config.label}
+        <Badge className="text-[10px] font-medium bg-transparent border border-zinc-300 text-zinc-600 rounded-md">
+          {typeLabel}
         </Badge>
         <Badge className={cn("text-[10px] font-medium border-0", statusStyle.bg, statusStyle.text)}>
-          {event.status}
+          {event.status.replace(/_/g, " ")}
         </Badge>
         <ChevronRight
           className={cn(
