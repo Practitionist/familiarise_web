@@ -3,7 +3,7 @@
 import { use } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
-import { DashboardHomeSkeleton } from "@/components/ui/dashboard-skeleton";
+import { TableSkeleton } from "@/components/dashboard";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { fetchDocuments } from "../../utils/fetchHelpers";
@@ -131,7 +131,7 @@ export default function DocumentsPage({
   };
 
   if (isLoading) {
-    return <DashboardHomeSkeleton />;
+    return <TableSkeleton />;
   }
 
   if (error) {

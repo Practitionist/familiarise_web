@@ -31,8 +31,8 @@ export default async function RootLayout({
 }>) {
   const session = await getServerSession(authOptions);
   return (
-    <html lang="en" className={sora.variable}>
-      <body className={`${sora.className} flex flex-col min-h-screen antialiased`}>
+    <html lang="en" className={sora.variable} suppressHydrationWarning>
+      <body className={`${sora.className} flex flex-col min-h-screen antialiased`} suppressHydrationWarning>
         <ReactQueryProvider>
           <NextAuthProvider session={session}>
             <Toaster />

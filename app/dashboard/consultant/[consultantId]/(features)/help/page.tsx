@@ -2,7 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
-import { DashboardHomeSkeleton } from "@/components/ui/dashboard-skeleton";
+import { HelpSkeleton } from "@/components/dashboard";
 import { staticQueries } from "@/hooks/useCosultantPrefetchDashboard";
 import { HelpTab } from "./HelpTab";
 
@@ -11,7 +11,7 @@ export default function HelpPage() {
   const { data: faqData, isLoading, error } = useQuery(staticQueries.help);
 
   if (isLoading) {
-    return <DashboardHomeSkeleton />;
+    return <HelpSkeleton />;
   }
 
   if (error) {

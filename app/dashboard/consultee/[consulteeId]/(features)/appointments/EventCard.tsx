@@ -9,12 +9,13 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { motion } from "framer-motion";
-import { ClockIcon, XIcon } from "lucide-react";
+import { Clock, X, Upload, Video, Calendar, ChevronDown } from "lucide-react";
 import React from "react";
 import { DocumentUpload } from "./DocumentUpload";
+import { cn } from "@/utils/tailwind";
+import { format } from "date-fns";
 
 interface EventCardProps {
   title: string;
@@ -34,24 +35,32 @@ interface EventCardProps {
 
 function formatSlotDate(date: Date | string): string {
   const d = typeof date === "string" ? new Date(date) : date;
-  return d.toLocaleString(undefined, {
-    weekday: "short",
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
+  return format(d, "EEE, d MMM yyyy");
 }
 
 function formatSlotTime(date: Date | string): string {
   const d = typeof date === "string" ? new Date(date) : date;
-  return d
-    .toLocaleString(undefined, {
-      hour: "numeric",
-      minute: "2-digit",
-      hour12: true,
-    })
-    .replace(/\s/, "");
+  return format(d, "h:mm a");
 }
+
+// Status configuration for consistent styling
+const statusConfig: Record<string, { bg: string; text: string; dot: string }> = {
+  APPROVED: { bg: "bg-emerald-50", text: "text-emerald-700", dot: "bg-emerald-500" },
+  PENDING: { bg: "bg-amber-50", text: "text-amber-700", dot: "bg-amber-500" },
+  CANCELLED: { bg: "bg-zinc-100", text: "text-zinc-600", dot: "bg-zinc-400" },
+  REJECTED: { bg: "bg-red-50", text: "text-red-700", dot: "bg-red-500" },
+  SCHEDULED: { bg: "bg-blue-50", text: "text-blue-700", dot: "bg-blue-500" },
+  COMPLETED: { bg: "bg-zinc-100", text: "text-zinc-600", dot: "bg-zinc-400" },
+  IN_PROGRESS: { bg: "bg-cyan-50", text: "text-cyan-700", dot: "bg-cyan-500" },
+};
+
+// Type configuration
+const typeConfig: Record<string, { bg: string; text: string }> = {
+  Consultation: { bg: "bg-blue-500/10", text: "text-blue-600" },
+  Subscription: { bg: "bg-violet-500/10", text: "text-violet-600" },
+  Webinar: { bg: "bg-amber-500/10", text: "text-amber-600" },
+  Class: { bg: "bg-emerald-500/10", text: "text-emerald-600" },
+};
 
 export function EventCard({
   title,
@@ -89,9 +98,7 @@ export function EventCard({
         `/api/appointments/${appointmentId}/reschedule`,
         {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
+          headers: { "Content-Type": "application/json" },
         },
       );
 
@@ -104,19 +111,15 @@ export function EventCard({
       toast({
         title: "Reschedule request sent",
         description: `Your reschedule request for ${title} has been sent to ${consultant}.`,
-        variant: "default",
       });
 
-      // Optionally refresh the page or update state
       window.location.reload();
     } catch (error) {
       console.error("Error requesting reschedule:", error);
       toast({
         title: "Error",
         description:
-          error instanceof Error
-            ? error.message
-            : "Failed to request reschedule",
+          error instanceof Error ? error.message : "Failed to request reschedule",
         variant: "destructive",
       });
     } finally {
@@ -148,9 +151,7 @@ export function EventCard({
         `/api/appointments/${appointmentId}/cancel`,
         {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
+          headers: { "Content-Type": "application/json" },
         },
       );
 
@@ -163,19 +164,15 @@ export function EventCard({
       toast({
         title: "Appointment cancelled",
         description: `Your ${type.toLowerCase()} "${title}" has been cancelled successfully.`,
-        variant: "default",
       });
 
-      // Refresh the page to reflect the cancellation
       window.location.reload();
     } catch (error) {
       console.error("Error cancelling appointment:", error);
       toast({
         title: "Error",
         description:
-          error instanceof Error
-            ? error.message
-            : "Failed to cancel appointment",
+          error instanceof Error ? error.message : "Failed to cancel appointment",
         variant: "destructive",
       });
     } finally {
@@ -183,196 +180,162 @@ export function EventCard({
     }
   };
 
-  // Determine if appointment is confirmed and scheduled
   const isConfirmed =
     status?.toLowerCase() === "approved" ||
     status?.toLowerCase() === "scheduled" ||
     (!isTentative && actualSlots.length > 0);
 
-  // Show document upload for consultations and subscriptions only
   const showDocumentUpload =
     (type === "Consultation" || type === "Subscription") &&
     appointmentId &&
     isConfirmed;
 
+  const statusStyle = statusConfig[status?.toUpperCase()] || statusConfig.PENDING;
+  const typeStyle = typeConfig[type] || typeConfig.Consultation;
+  const displayStatus = isTentative ? "PENDING" : status?.toUpperCase();
+  const displayStatusStyle = isTentative ? statusConfig.PENDING : statusStyle;
+
   return (
     <motion.div
       layout
-      initial={{ opacity: 0, y: 20 }}
+      initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -20 }}
       transition={{ duration: 0.2 }}
       className={`w-full h-full ${className}`}
     >
-      <Card className="w-full h-full min-h-[280px] max-w-none flex flex-col transition-all duration-200 hover:shadow-lg border border-gray-200 bg-white">
-        <CardHeader className="pb-3 flex-shrink-0">
-          <div className="flex items-start justify-between gap-3">
-            <div className="flex items-start space-x-3 min-w-0 flex-1">
-              <Avatar className="w-10 h-10 flex-shrink-0">
-                <AvatarImage alt={consultant} src={image || undefined} />
-                <AvatarFallback className="text-sm bg-gray-100 text-gray-700 font-medium">
-                  {consultant
-                    ?.split(" ")
-                    .slice(0, 2)
-                    .map((name) => name[0])
-                    .join("")}
-                </AvatarFallback>
-              </Avatar>
-              <div className="min-w-0 flex-1">
-                <CardTitle
-                  className="text-sm font-semibold leading-tight text-gray-900 mb-1 line-clamp-2"
-                  data-testid="card-title"
-                  title={title}
-                >
-                  {title}
-                </CardTitle>
-                <p
-                  className="text-xs text-gray-600 line-clamp-1"
-                  title={consultant}
-                >
-                  {consultant}
-                </p>
+      <div className="bg-white rounded-xl border border-zinc-200 p-4 hover:border-zinc-300 hover:shadow-md transition-all duration-200 h-full flex flex-col">
+        {/* Header */}
+        <div className="flex items-start gap-3 mb-4">
+          <Avatar className="h-11 w-11 ring-2 ring-zinc-100">
+            <AvatarImage alt={consultant} src={image || undefined} />
+            <AvatarFallback className="bg-gradient-to-br from-zinc-100 to-zinc-200 text-zinc-600 text-sm font-semibold">
+              {consultant?.split(" ").slice(0, 2).map((name) => name[0]).join("")}
+            </AvatarFallback>
+          </Avatar>
+          <div className="flex-1 min-w-0">
+            <h3 className="font-semibold text-zinc-900 text-sm leading-tight line-clamp-2 mb-1" title={title}>
+              {title}
+            </h3>
+            <p className="text-xs text-zinc-500 line-clamp-1" title={consultant}>
+              {consultant}
+            </p>
+          </div>
+        </div>
+
+        {/* Badges */}
+        <div className="flex items-center gap-2 mb-4">
+          <Badge className={cn("text-[10px] font-semibold px-2 py-0.5 border-0", typeStyle.bg, typeStyle.text)}>
+            {type}
+          </Badge>
+          <Badge className={cn("text-[10px] font-semibold px-2 py-0.5 border-0 flex items-center gap-1", displayStatusStyle.bg, displayStatusStyle.text)}>
+            <span className={cn("h-1.5 w-1.5 rounded-full", displayStatusStyle.dot)} />
+            {displayStatus?.replace(/_/g, " ")}
+          </Badge>
+        </div>
+
+        {/* Schedule Section */}
+        <div className="flex-1">
+          {type === "Class" && actualSlots.length === 1 ? (
+            <div className="bg-zinc-50 rounded-lg p-3 border border-zinc-100">
+              <div className="flex items-center gap-2 text-xs text-zinc-500 mb-1.5">
+                <Calendar className="h-3.5 w-3.5" />
+                <span>Scheduled Time</span>
+              </div>
+              <div className="text-sm text-zinc-700 font-medium">
+                {formatSlotDate(actualSlots[0].startTime)}
+              </div>
+              <div className="text-sm text-zinc-500">
+                {formatSlotTime(actualSlots[0].startTime)} - {formatSlotTime(actualSlots[0].endTime)}
               </div>
             </div>
-            <div className="flex flex-col items-end gap-1 flex-shrink-0">
-              <Badge
-                variant={
-                  isTentative
-                    ? "outline"
-                    : status?.toLowerCase() === "cancelled"
-                      ? "destructive"
-                      : "default"
-                }
-                className="text-xs px-2 py-0.5 font-medium whitespace-nowrap"
-              >
-                {isTentative
-                  ? "Pending"
-                  : status?.replace(/([A-Z])/g, " $1").trim() || "Active"}
-              </Badge>
-              <Badge
-                variant="secondary"
-                className="text-xs px-2 py-0.5 bg-gray-100 text-gray-700"
-              >
-                {type}
-              </Badge>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent className="pt-0 flex-1 flex flex-col">
-          <div className="flex flex-col h-full gap-3">
-            {/* Time/Schedule Section */}
-            <div className="flex-shrink-0">
-              {type === "Class" && actualSlots.length === 1 ? (
-                <div>
-                  {actualSlots && actualSlots.length > 0 ? (
-                    <div className="bg-gray-50 p-3 rounded-lg border border-gray-100">
-                      <div className="text-sm font-medium text-gray-700 mb-2">
-                        Scheduled Time
-                      </div>
-                      <div className="space-y-1">
-                        <div className="text-sm text-gray-600">
-                          {formatSlotDate(actualSlots[0].startTime)}
-                        </div>
-                        <div className="text-sm text-gray-600">
-                          {formatSlotTime(actualSlots[0].startTime)} -{" "}
-                          {formatSlotTime(actualSlots[0].endTime)}
-                        </div>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="bg-yellow-50 p-3 rounded-lg border border-yellow-200 text-yellow-700 text-sm">
-                      {date}
-                    </div>
-                  )}
-                </div>
-              ) : showSessionDetails ? (
-                <Accordion type="single" collapsible className="w-full">
-                  <AccordionItem value="sessions" className="border-none">
-                    <AccordionTrigger className="py-2 hover:no-underline text-left">
-                      <span className="text-sm font-medium text-gray-700">
-                        {type === "Subscription"
-                          ? "Scheduled Sessions"
-                          : "Class Schedule"}
-                      </span>
-                    </AccordionTrigger>
-                    <AccordionContent>
+          ) : showSessionDetails ? (
+            <Accordion type="single" collapsible className="w-full">
+              <AccordionItem value="sessions" className="border border-zinc-100 rounded-lg overflow-hidden">
+                <AccordionTrigger className="py-2.5 px-3 hover:no-underline hover:bg-zinc-50 text-left [&[data-state=open]>svg]:rotate-180">
+                  <div className="flex items-center gap-2 text-sm text-zinc-700 font-medium">
+                    <Calendar className="h-4 w-4 text-zinc-400" />
+                    {actualSlots.length} Sessions
+                  </div>
+                </AccordionTrigger>
+                <AccordionContent>
+                  <div className="px-3 pb-3 space-y-2 max-h-32 overflow-y-auto">
+                    {actualSlots.map((slot, index) => (
                       <div
-                        data-testid="slot-list"
-                        className="space-y-2 max-h-32 overflow-y-auto"
+                        key={index}
+                        className="flex items-center justify-between bg-zinc-50 p-2 rounded-lg text-xs"
                       >
-                        {actualSlots.map((slot, index) => (
-                          <div
-                            key={index}
-                            className="flex items-center justify-between bg-gray-50 p-2 rounded border border-gray-100 text-sm"
-                          >
-                            <div className="text-gray-600 min-w-0 flex-1">
-                              {formatSlotDate(slot.startTime)}
-                            </div>
-                            <div className="text-gray-600 text-xs ml-2 flex-shrink-0">
-                              {formatSlotTime(slot.startTime)} -{" "}
-                              {formatSlotTime(slot.endTime)}
-                            </div>
-                          </div>
-                        ))}
+                        <span className="text-zinc-700 font-medium">
+                          {formatSlotDate(slot.startTime)}
+                        </span>
+                        <span className="text-zinc-500">
+                          {formatSlotTime(slot.startTime)} - {formatSlotTime(slot.endTime)}
+                        </span>
                       </div>
-                    </AccordionContent>
-                  </AccordionItem>
-                </Accordion>
-              ) : (
-                <div className="bg-gray-50 p-3 rounded-lg border border-gray-100">
-                  <div className="text-sm text-gray-600">{date}</div>
-                </div>
-              )}
-            </div>
-
-            {/* Content Area - Takes up remaining space */}
-            <div className="flex-1 flex flex-col justify-end gap-3">
-              {/* Document Upload Section */}
-              {showDocumentUpload && (
-                <div className="border-t pt-3">
-                  <DocumentUpload
-                    appointmentId={appointmentId}
-                    appointmentTitle={title}
-                    appointmentType={type}
-                  />
-                </div>
-              )}
-
-              {/* Action Buttons */}
-              <div className="flex flex-col sm:flex-row justify-end gap-2">
-                {!isTentative && status?.toLowerCase() !== "cancelled" && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleReschedule}
-                    disabled={isLoading}
-                    className="flex items-center justify-center gap-1 text-yellow-600 hover:text-yellow-700 hover:bg-yellow-50 border-yellow-200 hover:border-yellow-300 transition-colors w-full sm:w-auto"
-                  >
-                    <ClockIcon className="h-4 w-4" />
-                    <span className="text-xs">
-                      {isLoading ? "Requesting..." : "Request Reschedule"}
-                    </span>
-                  </Button>
-                )}
-                {status?.toLowerCase() !== "cancelled" && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleCancel}
-                    disabled={isLoading}
-                    className="flex items-center justify-center gap-1 text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200 hover:border-red-300 transition-colors w-full sm:w-auto"
-                  >
-                    <XIcon className="h-4 w-4" />
-                    <span className="text-xs">
-                      {isLoading ? "Cancelling..." : "Cancel"}
-                    </span>
-                  </Button>
-                )}
+                    ))}
+                  </div>
+                </AccordionContent>
+              </AccordionItem>
+            </Accordion>
+          ) : (
+            <div className="bg-zinc-50 rounded-lg p-3 border border-zinc-100">
+              <div className="flex items-center gap-2 text-xs text-zinc-500 mb-1">
+                <Clock className="h-3.5 w-3.5" />
+                <span>Next Session</span>
               </div>
+              <div className="text-sm text-zinc-700">{date}</div>
             </div>
+          )}
+        </div>
+
+        {/* Document Upload */}
+        {showDocumentUpload && (
+          <div className="mt-4 pt-4 border-t border-zinc-100">
+            <DocumentUpload
+              appointmentId={appointmentId}
+              appointmentTitle={title}
+              appointmentType={type}
+            />
           </div>
-        </CardContent>
-      </Card>
+        )}
+
+        {/* Action Buttons */}
+        <div className="flex items-center gap-2 mt-4 pt-4 border-t border-zinc-100">
+          {!isTentative && status?.toLowerCase() !== "cancelled" && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleReschedule}
+              disabled={isLoading}
+              className="flex-1 h-8 text-xs font-medium text-zinc-600 hover:text-zinc-900 hover:bg-zinc-50 border-zinc-200"
+            >
+              <Clock className="h-3.5 w-3.5 mr-1.5" />
+              Reschedule
+            </Button>
+          )}
+          {status?.toLowerCase() !== "cancelled" && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleCancel}
+              disabled={isLoading}
+              className="flex-1 h-8 text-xs font-medium text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200 hover:border-red-300"
+            >
+              <X className="h-3.5 w-3.5 mr-1.5" />
+              Cancel
+            </Button>
+          )}
+        </div>
+
+        {/* Join Button for confirmed appointments */}
+        {isConfirmed && status?.toLowerCase() !== "cancelled" && (
+          <Button
+            className="w-full mt-3 h-9 bg-zinc-900 hover:bg-zinc-800 text-white font-medium text-sm"
+          >
+            <Video className="h-4 w-4 mr-2" />
+            Join Session
+          </Button>
+        )}
+      </div>
     </motion.div>
   );
 }

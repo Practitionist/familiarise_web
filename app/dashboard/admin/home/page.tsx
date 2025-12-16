@@ -1,9 +1,28 @@
 "use client";
 
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
 import { useQuery } from "@tanstack/react-query";
+import { motion } from "framer-motion";
 import Link from "next/link";
+import {
+  DashboardHeader,
+  DashboardContent,
+  DashboardGrid,
+  StatCard,
+  StatCardSkeleton,
+  DataCard,
+  EmptyState,
+} from "@/components/dashboard";
+import {
+  CreditCard,
+  Clock,
+  RefreshCw,
+  AlertTriangle,
+  TrendingUp,
+  ChevronRight,
+  Activity,
+  Zap,
+} from "lucide-react";
+import { cn } from "@/utils/tailwind";
 
 // Fetch admin dashboard stats
 async function fetchAdminStats() {
@@ -14,241 +33,253 @@ async function fetchAdminStats() {
   return response.json();
 }
 
+const staggerChildren = {
+  hidden: { opacity: 0 },
+  visible: {
+    opacity: 1,
+    transition: { staggerChildren: 0.08 },
+  },
+};
+
+const fadeInUp = {
+  hidden: { opacity: 0, y: 20 },
+  visible: { opacity: 1, y: 0, transition: { duration: 0.4 } },
+};
+
 export default function AdminHomePage() {
   const { data: stats, isLoading } = useQuery({
     queryKey: ["admin-stats"],
     queryFn: fetchAdminStats,
-    staleTime: 1 * 60 * 1000, // 1 minute
-    refetchInterval: 2 * 60 * 1000, // Refetch every 2 minutes
+    staleTime: 1 * 60 * 1000,
+    refetchInterval: 2 * 60 * 1000,
   });
 
   if (isLoading) {
     return (
-      <div className="space-y-6">
-        <h1 className="text-3xl font-bold text-gray-900">Admin Dashboard</h1>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          {[1, 2, 3, 4].map((i) => (
-            <Card key={i}>
-              <CardHeader>
-                <Skeleton className="h-4 w-[100px]" />
-              </CardHeader>
-              <CardContent>
-                <Skeleton className="h-8 w-[60px]" />
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      </div>
+      <>
+        <DashboardHeader
+          title="Admin Dashboard"
+          subtitle="Overview of platform payments and transactions"
+        />
+        <DashboardContent>
+          <div className="space-y-6">
+            <DashboardGrid columns={4}>
+              {[1, 2, 3, 4].map((i) => (
+                <StatCardSkeleton key={i} />
+              ))}
+            </DashboardGrid>
+          </div>
+        </DashboardContent>
+      </>
     );
   }
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold text-gray-900">Admin Dashboard</h1>
-        <p className="text-gray-600 mt-1">
-          Overview of platform payments and transactions
-        </p>
-      </div>
+    <>
+      <DashboardHeader
+        title="Admin Dashboard"
+        subtitle="Overview of platform payments and transactions"
+      />
 
-      {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <Card className="hover:shadow-lg transition-shadow">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-gray-600">
-              Total Payments
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-gray-900">
-              {stats?.totalPayments || 0}
-            </div>
-            <p className="text-xs text-gray-500 mt-1">
-              {stats?.totalPaymentsValue || "$0"} total value
-            </p>
-          </CardContent>
-        </Card>
+      <DashboardContent>
+        <motion.div
+          variants={staggerChildren}
+          initial="hidden"
+          animate="visible"
+          className="space-y-6"
+        >
+          {/* Stats Grid */}
+          <motion.div variants={fadeInUp}>
+            <DashboardGrid columns={4}>
+              <StatCard
+                title="Total Payments"
+                value={stats?.totalPayments || 0}
+                subtitle={`${stats?.totalPaymentsValue || "$0"} total value`}
+                icon={CreditCard}
+                variant="default"
+              />
+              <StatCard
+                title="Pending Payments"
+                value={stats?.pendingPayments || 0}
+                subtitle={`${stats?.pendingPaymentsValue || "$0"} pending`}
+                icon={Clock}
+                variant="warning"
+              />
+              <StatCard
+                title="Refunds"
+                value={stats?.totalRefunds || 0}
+                subtitle={`${stats?.totalRefundsValue || "$0"} refunded`}
+                icon={RefreshCw}
+                variant="info"
+              />
+              <StatCard
+                title="Active Disputes"
+                value={stats?.activeDisputes || 0}
+                subtitle={`${stats?.totalDisputes || 0} total disputes`}
+                icon={AlertTriangle}
+                variant="danger"
+              />
+            </DashboardGrid>
+          </motion.div>
 
-        <Card className="hover:shadow-lg transition-shadow">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-gray-600">
-              Pending Payments
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-yellow-600">
-              {stats?.pendingPayments || 0}
-            </div>
-            <p className="text-xs text-gray-500 mt-1">
-              {stats?.pendingPaymentsValue || "$0"} pending
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card className="hover:shadow-lg transition-shadow">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-gray-600">
-              Refunds
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-blue-600">
-              {stats?.totalRefunds || 0}
-            </div>
-            <p className="text-xs text-gray-500 mt-1">
-              {stats?.totalRefundsValue || "$0"} refunded
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card className="hover:shadow-lg transition-shadow">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-gray-600">
-              Disputes
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-red-600">
-              {stats?.activeDisputes || 0}
-            </div>
-            <p className="text-xs text-gray-500 mt-1">
-              {stats?.totalDisputes || 0} total
-            </p>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Recent Activity */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg">Recent Payments</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {stats?.recentPayments?.length > 0 ? (
-              <div className="space-y-3">
-                {stats.recentPayments.map((payment: any) => (
-                  <Link
-                    key={payment.id}
-                    href={`/dashboard/admin/payments/${payment.id}`}
-                    className="block p-3 border rounded-lg hover:bg-gray-50 transition-colors"
-                  >
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <p className="font-medium text-gray-900">
-                          {payment.amount} {payment.currency}
-                        </p>
-                        <p className="text-sm text-gray-500">
-                          {payment.paymentGateway} • {payment.appointmentType}
-                        </p>
-                      </div>
-                      <span
-                        className={`text-xs px-2 py-1 rounded ${
-                          payment.paymentStatus === "SUCCEEDED"
-                            ? "bg-green-100 text-green-800"
-                            : payment.paymentStatus === "PENDING"
-                              ? "bg-yellow-100 text-yellow-800"
-                              : "bg-red-100 text-red-800"
-                        }`}
-                      >
-                        {payment.paymentStatus}
-                      </span>
-                    </div>
-                  </Link>
-                ))}
-              </div>
-            ) : (
-              <p className="text-gray-500 text-sm">No recent payments</p>
-            )}
-            <Link
-              href="/dashboard/admin/payments"
-              className="block mt-4 text-blue-600 hover:text-blue-700 text-sm font-medium"
-            >
-              View all payments →
-            </Link>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg">Recent Refunds</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {stats?.recentRefunds?.length > 0 ? (
-              <div className="space-y-3">
-                {stats.recentRefunds.map((refund: any) => (
-                  <Link
-                    key={refund.id}
-                    href={`/dashboard/admin/refunds/${refund.id}`}
-                    className="block p-3 border rounded-lg hover:bg-gray-50 transition-colors"
-                  >
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <p className="font-medium text-gray-900">
-                          {refund.amount} {refund.currency}
-                        </p>
-                        <p className="text-sm text-gray-500">
-                          {refund.paymentGateway}
-                        </p>
-                      </div>
-                      <span
-                        className={`text-xs px-2 py-1 rounded ${
-                          refund.status === "SUCCEEDED"
-                            ? "bg-green-100 text-green-800"
-                            : refund.status === "PENDING"
-                              ? "bg-yellow-100 text-yellow-800"
-                              : "bg-red-100 text-red-800"
-                        }`}
-                      >
-                        {refund.status}
-                      </span>
-                    </div>
-                  </Link>
-                ))}
-              </div>
-            ) : (
-              <p className="text-gray-500 text-sm">No recent refunds</p>
-            )}
-            <Link
-              href="/dashboard/admin/refunds"
-              className="block mt-4 text-blue-600 hover:text-blue-700 text-sm font-medium"
-            >
-              View all refunds →
-            </Link>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Gateway Status */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">Payment Gateway Status</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            {["STRIPE", "RAZORPAY", "LEMON_SQUEEZY", "XFLOW"].map((gateway) => (
-              <div
-                key={gateway}
-                className="p-4 border rounded-lg flex items-center justify-between"
+          {/* Recent Activity Grid */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <motion.div variants={fadeInUp}>
+              <DataCard
+                title="Recent Payments"
+                icon={TrendingUp}
+                viewAllLink="/dashboard/admin/payments"
+                viewAllText="View all payments"
               >
-                <div>
-                  <p className="font-medium text-gray-900">{gateway}</p>
-                  <p className="text-sm text-gray-500">
-                    {stats?.gatewayStats?.[gateway]?.count || 0} payments
-                  </p>
-                </div>
-                <div
-                  className={`h-3 w-3 rounded-full ${
-                    gateway === "STRIPE" || gateway === "RAZORPAY"
-                      ? "bg-green-500"
-                      : "bg-gray-300"
-                  }`}
-                />
-              </div>
-            ))}
+                {stats?.recentPayments?.length > 0 ? (
+                  <div className="space-y-3">
+                    {stats.recentPayments.map((payment: any) => (
+                      <Link
+                        key={payment.id}
+                        href={`/dashboard/admin/payments/${payment.id}`}
+                        className="group flex items-center justify-between p-3 rounded-xl border border-zinc-100 hover:border-zinc-200 hover:bg-zinc-50 transition-all"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="h-10 w-10 rounded-lg bg-zinc-100 flex items-center justify-center">
+                            <CreditCard className="h-5 w-5 text-zinc-600" />
+                          </div>
+                          <div>
+                            <p className="font-medium text-zinc-900">
+                              {payment.amount} {payment.currency}
+                            </p>
+                            <p className="text-sm text-zinc-500">
+                              {payment.paymentGateway} • {payment.appointmentType}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <span
+                            className={cn(
+                              "text-xs px-2.5 py-1 rounded-full font-medium",
+                              payment.paymentStatus === "SUCCEEDED"
+                                ? "bg-emerald-50 text-emerald-700"
+                                : payment.paymentStatus === "PENDING"
+                                  ? "bg-amber-50 text-amber-700"
+                                  : "bg-red-50 text-red-700"
+                            )}
+                          >
+                            {payment.paymentStatus}
+                          </span>
+                          <ChevronRight className="h-4 w-4 text-zinc-300 group-hover:text-zinc-500 transition-colors" />
+                        </div>
+                      </Link>
+                    ))}
+                  </div>
+                ) : (
+                  <EmptyState
+                    icon={CreditCard}
+                    title="No recent payments"
+                    description="Payments will appear here once they're processed"
+                  />
+                )}
+              </DataCard>
+            </motion.div>
+
+            <motion.div variants={fadeInUp}>
+              <DataCard
+                title="Recent Refunds"
+                icon={RefreshCw}
+                viewAllLink="/dashboard/admin/refunds"
+                viewAllText="View all refunds"
+              >
+                {stats?.recentRefunds?.length > 0 ? (
+                  <div className="space-y-3">
+                    {stats.recentRefunds.map((refund: any) => (
+                      <Link
+                        key={refund.id}
+                        href={`/dashboard/admin/refunds/${refund.id}`}
+                        className="group flex items-center justify-between p-3 rounded-xl border border-zinc-100 hover:border-zinc-200 hover:bg-zinc-50 transition-all"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="h-10 w-10 rounded-lg bg-blue-50 flex items-center justify-center">
+                            <RefreshCw className="h-5 w-5 text-blue-600" />
+                          </div>
+                          <div>
+                            <p className="font-medium text-zinc-900">
+                              {refund.amount} {refund.currency}
+                            </p>
+                            <p className="text-sm text-zinc-500">
+                              {refund.paymentGateway}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <span
+                            className={cn(
+                              "text-xs px-2.5 py-1 rounded-full font-medium",
+                              refund.status === "SUCCEEDED"
+                                ? "bg-emerald-50 text-emerald-700"
+                                : refund.status === "PENDING"
+                                  ? "bg-amber-50 text-amber-700"
+                                  : "bg-red-50 text-red-700"
+                            )}
+                          >
+                            {refund.status}
+                          </span>
+                          <ChevronRight className="h-4 w-4 text-zinc-300 group-hover:text-zinc-500 transition-colors" />
+                        </div>
+                      </Link>
+                    ))}
+                  </div>
+                ) : (
+                  <EmptyState
+                    icon={RefreshCw}
+                    title="No recent refunds"
+                    description="Refund requests will appear here"
+                  />
+                )}
+              </DataCard>
+            </motion.div>
           </div>
-        </CardContent>
-      </Card>
-    </div>
+
+          {/* Payment Gateway Status */}
+          <motion.div variants={fadeInUp}>
+            <DataCard title="Payment Gateway Status" icon={Zap}>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                {["STRIPE", "RAZORPAY", "LEMON_SQUEEZY", "XFLOW"].map((gateway) => {
+                  const isActive = gateway === "STRIPE" || gateway === "RAZORPAY";
+                  const count = stats?.gatewayStats?.[gateway]?.count || 0;
+                  const value = stats?.gatewayStats?.[gateway]?.value || "$0";
+
+                  return (
+                    <div
+                      key={gateway}
+                      className="p-4 rounded-xl border border-zinc-100 hover:border-zinc-200 transition-all"
+                    >
+                      <div className="flex items-center justify-between mb-3">
+                        <span className="font-medium text-zinc-900">{gateway}</span>
+                        <div className="flex items-center gap-2">
+                          <div
+                            className={cn(
+                              "h-2.5 w-2.5 rounded-full",
+                              isActive ? "bg-emerald-500" : "bg-zinc-300"
+                            )}
+                          />
+                          <span className={cn(
+                            "text-xs font-medium",
+                            isActive ? "text-emerald-600" : "text-zinc-400"
+                          )}>
+                            {isActive ? "Active" : "Inactive"}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-2xl font-bold text-zinc-900">{count}</p>
+                        <p className="text-sm text-zinc-500">payments • {value}</p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </DataCard>
+          </motion.div>
+        </motion.div>
+      </DashboardContent>
+    </>
   );
 }

@@ -3,7 +3,7 @@
 import { use } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
-import { DashboardHomeSkeleton } from "@/components/ui/dashboard-skeleton";
+import { PageSkeleton } from "@/components/dashboard";
 import { createConsultantQueries } from "@/hooks/useCosultantPrefetchDashboard";
 import { BADGE_STYLES } from "../../types";
 import { AppointmentsTab } from "./AppointmentsTab";
@@ -20,7 +20,7 @@ export default function AppointmentsPage({
   const { data: appointments, isLoading, error } = useQuery(appointmentsQuery);
 
   if (isLoading) {
-    return <DashboardHomeSkeleton />;
+    return <PageSkeleton />;
   }
 
   if (error) {

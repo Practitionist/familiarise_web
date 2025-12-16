@@ -1,51 +1,33 @@
 "use client";
 
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
+import { DashboardShell, DashboardSidebar, type NavItem } from "@/components/dashboard";
 import { signOut, useSession } from "next-auth/react";
-import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { UserRole } from "@prisma/client";
+import { motion } from "framer-motion";
+import { schedulePrefetch } from "@/lib/dashboard-queries";
+import { useEffect } from "react";
 
 // Navigation configuration for admin
-const NAV_ITEMS = [
-  { name: "Overview", path: "home", icon: "📊" },
-  { name: "Payments", path: "payments", icon: "💳" },
-  { name: "Approval Payments", path: "approval-payments", icon: "⏳" },
-  { name: "Refunds", path: "refunds", icon: "↩️" },
-  { name: "Disputes", path: "disputes", icon: "⚠️" },
-  { name: "Analytics", path: "analytics", icon: "📈" },
-  { name: "Users", path: "users", icon: "👥" },
-] as const;
+const NAV_ITEMS: NavItem[] = [
+  { name: "Overview", path: "home" },
+  { name: "Payments", path: "payments" },
+  { name: "Approval Payments", path: "approval-payments" },
+  { name: "Refunds", path: "refunds" },
+  { name: "Disputes", path: "disputes" },
+  { name: "Analytics", path: "analytics" },
+  { name: "Users", path: "users" },
+];
+
+const BOTTOM_NAV_ITEMS: NavItem[] = [
+  { name: "Settings", path: "settings" },
+];
 
 interface PageProps {
   children: React.ReactNode;
-}
-
-interface MessageContainerProps {
-  title: string;
-  message: string;
-  titleColor?: string;
-}
-
-// Reusable components
-function MessageContainer({
-  title,
-  message,
-  titleColor = "text-red-600",
-}: Readonly<MessageContainerProps>) {
-  return (
-    <div className="flex items-center justify-center min-h-screen bg-gray-100">
-      <div className="bg-white p-4 sm:p-8 rounded-lg shadow-md w-full max-w-md mx-4">
-        <h2 className={`text-xl sm:text-2xl font-bold ${titleColor} mb-4`}>
-          {title}
-        </h2>
-        <p className="text-gray-700">{message}</p>
-      </div>
-    </div>
-  );
 }
 
 // Fetch admin user data
@@ -55,17 +37,117 @@ async function fetchAdminData(userId: string) {
     throw new Error("Failed to fetch admin data");
   }
   const result = await response.json();
-  return result.data; // API returns { data: user }
+  return result.data;
 }
 
-// Main layout component
+// Error display
+function ErrorDisplay({ message }: { message: string }) {
+  return (
+    <div className="flex items-center justify-center min-h-screen bg-zinc-100">
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="bg-white p-8 rounded-2xl shadow-xl border border-zinc-200 max-w-md text-center"
+      >
+        <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-red-100 flex items-center justify-center">
+          <svg className="w-8 h-8 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          </svg>
+        </div>
+        <h2 className="text-xl font-bold text-zinc-900 mb-2">Something went wrong</h2>
+        <p className="text-zinc-600">{message}</p>
+        <button
+          onClick={() => window.location.reload()}
+          className="mt-6 px-6 py-2.5 bg-zinc-900 text-white rounded-lg font-medium hover:bg-zinc-800 transition-colors"
+        >
+          Try Again
+        </button>
+      </motion.div>
+    </div>
+  );
+}
+
+// Auth/Access denied display
+function AccessDenied({ title, message }: { title: string; message: string }) {
+  return (
+    <div className="flex items-center justify-center min-h-screen bg-zinc-100">
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="bg-white p-8 rounded-2xl shadow-xl border border-zinc-200 max-w-md text-center"
+      >
+        <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-amber-100 flex items-center justify-center">
+          <svg className="w-8 h-8 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+          </svg>
+        </div>
+        <h2 className="text-xl font-bold text-zinc-900 mb-2">{title}</h2>
+        <p className="text-zinc-600">{message}</p>
+        <a
+          href="/"
+          className="inline-block mt-6 px-6 py-2.5 bg-zinc-900 text-white rounded-lg font-medium hover:bg-zinc-800 transition-colors"
+        >
+          Go Home
+        </a>
+      </motion.div>
+    </div>
+  );
+}
+
+// Loading skeleton
+function DashboardSkeleton() {
+  return (
+    <div className="flex min-h-screen bg-zinc-100">
+      <aside className="fixed left-0 top-0 z-40 hidden h-screen w-64 bg-zinc-950 lg:block">
+        <div className="flex h-16 items-center gap-3 border-b border-zinc-800/50 px-6">
+          <Skeleton className="h-9 w-9 rounded-lg bg-zinc-800" />
+          <Skeleton className="h-5 w-24 bg-zinc-800" />
+        </div>
+        <div className="border-b border-zinc-800/50 p-4">
+          <div className="flex items-center gap-3">
+            <Skeleton className="h-12 w-12 rounded-full bg-zinc-800" />
+            <div className="space-y-2">
+              <Skeleton className="h-4 w-28 bg-zinc-800" />
+              <Skeleton className="h-3 w-20 bg-zinc-800" />
+            </div>
+          </div>
+        </div>
+        <div className="p-3 space-y-1">
+          {[1, 2, 3, 4, 5, 6, 7].map((i) => (
+            <Skeleton key={i} className="h-11 w-full rounded-lg bg-zinc-800" />
+          ))}
+        </div>
+      </aside>
+
+      <main className="flex-1 lg:ml-64 p-8">
+        <div className="space-y-6">
+          <div className="flex items-center justify-between">
+            <div className="space-y-2">
+              <Skeleton className="h-8 w-48 bg-zinc-200" />
+              <Skeleton className="h-4 w-64 bg-zinc-200" />
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+            {[1, 2, 3, 4].map((i) => (
+              <Skeleton key={i} className="h-32 rounded-xl bg-white" />
+            ))}
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <Skeleton className="h-96 rounded-xl bg-white" />
+            <Skeleton className="h-96 rounded-xl bg-white" />
+          </div>
+        </div>
+      </main>
+    </div>
+  );
+}
+
+// Main layout
 export default function AdminLayout({ children }: Readonly<PageProps>) {
   const pathname = usePathname();
-  const currentPath = pathname.split("/").pop();
   const { data: session } = useSession();
   const router = useRouter();
 
-  // Fetch user data
   const userId = session?.user?.id;
 
   const {
@@ -73,146 +155,74 @@ export default function AdminLayout({ children }: Readonly<PageProps>) {
     error,
     isLoading,
   } = useQuery({
-    queryKey: [`admin-${userId}`, userId],
+    queryKey: ["admin-user", userId],
     queryFn: () => fetchAdminData(userId as string),
     enabled: !!userId,
-    staleTime: 5 * 60 * 1000, // 5 minutes
-    gcTime: 10 * 60 * 1000, // 10 minutes
+    staleTime: 5 * 60 * 1000,
+    gcTime: 10 * 60 * 1000,
     retry: 2,
   });
 
-  // Authentication check
+  // Prefetch common routes
+  useEffect(() => {
+    if (!userId) return;
+
+    schedulePrefetch(() => {
+      router.prefetch("/dashboard/admin/home");
+      router.prefetch("/dashboard/admin/payments");
+    }, 3000);
+  }, [userId, router]);
+
+  // Auth check
   if (!session?.user?.id) {
     return (
-      <MessageContainer
+      <AccessDenied
         title="Authentication Required"
         message="Please sign in to access the admin dashboard."
       />
     );
   }
 
-  // Role check - only ADMIN can access
+  // Initial loading
+  if (isLoading && !userData) {
+    return <DashboardSkeleton />;
+  }
+
+  // Role check
   if (userData && userData.role !== UserRole.ADMIN) {
     return (
-      <MessageContainer
+      <AccessDenied
         title="Access Denied"
         message="You do not have permission to access the admin dashboard."
       />
     );
   }
 
-  // Lightweight hover prefetching
-  const handleNavHover = (path: string) => {
-    router.prefetch(`/dashboard/admin/${path}`);
-  };
+  // Error state
+  if (error) {
+    return (
+      <ErrorDisplay
+        message={error instanceof Error ? error.message : "Failed to load dashboard"}
+      />
+    );
+  }
+
+  // Build sidebar
+  const sidebar = (
+    <DashboardSidebar
+      userImage={userData?.image}
+      userName={userData?.name}
+      userRole="ADMIN"
+      basePath="/dashboard/admin"
+      navItems={NAV_ITEMS}
+      bottomNavItems={BOTTOM_NAV_ITEMS}
+      isLoading={isLoading}
+    />
+  );
 
   return (
-    <div className="flex min-h-screen bg-gray-100">
-      {/* Sidebar */}
-      <aside className="w-64 bg-white border-r relative min-h-screen flex flex-col">
-        {/* Profile Section */}
-        <div className="p-4 border-b">
-          {isLoading ? (
-            <div className="flex items-center space-x-3">
-              <Skeleton className="h-12 w-12 rounded-full" />
-              <div className="space-y-2">
-                <Skeleton className="h-4 w-[150px]" />
-                <Skeleton className="h-4 w-[100px]" />
-              </div>
-            </div>
-          ) : (
-            <div className="flex items-center space-x-3">
-              <Avatar className="h-12 w-12">
-                <AvatarImage
-                  src={userData?.image || "/placeholder.svg"}
-                  alt={userData?.name || ""}
-                />
-                <AvatarFallback>
-                  {userData?.name?.charAt(0) || "A"}
-                </AvatarFallback>
-              </Avatar>
-              <div>
-                <h2 className="font-semibold">{userData?.name}</h2>
-                <p className="text-sm text-gray-500">ADMIN</p>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Navigation */}
-        <nav className="p-4 flex-grow">
-          <ul className="space-y-2">
-            {NAV_ITEMS.map((item) => (
-              <li key={item.path}>
-                <Link
-                  href={`/dashboard/admin/${item.path}`}
-                  className={`flex items-center space-x-2 p-2 rounded-md transition-colors ${
-                    currentPath === item.path
-                      ? "bg-blue-50 text-blue-600"
-                      : "text-gray-600 hover:bg-gray-100"
-                  }`}
-                  prefetch={true}
-                  onMouseEnter={() => handleNavHover(item.path)}
-                >
-                  <span>{item.icon}</span>
-                  <span>{item.name}</span>
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </nav>
-
-        {/* Bottom Navigation */}
-        <div className="border-t bg-white mt-auto">
-          <Link
-            href="/"
-            className="flex items-center space-x-2 p-4 text-gray-600 hover:bg-gray-100 transition-colors"
-          >
-            <span>⬅️</span>
-            <span>Back</span>
-          </Link>
-          <Link
-            href="/dashboard/admin/settings"
-            className={`flex items-center space-x-2 p-4 transition-colors ${
-              currentPath === "settings"
-                ? "bg-blue-50 text-blue-600"
-                : "text-gray-600 hover:bg-gray-100"
-            }`}
-            prefetch={true}
-            onMouseEnter={() => router.prefetch("/dashboard/admin/settings")}
-          >
-            <span>⚙️</span>
-            <span>Settings</span>
-          </Link>
-          <button
-            onClick={() => signOut()}
-            className="flex items-center space-x-2 p-4 w-full text-red-600 hover:bg-red-50 transition-colors"
-          >
-            <span>🚪</span>
-            <span>Logout</span>
-          </button>
-        </div>
-      </aside>
-
-      {/* Main Content */}
-      <main className="flex-1 p-8 overflow-auto">
-        {error ? (
-          <div className="flex items-center justify-center h-full">
-            <div className="bg-white p-4 sm:p-8 rounded-lg shadow-md w-full max-w-md mx-4">
-              <h2 className="text-xl sm:text-2xl font-bold text-red-600 mb-4">
-                Error
-              </h2>
-              <p className="text-gray-700">
-                {error instanceof Error
-                  ? error.message
-                  : "An unknown error occurred"}
-              </p>
-            </div>
-          </div>
-        ) : (
-          <DashboardErrorBoundary>{children}</DashboardErrorBoundary>
-        )}
-      </main>
-    </div>
+    <DashboardShell sidebar={sidebar}>
+      <DashboardErrorBoundary>{children}</DashboardErrorBoundary>
+    </DashboardShell>
   );
 }

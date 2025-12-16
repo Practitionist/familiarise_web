@@ -3,7 +3,7 @@
 import { use } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
-import { DashboardHomeSkeleton } from "@/components/ui/dashboard-skeleton";
+import { RequestsSkeleton } from "@/components/dashboard";
 import { createConsultantQueries } from "@/hooks/useCosultantPrefetchDashboard";
 import { RequestSlotAllocationTab } from "./RequestSlotAllocationTab";
 
@@ -19,7 +19,7 @@ export default function RequestsPage({
   const { data: requestsData, isLoading, error } = useQuery(requestsQuery);
 
   if (isLoading) {
-    return <DashboardHomeSkeleton />;
+    return <RequestsSkeleton />;
   }
 
   if (error) {
