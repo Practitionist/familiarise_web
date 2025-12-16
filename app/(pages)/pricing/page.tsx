@@ -18,6 +18,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
 import { DollarSign, Users, Video, Calendar, Repeat } from "lucide-react";
+import { PAGE_META, PRICING_DATA } from "../constants";
 
 export default function PricingPage() {
   return (
@@ -25,9 +26,9 @@ export default function PricingPage() {
       <div className="container mx-auto px-4 md:px-6 py-8">
         {/* Hero Section */}
         <div className="text-center mb-12">
-          <h1 className="text-4xl md:text-5xl font-bold mb-4">Pricing</h1>
+          <h1 className="text-4xl md:text-5xl font-bold mb-4">{PAGE_META.pricing.title}</h1>
           <p className="text-xl text-muted-foreground max-w-3xl mx-auto">
-            Transparent, consultant-driven pricing with no hidden fees
+            {PAGE_META.pricing.description}
           </p>
         </div>
 
@@ -50,34 +51,15 @@ export default function PricingPage() {
                 <strong> dynamic pricing model</strong> where:
               </p>
               <div className="bg-muted p-4 rounded-lg space-y-2">
-                <p className="flex items-start gap-2">
-                  <span className="text-green-600 mt-1">✓</span>
-                  <span>
-                    <strong>Consultants set their own rates</strong> based on
-                    their expertise and market demand
-                  </span>
-                </p>
-                <p className="flex items-start gap-2">
-                  <span className="text-green-600 mt-1">✓</span>
-                  <span>
-                    <strong>You see the exact price</strong> before booking any
-                    session
-                  </span>
-                </p>
-                <p className="flex items-start gap-2">
-                  <span className="text-green-600 mt-1">✓</span>
-                  <span>
-                    <strong>No hidden fees</strong> - the displayed price is
-                    what you pay
-                  </span>
-                </p>
-                <p className="flex items-start gap-2">
-                  <span className="text-green-600 mt-1">✓</span>
-                  <span>
-                    <strong>Platform commission</strong> is already included in
-                    the price
-                  </span>
-                </p>
+                {PRICING_DATA.howItWorks.map((item, index) => (
+                  <p key={index} className="flex items-start gap-2">
+                    <span className="text-green-600 mt-1">✓</span>
+                    <span>
+                      <strong>{item.split(" ").slice(0, 3).join(" ")}</strong>{" "}
+                      {item.split(" ").slice(3).join(" ")}
+                    </span>
+                  </p>
+                ))}
               </div>
             </CardContent>
           </Card>
@@ -97,14 +79,9 @@ export default function PricingPage() {
                 This fee helps us:
               </p>
               <ul className="list-disc list-inside space-y-2 text-muted-foreground ml-4">
-                <li>Maintain secure payment processing infrastructure</li>
-                <li>
-                  Provide integrated video conferencing and communication tools
-                </li>
-                <li>Host and deliver course materials and content</li>
-                <li>Ensure platform security and data protection</li>
-                <li>Offer 24/7 customer support</li>
-                <li>Continuously improve the user experience</li>
+                {PRICING_DATA.commissionBenefits.map((benefit, index) => (
+                  <li key={index}>{benefit}</li>
+                ))}
               </ul>
               <div className="bg-blue-50 dark:bg-blue-950 p-4 rounded-lg mt-4">
                 <p className="text-sm">
@@ -233,11 +210,9 @@ export default function PricingPage() {
                   payment partner, Razorpay:
                 </p>
                 <div className="flex flex-wrap gap-2">
-                  <Badge variant="outline">Credit Cards</Badge>
-                  <Badge variant="outline">Debit Cards</Badge>
-                  <Badge variant="outline">UPI</Badge>
-                  <Badge variant="outline">Net Banking</Badge>
-                  <Badge variant="outline">Wallets</Badge>
+                  {PRICING_DATA.paymentMethods.map((method) => (
+                    <Badge key={method} variant="outline">{method}</Badge>
+                  ))}
                 </div>
               </div>
               <Separator />
@@ -270,83 +245,26 @@ export default function PricingPage() {
             </CardHeader>
             <CardContent>
               <Accordion type="single" collapsible className="w-full">
-                <AccordionItem value="item-1">
-                  <AccordionTrigger>
-                    How do I know the price before booking?
-                  </AccordionTrigger>
-                  <AccordionContent>
-                    The price for each service is clearly displayed on the
-                    consultant's profile and on the booking page. You will see
-                    the exact amount you need to pay before confirming your
-                    booking.
-                  </AccordionContent>
-                </AccordionItem>
-
-                <AccordionItem value="item-2">
-                  <AccordionTrigger>
-                    Are there any additional fees?
-                  </AccordionTrigger>
-                  <AccordionContent>
-                    No, there are no hidden fees. The price displayed is the
-                    final amount you will pay. The platform commission is
-                    already included in the displayed price.
-                  </AccordionContent>
-                </AccordionItem>
-
-                <AccordionItem value="item-3">
-                  <AccordionTrigger>
-                    Can I get a refund if I cancel?
-                  </AccordionTrigger>
-                  <AccordionContent>
-                    Yes, refunds are available based on our cancellation policy.
-                    The refund eligibility depends on when you cancel and the
-                    type of service. Please refer to our{" "}
-                    <Link
-                      href="/refund"
-                      className="text-blue-600 hover:underline"
-                    >
-                      Cancellation & Refund Policy
-                    </Link>{" "}
-                    for detailed information.
-                  </AccordionContent>
-                </AccordionItem>
-
-                <AccordionItem value="item-4">
-                  <AccordionTrigger>
-                    Why do prices vary between consultants?
-                  </AccordionTrigger>
-                  <AccordionContent>
-                    Consultants set their own prices based on their expertise,
-                    experience, qualifications, and market demand. This allows
-                    you to choose consultants that fit your budget while
-                    ensuring consultants are fairly compensated for their
-                    knowledge and time.
-                  </AccordionContent>
-                </AccordionItem>
-
-                <AccordionItem value="item-5">
-                  <AccordionTrigger>
-                    Do you offer discounts or promotional pricing?
-                  </AccordionTrigger>
-                  <AccordionContent>
-                    Individual consultants may offer promotional pricing or
-                    discounts for their services. These will be clearly
-                    displayed on their profiles and during the booking process.
-                    We also occasionally run platform-wide promotions -
-                    subscribe to our newsletter to stay updated.
-                  </AccordionContent>
-                </AccordionItem>
-
-                <AccordionItem value="item-6">
-                  <AccordionTrigger>How are consultants paid?</AccordionTrigger>
-                  <AccordionContent>
-                    Consultants receive their earnings after the session is
-                    completed successfully. The platform commission is
-                    automatically deducted, and the remaining amount is
-                    transferred to the consultant's registered bank account
-                    according to the settlement schedule.
-                  </AccordionContent>
-                </AccordionItem>
+                {PRICING_DATA.faqs.map((faq, index) => (
+                  <AccordionItem key={index} value={`item-${index + 1}`}>
+                    <AccordionTrigger>{faq.question}</AccordionTrigger>
+                    <AccordionContent>
+                      {faq.answer}
+                      {faq.question.includes("refund") && (
+                        <>
+                          {" "}Please refer to our{" "}
+                          <Link
+                            href="/refund"
+                            className="text-blue-600 hover:underline"
+                          >
+                            Cancellation & Refund Policy
+                          </Link>{" "}
+                          for detailed information.
+                        </>
+                      )}
+                    </AccordionContent>
+                  </AccordionItem>
+                ))}
               </Accordion>
             </CardContent>
           </Card>

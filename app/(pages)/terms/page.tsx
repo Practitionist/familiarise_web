@@ -3,6 +3,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { FileText } from "lucide-react";
+import { COMPANY_INFO, PAGE_META, POLICY_DATES, getMailtoLink } from "../constants";
 
 export default function TermsPage() {
   return (
@@ -14,10 +15,10 @@ export default function TermsPage() {
             <FileText className="h-16 w-16 text-blue-600" />
           </div>
           <h1 className="text-4xl md:text-5xl font-bold mb-4">
-            Terms & Conditions
+            {PAGE_META.terms.title}
           </h1>
           <p className="text-muted-foreground max-w-3xl mx-auto">
-            Please read these terms carefully before using our services
+            {PAGE_META.terms.description}
           </p>
         </div>
 
@@ -26,7 +27,7 @@ export default function TermsPage() {
             <CardHeader>
               <CardTitle className="text-2xl">Terms & Conditions</CardTitle>
               <p className="text-sm text-muted-foreground">
-                Last Updated: [LAST UPDATED]
+                Last Updated: {POLICY_DATES.termsLastUpdated}
               </p>
             </CardHeader>
             <CardContent className="prose prose-slate max-w-none">
@@ -34,7 +35,7 @@ export default function TermsPage() {
                 1. Agreement to Terms
               </h2>
               <p>
-                Welcome to Familiarise ("[COMPANY NAME]"). These Terms &
+                Welcome to Familiarise ("{COMPANY_INFO.name}"). These Terms &
                 Conditions ("Terms") govern your access to and use of our
                 website, platform, and services. By accessing or using our
                 services, you agree to be bound by these Terms and our Privacy
@@ -329,7 +330,7 @@ export default function TermsPage() {
               </h3>
               <p>
                 The Familiarise platform, including its design, features, code,
-                logos, and trademarks, is owned by [COMPANY NAME] and protected
+                logos, and trademarks, is owned by {COMPANY_INFO.name} and protected
                 by intellectual property laws. You may not copy, modify,
                 distribute, or create derivative works without our express
                 written permission.
@@ -443,7 +444,7 @@ export default function TermsPage() {
                 10.3 Limitation of Liability
               </h3>
               <p>
-                To the maximum extent permitted by law, [COMPANY NAME] shall not
+                To the maximum extent permitted by law, {COMPANY_INFO.name} shall not
                 be liable for:
               </p>
               <ul>
@@ -476,8 +477,7 @@ export default function TermsPage() {
                 11. Indemnification
               </h2>
               <p>
-                You agree to indemnify, defend, and hold harmless [COMPANY
-                NAME], its officers, directors, employees, and agents from any
+                You agree to indemnify, defend, and hold harmless {COMPANY_INFO.name}, its officers, directors, employees, and agents from any
                 claims, damages, losses, liabilities, and expenses (including
                 legal fees) arising from:
               </p>
@@ -501,10 +501,10 @@ export default function TermsPage() {
               <p>
                 In the event of any dispute, you agree to first contact us at{" "}
                 <a
-                  href="mailto:[EMAIL]"
+                  href={getMailtoLink()}
                   className="text-blue-600 hover:underline"
                 >
-                  [EMAIL]
+                  {COMPANY_INFO.email}
                 </a>{" "}
                 to attempt to resolve the issue informally. We will work in good
                 faith to resolve disputes amicably.
@@ -523,7 +523,7 @@ export default function TermsPage() {
               </h3>
               <p>
                 These Terms shall be governed by and construed in accordance
-                with the laws of [JURISDICTION], without regard to its conflict
+                with the laws of {COMPANY_INFO.jurisdiction}, without regard to its conflict
                 of law provisions.
               </p>
 
@@ -532,7 +532,7 @@ export default function TermsPage() {
               </h3>
               <p>
                 You agree to submit to the exclusive jurisdiction of the courts
-                located in [JURISDICTION] for the resolution of any disputes.
+                located in {COMPANY_INFO.jurisdiction} for the resolution of any disputes.
               </p>
 
               <Separator className="my-6" />
@@ -590,7 +590,7 @@ export default function TermsPage() {
               <p>
                 These Terms, together with our Privacy Policy and Cancellation &
                 Refund Policy, constitute the entire agreement between you and
-                [COMPANY NAME] regarding your use of the platform and supersede
+                {COMPANY_INFO.name} regarding your use of the platform and supersede
                 all prior agreements and understandings.
               </p>
 
@@ -605,18 +605,18 @@ export default function TermsPage() {
               </p>
               <div className="bg-muted p-4 rounded-lg mt-4">
                 <p>
-                  <strong>Company Name:</strong> [COMPANY NAME]
+                  <strong>Company Name:</strong> {COMPANY_INFO.name}
                 </p>
                 <p>
-                  <strong>Address:</strong> [ADDRESS]
+                  <strong>Address:</strong> {COMPANY_INFO.address}
                 </p>
                 <p>
                   <strong>Email:</strong>{" "}
                   <a
-                    href="mailto:[EMAIL]"
+                    href={getMailtoLink()}
                     className="text-blue-600 hover:underline"
                   >
-                    [EMAIL]
+                    {COMPANY_INFO.email}
                   </a>
                 </p>
                 <p>

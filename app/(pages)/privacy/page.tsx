@@ -3,6 +3,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Shield } from "lucide-react";
+import { COMPANY_INFO, PAGE_META, POLICY_DATES, getMailtoLink } from "../constants";
 
 export default function PrivacyPolicyPage() {
   return (
@@ -14,11 +15,10 @@ export default function PrivacyPolicyPage() {
             <Shield className="h-16 w-16 text-blue-600" />
           </div>
           <h1 className="text-4xl md:text-5xl font-bold mb-4">
-            Privacy Policy
+            {PAGE_META.privacy.title}
           </h1>
           <p className="text-muted-foreground max-w-3xl mx-auto">
-            Your privacy is important to us. This policy explains how we
-            collect, use, and protect your personal information.
+            {PAGE_META.privacy.description}
           </p>
         </div>
 
@@ -27,7 +27,7 @@ export default function PrivacyPolicyPage() {
             <CardHeader>
               <CardTitle className="text-2xl">Privacy Policy</CardTitle>
               <p className="text-sm text-muted-foreground">
-                Last Updated: [LAST UPDATED]
+                Last Updated: {POLICY_DATES.privacyLastUpdated}
               </p>
             </CardHeader>
             <CardContent className="prose prose-slate max-w-none">
@@ -35,7 +35,7 @@ export default function PrivacyPolicyPage() {
                 1. Introduction
               </h2>
               <p>
-                Welcome to Familiarise ("[COMPANY NAME]"). We are committed to
+                Welcome to Familiarise ("{COMPANY_INFO.name}"). We are committed to
                 protecting your privacy and ensuring the security of your
                 personal information. This Privacy Policy explains how we
                 collect, use, disclose, and safeguard your information when you
@@ -471,18 +471,18 @@ export default function PrivacyPolicyPage() {
               </p>
               <div className="bg-muted p-4 rounded-lg mt-4">
                 <p>
-                  <strong>Company Name:</strong> [COMPANY NAME]
+                  <strong>Company Name:</strong> {COMPANY_INFO.name}
                 </p>
                 <p>
-                  <strong>Address:</strong> [ADDRESS]
+                  <strong>Address:</strong> {COMPANY_INFO.address}
                 </p>
                 <p>
                   <strong>Email:</strong>{" "}
                   <a
-                    href="mailto:[EMAIL]"
+                    href={getMailtoLink()}
                     className="text-blue-600 hover:underline"
                   >
-                    [EMAIL]
+                    {COMPANY_INFO.email}
                   </a>
                 </p>
                 <p>

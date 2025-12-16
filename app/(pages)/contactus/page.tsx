@@ -13,6 +13,15 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Mail, MapPin, Phone, Clock, MessageSquare } from "lucide-react";
+import {
+  COMPANY_INFO,
+  PAGE_META,
+  BUSINESS_HOURS,
+  INQUIRY_CATEGORIES,
+  SUPPORT_LINKS,
+  getMailtoLink,
+  getTelLink,
+} from "../constants";
 
 export default function ContactUsPage() {
   return (
@@ -23,10 +32,9 @@ export default function ContactUsPage() {
           <div className="flex justify-center mb-4">
             <MessageSquare className="h-16 w-16 text-blue-600" />
           </div>
-          <h1 className="text-4xl md:text-5xl font-bold mb-4">Contact Us</h1>
+          <h1 className="text-4xl md:text-5xl font-bold mb-4">{PAGE_META.contact.title}</h1>
           <p className="text-xl text-muted-foreground max-w-3xl mx-auto">
-            We're here to help! Reach out to us with any questions, concerns, or
-            feedback.
+            {PAGE_META.contact.description}
           </p>
         </div>
 
@@ -49,9 +57,9 @@ export default function ContactUsPage() {
                   <div>
                     <h3 className="font-semibold mb-1">Address</h3>
                     <p className="text-sm text-muted-foreground">
-                      [COMPANY NAME]
+                      {COMPANY_INFO.name}
                       <br />
-                      [ADDRESS]
+                      {COMPANY_INFO.address}
                     </p>
                   </div>
                 </div>
@@ -68,19 +76,19 @@ export default function ContactUsPage() {
                     <p className="text-sm text-muted-foreground">
                       General Inquiries:{" "}
                       <a
-                        href="mailto:[EMAIL]"
+                        href={getMailtoLink()}
                         className="text-blue-600 hover:underline"
                       >
-                        [EMAIL]
+                        {COMPANY_INFO.email}
                       </a>
                     </p>
                     <p className="text-sm text-muted-foreground mt-1">
                       Support:{" "}
                       <a
-                        href="mailto:[SUPPORT_EMAIL]"
+                        href={getMailtoLink(COMPANY_INFO.supportEmail)}
                         className="text-blue-600 hover:underline"
                       >
-                        [SUPPORT_EMAIL]
+                        {COMPANY_INFO.supportEmail}
                       </a>
                     </p>
                   </div>
@@ -97,10 +105,10 @@ export default function ContactUsPage() {
                     <h3 className="font-semibold mb-1">Phone</h3>
                     <p className="text-sm text-muted-foreground">
                       <a
-                        href="tel:[PHONE]"
+                        href={getTelLink()}
                         className="text-blue-600 hover:underline"
                       >
-                        [PHONE]
+                        {COMPANY_INFO.phone}
                       </a>
                     </p>
                     <p className="text-xs text-muted-foreground mt-1">
@@ -119,11 +127,11 @@ export default function ContactUsPage() {
                   <div>
                     <h3 className="font-semibold mb-1">Business Hours</h3>
                     <p className="text-sm text-muted-foreground">
-                      Monday - Friday: 9:00 AM - 6:00 PM IST
+                      {BUSINESS_HOURS.weekdays}
                       <br />
-                      Saturday: 10:00 AM - 4:00 PM IST
+                      {BUSINESS_HOURS.saturday}
                       <br />
-                      Sunday: Closed
+                      {BUSINESS_HOURS.sunday}
                     </p>
                   </div>
                 </div>
@@ -141,32 +149,16 @@ export default function ContactUsPage() {
                   in our help resources:
                 </p>
                 <ul className="space-y-2">
-                  <li className="text-sm">
-                    <a
-                      href="/pricing"
-                      className="text-blue-600 hover:underline"
-                    >
-                      • Pricing & Platform Fees
-                    </a>
-                  </li>
-                  <li className="text-sm">
-                    <a href="/refund" className="text-blue-600 hover:underline">
-                      • Cancellation & Refund Policy
-                    </a>
-                  </li>
-                  <li className="text-sm">
-                    <a
-                      href="/privacy"
-                      className="text-blue-600 hover:underline"
-                    >
-                      • Privacy Policy
-                    </a>
-                  </li>
-                  <li className="text-sm">
-                    <a href="/terms" className="text-blue-600 hover:underline">
-                      • Terms & Conditions
-                    </a>
-                  </li>
+                  {SUPPORT_LINKS.map((link) => (
+                    <li key={link.href} className="text-sm">
+                      <a
+                        href={link.href}
+                        className="text-blue-600 hover:underline"
+                      >
+                        • {link.label}
+                      </a>
+                    </li>
+                  ))}
                 </ul>
               </CardContent>
             </Card>
@@ -256,14 +248,11 @@ export default function ContactUsPage() {
                     id="category"
                     className="w-full px-3 py-2 border rounded-md bg-background"
                   >
-                    <option value="">Select a category</option>
-                    <option value="general">General Inquiry</option>
-                    <option value="technical">Technical Support</option>
-                    <option value="billing">Billing & Payments</option>
-                    <option value="booking">Booking Issues</option>
-                    <option value="consultant">Consultant Support</option>
-                    <option value="feedback">Feedback</option>
-                    <option value="other">Other</option>
+                    {INQUIRY_CATEGORIES.map((category) => (
+                      <option key={category.value} value={category.value}>
+                        {category.label}
+                      </option>
+                    ))}
                   </select>
                 </div>
 
