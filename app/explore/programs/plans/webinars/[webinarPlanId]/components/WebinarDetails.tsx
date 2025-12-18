@@ -13,6 +13,7 @@ import {
 } from "../icons";
 import { ClientWebinarRegistration } from "./ClientWebinarRegistration";
 import { generateProgramImageUrl } from "../../../../utils";
+import { formatCurrency } from "@/app/checkout/plans/math";
 import type { Prisma, Topic } from "@prisma/client";
 
 // Define the specific type for the plan prop
@@ -153,7 +154,7 @@ export function WebinarDetails({ plan, nextSession, webinarId }: WebinarDetailsP
               <CardContent className="p-6">
                 <h1 className="text-3xl font-bold mb-2">{plan.title}</h1>
                 <p className="text-xl font-semibold mb-4 text-blue-600">
-                  ${plan.price} USD
+                  {formatCurrency(plan.price, plan.priceCurrency || "USD")}
                 </p>
 
                 <div className="grid grid-cols-2 gap-4 mb-6">

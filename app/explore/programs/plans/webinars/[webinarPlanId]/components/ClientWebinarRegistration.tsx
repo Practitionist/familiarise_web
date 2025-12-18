@@ -11,6 +11,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { CheckCircle } from "lucide-react";
+import { formatCurrency } from "@/app/checkout/plans/math";
 
 // Redefine SessionStatus (or import if moved to a shared file)
 type SessionStatus =
@@ -89,7 +90,7 @@ export function ClientWebinarRegistration({
   }
 
   // Logic for buttonText and buttonDisabled
-  let buttonText = `Pay $${price} ${currency ?? "USD"} & Register Now`;
+  let buttonText = `Pay ${formatCurrency(price, currency || "USD")} & Register Now`;
   let buttonDisabled = false;
 
   if (sessionStatus === "Completed") {
