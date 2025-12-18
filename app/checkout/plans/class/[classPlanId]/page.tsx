@@ -410,7 +410,7 @@ export default function ClassCheckoutPage({
             <div className="grid gap-2">
               <div className="flex items-center justify-between">
                 <div>Enrollment Fee</div>
-                <div>${planDetails?.price || 0}</div>
+                <div>{formatCurrency(planDetails?.price || 0, currency)}</div>
               </div>
               <div className="flex items-center justify-between">
                 <div className="flex items-center">

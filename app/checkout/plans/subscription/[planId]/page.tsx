@@ -442,7 +442,7 @@ export default function SubscriptionCheckoutPage({
             <div className="grid gap-2">
               <div className="flex items-center justify-between">
                 <div>Monthly Fee</div>
-                <div>${planData?.data?.price || 100}</div>
+                <div>{formatCurrency(planData?.data?.price || 100, currency)}</div>
               </div>
               <div className="flex items-center justify-between">
                 <div className="flex items-center">

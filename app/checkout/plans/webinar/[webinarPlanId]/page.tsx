@@ -399,7 +399,7 @@ export default function WebinarCheckoutPage({
             <div className="grid gap-2">
               <div className="flex items-center justify-between">
                 <div>Registration Fee</div>
-                <div>${planDetails?.price || 0}</div>
+                <div>{formatCurrency(planDetails?.price || 0, currency)}</div>
               </div>
               <div className="flex items-center justify-between">
                 <div className="flex items-center">
