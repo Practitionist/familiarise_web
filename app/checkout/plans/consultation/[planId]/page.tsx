@@ -368,6 +368,17 @@ export default function ConsultationCheckoutPage({
     fetchEventData();
   }, [resolvedParams.planId, resolvedSearchParams]);
 
+  // Calculate pricing using the proper math functions
+  // NOTE: This must be before early returns to maintain consistent hook order
+  const pricing = useMemo(() => {
+    const basePrice = eventData?.data?.price || 0;
+    // TODO: Look up actual discount from discountCode via API
+    // For now, no automatic discount - user must apply a code
+    return calculatePricing(basePrice, {
+      discountPercent: 0, // Will be updated when discount code is applied
+    });
+  }, [eventData?.data?.price]);
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-screen">
@@ -397,16 +408,6 @@ export default function ConsultationCheckoutPage({
   const consultantDetails = eventData?.data.consultantProfile;
   const userDetails = eventData?.data.consultantProfile.user;
   const currency = eventData?.data?.priceCurrency || "USD";
-
-  // Calculate pricing using the proper math functions
-  const pricing = useMemo(() => {
-    const basePrice = eventData?.data?.price || 0;
-    // TODO: Look up actual discount from discountCode via API
-    // For now, no automatic discount - user must apply a code
-    return calculatePricing(basePrice, {
-      discountPercent: 0, // Will be updated when discount code is applied
-    });
-  }, [eventData?.data?.price]);
 
   return (
     <>
