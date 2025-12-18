@@ -226,6 +226,16 @@ export default function ClassCheckoutPage({
     fetchPlanData();
   }, [resolvedParams.classPlanId]);
 
+  // Calculate pricing using the proper math functions
+  // NOTE: This must be before early returns to maintain consistent hook order
+  const pricing = useMemo(() => {
+    const basePrice = planData?.data?.price || 0;
+    // TODO: Look up actual discount from discountCode via API
+    return calculatePricing(basePrice, {
+      discountPercent: 0, // Will be updated when discount code is applied
+    });
+  }, [planData?.data?.price]);
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-screen">
@@ -256,15 +266,6 @@ export default function ClassCheckoutPage({
   const consultantDetails = planDetails?.consultantProfile;
   const userDetails = consultantDetails?.user;
   const currency = planDetails?.priceCurrency || "USD";
-
-  // Calculate pricing using the proper math functions
-  const pricing = useMemo(() => {
-    const basePrice = planDetails?.price || 0;
-    // TODO: Look up actual discount from discountCode via API
-    return calculatePricing(basePrice, {
-      discountPercent: 0, // Will be updated when discount code is applied
-    });
-  }, [planDetails?.price]);
   const nextClassSession =
     planDetails?.classes?.[0]?.appointments?.[0]?.slotsOfAppointment?.[0];
 
