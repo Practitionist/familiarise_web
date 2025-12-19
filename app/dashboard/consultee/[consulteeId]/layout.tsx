@@ -35,9 +35,9 @@ import { useState } from "react";
 const NAV_ITEMS: NavItem[] = [
   { name: "Home", path: "home" },
   { name: "Appointments", path: "appointments" },
-  { name: "Booking History", path: "history" },
+  { name: "History", path: "history" },
   { name: "Messages", path: "messages" },
-  { name: "Feedback & Support", path: "feedback" },
+  { name: "Support", path: "feedback" },
   { name: "Settings", path: "settings" },
   { name: "Policy", path: "policy" },
 ];
@@ -156,7 +156,7 @@ function ConsulteeNav({
                   key={item.path}
                   href={`/dashboard/consultee/${consulteeId}/${item.path}`}
                   className={cn(
-                    "flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all",
+                    "px-3 py-2 rounded-lg text-sm font-medium transition-all whitespace-nowrap",
                     isActive
                       ? "bg-zinc-900 text-white"
                       : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900"
@@ -164,7 +164,6 @@ function ConsulteeNav({
                   prefetch={true}
                   onMouseEnter={() => handleNavHover(item.path)}
                 >
-                  {Icon && <Icon className="w-4 h-4" />}
                   {item.name}
                 </Link>
               );
