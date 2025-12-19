@@ -267,7 +267,7 @@ export function EventCard({
                 </AccordionContent>
               </AccordionItem>
             </Accordion>
-          ) : (
+          ) : type !== "Consultation" && type !== "Webinar" ? (
             <div className="bg-zinc-50 rounded-lg p-3 border border-zinc-100">
               <div className="flex items-center gap-2 text-xs text-zinc-500 mb-1">
                 <Clock className="h-3.5 w-3.5" />
@@ -275,7 +275,7 @@ export function EventCard({
               </div>
               <div className="text-sm text-zinc-700">{date}</div>
             </div>
-          )}
+          ) : null}
         </div>
 
         {/* Document Upload */}
