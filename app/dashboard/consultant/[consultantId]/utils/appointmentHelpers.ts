@@ -11,7 +11,9 @@ type AppointmentSlot = {
   slotStartTimeInUTC?: string | Date;
 };
 
-// Get the consultee name based on appointment type
+// Get the relevant name based on appointment type
+// For consultations/subscriptions: returns the consultee (requester) name
+// For webinars/classes: returns the consultant (host) name
 export const getConsumeeName = (appointment: TAppointment): string => {
   if (!appointment) return "Unknown User";
 
@@ -25,16 +27,25 @@ export const getConsumeeName = (appointment: TAppointment): string => {
         appointment.subscription?.requestedBy?.user?.name ?? "Unknown User"
       );
     case "WEBINAR":
-    case "CLASS":
+      // For webinars, show the consultant (host) name
       return (
-        appointment.slotsOfAppointment?.[0]?.user?.[0]?.name ?? "Unknown User"
+        appointment.webinar?.webinarPlan?.consultantProfile?.user?.name ??
+        "Unknown Consultant"
+      );
+    case "CLASS":
+      // For classes, show the consultant (instructor) name
+      return (
+        appointment.class?.classPlan?.consultantProfile?.user?.name ??
+        "Unknown Consultant"
       );
     default:
       return "Unknown User";
   }
 };
 
-// Get the consultee image based on appointment type
+// Get the relevant image based on appointment type
+// For consultations/subscriptions: returns the consultee (requester) image
+// For webinars/classes: returns the consultant (host) image
 export const getConsumeeImage = (appointment: TAppointment): string => {
   if (!appointment) return "/placeholder.svg";
 
@@ -48,9 +59,15 @@ export const getConsumeeImage = (appointment: TAppointment): string => {
         appointment.subscription?.requestedBy?.user?.image ?? "/placeholder.svg"
       );
     case "WEBINAR":
-    case "CLASS":
+      // For webinars, show the consultant (host) image
       return (
-        appointment.slotsOfAppointment?.[0]?.user?.[0]?.image ??
+        appointment.webinar?.webinarPlan?.consultantProfile?.user?.image ??
+        "/placeholder.svg"
+      );
+    case "CLASS":
+      // For classes, show the consultant (instructor) image
+      return (
+        appointment.class?.classPlan?.consultantProfile?.user?.image ??
         "/placeholder.svg"
       );
     default:
@@ -209,13 +226,43 @@ export const getAppointmentStatus = (appointment: TAppointment): string => {
   // Calculate time differences using local time
   const diffMs = startTime.getTime() - now.getTime();
   const diffMinutes = Math.floor(diffMs / (1000 * 60));
-  const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+  // Use calendar-based day comparison for accurate "Today"/"Tomorrow" labels
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const tomorrowStart = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate() + 1,
+  );
+  const dayAfterTomorrowStart = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate() + 2,
+  );
+
+  const appointmentDate = new Date(startTime);
 
   // Upcoming appointments with more precise timing
   if (diffMinutes <= 5 && diffMinutes > 0) return "Meeting in 5 min";
-  if (diffHours < 24) return "Today";
-  if (diffDays === 1) return "Tomorrow";
+
+  // Check if appointment is today (same calendar day)
+  if (appointmentDate >= todayStart && appointmentDate < tomorrowStart) {
+    return "Today";
+  }
+
+  // Check if appointment is tomorrow (next calendar day)
+  if (
+    appointmentDate >= tomorrowStart &&
+    appointmentDate < dayAfterTomorrowStart
+  ) {
+    return "Tomorrow";
+  }
+
+  // Calculate day difference for appointments further out
+  const diffDays = Math.floor(
+    (appointmentDate.getTime() - todayStart.getTime()) / (1000 * 60 * 60 * 24),
+  );
+
   if (diffDays < 7) return `In ${diffDays} days`;
 
   // For weekly intervals, show exact week number

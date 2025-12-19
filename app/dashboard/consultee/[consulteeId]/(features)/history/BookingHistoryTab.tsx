@@ -104,7 +104,7 @@ export function BookingHistoryTab({
                     <TableCell>
                       <div className="flex items-center gap-2">
                         <span className="font-medium">
-                          {formatAmount(getPaymentAmount(event))}
+                          {formatAmount(getPaymentAmount(event), getPaymentCurrency(event))}
                         </span>
                         {getPaymentStatus(event) && (
                           <Badge
@@ -243,12 +243,14 @@ function getBookingDate(event: EventWithType): string | null {
   }
 }
 
-function formatAmount(amount: number | null): string {
+function formatAmount(amount: number | null, currency: string = "INR"): string {
   if (amount === null) return "Not available";
   return new Intl.NumberFormat("en-US", {
     style: "currency",
-    currency: "USD",
-  }).format(amount / 100); // Convert cents to dollars
+    currency: currency,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(amount / 100); // Convert from smallest currency unit
 }
 
 function getPaymentStatus(event: EventWithType): string | null {
@@ -270,6 +272,23 @@ function getPaymentAmount(event: EventWithType): number | null {
     case "Subscription":
     case "Class":
       return event.appointments?.[0]?.payment?.[0]?.amount ?? null;
+  }
+}
+
+function getPaymentCurrency(event: EventWithType): string {
+  switch (event.type) {
+    case "Consultation":
+      return event.appointment?.payment?.[0]?.currency ?? 
+             event.consultationPlan?.priceCurrency ?? "INR";
+    case "Subscription":
+      return event.appointments?.[0]?.payment?.[0]?.currency ?? 
+             event.subscriptionPlan?.priceCurrency ?? "INR";
+    case "Webinar":
+      return event.appointment?.payment?.[0]?.currency ?? 
+             event.webinarPlan?.priceCurrency ?? "INR";
+    case "Class":
+      return event.appointments?.[0]?.payment?.[0]?.currency ?? 
+             event.classPlan?.priceCurrency ?? "INR";
   }
 }
 

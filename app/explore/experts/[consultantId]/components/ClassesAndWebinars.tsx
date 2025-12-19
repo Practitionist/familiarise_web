@@ -5,7 +5,6 @@ import { Badge } from "@/components/ui/badge";
 import { RegistrationBadge } from "@/components/ui/registration-badge";
 import { ClassPlan, WebinarPlan } from "@prisma/client";
 import {
-  Calendar,
   Clock,
   Users,
   Globe,
@@ -20,7 +19,7 @@ import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import React, { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import Image from "next/image";
+import { formatCurrency } from "@/app/checkout/plans/math";
 
 interface ClassesAndWebinarsProps {
   classPlans: ClassPlan[];
@@ -106,7 +105,7 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
             {/* Price Tag */}
             <div className="absolute bottom-4 right-4">
               <span className="px-3 py-1.5 bg-white rounded-full text-lg font-bold text-zinc-900">
-                ${classPlan.price}
+                {formatCurrency(classPlan.price, classPlan.priceCurrency || "INR")}
               </span>
             </div>
           </div>
@@ -200,7 +199,7 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
             {/* Price Tag */}
             <div className="absolute bottom-4 right-4">
               <span className="px-3 py-1.5 bg-white rounded-full text-lg font-bold text-zinc-900">
-                ${webinarPlan.price}
+                {formatCurrency(webinarPlan.price, webinarPlan.priceCurrency || "INR")}
               </span>
             </div>
           </div>

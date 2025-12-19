@@ -9,6 +9,7 @@ import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { TConsultantProfile } from "@/types/consultant";
 import { Star, MapPin, Clock, Briefcase, ArrowRight, CheckCircle2 } from "lucide-react";
+import { formatCurrency } from "@/app/checkout/plans/math";
 
 interface ConsultantCardProps {
   consultant: TConsultantProfile;
@@ -54,7 +55,7 @@ const SubscriptionPlanCard = ({ plan }: { plan: any }) => {
   return (
     <div className="bg-white rounded-xl p-5 border border-zinc-200">
       <div className="flex items-baseline justify-between mb-4">
-        <div className="text-3xl font-bold text-zinc-900">${plan.price / 100}</div>
+        <div className="text-3xl font-bold text-zinc-900">{formatCurrency(plan.price / 100, plan.priceCurrency || "INR")}</div>
         <div className="text-sm text-zinc-500 font-medium bg-zinc-100 px-3 py-1 rounded-full">
           {formatDuration(plan.durationInMonths)}
         </div>

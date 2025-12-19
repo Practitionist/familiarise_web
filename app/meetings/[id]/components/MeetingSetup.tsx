@@ -35,7 +35,7 @@ const createAudioAnalyzer = async () => {
 
     // Create data array for frequency data
     const bufferLength = analyser.frequencyBinCount;
-    const dataArray = new Uint8Array(bufferLength);
+    const dataArray = new Uint8Array(bufferLength) as Uint8Array<ArrayBuffer>;
 
     return { audioContext, analyser, dataArray, bufferLength };
   } catch (error) {
@@ -80,7 +80,7 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
   // Extracted audio level calculation function
   const calculateAudioLevel = (
     analyser: AnalyserNode,
-    dataArray: Uint8Array,
+    dataArray: Uint8Array<ArrayBuffer>,
     bufferLength: number,
   ) => {
     analyser.getByteFrequencyData(dataArray);
@@ -101,7 +101,7 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
     // Extracted update level function
     const updateLevel = (
       analyser: AnalyserNode,
-      dataArray: Uint8Array,
+      dataArray: Uint8Array<ArrayBuffer>,
       bufferLength: number,
     ) => {
       const normalizedLevel = calculateAudioLevel(

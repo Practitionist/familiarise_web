@@ -33,8 +33,16 @@ const Navbar = () => {
     };
 
     checkAnnouncementState();
+
+    // Listen for storage changes (cross-tab)
     window.addEventListener("storage", checkAnnouncementState);
-    return () => window.removeEventListener("storage", checkAnnouncementState);
+    // Listen for custom event (same-window)
+    window.addEventListener("announcementBarClosed", checkAnnouncementState);
+
+    return () => {
+      window.removeEventListener("storage", checkAnnouncementState);
+      window.removeEventListener("announcementBarClosed", checkAnnouncementState);
+    };
   }, []);
 
   const toggleMenu = () => setIsOpen(!isOpen);

@@ -13,6 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { CheckCircle } from "lucide-react";
 import { ClassPlanProgram } from "@/app/explore/programs/utils";
 import { isUserEnrolled } from "@/lib/payments/utils/participants";
+import { formatCurrency } from "@/app/checkout/plans/math";
 
 type ClientClassRegistrationProps = {
   readonly plan: ClassPlanProgram;
@@ -21,7 +22,7 @@ type ClientClassRegistrationProps = {
 export function ClientClassRegistration({
   plan,
 }: ClientClassRegistrationProps) {
-  const { id: classId, price, classes } = plan; // Removed language
+  const { id: classId, price, priceCurrency, classes } = plan;
   const startDate = classes?.[0]?.startDate; // Corrected to startDate
   const { data: session } = useSession();
   const isLoggedIn = !!session?.user;
@@ -177,7 +178,7 @@ export function ClientClassRegistration({
           onClick={handleRegistration}
           className="w-full bg-black hover:bg-gray-800"
         >
-          Pay ${price} USD & Register Now
+          Pay {formatCurrency(price, priceCurrency || "INR")} & Register Now
         </Button>
       </CardFooter>
     </Card>

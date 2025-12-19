@@ -21,7 +21,7 @@ import {
 } from "@prisma/client";
 import { loadStripe } from "@stripe/stripe-js";
 import { CreditCard as CreditCardIcon } from "lucide-react";
-import { use, useCallback, useEffect, useState } from "react";
+import { use, useCallback, useEffect, useMemo, useState } from "react";
 import RazorpayCheckout from "../../../components/RazorpayCheckout";
 import StripeCheckout from "../../../components/StripeCheckout";
 import {
@@ -30,6 +30,11 @@ import {
   createStripeCheckoutHandlers,
   createRazorpayCheckoutHandlers,
 } from "../../utils";
+import {
+  calculatePricing,
+  formatCurrency,
+  formatPercentage,
+} from "../../math";
 
 type SubscriptionPlanWithConsultant = SubscriptionPlan & {
   consultantProfile: ConsultantProfile & {
@@ -260,6 +265,16 @@ export default function SubscriptionCheckoutPage({
     fetchPlanData();
   }, [resolvedParams.planId]);
 
+  // Calculate pricing using the proper math functions
+  // NOTE: This must be before early returns to maintain consistent hook order
+  const pricing = useMemo(() => {
+    const basePrice = planData?.data?.price || 0;
+    // TODO: Look up actual discount from discountCode via API
+    return calculatePricing(basePrice, {
+      discountPercent: 0, // Will be updated when discount code is applied
+    });
+  }, [planData?.data?.price]);
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-screen bg-zinc-50">
@@ -288,6 +303,7 @@ export default function SubscriptionCheckoutPage({
 
   const consultantDetails = planData?.data.consultantProfile;
   const userDetails = planData?.data.consultantProfile.user;
+  const currency = planData?.data?.priceCurrency || "INR";
 
   return (
     <>
@@ -426,7 +442,7 @@ export default function SubscriptionCheckoutPage({
             <div className="grid gap-2">
               <div className="flex items-center justify-between">
                 <div>Monthly Fee</div>
-                <div>${planData?.data?.price || 100}</div>
+                <div>{formatCurrency(planData?.data?.price || 100, currency)}</div>
               </div>
               <div className="flex items-center justify-between">
                 <div className="flex items-center">
@@ -463,23 +479,26 @@ export default function SubscriptionCheckoutPage({
             <div className="grid gap-2">
               <div className="flex items-center justify-between">
                 <div>Subtotal</div>
-                <div>${planData?.data?.price || 100}</div>
+                <div>{formatCurrency(pricing.subtotal, currency)}</div>
               </div>
               <div className="flex items-center justify-between">
-                <div>Tax (10%)</div>
-                <div>${((planData?.data?.price || 100) * 0.1).toFixed(2)}</div>
+                <div>Tax ({formatPercentage(pricing.taxRate)})</div>
+                <div>{formatCurrency(pricing.taxAmount, currency)}</div>
               </div>
-              <div className="flex items-center justify-between">
-                <div>Discount (20%)</div>
-                <div>
-                  -$
-                  {((planData?.data?.price || 100) * 0.2).toFixed(2)}
+              {pricing.discountAmount > 0 && (
+                <div className="flex items-center justify-between text-green-600">
+                  <div>
+                    Discount{" "}
+                    {pricing.discountPercent > 0 &&
+                      `(${formatPercentage(pricing.discountPercent)})`}
+                  </div>
+                  <div>-{formatCurrency(pricing.discountAmount, currency)}</div>
                 </div>
-              </div>
+              )}
               <Separator className="bg-zinc-200" />
               <div className="flex items-center justify-between font-semibold">
-                <div>Net Amount</div>
-                <div>${((planData?.data?.price || 100) * 0.9).toFixed(2)}</div>
+                <div>Total</div>
+                <div>{formatCurrency(pricing.total, currency)}</div>
               </div>
             </div>
           </CardContent>

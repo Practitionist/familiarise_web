@@ -94,21 +94,21 @@ export default function AdminHomePage() {
               <StatCard
                 title="Total Payments"
                 value={stats?.totalPayments || 0}
-                subtitle={`${stats?.totalPaymentsValue || "$0"} total value`}
+                subtitle={`${stats?.totalPaymentsValue || "₹0"} total value`}
                 icon={CreditCard}
                 variant="default"
               />
               <StatCard
                 title="Pending Payments"
                 value={stats?.pendingPayments || 0}
-                subtitle={`${stats?.pendingPaymentsValue || "$0"} pending`}
+                subtitle={`${stats?.pendingPaymentsValue || "₹0"} pending`}
                 icon={Clock}
                 variant="warning"
               />
               <StatCard
                 title="Refunds"
                 value={stats?.totalRefunds || 0}
-                subtitle={`${stats?.totalRefundsValue || "$0"} refunded`}
+                subtitle={`${stats?.totalRefundsValue || "₹0"} refunded`}
                 icon={RefreshCw}
                 variant="info"
               />

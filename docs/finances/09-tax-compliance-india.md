@@ -8,6 +8,61 @@ This document covers tax obligations for Familiarise as an Indian marketplace pl
 
 ---
 
+## How Tax Collection Works (The Basics)
+
+Before diving into rates and compliance, understand how tax actually flows through your business.
+
+### Money Flow
+
+```
+Customer pays: ₹1,180 (₹1,000 service + ₹180 GST)
+        ↓
+Payment Gateway (Razorpay/Stripe) - deducts ~2% fee
+        ↓
+Your Bank Account - receives ~₹1,156 (full amount minus gateway fee)
+        ↓
+You file GST returns monthly/quarterly
+        ↓
+You remit ₹180 GST to government (minus any Input Tax Credit)
+```
+
+### Key Concept: You Are a Tax Collector
+
+| What Happens | Who Does It |
+|--------------|-------------|
+| Customer pays service + tax | Customer |
+| Full amount lands in your bank | Payment gateway |
+| Tax portion sits in your account | You (temporarily) |
+| File returns, calculate net tax | You |
+| Remit collected tax to government | You |
+
+**Important**: Payment gateways do NOT automatically split or remit tax. They transfer the full amount to you. You are responsible for:
+1. Tracking how much tax you collected
+2. Filing accurate returns
+3. Paying the government what you owe
+
+### Input Tax Credit (ITC)
+
+You don't always pay the full GST you collected. You can deduct GST you paid on business expenses:
+
+```
+GST Collected from customers:     ₹18,000
+GST Paid on expenses:             ₹5,000 (hosting, software, etc.)
+────────────────────────────────────────
+Net GST owed to government:       ₹13,000
+```
+
+This is called Input Tax Credit (ITC) - it prevents tax cascading.
+
+### What This Means for Your Code
+
+The `math.ts` checkout utilities calculate tax for **display and invoicing purposes**. The actual tax compliance happens outside the codebase through:
+- Accounting software (Zoho Books, Tally, etc.)
+- CA/tax professional filing returns
+- Manual or automated bank transfers to government
+
+---
+
 ## GST (Goods & Services Tax)
 
 ### Platform Registration
