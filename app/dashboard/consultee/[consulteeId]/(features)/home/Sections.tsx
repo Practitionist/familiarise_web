@@ -205,7 +205,7 @@ export function MonthlySection({
           </div>
           <div className="mt-6">
             <div className="flex items-baseline gap-1">
-              <span className="text-2xl font-bold text-blue-600">$99</span>
+              <span className="text-2xl font-bold text-blue-600">₹99</span>
               <span className="text-sm text-gray-600">/month</span>
             </div>
             <p className="text-sm text-blue-600 mt-1">

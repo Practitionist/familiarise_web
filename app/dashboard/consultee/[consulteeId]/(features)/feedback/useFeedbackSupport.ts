@@ -7,7 +7,7 @@ import {
   SupportResponse as PrismaSupportResponse,
   UserRole,
 } from "@prisma/client";
-import { useToast } from "hooks/use-toast";
+import { useToast } from "@/hooks/use-toast";
 import React from "react";
 
 interface FeedbackFormData {

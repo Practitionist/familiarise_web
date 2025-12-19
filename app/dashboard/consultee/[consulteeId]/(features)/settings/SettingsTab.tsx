@@ -12,7 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "components/ui/select";
-import { useToast } from "hooks/use-toast";
+import { useToast } from "@/hooks/use-toast";
 import React, { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { createConsulteeQueries } from "@/hooks/useConsulteePrefetchDashboard";

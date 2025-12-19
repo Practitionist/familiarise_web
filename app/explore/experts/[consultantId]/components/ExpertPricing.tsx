@@ -89,6 +89,7 @@ export function ExpertPricing({
           title: durationLabel,
           description: `${plan.durationInHours} hour consultation`,
           price: plan.price,
+          priceCurrency: plan.priceCurrency || "INR",
           duration: `${plan.durationInHours} hour${plan.durationInHours > 1 ? "s" : ""}`,
           durationInHours: plan.durationInHours,
           features: features,
@@ -101,11 +102,18 @@ export function ExpertPricing({
           title: durationLabel,
           description: `${plan.durationInMonths} month subscription`,
           price: plan.price,
+          priceCurrency: plan.priceCurrency || "INR",
           duration: `${plan.durationInMonths}`,
           durationInMonths: plan.durationInMonths,
+          totalHours: plan.totalHours,
+          totalSessions: plan.totalSessions,
+          callsPerWeek: plan.callsPerWeek,
+          sessionDurationInHours: plan.sessionDurationInHours,
           features: [
+            `${plan.totalHours} total hours`,
+            `${plan.totalSessions} sessions`,
             `${plan.callsPerWeek} call${plan.callsPerWeek > 1 ? "s" : ""} per week`,
-            `${plan.sessionDurationInHours} hour session${plan.sessionDurationInHours > 1 ? "s" : ""}`,
+            `${plan.sessionDurationInHours}h per session`,
             `${plan.emailSupport} email support`,
           ],
         };
@@ -114,6 +122,7 @@ export function ExpertPricing({
         title: "",
         description: "",
         price: 0,
+        priceCurrency: "INR",
         duration: "",
       };
     });

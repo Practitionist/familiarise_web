@@ -8,6 +8,7 @@ import { Domain, SubDomain, Tag } from "@prisma/client";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { TConsultantProfile } from "@/types/consultant";
+import { formatCurrency } from "@/app/checkout/plans/math";
 
 interface ConsultantCardProps {
   consultant: TConsultantProfile;
@@ -79,7 +80,9 @@ const SubscriptionPlanCard = ({ plan }: { plan: any }) => {
     <Card className="rounded-lg border-0 shadow-md hover:shadow-lg transition-shadow">
       <CardContent className="grid gap-4 p-6">
         <div className="flex items-center justify-between">
-          <div className="text-3xl font-bold">${plan.price / 100}</div>
+          <div className="text-3xl font-bold">
+            {formatCurrency(plan.price / 100, plan.priceCurrency || "INR")}
+          </div>
           <div className="text-gray-500 font-medium">
             {formatDuration(plan.durationInMonths)}
           </div>

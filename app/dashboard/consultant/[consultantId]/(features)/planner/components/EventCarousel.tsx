@@ -152,16 +152,16 @@ export function EventCarousel({
 
   const getEventCurrency = (event: Event): string => {
     if (isWebinarEvent(event)) {
-      return event.webinarPlan.priceCurrency ?? "INR"; // Default to INR if null/undefined
+      return event.webinarPlan.priceCurrency ?? "INR";
     }
     if (isClassEvent(event)) {
-      return event.classPlan.priceCurrency ?? "INR"; // Default to INR if null/undefined
+      return event.classPlan.priceCurrency ?? "INR";
     }
     if (isConsultationPlanEvent(event)) {
-      return "INR"; // Consultations don't have currency field
+      return event.consultationPlan.priceCurrency ?? "INR";
     }
     if (isSubscriptionPlanEvent(event)) {
-      return "INR"; // Subscriptions don't have currency field
+      return event.subscriptionPlan.priceCurrency ?? "INR";
     }
     throw new Error(`Unknown event type encountered.`);
   };

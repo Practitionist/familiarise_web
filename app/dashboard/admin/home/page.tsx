@@ -64,7 +64,7 @@ export default function AdminHomePage() {
               {stats?.totalPayments || 0}
             </div>
             <p className="text-xs text-gray-500 mt-1">
-              {stats?.totalPaymentsValue || "$0"} total value
+              {stats?.totalPaymentsValue || "₹0"} total value
             </p>
           </CardContent>
         </Card>
@@ -80,7 +80,7 @@ export default function AdminHomePage() {
               {stats?.pendingPayments || 0}
             </div>
             <p className="text-xs text-gray-500 mt-1">
-              {stats?.pendingPaymentsValue || "$0"} pending
+              {stats?.pendingPaymentsValue || "₹0"} pending
             </p>
           </CardContent>
         </Card>
@@ -96,7 +96,7 @@ export default function AdminHomePage() {
               {stats?.totalRefunds || 0}
             </div>
             <p className="text-xs text-gray-500 mt-1">
-              {stats?.totalRefundsValue || "$0"} refunded
+              {stats?.totalRefundsValue || "₹0"} refunded
             </p>
           </CardContent>
         </Card>
