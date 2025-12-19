@@ -14,6 +14,7 @@ import {
 } from "../../utils/scheduleHelpers";
 import { EventCard } from "./EventCard";
 import type { SlotOfAppointment } from "@prisma/client";
+import type { TAppointment } from "@/types/appointment";
 import React, { useRef, useState, useEffect, useCallback } from "react";
 import { ChevronLeft, ChevronRight, Calendar, Video, Users, BookOpen } from "lucide-react";
 import { motion } from "framer-motion";
@@ -43,6 +44,8 @@ interface DashboardCardProps {
       endTime: Date;
     }>;
     appointmentId?: string;
+    appointment?: TAppointment;
+    rawSlots?: SlotOfAppointment[];
   }>;
 }
 
@@ -94,6 +97,10 @@ export function Overview({
               ...consultation,
               type: "Consultation",
             });
+            const rawSlots = getActualSlots({
+              ...consultation,
+              type: "Consultation",
+            });
             return {
               id: consultation.id,
               title: consultation.consultationPlan.title,
@@ -112,6 +119,8 @@ export function Overview({
                 type: "Consultation",
               }),
               appointmentId: consultation.appointment?.id,
+              appointment: consultation.appointment as TAppointment | undefined,
+              rawSlots,
             };
           })}
         />
@@ -124,6 +133,10 @@ export function Overview({
           accentColor="violet"
           items={subscriptions.map((subscription) => {
             const slotInfo = getActualNextSlotTime({
+              ...subscription,
+              type: "Subscription",
+            });
+            const rawSlots = getActualSlots({
               ...subscription,
               type: "Subscription",
             });
@@ -145,6 +158,8 @@ export function Overview({
                 type: "Subscription",
               }),
               appointmentId: subscription.appointments?.[0]?.id,
+              appointment: subscription.appointments?.[0] as TAppointment | undefined,
+              rawSlots,
             };
           })}
         />
@@ -157,6 +172,10 @@ export function Overview({
           accentColor="amber"
           items={webinars.map((webinar) => {
             const slotInfo = getActualNextSlotTime({
+              ...webinar,
+              type: "Webinar",
+            });
+            const rawSlots = getActualSlots({
               ...webinar,
               type: "Webinar",
             });
@@ -178,6 +197,8 @@ export function Overview({
                 type: "Webinar",
               }),
               appointmentId: webinar.appointment?.id,
+              appointment: webinar.appointment as TAppointment | undefined,
+              rawSlots,
             };
           })}
         />
@@ -190,6 +211,10 @@ export function Overview({
           accentColor="emerald"
           items={classes.map((classItem) => {
             const slotInfo = getActualNextSlotTime({
+              ...classItem,
+              type: "Class",
+            });
+            const rawSlots = getActualSlots({
               ...classItem,
               type: "Class",
             });
@@ -212,6 +237,8 @@ export function Overview({
                 type: "Class",
               }),
               appointmentId: classItem.appointments?.[0]?.id,
+              appointment: classItem.appointments?.[0] as TAppointment | undefined,
+              rawSlots,
             };
           })}
         />
@@ -381,6 +408,8 @@ function DashboardCard({ title, icon: Icon, accentColor, items }: Readonly<Dashb
                   isTentative={item.isTentative}
                   actualSlots={item.actualSlots}
                   appointmentId={item.appointmentId}
+                  appointment={item.appointment}
+                  rawSlots={item.rawSlots}
                 />
               </div>
             ))}
@@ -403,6 +432,8 @@ function DashboardCard({ title, icon: Icon, accentColor, items }: Readonly<Dashb
                   isTentative={item.isTentative}
                   actualSlots={item.actualSlots}
                   appointmentId={item.appointmentId}
+                  appointment={item.appointment}
+                  rawSlots={item.rawSlots}
                 />
               </div>
             ))}

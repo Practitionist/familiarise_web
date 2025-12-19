@@ -11,11 +11,16 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { motion } from "framer-motion";
-import { Clock, X, Upload, Video, Calendar, ChevronDown } from "lucide-react";
+import { Clock, X, Video, Calendar, Loader2 } from "lucide-react";
 import React from "react";
 import { DocumentUpload } from "./DocumentUpload";
 import { cn } from "@/utils/tailwind";
 import { format } from "date-fns";
+import { useRouter } from "next/navigation";
+import { useStreamVideoClient } from "@stream-io/video-react-sdk";
+import { getOrCreateAppointmentMeeting } from "@/lib/meeting";
+import type { TAppointment, TSlotOfAppointment } from "@/types/appointment";
+import type { SlotOfAppointment } from "@prisma/client";
 
 interface EventCardProps {
   title: string;
@@ -31,6 +36,8 @@ interface EventCardProps {
   isTentative?: boolean;
   appointmentId?: string;
   className?: string;
+  appointment?: TAppointment;
+  rawSlots?: SlotOfAppointment[];
 }
 
 function formatSlotDate(date: Date | string): string {
@@ -65,9 +72,14 @@ export function EventCard({
   isTentative = false,
   appointmentId,
   className = "",
+  appointment,
+  rawSlots = [],
 }: Readonly<EventCardProps>) {
   const { toast } = useToast();
+  const router = useRouter();
+  const client = useStreamVideoClient();
   const [isLoading, setIsLoading] = React.useState(false);
+  const [isJoining, setIsJoining] = React.useState(false);
 
   const showSessionDetails =
     (type === "Subscription" || type === "Class") &&
@@ -169,6 +181,89 @@ export function EventCard({
       });
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  // Find the current/next joinable slot (within 10 minutes of start time or currently ongoing)
+  const getJoinableSlot = (): SlotOfAppointment | null => {
+    if (!rawSlots || rawSlots.length === 0) return null;
+    
+    const now = new Date();
+    
+    for (const slot of rawSlots) {
+      const startTime = new Date(slot.startsAt);
+      const endTime = slot.endsAt ? new Date(slot.endsAt) : new Date(startTime.getTime() + 60 * 60 * 1000); // Default 1 hour if no end time
+      const diffInMinutes = Math.floor((startTime.getTime() - now.getTime()) / 60000);
+      
+      // Joinable if: within 10 minutes before start OR currently ongoing (between start and end)
+      const isUpcoming = diffInMinutes <= 10 && diffInMinutes >= -60; // Allow joining up to 60 mins after start
+      const isOngoing = now >= startTime && now <= endTime;
+      
+      if (!slot.isTentative && (isUpcoming || isOngoing)) {
+        return slot;
+      }
+    }
+    
+    return null;
+  };
+
+  const joinableSlot = getJoinableSlot();
+  const isJoinable = !isTentative && !!joinableSlot && !!appointment;
+
+  const handleJoinSession = async () => {
+    if (!client) {
+      toast({
+        title: "Not signed in",
+        description: "Video client not initialized. Please sign in to join the meeting.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!appointment || !joinableSlot) {
+      toast({
+        title: "Unable to join",
+        description: "Meeting information is not available.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsJoining(true);
+    try {
+      // Convert SlotOfAppointment to TSlotOfAppointment format
+      // The meeting function only needs id, startsAt, endsAt, isTentative, appointmentId
+      const tSlot = {
+        id: joinableSlot.id,
+        startsAt: new Date(joinableSlot.startsAt),
+        endsAt: joinableSlot.endsAt ? new Date(joinableSlot.endsAt) : new Date(joinableSlot.startsAt),
+        isTentative: joinableSlot.isTentative,
+        appointmentId: joinableSlot.appointmentId,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        user: [],
+      } as TSlotOfAppointment;
+
+      const meetingId = await getOrCreateAppointmentMeeting(
+        client,
+        appointment,
+        tSlot,
+      );
+
+      toast({
+        title: "Joining meeting",
+        description: "You will now be redirected to the meeting room.",
+      });
+
+      router.push(`/meetings/${meetingId}`);
+    } catch (error) {
+      console.error("Error joining meeting:", error);
+      toast({
+        title: "Error joining meeting",
+        description: error instanceof Error ? error.message : "Unknown error occurred",
+        variant: "destructive",
+      });
+      setIsJoining(false);
     }
   };
 
@@ -335,16 +430,26 @@ export function EventCard({
 
         {/* Join Button - Always render for consistency */}
         <Button
-          disabled={!isConfirmed || isInactiveStatus}
+          onClick={handleJoinSession}
+          disabled={!isJoinable || isInactiveStatus || isJoining}
           className={cn(
             "w-full mt-3 h-9 font-medium text-sm",
-            isConfirmed && !isInactiveStatus
+            isJoinable && !isInactiveStatus && !isJoining
               ? "bg-zinc-900 hover:bg-zinc-800 text-white"
               : "bg-zinc-100 text-zinc-400 cursor-not-allowed"
           )}
         >
-          <Video className="h-4 w-4 mr-2" />
-          Join Session
+          {isJoining ? (
+            <>
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              Joining...
+            </>
+          ) : (
+            <>
+              <Video className="h-4 w-4 mr-2" />
+              Join Session
+            </>
+          )}
         </Button>
       </div>
     </motion.div>
