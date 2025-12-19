@@ -9,13 +9,13 @@ import {
   Users2Icon,
   BookOpenIcon,
   GlobeIcon,
-  DollarSignIcon,
   GraduationCapIcon,
   PackageIcon,
 } from "lucide-react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import React from "react";
+import { formatCurrency } from "@/app/checkout/plans/math";
 
 interface ClassesAndWebinarsProps {
   classPlans: ClassPlan[];
@@ -99,10 +99,9 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
           </div>
         </div>
         <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-1">
-            <DollarSignIcon className="w-4 h-4 text-gray-700" />
-            <span className="text-lg font-semibold">${classPlan.price}</span>
-          </div>
+          <span className="text-lg font-semibold">
+            {formatCurrency(classPlan.price, classPlan.priceCurrency || "INR")}
+          </span>
           {classPlan.certificateProvided && (
             <Badge variant="outline" className="text-xs">
               Certificate Provided
@@ -186,10 +185,9 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
           </div>
         </div>
         <div className="flex items-center mb-4">
-          <div className="flex items-center gap-1">
-            <DollarSignIcon className="w-4 h-4 text-gray-700" />
-            <span className="text-lg font-semibold">${webinarPlan.price}</span>
-          </div>
+          <span className="text-lg font-semibold">
+            {formatCurrency(webinarPlan.price, webinarPlan.priceCurrency || "INR")}
+          </span>
         </div>
         <Button
           variant="outline"

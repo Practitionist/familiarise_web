@@ -113,7 +113,7 @@ export function calculatePricing(
  */
 export function formatCurrency(
   amount: number,
-  currency: string = "USD",
+  currency: string = "INR",
 ): string {
   return new Intl.NumberFormat("en-US", {
     style: "currency",

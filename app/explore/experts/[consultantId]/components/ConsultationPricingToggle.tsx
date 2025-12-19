@@ -28,6 +28,7 @@ import { PricingOption } from "../defaults";
 import { TSlotTiming } from "@/types/slots";
 import { breakDownSlotsByDuration } from "@/utils/timeSlotsProcessing";
 import { useToast } from "@/hooks/use-toast";
+import { formatCurrency } from "@/app/checkout/plans/math";
 
 interface ConsultationPricingToggleProps {
   consultationOptions: PricingOption[];
@@ -283,7 +284,7 @@ export default function ConsultationPricingToggle({
               </CardHeader>
               <CardContent className="space-y-6">
                 <div className="text-5xl font-bold text-white">
-                  ${option.price}
+                  {formatCurrency(option.price, option.priceCurrency)}
                 </div>
                 {option.features && option.features.length > 0 && (
                   <div className="space-y-2">

@@ -303,7 +303,7 @@ export default function SubscriptionCheckoutPage({
 
   const consultantDetails = planData?.data.consultantProfile;
   const userDetails = planData?.data.consultantProfile.user;
-  const currency = planData?.data?.priceCurrency || "USD";
+  const currency = planData?.data?.priceCurrency || "INR";
 
   return (
     <>

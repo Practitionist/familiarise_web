@@ -263,7 +263,7 @@ export default function WebinarCheckoutPage({
   const planDetails = planData?.data;
   const consultantDetails = planDetails?.consultantProfile;
   const userDetails = consultantDetails?.user;
-  const currency = planDetails?.priceCurrency || "USD";
+  const currency = planDetails?.priceCurrency || "INR";
   const nextSession =
     planDetails?.webinars?.[0]?.appointment?.slotsOfAppointment?.[0];
 

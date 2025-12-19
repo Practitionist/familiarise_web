@@ -407,7 +407,7 @@ export default function ConsultationCheckoutPage({
 
   const consultantDetails = eventData?.data.consultantProfile;
   const userDetails = eventData?.data.consultantProfile.user;
-  const currency = eventData?.data?.priceCurrency || "USD";
+  const currency = eventData?.data?.priceCurrency || "INR";
 
   return (
     <>

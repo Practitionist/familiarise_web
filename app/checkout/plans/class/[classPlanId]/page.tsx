@@ -265,7 +265,7 @@ export default function ClassCheckoutPage({
   const planDetails = planData?.data;
   const consultantDetails = planDetails?.consultantProfile;
   const userDetails = consultantDetails?.user;
-  const currency = planDetails?.priceCurrency || "USD";
+  const currency = planDetails?.priceCurrency || "INR";
   const nextClassSession =
     planDetails?.classes?.[0]?.appointments?.[0]?.slotsOfAppointment?.[0];
 

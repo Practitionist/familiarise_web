@@ -89,6 +89,7 @@ export function ExpertPricing({
           title: durationLabel,
           description: `${plan.durationInHours} hour consultation`,
           price: plan.price,
+          priceCurrency: plan.priceCurrency || "INR",
           duration: `${plan.durationInHours} hour${plan.durationInHours > 1 ? "s" : ""}`,
           durationInHours: plan.durationInHours,
           features: features,
@@ -101,6 +102,7 @@ export function ExpertPricing({
           title: durationLabel,
           description: `${plan.durationInMonths} month subscription`,
           price: plan.price,
+          priceCurrency: plan.priceCurrency || "INR",
           duration: `${plan.durationInMonths}`,
           durationInMonths: plan.durationInMonths,
           totalHours: plan.totalHours,
@@ -120,6 +122,7 @@ export function ExpertPricing({
         title: "",
         description: "",
         price: 0,
+        priceCurrency: "INR",
         duration: "",
       };
     });

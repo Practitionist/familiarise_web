@@ -154,7 +154,7 @@ export function WebinarDetails({ plan, nextSession, webinarId }: WebinarDetailsP
               <CardContent className="p-6">
                 <h1 className="text-3xl font-bold mb-2">{plan.title}</h1>
                 <p className="text-xl font-semibold mb-4 text-blue-600">
-                  {formatCurrency(plan.price, plan.priceCurrency || "USD")}
+                  {formatCurrency(plan.price, plan.priceCurrency || "INR")}
                 </p>
 
                 <div className="grid grid-cols-2 gap-4 mb-6">

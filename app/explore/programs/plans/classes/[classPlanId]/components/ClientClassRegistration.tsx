@@ -178,7 +178,7 @@ export function ClientClassRegistration({
           onClick={handleRegistration}
           className="w-full bg-black hover:bg-gray-800"
         >
-          Pay {formatCurrency(price, priceCurrency || "USD")} & Register Now
+          Pay {formatCurrency(price, priceCurrency || "INR")} & Register Now
         </Button>
       </CardFooter>
     </Card>

@@ -26,6 +26,7 @@ import { useState, useMemo } from "react";
 import { PricingOption } from "../defaults";
 import { useToast } from "@/hooks/use-toast";
 import { addMonths, differenceInDays, format } from "date-fns";
+import { formatCurrency } from "@/app/checkout/plans/math";
 
 interface SubscriptionPricingToggleProps {
   subscriptionOptions: PricingOption[];
@@ -225,7 +226,7 @@ export default function SubscriptionPricingToggle({
               </CardHeader>
               <CardContent className="space-y-6">
                 <div className="text-5xl font-bold text-white">
-                  ${option.price}
+                  {formatCurrency(option.price, option.priceCurrency)}
                 </div>
                 <div className="space-y-2">
                   <p className="text-white">Includes:</p>

@@ -90,7 +90,7 @@ export function ClientWebinarRegistration({
   }
 
   // Logic for buttonText and buttonDisabled
-  let buttonText = `Pay ${formatCurrency(price, currency || "USD")} & Register Now`;
+  let buttonText = `Pay ${formatCurrency(price, currency || "INR")} & Register Now`;
   let buttonDisabled = false;
 
   if (sessionStatus === "Completed") {
