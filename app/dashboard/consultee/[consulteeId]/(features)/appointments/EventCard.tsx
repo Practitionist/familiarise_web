@@ -177,10 +177,15 @@ export function EventCard({
     status?.toLowerCase() === "scheduled" ||
     (!isTentative && actualSlots.length > 0);
 
+  // Determine if actions should be disabled (negative/terminal statuses)
+  const isInactiveStatus = 
+    status?.toLowerCase() === "cancelled" ||
+    status?.toLowerCase() === "rejected" ||
+    status?.toLowerCase() === "completed";
+
   const showDocumentUpload =
     (type === "Consultation" || type === "Subscription") &&
-    appointmentId &&
-    isConfirmed;
+    appointmentId;
 
   const statusStyle = statusConfig[status?.toUpperCase()] || statusConfig.PENDING;
   const displayStatus = isTentative ? "PENDING" : status?.toUpperCase();
@@ -278,54 +283,69 @@ export function EventCard({
           ) : null}
         </div>
 
-        {/* Document Upload */}
+        {/* Document Upload - Always render for consistency, disabled when inactive */}
         {showDocumentUpload && (
-          <div className="mt-4 pt-4 border-t border-zinc-100">
+          <div className={cn(
+            "mt-4 pt-4 border-t border-zinc-100",
+            isInactiveStatus && "opacity-50 pointer-events-none"
+          )}>
             <DocumentUpload
-              appointmentId={appointmentId}
+              appointmentId={appointmentId!}
               appointmentTitle={title}
               appointmentType={type}
             />
           </div>
         )}
 
-        {/* Action Buttons */}
+        {/* Action Buttons - Always render for consistency */}
         <div className="flex items-center gap-2 mt-4 pt-4 border-t border-zinc-100">
-          {!isTentative && status?.toLowerCase() !== "cancelled" && (
+          {!isTentative && (
             <Button
               variant="outline"
               size="sm"
               onClick={handleReschedule}
-              disabled={isLoading}
-              className="flex-1 h-8 text-xs font-medium text-zinc-600 hover:text-zinc-900 hover:bg-zinc-50 border-zinc-200"
+              disabled={isLoading || isInactiveStatus}
+              className={cn(
+                "flex-1 h-8 text-xs font-medium border-zinc-200",
+                isInactiveStatus 
+                  ? "text-zinc-400 bg-zinc-50 cursor-not-allowed" 
+                  : "text-zinc-600 hover:text-zinc-900 hover:bg-zinc-50"
+              )}
             >
               <Clock className="h-3.5 w-3.5 mr-1.5" />
               Reschedule
             </Button>
           )}
-          {status?.toLowerCase() !== "cancelled" && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleCancel}
-              disabled={isLoading}
-              className="flex-1 h-8 text-xs font-medium text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200 hover:border-red-300"
-            >
-              <X className="h-3.5 w-3.5 mr-1.5" />
-              Cancel
-            </Button>
-          )}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleCancel}
+            disabled={isLoading || isInactiveStatus}
+            className={cn(
+              "flex-1 h-8 text-xs font-medium",
+              isInactiveStatus 
+                ? "text-zinc-400 bg-zinc-50 border-zinc-200 cursor-not-allowed" 
+                : "text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200 hover:border-red-300"
+            )}
+          >
+            <X className="h-3.5 w-3.5 mr-1.5" />
+            Cancel
+          </Button>
         </div>
 
-        {/* Join Button for confirmed appointments */}
-        {isConfirmed && status?.toLowerCase() !== "cancelled" && (
-          <Button
-            className="w-full mt-3 h-9 bg-zinc-900 hover:bg-zinc-800 text-white font-medium text-sm"
-          >
-            <Video className="h-4 w-4 mr-2" />
-            Join Session
-          </Button>
-        )}
+        {/* Join Button - Always render for consistency */}
+        <Button
+          disabled={!isConfirmed || isInactiveStatus}
+          className={cn(
+            "w-full mt-3 h-9 font-medium text-sm",
+            isConfirmed && !isInactiveStatus
+              ? "bg-zinc-900 hover:bg-zinc-800 text-white"
+              : "bg-zinc-100 text-zinc-400 cursor-not-allowed"
+          )}
+        >
+          <Video className="h-4 w-4 mr-2" />
+          Join Session
+        </Button>
       </div>
     </motion.div>
   );
