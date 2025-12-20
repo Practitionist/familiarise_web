@@ -54,8 +54,8 @@ function formatDateFromSlot(slotInfo: SlotOfAppointment): string {
   return new Date(slotInfo.startsAt).toLocaleString();
 }
 
-function getNoSlotMessage(type: string): string {
-  return `No upcoming slots scheduled for this ${type.toLowerCase()}. Check details or wait for confirmation.`;
+function getNoSlotMessage(_type: string): string {
+  return "No slots available";
 }
 
 function getValidAppointmentSlots(event: EventWithType): Array<{
