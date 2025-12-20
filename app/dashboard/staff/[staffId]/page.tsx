@@ -10,5 +10,5 @@ type PageProps = {
 
 export default function StaffPage({ params }: Readonly<PageProps>) {
   const resolvedParams = use(params);
-  redirect(`/dashboard/staff/${resolvedParams.staffId}/settings`);
+  redirect(`/dashboard/staff/${resolvedParams.staffId}/home`);
 }
