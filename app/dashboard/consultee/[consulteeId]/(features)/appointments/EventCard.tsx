@@ -240,15 +240,16 @@ export function EventCard({
     try {
       // Convert SlotOfAppointment to TSlotOfAppointment format
       // The meeting function only needs id, startsAt, endsAt, isTentative, appointmentId
+      // Using actual slot values where available, with type assertion for user[] mismatch
       const tSlot = {
         id: slotToUse.id,
         startsAt: new Date(slotToUse.startsAt),
         endsAt: slotToUse.endsAt ? new Date(slotToUse.endsAt) : new Date(slotToUse.startsAt),
         isTentative: slotToUse.isTentative,
         appointmentId: slotToUse.appointmentId,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-        user: [],
+        createdAt: slotToUse.createdAt,
+        updatedAt: slotToUse.updatedAt,
+        user: [], // Type mismatch: rawSlots doesn't include user relation, but getOrCreateAppointmentMeeting doesn't use it
       } as TSlotOfAppointment;
 
       const meetingId = await getOrCreateAppointmentMeeting(
