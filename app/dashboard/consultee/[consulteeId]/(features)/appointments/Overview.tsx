@@ -69,6 +69,32 @@ function getValidAppointmentSlots(event: EventWithType): Array<{
   }));
 }
 
+// Helper to check if a status is inactive (greyed out)
+function isInactiveStatus(status: string): boolean {
+  const inactive = ["cancelled", "rejected", "completed"];
+  return inactive.includes(status.toLowerCase());
+}
+
+// Sort items: active first, then inactive. Within each group, sort chronologically
+function sortEventItems<T extends { status: string; actualSlots?: Array<{ startTime: Date }> }>(
+  items: T[]
+): T[] {
+  return [...items].sort((a, b) => {
+    const aInactive = isInactiveStatus(a.status);
+    const bInactive = isInactiveStatus(b.status);
+    
+    // Active items come first
+    if (aInactive !== bInactive) {
+      return aInactive ? 1 : -1;
+    }
+    
+    // Within the same group, sort chronologically by first slot
+    const aTime = a.actualSlots?.[0]?.startTime?.getTime() ?? Infinity;
+    const bTime = b.actualSlots?.[0]?.startTime?.getTime() ?? Infinity;
+    return aTime - bTime;
+  });
+}
+
 const fadeInUp = {
   hidden: { opacity: 0, y: 20 },
   visible: { opacity: 1, y: 0, transition: { duration: 0.4 } },
@@ -92,7 +118,7 @@ export function Overview({
           title="Consultations"
           icon={Video}
           accentColor="blue"
-          items={consultations.map((consultation) => {
+          items={sortEventItems(consultations.map((consultation) => {
             const slotInfo = getActualNextSlotTime({
               ...consultation,
               type: "Consultation",
@@ -122,7 +148,7 @@ export function Overview({
               appointment: consultation.appointment as TAppointment | undefined,
               rawSlots,
             };
-          })}
+          }))}
         />
       </motion.div>
 
@@ -131,7 +157,7 @@ export function Overview({
           title="Subscriptions"
           icon={Calendar}
           accentColor="violet"
-          items={subscriptions.map((subscription) => {
+          items={sortEventItems(subscriptions.map((subscription) => {
             const slotInfo = getActualNextSlotTime({
               ...subscription,
               type: "Subscription",
@@ -161,7 +187,7 @@ export function Overview({
               appointment: subscription.appointments?.[0] as TAppointment | undefined,
               rawSlots,
             };
-          })}
+          }))}
         />
       </motion.div>
 
@@ -170,7 +196,7 @@ export function Overview({
           title="Webinars"
           icon={Users}
           accentColor="amber"
-          items={webinars.map((webinar) => {
+          items={sortEventItems(webinars.map((webinar) => {
             const slotInfo = getActualNextSlotTime({
               ...webinar,
               type: "Webinar",
@@ -200,7 +226,7 @@ export function Overview({
               appointment: webinar.appointment as TAppointment | undefined,
               rawSlots,
             };
-          })}
+          }))}
         />
       </motion.div>
 
@@ -209,7 +235,7 @@ export function Overview({
           title="Classes"
           icon={BookOpen}
           accentColor="emerald"
-          items={classes.map((classItem) => {
+          items={sortEventItems(classes.map((classItem) => {
             const slotInfo = getActualNextSlotTime({
               ...classItem,
               type: "Class",
@@ -240,7 +266,7 @@ export function Overview({
               appointment: classItem.appointments?.[0] as TAppointment | undefined,
               rawSlots,
             };
-          })}
+          }))}
         />
       </motion.div>
     </motion.div>

@@ -209,8 +209,15 @@ export function EventCard({
 
   const joinableSlot = getJoinableSlot();
   const isJoinable = !isTentative && !!joinableSlot && !!appointment;
+  
+  // Dev mode: check if any slot exists for testing
+  const isDev = process.env.NODE_ENV === "development";
+  const hasAnySlot = rawSlots && rawSlots.length > 0;
+  const canDevJoin = isDev && hasAnySlot && !!appointment;
 
-  const handleJoinSession = async () => {
+  const handleJoinSession = async (forceSlot?: SlotOfAppointment) => {
+    const slotToUse = forceSlot || joinableSlot;
+    
     if (!client) {
       toast({
         title: "Not signed in",
@@ -220,7 +227,7 @@ export function EventCard({
       return;
     }
 
-    if (!appointment || !joinableSlot) {
+    if (!appointment || !slotToUse) {
       toast({
         title: "Unable to join",
         description: "Meeting information is not available.",
@@ -234,11 +241,11 @@ export function EventCard({
       // Convert SlotOfAppointment to TSlotOfAppointment format
       // The meeting function only needs id, startsAt, endsAt, isTentative, appointmentId
       const tSlot = {
-        id: joinableSlot.id,
-        startsAt: new Date(joinableSlot.startsAt),
-        endsAt: joinableSlot.endsAt ? new Date(joinableSlot.endsAt) : new Date(joinableSlot.startsAt),
-        isTentative: joinableSlot.isTentative,
-        appointmentId: joinableSlot.appointmentId,
+        id: slotToUse.id,
+        startsAt: new Date(slotToUse.startsAt),
+        endsAt: slotToUse.endsAt ? new Date(slotToUse.endsAt) : new Date(slotToUse.startsAt),
+        isTentative: slotToUse.isTentative,
+        appointmentId: slotToUse.appointmentId,
         createdAt: new Date(),
         updatedAt: new Date(),
         user: [],
@@ -430,7 +437,7 @@ export function EventCard({
 
         {/* Join Button - Always render for consistency */}
         <Button
-          onClick={handleJoinSession}
+          onClick={() => handleJoinSession()}
           disabled={!isJoinable || isInactiveStatus || isJoining}
           className={cn(
             "w-full mt-3 h-9 font-medium text-sm",
@@ -451,6 +458,27 @@ export function EventCard({
             </>
           )}
         </Button>
+
+        {/* Dev-only Join Button - bypasses time check for testing */}
+        {canDevJoin && !isJoinable && (
+          <Button
+            onClick={() => handleJoinSession(rawSlots[0])}
+            disabled={isInactiveStatus || isJoining}
+            className="w-full mt-2 h-8 font-medium text-xs bg-amber-500 hover:bg-amber-600 text-white"
+          >
+            {isJoining ? (
+              <>
+                <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                Joining...
+              </>
+            ) : (
+              <>
+                <Video className="h-3.5 w-3.5 mr-1.5" />
+                Join (dev)
+              </>
+            )}
+          </Button>
+        )}
       </div>
     </motion.div>
   );
