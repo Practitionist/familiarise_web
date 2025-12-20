@@ -50,6 +50,9 @@ function formatSlotTime(date: Date | string): string {
   return format(d, "h:mm a");
 }
 
+// Default meeting duration in milliseconds (1 hour)
+const DEFAULT_MEETING_DURATION_MS = 60 * 60 * 1000;
+
 // Status configuration - refined professional colors
 const statusConfig: Record<string, { bg: string; text: string; dot: string }> = {
   APPROVED: { bg: "bg-teal-50", text: "text-teal-600", dot: "bg-teal-500" },              // Teal - sophisticated success
@@ -192,14 +195,13 @@ export function EventCard({
     
     for (const slot of rawSlots) {
       const startTime = new Date(slot.startsAt);
-      const endTime = slot.endsAt ? new Date(slot.endsAt) : new Date(startTime.getTime() + 60 * 60 * 1000); // Default 1 hour if no end time
-      const diffInMinutes = Math.floor((startTime.getTime() - now.getTime()) / 60000);
+      const endTime = slot.endsAt ? new Date(slot.endsAt) : new Date(startTime.getTime() + DEFAULT_MEETING_DURATION_MS);
       
-      // Joinable if: within 10 minutes before start OR currently ongoing (between start and end)
-      const isUpcoming = diffInMinutes <= 10 && diffInMinutes >= -60; // Allow joining up to 60 mins after start
-      const isOngoing = now >= startTime && now <= endTime;
+      // Joinable if: current time is between (10 mins before start) and (actual end time)
+      const joinWindowStart = new Date(startTime.getTime() - 10 * 60 * 1000);
+      const isJoinable = now >= joinWindowStart && now <= endTime;
       
-      if (!slot.isTentative && (isUpcoming || isOngoing)) {
+      if (!slot.isTentative && isJoinable) {
         return slot;
       }
     }
@@ -241,10 +243,11 @@ export function EventCard({
       // Convert SlotOfAppointment to TSlotOfAppointment format
       // The meeting function only needs id, startsAt, endsAt, isTentative, appointmentId
       // Using actual slot values where available, with type assertion for user[] mismatch
+      const slotStartTime = new Date(slotToUse.startsAt);
       const tSlot = {
         id: slotToUse.id,
-        startsAt: new Date(slotToUse.startsAt),
-        endsAt: slotToUse.endsAt ? new Date(slotToUse.endsAt) : new Date(slotToUse.startsAt),
+        startsAt: slotStartTime,
+        endsAt: slotToUse.endsAt ? new Date(slotToUse.endsAt) : new Date(slotStartTime.getTime() + DEFAULT_MEETING_DURATION_MS),
         isTentative: slotToUse.isTentative,
         appointmentId: slotToUse.appointmentId,
         createdAt: slotToUse.createdAt,
