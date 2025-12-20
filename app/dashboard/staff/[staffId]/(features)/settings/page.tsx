@@ -42,11 +42,15 @@ import {
 import Link from "next/link";
 import { ChangeEvent, use, useEffect, useState } from "react";
 
-// Define a type for the combined staff data
-type StaffData = User & {
-  staffProfile: StaffProfile | null;
+// Define a type for the user with preferences
+type UserWithPreferences = User & {
   notificationPreferences: NotificationPreference | null;
   cookiePreferences: CookiePreference | null;
+};
+
+// Define a type for the combined staff data (StaffProfile with nested user)
+type StaffData = StaffProfile & {
+  user: UserWithPreferences;
 };
 
 type PageProps = {
@@ -70,12 +74,15 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
       try {
         const response = await fetch(`/api/user/staff/${staffId}`);
         if (!response.ok) {
-          throw new Error(`Failed to fetch staff data: ${response.statusText}`);
+          const errorData = await response.json();
+          throw new Error(errorData.error || `Failed to fetch staff data: ${response.statusText}`);
         }
-        const data: StaffData = await response.json();
-        setStaffData(data);
-      } catch (err: any) {
-        setError(err.message || "An unknown error occurred");
+        const result = await response.json();
+        // API returns { data: StaffProfile } with user nested inside
+        setStaffData(result.data);
+      } catch (err: unknown) {
+        const errorMessage = err instanceof Error ? err.message : "An unknown error occurred";
+        setError(errorMessage);
         console.error("Fetch error:", err);
       } finally {
         setLoading(false);
@@ -85,37 +92,46 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
     fetchData();
   }, [staffId]);
 
-  // Handle input changes
-  const handleInputChange = (
+  // Handle input changes for user fields (name, email, phone, address, image)
+  const handleUserInputChange = (
     e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
   ) => {
     const { name, value } = e.target;
     setStaffData((prev) => {
       if (!prev) return null;
-      // Handle nested profile fields if necessary (not needed for these inputs)
-      return { ...prev, [name]: value };
+      return {
+        ...prev,
+        user: {
+          ...prev.user,
+          [name]: value,
+        },
+      };
     });
   };
 
-  const handleSelectChange = (value: string, name: string) => {
+  const handleUserSelectChange = (value: string, name: string) => {
     setStaffData((prev) => {
       if (!prev) return null;
-      return { ...prev, [name]: value };
+      return {
+        ...prev,
+        user: {
+          ...prev.user,
+          [name]: value,
+        },
+      };
     });
   };
 
+  // Handle input changes for staff profile fields (department, position, etc.)
   const handleProfileInputChange = (
     e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
   ) => {
     const { name, value } = e.target;
     setStaffData((prev) => {
-      if (!prev || !prev.staffProfile) return prev;
+      if (!prev) return prev;
       return {
         ...prev,
-        staffProfile: {
-          ...prev.staffProfile,
-          [name]: value,
-        },
+        [name]: value,
       };
     });
   };
@@ -126,13 +142,16 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
   ) => {
     setStaffData((prev) => {
       if (!prev) return prev;
-      const currentPrefs = prev.notificationPreferences ?? { userId: prev.id }; // Create stub if null
+      const currentPrefs = prev.user.notificationPreferences ?? { userId: prev.user.id }; // Create stub if null
       return {
         ...prev,
-        notificationPreferences: {
-          ...currentPrefs,
-          [name]: checked,
-        } as NotificationPreference, // Assert type
+        user: {
+          ...prev.user,
+          notificationPreferences: {
+            ...currentPrefs,
+            [name]: checked,
+          } as NotificationPreference, // Assert type
+        },
       };
     });
   };
@@ -143,16 +162,19 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
   ) => {
     setStaffData((prev) => {
       if (!prev) return prev;
-      const currentPrefs = prev.cookiePreferences ?? {
-        userId: prev.id,
+      const currentPrefs = prev.user.cookiePreferences ?? {
+        userId: prev.user.id,
         essential: true,
       }; // Create stub if null
       return {
         ...prev,
-        cookiePreferences: {
-          ...currentPrefs,
-          [name]: checked,
-        } as CookiePreference, // Assert type
+        user: {
+          ...prev.user,
+          cookiePreferences: {
+            ...currentPrefs,
+            [name]: checked,
+          } as CookiePreference, // Assert type
+        },
       };
     });
   };
@@ -165,58 +187,46 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
     setIsSaving(true);
     setError(null);
 
-    let payload: Partial<StaffData> = {};
+    // Build payload - API expects flat object with both user and profile fields
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let payload: Record<string, any> = {};
 
     // Construct payload based on section
     switch (section) {
       case "personal":
         payload = {
-          name: staffData.name,
-          email: staffData.email,
-          phone: staffData.phone,
-          address: staffData.address,
-          image: staffData.image,
+          name: staffData.user.name,
+          email: staffData.user.email,
+          phone: staffData.user.phone,
+          address: staffData.user.address,
+          image: staffData.user.image,
         };
         break;
       case "role":
         payload = {
-          staffProfile: {
-            department: staffData.staffProfile?.department,
-            position: staffData.staffProfile?.position,
-            employeeId: staffData.staffProfile?.employeeId,
-            hireDate: staffData.staffProfile?.hireDate,
-            reportsTo: staffData.staffProfile?.reportsTo,
-            skills: staffData.staffProfile?.skills,
-            workSchedule: staffData.staffProfile?.workSchedule,
-            // TODO: Handle responsibilities/permissions update if editable
-          },
-        } as any; // Type assertion needed for partial nested update
+          department: staffData.department,
+          position: staffData.position,
+          employeeId: staffData.employeeId,
+          hireDate: staffData.hireDate,
+          reportsTo: staffData.reportsTo,
+          skills: staffData.skills,
+          workSchedule: staffData.workSchedule,
+        };
         break;
       case "account":
         payload = {
-          timezone: staffData.timezone,
-          // Add other account fields if they become editable
+          timezone: staffData.user.timezone,
         };
         break;
       case "preferences":
         payload = {
-          notificationPreferences: staffData.notificationPreferences
-            ? {
-                allNotifications:
-                  staffData.notificationPreferences.allNotifications,
-                mentions: staffData.notificationPreferences.mentions,
-                directMessages:
-                  staffData.notificationPreferences.directMessages,
-                updates: staffData.notificationPreferences.updates,
-              }
-            : undefined,
-          cookiePreferences: staffData.cookiePreferences
-            ? {
-                analytics: staffData.cookiePreferences.analytics,
-                marketing: staffData.cookiePreferences.marketing,
-              }
-            : undefined,
-        } as any; // Type assertion needed
+          allNotifications: staffData.user.notificationPreferences?.allNotifications,
+          mentions: staffData.user.notificationPreferences?.mentions,
+          directMessages: staffData.user.notificationPreferences?.directMessages,
+          updates: staffData.user.notificationPreferences?.updates,
+          analytics: staffData.user.cookiePreferences?.analytics,
+          marketing: staffData.user.cookiePreferences?.marketing,
+        };
         break;
     }
 
@@ -230,7 +240,7 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
       if (!response.ok) {
         const errorData = await response.json();
         throw new Error(
-          errorData.message || `Failed to save ${section} settings`,
+          errorData.error || `Failed to save ${section} settings`,
         );
       }
 
@@ -239,12 +249,11 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
       alert(
         `${section.charAt(0).toUpperCase() + section.slice(1)} settings saved successfully!`,
       ); // Simple feedback
-    } catch (err: any) {
-      setError(
-        err.message || `An error occurred while saving ${section} settings`,
-      );
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : `An error occurred while saving ${section} settings`;
+      setError(errorMessage);
       console.error("Save error:", err);
-      alert(`Error saving ${section} settings: ${err.message}`); // Simple feedback
+      alert(`Error saving ${section} settings: ${errorMessage}`); // Simple feedback
     } finally {
       setIsSaving(false);
     }
@@ -344,11 +353,11 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
           <div className="flex items-center gap-4">
             <Avatar className="h-16 w-16">
               <AvatarImage
-                alt={staffData.name ?? "Staff"}
-                src={staffData.image ?? "/placeholder.svg"}
+                alt={staffData.user.name ?? "Staff"}
+                src={staffData.user.image ?? "/placeholder.svg"}
               />
               <AvatarFallback>
-                {staffData.name
+                {staffData.user.name
                   ?.split(" ")
                   .map((n) => n[0])
                   .join("") ?? "ST"}
@@ -360,7 +369,7 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
               </h1>
               <p className="text-sm text-gray-500 dark:text-gray-400">
                 Manage profile and account settings for{" "}
-                {staffData.name ?? `Staff ID: ${staffId}`}.
+                {staffData.user.name ?? `Staff ID: ${staffId}`}.
               </p>
             </div>
           </div>
@@ -372,7 +381,7 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
               <CardHeader>
                 <CardTitle>Personal Information</CardTitle>
                 <CardDescription>
-                  Update the staff member's personal details.
+                  Update the staff member&apos;s personal details.
                 </CardDescription>
               </CardHeader>
               <CardContent className="grid gap-4 md:grid-cols-2">
@@ -382,8 +391,8 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
                     id="name"
                     name="name"
                     placeholder="Full Name"
-                    value={staffData.name ?? ""}
-                    onChange={handleInputChange}
+                    value={staffData.user.name ?? ""}
+                    onChange={handleUserInputChange}
                   />
                 </div>
                 <div className="space-y-2">
@@ -393,8 +402,8 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
                     name="email"
                     type="email"
                     placeholder="Email Address"
-                    value={staffData.email ?? ""}
-                    onChange={handleInputChange}
+                    value={staffData.user.email ?? ""}
+                    onChange={handleUserInputChange}
                   />
                 </div>
                 <div className="space-y-2">
@@ -404,8 +413,8 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
                     name="phone"
                     type="tel"
                     placeholder="Phone Number"
-                    value={staffData.phone ?? ""}
-                    onChange={handleInputChange}
+                    value={staffData.user.phone ?? ""}
+                    onChange={handleUserInputChange}
                   />
                 </div>
                 <div className="space-y-2">
@@ -414,8 +423,8 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
                     id="address"
                     name="address"
                     placeholder="Street Address"
-                    value={staffData.address ?? ""}
-                    onChange={handleInputChange}
+                    value={staffData.user.address ?? ""}
+                    onChange={handleUserInputChange}
                     className="min-h-[80px]"
                   />
                 </div>
@@ -425,8 +434,8 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
                     id="image"
                     name="image"
                     placeholder="https://example.com/avatar.png"
-                    value={staffData.image ?? ""}
-                    onChange={handleInputChange}
+                    value={staffData.user.image ?? ""}
+                    onChange={handleUserInputChange}
                   />
                 </div>
               </CardContent>
@@ -445,7 +454,7 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
               <CardHeader>
                 <CardTitle>Staff Role</CardTitle>
                 <CardDescription>
-                  Manage the staff member's role and responsibilities.
+                  Manage the staff member&apos;s role and responsibilities.
                 </CardDescription>
               </CardHeader>
               <CardContent className="grid gap-4 md:grid-cols-2">
@@ -455,7 +464,7 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
                     id="department"
                     name="department"
                     placeholder="e.g., Engineering, Marketing"
-                    value={staffData.staffProfile?.department ?? ""}
+                    value={staffData.department ?? ""}
                     onChange={handleProfileInputChange}
                   />
                 </div>
@@ -465,7 +474,7 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
                     id="position"
                     name="position"
                     placeholder="e.g., Software Engineer, Manager"
-                    value={staffData.staffProfile?.position ?? ""}
+                    value={staffData.position ?? ""}
                     onChange={handleProfileInputChange}
                   />
                 </div>
@@ -475,7 +484,7 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
                     id="employeeId"
                     name="employeeId"
                     placeholder="e.g., EMP-001"
-                    value={staffData.staffProfile?.employeeId ?? ""}
+                    value={staffData.employeeId ?? ""}
                     onChange={handleProfileInputChange}
                   />
                 </div>
@@ -485,7 +494,7 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
                     id="reportsTo"
                     name="reportsTo"
                     placeholder="Manager's name or ID"
-                    value={staffData.staffProfile?.reportsTo ?? ""}
+                    value={staffData.reportsTo ?? ""}
                     onChange={handleProfileInputChange}
                   />
                 </div>
@@ -495,8 +504,8 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
                     id="hireDate"
                     name="hireDate"
                     type="date"
-                    value={staffData.staffProfile?.hireDate
-                      ? new Date(staffData.staffProfile.hireDate).toISOString().split("T")[0]
+                    value={staffData.hireDate
+                      ? new Date(staffData.hireDate).toISOString().split("T")[0]
                       : ""}
                     onChange={handleProfileInputChange}
                   />
@@ -507,7 +516,7 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
                     id="workSchedule"
                     name="workSchedule"
                     placeholder="e.g., Mon-Fri 9AM-5PM"
-                    value={staffData.staffProfile?.workSchedule ?? ""}
+                    value={staffData.workSchedule ?? ""}
                     onChange={handleProfileInputChange}
                   />
                 </div>
@@ -516,20 +525,17 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
                   <Input
                     id="skills"
                     placeholder="e.g., Communication, Leadership (comma-separated)"
-                    value={(staffData.staffProfile?.skills as string[] ?? []).join(", ")}
+                    value={(staffData.skills ?? []).join(", ")}
                     onChange={(e) => {
                       const skills = e.target.value
                         .split(",")
                         .map((s) => s.trim())
                         .filter(Boolean);
                       setStaffData((prev) => {
-                        if (!prev || !prev.staffProfile) return prev;
+                        if (!prev) return prev;
                         return {
                           ...prev,
-                          staffProfile: {
-                            ...prev.staffProfile,
-                            skills: skills,
-                          },
+                          skills: skills,
                         };
                       });
                     }}
@@ -540,14 +546,14 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
                   <Label>Responsibilities</Label>
                   <p className="text-sm text-gray-500 dark:text-gray-400">
                     {/* TODO: Improve display/editing for JSON */}
-                    {JSON.stringify(staffData.staffProfile?.responsibilities) ??
+                    {JSON.stringify(staffData.responsibilities) ??
                       "Not specified"}
                   </p>
                 </div>
                 <div className="space-y-2 md:col-span-2">
                   <Label>Permissions</Label>
                   <p className="text-sm text-gray-500 dark:text-gray-400">
-                    {JSON.stringify(staffData.staffProfile?.permissions) ??
+                    {JSON.stringify(staffData.permissions) ??
                       "Not specified"}
                   </p>
                 </div>
@@ -572,9 +578,9 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
                   <Label htmlFor="timezone">Timezone</Label>
                   <Select
                     name="timezone"
-                    value={staffData.timezone ?? ""}
+                    value={staffData.user.timezone ?? ""}
                     onValueChange={(value) =>
-                      handleSelectChange(value, "timezone")
+                      handleUserSelectChange(value, "timezone")
                     }
                   >
                     <SelectTrigger>
@@ -629,7 +635,7 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
                       id="allNotifications"
                       name="allNotifications"
                       checked={
-                        staffData.notificationPreferences?.allNotifications ??
+                        staffData.user.notificationPreferences?.allNotifications ??
                         false
                       }
                       onCheckedChange={(checked) =>
@@ -651,7 +657,7 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
                       id="mentions"
                       name="mentions"
                       checked={
-                        staffData.notificationPreferences?.mentions ?? false
+                        staffData.user.notificationPreferences?.mentions ?? false
                       }
                       onCheckedChange={(checked) =>
                         handleNotificationChange(checked, "mentions")
@@ -672,7 +678,7 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
                       id="directMessages"
                       name="directMessages"
                       checked={
-                        staffData.notificationPreferences?.directMessages ??
+                        staffData.user.notificationPreferences?.directMessages ??
                         false
                       }
                       onCheckedChange={(checked) =>
@@ -694,7 +700,7 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
                       id="updates"
                       name="updates"
                       checked={
-                        staffData.notificationPreferences?.updates ?? false
+                        staffData.user.notificationPreferences?.updates ?? false
                       }
                       onCheckedChange={(checked) =>
                         handleNotificationChange(checked, "updates")
@@ -719,7 +725,7 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
                     <Switch
                       id="essentialCookies"
                       name="essential"
-                      checked={staffData.cookiePreferences?.essential ?? true}
+                      checked={staffData.user.cookiePreferences?.essential ?? true}
                       disabled
                     />
                   </div>
@@ -736,7 +742,7 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
                     <Switch
                       id="analyticsCookies"
                       name="analytics"
-                      checked={staffData.cookiePreferences?.analytics ?? false}
+                      checked={staffData.user.cookiePreferences?.analytics ?? false}
                       onCheckedChange={(checked) =>
                         handleCookieChange(checked, "analytics")
                       }
@@ -755,7 +761,7 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
                     <Switch
                       id="marketingCookies"
                       name="marketing"
-                      checked={staffData.cookiePreferences?.marketing ?? false}
+                      checked={staffData.user.cookiePreferences?.marketing ?? false}
                       onCheckedChange={(checked) =>
                         handleCookieChange(checked, "marketing")
                       }
