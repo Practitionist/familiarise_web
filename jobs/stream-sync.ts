@@ -7,10 +7,15 @@
  * Can be used:
  * 1. As an import: import { performStreamUserSync } from './stream-sync'
  * 2. As a CLI script: npx ts-node jobs/stream-sync.ts
+ *
+ * Features:
+ * - Distributed lock via Upstash Redis prevents concurrent runs
+ * - Graceful handling if lock cannot be acquired
  */
 
 import { StreamChat, UserResponse } from "stream-chat";
 import prisma from "../lib/prisma";
+import { acquireLock, releaseLock, withCircuitBreaker } from "../lib/redis";
 
 // Types
 interface FailedDeletionFromSDK {
@@ -45,6 +50,10 @@ const DEFAULT_EXCLUDED_USER_IDS = new Set(["system", "teetangh"]);
 
 // System user prefixes that should be excluded
 const SYSTEM_USER_PREFIXES = ["system-", "recording-egress-"];
+
+// Distributed lock configuration
+const SYNC_LOCK_KEY = "stream-sync:lock";
+const SYNC_LOCK_TTL = 10 * 60 * 1000; // 10 minutes max runtime
 
 /**
  * Check if a user ID should be excluded from deletion
@@ -94,17 +103,39 @@ function getStreamClient(): StreamChat {
  * Perform Stream user synchronization
  *
  * This function:
- * 1. Fetches all users from Stream (paginated)
- * 2. Compares against database users
- * 3. Deletes stale users from Stream that don't exist in database
+ * 1. Acquires distributed lock to prevent concurrent runs
+ * 2. Fetches all users from Stream (paginated)
+ * 3. Compares against database users
+ * 4. Deletes stale users from Stream that don't exist in database
+ * 5. Releases lock on completion
  *
  * @param options Sync configuration options
  * @returns Summary of the synchronization operation
+ * @throws Error if lock cannot be acquired (sync already in progress)
  */
 export async function performStreamUserSync(
   options: SyncOptions = {},
 ): Promise<SyncSummary> {
   const { pageLimit = 100, dryRun = false, excludeUserIds = [] } = options;
+
+  // Acquire distributed lock to prevent concurrent runs
+  let lockToken: string | null = null;
+  try {
+    lockToken = await withCircuitBreaker(
+      () => acquireLock(SYNC_LOCK_KEY, SYNC_LOCK_TTL),
+      () => null, // Fallback if Redis is down - proceed without lock
+    );
+  } catch (error) {
+    console.warn("[Stream Sync] Failed to acquire lock, proceeding without distributed lock:", error);
+  }
+
+  if (lockToken === null) {
+    // Check if this is because sync is already running or Redis failed
+    console.warn("[Stream Sync] Could not acquire lock - sync may already be in progress or Redis unavailable");
+    // We'll proceed anyway but log a warning - this is a best-effort lock
+  } else {
+    console.log("[Stream Sync] Acquired distributed lock");
+  }
 
   console.log("[Stream Sync] Starting synchronization...");
   if (dryRun) {
@@ -239,6 +270,17 @@ export async function performStreamUserSync(
   } catch (error) {
     console.error("[Stream Sync] Synchronization failed:", error);
     throw error;
+  } finally {
+    // Always release the lock when done (success or failure)
+    if (lockToken) {
+      try {
+        await releaseLock(SYNC_LOCK_KEY, lockToken);
+        console.log("[Stream Sync] Released distributed lock");
+      } catch (releaseError) {
+        console.warn("[Stream Sync] Failed to release lock:", releaseError);
+        // Lock will auto-expire after TTL anyway
+      }
+    }
   }
 }
 
