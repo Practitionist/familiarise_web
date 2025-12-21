@@ -7,13 +7,24 @@ import { PhoneOff, RefreshCw, Home } from "lucide-react";
 interface CallEndedProps {
   message?: string;
   onRejoin?: () => void;
+  onReturnHome?: () => void; // New prop for cleanup before navigation
 }
 
 const CallEnded = ({
   message = "The call has been ended by the host",
   onRejoin,
+  onReturnHome,
 }: CallEndedProps) => {
   const router = useRouter();
+
+  // Handle return to home - use cleanup callback if provided, otherwise fallback to router
+  const handleReturnHome = () => {
+    if (onReturnHome) {
+      onReturnHome();
+    } else {
+      router.push("/");
+    }
+  };
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-br from-zinc-950 via-zinc-900 to-zinc-950">
@@ -40,7 +51,7 @@ const CallEnded = ({
         {/* Actions */}
         <div className="flex flex-col sm:flex-row gap-3 justify-center">
           <Button
-            onClick={() => router.push("/")}
+            onClick={handleReturnHome}
             variant="outline"
             className="bg-transparent border-zinc-700 text-white hover:bg-zinc-800 hover:border-zinc-600 px-6 py-2.5 h-auto"
           >
