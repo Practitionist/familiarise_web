@@ -4,6 +4,7 @@ import {
   useCallback,
   useEffect,
   useState,
+  useRef,
   createContext,
   useContext,
 } from "react";
@@ -66,30 +67,17 @@ const StreamProvider = ({
   enableChat = true,
   enableVideo = true,
 }: StreamProviderProps) => {
-  // Connection states - initialize from global clients if same user
-  const [chatClient, setChatClient] = useState<StreamChat | null>(() => {
-    if (currentUserId === userId && globalChatClient) {
-      return globalChatClient;
-    }
-    return null;
-  });
-  const [videoClient, setVideoClient] = useState<StreamVideoClient | null>(
-    () => {
-      if (currentUserId === userId && globalVideoClient) {
-        return globalVideoClient;
-      }
-      return null;
-    },
-  );
-  const [chatConnected, setChatConnected] = useState(() => {
-    return currentUserId === userId && globalChatClient !== null;
-  });
-  const [videoConnected, setVideoConnected] = useState(() => {
-    return currentUserId === userId && globalVideoClient !== null;
-  });
+  // Connection states - always initialize to null/false
+  // Let the connection functions handle global client detection
+  const [chatClient, setChatClient] = useState<StreamChat | null>(null);
+  const [videoClient, setVideoClient] = useState<StreamVideoClient | null>(null);
+  const [chatConnected, setChatConnected] = useState(false);
+  const [videoConnected, setVideoConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [connectionAttempts, setConnectionAttempts] = useState(0);
+
+  // Use ref for connection attempts to avoid stale closures in retry logic
+  const connectionAttemptsRef = useRef(0);
 
   const { userDetails, isLoading } = useUserData(userId);
 
@@ -146,11 +134,11 @@ const StreamProvider = ({
   }, []);
 
   const connectChat = useCallback(async () => {
-    if (!enableChat || !userDetails || !apiKey || chatConnected) return;
+    if (!enableChat || !userDetails || !apiKey) return;
 
-    // Check if we already have a global client for this user
+    // Check if we already have a global client for this user - adopt it
     if (currentUserId === userDetails.id && globalChatClient) {
-      streamLogger.debug("Reusing existing chat client", {
+      streamLogger.debug("Adopting existing chat client", {
         userId: userDetails.id,
       });
       setChatClient(globalChatClient);
@@ -230,14 +218,14 @@ const StreamProvider = ({
       setChatConnected(false);
       throw error;
     }
-  }, [enableChat, userDetails, apiKey, chatConnected, getCachedToken]);
+  }, [enableChat, userDetails, apiKey, getCachedToken]);
 
   const connectVideo = useCallback(async () => {
-    if (!enableVideo || !userDetails || !apiKey || videoConnected) return;
+    if (!enableVideo || !userDetails || !apiKey) return;
 
-    // Check if we already have a global client for this user
+    // Check if we already have a global client for this user - adopt it
     if (currentUserId === userDetails.id && globalVideoClient) {
-      streamLogger.debug("Reusing existing video client", {
+      streamLogger.debug("Adopting existing video client", {
         userId: userDetails.id,
       });
       setVideoClient(globalVideoClient);
@@ -276,66 +264,7 @@ const StreamProvider = ({
       setVideoConnected(false);
       throw error;
     }
-  }, [enableVideo, userDetails, apiKey, videoConnected, getCachedToken]);
-
-  const connectServices = useCallback(async () => {
-    if (isLoading || !userDetails || isConnecting) return;
-
-    setIsConnecting(true);
-    setError(null);
-
-    try {
-      const promises = [];
-      if (enableChat && !chatConnected) promises.push(connectChat());
-      if (enableVideo && !videoConnected) promises.push(connectVideo());
-
-      await Promise.all(promises);
-      setConnectionAttempts(0); // Reset on success
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : "Connection failed";
-      setError(errorMessage);
-
-      // Implement exponential backoff retry
-      const newAttempts = connectionAttempts + 1;
-      setConnectionAttempts(newAttempts);
-
-      if (newAttempts < 5) {
-        // Max 5 attempts
-        const delay = getRetryDelay(newAttempts);
-        streamLogger.debug(`Retrying connection in ${delay}ms`, {
-          attempt: newAttempts,
-        });
-        setTimeout(() => {
-          setIsConnecting(false);
-          connectServices();
-        }, delay);
-        return;
-      } else {
-        streamLogger.error("Max connection attempts reached", error);
-      }
-    } finally {
-      setIsConnecting(false);
-    }
-  }, [
-    isLoading,
-    userDetails,
-    isConnecting,
-    enableChat,
-    enableVideo,
-    chatConnected,
-    videoConnected,
-    connectChat,
-    connectVideo,
-    connectionAttempts,
-    getRetryDelay,
-  ]);
-
-  const retryConnection = useCallback(() => {
-    setConnectionAttempts(0);
-    setError(null);
-    connectServices();
-  }, [connectServices]);
+  }, [enableVideo, userDetails, apiKey, getCachedToken]);
 
   // Full disconnect - only call when user changes or app unmounts
   const disconnect = useCallback(
@@ -369,10 +298,69 @@ const StreamProvider = ({
       if (clearGlobal) {
         currentUserId = null;
         setTokenCache({}); // Clear token cache
+        connectionAttemptsRef.current = 0; // Reset attempts
       }
     },
     [chatClient, videoClient],
   );
+
+  // Stable connectServices function using ref pattern for retry logic
+  const connectServices = useCallback(async () => {
+    if (isLoading || !userDetails) return;
+
+    setIsConnecting(true);
+    setError(null);
+
+    try {
+      const promises = [];
+      // Always try to connect - the functions will handle global client detection
+      if (enableChat) promises.push(connectChat());
+      if (enableVideo) promises.push(connectVideo());
+
+      await Promise.all(promises);
+      connectionAttemptsRef.current = 0; // Reset on success
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Connection failed";
+      setError(errorMessage);
+
+      // Implement exponential backoff retry using ref
+      connectionAttemptsRef.current += 1;
+      const currentAttempts = connectionAttemptsRef.current;
+
+      if (currentAttempts < 5) {
+        // Max 5 attempts
+        const delay = getRetryDelay(currentAttempts);
+        streamLogger.debug(`Retrying connection in ${delay}ms`, {
+          attempt: currentAttempts,
+        });
+        setTimeout(() => {
+          setIsConnecting(false);
+          // Re-run connection (the ref ensures we get current attempt count)
+          connectServices();
+        }, delay);
+        return;
+      } else {
+        streamLogger.error("Max connection attempts reached", error);
+      }
+    } finally {
+      setIsConnecting(false);
+    }
+  }, [
+    isLoading,
+    userDetails,
+    enableChat,
+    enableVideo,
+    connectChat,
+    connectVideo,
+    getRetryDelay,
+  ]);
+
+  const retryConnection = useCallback(() => {
+    connectionAttemptsRef.current = 0;
+    setError(null);
+    connectServices();
+  }, [connectServices]);
 
   // Initialize connections
   useEffect(() => {
@@ -397,7 +385,7 @@ const StreamProvider = ({
       // Intentionally not calling disconnect() here
       // Global clients are reused across component remounts
     };
-  }, [userDetails?.id, isLoading, apiKey]); // Use userDetails?.id to track user changes
+  }, [userDetails?.id, isLoading, apiKey, connectServices, disconnect]);
 
   // Connection state for context
   const connectionState: StreamConnectionState = {
@@ -425,7 +413,7 @@ const StreamProvider = ({
   }
 
   // Error state
-  if (error && connectionAttempts >= 5) {
+  if (error && connectionAttemptsRef.current >= 5) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[200px] p-4">
         <div className="text-red-600 text-center">
