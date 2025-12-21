@@ -1,62 +1,69 @@
 "use server";
 
-import { fetchUserDetails, mapRoleToStream } from "@/lib/user";
-import { StreamClient } from "@stream-io/node-sdk";
-import { StreamChat } from "stream-chat";
+import { z } from "zod";
+import {
+  generateVideoToken,
+  generateChatToken,
+  isStreamConfigured,
+} from "@/lib/stream-client";
+import { streamLogger } from "@/lib/stream-logger";
 
-const apiKey = process.env.NEXT_PUBLIC_STREAM_API_KEY;
-const apiSecret = process.env.STREAM_API_SECRET;
+// Input validation
+const userIdSchema = z.string().min(1, "User ID is required");
 
-// Video token provider (Stream Video)
-export const tokenProvider = async (userId: string) => {
+/**
+ * Generate a video call token for a user
+ * Token is valid for 1 hour by default
+ * @param userId The user ID to generate token for
+ * @returns The video token string
+ */
+export async function tokenProvider(userId: string): Promise<string> {
+  // Validate input
+  const validatedUserId = userIdSchema.parse(userId);
+
+  if (!isStreamConfigured()) {
+    streamLogger.error("Stream not configured for video token generation");
+    throw new Error("Stream API is not configured");
+  }
+
   try {
-    const userDetails = await fetchUserDetails(userId);
+    const token = generateVideoToken(validatedUserId, 3600); // 1 hour
 
-    if (!userDetails) throw new Error("User not found");
-    if (!apiKey) throw new Error("Stream API key not configured");
-    if (!apiSecret) throw new Error("Stream API secret not configured");
+    streamLogger.debug("Generated video token", { userId: validatedUserId });
 
-    const client = new StreamClient(apiKey, apiSecret);
-
-    const exp = Math.round(Date.now() / 1000) + 60 * 60; // 1 hour
-    const issued = Math.round(Date.now() / 1000) - 60; // 1 minute ago
-
-    // Use the shared utility function
-    const streamRole = mapRoleToStream(userDetails.role);
-
-    console.log(
-      `Generating token for user ${userDetails.id} with role ${streamRole}`,
-    );
-
-    // Generate user token with the correct payload structure
-    const token = client.generateUserToken({
-      user_id: userDetails.id,
-      exp,
-      iat: issued,
+    return token;
+  } catch (error) {
+    streamLogger.error("Failed to generate video token", error, {
+      userId: validatedUserId,
     });
-
-    return token;
-  } catch (error) {
-    console.error("Error generating token:", error);
     throw error;
   }
-};
+}
 
-// Chat token provider (Stream Chat)
-export const chatTokenProvider = async (userId: string) => {
+/**
+ * Generate a chat token for a user
+ * @param userId The user ID to generate token for
+ * @returns The chat token string
+ */
+export async function chatTokenProvider(userId: string): Promise<string> {
+  // Validate input
+  const validatedUserId = userIdSchema.parse(userId);
+
+  if (!isStreamConfigured()) {
+    streamLogger.error("Stream not configured for chat token generation");
+    throw new Error("Stream API is not configured");
+  }
+
   try {
-    if (!apiKey) throw new Error("Stream API key not configured");
-    if (!apiSecret) throw new Error("Stream API secret not configured");
+    const token = generateChatToken(validatedUserId);
 
-    // Optionally verify user exists in DB
-    const userDetails = await fetchUserDetails(userId);
-    if (!userDetails) throw new Error("User not found");
+    streamLogger.debug("Generated chat token", { userId: validatedUserId });
 
-    const serverClient = StreamChat.getInstance(apiKey, apiSecret);
-    const token = serverClient.createToken(userDetails.id);
     return token;
   } catch (error) {
-    console.error("Error generating chat token:", error);
+    streamLogger.error("Failed to generate chat token", error, {
+      userId: validatedUserId,
+    });
     throw error;
   }
-};
+}

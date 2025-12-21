@@ -18,16 +18,14 @@ import { upsertUserToStream } from "@/actions/stream/chat/user.action";
 import { syncUserEventChannels } from "@/actions/stream/chat/event-channel.action";
 import { useUserData } from "@/hooks/useUserData";
 import { mapRoleToStream } from "@/lib/user";
+import { streamLogger } from "@/lib/stream-logger";
+import { initialSyncCompletedUsers } from "@/lib/stream-cache";
 import StreamErrorBoundary from "@/components/stream/StreamErrorBoundary";
 
 // Import Stream Chat CSS
 import "stream-chat-react/dist/css/v2/index.css";
 
 const apiKey = process.env.NEXT_PUBLIC_STREAM_API_KEY;
-
-// Module-level tracking of which users have completed initial sync
-// This persists across component remounts during the same session
-const initialSyncCompletedUsers = new Set<string>();
 
 // Module-level client instances to avoid re-creating on remount
 let globalChatClient: StreamChat | null = null;
@@ -75,12 +73,14 @@ const StreamProvider = ({
     }
     return null;
   });
-  const [videoClient, setVideoClient] = useState<StreamVideoClient | null>(() => {
-    if (currentUserId === userId && globalVideoClient) {
-      return globalVideoClient;
-    }
-    return null;
-  });
+  const [videoClient, setVideoClient] = useState<StreamVideoClient | null>(
+    () => {
+      if (currentUserId === userId && globalVideoClient) {
+        return globalVideoClient;
+      }
+      return null;
+    },
+  );
   const [chatConnected, setChatConnected] = useState(() => {
     return currentUserId === userId && globalChatClient !== null;
   });
@@ -93,7 +93,7 @@ const StreamProvider = ({
 
   const { userDetails, isLoading } = useUserData(userId);
 
-  // Enhanced token caching
+  // Token caching with expiry tracking
   const [tokenCache, setTokenCache] = useState<{
     chatToken?: string;
     videoToken?: string;
@@ -150,14 +150,18 @@ const StreamProvider = ({
 
     // Check if we already have a global client for this user
     if (currentUserId === userDetails.id && globalChatClient) {
-      console.log(`Reusing existing chat client for user ${userDetails.id}`);
+      streamLogger.debug("Reusing existing chat client", {
+        userId: userDetails.id,
+      });
       setChatClient(globalChatClient);
       setChatConnected(true);
       return;
     }
 
     try {
-      console.log(`Connecting user ${userDetails.id} to Stream Chat`);
+      streamLogger.debug("Connecting to Stream Chat", {
+        userId: userDetails.id,
+      });
 
       const client = StreamChat.getInstance(apiKey);
 
@@ -165,9 +169,13 @@ const StreamProvider = ({
       if (!initialSyncCompletedUsers.has(userDetails.id)) {
         try {
           await upsertUserToStream(userDetails.id);
-          console.log(`User ${userDetails.id} upserted to Stream`);
+          streamLogger.debug("User upserted to Stream", {
+            userId: userDetails.id,
+          });
         } catch (upsertError) {
-          console.warn("User upserting failed, continuing:", upsertError);
+          streamLogger.warn("User upsert failed, continuing", {
+            userId: userDetails.id,
+          });
         }
       }
 
@@ -186,58 +194,61 @@ const StreamProvider = ({
       // Store in global references
       globalChatClient = client;
       currentUserId = userDetails.id;
-      
+
       setChatClient(client);
       setChatConnected(true);
 
-      // Initial channel sync only once per user per session (tracked at module level)
+      // Initial channel sync only once per user per session
       if (!initialSyncCompletedUsers.has(userDetails.id)) {
         try {
-          console.log(
-            `Performing initial channel sync for user ${userDetails.id}`,
-          );
+          streamLogger.info("Starting initial channel sync", {
+            userId: userDetails.id,
+          });
           await syncUserEventChannels(userDetails.id);
           initialSyncCompletedUsers.add(userDetails.id);
-          console.log(`Completed initial sync for user ${userDetails.id}`);
+          streamLogger.info("Initial channel sync completed", {
+            userId: userDetails.id,
+          });
         } catch (syncError) {
-          console.warn(
-            `Channel sync failed for user ${userDetails.id}:`,
-            syncError,
-          );
+          streamLogger.warn("Channel sync failed", { userId: userDetails.id });
           // Still mark as completed to avoid repeated failed attempts
           initialSyncCompletedUsers.add(userDetails.id);
         }
       } else {
-        console.log(`Skipping channel sync for user ${userDetails.id} (already completed this session)`);
+        streamLogger.debug("Skipping channel sync (already completed)", {
+          userId: userDetails.id,
+        });
       }
 
-      console.log(`Chat connection successful for user ${userDetails.id}`);
+      streamLogger.info("Chat connection established", {
+        userId: userDetails.id,
+      });
     } catch (error) {
-      console.error("Chat connection failed:", error);
+      streamLogger.error("Chat connection failed", error, {
+        userId: userDetails.id,
+      });
       setChatConnected(false);
       throw error;
     }
-  }, [
-    enableChat,
-    userDetails,
-    apiKey,
-    chatConnected,
-    getCachedToken,
-  ]);
+  }, [enableChat, userDetails, apiKey, chatConnected, getCachedToken]);
 
   const connectVideo = useCallback(async () => {
     if (!enableVideo || !userDetails || !apiKey || videoConnected) return;
 
     // Check if we already have a global client for this user
     if (currentUserId === userDetails.id && globalVideoClient) {
-      console.log(`Reusing existing video client for user ${userDetails.id}`);
+      streamLogger.debug("Reusing existing video client", {
+        userId: userDetails.id,
+      });
       setVideoClient(globalVideoClient);
       setVideoConnected(true);
       return;
     }
 
     try {
-      console.log(`Connecting user ${userDetails.id} to Stream Video`);
+      streamLogger.debug("Connecting to Stream Video", {
+        userId: userDetails.id,
+      });
 
       const client = new StreamVideoClient({
         apiKey: apiKey,
@@ -255,9 +266,13 @@ const StreamProvider = ({
 
       setVideoClient(client);
       setVideoConnected(true);
-      console.log(`Video connection successful for user ${userDetails.id}`);
+      streamLogger.info("Video connection established", {
+        userId: userDetails.id,
+      });
     } catch (error) {
-      console.error("Video connection failed:", error);
+      streamLogger.error("Video connection failed", error, {
+        userId: userDetails.id,
+      });
       setVideoConnected(false);
       throw error;
     }
@@ -288,16 +303,16 @@ const StreamProvider = ({
       if (newAttempts < 5) {
         // Max 5 attempts
         const delay = getRetryDelay(newAttempts);
-        console.log(
-          `Retrying connection in ${delay}ms (attempt ${newAttempts})`,
-        );
+        streamLogger.debug(`Retrying connection in ${delay}ms`, {
+          attempt: newAttempts,
+        });
         setTimeout(() => {
           setIsConnecting(false);
           connectServices();
         }, delay);
         return;
       } else {
-        console.error("Max connection attempts reached");
+        streamLogger.error("Max connection attempts reached", error);
       }
     } finally {
       setIsConnecting(false);
@@ -323,45 +338,51 @@ const StreamProvider = ({
   }, [connectServices]);
 
   // Full disconnect - only call when user changes or app unmounts
-  const disconnect = useCallback(async (clearGlobal = false) => {
-    const promises = [];
+  const disconnect = useCallback(
+    async (clearGlobal = false) => {
+      const promises = [];
 
-    if (chatClient) {
-      promises.push(
-        chatClient.disconnectUser().then(() => {
-          console.log("Chat client disconnected");
-          setChatClient(null);
-          setChatConnected(false);
-          if (clearGlobal) {
-            globalChatClient = null;
-          }
-        }),
-      );
-    }
-
-    if (videoClient) {
-      // Note: StreamVideoClient doesn't have explicit disconnect method
-      // It's cleaned up when the component unmounts
-      setVideoClient(null);
-      setVideoConnected(false);
-      if (clearGlobal) {
-        globalVideoClient = null;
+      if (chatClient) {
+        promises.push(
+          chatClient.disconnectUser().then(() => {
+            streamLogger.debug("Chat client disconnected");
+            setChatClient(null);
+            setChatConnected(false);
+            if (clearGlobal) {
+              globalChatClient = null;
+            }
+          }),
+        );
       }
-    }
 
-    await Promise.all(promises);
-    if (clearGlobal) {
-      currentUserId = null;
-      setTokenCache({}); // Clear token cache
-    }
-  }, [chatClient, videoClient]);
+      if (videoClient) {
+        // Note: StreamVideoClient doesn't have explicit disconnect method
+        // It's cleaned up when the component unmounts
+        setVideoClient(null);
+        setVideoConnected(false);
+        if (clearGlobal) {
+          globalVideoClient = null;
+        }
+      }
+
+      await Promise.all(promises);
+      if (clearGlobal) {
+        currentUserId = null;
+        setTokenCache({}); // Clear token cache
+      }
+    },
+    [chatClient, videoClient],
+  );
 
   // Initialize connections
   useEffect(() => {
     if (!isLoading && userDetails && apiKey) {
       // Check if user changed - if so, disconnect old user first
       if (currentUserId && currentUserId !== userDetails.id) {
-        console.log(`User changed from ${currentUserId} to ${userDetails.id}, disconnecting...`);
+        streamLogger.info("User changed, reconnecting", {
+          from: currentUserId,
+          to: userDetails.id,
+        });
         disconnect(true).then(() => {
           connectServices();
         });
@@ -437,7 +458,9 @@ const StreamProvider = ({
   return (
     <StreamErrorBoundary
       onError={(error, errorInfo) => {
-        console.error("Stream Provider Error:", error, errorInfo);
+        streamLogger.error("Stream Provider Error", error, {
+          componentStack: errorInfo.componentStack,
+        });
         setError(error.message);
       }}
       enableRetry={true}
