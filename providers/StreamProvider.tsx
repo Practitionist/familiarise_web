@@ -25,6 +25,15 @@ import "stream-chat-react/dist/css/v2/index.css";
 
 const apiKey = process.env.NEXT_PUBLIC_STREAM_API_KEY;
 
+// Module-level tracking of which users have completed initial sync
+// This persists across component remounts during the same session
+const initialSyncCompletedUsers = new Set<string>();
+
+// Module-level client instances to avoid re-creating on remount
+let globalChatClient: StreamChat | null = null;
+let globalVideoClient: StreamVideoClient | null = null;
+let currentUserId: string | null = null;
+
 // Connection state context
 interface StreamConnectionState {
   chatConnected: boolean;
@@ -59,16 +68,27 @@ const StreamProvider = ({
   enableChat = true,
   enableVideo = true,
 }: StreamProviderProps) => {
-  // Connection states
-  const [chatClient, setChatClient] = useState<StreamChat | null>(null);
-  const [videoClient, setVideoClient] = useState<StreamVideoClient | null>(
-    null,
-  );
-  const [chatConnected, setChatConnected] = useState(false);
-  const [videoConnected, setVideoConnected] = useState(false);
+  // Connection states - initialize from global clients if same user
+  const [chatClient, setChatClient] = useState<StreamChat | null>(() => {
+    if (currentUserId === userId && globalChatClient) {
+      return globalChatClient;
+    }
+    return null;
+  });
+  const [videoClient, setVideoClient] = useState<StreamVideoClient | null>(() => {
+    if (currentUserId === userId && globalVideoClient) {
+      return globalVideoClient;
+    }
+    return null;
+  });
+  const [chatConnected, setChatConnected] = useState(() => {
+    return currentUserId === userId && globalChatClient !== null;
+  });
+  const [videoConnected, setVideoConnected] = useState(() => {
+    return currentUserId === userId && globalVideoClient !== null;
+  });
   const [isConnecting, setIsConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [hasInitialSyncCompleted, setHasInitialSyncCompleted] = useState(false);
   const [connectionAttempts, setConnectionAttempts] = useState(0);
 
   const { userDetails, isLoading } = useUserData(userId);
@@ -128,17 +148,27 @@ const StreamProvider = ({
   const connectChat = useCallback(async () => {
     if (!enableChat || !userDetails || !apiKey || chatConnected) return;
 
+    // Check if we already have a global client for this user
+    if (currentUserId === userDetails.id && globalChatClient) {
+      console.log(`Reusing existing chat client for user ${userDetails.id}`);
+      setChatClient(globalChatClient);
+      setChatConnected(true);
+      return;
+    }
+
     try {
       console.log(`Connecting user ${userDetails.id} to Stream Chat`);
 
       const client = StreamChat.getInstance(apiKey);
 
-      // Ensure user exists in Stream's database
-      try {
-        await upsertUserToStream(userDetails.id);
-        console.log(`User ${userDetails.id} upserted to Stream`);
-      } catch (upsertError) {
-        console.warn("User upserting failed, continuing:", upsertError);
+      // Ensure user exists in Stream's database (only if not synced before)
+      if (!initialSyncCompletedUsers.has(userDetails.id)) {
+        try {
+          await upsertUserToStream(userDetails.id);
+          console.log(`User ${userDetails.id} upserted to Stream`);
+        } catch (upsertError) {
+          console.warn("User upserting failed, continuing:", upsertError);
+        }
       }
 
       const streamRole = mapRoleToStream(userDetails.role);
@@ -153,24 +183,32 @@ const StreamProvider = ({
         () => getCachedToken("chat"),
       );
 
+      // Store in global references
+      globalChatClient = client;
+      currentUserId = userDetails.id;
+      
       setChatClient(client);
       setChatConnected(true);
 
-      // Initial channel sync only once
-      if (!hasInitialSyncCompleted) {
+      // Initial channel sync only once per user per session (tracked at module level)
+      if (!initialSyncCompletedUsers.has(userDetails.id)) {
         try {
           console.log(
             `Performing initial channel sync for user ${userDetails.id}`,
           );
           await syncUserEventChannels(userDetails.id);
-          setHasInitialSyncCompleted(true);
+          initialSyncCompletedUsers.add(userDetails.id);
           console.log(`Completed initial sync for user ${userDetails.id}`);
         } catch (syncError) {
           console.warn(
             `Channel sync failed for user ${userDetails.id}:`,
             syncError,
           );
+          // Still mark as completed to avoid repeated failed attempts
+          initialSyncCompletedUsers.add(userDetails.id);
         }
+      } else {
+        console.log(`Skipping channel sync for user ${userDetails.id} (already completed this session)`);
       }
 
       console.log(`Chat connection successful for user ${userDetails.id}`);
@@ -184,12 +222,19 @@ const StreamProvider = ({
     userDetails,
     apiKey,
     chatConnected,
-    hasInitialSyncCompleted,
     getCachedToken,
   ]);
 
   const connectVideo = useCallback(async () => {
     if (!enableVideo || !userDetails || !apiKey || videoConnected) return;
+
+    // Check if we already have a global client for this user
+    if (currentUserId === userDetails.id && globalVideoClient) {
+      console.log(`Reusing existing video client for user ${userDetails.id}`);
+      setVideoClient(globalVideoClient);
+      setVideoConnected(true);
+      return;
+    }
 
     try {
       console.log(`Connecting user ${userDetails.id} to Stream Video`);
@@ -203,6 +248,10 @@ const StreamProvider = ({
         },
         tokenProvider: () => getCachedToken("video"),
       });
+
+      // Store in global reference
+      globalVideoClient = client;
+      currentUserId = userDetails.id;
 
       setVideoClient(client);
       setVideoConnected(true);
@@ -273,7 +322,8 @@ const StreamProvider = ({
     connectServices();
   }, [connectServices]);
 
-  const disconnect = useCallback(async () => {
+  // Full disconnect - only call when user changes or app unmounts
+  const disconnect = useCallback(async (clearGlobal = false) => {
     const promises = [];
 
     if (chatClient) {
@@ -282,6 +332,9 @@ const StreamProvider = ({
           console.log("Chat client disconnected");
           setChatClient(null);
           setChatConnected(false);
+          if (clearGlobal) {
+            globalChatClient = null;
+          }
         }),
       );
     }
@@ -291,22 +344,39 @@ const StreamProvider = ({
       // It's cleaned up when the component unmounts
       setVideoClient(null);
       setVideoConnected(false);
+      if (clearGlobal) {
+        globalVideoClient = null;
+      }
     }
 
     await Promise.all(promises);
-    setTokenCache({}); // Clear token cache
+    if (clearGlobal) {
+      currentUserId = null;
+      setTokenCache({}); // Clear token cache
+    }
   }, [chatClient, videoClient]);
 
   // Initialize connections
   useEffect(() => {
     if (!isLoading && userDetails && apiKey) {
-      connectServices();
+      // Check if user changed - if so, disconnect old user first
+      if (currentUserId && currentUserId !== userDetails.id) {
+        console.log(`User changed from ${currentUserId} to ${userDetails.id}, disconnecting...`);
+        disconnect(true).then(() => {
+          connectServices();
+        });
+      } else {
+        connectServices();
+      }
     }
 
+    // Don't disconnect on unmount - keep global clients alive for tab switching
+    // Only disconnect when user explicitly logs out or changes
     return () => {
-      disconnect();
+      // Intentionally not calling disconnect() here
+      // Global clients are reused across component remounts
     };
-  }, [userDetails, isLoading, apiKey]); // Removed connectServices and disconnect to avoid infinite loops
+  }, [userDetails?.id, isLoading, apiKey]); // Use userDetails?.id to track user changes
 
   // Connection state for context
   const connectionState: StreamConnectionState = {
