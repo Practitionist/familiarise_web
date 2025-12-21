@@ -123,19 +123,20 @@ export async function addUserToEventChannel(
       throw new Error(`${eventType} not found: ${eventId}`);
     }
 
-    // Create channel with initial members
+    // Create channel with all data and members in a single atomic call
+    // This fixes the "created_by_id must be provided" error and reduces 3 API calls to 1
     const { consultantId, members, name } = eventData;
-    await channel.create();
+    const allMembers = Array.from(new Set([consultantId, ...members, userId]));
 
-    await channel.update({
+    // Re-initialize channel with all required data for atomic creation
+    const channelWithData = client.channel(channelType, channelId, {
       name,
       created_by_id: consultantId,
       [`${eventType}_id`]: eventId,
+      members: allMembers,
     });
 
-    // Add all members including the new user
-    const allMembers = Array.from(new Set([consultantId, ...members, userId]));
-    await channel.addMembers(allMembers);
+    await channelWithData.create();
 
     markChannelExists(channelType, channelId);
     markMembership(channelId, userId, true);
