@@ -86,47 +86,48 @@ export async function cleanupDuplicateConsultations(): Promise<{
       orderBy: { createdAt: "asc" },
     });
 
-    // Group by user + plan + date, find duplicates (keep oldest)
-    const seen = new Map<string, string>(); // key -> oldest id
     const duplicatesToCancel = new Set<string>();
 
+    // Group by user + plan (like subscriptions) for efficient comparison
+    const groupedByUserPlan = new Map<string, typeof consultations>();
     for (const c of consultations) {
-      const dateKey = c.createdAt.toISOString().split("T")[0];
-      const groupKey = `${c.requestedById}-${c.consultationPlanId}-${dateKey}`;
-
-      if (seen.has(groupKey)) {
-        duplicatesToCancel.add(c.id); // This is a duplicate (same day)
-        console.log(
-          `  Found same-day duplicate: ${c.id} (original: ${seen.get(groupKey)})`
-        );
-      } else {
-        seen.set(groupKey, c.id);
-      }
+      const key = `${c.requestedById}-${c.consultationPlanId}`;
+      if (!groupedByUserPlan.has(key)) groupedByUserPlan.set(key, []);
+      groupedByUserPlan.get(key)!.push(c);
     }
 
-    // Also check for exact duplicates within 5 seconds
-    // Optimized: since data is sorted by createdAt, break early when time diff >= 5s
-    for (let i = 0; i < consultations.length; i++) {
-      const c1 = consultations[i];
-      for (let j = i + 1; j < consultations.length; j++) {
-        const c2 = consultations[j];
+    // Check within each group for duplicates
+    groupedByUserPlan.forEach((group) => {
+      // Track seen dates for same-day duplicates
+      const seenDates = new Map<string, string>(); // date -> oldest id
 
-        // Since sorted by createdAt asc, break when time diff >= 5s
-        if (c2.createdAt.getTime() - c1.createdAt.getTime() >= 5000) {
-          break;
+      for (let i = 0; i < group.length; i++) {
+        const c = group[i];
+        const dateKey = c.createdAt.toISOString().split("T")[0];
+
+        // Check same-day duplicate
+        if (seenDates.has(dateKey)) {
+          duplicatesToCancel.add(c.id);
+          console.log(
+            `  Found same-day duplicate: ${c.id} (original: ${seenDates.get(dateKey)})`
+          );
+        } else {
+          seenDates.set(dateKey, c.id);
         }
 
-        if (
-          c1.requestedById === c2.requestedById &&
-          c1.consultationPlanId === c2.consultationPlanId
-        ) {
-          duplicatesToCancel.add(c2.id); // Cancel newer one
+        // Check within-5-second duplicates (break early since sorted by createdAt)
+        for (let j = i + 1; j < group.length; j++) {
+          const c2 = group[j];
+          if (c2.createdAt.getTime() - c.createdAt.getTime() >= 5000) {
+            break; // No more items within 5 seconds
+          }
+          duplicatesToCancel.add(c2.id);
           console.log(
-            `  Found exact duplicate (within 5s): ${c2.id} (original: ${c1.id})`
+            `  Found exact duplicate (within 5s): ${c2.id} (original: ${c.id})`
           );
         }
       }
-    }
+    });
 
     console.log(`📊 Found ${duplicatesToCancel.size} duplicate consultations`);
 
