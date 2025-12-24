@@ -20,7 +20,7 @@
  * Action: Marks invalid records as CANCELLED (preserves audit trail)
  */
 
-import { Prisma, PrismaClient, RequestStatus } from "@prisma/client";
+import { PrismaClient, RequestStatus } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
@@ -38,11 +38,21 @@ export interface CleanupResult {
 }
 
 // Statuses that should not be cleaned up (already terminal)
-const TERMINAL_STATUSES = [
+const TERMINAL_STATUSES: RequestStatus[] = [
   RequestStatus.CANCELLED,
   RequestStatus.REJECTED,
   RequestStatus.EXPIRED,
 ];
+
+/**
+ * Calculate the difference in months between two dates
+ */
+function monthsDiff(start: Date, end: Date): number {
+  return (
+    (end.getFullYear() - start.getFullYear()) * 12 +
+    (end.getMonth() - start.getMonth())
+  );
+}
 
 /**
  * Clean up duplicate consultations
@@ -64,85 +74,70 @@ export async function cleanupDuplicateConsultations(): Promise<{
   let cancelledCount = 0;
 
   try {
-    // Find duplicate consultations (same user + plan + same day)
-    // Using raw query for efficient duplicate detection
-    const duplicates = await prisma.$queryRaw<
-      Array<{ duplicate_id: string; original_id: string; reason: string }>
-    >`
-      WITH ranked_consultations AS (
-        SELECT
-          c.id,
-          c."requestedById",
-          c."consultationPlanId",
-          c."requestStatus",
-          c."createdAt",
-          ROW_NUMBER() OVER (
-            PARTITION BY c."requestedById", c."consultationPlanId", DATE(c."createdAt")
-            ORDER BY c."createdAt" ASC
-          ) as rn
-        FROM "Consultation" c
-        WHERE c."requestStatus" NOT IN (${Prisma.join(TERMINAL_STATUSES)})
-      )
-      SELECT
-        r.id as duplicate_id,
-        (SELECT id FROM ranked_consultations WHERE "requestedById" = r."requestedById"
-         AND "consultationPlanId" = r."consultationPlanId"
-         AND DATE("createdAt") = DATE(r."createdAt") AND rn = 1) as original_id,
-        'same_day_duplicate' as reason
-      FROM ranked_consultations r
-      WHERE r.rn > 1
+    // Fetch all non-terminal consultations
+    const consultations = await prisma.consultation.findMany({
+      where: { requestStatus: { notIn: TERMINAL_STATUSES } },
+      select: {
+        id: true,
+        requestedById: true,
+        consultationPlanId: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: "asc" },
+    });
 
-      UNION ALL
+    // Group by user + plan + date, find duplicates (keep oldest)
+    const seen = new Map<string, string>(); // key -> oldest id
+    const duplicatesToCancel = new Set<string>();
 
-      -- Exact duplicates (within 5 seconds)
-      SELECT DISTINCT ON (c1.id)
-        c1.id as duplicate_id,
-        c2.id as original_id,
-        'exact_duplicate_5s' as reason
-      FROM "Consultation" c1
-      JOIN "Consultation" c2 ON
-        c1.id != c2.id AND
-        c1."requestedById" = c2."requestedById" AND
-        c1."consultationPlanId" = c2."consultationPlanId" AND
-        ABS(EXTRACT(EPOCH FROM (c1."createdAt" - c2."createdAt"))) < 5 AND
-        c1."createdAt" > c2."createdAt"
-      WHERE c1."requestStatus" NOT IN (${Prisma.join(TERMINAL_STATUSES)})
-        AND c2."requestStatus" NOT IN (${Prisma.join(TERMINAL_STATUSES)})
-    `;
+    for (const c of consultations) {
+      const dateKey = c.createdAt.toISOString().split("T")[0];
+      const groupKey = `${c.requestedById}-${c.consultationPlanId}-${dateKey}`;
 
-    console.log(`📊 Found ${duplicates.length} duplicate consultations`);
-
-    // Cancel each duplicate
-    for (const dup of duplicates) {
-      try {
-        await prisma.consultation.update({
-          where: { id: dup.duplicate_id },
-          data: {
-            requestStatus: RequestStatus.CANCELLED,
-            updatedAt: new Date(),
-          },
-        });
-        cancelledCount++;
+      if (seen.has(groupKey)) {
+        duplicatesToCancel.add(c.id); // This is a duplicate (same day)
         console.log(
-          `✅ Cancelled duplicate consultation: ${dup.duplicate_id} (${dup.reason})`
+          `  Found same-day duplicate: ${c.id} (original: ${seen.get(groupKey)})`
         );
-      } catch (error) {
-        const errorMessage =
-          error instanceof Error ? error.message : "Unknown error";
-        errors.push(
-          `Failed to cancel consultation ${dup.duplicate_id}: ${errorMessage}`
-        );
-        console.error(
-          `❌ Failed to cancel consultation ${dup.duplicate_id}:`,
-          errorMessage
-        );
+      } else {
+        seen.set(groupKey, c.id);
       }
+    }
+
+    // Also check for exact duplicates within 5 seconds
+    for (let i = 0; i < consultations.length; i++) {
+      for (let j = i + 1; j < consultations.length; j++) {
+        const c1 = consultations[i];
+        const c2 = consultations[j];
+        if (
+          c1.requestedById === c2.requestedById &&
+          c1.consultationPlanId === c2.consultationPlanId &&
+          Math.abs(c1.createdAt.getTime() - c2.createdAt.getTime()) < 5000
+        ) {
+          duplicatesToCancel.add(c2.id); // Cancel newer one
+          console.log(
+            `  Found exact duplicate (within 5s): ${c2.id} (original: ${c1.id})`
+          );
+        }
+      }
+    }
+
+    console.log(`📊 Found ${duplicatesToCancel.size} duplicate consultations`);
+
+    // Batch cancel duplicates
+    if (duplicatesToCancel.size > 0) {
+      const result = await prisma.consultation.updateMany({
+        where: { id: { in: Array.from(duplicatesToCancel) } },
+        data: { requestStatus: RequestStatus.CANCELLED },
+      });
+      cancelledCount = result.count;
+      console.log(`✅ Cancelled ${cancelledCount} duplicate consultations`);
     }
   } catch (error) {
     const errorMessage =
       error instanceof Error ? error.message : "Unknown error";
-    errors.push(`Duplicate consultation query failed: ${errorMessage}`);
-    console.error("❌ Failed to find duplicate consultations:", errorMessage);
+    errors.push(`Duplicate consultation cleanup failed: ${errorMessage}`);
+    console.error("❌ Failed to cleanup duplicate consultations:", errorMessage);
   }
 
   return { count: cancelledCount, errors };
@@ -168,77 +163,77 @@ export async function cleanupDuplicateSubscriptions(): Promise<{
   let cancelledCount = 0;
 
   try {
-    // Find duplicate subscriptions (overlapping periods or exact duplicates)
-    const duplicates = await prisma.$queryRaw<
-      Array<{ duplicate_id: string; original_id: string; reason: string }>
-    >`
-      -- Overlapping scheduling periods
-      SELECT DISTINCT ON (s1.id)
-        s1.id as duplicate_id,
-        s2.id as original_id,
-        'overlapping_period' as reason
-      FROM "Subscription" s1
-      JOIN "Subscription" s2 ON
-        s1.id != s2.id AND
-        s1."requestedById" = s2."requestedById" AND
-        s1."subscriptionPlanId" = s2."subscriptionPlanId" AND
-        s1."schedulingPeriodStartsAt" < s2."schedulingPeriodEndsAt" AND
-        s1."schedulingPeriodEndsAt" > s2."schedulingPeriodStartsAt" AND
-        s1."createdAt" > s2."createdAt"
-      WHERE s1."requestStatus" NOT IN (${Prisma.join(TERMINAL_STATUSES)})
-        AND s2."requestStatus" NOT IN (${Prisma.join(TERMINAL_STATUSES)})
+    // Fetch all non-terminal subscriptions
+    const subscriptions = await prisma.subscription.findMany({
+      where: { requestStatus: { notIn: TERMINAL_STATUSES } },
+      select: {
+        id: true,
+        requestedById: true,
+        subscriptionPlanId: true,
+        schedulingPeriodStartsAt: true,
+        schedulingPeriodEndsAt: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: "asc" },
+    });
 
-      UNION ALL
+    const duplicatesToCancel = new Set<string>();
+    const seenByUserPlan = new Map<string, typeof subscriptions>();
 
-      -- Exact duplicates (within 5 seconds)
-      SELECT DISTINCT ON (s1.id)
-        s1.id as duplicate_id,
-        s2.id as original_id,
-        'exact_duplicate_5s' as reason
-      FROM "Subscription" s1
-      JOIN "Subscription" s2 ON
-        s1.id != s2.id AND
-        s1."requestedById" = s2."requestedById" AND
-        s1."subscriptionPlanId" = s2."subscriptionPlanId" AND
-        ABS(EXTRACT(EPOCH FROM (s1."createdAt" - s2."createdAt"))) < 5 AND
-        s1."createdAt" > s2."createdAt"
-      WHERE s1."requestStatus" NOT IN (${Prisma.join(TERMINAL_STATUSES)})
-        AND s2."requestStatus" NOT IN (${Prisma.join(TERMINAL_STATUSES)})
-    `;
+    // Group by user + plan
+    for (const s of subscriptions) {
+      const key = `${s.requestedById}-${s.subscriptionPlanId}`;
+      if (!seenByUserPlan.has(key)) seenByUserPlan.set(key, []);
+      seenByUserPlan.get(key)!.push(s);
+    }
 
-    console.log(`📊 Found ${duplicates.length} duplicate subscriptions`);
+    // Check for overlaps within each group
+    seenByUserPlan.forEach((group) => {
+      for (let i = 0; i < group.length; i++) {
+        for (let j = i + 1; j < group.length; j++) {
+          const s1 = group[i];
+          const s2 = group[j];
 
-    // Cancel each duplicate
-    for (const dup of duplicates) {
-      try {
-        await prisma.subscription.update({
-          where: { id: dup.duplicate_id },
-          data: {
-            requestStatus: RequestStatus.CANCELLED,
-            updatedAt: new Date(),
-          },
-        });
-        cancelledCount++;
-        console.log(
-          `✅ Cancelled duplicate subscription: ${dup.duplicate_id} (${dup.reason})`
-        );
-      } catch (error) {
-        const errorMessage =
-          error instanceof Error ? error.message : "Unknown error";
-        errors.push(
-          `Failed to cancel subscription ${dup.duplicate_id}: ${errorMessage}`
-        );
-        console.error(
-          `❌ Failed to cancel subscription ${dup.duplicate_id}:`,
-          errorMessage
-        );
+          // Check overlap
+          const overlaps =
+            s1.schedulingPeriodStartsAt < s2.schedulingPeriodEndsAt &&
+            s1.schedulingPeriodEndsAt > s2.schedulingPeriodStartsAt;
+
+          // Check within 5 seconds
+          const within5s =
+            Math.abs(s1.createdAt.getTime() - s2.createdAt.getTime()) < 5000;
+
+          if (overlaps) {
+            duplicatesToCancel.add(s2.id); // Cancel newer one
+            console.log(
+              `  Found overlapping subscription: ${s2.id} (overlaps with: ${s1.id})`
+            );
+          } else if (within5s) {
+            duplicatesToCancel.add(s2.id); // Cancel newer one
+            console.log(
+              `  Found exact duplicate (within 5s): ${s2.id} (original: ${s1.id})`
+            );
+          }
+        }
       }
+    });
+
+    console.log(`📊 Found ${duplicatesToCancel.size} duplicate subscriptions`);
+
+    // Batch cancel duplicates
+    if (duplicatesToCancel.size > 0) {
+      const result = await prisma.subscription.updateMany({
+        where: { id: { in: Array.from(duplicatesToCancel) } },
+        data: { requestStatus: RequestStatus.CANCELLED },
+      });
+      cancelledCount = result.count;
+      console.log(`✅ Cancelled ${cancelledCount} duplicate subscriptions`);
     }
   } catch (error) {
     const errorMessage =
       error instanceof Error ? error.message : "Unknown error";
-    errors.push(`Duplicate subscription query failed: ${errorMessage}`);
-    console.error("❌ Failed to find duplicate subscriptions:", errorMessage);
+    errors.push(`Duplicate subscription cleanup failed: ${errorMessage}`);
+    console.error("❌ Failed to cleanup duplicate subscriptions:", errorMessage);
   }
 
   return { count: cancelledCount, errors };
@@ -260,63 +255,58 @@ export async function cleanupInvalidDurationConsultations(): Promise<{
   let cancelledCount = 0;
 
   try {
-    // Find consultations where slot duration doesn't match plan duration
-    const invalidConsultations = await prisma.$queryRaw<
-      Array<{
-        consultation_id: string;
-        expected_hours: number;
-        actual_hours: number;
-      }>
-    >`
-      SELECT
-        c.id as consultation_id,
-        cp."durationInHours" as expected_hours,
-        EXTRACT(EPOCH FROM (s."endsAt" - s."startsAt"))/3600 as actual_hours
-      FROM "Consultation" c
-      JOIN "ConsultationPlan" cp ON c."consultationPlanId" = cp.id
-      JOIN "Appointment" a ON a."consultationId" = c.id
-      JOIN "SlotOfAppointment" s ON s."appointmentId" = a.id
-      WHERE c."requestStatus" NOT IN (${Prisma.join(TERMINAL_STATUSES)})
-        AND ABS(cp."durationInHours" - EXTRACT(EPOCH FROM (s."endsAt" - s."startsAt"))/3600) > 0.01
-    `;
-
-    console.log(
-      `📊 Found ${invalidConsultations.length} consultations with invalid durations`
-    );
-
-    // Cancel each invalid consultation
-    for (const invalid of invalidConsultations) {
-      try {
-        await prisma.consultation.update({
-          where: { id: invalid.consultation_id },
-          data: {
-            requestStatus: RequestStatus.CANCELLED,
-            updatedAt: new Date(),
+    // Fetch consultations with their plan and slots
+    const consultations = await prisma.consultation.findMany({
+      where: { requestStatus: { notIn: TERMINAL_STATUSES } },
+      include: {
+        consultationPlan: { select: { durationInHours: true } },
+        appointment: {
+          include: {
+            slotsOfAppointment: { select: { startsAt: true, endsAt: true } },
           },
-        });
-        cancelledCount++;
+        },
+      },
+    });
+
+    const invalidIds: string[] = [];
+
+    for (const c of consultations) {
+      if (!c.appointment?.slotsOfAppointment?.length) continue;
+
+      const expectedHours = c.consultationPlan.durationInHours;
+      const slot = c.appointment.slotsOfAppointment[0];
+      const actualHours =
+        (slot.endsAt.getTime() - slot.startsAt.getTime()) / (1000 * 60 * 60);
+
+      if (Math.abs(expectedHours - actualHours) > 0.01) {
+        invalidIds.push(c.id);
         console.log(
-          `✅ Cancelled invalid duration consultation: ${invalid.consultation_id} ` +
-            `(expected: ${invalid.expected_hours}h, actual: ${invalid.actual_hours.toFixed(2)}h)`
-        );
-      } catch (error) {
-        const errorMessage =
-          error instanceof Error ? error.message : "Unknown error";
-        errors.push(
-          `Failed to cancel consultation ${invalid.consultation_id}: ${errorMessage}`
-        );
-        console.error(
-          `❌ Failed to cancel consultation ${invalid.consultation_id}:`,
-          errorMessage
+          `  Found invalid duration: ${c.id} (expected: ${expectedHours}h, actual: ${actualHours.toFixed(2)}h)`
         );
       }
+    }
+
+    console.log(
+      `📊 Found ${invalidIds.length} consultations with invalid durations`
+    );
+
+    // Batch cancel invalid consultations
+    if (invalidIds.length > 0) {
+      const result = await prisma.consultation.updateMany({
+        where: { id: { in: invalidIds } },
+        data: { requestStatus: RequestStatus.CANCELLED },
+      });
+      cancelledCount = result.count;
+      console.log(
+        `✅ Cancelled ${cancelledCount} invalid duration consultations`
+      );
     }
   } catch (error) {
     const errorMessage =
       error instanceof Error ? error.message : "Unknown error";
-    errors.push(`Invalid duration consultation query failed: ${errorMessage}`);
+    errors.push(`Invalid duration consultation cleanup failed: ${errorMessage}`);
     console.error(
-      "❌ Failed to find invalid duration consultations:",
+      "❌ Failed to cleanup invalid duration consultations:",
       errorMessage
     );
   }
@@ -340,65 +330,52 @@ export async function cleanupInvalidDurationSubscriptions(): Promise<{
   let cancelledCount = 0;
 
   try {
-    // Find subscriptions where period doesn't match plan duration
-    const invalidSubscriptions = await prisma.$queryRaw<
-      Array<{
-        subscription_id: string;
-        expected_months: number;
-        actual_months: number;
-      }>
-    >`
-      SELECT
-        s.id as subscription_id,
-        sp."durationInMonths" as expected_months,
-        EXTRACT(MONTH FROM AGE(s."schedulingPeriodEndsAt", s."schedulingPeriodStartsAt")) +
-        EXTRACT(YEAR FROM AGE(s."schedulingPeriodEndsAt", s."schedulingPeriodStartsAt")) * 12 as actual_months
-      FROM "Subscription" s
-      JOIN "SubscriptionPlan" sp ON s."subscriptionPlanId" = sp.id
-      WHERE s."requestStatus" NOT IN (${Prisma.join(TERMINAL_STATUSES)})
-        AND (
-          EXTRACT(MONTH FROM AGE(s."schedulingPeriodEndsAt", s."schedulingPeriodStartsAt")) +
-          EXTRACT(YEAR FROM AGE(s."schedulingPeriodEndsAt", s."schedulingPeriodStartsAt")) * 12
-        ) != sp."durationInMonths"
-    `;
+    // Fetch subscriptions with their plans
+    const subscriptions = await prisma.subscription.findMany({
+      where: { requestStatus: { notIn: TERMINAL_STATUSES } },
+      include: {
+        subscriptionPlan: { select: { durationInMonths: true } },
+      },
+    });
 
-    console.log(
-      `📊 Found ${invalidSubscriptions.length} subscriptions with invalid periods`
-    );
+    const invalidIds: string[] = [];
 
-    // Cancel each invalid subscription
-    for (const invalid of invalidSubscriptions) {
-      try {
-        await prisma.subscription.update({
-          where: { id: invalid.subscription_id },
-          data: {
-            requestStatus: RequestStatus.CANCELLED,
-            updatedAt: new Date(),
-          },
-        });
-        cancelledCount++;
+    for (const s of subscriptions) {
+      const expectedMonths = s.subscriptionPlan.durationInMonths;
+      const actualMonths = monthsDiff(
+        s.schedulingPeriodStartsAt,
+        s.schedulingPeriodEndsAt
+      );
+
+      if (actualMonths !== expectedMonths) {
+        invalidIds.push(s.id);
         console.log(
-          `✅ Cancelled invalid duration subscription: ${invalid.subscription_id} ` +
-            `(expected: ${invalid.expected_months} months, actual: ${invalid.actual_months} months)`
-        );
-      } catch (error) {
-        const errorMessage =
-          error instanceof Error ? error.message : "Unknown error";
-        errors.push(
-          `Failed to cancel subscription ${invalid.subscription_id}: ${errorMessage}`
-        );
-        console.error(
-          `❌ Failed to cancel subscription ${invalid.subscription_id}:`,
-          errorMessage
+          `  Found invalid period: ${s.id} (expected: ${expectedMonths} months, actual: ${actualMonths} months)`
         );
       }
+    }
+
+    console.log(
+      `📊 Found ${invalidIds.length} subscriptions with invalid periods`
+    );
+
+    // Batch cancel invalid subscriptions
+    if (invalidIds.length > 0) {
+      const result = await prisma.subscription.updateMany({
+        where: { id: { in: invalidIds } },
+        data: { requestStatus: RequestStatus.CANCELLED },
+      });
+      cancelledCount = result.count;
+      console.log(
+        `✅ Cancelled ${cancelledCount} invalid duration subscriptions`
+      );
     }
   } catch (error) {
     const errorMessage =
       error instanceof Error ? error.message : "Unknown error";
-    errors.push(`Invalid duration subscription query failed: ${errorMessage}`);
+    errors.push(`Invalid duration subscription cleanup failed: ${errorMessage}`);
     console.error(
-      "❌ Failed to find invalid duration subscriptions:",
+      "❌ Failed to cleanup invalid duration subscriptions:",
       errorMessage
     );
   }
@@ -419,7 +396,9 @@ export async function cleanupInvalidDurationSubscriptions(): Promise<{
  */
 export async function runAllCleanupTasks(): Promise<CleanupResult> {
   const startTime = Date.now();
-  console.log(`\n🚀 Starting invalid appointment cleanup at ${new Date().toISOString()}\n`);
+  console.log(
+    `\n🚀 Starting invalid appointment cleanup at ${new Date().toISOString()}\n`
+  );
 
   const result: CleanupResult = {
     duplicateConsultationsCancelled: 0,
