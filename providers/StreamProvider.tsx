@@ -23,8 +23,9 @@ import { streamLogger } from "@/lib/stream-logger";
 import { initialSyncCompletedUsers } from "@/lib/stream-cache";
 import StreamErrorBoundary from "@/components/stream/StreamErrorBoundary";
 
-// Import Stream Chat CSS
+// Import Stream CSS (only loaded when StreamProvider is used)
 import "stream-chat-react/dist/css/v2/index.css";
+import "@stream-io/video-react-sdk/dist/css/styles.css";
 
 const apiKey = process.env.NEXT_PUBLIC_STREAM_API_KEY;
 

@@ -5,6 +5,22 @@ import * as AvatarPrimitive from "@radix-ui/react-avatar";
 
 import { cn } from "@/utils/tailwind";
 
+/**
+ * Optimizes GitHub avatar URLs by appending size parameter.
+ * GitHub avatars support ?s=SIZE to request appropriately sized images.
+ * Default size 80 provides 2x resolution for 40px display (retina).
+ */
+function optimizeAvatarUrl(
+  src: string | undefined,
+  size: number = 80,
+): string | undefined {
+  if (!src) return src;
+  if (src.includes("avatars.githubusercontent.com") && !src.includes("?s=")) {
+    return `${src}?s=${size}`;
+  }
+  return src;
+}
+
 const Avatar = React.forwardRef<
   React.ElementRef<typeof AvatarPrimitive.Root>,
   React.ComponentPropsWithoutRef<typeof AvatarPrimitive.Root>
@@ -20,12 +36,19 @@ const Avatar = React.forwardRef<
 ));
 Avatar.displayName = AvatarPrimitive.Root.displayName;
 
+interface AvatarImageProps
+  extends React.ComponentPropsWithoutRef<typeof AvatarPrimitive.Image> {
+  /** Size in pixels for GitHub avatar optimization (default: 80 for 2x retina) */
+  optimizedSize?: number;
+}
+
 const AvatarImage = React.forwardRef<
   React.ElementRef<typeof AvatarPrimitive.Image>,
-  React.ComponentPropsWithoutRef<typeof AvatarPrimitive.Image>
->(({ className, ...props }, ref) => (
+  AvatarImageProps
+>(({ className, src, optimizedSize = 80, ...props }, ref) => (
   <AvatarPrimitive.Image
     ref={ref}
+    src={optimizeAvatarUrl(src, optimizedSize)}
     className={cn("aspect-square h-full w-full", className)}
     {...props}
   />
