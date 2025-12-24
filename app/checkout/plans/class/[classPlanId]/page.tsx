@@ -20,11 +20,7 @@ import {
   createStripeCheckoutHandlers,
   handleUnifiedCheckout,
 } from "../../utils";
-import {
-  calculatePricing,
-  formatCurrency,
-  formatPercentage,
-} from "../../math";
+import { calculatePricing, formatCurrency, formatPercentage } from "../../math";
 
 import type {
   Appointment,
@@ -342,7 +338,8 @@ export default function ClassCheckoutPage({
               <div>
                 {planDetails?.durationInMonths} month
                 {planDetails?.durationInMonths !== 1 ? "s" : ""} (
-                {planDetails?.totalSessions || planDetails?.durationInMonths * 4}{" "}
+                {planDetails?.totalSessions ||
+                  planDetails?.durationInMonths * 4}{" "}
                 sessions)
               </div>
             </div>
@@ -430,7 +427,9 @@ export default function ClassCheckoutPage({
                           4}{" "}
                       hours)
                     </li>
-                    <li>{planDetails?.meetingsPerWeek || 2} sessions per week</li>
+                    <li>
+                      {planDetails?.meetingsPerWeek || 2} sessions per week
+                    </li>
                     <li>Course materials</li>
                     <li>Certificate of completion</li>
                   </ul>
@@ -507,7 +506,9 @@ export default function ClassCheckoutPage({
                   <div className="flex items-center gap-4">
                     <CreditCardIcon className="w-8 h-8 text-zinc-600" />
                     <div>
-                      <div className="font-semibold text-zinc-900">Credit/Debit Card</div>
+                      <div className="font-semibold text-zinc-900">
+                        Credit/Debit Card
+                      </div>
                       <div className="text-sm text-zinc-500">
                         {gateway.description}
                       </div>

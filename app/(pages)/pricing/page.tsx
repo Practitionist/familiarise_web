@@ -26,7 +26,9 @@ export default function PricingPage() {
       <div className="container mx-auto px-4 md:px-6 py-8">
         {/* Hero Section */}
         <div className="text-center mb-12">
-          <h1 className="text-4xl md:text-5xl font-bold mb-4">{PAGE_META.pricing.title}</h1>
+          <h1 className="text-4xl md:text-5xl font-bold mb-4">
+            {PAGE_META.pricing.title}
+          </h1>
           <p className="text-xl text-muted-foreground max-w-3xl mx-auto">
             {PAGE_META.pricing.description}
           </p>
@@ -211,7 +213,9 @@ export default function PricingPage() {
                 </p>
                 <div className="flex flex-wrap gap-2">
                   {PRICING_DATA.paymentMethods.map((method) => (
-                    <Badge key={method} variant="outline">{method}</Badge>
+                    <Badge key={method} variant="outline">
+                      {method}
+                    </Badge>
                   ))}
                 </div>
               </div>
@@ -252,7 +256,8 @@ export default function PricingPage() {
                       {faq.answer}
                       {faq.question.includes("refund") && (
                         <>
-                          {" "}Please refer to our{" "}
+                          {" "}
+                          Please refer to our{" "}
                           <Link
                             href="/refund"
                             className="text-blue-600 hover:underline"

@@ -14,7 +14,12 @@ import {
 import { upsertUserToStream } from "./user.action";
 
 // Validation schemas
-const eventTypeSchema = z.enum(["webinar", "class", "consultation", "subscription"]);
+const eventTypeSchema = z.enum([
+  "webinar",
+  "class",
+  "consultation",
+  "subscription",
+]);
 const eventIdSchema = z.string().min(1, "Event ID is required");
 const userIdSchema = z.string().min(1, "User ID is required");
 
@@ -52,7 +57,10 @@ export async function checkEventChannelExists(
   // Check cache first
   const cached = isChannelCached(channelType, channelId);
   if (cached !== undefined) {
-    streamLogger.debug("Channel existence from cache", { channelId, exists: cached });
+    streamLogger.debug("Channel existence from cache", {
+      channelId,
+      exists: cached,
+    });
     return cached;
   }
 
@@ -108,11 +116,16 @@ export async function addUserToEventChannel(
     try {
       await channel.addMembers([userId]);
       markMembership(channelId, userId, true);
-      streamLogger.debug("Added user to existing channel", { channelId, userId });
+      streamLogger.debug("Added user to existing channel", {
+        channelId,
+        userId,
+      });
       return { success: true, channelId };
     } catch (addError) {
       // Channel might not exist, try to create it
-      streamLogger.debug("Channel may not exist, attempting creation", { channelId });
+      streamLogger.debug("Channel may not exist, attempting creation", {
+        channelId,
+      });
     }
 
     // Channel doesn't exist, create it based on event type
@@ -170,13 +183,17 @@ async function getEventData(eventType: EventType, eventId: string) {
         include: {
           webinarPlan: {
             include: {
-              consultantProfile: { include: { user: { select: { id: true } } } },
+              consultantProfile: {
+                include: { user: { select: { id: true } } },
+              },
             },
           },
           waitlist: { select: { userId: true } },
           appointment: {
             include: {
-              slotsOfAppointment: { include: { user: { select: { id: true } } } },
+              slotsOfAppointment: {
+                include: { user: { select: { id: true } } },
+              },
             },
           },
         },
@@ -202,13 +219,17 @@ async function getEventData(eventType: EventType, eventId: string) {
         include: {
           classPlan: {
             include: {
-              consultantProfile: { include: { user: { select: { id: true } } } },
+              consultantProfile: {
+                include: { user: { select: { id: true } } },
+              },
             },
           },
           waitlist: { select: { userId: true } },
           appointments: {
             include: {
-              slotsOfAppointment: { include: { user: { select: { id: true } } } },
+              slotsOfAppointment: {
+                include: { user: { select: { id: true } } },
+              },
             },
           },
         },
@@ -221,7 +242,8 @@ async function getEventData(eventType: EventType, eventId: string) {
       const members = [
         ...classData.waitlist.map((w) => w.userId),
         ...(classData.appointments?.flatMap(
-          (a) => a.slotsOfAppointment?.flatMap((s) => s.user.map((u) => u.id)) || [],
+          (a) =>
+            a.slotsOfAppointment?.flatMap((s) => s.user.map((u) => u.id)) || [],
         ) || []),
       ];
 
@@ -234,7 +256,9 @@ async function getEventData(eventType: EventType, eventId: string) {
         include: {
           consultationPlan: {
             include: {
-              consultantProfile: { include: { user: { select: { id: true } } } },
+              consultantProfile: {
+                include: { user: { select: { id: true } } },
+              },
             },
           },
           requestedBy: { include: { user: { select: { id: true } } } },
@@ -242,7 +266,8 @@ async function getEventData(eventType: EventType, eventId: string) {
       });
       if (!consultation) return null;
 
-      const consultantId = consultation.consultationPlan.consultantProfile?.user?.id;
+      const consultantId =
+        consultation.consultationPlan.consultantProfile?.user?.id;
       const consulteeId = consultation.requestedBy?.user?.id;
       if (!consultantId || !consulteeId) return null;
 
@@ -259,7 +284,9 @@ async function getEventData(eventType: EventType, eventId: string) {
         include: {
           subscriptionPlan: {
             include: {
-              consultantProfile: { include: { user: { select: { id: true } } } },
+              consultantProfile: {
+                include: { user: { select: { id: true } } },
+              },
             },
           },
           requestedBy: { include: { user: { select: { id: true } } } },
@@ -267,7 +294,8 @@ async function getEventData(eventType: EventType, eventId: string) {
       });
       if (!subscription) return null;
 
-      const consultantId = subscription.subscriptionPlan.consultantProfile?.user?.id;
+      const consultantId =
+        subscription.subscriptionPlan.consultantProfile?.user?.id;
       const consulteeId = subscription.requestedBy?.user?.id;
       if (!consultantId || !consulteeId) return null;
 
@@ -320,7 +348,9 @@ export async function syncUserEventChannels(userId: string) {
 
   // Check if sync already completed for this user in this session
   if (initialSyncCompletedUsers.has(userId)) {
-    streamLogger.debug("Sync already completed for user this session", { userId });
+    streamLogger.debug("Sync already completed for user this session", {
+      userId,
+    });
     return { success: true, skipped: true };
   }
 
@@ -349,12 +379,14 @@ export async function syncUserEventChannels(userId: string) {
     const eventIds: { type: EventType; id: string }[] = [];
 
     // Batch query all events in parallel
-    const [webinars, classes, consultations, subscriptions] = await Promise.all([
-      getWebinarIdsForUser(userId, user),
-      getClassIdsForUser(userId, user),
-      getConsultationIdsForUser(user),
-      getSubscriptionIdsForUser(user),
-    ]);
+    const [webinars, classes, consultations, subscriptions] = await Promise.all(
+      [
+        getWebinarIdsForUser(userId, user),
+        getClassIdsForUser(userId, user),
+        getConsultationIdsForUser(user),
+        getSubscriptionIdsForUser(user),
+      ],
+    );
 
     webinars.forEach((id) => eventIds.push({ type: "webinar", id }));
     classes.forEach((id) => eventIds.push({ type: "class", id }));
@@ -384,7 +416,9 @@ export async function syncUserEventChannels(userId: string) {
       const batch = eventIds.slice(i, i + BATCH_SIZE);
 
       const results = await Promise.allSettled(
-        batch.map((event) => addUserToEventChannel(event.type, event.id, userId)),
+        batch.map((event) =>
+          addUserToEventChannel(event.type, event.id, userId),
+        ),
       );
 
       results.forEach((result) => {
@@ -421,7 +455,10 @@ export async function syncUserEventChannels(userId: string) {
  */
 async function getWebinarIdsForUser(
   userId: string,
-  user: { consultantProfileId: string | null; consulteeProfileId: string | null },
+  user: {
+    consultantProfileId: string | null;
+    consulteeProfileId: string | null;
+  },
 ): Promise<string[]> {
   if (user.consultantProfileId) {
     // Consultant: get webinars they host
@@ -451,7 +488,10 @@ async function getWebinarIdsForUser(
   ]);
 
   return Array.from(
-    new Set([...waitlistWebinars.map((w) => w.id), ...appointmentWebinars.map((w) => w.id)]),
+    new Set([
+      ...waitlistWebinars.map((w) => w.id),
+      ...appointmentWebinars.map((w) => w.id),
+    ]),
   );
 }
 
@@ -460,7 +500,10 @@ async function getWebinarIdsForUser(
  */
 async function getClassIdsForUser(
   userId: string,
-  user: { consultantProfileId: string | null; consulteeProfileId: string | null },
+  user: {
+    consultantProfileId: string | null;
+    consulteeProfileId: string | null;
+  },
 ): Promise<string[]> {
   if (user.consultantProfileId) {
     // Consultant: get classes they host
@@ -492,7 +535,10 @@ async function getClassIdsForUser(
   ]);
 
   return Array.from(
-    new Set([...waitlistClasses.map((c) => c.id), ...appointmentClasses.map((c) => c.id)]),
+    new Set([
+      ...waitlistClasses.map((c) => c.id),
+      ...appointmentClasses.map((c) => c.id),
+    ]),
   );
 }
 
@@ -512,9 +558,15 @@ async function getConsultationIdsForUser(user: {
       requestStatus: { in: ["APPROVED", "SCHEDULED"] },
       OR: [
         user.consultantProfileId
-          ? { consultationPlan: { consultantProfileId: user.consultantProfileId } }
+          ? {
+              consultationPlan: {
+                consultantProfileId: user.consultantProfileId,
+              },
+            }
           : {},
-        user.consulteeProfileId ? { requestedById: user.consulteeProfileId } : {},
+        user.consulteeProfileId
+          ? { requestedById: user.consulteeProfileId }
+          : {},
       ].filter((o) => Object.keys(o).length > 0),
     },
     select: { id: true },
@@ -539,9 +591,15 @@ async function getSubscriptionIdsForUser(user: {
       requestStatus: { in: ["APPROVED", "SCHEDULED"] },
       OR: [
         user.consultantProfileId
-          ? { subscriptionPlan: { consultantProfileId: user.consultantProfileId } }
+          ? {
+              subscriptionPlan: {
+                consultantProfileId: user.consultantProfileId,
+              },
+            }
           : {},
-        user.consulteeProfileId ? { requestedById: user.consulteeProfileId } : {},
+        user.consulteeProfileId
+          ? { requestedById: user.consulteeProfileId }
+          : {},
       ].filter((o) => Object.keys(o).length > 0),
     },
     select: { id: true },

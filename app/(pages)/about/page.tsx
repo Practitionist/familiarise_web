@@ -4,7 +4,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { Users, Target, Award, BookOpen } from "lucide-react";
-import { COMPANY_INFO, PAGE_META, ABOUT_DATA, getMailtoLink } from "../constants";
+import {
+  COMPANY_INFO,
+  PAGE_META,
+  ABOUT_DATA,
+  getMailtoLink,
+} from "../constants";
 
 export default function AboutPage() {
   return (
@@ -33,16 +38,12 @@ export default function AboutPage() {
             <CardContent className="space-y-4">
               <div>
                 <h3 className="font-semibold text-lg mb-2">Mission</h3>
-                <p className="text-muted-foreground">
-                  {ABOUT_DATA.mission}
-                </p>
+                <p className="text-muted-foreground">{ABOUT_DATA.mission}</p>
               </div>
               <Separator />
               <div>
                 <h3 className="font-semibold text-lg mb-2">Vision</h3>
-                <p className="text-muted-foreground">
-                  {ABOUT_DATA.vision}
-                </p>
+                <p className="text-muted-foreground">{ABOUT_DATA.vision}</p>
               </div>
             </CardContent>
           </Card>

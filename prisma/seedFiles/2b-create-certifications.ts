@@ -11,10 +11,10 @@ import {
  * Should be called after users are created
  */
 export async function createCertifications(
-  consultants: UserWithProfiles[]
+  consultants: UserWithProfiles[],
 ): Promise<void> {
   console.log(
-    `Creating certifications for ${consultants.length} consultants...`
+    `Creating certifications for ${consultants.length} consultants...`,
   );
 
   for (const consultant of consultants) {
@@ -40,7 +40,7 @@ export async function createCertifications(
           ? new Date(
               issueDate.getFullYear() + faker.number.int({ min: 2, max: 5 }),
               issueDate.getMonth(),
-              issueDate.getDate()
+              issueDate.getDate(),
             )
           : null;
 
@@ -63,7 +63,7 @@ export async function createCertifications(
     } catch (error) {
       console.error(
         `Failed to create certifications for consultant ${consultant.id}:`,
-        error
+        error,
       );
     }
   }

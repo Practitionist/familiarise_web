@@ -9,15 +9,15 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { CATEGORIES } from "./data";
 
-function CategoryCard({ 
-  category, 
-  index 
-}: { 
-  category: { icon: LucideIcon; name: string; count: string; color: string }; 
-  index: number 
+function CategoryCard({
+  category,
+  index,
+}: {
+  category: { icon: LucideIcon; name: string; count: string; color: string };
+  index: number;
 }) {
   const Icon = category.icon;
-  
+
   return (
     <motion.div
       initial={{ opacity: 0, scale: 0.9 }}
@@ -28,7 +28,9 @@ function CategoryCard({
       <Link href={`/explore/experts?category=${category.name.toLowerCase()}`}>
         <Card className="group cursor-pointer border border-zinc-200 bg-white hover:border-zinc-400 transition-all duration-300 hover:-translate-y-1 hover:shadow-lg">
           <CardContent className="p-6 flex items-center gap-4">
-            <div className={`w-12 h-12 rounded-xl ${category.color} flex items-center justify-center group-hover:scale-110 transition-transform`}>
+            <div
+              className={`w-12 h-12 rounded-xl ${category.color} flex items-center justify-center group-hover:scale-110 transition-transform`}
+            >
               <Icon className="w-6 h-6 text-white" />
             </div>
             <div>
@@ -47,7 +49,7 @@ export function CategoriesSection() {
   return (
     <section className="py-20 md:py-32 bg-gradient-to-b from-white to-zinc-50 relative overflow-hidden">
       <div className="absolute inset-0 grid-pattern-dark opacity-30" />
-      
+
       <div className="container mx-auto px-4 md:px-6 relative z-10">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -56,7 +58,10 @@ export function CategoriesSection() {
           viewport={{ once: true }}
           className="text-center mb-12"
         >
-          <Badge variant="secondary" className="mb-4 bg-zinc-100 text-zinc-700 hover:bg-zinc-100 border-0">
+          <Badge
+            variant="secondary"
+            className="mb-4 bg-zinc-100 text-zinc-700 hover:bg-zinc-100 border-0"
+          >
             Categories
           </Badge>
           <h2 className="text-3xl md:text-4xl lg:text-5xl font-bold text-zinc-900 mb-4">
@@ -69,7 +74,11 @@ export function CategoriesSection() {
 
         <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {CATEGORIES.map((category, index) => (
-            <CategoryCard key={category.name} category={category} index={index} />
+            <CategoryCard
+              key={category.name}
+              category={category}
+              index={index}
+            />
           ))}
         </div>
 
@@ -81,7 +90,11 @@ export function CategoriesSection() {
           className="text-center mt-10"
         >
           <Link href="/explore/experts">
-            <Button variant="outline" size="lg" className="border-zinc-300 hover:bg-zinc-100">
+            <Button
+              variant="outline"
+              size="lg"
+              className="border-zinc-300 hover:bg-zinc-100"
+            >
               View All Categories
               <ChevronRight className="ml-2 w-4 h-4" />
             </Button>
@@ -91,4 +104,3 @@ export function CategoriesSection() {
     </section>
   );
 }
-

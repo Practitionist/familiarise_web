@@ -30,11 +30,7 @@ import {
   createStripeCheckoutHandlers,
   createRazorpayCheckoutHandlers,
 } from "../../utils";
-import {
-  calculatePricing,
-  formatCurrency,
-  formatPercentage,
-} from "../../math";
+import { calculatePricing, formatCurrency, formatPercentage } from "../../math";
 
 type SubscriptionPlanWithConsultant = SubscriptionPlan & {
   consultantProfile: ConsultantProfile & {
@@ -376,11 +372,24 @@ export default function SubscriptionCheckoutPage({
             </div>
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Total Sessions</div>
-              <div>{planData?.data?.totalSessions || (planData?.data?.callsPerWeek || 1) * (planData?.data?.durationInMonths || 1) * 4} sessions</div>
+              <div>
+                {planData?.data?.totalSessions ||
+                  (planData?.data?.callsPerWeek || 1) *
+                    (planData?.data?.durationInMonths || 1) *
+                    4}{" "}
+                sessions
+              </div>
             </div>
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Total Hours</div>
-              <div>{planData?.data?.totalHours || (planData?.data?.callsPerWeek || 1) * (planData?.data?.durationInMonths || 1) * 4 * (planData?.data?.sessionDurationInHours || 1)} hours</div>
+              <div>
+                {planData?.data?.totalHours ||
+                  (planData?.data?.callsPerWeek || 1) *
+                    (planData?.data?.durationInMonths || 1) *
+                    4 *
+                    (planData?.data?.sessionDurationInHours || 1)}{" "}
+                hours
+              </div>
             </div>
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Email Support</div>
@@ -436,13 +445,17 @@ export default function SubscriptionCheckoutPage({
       <div className="flex flex-col gap-8 p-8 bg-white">
         <Card className="border-zinc-200 shadow-sm">
           <CardHeader>
-            <CardTitle className="text-zinc-900">Subscription Pricing</CardTitle>
+            <CardTitle className="text-zinc-900">
+              Subscription Pricing
+            </CardTitle>
           </CardHeader>
           <CardContent className="grid gap-4">
             <div className="grid gap-2">
               <div className="flex items-center justify-between">
                 <div>Monthly Fee</div>
-                <div>{formatCurrency(planData?.data?.price || 100, currency)}</div>
+                <div>
+                  {formatCurrency(planData?.data?.price || 100, currency)}
+                </div>
               </div>
               <div className="flex items-center justify-between">
                 <div className="flex items-center">
@@ -465,7 +478,8 @@ export default function SubscriptionCheckoutPage({
                     </li>
                     <li>{planData?.data?.callsPerWeek || 1} calls per week</li>
                     <li>
-                      {planData?.data?.sessionDurationInHours || 1} hour sessions
+                      {planData?.data?.sessionDurationInHours || 1} hour
+                      sessions
                     </li>
                     <li>
                       {planData?.data?.emailSupport || "General"} email support
@@ -547,7 +561,9 @@ export default function SubscriptionCheckoutPage({
                   <div className="flex items-center gap-4">
                     <CreditCardIcon className="w-8 h-8 text-zinc-600" />
                     <div>
-                      <div className="font-semibold text-zinc-900">Credit/Debit Card</div>
+                      <div className="font-semibold text-zinc-900">
+                        Credit/Debit Card
+                      </div>
                       <div className="text-sm text-zinc-500">
                         {gateway.description}
                       </div>

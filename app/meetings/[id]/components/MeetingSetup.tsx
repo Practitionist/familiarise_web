@@ -222,7 +222,7 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
     <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-br from-zinc-900 via-zinc-800 to-zinc-900 p-4">
       {/* Background pattern */}
       <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZyBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPjxnIGZpbGw9IiMyMjIiIGZpbGwtb3BhY2l0eT0iMC4wNSI+PGNpcmNsZSBjeD0iMzAiIGN5PSIzMCIgcj0iMiIvPjwvZz48L2c+PC9zdmc+')] opacity-50" />
-      
+
       <div className="relative z-10 w-full max-w-lg">
         {/* Card */}
         <div className="bg-white/95 backdrop-blur-xl rounded-2xl shadow-2xl border border-zinc-200/50 overflow-hidden">
@@ -238,7 +238,10 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
 
           {/* Video Preview */}
           <div className="px-6 pb-4">
-            <div className="relative rounded-xl overflow-hidden bg-zinc-900 shadow-inner" style={{ aspectRatio: "16/9" }}>
+            <div
+              className="relative rounded-xl overflow-hidden bg-zinc-900 shadow-inner"
+              style={{ aspectRatio: "16/9" }}
+            >
               <VideoPreview
                 mirror={true}
                 className="w-full h-full object-cover"
@@ -248,24 +251,42 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
                   <div className="w-20 h-20 rounded-full bg-zinc-800 flex items-center justify-center mb-3">
                     <VideoOff className="w-8 h-8 text-zinc-500" />
                   </div>
-                  <p className="text-zinc-400 text-sm font-medium">Camera is off</p>
+                  <p className="text-zinc-400 text-sm font-medium">
+                    Camera is off
+                  </p>
                 </div>
               )}
-              
+
               {/* Camera/Mic status indicators */}
               <div className="absolute bottom-3 left-3 flex gap-2">
-                <div className={cn(
-                  "px-2.5 py-1 rounded-full text-xs font-medium flex items-center gap-1.5 backdrop-blur-sm",
-                  isMicOn ? "bg-green-500/20 text-green-400" : "bg-red-500/20 text-red-400"
-                )}>
-                  {isMicOn ? <Mic className="w-3 h-3" /> : <MicOff className="w-3 h-3" />}
+                <div
+                  className={cn(
+                    "px-2.5 py-1 rounded-full text-xs font-medium flex items-center gap-1.5 backdrop-blur-sm",
+                    isMicOn
+                      ? "bg-green-500/20 text-green-400"
+                      : "bg-red-500/20 text-red-400",
+                  )}
+                >
+                  {isMicOn ? (
+                    <Mic className="w-3 h-3" />
+                  ) : (
+                    <MicOff className="w-3 h-3" />
+                  )}
                   {isMicOn ? "Mic on" : "Mic off"}
                 </div>
-                <div className={cn(
-                  "px-2.5 py-1 rounded-full text-xs font-medium flex items-center gap-1.5 backdrop-blur-sm",
-                  isCameraOn ? "bg-green-500/20 text-green-400" : "bg-red-500/20 text-red-400"
-                )}>
-                  {isCameraOn ? <Video className="w-3 h-3" /> : <VideoOff className="w-3 h-3" />}
+                <div
+                  className={cn(
+                    "px-2.5 py-1 rounded-full text-xs font-medium flex items-center gap-1.5 backdrop-blur-sm",
+                    isCameraOn
+                      ? "bg-green-500/20 text-green-400"
+                      : "bg-red-500/20 text-red-400",
+                  )}
+                >
+                  {isCameraOn ? (
+                    <Video className="w-3 h-3" />
+                  ) : (
+                    <VideoOff className="w-3 h-3" />
+                  )}
                   {isCameraOn ? "Camera on" : "Camera off"}
                 </div>
               </div>
@@ -300,12 +321,16 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
                 onClick={toggleMic}
                 className={cn(
                   "w-14 h-14 rounded-full flex items-center justify-center transition-all duration-200",
-                  isMicOn 
-                    ? "bg-zinc-900 text-white hover:bg-zinc-800" 
-                    : "bg-red-500 text-white hover:bg-red-600"
+                  isMicOn
+                    ? "bg-zinc-900 text-white hover:bg-zinc-800"
+                    : "bg-red-500 text-white hover:bg-red-600",
                 )}
               >
-                {isMicOn ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
+                {isMicOn ? (
+                  <Mic className="w-5 h-5" />
+                ) : (
+                  <MicOff className="w-5 h-5" />
+                )}
               </button>
 
               {/* Camera Toggle */}
@@ -313,12 +338,16 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
                 onClick={toggleCamera}
                 className={cn(
                   "w-14 h-14 rounded-full flex items-center justify-center transition-all duration-200",
-                  isCameraOn 
-                    ? "bg-zinc-900 text-white hover:bg-zinc-800" 
-                    : "bg-red-500 text-white hover:bg-red-600"
+                  isCameraOn
+                    ? "bg-zinc-900 text-white hover:bg-zinc-800"
+                    : "bg-red-500 text-white hover:bg-red-600",
                 )}
               >
-                {isCameraOn ? <Video className="w-5 h-5" /> : <VideoOff className="w-5 h-5" />}
+                {isCameraOn ? (
+                  <Video className="w-5 h-5" />
+                ) : (
+                  <VideoOff className="w-5 h-5" />
+                )}
               </button>
 
               {/* Settings Toggle */}
@@ -326,9 +355,9 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
                 onClick={() => setShowSettings(!showSettings)}
                 className={cn(
                   "w-14 h-14 rounded-full flex items-center justify-center transition-all duration-200",
-                  showSettings 
-                    ? "bg-zinc-900 text-white" 
-                    : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
+                  showSettings
+                    ? "bg-zinc-900 text-white"
+                    : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200",
                 )}
               >
                 <Settings className="w-5 h-5" />
@@ -338,7 +367,9 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
             {/* Device Settings */}
             {showSettings && (
               <div className="mt-4 p-4 bg-zinc-50 rounded-xl border border-zinc-200">
-                <p className="text-sm font-medium text-zinc-700 mb-3">Device Settings</p>
+                <p className="text-sm font-medium text-zinc-700 mb-3">
+                  Device Settings
+                </p>
                 <DeviceSettings />
               </div>
             )}

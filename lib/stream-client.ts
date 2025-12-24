@@ -144,4 +144,3 @@ export function resetClients(): void {
 
 // Type exports for external use
 export type { StreamChat };
-

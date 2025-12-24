@@ -29,11 +29,16 @@ const DISPUTE_REASONS = [
 // Human-readable reason descriptions
 const REASON_DESCRIPTIONS: Record<string, string> = {
   fraudulent: "Customer claims they did not authorize this transaction",
-  product_not_received: "Customer claims they did not receive the consultation service",
-  product_unacceptable: "Customer claims the consultation did not meet expectations",
-  credit_not_processed: "Customer claims they were promised a refund that was not processed",
-  duplicate: "Customer claims they were charged multiple times for the same service",
-  subscription_canceled: "Customer claims they canceled their subscription before being charged",
+  product_not_received:
+    "Customer claims they did not receive the consultation service",
+  product_unacceptable:
+    "Customer claims the consultation did not meet expectations",
+  credit_not_processed:
+    "Customer claims they were promised a refund that was not processed",
+  duplicate:
+    "Customer claims they were charged multiple times for the same service",
+  subscription_canceled:
+    "Customer claims they canceled their subscription before being charged",
   unrecognized: "Customer does not recognize this charge",
   general: "General dispute without specific category",
 };
@@ -61,7 +66,10 @@ function generateDisputeId(gateway: PaymentGateway): string {
 /**
  * Generate realistic dispute evidence
  */
-function generateEvidence(reason: string, status: DisputeStatus): Record<string, any> {
+function generateEvidence(
+  reason: string,
+  status: DisputeStatus,
+): Record<string, any> {
   const baseEvidence: Record<string, any> = {
     customer_name: faker.person.fullName(),
     customer_email: faker.internet.email(),
@@ -77,12 +85,15 @@ function generateEvidence(reason: string, status: DisputeStatus): Record<string,
   // Add evidence based on reason
   if (reason === "product_not_received" || reason === "product_unacceptable") {
     baseEvidence.service_date = faker.date.recent({ days: 60 }).toISOString();
-    baseEvidence.service_documentation = "Session notes and recording available";
+    baseEvidence.service_documentation =
+      "Session notes and recording available";
     baseEvidence.customer_communication = "Pre-session confirmation email sent";
   }
 
   if (reason === "fraudulent") {
-    baseEvidence.customer_signature = faker.datatype.boolean({ probability: 0.5 });
+    baseEvidence.customer_signature = faker.datatype.boolean({
+      probability: 0.5,
+    });
     baseEvidence.customer_ip_address = faker.internet.ip();
     baseEvidence.customer_email_verified = true;
   }
@@ -143,7 +154,9 @@ export async function createDisputes(): Promise<void> {
       // Due date for response (7-21 days from creation for active disputes)
       let dueBy: Date | null = null;
       if (["WARNING_NEEDS_RESPONSE", "NEEDS_RESPONSE"].includes(status)) {
-        dueBy = faker.date.soon({ days: faker.number.int({ min: 7, max: 21 }) });
+        dueBy = faker.date.soon({
+          days: faker.number.int({ min: 7, max: 21 }),
+        });
       }
 
       // Charge refundable status

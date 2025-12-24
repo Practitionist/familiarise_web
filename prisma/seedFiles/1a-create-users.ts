@@ -294,7 +294,9 @@ async function createConsultantProfileData() {
       : faker.datatype.boolean({ probability: 0.2 });
 
   // Total mentees helped
-  const totalMenteesHelped = Math.floor(experience * faker.number.int({ min: 5, max: 20 }));
+  const totalMenteesHelped = Math.floor(
+    experience * faker.number.int({ min: 5, max: 20 }),
+  );
 
   return {
     rating: faker.number.float({ min: 3.5, max: 5, multipleOf: 0.1 }),
@@ -416,13 +418,8 @@ function createStaffProfileData(staffIndex: number, managerIds: string[]) {
     },
     responsibilities: {
       responsibilities: faker.helpers.arrayElements(
-        [
-          "manage team",
-          "oversee projects",
-          "allocate resources",
-          "budget",
-        ],
-        { min: 1, max: 4 }
+        ["manage team", "oversee projects", "allocate resources", "budget"],
+        { min: 1, max: 4 },
       ),
     },
 
@@ -473,12 +470,8 @@ export async function createUsers(): Promise<UserWithProfiles[]> {
   let adminIndex = 0;
 
   console.log(`Creating ${NUM_USERS} users...`);
-  console.log(
-    `  - ${NUM_CONSULTANTS} consultants`
-  );
-  console.log(
-    `  - ${NUM_CONSULTEES} consultees`
-  );
+  console.log(`  - ${NUM_CONSULTANTS} consultants`);
+  console.log(`  - ${NUM_CONSULTEES} consultees`);
   console.log(`  - ${NUM_STAFF} staff members`);
   console.log(`  - ${NUM_ADMINS} admins`);
 
@@ -527,7 +520,9 @@ export async function createUsers(): Promise<UserWithProfiles[]> {
         linkedinUrl: faker.datatype.boolean({ probability: 0.5 })
           ? `https://linkedin.com/in/${faker.internet.username()}`
           : null,
-        bio: faker.datatype.boolean({ probability: 0.7 }) ? generateBio() : null,
+        bio: faker.datatype.boolean({ probability: 0.7 })
+          ? generateBio()
+          : null,
 
         cookiePreferences: {
           create: {

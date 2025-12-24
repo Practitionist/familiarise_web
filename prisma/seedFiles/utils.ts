@@ -73,12 +73,12 @@ export function generateDateOfBirth(): Date {
   const minDate = new Date(
     now.getFullYear() - maxAge,
     now.getMonth(),
-    now.getDate()
+    now.getDate(),
   );
   const maxDate = new Date(
     now.getFullYear() - minAge,
     now.getMonth(),
-    now.getDate()
+    now.getDate(),
   );
   return faker.date.between({ from: minDate, to: maxDate });
 }

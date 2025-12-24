@@ -8,7 +8,14 @@ import { Domain, SubDomain, Tag } from "@prisma/client";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { TConsultantProfile } from "@/types/consultant";
-import { Star, MapPin, Clock, Briefcase, ArrowRight, CheckCircle2 } from "lucide-react";
+import {
+  Star,
+  MapPin,
+  Clock,
+  Briefcase,
+  ArrowRight,
+  CheckCircle2,
+} from "lucide-react";
 import { formatCurrency } from "@/app/checkout/plans/math";
 
 interface ConsultantCardProps {
@@ -32,7 +39,9 @@ const ConsultantInfo = ({
   <div className="flex items-center gap-2 text-sm">
     <Icon className="w-4 h-4 text-zinc-400" />
     <span className="text-zinc-500">{label}:</span>
-    <span className="text-zinc-800 font-medium">{value || "Not specified"}</span>
+    <span className="text-zinc-800 font-medium">
+      {value || "Not specified"}
+    </span>
   </div>
 );
 
@@ -55,7 +64,9 @@ const SubscriptionPlanCard = ({ plan }: { plan: any }) => {
   return (
     <div className="bg-white rounded-xl p-5 border border-zinc-200">
       <div className="flex items-baseline justify-between mb-4">
-        <div className="text-3xl font-bold text-zinc-900">{formatCurrency(plan.price / 100, plan.priceCurrency || "INR")}</div>
+        <div className="text-3xl font-bold text-zinc-900">
+          {formatCurrency(plan.price / 100, plan.priceCurrency || "INR")}
+        </div>
         <div className="text-sm text-zinc-500 font-medium bg-zinc-100 px-3 py-1 rounded-full">
           {formatDuration(plan.durationInMonths)}
         </div>
@@ -67,11 +78,15 @@ const SubscriptionPlanCard = ({ plan }: { plan: any }) => {
         </div>
         <div className="flex items-center gap-2 text-sm">
           <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-          <span className="text-zinc-600 capitalize">{plan.emailSupport.toLowerCase()} email support</span>
+          <span className="text-zinc-600 capitalize">
+            {plan.emailSupport.toLowerCase()} email support
+          </span>
         </div>
         <div className="flex items-center gap-2 text-sm">
           <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-          <span className="text-zinc-600">{plan.videoMeetings} video meetings/month</span>
+          <span className="text-zinc-600">
+            {plan.videoMeetings} video meetings/month
+          </span>
         </div>
       </div>
     </div>
@@ -160,7 +175,7 @@ export function ConsultantCard({ consultant, metadata }: ConsultantCardProps) {
               {consultant.domain.name}
             </Badge>
             {consultant.subDomains.slice(0, 2).map((sd) => (
-              <Badge 
+              <Badge
                 key={`${consultant.id}-subdomain-${sd.id}`}
                 variant="outline"
                 className="border-zinc-300 text-zinc-700 px-3 py-1"
@@ -169,7 +184,7 @@ export function ConsultantCard({ consultant, metadata }: ConsultantCardProps) {
               </Badge>
             ))}
             {consultant.tags.slice(0, 3).map((t) => (
-              <Badge 
+              <Badge
                 key={`${consultant.id}-tag-${t.id}`}
                 className="bg-zinc-100 text-zinc-600 hover:bg-zinc-200 px-3 py-1"
               >

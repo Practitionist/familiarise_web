@@ -36,13 +36,7 @@ const STEP_LABELS = {
     "Agreement",
     "Review",
   ],
-  CONSULTEE: [
-    "Personal Info",
-    "Profile",
-    "Preferences",
-    "Agreement",
-    "Review",
-  ],
+  CONSULTEE: ["Personal Info", "Profile", "Preferences", "Agreement", "Review"],
   STAFF: [
     "Personal Info",
     "Role Details",
@@ -137,7 +131,7 @@ const MultiStepForm: React.FC = () => {
 
       // Transform the data for server submission
       const requestBody = transformOnboardingFormToServerData(
-        validationResult.data
+        validationResult.data,
       );
 
       toast({
@@ -188,9 +182,7 @@ const MultiStepForm: React.FC = () => {
 
       // Redirect based on role
       if (finalData.role === "CONSULTANT" && result.user.consultantProfileId) {
-        router.push(
-          `/dashboard/consultant/${result.user.consultantProfileId}`
-        );
+        router.push(`/dashboard/consultant/${result.user.consultantProfileId}`);
       } else if (
         finalData.role === "CONSULTEE" &&
         result.user.consulteeProfileId
@@ -363,7 +355,7 @@ const MultiStepForm: React.FC = () => {
   const totalSteps = stepLabels.length;
   const progressValue = Math.min(
     100,
-    Math.max(0, ((step + 1) / totalSteps) * 100)
+    Math.max(0, ((step + 1) / totalSteps) * 100),
   );
 
   return (
@@ -405,9 +397,7 @@ const MultiStepForm: React.FC = () => {
                 <div
                   key={label}
                   className={`text-xs font-medium transition-colors ${
-                    index <= step
-                      ? "text-primary"
-                      : "text-muted-foreground"
+                    index <= step ? "text-primary" : "text-muted-foreground"
                   }`}
                 >
                   {index === step ? label : ""}
@@ -435,9 +425,7 @@ const MultiStepForm: React.FC = () => {
           <Card className="shadow-lg">
             <CardHeader className="text-center pb-2">
               <CardTitle className="text-2xl">
-                {step === 0
-                  ? "Welcome! Let's get started"
-                  : stepLabels[step]}
+                {step === 0 ? "Welcome! Let's get started" : stepLabels[step]}
               </CardTitle>
               <p className="text-muted-foreground text-sm mt-1">
                 {step === 0

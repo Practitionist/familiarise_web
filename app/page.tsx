@@ -32,7 +32,11 @@ const fetchHomePageData = async <T,>(url: string): Promise<T> => {
   return jsonData.data as T;
 };
 
-const supabaseImagesFetcher = async ([, bucket, path]: [string, string, string]): Promise<SupabaseImageFile[]> => {
+const supabaseImagesFetcher = async ([, bucket, path]: [
+  string,
+  string,
+  string,
+]): Promise<SupabaseImageFile[]> => {
   const imageData = await fetchImagesFromSupabaseStorage(bucket, path);
   return imageData || [];
 };
@@ -42,19 +46,26 @@ export default function Home() {
   // Data fetching
   const { data: imagesData } = useQuery<SupabaseImageFile[]>({
     queryKey: ["supabase_landing_images", "assets", "images/landing-page"],
-    queryFn: ({ queryKey }) => supabaseImagesFetcher(queryKey as [string, string, string]),
+    queryFn: ({ queryKey }) =>
+      supabaseImagesFetcher(queryKey as [string, string, string]),
     staleTime: 5 * 60 * 1000,
   });
 
-  const { data: expertsData, isLoading: isLoadingExperts } = useQuery<TConsultantProfile[]>({
+  const { data: expertsData, isLoading: isLoadingExperts } = useQuery<
+    TConsultantProfile[]
+  >({
     queryKey: ["home-experts"],
-    queryFn: () => fetchHomePageData<TConsultantProfile[]>("/api/user/consultants?limit=10"),
+    queryFn: () =>
+      fetchHomePageData<TConsultantProfile[]>("/api/user/consultants?limit=10"),
     staleTime: 2 * 60 * 1000,
   });
 
-  const { data: reviewsData, isLoading: isLoadingReviews } = useQuery<ReviewWithProfiles[]>({
+  const { data: reviewsData, isLoading: isLoadingReviews } = useQuery<
+    ReviewWithProfiles[]
+  >({
     queryKey: ["home-reviews"],
-    queryFn: () => fetchHomePageData<ReviewWithProfiles[]>("/api/user/reviews?rating=4"),
+    queryFn: () =>
+      fetchHomePageData<ReviewWithProfiles[]>("/api/user/reviews?rating=4"),
     staleTime: 5 * 60 * 1000,
   });
 
@@ -107,6 +118,6 @@ export default function Home() {
       <FAQSection />
 
       {/* Newsletter is now merged into Footer for seamless dark block */}
-      </main>
+    </main>
   );
 }

@@ -104,7 +104,10 @@ export function BookingHistoryTab({
                     <TableCell>
                       <div className="flex items-center gap-2">
                         <span className="font-medium">
-                          {formatAmount(getPaymentAmount(event), getPaymentCurrency(event))}
+                          {formatAmount(
+                            getPaymentAmount(event),
+                            getPaymentCurrency(event),
+                          )}
                         </span>
                         {getPaymentStatus(event) && (
                           <Badge
@@ -278,17 +281,29 @@ function getPaymentAmount(event: EventWithType): number | null {
 function getPaymentCurrency(event: EventWithType): string {
   switch (event.type) {
     case "Consultation":
-      return event.appointment?.payment?.[0]?.currency ?? 
-             event.consultationPlan?.priceCurrency ?? "INR";
+      return (
+        event.appointment?.payment?.[0]?.currency ??
+        event.consultationPlan?.priceCurrency ??
+        "INR"
+      );
     case "Subscription":
-      return event.appointments?.[0]?.payment?.[0]?.currency ?? 
-             event.subscriptionPlan?.priceCurrency ?? "INR";
+      return (
+        event.appointments?.[0]?.payment?.[0]?.currency ??
+        event.subscriptionPlan?.priceCurrency ??
+        "INR"
+      );
     case "Webinar":
-      return event.appointment?.payment?.[0]?.currency ?? 
-             event.webinarPlan?.priceCurrency ?? "INR";
+      return (
+        event.appointment?.payment?.[0]?.currency ??
+        event.webinarPlan?.priceCurrency ??
+        "INR"
+      );
     case "Class":
-      return event.appointments?.[0]?.payment?.[0]?.currency ?? 
-             event.classPlan?.priceCurrency ?? "INR";
+      return (
+        event.appointments?.[0]?.payment?.[0]?.currency ??
+        event.classPlan?.priceCurrency ??
+        "INR"
+      );
   }
 }
 

@@ -90,8 +90,7 @@ export async function POST(
     console.error("Error creating staff profile:", error);
     return NextResponse.json(
       {
-        error:
-          "An unexpected error occurred while creating the staff profile",
+        error: "An unexpected error occurred while creating the staff profile",
         details: error instanceof Error ? error.message : "Unknown error",
       },
       { status: 500 },
@@ -144,8 +143,7 @@ export async function PATCH(
     console.error("Error updating staff profile:", error);
     return NextResponse.json(
       {
-        error:
-          "An unexpected error occurred while updating the staff profile",
+        error: "An unexpected error occurred while updating the staff profile",
         details: error instanceof Error ? error.message : "Unknown error",
       },
       { status: 500 },
@@ -201,7 +199,14 @@ export async function PUT(
     });
 
     // Also update user fields if provided
-    if (body.name || body.email || body.phone || body.address || body.image || body.timezone) {
+    if (
+      body.name ||
+      body.email ||
+      body.phone ||
+      body.address ||
+      body.image ||
+      body.timezone
+    ) {
       await prisma.user.update({
         where: { id: existingStaffProfile.userId },
         data: {
@@ -216,8 +221,12 @@ export async function PUT(
     }
 
     // Update notification preferences if provided
-    if (body.allNotifications !== undefined || body.mentions !== undefined || 
-        body.directMessages !== undefined || body.updates !== undefined) {
+    if (
+      body.allNotifications !== undefined ||
+      body.mentions !== undefined ||
+      body.directMessages !== undefined ||
+      body.updates !== undefined
+    ) {
       await prisma.notificationPreference.upsert({
         where: { userId: existingStaffProfile.userId },
         update: {
@@ -271,8 +280,7 @@ export async function PUT(
     console.error("Error updating staff profile:", error);
     return NextResponse.json(
       {
-        error:
-          "An unexpected error occurred while updating the staff profile",
+        error: "An unexpected error occurred while updating the staff profile",
         details: error instanceof Error ? error.message : "Unknown error",
       },
       { status: 500 },
@@ -312,8 +320,7 @@ export async function DELETE(
     console.error("Error deleting staff profile:", error);
     return NextResponse.json(
       {
-        error:
-          "An unexpected error occurred while deleting the staff profile",
+        error: "An unexpected error occurred while deleting the staff profile",
         details: error instanceof Error ? error.message : "Unknown error",
       },
       { status: 500 },

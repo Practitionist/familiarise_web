@@ -1,7 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -128,23 +134,28 @@ const recentArticles = [
 const faqs = [
   {
     question: "How do I assign a ticket to myself?",
-    answer: "Navigate to the Support Tickets page, find the ticket you want to handle, click on the actions menu (three dots), and select 'Assign to me'. The ticket will then appear in your assigned tickets list.",
+    answer:
+      "Navigate to the Support Tickets page, find the ticket you want to handle, click on the actions menu (three dots), and select 'Assign to me'. The ticket will then appear in your assigned tickets list.",
   },
   {
     question: "What is the standard response time for tickets?",
-    answer: "High priority tickets should be responded to within 1 hour. Medium priority tickets within 4 hours. Low priority tickets within 24 hours. Always acknowledge the ticket first if you need more time to investigate.",
+    answer:
+      "High priority tickets should be responded to within 1 hour. Medium priority tickets within 4 hours. Low priority tickets within 24 hours. Always acknowledge the ticket first if you need more time to investigate.",
   },
   {
     question: "When should I escalate a ticket to admin?",
-    answer: "Escalate to admin when: 1) The issue requires system-level changes, 2) Refund amount exceeds ₹10,000, 3) Legal/compliance issues are involved, 4) User is threatening legal action, 5) Issue persists after standard troubleshooting.",
+    answer:
+      "Escalate to admin when: 1) The issue requires system-level changes, 2) Refund amount exceeds ₹10,000, 3) Legal/compliance issues are involved, 4) User is threatening legal action, 5) Issue persists after standard troubleshooting.",
   },
   {
     question: "How do I process a partial refund?",
-    answer: "For partial refunds, go to the Payments section, find the transaction, click 'Process Refund', enter the partial amount with a reason. Partial refunds require admin approval for amounts over ₹5,000.",
+    answer:
+      "For partial refunds, go to the Payments section, find the transaction, click 'Process Refund', enter the partial amount with a reason. Partial refunds require admin approval for amounts over ₹5,000.",
   },
   {
     question: "What information do I need to verify a consultant profile?",
-    answer: "Required documents include: 1) Government-issued ID, 2) Educational certificates, 3) Professional certifications (if claimed), 4) Proof of experience (employment letters, portfolio). Verify all documents are clear, valid, and match the profile information.",
+    answer:
+      "Required documents include: 1) Government-issued ID, 2) Educational certificates, 3) Professional certifications (if claimed), 4) Proof of experience (employment letters, portfolio). Verify all documents are clear, valid, and match the profile information.",
   },
 ];
 
@@ -218,7 +229,9 @@ export default function KnowledgeBasePage() {
                     <FileText className="h-5 w-5 text-zinc-400" />
                     <div>
                       <p className="font-medium">{article.title}</p>
-                      <p className="text-sm text-zinc-500">{article.category}</p>
+                      <p className="text-sm text-zinc-500">
+                        {article.category}
+                      </p>
                     </div>
                   </div>
                   <div className="flex items-center gap-4 text-sm text-zinc-500">
@@ -327,4 +340,3 @@ export default function KnowledgeBasePage() {
     </div>
   );
 }
-

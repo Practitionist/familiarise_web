@@ -47,7 +47,9 @@ function outputToGitHubActions(result: CleanupResult): void {
  */
 async function main(): Promise<void> {
   const startTime = Date.now();
-  console.log(`🚀 Starting invalid appointments cleanup job at ${new Date().toISOString()}`);
+  console.log(
+    `🚀 Starting invalid appointments cleanup job at ${new Date().toISOString()}`,
+  );
 
   try {
     // Run all cleanup tasks
@@ -58,10 +60,18 @@ async function main(): Promise<void> {
 
     // Summary
     console.log(`\n📊 Cleanup Summary:`);
-    console.log(`   🔄 Duplicate consultations cancelled: ${result.duplicateConsultationsCancelled}`);
-    console.log(`   🔄 Duplicate subscriptions cancelled: ${result.duplicateSubscriptionsCancelled}`);
-    console.log(`   ⏱️ Invalid duration consultations cancelled: ${result.invalidDurationConsultationsCancelled}`);
-    console.log(`   ⏱️ Invalid duration subscriptions cancelled: ${result.invalidDurationSubscriptionsCancelled}`);
+    console.log(
+      `   🔄 Duplicate consultations cancelled: ${result.duplicateConsultationsCancelled}`,
+    );
+    console.log(
+      `   🔄 Duplicate subscriptions cancelled: ${result.duplicateSubscriptionsCancelled}`,
+    );
+    console.log(
+      `   ⏱️ Invalid duration consultations cancelled: ${result.invalidDurationConsultationsCancelled}`,
+    );
+    console.log(
+      `   ⏱️ Invalid duration subscriptions cancelled: ${result.invalidDurationSubscriptionsCancelled}`,
+    );
     console.log(`   📊 Total cancelled: ${result.totalCancelled}`);
     console.log(`   ❌ Errors: ${result.errors.length}`);
 

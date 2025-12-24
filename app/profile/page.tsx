@@ -137,7 +137,12 @@ export default function Profile() {
                     <div className="h-32 w-32 rounded-full bg-zinc-100 flex items-center justify-center">
                       <Upload className="h-10 w-10 text-zinc-400" />
                     </div>
-                    <Input id="profile-picture" type="file" accept="image/*" className="max-w-xs" />
+                    <Input
+                      id="profile-picture"
+                      type="file"
+                      accept="image/*"
+                      className="max-w-xs"
+                    />
                   </div>
                   <DialogFooter className="gap-2">
                     <Button variant="outline">Cancel</Button>
@@ -177,7 +182,9 @@ export default function Profile() {
                     <UserIcon className="h-5 w-5 text-zinc-600" />
                   </div>
                   <div>
-                    <CardTitle className="text-lg">Profile Information</CardTitle>
+                    <CardTitle className="text-lg">
+                      Profile Information
+                    </CardTitle>
                     <CardDescription>Your personal details</CardDescription>
                   </div>
                 </div>
@@ -191,8 +198,12 @@ export default function Profile() {
                     </AvatarFallback>
                   </Avatar>
                   <div className="flex-1">
-                    <p className="font-semibold text-zinc-900">{session?.user?.name || "Your Name"}</p>
-                    <p className="text-sm text-zinc-500">{session?.user?.email || "your@email.com"}</p>
+                    <p className="font-semibold text-zinc-900">
+                      {session?.user?.name || "Your Name"}
+                    </p>
+                    <p className="text-sm text-zinc-500">
+                      {session?.user?.email || "your@email.com"}
+                    </p>
                   </div>
                 </div>
 
@@ -202,8 +213,12 @@ export default function Profile() {
                       <MapPin className="h-4 w-4 text-zinc-500" />
                     </div>
                     <div className="flex-1">
-                      <p className="text-sm font-medium text-zinc-700">Address</p>
-                      <p className="text-sm text-zinc-500">{session?.user?.address || "Not provided"}</p>
+                      <p className="text-sm font-medium text-zinc-700">
+                        Address
+                      </p>
+                      <p className="text-sm text-zinc-500">
+                        {session?.user?.address || "Not provided"}
+                      </p>
                     </div>
                   </div>
                   <div className="flex items-center gap-3 p-3 rounded-lg hover:bg-zinc-50 transition-colors">
@@ -212,7 +227,9 @@ export default function Profile() {
                     </div>
                     <div className="flex-1">
                       <p className="text-sm font-medium text-zinc-700">Phone</p>
-                      <p className="text-sm text-zinc-500">{session?.user?.phone || "Not provided"}</p>
+                      <p className="text-sm text-zinc-500">
+                        {session?.user?.phone || "Not provided"}
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -220,7 +237,10 @@ export default function Profile() {
               <CardFooter className="pt-0 mt-auto">
                 <Dialog>
                   <DialogTrigger asChild>
-                    <Button variant="outline" className="w-full border-zinc-200 hover:bg-zinc-50">
+                    <Button
+                      variant="outline"
+                      className="w-full border-zinc-200 hover:bg-zinc-50"
+                    >
                       <Settings className="h-4 w-4 mr-2" />
                       Update Information
                     </Button>
@@ -263,7 +283,10 @@ export default function Profile() {
                         </div>
                       </div>
                       <DialogFooter>
-                        <Button type="submit" className="bg-zinc-900 hover:bg-zinc-800 text-white">
+                        <Button
+                          type="submit"
+                          className="bg-zinc-900 hover:bg-zinc-800 text-white"
+                        >
                           Save Changes
                         </Button>
                       </DialogFooter>
@@ -284,7 +307,9 @@ export default function Profile() {
                   </div>
                   <div>
                     <CardTitle className="text-lg">Account Settings</CardTitle>
-                    <CardDescription>Security and account management</CardDescription>
+                    <CardDescription>
+                      Security and account management
+                    </CardDescription>
                   </div>
                 </div>
               </CardHeader>
@@ -298,7 +323,9 @@ export default function Profile() {
                   </Avatar>
                   <div className="flex-1">
                     <p className="font-medium text-zinc-900">Current User</p>
-                    <p className="text-sm text-zinc-500">{session?.user?.email || "user@example.com"}</p>
+                    <p className="text-sm text-zinc-500">
+                      {session?.user?.email || "user@example.com"}
+                    </p>
                   </div>
                 </div>
 
@@ -307,8 +334,12 @@ export default function Profile() {
                     <LogOut className="h-5 w-5 text-zinc-600" />
                   </div>
                   <div className="flex-1">
-                    <p className="font-medium text-zinc-900">Logout of all devices</p>
-                    <p className="text-sm text-zinc-500">Sign out from all active sessions</p>
+                    <p className="font-medium text-zinc-900">
+                      Logout of all devices
+                    </p>
+                    <p className="text-sm text-zinc-500">
+                      Sign out from all active sessions
+                    </p>
                   </div>
                 </button>
 
@@ -318,7 +349,9 @@ export default function Profile() {
                   </div>
                   <div className="flex-1">
                     <p className="font-medium text-red-600">Delete Account</p>
-                    <p className="text-sm text-zinc-500">Permanently delete your account and data</p>
+                    <p className="text-sm text-zinc-500">
+                      Permanently delete your account and data
+                    </p>
                   </div>
                 </button>
               </CardContent>
@@ -336,7 +369,9 @@ export default function Profile() {
                 </div>
                 <div>
                   <CardTitle className="text-lg">Cookie Preferences</CardTitle>
-                  <CardDescription>Manage how we use cookies on your browser</CardDescription>
+                  <CardDescription>
+                    Manage how we use cookies on your browser
+                  </CardDescription>
                 </div>
               </div>
             </CardHeader>
@@ -344,24 +379,45 @@ export default function Profile() {
               <div className="grid gap-4 md:grid-cols-3">
                 <div className="p-4 rounded-xl border border-zinc-100 hover:border-zinc-200 transition-colors">
                   <div className="flex items-center justify-between mb-3">
-                    <Label htmlFor="essential" className="font-semibold text-zinc-900">Essential</Label>
+                    <Label
+                      htmlFor="essential"
+                      className="font-semibold text-zinc-900"
+                    >
+                      Essential
+                    </Label>
                     <Switch id="essential" defaultChecked disabled />
                   </div>
-                  <p className="text-sm text-zinc-500">Required for basic site functionality</p>
+                  <p className="text-sm text-zinc-500">
+                    Required for basic site functionality
+                  </p>
                 </div>
                 <div className="p-4 rounded-xl border border-zinc-100 hover:border-zinc-200 transition-colors">
                   <div className="flex items-center justify-between mb-3">
-                    <Label htmlFor="analytics" className="font-semibold text-zinc-900">Analytics</Label>
+                    <Label
+                      htmlFor="analytics"
+                      className="font-semibold text-zinc-900"
+                    >
+                      Analytics
+                    </Label>
                     <Switch id="analytics" />
                   </div>
-                  <p className="text-sm text-zinc-500">Help us improve site performance</p>
+                  <p className="text-sm text-zinc-500">
+                    Help us improve site performance
+                  </p>
                 </div>
                 <div className="p-4 rounded-xl border border-zinc-100 hover:border-zinc-200 transition-colors">
                   <div className="flex items-center justify-between mb-3">
-                    <Label htmlFor="marketing" className="font-semibold text-zinc-900">Marketing</Label>
+                    <Label
+                      htmlFor="marketing"
+                      className="font-semibold text-zinc-900"
+                    >
+                      Marketing
+                    </Label>
                     <Switch id="marketing" />
                   </div>
-                  <p className="text-sm text-zinc-500">Personalized recommendations</p>
+                  <p className="text-sm text-zinc-500">
+                    Personalized recommendations
+                  </p>
                 </div>
               </div>
             </CardContent>
@@ -377,8 +433,12 @@ export default function Profile() {
                   <Bell className="h-5 w-5 text-indigo-600" />
                 </div>
                 <div>
-                  <CardTitle className="text-lg">Notification Preferences</CardTitle>
-                  <CardDescription>Choose what updates you want to receive</CardDescription>
+                  <CardTitle className="text-lg">
+                    Notification Preferences
+                  </CardTitle>
+                  <CardDescription>
+                    Choose what updates you want to receive
+                  </CardDescription>
                 </div>
               </div>
             </CardHeader>
@@ -390,8 +450,12 @@ export default function Profile() {
                       <Bell className="h-4 w-4 text-zinc-600" />
                     </div>
                     <div>
-                      <p className="font-medium text-zinc-900">All Notifications</p>
-                      <p className="text-sm text-zinc-500">Receive all updates and alerts</p>
+                      <p className="font-medium text-zinc-900">
+                        All Notifications
+                      </p>
+                      <p className="text-sm text-zinc-500">
+                        Receive all updates and alerts
+                      </p>
                     </div>
                   </div>
                   <Switch id="all" />
@@ -403,7 +467,9 @@ export default function Profile() {
                     </div>
                     <div>
                       <p className="font-medium text-zinc-900">Mentions</p>
-                      <p className="text-sm text-zinc-500">When someone mentions you</p>
+                      <p className="text-sm text-zinc-500">
+                        When someone mentions you
+                      </p>
                     </div>
                   </div>
                   <Switch id="mentions" />
@@ -414,8 +480,12 @@ export default function Profile() {
                       <MessageSquare className="h-4 w-4 text-zinc-600" />
                     </div>
                     <div>
-                      <p className="font-medium text-zinc-900">Direct Messages</p>
-                      <p className="text-sm text-zinc-500">New messages from experts</p>
+                      <p className="font-medium text-zinc-900">
+                        Direct Messages
+                      </p>
+                      <p className="text-sm text-zinc-500">
+                        New messages from experts
+                      </p>
                     </div>
                   </div>
                   <Switch id="direct-messages" />
@@ -426,8 +496,12 @@ export default function Profile() {
                       <Sparkles className="h-4 w-4 text-zinc-600" />
                     </div>
                     <div>
-                      <p className="font-medium text-zinc-900">Product Updates</p>
-                      <p className="text-sm text-zinc-500">New features and improvements</p>
+                      <p className="font-medium text-zinc-900">
+                        Product Updates
+                      </p>
+                      <p className="text-sm text-zinc-500">
+                        New features and improvements
+                      </p>
                     </div>
                   </div>
                   <Switch id="updates" />

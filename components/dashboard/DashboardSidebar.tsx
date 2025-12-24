@@ -120,7 +120,9 @@ export function DashboardSidebar({
           <Briefcase className="h-5 w-5 text-zinc-100" />
         </div>
         <div>
-          <span className="text-lg font-semibold tracking-tight">Familiarise</span>
+          <span className="text-lg font-semibold tracking-tight">
+            Familiarise
+          </span>
         </div>
       </div>
 
@@ -137,17 +139,24 @@ export function DashboardSidebar({
         ) : (
           <div className="flex items-center gap-3">
             <Avatar className="h-12 w-12 ring-2 ring-zinc-700 ring-offset-2 ring-offset-zinc-950">
-              <AvatarImage src={userImage || "/placeholder-user.jpg"} alt={userName || ""} />
+              <AvatarImage
+                src={userImage || "/placeholder-user.jpg"}
+                alt={userName || ""}
+              />
               <AvatarFallback className="bg-zinc-800 text-zinc-300">
                 {userName?.charAt(0) || "?"}
               </AvatarFallback>
             </Avatar>
             <div className="flex-1 min-w-0">
-              <p className="font-medium truncate text-zinc-100">{userName || "User"}</p>
-              <span className={cn(
-                "inline-flex items-center px-2 py-0.5 rounded text-xs font-medium border",
-                getRoleColor()
-              )}>
+              <p className="font-medium truncate text-zinc-100">
+                {userName || "User"}
+              </p>
+              <span
+                className={cn(
+                  "inline-flex items-center px-2 py-0.5 rounded text-xs font-medium border",
+                  getRoleColor(),
+                )}
+              >
                 {userRole}
               </span>
             </div>
@@ -160,7 +169,7 @@ export function DashboardSidebar({
         <ul className="space-y-1">
           {navItems.map((item) => {
             const isActive = currentPath === item.path;
-            
+
             return (
               <li key={item.path}>
                 <Link
@@ -169,17 +178,19 @@ export function DashboardSidebar({
                     "group flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-150",
                     isActive
                       ? "bg-zinc-800 text-white shadow-sm"
-                      : "text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-100"
+                      : "text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-100",
                   )}
                   prefetch={true}
                   onMouseEnter={() => handleNavHover(item.path)}
                 >
-                  <span className={cn(
-                    "flex h-8 w-8 items-center justify-center rounded-md transition-colors",
-                    isActive 
-                      ? "bg-zinc-700 text-white" 
-                      : "bg-zinc-800/50 text-zinc-500 group-hover:bg-zinc-700 group-hover:text-zinc-300"
-                  )}>
+                  <span
+                    className={cn(
+                      "flex h-8 w-8 items-center justify-center rounded-md transition-colors",
+                      isActive
+                        ? "bg-zinc-700 text-white"
+                        : "bg-zinc-800/50 text-zinc-500 group-hover:bg-zinc-700 group-hover:text-zinc-300",
+                    )}
+                  >
                     {renderIcon(item.path)}
                   </span>
                   <span className="flex-1">{item.name}</span>
@@ -188,10 +199,14 @@ export function DashboardSidebar({
                       {item.badge}
                     </span>
                   )}
-                  <ChevronRight className={cn(
-                    "w-4 h-4 transition-opacity",
-                    isActive ? "opacity-100 text-zinc-500" : "opacity-0 group-hover:opacity-50"
-                  )} />
+                  <ChevronRight
+                    className={cn(
+                      "w-4 h-4 transition-opacity",
+                      isActive
+                        ? "opacity-100 text-zinc-500"
+                        : "opacity-0 group-hover:opacity-50",
+                    )}
+                  />
                 </Link>
               </li>
             );
@@ -210,10 +225,10 @@ export function DashboardSidebar({
           </span>
           <span>Back to Home</span>
         </Link>
-        
+
         {bottomNavItems.map((item) => {
           const isActive = currentPath === item.path;
-          
+
           return (
             <Link
               key={item.path}
@@ -222,22 +237,26 @@ export function DashboardSidebar({
                 "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all",
                 isActive
                   ? "bg-zinc-800 text-white"
-                  : "text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-100"
+                  : "text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-100",
               )}
               prefetch={true}
               onMouseEnter={() => handleNavHover(item.path)}
             >
-              <span className={cn(
-                "flex h-8 w-8 items-center justify-center rounded-md",
-                isActive ? "bg-zinc-700 text-white" : "bg-zinc-800/50 text-zinc-500"
-              )}>
+              <span
+                className={cn(
+                  "flex h-8 w-8 items-center justify-center rounded-md",
+                  isActive
+                    ? "bg-zinc-700 text-white"
+                    : "bg-zinc-800/50 text-zinc-500",
+                )}
+              >
                 {renderIcon(item.path)}
               </span>
               <span>{item.name}</span>
             </Link>
           );
         })}
-        
+
         <button
           onClick={() => signOut()}
           className="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-all"
@@ -251,4 +270,3 @@ export function DashboardSidebar({
     </div>
   );
 }
-

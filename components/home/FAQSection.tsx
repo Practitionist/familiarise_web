@@ -22,7 +22,10 @@ export function FAQSection() {
           viewport={{ once: true }}
           className="text-center mb-12"
         >
-          <Badge variant="secondary" className="mb-4 bg-zinc-100 text-zinc-700 hover:bg-zinc-100 border-0">
+          <Badge
+            variant="secondary"
+            className="mb-4 bg-zinc-100 text-zinc-700 hover:bg-zinc-100 border-0"
+          >
             FAQ
           </Badge>
           <h2 className="text-3xl md:text-4xl lg:text-5xl font-bold text-zinc-900 mb-4">
@@ -48,7 +51,9 @@ export function FAQSection() {
                 className="border border-zinc-200 rounded-xl px-6 bg-white shadow-sm hover:shadow-md transition-shadow"
               >
                 <AccordionTrigger className="text-left hover:no-underline py-5">
-                  <span className="font-medium text-zinc-900">{item.question}</span>
+                  <span className="font-medium text-zinc-900">
+                    {item.question}
+                  </span>
                 </AccordionTrigger>
                 <AccordionContent className="text-zinc-600 pb-5 leading-relaxed">
                   {item.answer}
@@ -61,4 +66,3 @@ export function FAQSection() {
     </section>
   );
 }
-

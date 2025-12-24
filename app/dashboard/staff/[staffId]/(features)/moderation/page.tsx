@@ -1,7 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -105,7 +111,8 @@ const pendingReviews = [
     reviewer: { name: "John Doe", avatar: "" },
     consultant: { name: "Dr. Jane Smith", avatar: "" },
     rating: 4,
-    content: "Great session! Very helpful and insightful. Would definitely recommend to others looking for career guidance.",
+    content:
+      "Great session! Very helpful and insightful. Would definitely recommend to others looking for career guidance.",
     submittedAt: "2025-12-20T11:00:00",
   },
   {
@@ -113,7 +120,8 @@ const pendingReviews = [
     reviewer: { name: "Sarah Connor", avatar: "" },
     consultant: { name: "Mike Wilson", avatar: "" },
     rating: 2,
-    content: "Session was okay but the consultant seemed unprepared and distracted during our call.",
+    content:
+      "Session was okay but the consultant seemed unprepared and distracted during our call.",
     submittedAt: "2025-12-20T09:30:00",
   },
 ];
@@ -157,8 +165,12 @@ const formatDate = (dateString: string) => {
 export default function ContentModerationPage() {
   const [activeTab, setActiveTab] = useState("reports");
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedReport, setSelectedReport] = useState<typeof reportedContent[0] | null>(null);
-  const [selectedProfile, setSelectedProfile] = useState<typeof pendingProfiles[0] | null>(null);
+  const [selectedReport, setSelectedReport] = useState<
+    (typeof reportedContent)[0] | null
+  >(null);
+  const [selectedProfile, setSelectedProfile] = useState<
+    (typeof pendingProfiles)[0] | null
+  >(null);
   const [moderationNote, setModerationNote] = useState("");
 
   return (
@@ -183,7 +195,9 @@ export default function ContentModerationPage() {
               <Flag className="h-5 w-5 text-red-600" />
             </div>
             <div>
-              <p className="text-2xl font-bold">{reportedContent.filter(r => r.status === "pending").length}</p>
+              <p className="text-2xl font-bold">
+                {reportedContent.filter((r) => r.status === "pending").length}
+              </p>
               <p className="text-sm text-zinc-500">Pending Reports</p>
             </div>
           </CardContent>
@@ -230,7 +244,7 @@ export default function ContentModerationPage() {
             <Flag className="h-4 w-4" />
             Reports
             <Badge variant="secondary" className="ml-1">
-              {reportedContent.filter(r => r.status === "pending").length}
+              {reportedContent.filter((r) => r.status === "pending").length}
             </Badge>
           </TabsTrigger>
           <TabsTrigger value="profiles" className="gap-2">
@@ -267,7 +281,11 @@ export default function ContentModerationPage() {
 
           <div className="space-y-3">
             {reportedContent.map((report) => (
-              <Card key={report.id} className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => setSelectedReport(report)}>
+              <Card
+                key={report.id}
+                className="cursor-pointer hover:shadow-md transition-shadow"
+                onClick={() => setSelectedReport(report)}
+              >
                 <CardContent className="p-4">
                   <div className="flex items-start justify-between">
                     <div className="flex items-start gap-3">
@@ -280,7 +298,10 @@ export default function ContentModerationPage() {
                           <Badge variant="outline" className="capitalize">
                             {report.type}
                           </Badge>
-                          <Badge className={getStatusColor(report.status)} variant="secondary">
+                          <Badge
+                            className={getStatusColor(report.status)}
+                            variant="secondary"
+                          >
                             {report.status}
                           </Badge>
                         </div>
@@ -309,26 +330,39 @@ export default function ContentModerationPage() {
         <TabsContent value="profiles" className="space-y-4">
           <div className="space-y-3">
             {pendingProfiles.map((profile) => (
-              <Card key={profile.id} className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => setSelectedProfile(profile)}>
+              <Card
+                key={profile.id}
+                className="cursor-pointer hover:shadow-md transition-shadow"
+                onClick={() => setSelectedProfile(profile)}
+              >
                 <CardContent className="p-4">
                   <div className="flex items-start justify-between">
                     <div className="flex items-center gap-4">
                       <Avatar className="h-12 w-12">
                         <AvatarFallback>
-                          {profile.name.split(" ").map((n) => n[0]).join("")}
+                          {profile.name
+                            .split(" ")
+                            .map((n) => n[0])
+                            .join("")}
                         </AvatarFallback>
                       </Avatar>
                       <div>
                         <p className="font-medium">{profile.name}</p>
                         <p className="text-sm text-zinc-500">{profile.email}</p>
                         <div className="flex items-center gap-2 mt-1">
-                          <Badge variant="outline">{profile.specialization}</Badge>
-                          <span className="text-xs text-zinc-500">{profile.experience} experience</span>
+                          <Badge variant="outline">
+                            {profile.specialization}
+                          </Badge>
+                          <span className="text-xs text-zinc-500">
+                            {profile.experience} experience
+                          </span>
                         </div>
                       </div>
                     </div>
                     <div className="text-right">
-                      <Badge className="bg-amber-100 text-amber-700">Pending Review</Badge>
+                      <Badge className="bg-amber-100 text-amber-700">
+                        Pending Review
+                      </Badge>
                       <p className="text-xs text-zinc-400 mt-1">
                         {formatDate(profile.submittedAt)}
                       </p>
@@ -357,14 +391,19 @@ export default function ContentModerationPage() {
                       <Avatar>
                         <AvatarImage src={review.reviewer.avatar} />
                         <AvatarFallback>
-                          {review.reviewer.name.split(" ").map((n) => n[0]).join("")}
+                          {review.reviewer.name
+                            .split(" ")
+                            .map((n) => n[0])
+                            .join("")}
                         </AvatarFallback>
                       </Avatar>
                       <div>
                         <div className="flex items-center gap-2">
                           <p className="font-medium">{review.reviewer.name}</p>
                           <span className="text-zinc-400">→</span>
-                          <p className="text-zinc-600 dark:text-zinc-400">{review.consultant.name}</p>
+                          <p className="text-zinc-600 dark:text-zinc-400">
+                            {review.consultant.name}
+                          </p>
                         </div>
                         <div className="flex items-center gap-1 mt-1">
                           {Array.from({ length: 5 }).map((_, i) => (
@@ -405,7 +444,10 @@ export default function ContentModerationPage() {
       </Tabs>
 
       {/* Report Detail Dialog */}
-      <Dialog open={!!selectedReport} onOpenChange={() => setSelectedReport(null)}>
+      <Dialog
+        open={!!selectedReport}
+        onOpenChange={() => setSelectedReport(null)}
+      >
         <DialogContent className="max-w-2xl">
           {selectedReport && (
             <>
@@ -420,24 +462,36 @@ export default function ContentModerationPage() {
               </DialogHeader>
               <div className="space-y-4">
                 <div className="p-4 rounded-lg bg-zinc-50 dark:bg-zinc-900">
-                  <Label className="text-sm font-medium">Reported Content</Label>
+                  <Label className="text-sm font-medium">
+                    Reported Content
+                  </Label>
                   <p className="mt-1 text-sm">{selectedReport.content}</p>
                 </div>
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div>
                     <Label className="text-sm font-medium">Reported By</Label>
-                    <p className="text-sm text-zinc-600">{selectedReport.reportedBy.name}</p>
-                    <p className="text-xs text-zinc-400">{selectedReport.reportedBy.email}</p>
+                    <p className="text-sm text-zinc-600">
+                      {selectedReport.reportedBy.name}
+                    </p>
+                    <p className="text-xs text-zinc-400">
+                      {selectedReport.reportedBy.email}
+                    </p>
                   </div>
                   <div>
                     <Label className="text-sm font-medium">Target User</Label>
-                    <p className="text-sm text-zinc-600">{selectedReport.targetUser.name}</p>
-                    <p className="text-xs text-zinc-400">{selectedReport.targetUser.role}</p>
+                    <p className="text-sm text-zinc-600">
+                      {selectedReport.targetUser.name}
+                    </p>
+                    <p className="text-xs text-zinc-400">
+                      {selectedReport.targetUser.role}
+                    </p>
                   </div>
                 </div>
                 <div>
                   <Label className="text-sm font-medium">Reason</Label>
-                  <p className="text-sm text-zinc-600">{selectedReport.reason}</p>
+                  <p className="text-sm text-zinc-600">
+                    {selectedReport.reason}
+                  </p>
                 </div>
                 <div>
                   <Label htmlFor="note">Moderation Note</Label>
@@ -451,7 +505,10 @@ export default function ContentModerationPage() {
                 </div>
               </div>
               <DialogFooter className="gap-2">
-                <Button variant="outline" onClick={() => setSelectedReport(null)}>
+                <Button
+                  variant="outline"
+                  onClick={() => setSelectedReport(null)}
+                >
                   Cancel
                 </Button>
                 <Button variant="outline" className="text-green-600">
@@ -469,7 +526,10 @@ export default function ContentModerationPage() {
       </Dialog>
 
       {/* Profile Verification Dialog */}
-      <Dialog open={!!selectedProfile} onOpenChange={() => setSelectedProfile(null)}>
+      <Dialog
+        open={!!selectedProfile}
+        onOpenChange={() => setSelectedProfile(null)}
+      >
         <DialogContent className="max-w-2xl">
           {selectedProfile && (
             <>
@@ -483,33 +543,53 @@ export default function ContentModerationPage() {
                 <div className="flex items-center gap-4 p-4 rounded-lg bg-zinc-50 dark:bg-zinc-900">
                   <Avatar className="h-16 w-16">
                     <AvatarFallback className="text-lg">
-                      {selectedProfile.name.split(" ").map((n) => n[0]).join("")}
+                      {selectedProfile.name
+                        .split(" ")
+                        .map((n) => n[0])
+                        .join("")}
                     </AvatarFallback>
                   </Avatar>
                   <div>
-                    <h3 className="text-lg font-semibold">{selectedProfile.name}</h3>
-                    <p className="text-sm text-zinc-500">{selectedProfile.email}</p>
+                    <h3 className="text-lg font-semibold">
+                      {selectedProfile.name}
+                    </h3>
+                    <p className="text-sm text-zinc-500">
+                      {selectedProfile.email}
+                    </p>
                   </div>
                 </div>
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div>
-                    <Label className="text-sm font-medium">Specialization</Label>
-                    <p className="text-sm text-zinc-600">{selectedProfile.specialization}</p>
+                    <Label className="text-sm font-medium">
+                      Specialization
+                    </Label>
+                    <p className="text-sm text-zinc-600">
+                      {selectedProfile.specialization}
+                    </p>
                   </div>
                   <div>
                     <Label className="text-sm font-medium">Experience</Label>
-                    <p className="text-sm text-zinc-600">{selectedProfile.experience}</p>
+                    <p className="text-sm text-zinc-600">
+                      {selectedProfile.experience}
+                    </p>
                   </div>
                 </div>
                 <div>
                   <Label className="text-sm font-medium">Qualifications</Label>
-                  <p className="text-sm text-zinc-600">{selectedProfile.qualifications}</p>
+                  <p className="text-sm text-zinc-600">
+                    {selectedProfile.qualifications}
+                  </p>
                 </div>
                 <div>
                   <Label className="text-sm font-medium">Documents</Label>
                   <div className="flex flex-wrap gap-2 mt-1">
                     {selectedProfile.documents.map((doc, i) => (
-                      <Button key={i} variant="outline" size="sm" className="gap-1">
+                      <Button
+                        key={i}
+                        variant="outline"
+                        size="sm"
+                        className="gap-1"
+                      >
                         <FileText className="h-4 w-4" />
                         {doc}
                         <Eye className="h-3 w-3 ml-1" />
@@ -527,7 +607,10 @@ export default function ContentModerationPage() {
                 </div>
               </div>
               <DialogFooter className="gap-2">
-                <Button variant="outline" onClick={() => setSelectedProfile(null)}>
+                <Button
+                  variant="outline"
+                  onClick={() => setSelectedProfile(null)}
+                >
                   Cancel
                 </Button>
                 <Button variant="outline" className="text-red-600">
@@ -546,4 +629,3 @@ export default function ContentModerationPage() {
     </div>
   );
 }
-

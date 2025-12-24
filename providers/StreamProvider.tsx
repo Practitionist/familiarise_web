@@ -70,7 +70,9 @@ const StreamProvider = ({
   // Connection states - always initialize to null/false
   // Let the connection functions handle global client detection
   const [chatClient, setChatClient] = useState<StreamChat | null>(null);
-  const [videoClient, setVideoClient] = useState<StreamVideoClient | null>(null);
+  const [videoClient, setVideoClient] = useState<StreamVideoClient | null>(
+    null,
+  );
   const [chatConnected, setChatConnected] = useState(false);
   const [videoConnected, setVideoConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);

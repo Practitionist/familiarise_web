@@ -26,7 +26,9 @@ function FindExperts() {
   const [searchTerm, setSearchTerm] = useState("");
   const [experienceYears, setExperienceYears] = useState(0);
   const [selectedDomain, setSelectedDomain] = useState<string | null>(null);
-  const [selectedSubdomain, setSelectedSubdomain] = useState<string | null>(null);
+  const [selectedSubdomain, setSelectedSubdomain] = useState<string | null>(
+    null,
+  );
   const [sortBy, setSortBy] = useState<SortOption>("nameAsc");
 
   const {
@@ -85,7 +87,7 @@ function FindExperts() {
     <section className="py-16 md:py-20 bg-white">
       <div className="max-w-[1600px] mx-auto px-4 md:px-8 lg:px-12">
         {/* Section Header */}
-        <motion.div 
+        <motion.div
           className="text-center mb-12"
           initial={{ opacity: 0, y: 20 }}
           whileInView={{ opacity: 1, y: 0 }}
@@ -94,7 +96,9 @@ function FindExperts() {
         >
           <div className="inline-flex items-center gap-2 px-4 py-2 bg-zinc-100 rounded-full mb-6">
             <Search className="w-4 h-4 text-zinc-600" />
-            <span className="text-sm font-medium text-zinc-700">Find Your Expert</span>
+            <span className="text-sm font-medium text-zinc-700">
+              Find Your Expert
+            </span>
           </div>
           <h2 className="text-3xl md:text-4xl lg:text-5xl font-bold text-zinc-900 mb-4">
             Browse All <span className="silver-text">Experts</span>
@@ -162,8 +166,8 @@ function FindExperts() {
                 if (domainConsultants.length === 0) return null;
 
                 return (
-                  <motion.div 
-                    key={domain.id} 
+                  <motion.div
+                    key={domain.id}
                     className="mb-12"
                     initial={{ opacity: 0, y: 20 }}
                     whileInView={{ opacity: 1, y: 0 }}
@@ -172,9 +176,12 @@ function FindExperts() {
                   >
                     <div className="flex items-center gap-3 mb-6">
                       <div className="w-1 h-8 bg-gradient-to-b from-zinc-900 to-zinc-400 rounded-full" />
-                      <h3 className="text-2xl font-bold text-zinc-900">{domain.name}</h3>
+                      <h3 className="text-2xl font-bold text-zinc-900">
+                        {domain.name}
+                      </h3>
                       <span className="px-3 py-1 bg-zinc-100 rounded-full text-sm text-zinc-600">
-                        {domainConsultants.length} expert{domainConsultants.length !== 1 ? "s" : ""}
+                        {domainConsultants.length} expert
+                        {domainConsultants.length !== 1 ? "s" : ""}
                       </span>
                     </div>
                     <div className="space-y-6">
@@ -205,7 +212,7 @@ function FindExperts() {
               })}
 
               {consultants.length === 0 && (
-                <motion.div 
+                <motion.div
                   className="text-center py-16"
                   initial={{ opacity: 0, scale: 0.95 }}
                   animate={{ opacity: 1, scale: 1 }}
@@ -218,7 +225,8 @@ function FindExperts() {
                     No experts found
                   </h3>
                   <p className="text-zinc-500 max-w-md mx-auto">
-                    Try adjusting your filters or search terms to discover more amazing mentors
+                    Try adjusting your filters or search terms to discover more
+                    amazing mentors
                   </p>
                 </motion.div>
               )}
@@ -227,7 +235,9 @@ function FindExperts() {
                 <div className="flex justify-center py-8">
                   <div className="flex items-center gap-3">
                     <div className="w-8 h-8 border-3 border-zinc-200 border-t-zinc-900 rounded-full animate-spin" />
-                    <span className="text-zinc-500 text-sm">Loading more...</span>
+                    <span className="text-zinc-500 text-sm">
+                      Loading more...
+                    </span>
                   </div>
                 </div>
               )}
@@ -260,16 +270,17 @@ export default function ExploreExperts() {
           >
             <div className="inline-flex items-center gap-2 px-4 py-2 bg-zinc-800/50 backdrop-blur-sm border border-zinc-700/50 rounded-full mb-8">
               <Sparkles className="w-4 h-4 text-white" />
-              <span className="text-sm font-medium text-zinc-300">World-Class Mentorship</span>
+              <span className="text-sm font-medium text-zinc-300">
+                World-Class Mentorship
+              </span>
             </div>
 
             <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold text-white mb-6">
-              Meet Your Perfect{" "}
-              <span className="silver-text">Mentor</span>
+              Meet Your Perfect <span className="silver-text">Mentor</span>
             </h1>
 
             <p className="text-lg md:text-xl text-zinc-400 mb-12 max-w-2xl mx-auto">
-              Ready to level up? Our amazing mentors are here to guide you! 
+              Ready to level up? Our amazing mentors are here to guide you!
               Connect with industry experts who understand your journey.
             </p>
 
@@ -286,7 +297,9 @@ export default function ExploreExperts() {
                   <div className="w-12 h-12 mx-auto mb-3 rounded-xl bg-zinc-800/50 border border-zinc-700/50 flex items-center justify-center">
                     <stat.icon className="w-6 h-6 text-white" />
                   </div>
-                  <div className="text-2xl md:text-3xl font-bold text-white">{stat.value}</div>
+                  <div className="text-2xl md:text-3xl font-bold text-white">
+                    {stat.value}
+                  </div>
                   <div className="text-sm text-zinc-500">{stat.label}</div>
                 </motion.div>
               ))}

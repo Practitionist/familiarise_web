@@ -52,11 +52,13 @@ export const getConsumeeImage = (appointment: TAppointment): string => {
   switch (appointment.appointmentType) {
     case "CONSULTATION":
       return (
-        appointment.consultation?.requestedBy?.user?.image ?? "/placeholder-user.jpg"
+        appointment.consultation?.requestedBy?.user?.image ??
+        "/placeholder-user.jpg"
       );
     case "SUBSCRIPTION":
       return (
-        appointment.subscription?.requestedBy?.user?.image ?? "/placeholder-user.jpg"
+        appointment.subscription?.requestedBy?.user?.image ??
+        "/placeholder-user.jpg"
       );
     case "WEBINAR":
       // For webinars, show the consultant (host) image

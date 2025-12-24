@@ -7,7 +7,8 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const consultantId = searchParams.get("consultantId");
     const includeClasses = searchParams.get("include")?.includes("classes");
-    const includeRegistration = searchParams.get("includeRegistration") === "true";
+    const includeRegistration =
+      searchParams.get("includeRegistration") === "true";
     const page = parseInt(searchParams.get("page") || "1");
     const limit = parseInt(searchParams.get("limit") || "10");
     const skip = (page - 1) * limit;
@@ -37,7 +38,9 @@ export async function GET(request: NextRequest) {
       topics: true,
       classContents: true,
       // Include classes with registration data if requested, otherwise include only if explicitly asked
-      ...((includeClasses || includeRegistration) && { classes: classesInclude }),
+      ...((includeClasses || includeRegistration) && {
+        classes: classesInclude,
+      }),
     };
 
     const [classPlans, total] = await Promise.all([

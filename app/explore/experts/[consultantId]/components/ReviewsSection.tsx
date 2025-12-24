@@ -9,9 +9,10 @@ interface ReviewsSectionProps {
 }
 
 export function ReviewsSection({ reviews }: ReviewsSectionProps) {
-  const averageRating = reviews.length > 0
-    ? reviews.reduce((sum, r) => sum + r.rating, 0) / reviews.length
-    : 0;
+  const averageRating =
+    reviews.length > 0
+      ? reviews.reduce((sum, r) => sum + r.rating, 0) / reviews.length
+      : 0;
 
   return (
     <div className="bg-white rounded-2xl border border-zinc-200 p-6 md:p-8">
@@ -45,7 +46,9 @@ export function ReviewsSection({ reviews }: ReviewsSectionProps) {
               <MessageSquare className="w-8 h-8 text-zinc-400" />
             </div>
             <p className="text-zinc-500">No reviews yet</p>
-            <p className="text-sm text-zinc-400 mt-1">Be the first to leave a review!</p>
+            <p className="text-sm text-zinc-400 mt-1">
+              Be the first to leave a review!
+            </p>
           </div>
         )}
       </div>

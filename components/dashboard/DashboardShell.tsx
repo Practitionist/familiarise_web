@@ -10,14 +10,18 @@ interface DashboardShellProps {
   className?: string;
 }
 
-export function DashboardShell({ children, sidebar, className }: DashboardShellProps) {
+export function DashboardShell({
+  children,
+  sidebar,
+  className,
+}: DashboardShellProps) {
   return (
     <div className={cn("flex h-screen bg-zinc-100", className)}>
       {/* Sidebar */}
       <aside className="fixed left-0 top-0 z-40 hidden h-screen w-64 lg:block">
         {sidebar}
       </aside>
-      
+
       {/* Main Content */}
       <main className="flex-1 lg:ml-64 flex flex-col h-screen overflow-y-auto">
         <AnimatePresence mode="wait">
@@ -43,7 +47,12 @@ interface DashboardHeaderProps {
   breadcrumbs?: { label: string; href?: string }[];
 }
 
-export function DashboardHeader({ title, subtitle, actions, breadcrumbs }: DashboardHeaderProps) {
+export function DashboardHeader({
+  title,
+  subtitle,
+  actions,
+  breadcrumbs,
+}: DashboardHeaderProps) {
   return (
     <div className="sticky top-0 z-30 bg-zinc-100/80 backdrop-blur-xl border-b border-zinc-200/50">
       <div className="px-6 py-4 lg:px-8">
@@ -53,7 +62,10 @@ export function DashboardHeader({ title, subtitle, actions, breadcrumbs }: Dashb
               <span key={crumb.label} className="flex items-center gap-2">
                 {index > 0 && <span>/</span>}
                 {crumb.href ? (
-                  <a href={crumb.href} className="hover:text-zinc-900 transition-colors">
+                  <a
+                    href={crumb.href}
+                    className="hover:text-zinc-900 transition-colors"
+                  >
                     {crumb.label}
                   </a>
                 ) : (
@@ -63,7 +75,7 @@ export function DashboardHeader({ title, subtitle, actions, breadcrumbs }: Dashb
             ))}
           </nav>
         )}
-        
+
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold text-zinc-900">{title}</h1>
@@ -84,13 +96,19 @@ interface DashboardContentProps {
   fullHeight?: boolean;
 }
 
-export function DashboardContent({ children, className, fullHeight = false }: DashboardContentProps) {
+export function DashboardContent({
+  children,
+  className,
+  fullHeight = false,
+}: DashboardContentProps) {
   return (
-    <div className={cn(
-      "px-6 py-6 lg:px-8",
-      fullHeight && "flex-1 flex flex-col overflow-auto",
-      className
-    )}>
+    <div
+      className={cn(
+        "px-6 py-6 lg:px-8",
+        fullHeight && "flex-1 flex flex-col overflow-auto",
+        className,
+      )}
+    >
       {children}
     </div>
   );
@@ -102,7 +120,11 @@ interface DashboardGridProps {
   className?: string;
 }
 
-export function DashboardGrid({ children, columns = 3, className }: DashboardGridProps) {
+export function DashboardGrid({
+  children,
+  columns = 3,
+  className,
+}: DashboardGridProps) {
   const gridCols = {
     1: "grid-cols-1",
     2: "grid-cols-1 md:grid-cols-2",
@@ -116,4 +138,3 @@ export function DashboardGrid({ children, columns = 3, className }: DashboardGri
     </div>
   );
 }
-

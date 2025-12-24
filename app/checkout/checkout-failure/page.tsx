@@ -64,7 +64,8 @@ export default function CheckoutFailurePage() {
             Payment Failed
           </h1>
           <p className="text-zinc-600">
-            We couldn&apos;t process your payment. Don&apos;t worry, no charges were made.
+            We couldn&apos;t process your payment. Don&apos;t worry, no charges
+            were made.
           </p>
         </div>
 
@@ -84,7 +85,9 @@ export default function CheckoutFailurePage() {
 
         <Card className="mb-6 border-zinc-200 shadow-lg">
           <CardHeader className="border-b border-zinc-100">
-            <CardTitle className="text-zinc-900">Common Reasons for Payment Failure</CardTitle>
+            <CardTitle className="text-zinc-900">
+              Common Reasons for Payment Failure
+            </CardTitle>
           </CardHeader>
           <CardContent className="pt-6">
             <div className="space-y-4">
@@ -151,7 +154,10 @@ export default function CheckoutFailurePage() {
         <div className="mt-6 text-center text-sm text-zinc-500">
           <p>
             Need immediate assistance?{" "}
-            <a href="/support" className="text-zinc-900 font-medium hover:underline">
+            <a
+              href="/support"
+              className="text-zinc-900 font-medium hover:underline"
+            >
               Contact our support team
             </a>
           </p>

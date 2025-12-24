@@ -118,7 +118,10 @@ export function HomeTab({
 
   // Process appointments
   const expandedAppointments = (appointments || []).flatMap((appointment) => {
-    if (!appointment.slotsOfAppointment || appointment.slotsOfAppointment.length === 0) {
+    if (
+      !appointment.slotsOfAppointment ||
+      appointment.slotsOfAppointment.length === 0
+    ) {
       return [appointment];
     }
     return appointment.slotsOfAppointment.map((slot) => ({
@@ -182,7 +185,9 @@ export function HomeTab({
                 subtitle="Awaiting response"
                 icon={Bell}
                 variant="warning"
-                onClick={() => router.push(`/dashboard/consultant/${consultantId}/requests`)}
+                onClick={() =>
+                  router.push(`/dashboard/consultant/${consultantId}/requests`)
+                }
               />
               <StatCard
                 title="This Week"
@@ -226,11 +231,16 @@ export function HomeTab({
                                 src={getConsumeeImage(appointment)}
                               />
                               <AvatarFallback className="bg-zinc-100 text-zinc-600 font-medium">
-                                {userName.split(" ").map((n: string) => n[0]).join("")}
+                                {userName
+                                  .split(" ")
+                                  .map((n: string) => n[0])
+                                  .join("")}
                               </AvatarFallback>
                             </Avatar>
                             <div className="flex-1 min-w-0">
-                              <h3 className="font-semibold text-zinc-900 truncate">{userName}</h3>
+                              <h3 className="font-semibold text-zinc-900 truncate">
+                                {userName}
+                              </h3>
                               <p className="text-sm text-zinc-500 truncate">
                                 {getAppointmentTypeAndPlan(appointment)}
                               </p>
@@ -241,7 +251,11 @@ export function HomeTab({
                             <div className="flex items-center gap-2 text-sm text-zinc-500">
                               <Clock className="h-4 w-4" />
                               <span>
-                                {startTime ? formatAppointmentTime(startTime.toISOString()) : "TBD"}
+                                {startTime
+                                  ? formatAppointmentTime(
+                                      startTime.toISOString(),
+                                    )
+                                  : "TBD"}
                               </span>
                             </div>
                             <Badge className={getBadgeStyle(status)}>
@@ -283,14 +297,18 @@ export function HomeTab({
                   <div className="space-y-3">
                     {upcomingGroups.map(([groupKey, groupAppointments]) => {
                       const isRecurring =
-                        groupKey.startsWith("subscription-") || groupKey.startsWith("class-");
+                        groupKey.startsWith("subscription-") ||
+                        groupKey.startsWith("class-");
                       const firstAppointment = groupAppointments[0];
                       const userName = getConsumeeName(firstAppointment);
                       const status = getAppointmentStatus(firstAppointment);
                       const startTime = getStartTime(firstAppointment);
 
-                      const { completedSessions, totalSessions, progressPercentage } =
-                        calculateSessionProgress(groupAppointments);
+                      const {
+                        completedSessions,
+                        totalSessions,
+                        progressPercentage,
+                      } = calculateSessionProgress(groupAppointments);
 
                       return (
                         <motion.div
@@ -299,7 +317,7 @@ export function HomeTab({
                           className="group flex items-center gap-4 p-3 rounded-xl hover:bg-zinc-50 cursor-pointer transition-all"
                           onClick={() =>
                             router.push(
-                              `/dashboard/consultant/${consultantId}/appointments?highlight=${encodeURIComponent(groupKey)}`
+                              `/dashboard/consultant/${consultantId}/appointments?highlight=${encodeURIComponent(groupKey)}`,
                             )
                           }
                         >
@@ -309,13 +327,18 @@ export function HomeTab({
                               src={getConsumeeImage(firstAppointment)}
                             />
                             <AvatarFallback className="bg-zinc-100 text-zinc-600 text-sm">
-                              {userName.split(" ").map((n: string) => n[0]).join("")}
+                              {userName
+                                .split(" ")
+                                .map((n: string) => n[0])
+                                .join("")}
                             </AvatarFallback>
                           </Avatar>
 
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2">
-                              <h4 className="font-medium text-zinc-900 truncate">{userName}</h4>
+                              <h4 className="font-medium text-zinc-900 truncate">
+                                {userName}
+                              </h4>
                               {isRecurring && (
                                 <span className="text-xs text-zinc-400">
                                   {completedSessions}/{totalSessions} sessions
@@ -323,7 +346,9 @@ export function HomeTab({
                               )}
                             </div>
                             <p className="text-sm text-zinc-500">
-                              {startTime ? formatAppointmentTime(startTime.toISOString()) : "TBD"}
+                              {startTime
+                                ? formatAppointmentTime(startTime.toISOString())
+                                : "TBD"}
                             </p>
                             {isRecurring && (
                               <div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-zinc-100">
@@ -335,7 +360,10 @@ export function HomeTab({
                             )}
                           </div>
 
-                          <Badge className={getBadgeStyle(status)} variant="outline">
+                          <Badge
+                            className={getBadgeStyle(status)}
+                            variant="outline"
+                          >
                             {status}
                           </Badge>
 

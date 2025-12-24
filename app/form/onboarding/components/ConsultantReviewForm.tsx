@@ -50,7 +50,10 @@ const ConsultantReviewForm: React.FC<Props> = ({
               <p className="text-sm font-medium">Weekly Slots</p>
               <div className="space-y-1">
                 {formData.weeklySlots.filter(isValidSlot).map((slot, index) => {
-                  const startTime = formatTime(slot.availabilityStartsAt, "12h");
+                  const startTime = formatTime(
+                    slot.availabilityStartsAt,
+                    "12h",
+                  );
                   const endTime = formatTime(slot.availabilityEndsAt, "12h");
                   const isSameDay =
                     slot.dayOfWeekForStartsAt === slot.dayOfWeekForEndsAt;
@@ -85,7 +88,10 @@ const ConsultantReviewForm: React.FC<Props> = ({
                 {formData.customSlots.filter(isValidSlot).map((slot, index) => {
                   const startDate = formatDate(slot.availabilityStartsAt);
                   const endDate = formatDate(slot.availabilityEndsAt);
-                  const startTime = formatTime(slot.availabilityStartsAt, "12h");
+                  const startTime = formatTime(
+                    slot.availabilityStartsAt,
+                    "12h",
+                  );
                   const endTime = formatTime(slot.availabilityEndsAt, "12h");
                   const isSameDay = startDate === endDate;
 
@@ -130,7 +136,7 @@ const ConsultantReviewForm: React.FC<Props> = ({
 
   const renderList = (
     items: { id: string; name: string }[] | undefined,
-    emptyMessage: string
+    emptyMessage: string,
   ) => (
     <div className="flex flex-wrap gap-2">
       {items?.map((item) => (
@@ -142,7 +148,9 @@ const ConsultantReviewForm: React.FC<Props> = ({
         </span>
       ))}
       {(!items || items.length === 0) && (
-        <span className="text-sm text-muted-foreground italic">{emptyMessage}</span>
+        <span className="text-sm text-muted-foreground italic">
+          {emptyMessage}
+        </span>
       )}
     </div>
   );
@@ -157,7 +165,7 @@ const ConsultantReviewForm: React.FC<Props> = ({
           {renderField("Phone", formData.phone)}
           {renderField("City", formData.city)}
           {renderField("Country", formData.country)}
-        </div>
+        </div>,
       )}
 
       {renderSection(
@@ -166,8 +174,11 @@ const ConsultantReviewForm: React.FC<Props> = ({
           {renderField("Description", formData.description)}
           {renderField("Qualifications", formData.qualifications)}
           {renderField("Specialization", formData.specialization)}
-          {renderField("Experience", formData.experience ? `${formData.experience} years` : undefined)}
-        </div>
+          {renderField(
+            "Experience",
+            formData.experience ? `${formData.experience} years` : undefined,
+          )}
+        </div>,
       )}
 
       {renderSection(
@@ -182,7 +193,7 @@ const ConsultantReviewForm: React.FC<Props> = ({
             <p className="text-sm text-muted-foreground mb-2">Tags</p>
             {renderList(formData.tags, "No tags selected")}
           </div>
-        </div>
+        </div>,
       )}
 
       {renderSchedule()}

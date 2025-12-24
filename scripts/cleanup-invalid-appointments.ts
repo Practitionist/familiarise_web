@@ -109,7 +109,7 @@ export async function cleanupDuplicateConsultations(): Promise<{
         if (seenDates.has(dateKey)) {
           duplicatesToCancel.add(c.id);
           console.log(
-            `  Found same-day duplicate: ${c.id} (original: ${seenDates.get(dateKey)})`
+            `  Found same-day duplicate: ${c.id} (original: ${seenDates.get(dateKey)})`,
           );
         } else {
           seenDates.set(dateKey, c.id);
@@ -123,7 +123,7 @@ export async function cleanupDuplicateConsultations(): Promise<{
           }
           duplicatesToCancel.add(c2.id);
           console.log(
-            `  Found exact duplicate (within 5s): ${c2.id} (original: ${c.id})`
+            `  Found exact duplicate (within 5s): ${c2.id} (original: ${c.id})`,
           );
         }
       }
@@ -144,7 +144,10 @@ export async function cleanupDuplicateConsultations(): Promise<{
     const errorMessage =
       error instanceof Error ? error.message : "Unknown error";
     errors.push(`Duplicate consultation cleanup failed: ${errorMessage}`);
-    console.error("❌ Failed to cleanup duplicate consultations:", errorMessage);
+    console.error(
+      "❌ Failed to cleanup duplicate consultations:",
+      errorMessage,
+    );
   }
 
   return { count: cancelledCount, errors };
@@ -213,12 +216,12 @@ export async function cleanupDuplicateSubscriptions(): Promise<{
           if (overlaps) {
             duplicatesToCancel.add(s2.id); // Cancel newer one
             console.log(
-              `  Found overlapping subscription: ${s2.id} (overlaps with: ${s1.id})`
+              `  Found overlapping subscription: ${s2.id} (overlaps with: ${s1.id})`,
             );
           } else if (within5s) {
             duplicatesToCancel.add(s2.id); // Cancel newer one
             console.log(
-              `  Found exact duplicate (within 5s): ${s2.id} (original: ${s1.id})`
+              `  Found exact duplicate (within 5s): ${s2.id} (original: ${s1.id})`,
             );
           }
         }
@@ -240,7 +243,10 @@ export async function cleanupDuplicateSubscriptions(): Promise<{
     const errorMessage =
       error instanceof Error ? error.message : "Unknown error";
     errors.push(`Duplicate subscription cleanup failed: ${errorMessage}`);
-    console.error("❌ Failed to cleanup duplicate subscriptions:", errorMessage);
+    console.error(
+      "❌ Failed to cleanup duplicate subscriptions:",
+      errorMessage,
+    );
   }
 
   return { count: cancelledCount, errors };
@@ -283,7 +289,8 @@ export async function cleanupInvalidDurationConsultations(): Promise<{
       const expectedHours = c.consultationPlan.durationInHours;
       // Sum duration of ALL slots (not just the first one)
       const totalSlotMillis = c.appointment.slotsOfAppointment.reduce(
-        (total, slot) => total + (slot.endsAt.getTime() - slot.startsAt.getTime()),
+        (total, slot) =>
+          total + (slot.endsAt.getTime() - slot.startsAt.getTime()),
         0,
       );
       const actualHours = totalSlotMillis / (1000 * 60 * 60);
@@ -291,13 +298,13 @@ export async function cleanupInvalidDurationConsultations(): Promise<{
       if (Math.abs(expectedHours - actualHours) > 0.01) {
         invalidIds.push(c.id);
         console.log(
-          `  Found invalid duration: ${c.id} (expected: ${expectedHours}h, actual: ${actualHours.toFixed(2)}h)`
+          `  Found invalid duration: ${c.id} (expected: ${expectedHours}h, actual: ${actualHours.toFixed(2)}h)`,
         );
       }
     }
 
     console.log(
-      `📊 Found ${invalidIds.length} consultations with invalid durations`
+      `📊 Found ${invalidIds.length} consultations with invalid durations`,
     );
 
     // Batch cancel invalid consultations
@@ -308,16 +315,18 @@ export async function cleanupInvalidDurationConsultations(): Promise<{
       });
       cancelledCount = result.count;
       console.log(
-        `✅ Cancelled ${cancelledCount} invalid duration consultations`
+        `✅ Cancelled ${cancelledCount} invalid duration consultations`,
       );
     }
   } catch (error) {
     const errorMessage =
       error instanceof Error ? error.message : "Unknown error";
-    errors.push(`Invalid duration consultation cleanup failed: ${errorMessage}`);
+    errors.push(
+      `Invalid duration consultation cleanup failed: ${errorMessage}`,
+    );
     console.error(
       "❌ Failed to cleanup invalid duration consultations:",
-      errorMessage
+      errorMessage,
     );
   }
 
@@ -354,19 +363,19 @@ export async function cleanupInvalidDurationSubscriptions(): Promise<{
       const expectedMonths = s.subscriptionPlan.durationInMonths;
       const actualMonths = monthsDiff(
         s.schedulingPeriodStartsAt,
-        s.schedulingPeriodEndsAt
+        s.schedulingPeriodEndsAt,
       );
 
       if (actualMonths !== expectedMonths) {
         invalidIds.push(s.id);
         console.log(
-          `  Found invalid period: ${s.id} (expected: ${expectedMonths} months, actual: ${actualMonths} months)`
+          `  Found invalid period: ${s.id} (expected: ${expectedMonths} months, actual: ${actualMonths} months)`,
         );
       }
     }
 
     console.log(
-      `📊 Found ${invalidIds.length} subscriptions with invalid periods`
+      `📊 Found ${invalidIds.length} subscriptions with invalid periods`,
     );
 
     // Batch cancel invalid subscriptions
@@ -377,16 +386,18 @@ export async function cleanupInvalidDurationSubscriptions(): Promise<{
       });
       cancelledCount = result.count;
       console.log(
-        `✅ Cancelled ${cancelledCount} invalid duration subscriptions`
+        `✅ Cancelled ${cancelledCount} invalid duration subscriptions`,
       );
     }
   } catch (error) {
     const errorMessage =
       error instanceof Error ? error.message : "Unknown error";
-    errors.push(`Invalid duration subscription cleanup failed: ${errorMessage}`);
+    errors.push(
+      `Invalid duration subscription cleanup failed: ${errorMessage}`,
+    );
     console.error(
       "❌ Failed to cleanup invalid duration subscriptions:",
-      errorMessage
+      errorMessage,
     );
   }
 
@@ -407,7 +418,7 @@ export async function cleanupInvalidDurationSubscriptions(): Promise<{
 export async function runAllCleanupTasks(): Promise<CleanupResult> {
   const startTime = Date.now();
   console.log(
-    `\n🚀 Starting invalid appointment cleanup at ${new Date().toISOString()}\n`
+    `\n🚀 Starting invalid appointment cleanup at ${new Date().toISOString()}\n`,
   );
 
   const result: CleanupResult = {
@@ -458,16 +469,16 @@ export async function runAllCleanupTasks(): Promise<CleanupResult> {
     const duration = (Date.now() - startTime) / 1000;
     console.log(`\n📊 Cleanup Summary:`);
     console.log(
-      `   🔄 Duplicate consultations cancelled: ${result.duplicateConsultationsCancelled}`
+      `   🔄 Duplicate consultations cancelled: ${result.duplicateConsultationsCancelled}`,
     );
     console.log(
-      `   🔄 Duplicate subscriptions cancelled: ${result.duplicateSubscriptionsCancelled}`
+      `   🔄 Duplicate subscriptions cancelled: ${result.duplicateSubscriptionsCancelled}`,
     );
     console.log(
-      `   ⏱️ Invalid duration consultations cancelled: ${result.invalidDurationConsultationsCancelled}`
+      `   ⏱️ Invalid duration consultations cancelled: ${result.invalidDurationConsultationsCancelled}`,
     );
     console.log(
-      `   ⏱️ Invalid duration subscriptions cancelled: ${result.invalidDurationSubscriptionsCancelled}`
+      `   ⏱️ Invalid duration subscriptions cancelled: ${result.invalidDurationSubscriptionsCancelled}`,
     );
     console.log(`   📈 Total cancelled: ${result.totalCancelled}`);
     console.log(`   ⏱️ Duration: ${duration.toFixed(2)}s`);

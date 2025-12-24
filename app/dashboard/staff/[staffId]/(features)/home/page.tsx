@@ -1,6 +1,12 @@
 "use client";
 
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -211,7 +217,10 @@ export default function StaffHomePage() {
                     <Avatar className="h-9 w-9">
                       <AvatarImage src="" />
                       <AvatarFallback className="text-xs">
-                        {ticket.user.split(" ").map((n) => n[0]).join("")}
+                        {ticket.user
+                          .split(" ")
+                          .map((n) => n[0])
+                          .join("")}
                       </AvatarFallback>
                     </Avatar>
                     <div>
@@ -224,10 +233,16 @@ export default function StaffHomePage() {
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    <Badge className={getPriorityColor(ticket.priority)} variant="secondary">
+                    <Badge
+                      className={getPriorityColor(ticket.priority)}
+                      variant="secondary"
+                    >
                       {ticket.priority}
                     </Badge>
-                    <Badge className={getStatusColor(ticket.status)} variant="secondary">
+                    <Badge
+                      className={getStatusColor(ticket.status)}
+                      variant="secondary"
+                    >
                       {ticket.status.replace("_", " ")}
                     </Badge>
                     <span className="text-xs text-zinc-400 ml-2 hidden sm:inline">
@@ -319,4 +334,3 @@ export default function StaffHomePage() {
     </div>
   );
 }
-

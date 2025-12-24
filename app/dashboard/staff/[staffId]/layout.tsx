@@ -61,7 +61,7 @@ export default function StaffDashboardLayout({
       <aside
         className={cn(
           "flex flex-col border-r border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 transition-all duration-300",
-          collapsed ? "w-16" : "w-64"
+          collapsed ? "w-16" : "w-64",
         )}
       >
         {/* Header */}
@@ -99,7 +99,7 @@ export default function StaffDashboardLayout({
                           "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors",
                           isActive(item.path)
                             ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
-                            : "text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:text-zinc-100 dark:hover:bg-zinc-800"
+                            : "text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:text-zinc-100 dark:hover:bg-zinc-800",
                         )}
                       >
                         <item.icon className="h-5 w-5 flex-shrink-0" />
@@ -107,9 +107,7 @@ export default function StaffDashboardLayout({
                       </Link>
                     </TooltipTrigger>
                     {collapsed && (
-                      <TooltipContent side="right">
-                        {item.name}
-                      </TooltipContent>
+                      <TooltipContent side="right">{item.name}</TooltipContent>
                     )}
                   </Tooltip>
                 </li>
@@ -135,4 +133,3 @@ export default function StaffDashboardLayout({
     </div>
   );
 }
-

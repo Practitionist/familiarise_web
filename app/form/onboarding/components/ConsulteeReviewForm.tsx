@@ -61,7 +61,7 @@ const ConsulteeReviewForm: React.FC<Props> = ({
           {renderField("Phone", formData.phone)}
           {renderField("City", formData.city)}
           {renderField("Country", formData.country)}
-        </div>
+        </div>,
       )}
 
       {renderSection(
@@ -72,7 +72,7 @@ const ConsulteeReviewForm: React.FC<Props> = ({
           {renderField("Industry", formData.industry)}
           {renderField("Career Stage", formData.careerStage?.replace("_", " "))}
           {renderField("About Me", formData.aboutMe)}
-        </div>
+        </div>,
       )}
 
       {renderSection(
@@ -81,17 +81,14 @@ const ConsulteeReviewForm: React.FC<Props> = ({
           {renderField(
             "Communication",
             COMMUNICATION_LABELS[formData.preferredCommunicationMethod] ||
-              formData.preferredCommunicationMethod
+              formData.preferredCommunicationMethod,
           )}
           {renderField("Language", formData.preferredLanguage)}
-          {renderField(
-            "Budget",
-            formData.budgetPreference?.replace("_", " ")
-          )}
-        </div>
+          {renderField("Budget", formData.budgetPreference?.replace("_", " "))}
+        </div>,
       )}
 
-      {(formData.interests?.length || formData.goals?.length) && (
+      {(formData.interests?.length || formData.goals?.length) &&
         renderSection(
           "Interests & Goals",
           <div className="bg-muted/50 rounded-lg p-4 space-y-4">
@@ -122,9 +119,8 @@ const ConsulteeReviewForm: React.FC<Props> = ({
                 </ul>
               </div>
             )}
-          </div>
-        )
-      )}
+          </div>,
+        )}
 
       {/* Navigation */}
       <div className="flex gap-4 pt-4">

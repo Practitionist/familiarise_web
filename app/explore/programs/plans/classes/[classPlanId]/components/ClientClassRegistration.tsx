@@ -30,7 +30,9 @@ export function ClientClassRegistration({
 
   // Check if user is already enrolled in this class
   const appointments = classes?.flatMap((c) => c.appointments ?? []) ?? [];
-  const isAlreadyEnrolled = userId ? isUserEnrolled(appointments, userId) : false;
+  const isAlreadyEnrolled = userId
+    ? isUserEnrolled(appointments, userId)
+    : false;
 
   const handleRegistration = () => {
     if (!isLoggedIn) {
@@ -142,15 +144,19 @@ export function ClientClassRegistration({
           </div>
           <p className="text-sm text-gray-600 mb-4">
             {startDate
-              ? `Class starts on ${new Date(startDate).toLocaleString(undefined, {
-                  dateStyle: "long",
-                  timeStyle: "short",
-                  timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-                })}`
+              ? `Class starts on ${new Date(startDate).toLocaleString(
+                  undefined,
+                  {
+                    dateStyle: "long",
+                    timeStyle: "short",
+                    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                  },
+                )}`
               : "Start date to be announced"}
           </p>
           <p className="text-sm text-gray-600">
-            You are enrolled in this class. Check your dashboard for session details.
+            You are enrolled in this class. Check your dashboard for session
+            details.
           </p>
         </CardContent>
       </Card>

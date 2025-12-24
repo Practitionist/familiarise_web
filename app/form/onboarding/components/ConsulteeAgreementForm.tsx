@@ -66,10 +66,7 @@ const ConsulteeAgreementForm: React.FC<Props> = ({
             onCheckedChange={(checked) => setTermsAccepted(checked as boolean)}
             className="h-5 w-5"
           />
-          <label
-            htmlFor="terms"
-            className="text-sm cursor-pointer font-medium"
-          >
+          <label htmlFor="terms" className="text-sm cursor-pointer font-medium">
             I accept the{" "}
             <a
               href="/terms"

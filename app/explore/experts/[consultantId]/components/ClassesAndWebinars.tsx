@@ -31,19 +31,20 @@ interface ClassesAndWebinarsProps {
 // Generate a deterministic gradient based on ID
 const getGradient = (id: string, type: "class" | "webinar") => {
   const hash = id.split("").reduce((acc, char) => acc + char.charCodeAt(0), 0);
-  const gradients = type === "class" 
-    ? [
-        "from-zinc-900 via-zinc-800 to-zinc-700",
-        "from-slate-900 via-slate-800 to-slate-700",
-        "from-neutral-900 via-neutral-800 to-neutral-700",
-        "from-stone-900 via-stone-800 to-stone-700",
-      ]
-    : [
-        "from-zinc-800 via-zinc-700 to-zinc-600",
-        "from-slate-800 via-slate-700 to-slate-600",
-        "from-neutral-800 via-neutral-700 to-neutral-600",
-        "from-stone-800 via-stone-700 to-stone-600",
-      ];
+  const gradients =
+    type === "class"
+      ? [
+          "from-zinc-900 via-zinc-800 to-zinc-700",
+          "from-slate-900 via-slate-800 to-slate-700",
+          "from-neutral-900 via-neutral-800 to-neutral-700",
+          "from-stone-900 via-stone-800 to-stone-700",
+        ]
+      : [
+          "from-zinc-800 via-zinc-700 to-zinc-600",
+          "from-slate-800 via-slate-700 to-slate-600",
+          "from-neutral-800 via-neutral-700 to-neutral-600",
+          "from-stone-800 via-stone-700 to-stone-600",
+        ];
   return gradients[hash % gradients.length];
 };
 
@@ -85,12 +86,16 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
         transition={{ duration: 0.4, delay: index * 0.1 }}
         className="group"
       >
-        <div 
+        <div
           className="relative bg-white rounded-2xl border border-zinc-200 overflow-hidden hover:border-zinc-300 hover:shadow-xl transition-all duration-300 cursor-pointer h-full flex flex-col"
-          onClick={() => router.push(`/explore/programs/plans/classes/${classPlan.id}`)}
+          onClick={() =>
+            router.push(`/explore/programs/plans/classes/${classPlan.id}`)
+          }
         >
           {/* Cover Image/Gradient */}
-          <div className={`relative h-44 md:h-48 bg-gradient-to-br ${gradient} overflow-hidden`}>
+          <div
+            className={`relative h-44 md:h-48 bg-gradient-to-br ${gradient} overflow-hidden`}
+          >
             <div className="absolute inset-0 grid-pattern opacity-20" />
             <div className="absolute inset-0 flex items-center justify-center">
               <div className="w-16 h-16 rounded-2xl bg-white/10 backdrop-blur-sm flex items-center justify-center">
@@ -99,13 +104,18 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
             </div>
             {/* Badges */}
             <div className="absolute top-4 left-4 flex gap-2">
-              <Badge className="bg-white text-zinc-900 font-medium">Class</Badge>
+              <Badge className="bg-white text-zinc-900 font-medium">
+                Class
+              </Badge>
               {isEnrolled && <RegistrationBadge type="class" compact />}
             </div>
             {/* Price Tag */}
             <div className="absolute bottom-4 right-4">
               <span className="px-3 py-1.5 bg-white rounded-full text-lg font-bold text-zinc-900">
-                {formatCurrency(classPlan.price, classPlan.priceCurrency || "INR")}
+                {formatCurrency(
+                  classPlan.price,
+                  classPlan.priceCurrency || "INR",
+                )}
               </span>
             </div>
           </div>
@@ -115,7 +125,7 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
             <h3 className="text-lg font-semibold text-zinc-900 mb-2 line-clamp-1 group-hover:text-zinc-700 transition-colors">
               {classPlan.title}
             </h3>
-            
+
             <p className="text-sm text-zinc-500 mb-4 line-clamp-2 flex-1">
               {classPlan.description}
             </p>
@@ -124,7 +134,10 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
             <div className="flex flex-wrap gap-3 mb-4">
               <div className="flex items-center gap-1.5 text-xs text-zinc-500">
                 <Clock className="w-3.5 h-3.5" />
-                <span>{classPlan.durationInMonths} month{classPlan.durationInMonths > 1 ? "s" : ""}</span>
+                <span>
+                  {classPlan.durationInMonths} month
+                  {classPlan.durationInMonths > 1 ? "s" : ""}
+                </span>
               </div>
               <div className="flex items-center gap-1.5 text-xs text-zinc-500">
                 <Users className="w-3.5 h-3.5" />
@@ -138,12 +151,18 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
 
             {/* Tags */}
             <div className="flex flex-wrap gap-1.5 mb-4">
-              <Badge variant="secondary" className="text-xs bg-zinc-100 text-zinc-600">
+              <Badge
+                variant="secondary"
+                className="text-xs bg-zinc-100 text-zinc-600"
+              >
                 <Globe className="w-3 h-3 mr-1" />
                 {classPlan.language}
               </Badge>
               {classPlan.certificateProvided && (
-                <Badge variant="secondary" className="text-xs bg-emerald-50 text-emerald-700">
+                <Badge
+                  variant="secondary"
+                  className="text-xs bg-emerald-50 text-emerald-700"
+                >
                   <Sparkles className="w-3 h-3 mr-1" />
                   Certificate
                 </Badge>
@@ -168,7 +187,8 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
   };
 
   const renderWebinarCard = (webinarPlan: WebinarPlan, index: number) => {
-    const isRegistered = isLoggedIn && registeredWebinarPlanIds.has(webinarPlan.id);
+    const isRegistered =
+      isLoggedIn && registeredWebinarPlanIds.has(webinarPlan.id);
     const gradient = getGradient(webinarPlan.id, "webinar");
 
     return (
@@ -179,12 +199,16 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
         transition={{ duration: 0.4, delay: index * 0.1 }}
         className="group"
       >
-        <div 
+        <div
           className="relative bg-white rounded-2xl border border-zinc-200 overflow-hidden hover:border-zinc-300 hover:shadow-xl transition-all duration-300 cursor-pointer h-full flex flex-col"
-          onClick={() => router.push(`/explore/programs/plans/webinars/${webinarPlan.id}`)}
+          onClick={() =>
+            router.push(`/explore/programs/plans/webinars/${webinarPlan.id}`)
+          }
         >
           {/* Cover Image/Gradient */}
-          <div className={`relative h-44 md:h-48 bg-gradient-to-br ${gradient} overflow-hidden`}>
+          <div
+            className={`relative h-44 md:h-48 bg-gradient-to-br ${gradient} overflow-hidden`}
+          >
             <div className="absolute inset-0 grid-pattern opacity-20" />
             <div className="absolute inset-0 flex items-center justify-center">
               <div className="w-16 h-16 rounded-2xl bg-white/10 backdrop-blur-sm flex items-center justify-center">
@@ -193,13 +217,18 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
             </div>
             {/* Badges */}
             <div className="absolute top-4 left-4 flex gap-2">
-              <Badge className="bg-white/90 text-zinc-900 font-medium">Webinar</Badge>
+              <Badge className="bg-white/90 text-zinc-900 font-medium">
+                Webinar
+              </Badge>
               {isRegistered && <RegistrationBadge type="webinar" compact />}
             </div>
             {/* Price Tag */}
             <div className="absolute bottom-4 right-4">
               <span className="px-3 py-1.5 bg-white rounded-full text-lg font-bold text-zinc-900">
-                {formatCurrency(webinarPlan.price, webinarPlan.priceCurrency || "INR")}
+                {formatCurrency(
+                  webinarPlan.price,
+                  webinarPlan.priceCurrency || "INR",
+                )}
               </span>
             </div>
           </div>
@@ -209,7 +238,7 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
             <h3 className="text-lg font-semibold text-zinc-900 mb-2 line-clamp-1 group-hover:text-zinc-700 transition-colors">
               {webinarPlan.title}
             </h3>
-            
+
             <p className="text-sm text-zinc-500 mb-4 line-clamp-2 flex-1">
               {webinarPlan.description}
             </p>
@@ -218,7 +247,10 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
             <div className="flex flex-wrap gap-3 mb-4">
               <div className="flex items-center gap-1.5 text-xs text-zinc-500">
                 <Clock className="w-3.5 h-3.5" />
-                <span>{webinarPlan.durationInHours} hour{webinarPlan.durationInHours > 1 ? "s" : ""}</span>
+                <span>
+                  {webinarPlan.durationInHours} hour
+                  {webinarPlan.durationInHours > 1 ? "s" : ""}
+                </span>
               </div>
               <div className="flex items-center gap-1.5 text-xs text-zinc-500">
                 <Users className="w-3.5 h-3.5" />
@@ -232,11 +264,17 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
 
             {/* Tags */}
             <div className="flex flex-wrap gap-1.5 mb-4">
-              <Badge variant="secondary" className="text-xs bg-zinc-100 text-zinc-600">
+              <Badge
+                variant="secondary"
+                className="text-xs bg-zinc-100 text-zinc-600"
+              >
                 <Globe className="w-3 h-3 mr-1" />
                 {webinarPlan.language}
               </Badge>
-              <Badge variant="secondary" className="text-xs bg-zinc-100 text-zinc-600">
+              <Badge
+                variant="secondary"
+                className="text-xs bg-zinc-100 text-zinc-600"
+              >
                 <Video className="w-3 h-3 mr-1" />
                 Live
               </Badge>
@@ -247,7 +285,9 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
               className="w-full bg-zinc-900 hover:bg-zinc-800 text-white rounded-xl h-11 font-medium group/btn"
               onClick={(e) => {
                 e.stopPropagation();
-                router.push(`/explore/programs/plans/webinars/${webinarPlan.id}`);
+                router.push(
+                  `/explore/programs/plans/webinars/${webinarPlan.id}`,
+                );
               }}
             >
               <span>{isRegistered ? "View Webinar" : "Learn More"}</span>
@@ -270,9 +310,13 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
                 <GraduationCap className="w-5 h-5 text-zinc-600" />
               </div>
               <div>
-                <h2 className="text-lg font-semibold text-zinc-900">Programs by this Expert</h2>
+                <h2 className="text-lg font-semibold text-zinc-900">
+                  Programs by this Expert
+                </h2>
                 <p className="text-sm text-zinc-500">
-                  {classPlans.length} class{classPlans.length !== 1 ? "es" : ""} • {webinarPlans.length} webinar{webinarPlans.length !== 1 ? "s" : ""}
+                  {classPlans.length} class{classPlans.length !== 1 ? "es" : ""}{" "}
+                  • {webinarPlans.length} webinar
+                  {webinarPlans.length !== 1 ? "s" : ""}
                 </p>
               </div>
             </div>
@@ -292,7 +336,11 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
                     <motion.div
                       layoutId="activeTab"
                       className="absolute inset-0 bg-white rounded-lg shadow-sm"
-                      transition={{ type: "spring", bounce: 0.2, duration: 0.4 }}
+                      transition={{
+                        type: "spring",
+                        bounce: 0.2,
+                        duration: 0.4,
+                      }}
                     />
                   )}
                   <span className="relative flex items-center gap-2">
@@ -312,7 +360,11 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
                     <motion.div
                       layoutId="activeTab"
                       className="absolute inset-0 bg-white rounded-lg shadow-sm"
-                      transition={{ type: "spring", bounce: 0.2, duration: 0.4 }}
+                      transition={{
+                        type: "spring",
+                        bounce: 0.2,
+                        duration: 0.4,
+                      }}
                     />
                   )}
                   <span className="relative flex items-center gap-2">
@@ -337,7 +389,9 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
                 transition={{ duration: 0.3 }}
                 className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-6 md:gap-8"
               >
-                {classPlans.map((classPlan, index) => renderClassCard(classPlan, index))}
+                {classPlans.map((classPlan, index) =>
+                  renderClassCard(classPlan, index),
+                )}
               </motion.div>
             )}
 
@@ -350,12 +404,15 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
                 transition={{ duration: 0.3 }}
                 className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-6 md:gap-8"
               >
-                {webinarPlans.map((webinarPlan, index) => renderWebinarCard(webinarPlan, index))}
+                {webinarPlans.map((webinarPlan, index) =>
+                  renderWebinarCard(webinarPlan, index),
+                )}
               </motion.div>
             )}
 
             {/* Empty State */}
-            {((activeTab === "classes" && !hasClasses) || (activeTab === "webinars" && !hasWebinars)) && (
+            {((activeTab === "classes" && !hasClasses) ||
+              (activeTab === "webinars" && !hasWebinars)) && (
               <motion.div
                 key="empty"
                 initial={{ opacity: 0 }}
@@ -370,7 +427,8 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
                   )}
                 </div>
                 <p className="text-zinc-500">
-                  No {activeTab === "classes" ? "classes" : "webinars"} available yet
+                  No {activeTab === "classes" ? "classes" : "webinars"}{" "}
+                  available yet
                 </p>
               </motion.div>
             )}

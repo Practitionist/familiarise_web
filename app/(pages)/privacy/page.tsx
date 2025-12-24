@@ -3,7 +3,12 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Shield } from "lucide-react";
-import { COMPANY_INFO, PAGE_META, POLICY_DATES, getMailtoLink } from "../constants";
+import {
+  COMPANY_INFO,
+  PAGE_META,
+  POLICY_DATES,
+  getMailtoLink,
+} from "../constants";
 
 export default function PrivacyPolicyPage() {
   return (
@@ -35,8 +40,8 @@ export default function PrivacyPolicyPage() {
                 1. Introduction
               </h2>
               <p>
-                Welcome to Familiarise ("{COMPANY_INFO.name}"). We are committed to
-                protecting your privacy and ensuring the security of your
+                Welcome to Familiarise ("{COMPANY_INFO.name}"). We are committed
+                to protecting your privacy and ensuring the security of your
                 personal information. This Privacy Policy explains how we
                 collect, use, disclose, and safeguard your information when you
                 use our platform, website, and services.

@@ -58,7 +58,7 @@ export function TableSkeleton() {
           </div>
           <Skeleton className="h-10 w-32" />
         </div>
-        
+
         {/* Table header */}
         <div className="bg-white rounded-xl border border-zinc-200 overflow-hidden">
           <div className="border-b border-zinc-100 p-4">
@@ -70,7 +70,7 @@ export function TableSkeleton() {
               <Skeleton className="h-4 w-20" />
             </div>
           </div>
-          
+
           {/* Table rows */}
           {[1, 2, 3, 4, 5].map((i) => (
             <div key={i} className="border-b border-zinc-100 p-4 last:border-0">
@@ -101,7 +101,10 @@ export function RequestsSkeleton() {
       <div className="flex-1 space-y-4">
         <Skeleton className="h-8 w-48" />
         {[1, 2, 3, 4].map((i) => (
-          <div key={i} className="bg-white rounded-xl border border-zinc-200 p-4 space-y-3">
+          <div
+            key={i}
+            className="bg-white rounded-xl border border-zinc-200 p-4 space-y-3"
+          >
             <div className="flex items-center gap-3">
               <Skeleton className="h-10 w-10 rounded-full" />
               <div className="flex-1 space-y-2">
@@ -118,7 +121,7 @@ export function RequestsSkeleton() {
           </div>
         ))}
       </div>
-      
+
       {/* Right panel */}
       <div className="w-full lg:w-80 space-y-4">
         <Skeleton className="h-8 w-32" />
@@ -147,13 +150,16 @@ export function HomeSkeleton() {
         <Skeleton className="h-8 w-48" />
         <Skeleton className="h-4 w-64 mt-1" />
       </div>
-      
+
       {/* Content */}
       <div className="px-6 py-6 lg:px-8 space-y-6">
         {/* Stats */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           {[1, 2, 3, 4].map((i) => (
-            <div key={i} className="bg-white rounded-xl border border-zinc-200 p-5">
+            <div
+              key={i}
+              className="bg-white rounded-xl border border-zinc-200 p-5"
+            >
               <div className="flex items-start justify-between">
                 <div className="space-y-2">
                   <Skeleton className="h-4 w-24" />
@@ -165,7 +171,7 @@ export function HomeSkeleton() {
             </div>
           ))}
         </div>
-        
+
         {/* Cards */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 space-y-6">
@@ -209,9 +215,12 @@ export function SettingsSkeleton() {
           <Skeleton className="h-8 w-32" />
           <Skeleton className="h-4 w-64" />
         </div>
-        
+
         {[1, 2, 3].map((section) => (
-          <div key={section} className="bg-white rounded-xl border border-zinc-200 p-6 space-y-4">
+          <div
+            key={section}
+            className="bg-white rounded-xl border border-zinc-200 p-6 space-y-4"
+          >
             <Skeleton className="h-6 w-40" />
             <div className="space-y-4">
               {[1, 2, 3].map((i) => (
@@ -240,12 +249,15 @@ export function HelpSkeleton() {
           <Skeleton className="h-8 w-48" />
           <Skeleton className="h-4 w-64" />
         </div>
-        
+
         <Skeleton className="h-12 w-full rounded-xl" />
-        
+
         <div className="space-y-3">
           {[1, 2, 3, 4, 5, 6].map((i) => (
-            <div key={i} className="bg-white rounded-xl border border-zinc-200 p-4">
+            <div
+              key={i}
+              className="bg-white rounded-xl border border-zinc-200 p-4"
+            >
               <div className="flex items-center justify-between">
                 <Skeleton className="h-5 w-64" />
                 <Skeleton className="h-5 w-5" />
@@ -274,11 +286,14 @@ export function PlannerSkeleton() {
             <Skeleton className="h-10 w-32" />
           </div>
         </div>
-        
+
         {/* Event cards row */}
         <div className="flex gap-4 overflow-x-auto pb-2">
           {[1, 2, 3, 4].map((i) => (
-            <div key={i} className="flex-shrink-0 w-64 bg-white rounded-xl border border-zinc-200 p-4 space-y-3">
+            <div
+              key={i}
+              className="flex-shrink-0 w-64 bg-white rounded-xl border border-zinc-200 p-4 space-y-3"
+            >
               <div className="flex items-center gap-3">
                 <Skeleton className="h-10 w-10 rounded-lg" />
                 <div className="flex-1 space-y-1">
@@ -302,7 +317,7 @@ export function PlannerSkeleton() {
                 <Skeleton className="h-8 w-8" />
               </div>
             </div>
-            
+
             {/* Calendar grid */}
             <div className="grid grid-cols-7 gap-1">
               {/* Day headers */}
@@ -330,7 +345,7 @@ export function PlannerSkeleton() {
                 </div>
               ))}
             </div>
-            
+
             <div className="bg-white rounded-xl border border-zinc-200 p-4 space-y-3">
               <Skeleton className="h-6 w-32" />
               <Skeleton className="h-10 w-full" />
@@ -342,4 +357,3 @@ export function PlannerSkeleton() {
     </div>
   );
 }
-

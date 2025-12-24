@@ -4,7 +4,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { RefreshCw } from "lucide-react";
 import Link from "next/link";
-import { COMPANY_INFO, PAGE_META, POLICY_DATES, getMailtoLink } from "../constants";
+import {
+  COMPANY_INFO,
+  PAGE_META,
+  POLICY_DATES,
+  getMailtoLink,
+} from "../constants";
 
 export default function RefundPolicyPage() {
   return (

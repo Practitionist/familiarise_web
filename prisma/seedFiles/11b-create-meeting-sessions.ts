@@ -26,7 +26,10 @@ const RECORDING_TITLES = [
 ];
 
 function getWeightedPlatform(): Platform {
-  const totalWeight = PLATFORM_WEIGHTS.reduce((sum, item) => sum + item.weight, 0);
+  const totalWeight = PLATFORM_WEIGHTS.reduce(
+    (sum, item) => sum + item.weight,
+    0,
+  );
   let random = faker.number.int({ min: 1, max: totalWeight });
 
   for (const item of PLATFORM_WEIGHTS) {
@@ -60,7 +63,7 @@ function generatePasscode(): string {
 function generateHostKeys(): string[] {
   const numKeys = faker.number.int({ min: 1, max: 3 });
   return Array.from({ length: numKeys }, () =>
-    faker.string.alphanumeric(12).toUpperCase()
+    faker.string.alphanumeric(12).toUpperCase(),
   );
 }
 
@@ -68,7 +71,9 @@ const NUM_MEETING_SESSIONS = 150;
 const NUM_RECORDINGS = 75;
 
 export async function createMeetingSessions(): Promise<void> {
-  console.log(`Creating ${NUM_MEETING_SESSIONS} meeting sessions and ${NUM_RECORDINGS} recordings...`);
+  console.log(
+    `Creating ${NUM_MEETING_SESSIONS} meeting sessions and ${NUM_RECORDINGS} recordings...`,
+  );
 
   // Get slots of appointments that can have meeting sessions
   const slotsOfAppointment = await prisma.slotOfAppointment.findMany({
@@ -89,7 +94,9 @@ export async function createMeetingSessions(): Promise<void> {
   });
 
   if (slotsOfAppointment.length === 0) {
-    console.warn("No eligible appointment slots found for meeting session creation");
+    console.warn(
+      "No eligible appointment slots found for meeting session creation",
+    );
     return;
   }
 
@@ -99,7 +106,11 @@ export async function createMeetingSessions(): Promise<void> {
   // Track which slots we've used
   const usedSlotIds = new Set<string>();
 
-  for (let i = 0; i < Math.min(NUM_MEETING_SESSIONS, slotsOfAppointment.length); i++) {
+  for (
+    let i = 0;
+    i < Math.min(NUM_MEETING_SESSIONS, slotsOfAppointment.length);
+    i++
+  ) {
     const slot = slotsOfAppointment[i];
 
     // Skip if slot already used
@@ -137,7 +148,11 @@ export async function createMeetingSessions(): Promise<void> {
       const slotEndsAt = new Date(slot.endsAt);
       const isPast = slotEndsAt < new Date();
 
-      if (isPast && recordingsCreated < NUM_RECORDINGS && faker.datatype.boolean({ probability: 0.5 })) {
+      if (
+        isPast &&
+        recordingsCreated < NUM_RECORDINGS &&
+        faker.datatype.boolean({ probability: 0.5 })
+      ) {
         const numRecordings = faker.number.int({ min: 1, max: 2 });
 
         for (let j = 0; j < numRecordings; j++) {
@@ -170,16 +185,23 @@ export async function createMeetingSessions(): Promise<void> {
       }
 
       if (sessionsCreated % 20 === 0) {
-        console.log(`Created ${sessionsCreated} meeting sessions, ${recordingsCreated} recordings...`);
+        console.log(
+          `Created ${sessionsCreated} meeting sessions, ${recordingsCreated} recordings...`,
+        );
       }
     } catch (error) {
       // Handle unique constraint violations
-      if (error instanceof Error && error.message.includes("Unique constraint")) {
+      if (
+        error instanceof Error &&
+        error.message.includes("Unique constraint")
+      ) {
         continue;
       }
       console.error(`Failed to create meeting session:`, error);
     }
   }
 
-  console.log(`Created ${sessionsCreated} meeting sessions with ${recordingsCreated} recordings`);
+  console.log(
+    `Created ${sessionsCreated} meeting sessions with ${recordingsCreated} recordings`,
+  );
 }

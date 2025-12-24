@@ -208,9 +208,11 @@ export default function SubscriptionPricingToggle({
                 <h3 className="text-xl font-bold text-white">{option.title}</h3>
                 <p className="text-sm text-zinc-400">{option.description}</p>
               </div>
-              
+
               <div className="my-4">
-                <span className="text-4xl font-bold text-white">{formatCurrency(option.price, option.priceCurrency)}</span>
+                <span className="text-4xl font-bold text-white">
+                  {formatCurrency(option.price, option.priceCurrency)}
+                </span>
               </div>
 
               {option.features && option.features.length > 0 && (
@@ -240,128 +242,130 @@ export default function SubscriptionPricingToggle({
                   </Button>
                 </DialogTrigger>
                 <DialogContent className="sm:max-w-[550px] lg:max-w-[650px] bg-zinc-900 text-white p-0 border border-zinc-800 rounded-2xl shadow-2xl">
-                    <DialogHeader className="p-6 border-b border-zinc-800">
-                      <DialogTitle className="text-xl font-semibold">Select Scheduling Period</DialogTitle>
-                      <DialogDescription className="text-zinc-400">
-                        Choose when you&apos;d like your {option.durationInMonths}{" "}
-                        month subscription to run
-                      </DialogDescription>
-                    </DialogHeader>
-                    <div className="p-8 space-y-6">
-                      {/* Date Inputs */}
-                      <div className="space-y-5">
-                        {/* Start Date */}
-                        <div className="space-y-2">
-                          <label className="text-sm font-medium flex items-center gap-2 text-zinc-400">
-                            <CalendarIcon className="h-4 w-4" />
-                            Start Date
-                          </label>
-                          <input
-                            type="date"
-                            value={
-                              schedulingStartDate
-                                ? format(schedulingStartDate, "yyyy-MM-dd")
-                                : ""
-                            }
-                            onChange={(e) => {
-                              const date = e.target.value
-                                ? new Date(e.target.value)
-                                : null;
-                              setSchedulingStartDate(date);
-                            }}
-                            min={format(new Date(), "yyyy-MM-dd")}
-                            className="w-full px-5 py-3.5 bg-zinc-800/60 border-2 border-zinc-700/50 rounded-xl text-white text-base font-medium focus:outline-none focus:ring-2 focus:ring-zinc-500/50 focus:border-zinc-500 transition-all hover:border-zinc-600 cursor-pointer"
-                            style={{ colorScheme: "dark" }}
-                          />
-                        </div>
-
-                        {/* End Date */}
-                        <div className="space-y-2">
-                          <label className="text-sm font-medium flex items-center gap-2 text-zinc-400">
-                            <CalendarIcon className="h-4 w-4" />
-                            End Date
-                          </label>
-                          <input
-                            type="date"
-                            value={
-                              schedulingEndDate
-                                ? format(schedulingEndDate, "yyyy-MM-dd")
-                                : ""
-                            }
-                            onChange={(e) => {
-                              const date = e.target.value
-                                ? new Date(e.target.value)
-                                : null;
-                              setSchedulingEndDate(date);
-                            }}
-                            min={
-                              schedulingStartDate
-                                ? format(schedulingStartDate, "yyyy-MM-dd")
-                                : format(new Date(), "yyyy-MM-dd")
-                            }
-                            className="w-full px-5 py-3.5 bg-zinc-800/60 border-2 border-zinc-700/50 rounded-xl text-white text-base font-medium focus:outline-none focus:ring-2 focus:ring-zinc-500/50 focus:border-zinc-500 transition-all hover:border-zinc-600 cursor-pointer"
-                            style={{ colorScheme: "dark" }}
-                          />
-                        </div>
+                  <DialogHeader className="p-6 border-b border-zinc-800">
+                    <DialogTitle className="text-xl font-semibold">
+                      Select Scheduling Period
+                    </DialogTitle>
+                    <DialogDescription className="text-zinc-400">
+                      Choose when you&apos;d like your {option.durationInMonths}{" "}
+                      month subscription to run
+                    </DialogDescription>
+                  </DialogHeader>
+                  <div className="p-8 space-y-6">
+                    {/* Date Inputs */}
+                    <div className="space-y-5">
+                      {/* Start Date */}
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium flex items-center gap-2 text-zinc-400">
+                          <CalendarIcon className="h-4 w-4" />
+                          Start Date
+                        </label>
+                        <input
+                          type="date"
+                          value={
+                            schedulingStartDate
+                              ? format(schedulingStartDate, "yyyy-MM-dd")
+                              : ""
+                          }
+                          onChange={(e) => {
+                            const date = e.target.value
+                              ? new Date(e.target.value)
+                              : null;
+                            setSchedulingStartDate(date);
+                          }}
+                          min={format(new Date(), "yyyy-MM-dd")}
+                          className="w-full px-5 py-3.5 bg-zinc-800/60 border-2 border-zinc-700/50 rounded-xl text-white text-base font-medium focus:outline-none focus:ring-2 focus:ring-zinc-500/50 focus:border-zinc-500 transition-all hover:border-zinc-600 cursor-pointer"
+                          style={{ colorScheme: "dark" }}
+                        />
                       </div>
 
-                      {/* Period Summary */}
-                      {schedulingStartDate && schedulingEndDate && (
-                        <div className="p-4 bg-zinc-800/50 rounded-xl border border-zinc-700/50">
-                          <p className="text-sm text-zinc-500 mb-1">
-                            Selected Period:
-                          </p>
-                          <p className="text-white font-semibold text-lg">
-                            {format(schedulingStartDate, "MMM dd, yyyy")} →{" "}
-                            {format(schedulingEndDate, "MMM dd, yyyy")}
-                          </p>
-                          <p className="text-sm text-zinc-500 mt-1">
-                            Duration: ~
-                            {Math.round(
-                              differenceInDays(
-                                schedulingEndDate,
-                                schedulingStartDate,
-                              ) / 30,
-                            )}{" "}
-                            month(s)
-                          </p>
-                        </div>
-                      )}
+                      {/* End Date */}
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium flex items-center gap-2 text-zinc-400">
+                          <CalendarIcon className="h-4 w-4" />
+                          End Date
+                        </label>
+                        <input
+                          type="date"
+                          value={
+                            schedulingEndDate
+                              ? format(schedulingEndDate, "yyyy-MM-dd")
+                              : ""
+                          }
+                          onChange={(e) => {
+                            const date = e.target.value
+                              ? new Date(e.target.value)
+                              : null;
+                            setSchedulingEndDate(date);
+                          }}
+                          min={
+                            schedulingStartDate
+                              ? format(schedulingStartDate, "yyyy-MM-dd")
+                              : format(new Date(), "yyyy-MM-dd")
+                          }
+                          className="w-full px-5 py-3.5 bg-zinc-800/60 border-2 border-zinc-700/50 rounded-xl text-white text-base font-medium focus:outline-none focus:ring-2 focus:ring-zinc-500/50 focus:border-zinc-500 transition-all hover:border-zinc-600 cursor-pointer"
+                          style={{ colorScheme: "dark" }}
+                        />
+                      </div>
+                    </div>
 
-                      {/* Validation Message */}
-                      {!validation.valid && validation.message && (
-                        <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-xl">
-                          <p className="text-sm text-red-400">
-                            {validation.message}
-                          </p>
-                        </div>
-                      )}
-
-                      {/* Timezone Info */}
-                      <div className="p-4 bg-zinc-800/40 border border-zinc-700/50 rounded-xl">
-                        <p className="text-sm text-zinc-400">
-                          💡 Timezone: {timezone} (Your local time)
+                    {/* Period Summary */}
+                    {schedulingStartDate && schedulingEndDate && (
+                      <div className="p-4 bg-zinc-800/50 rounded-xl border border-zinc-700/50">
+                        <p className="text-sm text-zinc-500 mb-1">
+                          Selected Period:
+                        </p>
+                        <p className="text-white font-semibold text-lg">
+                          {format(schedulingStartDate, "MMM dd, yyyy")} →{" "}
+                          {format(schedulingEndDate, "MMM dd, yyyy")}
+                        </p>
+                        <p className="text-sm text-zinc-500 mt-1">
+                          Duration: ~
+                          {Math.round(
+                            differenceInDays(
+                              schedulingEndDate,
+                              schedulingStartDate,
+                            ) / 30,
+                          )}{" "}
+                          month(s)
                         </p>
                       </div>
+                    )}
+
+                    {/* Validation Message */}
+                    {!validation.valid && validation.message && (
+                      <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-xl">
+                        <p className="text-sm text-red-400">
+                          {validation.message}
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Timezone Info */}
+                    <div className="p-4 bg-zinc-800/40 border border-zinc-700/50 rounded-xl">
+                      <p className="text-sm text-zinc-400">
+                        💡 Timezone: {timezone} (Your local time)
+                      </p>
                     </div>
-                    <div className="bg-zinc-800/50 px-6 py-4 flex justify-end gap-3 rounded-b-2xl border-t border-zinc-800">
-                      <Button
-                        variant="ghost"
-                        className="text-zinc-400 hover:text-white hover:bg-zinc-700/50"
-                        onClick={() => setIsDialogOpen(false)}
-                      >
-                        Cancel
-                      </Button>
-                      <Button
-                        onClick={handleContinueToCheckout}
-                        disabled={!validation.valid}
-                        className="bg-white text-zinc-900 hover:bg-zinc-100 font-medium px-6"
-                      >
-                        Continue to Checkout
-                      </Button>
-                    </div>
-                    </DialogContent>
-                </Dialog>
+                  </div>
+                  <div className="bg-zinc-800/50 px-6 py-4 flex justify-end gap-3 rounded-b-2xl border-t border-zinc-800">
+                    <Button
+                      variant="ghost"
+                      className="text-zinc-400 hover:text-white hover:bg-zinc-700/50"
+                      onClick={() => setIsDialogOpen(false)}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      onClick={handleContinueToCheckout}
+                      disabled={!validation.valid}
+                      className="bg-white text-zinc-900 hover:bg-zinc-100 font-medium px-6"
+                    >
+                      Continue to Checkout
+                    </Button>
+                  </div>
+                </DialogContent>
+              </Dialog>
             </div>
           </motion.div>
         ))}

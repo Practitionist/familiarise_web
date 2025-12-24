@@ -72,25 +72,28 @@ export function StatCard({
         "relative overflow-hidden rounded-xl border border-zinc-200/80 p-5 transition-all",
         v.bg,
         onClick && "cursor-pointer",
-        className
+        className,
       )}
       onClick={onClick}
     >
       <div className="flex items-start justify-between">
         <div className="flex-1 min-w-0">
           <p className="text-sm font-medium text-zinc-500 truncate">{title}</p>
-          <p className={cn("mt-2 text-2xl font-bold tracking-tight", v.valueColor)}>
+          <p
+            className={cn(
+              "mt-2 text-2xl font-bold tracking-tight",
+              v.valueColor,
+            )}
+          >
             {value}
           </p>
-          {subtitle && (
-            <p className="mt-1 text-xs text-zinc-400">{subtitle}</p>
-          )}
+          {subtitle && <p className="mt-1 text-xs text-zinc-400">{subtitle}</p>}
           {trend && (
             <div className="mt-2 flex items-center gap-1">
               <span
                 className={cn(
                   "inline-flex items-center text-xs font-medium",
-                  trend.isPositive ? "text-emerald-600" : "text-red-600"
+                  trend.isPositive ? "text-emerald-600" : "text-red-600",
                 )}
               >
                 {trend.isPositive ? "↑" : "↓"} {Math.abs(trend.value)}%
@@ -99,9 +102,14 @@ export function StatCard({
             </div>
           )}
         </div>
-        
+
         {Icon && (
-          <div className={cn("flex h-11 w-11 items-center justify-center rounded-xl", v.iconBg)}>
+          <div
+            className={cn(
+              "flex h-11 w-11 items-center justify-center rounded-xl",
+              v.iconBg,
+            )}
+          >
             <Icon className={cn("h-5 w-5", v.iconColor)} />
           </div>
         )}
@@ -119,10 +127,12 @@ interface StatCardSkeletonProps {
 
 export function StatCardSkeleton({ className }: StatCardSkeletonProps) {
   return (
-    <div className={cn(
-      "relative overflow-hidden rounded-xl border border-zinc-200/80 bg-white p-5",
-      className
-    )}>
+    <div
+      className={cn(
+        "relative overflow-hidden rounded-xl border border-zinc-200/80 bg-white p-5",
+        className,
+      )}
+    >
       <div className="flex items-start justify-between">
         <div className="flex-1 space-y-3">
           <div className="h-4 w-24 animate-pulse rounded bg-zinc-200" />
@@ -134,4 +144,3 @@ export function StatCardSkeleton({ className }: StatCardSkeletonProps) {
     </div>
   );
 }
-

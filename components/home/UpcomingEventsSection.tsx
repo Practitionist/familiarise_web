@@ -11,12 +11,12 @@ import { Card, CardContent } from "@/components/ui/card";
 import type { ReviewWithProfiles } from "@/types/review";
 import { UPCOMING_EVENTS } from "./data";
 
-function EventCard({ 
-  event, 
-  index 
-}: { 
-  event: typeof UPCOMING_EVENTS[0]; 
-  index: number 
+function EventCard({
+  event,
+  index,
+}: {
+  event: (typeof UPCOMING_EVENTS)[0];
+  index: number;
 }) {
   return (
     <motion.div
@@ -28,12 +28,19 @@ function EventCard({
       <Card className="border border-zinc-800 bg-zinc-900/50 hover:bg-zinc-900 transition-colors group">
         <CardContent className="p-5">
           <div className="flex items-start justify-between mb-3">
-            <Badge variant="secondary" className="bg-zinc-800 text-zinc-300 text-xs">
+            <Badge
+              variant="secondary"
+              className="bg-zinc-800 text-zinc-300 text-xs"
+            >
               {event.type}
             </Badge>
-            <span className="text-xs text-zinc-500">{event.attendees} attending</span>
+            <span className="text-xs text-zinc-500">
+              {event.attendees} attending
+            </span>
           </div>
-          <h4 className="font-semibold text-white mb-2 group-hover:text-zinc-200">{event.title}</h4>
+          <h4 className="font-semibold text-white mb-2 group-hover:text-zinc-200">
+            {event.title}
+          </h4>
           <p className="text-sm text-zinc-400 mb-3">Hosted by {event.host}</p>
           <div className="flex items-center gap-4 text-xs text-zinc-500">
             <span className="flex items-center gap-1">
@@ -59,11 +66,11 @@ export function UpcomingEventsSection({ reviews }: UpcomingEventsSectionProps) {
   return (
     <section className="py-20 md:py-32 bg-gradient-to-b from-black via-zinc-950 to-zinc-900 overflow-hidden relative">
       <div className="absolute inset-0 grid-pattern opacity-20" />
-      
+
       {/* Glow accents */}
       <div className="absolute top-1/2 left-0 w-96 h-96 bg-zinc-700/20 rounded-full blur-[150px] -translate-y-1/2" />
       <div className="absolute top-1/2 right-0 w-96 h-96 bg-zinc-600/15 rounded-full blur-[150px] -translate-y-1/2" />
-      
+
       <div className="container mx-auto px-4 md:px-6 relative z-10">
         <div className="grid lg:grid-cols-2 gap-16">
           {/* Testimonials Column */}
@@ -75,7 +82,10 @@ export function UpcomingEventsSection({ reviews }: UpcomingEventsSectionProps) {
               viewport={{ once: true }}
               className="mb-8"
             >
-              <Badge variant="secondary" className="mb-4 bg-zinc-800 text-zinc-300 hover:bg-zinc-800 border-zinc-700">
+              <Badge
+                variant="secondary"
+                className="mb-4 bg-zinc-800 text-zinc-300 hover:bg-zinc-800 border-zinc-700"
+              >
                 Reviews
               </Badge>
               <h2 className="text-3xl md:text-4xl font-bold text-white mb-4">
@@ -103,16 +113,22 @@ export function UpcomingEventsSection({ reviews }: UpcomingEventsSectionProps) {
                         ))}
                       </div>
                       <p className="text-zinc-300 text-sm mb-3 line-clamp-2">
-                        &ldquo;{review.reviewDescription || "Great experience!"}&rdquo;
+                        &ldquo;{review.reviewDescription || "Great experience!"}
+                        &rdquo;
                       </p>
                       <div className="flex items-center gap-2">
                         <Avatar className="w-6 h-6 border border-zinc-700">
-                          <AvatarImage src={review.consulteeProfile?.user?.image ?? ""} />
+                          <AvatarImage
+                            src={review.consulteeProfile?.user?.image ?? ""}
+                          />
                           <AvatarFallback className="bg-zinc-800 text-zinc-300 text-xs">
-                            {review.consulteeProfile?.user?.name?.charAt(0) ?? "U"}
+                            {review.consulteeProfile?.user?.name?.charAt(0) ??
+                              "U"}
                           </AvatarFallback>
                         </Avatar>
-                        <p className="text-xs text-zinc-500">— {review.consulteeProfile?.user?.name || "Anonymous"}</p>
+                        <p className="text-xs text-zinc-500">
+                          — {review.consulteeProfile?.user?.name || "Anonymous"}
+                        </p>
                       </div>
                     </CardContent>
                   </Card>
@@ -130,7 +146,10 @@ export function UpcomingEventsSection({ reviews }: UpcomingEventsSectionProps) {
               viewport={{ once: true }}
               className="mb-8"
             >
-              <Badge variant="secondary" className="mb-4 bg-zinc-800 text-zinc-300 hover:bg-zinc-800 border-zinc-700">
+              <Badge
+                variant="secondary"
+                className="mb-4 bg-zinc-800 text-zinc-300 hover:bg-zinc-800 border-zinc-700"
+              >
                 Coming Soon
               </Badge>
               <h2 className="text-3xl md:text-4xl font-bold text-white mb-4">
@@ -164,4 +183,3 @@ export function UpcomingEventsSection({ reviews }: UpcomingEventsSectionProps) {
     </section>
   );
 }
-

@@ -57,9 +57,8 @@ export const fetchConsultantPlanner = async (consultantId: string) => {
 };
 
 export const fetchHelpFAQs = async () => {
-  const { faqs } = await import(
-    "../app/dashboard/consultant/[consultantId]/(features)/help/questions"
-  );
+  const { faqs } =
+    await import("../app/dashboard/consultant/[consultantId]/(features)/help/questions");
   return faqs;
 };
 

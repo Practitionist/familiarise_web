@@ -119,9 +119,7 @@ const ConsultantProfileForm: React.FC<Props> = ({
     return (
       <div className="text-center space-y-4 p-8">
         <p className="text-destructive text-lg">{error}</p>
-        <Button onClick={() => window.location.reload()}>
-          Retry
-        </Button>
+        <Button onClick={() => window.location.reload()}>Retry</Button>
       </div>
     );
   }
@@ -188,7 +186,9 @@ const ConsultantProfileForm: React.FC<Props> = ({
         </div>
 
         <div className="space-y-2">
-          <Label htmlFor="qualifications">Qualifications & Certifications</Label>
+          <Label htmlFor="qualifications">
+            Qualifications & Certifications
+          </Label>
           <Textarea
             id="qualifications"
             {...register("qualifications")}
@@ -265,12 +265,15 @@ const ConsultantProfileForm: React.FC<Props> = ({
                             }
                             onCheckedChange={(checked) => {
                               if (checked) {
-                                field.onChange([...(field.value || []), subDomain]);
+                                field.onChange([
+                                  ...(field.value || []),
+                                  subDomain,
+                                ]);
                               } else {
                                 field.onChange(
                                   field.value?.filter(
-                                    (s) => s.id !== subDomain.id
-                                  ) || []
+                                    (s) => s.id !== subDomain.id,
+                                  ) || [],
                                 );
                               }
                             }}
@@ -303,7 +306,10 @@ const ConsultantProfileForm: React.FC<Props> = ({
                   render={({ field }) => (
                     <>
                       {filteredTags.map((tag) => (
-                        <div key={tag.id} className="flex items-center space-x-2">
+                        <div
+                          key={tag.id}
+                          className="flex items-center space-x-2"
+                        >
                           <Checkbox
                             id={`tag-${tag.id}`}
                             checked={
@@ -314,7 +320,8 @@ const ConsultantProfileForm: React.FC<Props> = ({
                                 field.onChange([...(field.value || []), tag]);
                               } else {
                                 field.onChange(
-                                  field.value?.filter((t) => t.id !== tag.id) || []
+                                  field.value?.filter((t) => t.id !== tag.id) ||
+                                    [],
                                 );
                               }
                             }}
@@ -332,7 +339,9 @@ const ConsultantProfileForm: React.FC<Props> = ({
                 />
               </div>
               {errors.tags && (
-                <p className="text-sm text-destructive">{errors.tags.message}</p>
+                <p className="text-sm text-destructive">
+                  {errors.tags.message}
+                </p>
               )}
             </div>
           </>

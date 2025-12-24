@@ -16,7 +16,8 @@ export function RegistrationBadge({
   compact = false,
 }: Readonly<RegistrationBadgeProps>) {
   const text = type === "webinar" ? "Registered" : "Enrolled";
-  const fullText = type === "webinar" ? "Already Registered" : "Already Enrolled";
+  const fullText =
+    type === "webinar" ? "Already Registered" : "Already Enrolled";
 
   if (compact) {
     return (

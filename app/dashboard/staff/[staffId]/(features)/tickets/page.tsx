@@ -1,7 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -56,7 +62,8 @@ const tickets = [
   {
     id: "TKT-001",
     subject: "Payment not processed",
-    description: "My payment was declined but amount was deducted from my account.",
+    description:
+      "My payment was declined but amount was deducted from my account.",
     user: { name: "John Doe", email: "john@example.com", avatar: "" },
     status: "open",
     priority: "high",
@@ -69,7 +76,8 @@ const tickets = [
   {
     id: "TKT-002",
     subject: "Cannot schedule appointment",
-    description: "The calendar is not loading when I try to book a consultation.",
+    description:
+      "The calendar is not loading when I try to book a consultation.",
     user: { name: "Jane Smith", email: "jane@example.com", avatar: "" },
     status: "in_progress",
     priority: "medium",
@@ -82,7 +90,8 @@ const tickets = [
   {
     id: "TKT-003",
     subject: "Profile verification issue",
-    description: "My consultant profile is pending verification for over a week.",
+    description:
+      "My consultant profile is pending verification for over a week.",
     user: { name: "Mike Wilson", email: "mike@example.com", avatar: "" },
     status: "pending",
     priority: "low",
@@ -95,7 +104,8 @@ const tickets = [
   {
     id: "TKT-004",
     subject: "Refund request for cancelled session",
-    description: "The consultant cancelled the session but I haven't received my refund.",
+    description:
+      "The consultant cancelled the session but I haven't received my refund.",
     user: { name: "Sarah Connor", email: "sarah@example.com", avatar: "" },
     status: "open",
     priority: "high",
@@ -184,7 +194,9 @@ export default function SupportTicketsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [priorityFilter, setPriorityFilter] = useState("all");
-  const [selectedTicket, setSelectedTicket] = useState<typeof tickets[0] | null>(null);
+  const [selectedTicket, setSelectedTicket] = useState<
+    (typeof tickets)[0] | null
+  >(null);
   const [replyText, setReplyText] = useState("");
 
   const filteredTickets = tickets.filter((ticket) => {
@@ -192,8 +204,10 @@ export default function SupportTicketsPage() {
       ticket.subject.toLowerCase().includes(searchQuery.toLowerCase()) ||
       ticket.user.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       ticket.id.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesStatus = statusFilter === "all" || ticket.status === statusFilter;
-    const matchesPriority = priorityFilter === "all" || ticket.priority === priorityFilter;
+    const matchesStatus =
+      statusFilter === "all" || ticket.status === statusFilter;
+    const matchesPriority =
+      priorityFilter === "all" || ticket.priority === priorityFilter;
     return matchesSearch && matchesStatus && matchesPriority;
   });
 
@@ -228,9 +242,21 @@ export default function SupportTicketsPage() {
         {[
           { label: "All", value: ticketCounts.all, color: "text-zinc-600" },
           { label: "Open", value: ticketCounts.open, color: "text-blue-600" },
-          { label: "In Progress", value: ticketCounts.in_progress, color: "text-yellow-600" },
-          { label: "Pending", value: ticketCounts.pending, color: "text-orange-600" },
-          { label: "Resolved", value: ticketCounts.resolved, color: "text-green-600" },
+          {
+            label: "In Progress",
+            value: ticketCounts.in_progress,
+            color: "text-yellow-600",
+          },
+          {
+            label: "Pending",
+            value: ticketCounts.pending,
+            color: "text-orange-600",
+          },
+          {
+            label: "Resolved",
+            value: ticketCounts.resolved,
+            color: "text-green-600",
+          },
         ].map((stat) => (
           <Card key={stat.label}>
             <CardContent className="p-4">
@@ -304,7 +330,9 @@ export default function SupportTicketsPage() {
                   className="cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-900"
                   onClick={() => setSelectedTicket(ticket)}
                 >
-                  <TableCell className="font-mono text-sm">{ticket.id}</TableCell>
+                  <TableCell className="font-mono text-sm">
+                    {ticket.id}
+                  </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-2">
                       {getStatusIcon(ticket.status)}
@@ -322,19 +350,28 @@ export default function SupportTicketsPage() {
                       <Avatar className="h-6 w-6">
                         <AvatarImage src={ticket.user.avatar} />
                         <AvatarFallback className="text-xs">
-                          {ticket.user.name.split(" ").map((n) => n[0]).join("")}
+                          {ticket.user.name
+                            .split(" ")
+                            .map((n) => n[0])
+                            .join("")}
                         </AvatarFallback>
                       </Avatar>
                       <span className="text-sm">{ticket.user.name}</span>
                     </div>
                   </TableCell>
                   <TableCell>
-                    <Badge className={getStatusColor(ticket.status)} variant="secondary">
+                    <Badge
+                      className={getStatusColor(ticket.status)}
+                      variant="secondary"
+                    >
                       {ticket.status.replace("_", " ")}
                     </Badge>
                   </TableCell>
                   <TableCell>
-                    <Badge className={getPriorityColor(ticket.priority)} variant="secondary">
+                    <Badge
+                      className={getPriorityColor(ticket.priority)}
+                      variant="secondary"
+                    >
                       {ticket.priority}
                     </Badge>
                   </TableCell>
@@ -346,7 +383,10 @@ export default function SupportTicketsPage() {
                   </TableCell>
                   <TableCell>
                     <DropdownMenu>
-                      <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+                      <DropdownMenuTrigger
+                        asChild
+                        onClick={(e) => e.stopPropagation()}
+                      >
                         <Button variant="ghost" size="icon" className="h-8 w-8">
                           <MoreHorizontal className="h-4 w-4" />
                         </Button>
@@ -355,7 +395,9 @@ export default function SupportTicketsPage() {
                         <DropdownMenuItem>Assign to me</DropdownMenuItem>
                         <DropdownMenuItem>Change status</DropdownMenuItem>
                         <DropdownMenuItem>Change priority</DropdownMenuItem>
-                        <DropdownMenuItem className="text-red-600">Close ticket</DropdownMenuItem>
+                        <DropdownMenuItem className="text-red-600">
+                          Close ticket
+                        </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </TableCell>
@@ -367,7 +409,10 @@ export default function SupportTicketsPage() {
       </Card>
 
       {/* Ticket Detail Dialog */}
-      <Dialog open={!!selectedTicket} onOpenChange={() => setSelectedTicket(null)}>
+      <Dialog
+        open={!!selectedTicket}
+        onOpenChange={() => setSelectedTicket(null)}
+      >
         <DialogContent className="max-w-2xl">
           {selectedTicket && (
             <>
@@ -377,12 +422,16 @@ export default function SupportTicketsPage() {
                     {getStatusIcon(selectedTicket.status)}
                     {selectedTicket.subject}
                   </DialogTitle>
-                  <Badge className={getPriorityColor(selectedTicket.priority)} variant="secondary">
+                  <Badge
+                    className={getPriorityColor(selectedTicket.priority)}
+                    variant="secondary"
+                  >
                     {selectedTicket.priority}
                   </Badge>
                 </div>
                 <DialogDescription>
-                  {selectedTicket.id} • Created {formatDate(selectedTicket.createdAt)}
+                  {selectedTicket.id} • Created{" "}
+                  {formatDate(selectedTicket.createdAt)}
                 </DialogDescription>
               </DialogHeader>
               <div className="space-y-4">
@@ -391,12 +440,17 @@ export default function SupportTicketsPage() {
                   <Avatar>
                     <AvatarImage src={selectedTicket.user.avatar} />
                     <AvatarFallback>
-                      {selectedTicket.user.name.split(" ").map((n) => n[0]).join("")}
+                      {selectedTicket.user.name
+                        .split(" ")
+                        .map((n) => n[0])
+                        .join("")}
                     </AvatarFallback>
                   </Avatar>
                   <div>
                     <p className="font-medium">{selectedTicket.user.name}</p>
-                    <p className="text-sm text-zinc-500">{selectedTicket.user.email}</p>
+                    <p className="text-sm text-zinc-500">
+                      {selectedTicket.user.email}
+                    </p>
                   </div>
                 </div>
 
@@ -439,7 +493,10 @@ export default function SupportTicketsPage() {
                 </div>
               </div>
               <DialogFooter>
-                <Button variant="outline" onClick={() => setSelectedTicket(null)}>
+                <Button
+                  variant="outline"
+                  onClick={() => setSelectedTicket(null)}
+                >
                   Cancel
                 </Button>
                 <Button>Send Reply</Button>
@@ -451,4 +508,3 @@ export default function SupportTicketsPage() {
     </div>
   );
 }
-

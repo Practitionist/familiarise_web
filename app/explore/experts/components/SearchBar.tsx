@@ -38,7 +38,9 @@ export function SearchBar({ onSearch, onSort, sortBy }: SearchBarProps) {
       <div className="flex items-center gap-2">
         <div className="flex items-center gap-2 px-4 h-12 bg-zinc-100 rounded-xl">
           <SlidersHorizontal className="w-4 h-4 text-zinc-500" />
-          <span className="text-sm font-medium text-zinc-600 hidden sm:inline">Sort by</span>
+          <span className="text-sm font-medium text-zinc-600 hidden sm:inline">
+            Sort by
+          </span>
         </div>
         <Select
           value={sortBy}

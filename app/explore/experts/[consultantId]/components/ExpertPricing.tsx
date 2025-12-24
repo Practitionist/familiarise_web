@@ -170,14 +170,14 @@ export function ExpertPricing({
         {hasConsultations && hasSubscriptions ? (
           <Tabs defaultValue="consultations" className="w-full">
             <TabsList className="grid w-full grid-cols-2 mb-6 bg-zinc-900 p-1 rounded-xl">
-              <TabsTrigger 
+              <TabsTrigger
                 value="consultations"
                 className="rounded-lg data-[state=active]:bg-white data-[state=active]:text-zinc-900 text-zinc-400"
               >
                 <Calendar className="w-4 h-4 mr-2" />
                 One-time
               </TabsTrigger>
-              <TabsTrigger 
+              <TabsTrigger
                 value="subscriptions"
                 className="rounded-lg data-[state=active]:bg-white data-[state=active]:text-zinc-900 text-zinc-400"
               >

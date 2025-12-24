@@ -11,7 +11,10 @@ const DOCUMENT_TYPES = [
       "Updated CV for job search guidance",
       "Professional resume for feedback",
     ],
-    mimeTypes: ["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
+    mimeTypes: [
+      "application/pdf",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ],
     extensions: ["pdf", "docx"],
     sizeRange: { min: 50000, max: 500000 }, // 50KB - 500KB
   },
@@ -33,7 +36,10 @@ const DOCUMENT_TYPES = [
       "Agreement document for consultation",
       "Legal paperwork requiring expert opinion",
     ],
-    mimeTypes: ["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
+    mimeTypes: [
+      "application/pdf",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ],
     extensions: ["pdf", "docx"],
     sizeRange: { min: 100000, max: 3000000 }, // 100KB - 3MB
   },
@@ -55,7 +61,10 @@ const DOCUMENT_TYPES = [
       "Business agreement for consultation",
       "Service contract needing expert input",
     ],
-    mimeTypes: ["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
+    mimeTypes: [
+      "application/pdf",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ],
     extensions: ["pdf", "docx"],
     sizeRange: { min: 50000, max: 1000000 }, // 50KB - 1MB
   },
@@ -108,7 +117,10 @@ const REVIEW_NOTES = {
 };
 
 function getWeightedStatus(): DocumentReviewStatus {
-  const totalWeight = STATUS_WEIGHTS.reduce((sum, item) => sum + item.weight, 0);
+  const totalWeight = STATUS_WEIGHTS.reduce(
+    (sum, item) => sum + item.weight,
+    0,
+  );
   let random = faker.number.int({ min: 1, max: totalWeight });
 
   for (const item of STATUS_WEIGHTS) {
@@ -169,9 +181,12 @@ export async function createAppointmentDocuments(): Promise<void> {
       const status = getWeightedStatus();
 
       const extension = faker.helpers.arrayElement(docType.extensions);
-      const mimeType = docType.mimeTypes.find((m) =>
-        m.includes(extension) || (extension === "jpg" && m.includes("jpeg"))
-      ) || docType.mimeTypes[0];
+      const mimeType =
+        docType.mimeTypes.find(
+          (m) =>
+            m.includes(extension) ||
+            (extension === "jpg" && m.includes("jpeg")),
+        ) || docType.mimeTypes[0];
 
       const fileName = `${docType.type.toLowerCase().replace(/\s+/g, "_")}_${faker.string.alphanumeric(8)}.${extension}`;
       const originalName = `${faker.person.lastName()}_${docType.type}.${extension}`;
@@ -189,7 +204,8 @@ export async function createAppointmentDocuments(): Promise<void> {
       if (status !== "PENDING") {
         // Get the consultant ID from the appointment
         const consultantUserId =
-          appointment.consultation?.consultationPlan?.consultantProfile?.userId ||
+          appointment.consultation?.consultationPlan?.consultantProfile
+            ?.userId ||
           appointment.subscription?.subscriptionPlan?.consultantProfile?.userId;
 
         if (consultantUserId && status !== "IN_REVIEW") {
@@ -199,7 +215,7 @@ export async function createAppointmentDocuments(): Promise<void> {
 
         if (status in REVIEW_NOTES) {
           reviewNotes = faker.helpers.arrayElement(
-            REVIEW_NOTES[status as keyof typeof REVIEW_NOTES]
+            REVIEW_NOTES[status as keyof typeof REVIEW_NOTES],
           );
         }
       }

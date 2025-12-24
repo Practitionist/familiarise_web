@@ -13,10 +13,10 @@ import {
  * Should be called after users are created
  */
 export async function createConsultantEducation(
-  consultants: UserWithProfiles[]
+  consultants: UserWithProfiles[],
 ): Promise<void> {
   console.log(
-    `Creating education records for ${consultants.length} consultants...`
+    `Creating education records for ${consultants.length} consultants...`,
   );
 
   for (const consultant of consultants) {
@@ -79,7 +79,7 @@ export async function createConsultantEducation(
     } catch (error) {
       console.error(
         `Failed to create education for consultant ${consultant.id}:`,
-        error
+        error,
       );
     }
   }

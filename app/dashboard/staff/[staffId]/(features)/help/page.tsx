@@ -1,7 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -67,23 +73,28 @@ const quickHelp = [
 const faqs = [
   {
     question: "How do I reset my password?",
-    answer: "Go to Settings > Security > Change Password. If you're locked out, contact IT support through the help desk or email it-support@familiarise.com.",
+    answer:
+      "Go to Settings > Security > Change Password. If you're locked out, contact IT support through the help desk or email it-support@familiarise.com.",
   },
   {
     question: "Where can I find my shift schedule?",
-    answer: "Your shift schedule is available in Settings > Work Schedule. You can also check the team calendar in the Chat section for team-wide schedules.",
+    answer:
+      "Your shift schedule is available in Settings > Work Schedule. You can also check the team calendar in the Chat section for team-wide schedules.",
   },
   {
     question: "How do I request time off?",
-    answer: "Submit time-off requests through HR Portal (linked in Settings). For urgent requests, email your supervisor directly and CC hr@familiarise.com.",
+    answer:
+      "Submit time-off requests through HR Portal (linked in Settings). For urgent requests, email your supervisor directly and CC hr@familiarise.com.",
   },
   {
     question: "Who do I contact for technical issues?",
-    answer: "For platform technical issues, create a ticket in the IT Help Desk. For urgent issues affecting users, escalate through the #tech-support channel in Team Chat.",
+    answer:
+      "For platform technical issues, create a ticket in the IT Help Desk. For urgent issues affecting users, escalate through the #tech-support channel in Team Chat.",
   },
   {
     question: "How do I access previous training materials?",
-    answer: "All training materials are available in the Knowledge Base under 'Getting Started' and 'Video Tutorials' categories. Contact HR for access to advanced training modules.",
+    answer:
+      "All training materials are available in the Knowledge Base under 'Getting Started' and 'Video Tutorials' categories. Contact HR for access to advanced training modules.",
   },
 ];
 
@@ -169,7 +180,9 @@ export default function HelpPage() {
               <HelpCircle className="h-5 w-5" />
               Frequently Asked Questions
             </CardTitle>
-            <CardDescription>Common questions about the staff portal</CardDescription>
+            <CardDescription>
+              Common questions about the staff portal
+            </CardDescription>
           </CardHeader>
           <CardContent>
             <Accordion type="single" collapsible className="w-full">
@@ -238,7 +251,8 @@ export default function HelpPage() {
             Submit a Support Ticket
           </CardTitle>
           <CardDescription>
-            Can&apos;t find what you&apos;re looking for? Submit a ticket to the support team
+            Can&apos;t find what you&apos;re looking for? Submit a ticket to the
+            support team
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -253,7 +267,9 @@ export default function HelpPage() {
                   <SelectItem value="technical">Technical Issue</SelectItem>
                   <SelectItem value="access">Access / Permissions</SelectItem>
                   <SelectItem value="training">Training Request</SelectItem>
-                  <SelectItem value="feedback">Feedback / Suggestion</SelectItem>
+                  <SelectItem value="feedback">
+                    Feedback / Suggestion
+                  </SelectItem>
                   <SelectItem value="other">Other</SelectItem>
                 </SelectContent>
               </Select>
@@ -335,4 +351,3 @@ export default function HelpPage() {
     </div>
   );
 }
-

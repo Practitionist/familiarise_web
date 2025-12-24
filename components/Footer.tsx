@@ -47,11 +47,31 @@ const FOOTER_LINKS = {
 };
 
 const SOCIAL_LINKS = [
-  { icon: FaTwitter, href: "https://twitter.com/familiarise", label: "Twitter" },
-  { icon: FaLinkedin, href: "https://linkedin.com/company/familiarise", label: "LinkedIn" },
-  { icon: FaInstagram, href: "https://instagram.com/familiarise", label: "Instagram" },
-  { icon: FaYoutube, href: "https://youtube.com/familiarise", label: "YouTube" },
-  { icon: FaFacebook, href: "https://facebook.com/familiarise", label: "Facebook" },
+  {
+    icon: FaTwitter,
+    href: "https://twitter.com/familiarise",
+    label: "Twitter",
+  },
+  {
+    icon: FaLinkedin,
+    href: "https://linkedin.com/company/familiarise",
+    label: "LinkedIn",
+  },
+  {
+    icon: FaInstagram,
+    href: "https://instagram.com/familiarise",
+    label: "Instagram",
+  },
+  {
+    icon: FaYoutube,
+    href: "https://youtube.com/familiarise",
+    label: "YouTube",
+  },
+  {
+    icon: FaFacebook,
+    href: "https://facebook.com/familiarise",
+    label: "Facebook",
+  },
 ];
 
 const Footer: React.FC = () => {
@@ -104,10 +124,14 @@ const Footer: React.FC = () => {
                 Stay in the <span className="silver-text">loop</span>
               </h2>
               <p className="text-lg text-zinc-500 mb-8">
-                Get expert tips, career advice, and exclusive offers delivered to your inbox weekly.
+                Get expert tips, career advice, and exclusive offers delivered
+                to your inbox weekly.
               </p>
-              
-              <form className="flex flex-col sm:flex-row gap-3 max-w-md mx-auto" onSubmit={handleNewsletterSubmit}>
+
+              <form
+                className="flex flex-col sm:flex-row gap-3 max-w-md mx-auto"
+                onSubmit={handleNewsletterSubmit}
+              >
                 <Input
                   type="email"
                   placeholder="Enter your email"
@@ -115,18 +139,21 @@ const Footer: React.FC = () => {
                   onChange={(e) => setEmail(e.target.value)}
                   className="h-14 bg-zinc-900 border-zinc-800 text-white placeholder:text-zinc-600 rounded-xl focus:border-zinc-600 focus:ring-zinc-600"
                 />
-                <Button 
+                <Button
                   type="submit"
-                  size="lg" 
+                  size="lg"
                   className="h-14 bg-white text-zinc-900 hover:bg-zinc-200 px-8 rounded-xl font-medium shrink-0"
                 >
                   Subscribe
                 </Button>
               </form>
-              
+
               <p className="text-sm text-zinc-600 mt-4">
                 No spam, unsubscribe anytime.{" "}
-                <Link href="/privacy" className="underline hover:text-zinc-400 transition-colors">
+                <Link
+                  href="/privacy"
+                  className="underline hover:text-zinc-400 transition-colors"
+                >
                   Privacy Policy
                 </Link>
               </p>
@@ -142,20 +169,20 @@ const Footer: React.FC = () => {
           <div className="col-span-2 md:col-span-3 lg:col-span-2">
             <Link href="/" className="inline-block mb-6">
               <div className="relative h-10 w-36">
-          <Image
-            src={familiariseLogoWhite}
+                <Image
+                  src={familiariseLogoWhite}
                   alt="Familiarise"
-            fill
+                  fill
                   className="object-contain object-left"
                   sizes="144px"
                 />
               </div>
             </Link>
             <p className="text-zinc-400 text-sm leading-relaxed mb-6 max-w-xs">
-              Connect with world-class experts for personalized mentorship, 
+              Connect with world-class experts for personalized mentorship,
               classes, and career guidance. Transform your career today.
             </p>
-            
+
             {/* Social Links */}
             <div className="flex items-center gap-3">
               {SOCIAL_LINKS.map((social) => (
@@ -170,8 +197,8 @@ const Footer: React.FC = () => {
                   <social.icon className="w-4 h-4 text-zinc-400 group-hover:text-white transition-colors" />
                 </a>
               ))}
-        </div>
-      </div>
+            </div>
+          </div>
 
           {/* Expertise Column */}
           <div>
@@ -185,10 +212,10 @@ const Footer: React.FC = () => {
                   >
                     {link.label}
                   </Link>
-            </li>
+                </li>
               ))}
-          </ul>
-        </div>
+            </ul>
+          </div>
 
           {/* Company Column */}
           <div>
@@ -201,8 +228,8 @@ const Footer: React.FC = () => {
                     className="text-sm text-zinc-400 hover:text-white transition-colors"
                   >
                     {link.label}
-              </Link>
-            </li>
+                  </Link>
+                </li>
               ))}
             </ul>
           </div>
@@ -221,8 +248,8 @@ const Footer: React.FC = () => {
                     {link.label === "Become an Expert" && (
                       <ArrowUpRight className="w-3 h-3" />
                     )}
-              </Link>
-            </li>
+                  </Link>
+                </li>
               ))}
             </ul>
           </div>
@@ -238,10 +265,10 @@ const Footer: React.FC = () => {
                     className="text-sm text-zinc-400 hover:text-white transition-colors"
                   >
                     {link.label}
-              </Link>
-            </li>
+                  </Link>
+                </li>
               ))}
-          </ul>
+            </ul>
           </div>
         </div>
       </div>
@@ -252,26 +279,26 @@ const Footer: React.FC = () => {
           <div className="flex flex-col md:flex-row items-center justify-between gap-4">
             <p className="text-sm text-zinc-500">
               © {new Date().getFullYear()} Familiarise. All rights reserved.
-        </p>
+            </p>
             <div className="flex items-center gap-6">
-          <Link
-            href="/terms"
+              <Link
+                href="/terms"
                 className="text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
-          >
+              >
                 Terms
-          </Link>
-          <Link
-            href="/privacy"
+              </Link>
+              <Link
+                href="/privacy"
                 className="text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
-          >
-            Privacy
-          </Link>
-          <Link
-            href="/refund"
+              >
+                Privacy
+              </Link>
+              <Link
+                href="/refund"
                 className="text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
-          >
+              >
                 Refunds
-          </Link>
+              </Link>
             </div>
           </div>
         </div>

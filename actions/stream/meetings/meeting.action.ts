@@ -106,7 +106,9 @@ export async function createDbMeetingSession(
     if (error instanceof Error) {
       throw new Error(`Failed to create meeting session: ${error.message}`);
     }
-    throw new Error("An unknown error occurred while creating the meeting session.");
+    throw new Error(
+      "An unknown error occurred while creating the meeting session.",
+    );
   }
 }
 
