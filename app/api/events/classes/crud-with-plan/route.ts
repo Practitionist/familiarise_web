@@ -1,9 +1,11 @@
 import prisma from "@/lib/prisma";
 import { ClassPlanSchema } from "@/schemas/plans";
-import { ClassStatus } from "@prisma/client"; // Import Enum
+import { ClassStatus } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { addMonthsSafely } from "@/utils/dateUtils";
+import { getServerSession } from "next-auth";
+import authOptions from "@/app/api/auth/[...nextauth]/options";
 
 // Schema for POST request body based on ClassPlanSchema
 // Topics field name matches PlanSchema ('topics' instead of 'topicIds')
@@ -49,6 +51,15 @@ const PatchClassWithPlanBodySchema =
 
 export async function POST(request: NextRequest) {
   try {
+    // Authentication check
+    const session = await getServerSession(authOptions);
+    if (!session?.user?.id) {
+      return NextResponse.json(
+        { error: "Authentication required" },
+        { status: 401 },
+      );
+    }
+
     const body = await request.json();
 
     // --- Zod Validation ---
@@ -85,6 +96,21 @@ export async function POST(request: NextRequest) {
       startDate,
     } = validatedData;
     // --- End Zod Validation ---
+
+    // Verify ownership - user must own this consultant profile
+    const consultantProfile = await prisma.consultantProfile.findFirst({
+      where: {
+        id: consultantProfileId,
+        userId: session.user.id,
+      },
+    });
+
+    if (!consultantProfile) {
+      return NextResponse.json(
+        { error: "You do not have permission to create classes for this consultant profile" },
+        { status: 403 },
+      );
+    }
 
     // Compute derived metrics
     const sessionDurationInHours = 1.0; // Default session duration for classes
@@ -252,6 +278,15 @@ export async function POST(request: NextRequest) {
 
 export async function PATCH(request: NextRequest) {
   try {
+    // Authentication check
+    const session = await getServerSession(authOptions);
+    if (!session?.user?.id) {
+      return NextResponse.json(
+        { error: "Authentication required" },
+        { status: 401 },
+      );
+    }
+
     const body = await request.json();
     console.log(
       "Received class update request body:",
@@ -311,6 +346,7 @@ export async function PATCH(request: NextRequest) {
     const existingPlan = await prisma.classPlan.findUnique({
       where: { id },
       include: {
+        consultantProfile: true,
         topics: true,
         classContents: true,
         classes: true,
@@ -321,6 +357,15 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json(
         { error: `Class plan with ID ${id} not found` },
         { status: 404 },
+      );
+    }
+
+    // Verify ownership - user must own this class plan
+    if (!existingPlan.consultantProfile ||
+        existingPlan.consultantProfile.userId !== session.user.id) {
+      return NextResponse.json(
+        { error: "You do not have permission to update this class" },
+        { status: 403 },
       );
     }
 

@@ -53,6 +53,7 @@ import {
   SubscriptionPlanEvent,
   SubscriptionPlannerProps,
 } from "../types/event";
+import { PlannerService } from "../services/planner";
 
 export function EventPlannerForSubscription({
   isOpen,
@@ -78,6 +79,8 @@ export function EventPlannerForSubscription({
           price: initialData.subscriptionPlan.price,
           priceCurrency: initialData.subscriptionPlan.priceCurrency ?? "INR",
           callsPerWeek: initialData.subscriptionPlan.callsPerWeek,
+          sessionDurationInHours:
+            initialData.subscriptionPlan.sessionDurationInHours ?? 1,
           emailSupport: initialData.subscriptionPlan.emailSupport,
           language: initialData.subscriptionPlan.language ?? "English",
           level: initialData.subscriptionPlan.level ?? "Beginner",
@@ -94,6 +97,7 @@ export function EventPlannerForSubscription({
           price: 0,
           priceCurrency: "INR",
           callsPerWeek: 1,
+          sessionDurationInHours: 1,
           emailSupport: "GENERAL" as const,
           language: "English",
           level: "Beginner",
@@ -101,7 +105,7 @@ export function EventPlannerForSubscription({
           materialProvided: "",
           learningOutcomes: [],
         },
-    mode: "onChange",
+    mode: "onBlur",
   });
 
   useEffect(() => {
@@ -113,6 +117,8 @@ export function EventPlannerForSubscription({
         price: initialData.subscriptionPlan.price,
         priceCurrency: initialData.subscriptionPlan.priceCurrency ?? "INR",
         callsPerWeek: initialData.subscriptionPlan.callsPerWeek,
+        sessionDurationInHours:
+          initialData.subscriptionPlan.sessionDurationInHours ?? 1,
         emailSupport: initialData.subscriptionPlan.emailSupport,
         language: initialData.subscriptionPlan.language ?? "English",
         level: initialData.subscriptionPlan.level ?? "Beginner",
@@ -144,6 +150,25 @@ export function EventPlannerForSubscription({
       setInternalIsSaving(true);
       setShowConfirmation(false);
 
+      // Check for duplicate title
+      const planId = initialData?.subscriptionPlan?.id ?? "";
+      const isDuplicate = await PlannerService.checkDuplicateTitle(
+        formData.title,
+        consultantId,
+        "subscription",
+        planId,
+      );
+
+      if (isDuplicate) {
+        toast({
+          title: "Duplicate Title",
+          description: `A subscription plan with title "${formData.title}" already exists. Please use a different title.`,
+          variant: "destructive",
+        });
+        setInternalIsSaving(false);
+        return;
+      }
+
       const now = new Date();
 
       const subscriptionData: Partial<SubscriptionPlanEvent> = {
@@ -166,13 +191,14 @@ export function EventPlannerForSubscription({
           consultantProfileId: consultantId,
           consultantProfile: null,
           subscriptions: initialData?.subscriptionPlan?.subscriptions ?? [],
-          sessionDurationInHours: 1,
+          sessionDurationInHours: formData.sessionDurationInHours ?? 1,
           createdAt: initialData?.subscriptionPlan?.createdAt ?? now,
           updatedAt: now,
         },
       };
 
-      onSave(subscriptionData);
+      // Await onSave to ensure API call completes before showing success
+      await onSave(subscriptionData);
 
       toast({
         title: "Success",
@@ -327,10 +353,10 @@ export function EventPlannerForSubscription({
               {/* Support Options Section */}
               <FormSection
                 title="Support Options"
-                description="Define call frequency and support level"
+                description="Define call frequency, duration, and support level"
                 icon={Headphones}
               >
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <FormField
                     control={form.control}
                     name="callsPerWeek"
@@ -354,6 +380,36 @@ export function EventPlannerForSubscription({
                         </FormControl>
                         <FormDescription>
                           Number of scheduled calls per week
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="sessionDurationInHours"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Session Duration (hours)</FormLabel>
+                        <FormControl>
+                          <Input
+                            type="number"
+                            step="0.5"
+                            min="0.5"
+                            max="4"
+                            placeholder="1"
+                            {...field}
+                            onChange={(e) => {
+                              const value = e.target.value;
+                              field.onChange(
+                                value === "" ? 0 : Number.parseFloat(value),
+                              );
+                            }}
+                          />
+                        </FormControl>
+                        <FormDescription>
+                          Duration of each call (30 min increments)
                         </FormDescription>
                         <FormMessage />
                       </FormItem>

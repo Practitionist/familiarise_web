@@ -1,6 +1,9 @@
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
+import authOptions from "@/app/api/auth/[...nextauth]/options";
+import { ConsultationPlanSchema } from "@/schemas/plans";
 
 export async function GET(
   request: NextRequest,
@@ -54,41 +57,63 @@ export async function PUT(
   { params }: { params: Promise<{ consultationId: string }> },
 ) {
   try {
+    // Authentication check
+    const session = await getServerSession(authOptions);
+    if (!session?.user?.id) {
+      return NextResponse.json(
+        { error: "Authentication required" },
+        { status: 401 },
+      );
+    }
+
     const { consultationId } = await params;
+
+    // Verify ownership - user must own this consultation plan
+    const existingPlan = await prisma.consultationPlan.findUnique({
+      where: { id: consultationId },
+      include: { consultantProfile: true },
+    });
+
+    if (!existingPlan) {
+      return NextResponse.json(
+        { error: "Consultation plan not found" },
+        { status: 404 },
+      );
+    }
+
+    if (existingPlan.consultantProfile.userId !== session.user.id) {
+      return NextResponse.json(
+        { error: "You do not have permission to update this consultation plan" },
+        { status: 403 },
+      );
+    }
+
     const body = await request.json();
 
-    // Input validation
-    if (body.durationInHours && body.durationInHours <= 0) {
+    // Validate input with Zod schema (partial for updates)
+    const validationResult = ConsultationPlanSchema.partial().safeParse(body);
+    if (!validationResult.success) {
       return NextResponse.json(
-        { error: "Duration must be a positive number" },
+        { error: "Validation failed", details: validationResult.error.issues },
         { status: 400 },
       );
     }
 
-    if (body.price && body.price <= 0) {
-      return NextResponse.json(
-        { error: "Price must be a positive number" },
-        { status: 400 },
-      );
-    }
+    const validatedData = validationResult.data;
 
     const consultationPlan = await prisma.consultationPlan.update({
       where: { id: consultationId },
       data: {
-        title: body.title,
-        description: body.description,
-        durationInHours: body.durationInHours,
-        price: body.price ? Math.round(body.price) : undefined, // Ensure price is an integer
-        language: body.language,
-        level: body.level,
-        prerequisites: body.prerequisites,
-        materialProvided: body.materialProvided,
-        learningOutcomes: body.learningOutcomes,
-        consultantProfile: body.consultantProfileId
-          ? {
-              connect: { id: body.consultantProfileId },
-            }
-          : undefined,
+        title: validatedData.title,
+        description: validatedData.description,
+        durationInHours: validatedData.durationInHours,
+        price: validatedData.price !== undefined ? Math.round(validatedData.price) : undefined,
+        priceCurrency: validatedData.priceCurrency,
+        language: validatedData.language,
+        level: validatedData.level,
+        prerequisites: validatedData.prerequisites,
+        materialProvided: validatedData.materialProvided,
+        learningOutcomes: validatedData.learningOutcomes,
       },
       include: {
         consultantProfile: {
@@ -134,7 +159,36 @@ export async function DELETE(
   { params }: { params: Promise<{ consultationId: string }> },
 ) {
   try {
+    // Authentication check
+    const session = await getServerSession(authOptions);
+    if (!session?.user?.id) {
+      return NextResponse.json(
+        { error: "Authentication required" },
+        { status: 401 },
+      );
+    }
+
     const { consultationId } = await params;
+
+    // Verify ownership - user must own this consultation plan
+    const existingPlan = await prisma.consultationPlan.findUnique({
+      where: { id: consultationId },
+      include: { consultantProfile: true },
+    });
+
+    if (!existingPlan) {
+      return NextResponse.json(
+        { error: "Consultation plan not found" },
+        { status: 404 },
+      );
+    }
+
+    if (existingPlan.consultantProfile.userId !== session.user.id) {
+      return NextResponse.json(
+        { error: "You do not have permission to delete this consultation plan" },
+        { status: 403 },
+      );
+    }
 
     // Check if there are any associated consultations
     const associatedConsultations = await prisma.consultation.findMany({

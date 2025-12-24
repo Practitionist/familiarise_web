@@ -2,14 +2,43 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
+import {
+  WebinarEvent,
+  ClassEvent,
+  ConsultationPlanEvent,
+  SubscriptionPlanEvent,
+} from "../(features)/planner/types/event";
+import {
+  ConsultationPlan,
+  SubscriptionPlan,
+} from "@/schemas/plans";
 
 interface PlannerData {
-  webinars: any[];
-  classes: any[];
-  consultationPlans: any[];
-  subscriptionPlans: any[];
+  webinars: WebinarEvent[];
+  classes: ClassEvent[];
+  consultationPlans: ConsultationPlanEvent[];
+  subscriptionPlans: SubscriptionPlanEvent[];
   participantCounts: Record<string, number>;
 }
+
+// Types for mutation inputs
+type ConsultationPlanInput = Partial<ConsultationPlan> & {
+  consultantProfileId?: string;
+} | undefined;
+
+type ConsultationPlanUpdateInput = {
+  id: string;
+  [key: string]: unknown;
+};
+
+type SubscriptionPlanInput = Partial<SubscriptionPlan> & {
+  consultantProfileId?: string;
+} | undefined;
+
+type SubscriptionPlanUpdateInput = {
+  id: string;
+  [key: string]: unknown;
+};
 
 // Main planner data hook
 async function fetchPlannerData(consultantId: string): Promise<PlannerData> {
@@ -144,7 +173,7 @@ export function useConsultationPlanMutations(consultantId: string) {
   const { toast } = useToast();
 
   const createConsultationPlan = useMutation({
-    mutationFn: async (planData: any) => {
+    mutationFn: async (planData: ConsultationPlanInput) => {
       const response = await fetch("/api/plans/consultations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -181,7 +210,7 @@ export function useConsultationPlanMutations(consultantId: string) {
   });
 
   const updateConsultationPlan = useMutation({
-    mutationFn: async ({ id, ...planData }: any) => {
+    mutationFn: async ({ id, ...planData }: ConsultationPlanUpdateInput) => {
       const response = await fetch(`/api/plans/consultations/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -279,7 +308,7 @@ export function useSubscriptionPlanMutations(consultantId: string) {
   const { toast } = useToast();
 
   const createSubscriptionPlan = useMutation({
-    mutationFn: async (planData: any) => {
+    mutationFn: async (planData: SubscriptionPlanInput) => {
       const response = await fetch("/api/plans/subscriptions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -316,7 +345,7 @@ export function useSubscriptionPlanMutations(consultantId: string) {
   });
 
   const updateSubscriptionPlan = useMutation({
-    mutationFn: async ({ id, ...planData }: any) => {
+    mutationFn: async ({ id, ...planData }: SubscriptionPlanUpdateInput) => {
       const response = await fetch(`/api/plans/subscriptions/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },

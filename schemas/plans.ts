@@ -170,6 +170,11 @@ export const SubscriptionPlanSchema = z.object({
     .number()
     .min(0, "Calls per week cannot be negative")
     .max(7, "Cannot exceed 7 calls per week"),
+  sessionDurationInHours: z
+    .number()
+    .min(0.5, "Session duration must be at least 30 minutes")
+    .max(4, "Session duration cannot exceed 4 hours")
+    .default(1),
   emailSupport: z.enum(["GENERAL", "PRIORITY", "DEDICATED"]),
   language: z.string().min(1, "Language is required"),
   level: z.string().min(1, "Level is required"),

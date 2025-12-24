@@ -205,23 +205,23 @@ export function EventManagementDashboard({
   // Handle consultation plan saved event
   const handleConsultationPlanSaved = async (
     data: Partial<ConsultationPlanEvent>,
-  ) => {
+  ): Promise<void> => {
     try {
       setIsSaving(true);
       console.log("EventManagementDashboard - Saving consultation plan:", data);
 
       if (data.consultationPlan?.id) {
-        // Update existing plan
-        updateConsultationPlan.mutate({
+        // Update existing plan - use mutateAsync to return a Promise
+        await updateConsultationPlan.mutateAsync({
           id: data.consultationPlan.id,
           ...data.consultationPlan,
         });
       } else {
-        // Create new plan
-        createConsultationPlan.mutate(data.consultationPlan);
+        // Create new plan - use mutateAsync to return a Promise
+        await createConsultationPlan.mutateAsync(data.consultationPlan);
       }
 
-      setIsConsultationDialogOpen(false);
+      // Dialog closing is handled by the form component after awaiting this Promise
       setEditingEvent(null);
     } catch (error) {
       console.error("Error saving consultation plan:", error);
@@ -234,23 +234,23 @@ export function EventManagementDashboard({
   // Handle subscription plan saved event
   const handleSubscriptionPlanSaved = async (
     data: Partial<SubscriptionPlanEvent>,
-  ) => {
+  ): Promise<void> => {
     try {
       setIsSaving(true);
       console.log("EventManagementDashboard - Saving subscription plan:", data);
 
       if (data.subscriptionPlan?.id) {
-        // Update existing plan
-        updateSubscriptionPlan.mutate({
+        // Update existing plan - use mutateAsync to return a Promise
+        await updateSubscriptionPlan.mutateAsync({
           id: data.subscriptionPlan.id,
           ...data.subscriptionPlan,
         });
       } else {
-        // Create new plan
-        createSubscriptionPlan.mutate(data.subscriptionPlan);
+        // Create new plan - use mutateAsync to return a Promise
+        await createSubscriptionPlan.mutateAsync(data.subscriptionPlan);
       }
 
-      setIsSubscriptionDialogOpen(false);
+      // Dialog closing is handled by the form component after awaiting this Promise
       setEditingEvent(null);
     } catch (error) {
       console.error("Error saving subscription plan:", error);

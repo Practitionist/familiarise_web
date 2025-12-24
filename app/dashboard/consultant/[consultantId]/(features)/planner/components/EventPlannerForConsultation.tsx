@@ -40,6 +40,7 @@ import {
   ConsultationPlanEvent,
   ConsultationPlannerProps,
 } from "../types/event";
+import { PlannerService } from "../services/planner";
 
 export function EventPlannerForConsultation({
   isOpen,
@@ -82,7 +83,7 @@ export function EventPlannerForConsultation({
           materialProvided: "",
           learningOutcomes: [],
         },
-    mode: "onChange",
+    mode: "onBlur",
   });
 
   useEffect(() => {
@@ -123,6 +124,25 @@ export function EventPlannerForConsultation({
       setInternalIsSaving(true);
       setShowConfirmation(false);
 
+      // Check for duplicate title
+      const planId = initialData?.consultationPlan?.id ?? "";
+      const isDuplicate = await PlannerService.checkDuplicateTitle(
+        formData.title,
+        consultantId,
+        "consultation",
+        planId,
+      );
+
+      if (isDuplicate) {
+        toast({
+          title: "Duplicate Title",
+          description: `A consultation plan with title "${formData.title}" already exists. Please use a different title.`,
+          variant: "destructive",
+        });
+        setInternalIsSaving(false);
+        return;
+      }
+
       const now = new Date();
 
       const consultationData: Partial<ConsultationPlanEvent> = {
@@ -148,7 +168,8 @@ export function EventPlannerForConsultation({
         },
       };
 
-      onSave(consultationData);
+      // Await onSave to ensure API call completes before showing success
+      await onSave(consultationData);
 
       toast({
         title: "Success",

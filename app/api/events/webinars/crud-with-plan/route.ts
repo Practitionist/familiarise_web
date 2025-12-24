@@ -2,7 +2,9 @@ import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { WebinarPlanSchema } from "@/schemas/plans";
-import { WebinarStatus } from "@prisma/client"; // Import Enum
+import { WebinarStatus } from "@prisma/client";
+import { getServerSession } from "next-auth";
+import authOptions from "@/app/api/auth/[...nextauth]/options";
 
 // Schema for POST request body based on WebinarPlanSchema
 const PostWebinarWithPlanBodySchema = WebinarPlanSchema.omit({
@@ -45,6 +47,15 @@ const PatchWebinarWithPlanBodySchema = PostWebinarWithPlanBodySchema.omit({
 
 export async function POST(request: NextRequest) {
   try {
+    // Authentication check
+    const session = await getServerSession(authOptions);
+    if (!session?.user?.id) {
+      return NextResponse.json(
+        { error: "Authentication required" },
+        { status: 401 },
+      );
+    }
+
     const body = await request.json();
     console.log(
       "Received webinar creation request body:",
@@ -75,11 +86,26 @@ export async function POST(request: NextRequest) {
       learningOutcomes,
       priceCurrency,
       consultantProfileId,
-      topicIds, // Use validated topicIds directly
+      topicIds,
       scheduledAt,
       status,
     } = validatedData;
     // --- End Zod Validation ---
+
+    // Verify ownership - user must own this consultant profile
+    const consultantProfile = await prisma.consultantProfile.findFirst({
+      where: {
+        id: consultantProfileId,
+        userId: session.user.id,
+      },
+    });
+
+    if (!consultantProfile) {
+      return NextResponse.json(
+        { error: "You do not have permission to create webinars for this consultant profile" },
+        { status: 403 },
+      );
+    }
 
     // Log validated fields
     console.log("Validated fields:", {
@@ -285,6 +311,15 @@ export async function POST(request: NextRequest) {
 
 export async function PATCH(request: NextRequest) {
   try {
+    // Authentication check
+    const session = await getServerSession(authOptions);
+    if (!session?.user?.id) {
+      return NextResponse.json(
+        { error: "Authentication required" },
+        { status: 401 },
+      );
+    }
+
     const body = await request.json();
     console.log(
       "Received webinar update request body:",
@@ -344,6 +379,7 @@ export async function PATCH(request: NextRequest) {
     const existingPlan = await prisma.webinarPlan.findUnique({
       where: { id },
       include: {
+        consultantProfile: true,
         topics: true,
         webinars: {
           include: {
@@ -361,6 +397,15 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json(
         { error: `Webinar plan with ID ${id} not found` },
         { status: 404 },
+      );
+    }
+
+    // Verify ownership - user must own this webinar plan
+    if (!existingPlan.consultantProfile ||
+        existingPlan.consultantProfile.userId !== session.user.id) {
+      return NextResponse.json(
+        { error: "You do not have permission to update this webinar" },
+        { status: 403 },
       );
     }
 
