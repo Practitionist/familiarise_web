@@ -105,14 +105,20 @@ export async function cleanupDuplicateConsultations(): Promise<{
     }
 
     // Also check for exact duplicates within 5 seconds
+    // Optimized: since data is sorted by createdAt, break early when time diff >= 5s
     for (let i = 0; i < consultations.length; i++) {
+      const c1 = consultations[i];
       for (let j = i + 1; j < consultations.length; j++) {
-        const c1 = consultations[i];
         const c2 = consultations[j];
+
+        // Since sorted by createdAt asc, break when time diff >= 5s
+        if (c2.createdAt.getTime() - c1.createdAt.getTime() >= 5000) {
+          break;
+        }
+
         if (
           c1.requestedById === c2.requestedById &&
-          c1.consultationPlanId === c2.consultationPlanId &&
-          Math.abs(c1.createdAt.getTime() - c2.createdAt.getTime()) < 5000
+          c1.consultationPlanId === c2.consultationPlanId
         ) {
           duplicatesToCancel.add(c2.id); // Cancel newer one
           console.log(
@@ -274,9 +280,12 @@ export async function cleanupInvalidDurationConsultations(): Promise<{
       if (!c.appointment?.slotsOfAppointment?.length) continue;
 
       const expectedHours = c.consultationPlan.durationInHours;
-      const slot = c.appointment.slotsOfAppointment[0];
-      const actualHours =
-        (slot.endsAt.getTime() - slot.startsAt.getTime()) / (1000 * 60 * 60);
+      // Sum duration of ALL slots (not just the first one)
+      const totalSlotMillis = c.appointment.slotsOfAppointment.reduce(
+        (total, slot) => total + (slot.endsAt.getTime() - slot.startsAt.getTime()),
+        0,
+      );
+      const actualHours = totalSlotMillis / (1000 * 60 * 60);
 
       if (Math.abs(expectedHours - actualHours) > 0.01) {
         invalidIds.push(c.id);

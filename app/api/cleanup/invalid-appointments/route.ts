@@ -4,6 +4,15 @@ import { runAllCleanupTasks } from "@/scripts/cleanup-invalid-appointments";
 
 export async function POST(req: NextRequest) {
   try {
+    // Fail safely if CRON_SECRET is not configured
+    if (!process.env.CRON_SECRET) {
+      console.error("CRON_SECRET environment variable not set");
+      return NextResponse.json(
+        { error: "Internal Server Error", message: "Server misconfigured" },
+        { status: 500 },
+      );
+    }
+
     // Verify this is called by a cron job or authorized service
     // Use timing-safe comparison to prevent timing attacks
     const authHeader = req.headers.get("authorization");
