@@ -201,18 +201,18 @@ export function EventCarousel({
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3 }}
-        className="flex flex-col items-center justify-center py-16 text-center rounded-xl border border-dashed border-zinc-200 bg-zinc-50/50"
+        className="flex flex-col items-center justify-center py-10 sm:py-16 text-center rounded-xl border border-dashed border-zinc-200 bg-zinc-50/50 mx-1 sm:mx-0"
       >
         <div
           className={cn(
-            "mb-4 flex h-16 w-16 items-center justify-center rounded-2xl",
+            "mb-3 sm:mb-4 flex h-12 w-12 sm:h-16 sm:w-16 items-center justify-center rounded-xl sm:rounded-2xl",
             config.iconBg,
           )}
         >
-          <Icon className={cn("h-8 w-8", config.iconColor)} />
+          <Icon className={cn("h-6 w-6 sm:h-8 sm:w-8", config.iconColor)} />
         </div>
-        <h4 className="text-lg font-semibold text-zinc-900">{config.title}</h4>
-        <p className="mt-2 text-sm text-zinc-500 max-w-sm px-4">
+        <h4 className="text-base sm:text-lg font-semibold text-zinc-900">{config.title}</h4>
+        <p className="mt-1.5 sm:mt-2 text-xs sm:text-sm text-zinc-500 max-w-sm px-4">
           {config.description}
         </p>
       </motion.div>
@@ -222,7 +222,7 @@ export function EventCarousel({
   return (
     <div className="w-full">
       <motion.div
-        className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5 w-full"
+        className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-4 sm:gap-5 lg:gap-6 w-full"
         variants={containerVariants}
         initial="hidden"
         animate="visible"
@@ -243,17 +243,17 @@ export function EventCarousel({
 
       {/* Pagination Controls */}
       {totalPages > 1 && (
-        <div className="flex justify-center items-center gap-4 mt-8">
+        <div className="flex justify-center items-center gap-3 sm:gap-4 mt-6 sm:mt-8">
           <Button
             variant="outline"
             size="icon"
             onClick={goToPreviousPage}
             disabled={currentPage === 1}
-            className="h-9 w-9"
+            className="h-8 w-8 sm:h-9 sm:w-9"
           >
             <ChevronLeftIcon className="h-4 w-4" />
           </Button>
-          <span className="text-sm text-zinc-600">
+          <span className="text-xs sm:text-sm text-zinc-600">
             Page {currentPage} of {totalPages}
           </span>
           <Button
@@ -261,7 +261,7 @@ export function EventCarousel({
             size="icon"
             onClick={goToNextPage}
             disabled={currentPage === totalPages}
-            className="h-9 w-9"
+            className="h-8 w-8 sm:h-9 sm:w-9"
           >
             <ChevronRightIcon className="h-4 w-4" />
           </Button>

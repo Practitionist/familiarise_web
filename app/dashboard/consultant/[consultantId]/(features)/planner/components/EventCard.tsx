@@ -244,7 +244,7 @@ export function EventCard({
     <motion.div
       whileHover={{ y: -4, boxShadow: "0 12px 40px -12px rgba(0, 0, 0, 0.15)" }}
       transition={{ duration: 0.2 }}
-      className="group relative overflow-hidden rounded-xl border border-zinc-200/80 bg-white p-5"
+      className="group relative overflow-hidden rounded-xl border border-zinc-200/80 bg-white p-5 sm:p-6 h-full flex flex-col"
     >
       {/* Decorative gradient blob */}
       <div
@@ -254,12 +254,12 @@ export function EventCard({
         )}
       />
 
-      {/* Hover action buttons */}
-      <div className="absolute top-3 right-3 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all duration-200 transform translate-y-1 group-hover:translate-y-0 z-10">
+      {/* Hover action buttons - always visible on mobile */}
+      <div className="absolute top-3 right-3 sm:top-4 sm:right-4 flex items-center gap-1.5 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all duration-200 sm:transform sm:translate-y-1 sm:group-hover:translate-y-0 z-10">
         <Button
           variant="ghost"
           size="icon"
-          className="h-8 w-8 bg-white/90 backdrop-blur-sm shadow-sm hover:bg-white border border-zinc-200/60"
+          className="h-8 w-8 sm:h-9 sm:w-9 bg-white/90 backdrop-blur-sm shadow-sm hover:bg-white border border-zinc-200/60"
           onClick={(e) => {
             e.stopPropagation();
             onEdit();
@@ -270,7 +270,7 @@ export function EventCard({
         <Button
           variant="ghost"
           size="icon"
-          className="h-8 w-8 bg-white/90 backdrop-blur-sm shadow-sm hover:bg-red-50 border border-zinc-200/60"
+          className="h-8 w-8 sm:h-9 sm:w-9 bg-white/90 backdrop-blur-sm shadow-sm hover:bg-red-50 border border-zinc-200/60"
           onClick={(e) => {
             e.stopPropagation();
             onDelete();
@@ -281,30 +281,34 @@ export function EventCard({
       </div>
 
       {/* Main content */}
-      <div className="flex items-start gap-4">
+      <div className="flex items-start gap-3 sm:gap-4">
         {/* Icon badge */}
         <div
           className={cn(
-            "flex h-11 w-11 items-center justify-center rounded-xl shrink-0",
+            "flex h-10 w-10 sm:h-12 sm:w-12 items-center justify-center rounded-xl shrink-0",
             config.iconBg,
           )}
         >
-          <Icon className={cn("h-5 w-5", config.iconColor)} />
+          <Icon className={cn("h-5 w-5 sm:h-6 sm:w-6", config.iconColor)} />
         </div>
 
         {/* Content area */}
-        <div className="flex-1 min-w-0 pr-16">
-          <h3 className="font-semibold text-zinc-900 truncate">{title}</h3>
-          <p className="text-sm text-zinc-500 line-clamp-2 mt-1">
-            {description || "No description provided"}
-          </p>
+        <div className="flex-1 min-w-0 pr-12 sm:pr-16">
+          <h3 className="font-semibold text-zinc-900 text-base sm:text-lg leading-tight line-clamp-2">
+            {title}
+          </h3>
         </div>
       </div>
+
+      {/* Description - expanded */}
+      <p className="text-sm text-zinc-500 line-clamp-3 mt-3 flex-grow">
+        {description || "No description provided"}
+      </p>
 
       {/* Live session info (webinar/class only) */}
       {isLiveSession && (
         <div className="mt-4 flex items-center gap-2 flex-wrap">
-          <span className="text-xs text-zinc-500 font-medium">
+          <span className="text-xs sm:text-sm text-zinc-500 font-medium">
             {formatDateTime(startDate)}
           </span>
           {status && (
@@ -316,8 +320,8 @@ export function EventCard({
       )}
 
       {/* Participants row */}
-      <div className="mt-3 flex items-center gap-1.5 text-xs text-zinc-500">
-        <Users className="h-3.5 w-3.5" />
+      <div className="mt-3 flex items-center gap-1.5 text-xs sm:text-sm text-zinc-500">
+        <Users className="h-4 w-4" />
         <span>
           {participantCount}/{maxParticipants} participants
         </span>
@@ -326,15 +330,15 @@ export function EventCard({
       {/* Price/Duration row */}
       <div className="mt-4 pt-4 border-t border-zinc-100 flex items-center justify-between">
         <div className="flex items-baseline gap-1">
-          <span className="text-xl font-bold tracking-tight text-zinc-900">
+          <span className="text-lg sm:text-xl font-bold tracking-tight text-zinc-900">
             {formatCurrency(price, currency)}
           </span>
           {durationSuffix && (
-            <span className="text-sm text-zinc-400">{durationSuffix}</span>
+            <span className="text-xs sm:text-sm text-zinc-400">{durationSuffix}</span>
           )}
         </div>
 
-        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-zinc-100 text-zinc-600">
+        <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-zinc-100 text-zinc-600">
           <Clock className="h-3.5 w-3.5" />
           <span className="text-xs font-medium">{duration}</span>
         </div>

@@ -309,46 +309,46 @@ export function EventManagementDashboard({
   if (isLoading) {
     return (
       <div className="min-h-screen bg-white">
-        <div className="container mx-auto px-6 py-8">
-          <div className="animate-pulse space-y-12">
+        <div className="w-full px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
+          <div className="animate-pulse space-y-8 sm:space-y-12">
             {/* Header skeleton */}
             <div className="space-y-3">
-              <div className="h-10 bg-zinc-200 rounded-lg w-80"></div>
-              <div className="h-5 bg-zinc-200 rounded w-96"></div>
-              <div className="flex gap-3 mt-4">
-                <div className="h-8 bg-zinc-200 rounded-full w-28"></div>
-                <div className="h-8 bg-zinc-200 rounded-full w-32"></div>
+              <div className="h-8 sm:h-10 bg-zinc-200 rounded-lg w-64 sm:w-80"></div>
+              <div className="h-4 sm:h-5 bg-zinc-200 rounded w-72 sm:w-96"></div>
+              <div className="flex flex-wrap gap-2 sm:gap-3 mt-4">
+                <div className="h-8 bg-zinc-200 rounded-full w-24 sm:w-28"></div>
+                <div className="h-8 bg-zinc-200 rounded-full w-28 sm:w-32"></div>
               </div>
             </div>
 
             {/* Section skeleton */}
             <div className="space-y-6">
-              <div className="flex items-center gap-4">
-                <div className="h-12 w-12 bg-zinc-200 rounded-xl"></div>
+              <div className="flex items-center gap-3 sm:gap-4">
+                <div className="h-10 w-10 sm:h-12 sm:w-12 bg-zinc-200 rounded-xl"></div>
                 <div className="space-y-2">
-                  <div className="h-6 bg-zinc-200 rounded w-40"></div>
-                  <div className="h-4 bg-zinc-200 rounded w-64"></div>
+                  <div className="h-5 sm:h-6 bg-zinc-200 rounded w-32 sm:w-40"></div>
+                  <div className="h-3 sm:h-4 bg-zinc-200 rounded w-48 sm:w-64"></div>
                 </div>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-4 sm:gap-5 lg:gap-6">
                 {[...Array(4)].map((_, i) => (
-                  <div key={i} className="h-48 bg-zinc-200 rounded-xl"></div>
+                  <div key={i} className="h-56 sm:h-64 bg-zinc-200 rounded-xl"></div>
                 ))}
               </div>
             </div>
 
             {/* Section skeleton */}
             <div className="space-y-6">
-              <div className="flex items-center gap-4">
-                <div className="h-12 w-12 bg-zinc-200 rounded-xl"></div>
+              <div className="flex items-center gap-3 sm:gap-4">
+                <div className="h-10 w-10 sm:h-12 sm:w-12 bg-zinc-200 rounded-xl"></div>
                 <div className="space-y-2">
-                  <div className="h-6 bg-zinc-200 rounded w-36"></div>
-                  <div className="h-4 bg-zinc-200 rounded w-56"></div>
+                  <div className="h-5 sm:h-6 bg-zinc-200 rounded w-28 sm:w-36"></div>
+                  <div className="h-3 sm:h-4 bg-zinc-200 rounded w-44 sm:w-56"></div>
                 </div>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-4 sm:gap-5 lg:gap-6">
                 {[...Array(4)].map((_, i) => (
-                  <div key={i} className="h-48 bg-zinc-200 rounded-xl"></div>
+                  <div key={i} className="h-56 sm:h-64 bg-zinc-200 rounded-xl"></div>
                 ))}
               </div>
             </div>
@@ -364,30 +364,30 @@ export function EventManagementDashboard({
 
   return (
     <div className="min-h-screen bg-white">
-      <div className="container mx-auto px-6 py-8">
+      <div className="w-full px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
         {/* Page Header */}
         <motion.div
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3 }}
-          className="mb-12"
+          className="mb-8 sm:mb-12"
         >
-          <h1 className="text-4xl font-bold text-zinc-900 tracking-tight">
+          <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-zinc-900 tracking-tight">
             Event Management
           </h1>
-          <p className="mt-2 text-lg text-zinc-500">
+          <p className="mt-1 sm:mt-2 text-sm sm:text-base lg:text-lg text-zinc-500">
             Manage your service templates and scheduled sessions
           </p>
 
           {/* Quick Stats */}
-          <div className="mt-6 flex items-center gap-3">
-            <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-zinc-100 border border-zinc-200/60">
+          <div className="mt-4 sm:mt-6 flex flex-wrap items-center gap-2 sm:gap-3">
+            <div className="flex items-center gap-2 px-3 sm:px-4 py-1.5 sm:py-2 rounded-full bg-zinc-100 border border-zinc-200/60">
               <LayoutTemplate className="h-4 w-4 text-zinc-600" />
-              <span className="text-sm font-medium text-zinc-700">{totalPlans} Plans</span>
+              <span className="text-xs sm:text-sm font-medium text-zinc-700">{totalPlans} Plans</span>
             </div>
-            <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-zinc-100 border border-zinc-200/60">
+            <div className="flex items-center gap-2 px-3 sm:px-4 py-1.5 sm:py-2 rounded-full bg-zinc-100 border border-zinc-200/60">
               <Radio className="h-4 w-4 text-zinc-600" />
-              <span className="text-sm font-medium text-zinc-700">{totalSessions} Live Sessions</span>
+              <span className="text-xs sm:text-sm font-medium text-zinc-700">{totalSessions} Live Sessions</span>
             </div>
           </div>
         </motion.div>
@@ -397,44 +397,44 @@ export function EventManagementDashboard({
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.4, delay: 0.1 }}
-          className="mb-16"
+          className="mb-10 sm:mb-16"
         >
           {/* Section Header */}
-          <div className="flex items-center gap-4 mb-8">
-            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-zinc-900">
-              <LayoutTemplate className="h-6 w-6 text-white" />
+          <div className="flex items-center gap-3 sm:gap-4 mb-6 sm:mb-8">
+            <div className="flex h-10 w-10 sm:h-12 sm:w-12 items-center justify-center rounded-xl bg-zinc-900 shrink-0">
+              <LayoutTemplate className="h-5 w-5 sm:h-6 sm:w-6 text-white" />
             </div>
-            <div>
-              <h2 className="text-2xl font-bold text-zinc-900">Plan Templates</h2>
-              <p className="text-sm text-zinc-500">Create reusable service templates</p>
+            <div className="min-w-0">
+              <h2 className="text-xl sm:text-2xl font-bold text-zinc-900">Plan Templates</h2>
+              <p className="text-xs sm:text-sm text-zinc-500">Create reusable service templates</p>
             </div>
-            <div className="flex-1 h-px bg-gradient-to-r from-zinc-200 to-transparent" />
+            <div className="flex-1 h-px bg-gradient-to-r from-zinc-200 to-transparent hidden sm:block" />
           </div>
 
           {/* Consultation Plans */}
-          <div className="mb-10 bg-zinc-50/50 border border-zinc-100 rounded-xl p-6">
-            <div className="flex justify-between items-center mb-6">
+          <div className="mb-6 sm:mb-10 bg-zinc-50/50 border border-zinc-100 rounded-xl p-4 sm:p-6">
+            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-4 sm:mb-6">
               <div className="flex items-center gap-3">
-                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-50">
-                  <MessageSquare className="h-4.5 w-4.5 text-blue-600" />
+                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-50 shrink-0">
+                  <MessageSquare className="h-4 w-4 sm:h-5 sm:w-5 text-blue-600" />
                 </div>
                 <div>
-                  <h3 className="text-lg font-semibold text-zinc-900">Consultation Plans</h3>
-                  <p className="text-sm text-zinc-500">One-on-one session templates</p>
+                  <h3 className="text-base sm:text-lg font-semibold text-zinc-900">Consultation Plans</h3>
+                  <p className="text-xs sm:text-sm text-zinc-500">One-on-one session templates</p>
                 </div>
               </div>
               <Button
                 onClick={() => setIsConsultationDialogOpen(true)}
-                className="bg-zinc-900 hover:bg-zinc-800 text-white font-medium gap-2"
+                className="bg-zinc-900 hover:bg-zinc-800 text-white font-medium gap-2 w-full sm:w-auto"
               >
                 <Plus className="h-4 w-4" />
                 New Plan
               </Button>
             </div>
             {consultationPlansLoading ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-4 sm:gap-5 lg:gap-6">
                 {[...Array(4)].map((_, i) => (
-                  <div key={i} className="h-48 bg-zinc-200 rounded-xl animate-pulse"></div>
+                  <div key={i} className="h-56 sm:h-64 bg-zinc-200 rounded-xl animate-pulse"></div>
                 ))}
               </div>
             ) : (
@@ -455,29 +455,29 @@ export function EventManagementDashboard({
           </div>
 
           {/* Subscription Plans */}
-          <div className="bg-zinc-50/50 border border-zinc-100 rounded-xl p-6">
-            <div className="flex justify-between items-center mb-6">
+          <div className="bg-zinc-50/50 border border-zinc-100 rounded-xl p-4 sm:p-6">
+            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-4 sm:mb-6">
               <div className="flex items-center gap-3">
-                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-purple-50">
-                  <CalendarRange className="h-4.5 w-4.5 text-purple-600" />
+                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-purple-50 shrink-0">
+                  <CalendarRange className="h-4 w-4 sm:h-5 sm:w-5 text-purple-600" />
                 </div>
                 <div>
-                  <h3 className="text-lg font-semibold text-zinc-900">Subscription Plans</h3>
-                  <p className="text-sm text-zinc-500">Recurring mentorship offerings</p>
+                  <h3 className="text-base sm:text-lg font-semibold text-zinc-900">Subscription Plans</h3>
+                  <p className="text-xs sm:text-sm text-zinc-500">Recurring mentorship offerings</p>
                 </div>
               </div>
               <Button
                 onClick={() => setIsSubscriptionDialogOpen(true)}
-                className="bg-zinc-900 hover:bg-zinc-800 text-white font-medium gap-2"
+                className="bg-zinc-900 hover:bg-zinc-800 text-white font-medium gap-2 w-full sm:w-auto"
               >
                 <Plus className="h-4 w-4" />
                 New Plan
               </Button>
             </div>
             {subscriptionPlansLoading ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-4 sm:gap-5 lg:gap-6">
                 {[...Array(4)].map((_, i) => (
-                  <div key={i} className="h-48 bg-zinc-200 rounded-xl animate-pulse"></div>
+                  <div key={i} className="h-56 sm:h-64 bg-zinc-200 rounded-xl animate-pulse"></div>
                 ))}
               </div>
             ) : (
@@ -503,35 +503,35 @@ export function EventManagementDashboard({
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.4, delay: 0.2 }}
-          className="mb-16"
+          className="mb-10 sm:mb-16"
         >
           {/* Section Header */}
-          <div className="flex items-center gap-4 mb-8">
-            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-zinc-900">
-              <Radio className="h-6 w-6 text-white" />
+          <div className="flex items-center gap-3 sm:gap-4 mb-6 sm:mb-8">
+            <div className="flex h-10 w-10 sm:h-12 sm:w-12 items-center justify-center rounded-xl bg-zinc-900 shrink-0">
+              <Radio className="h-5 w-5 sm:h-6 sm:w-6 text-white" />
             </div>
-            <div>
-              <h2 className="text-2xl font-bold text-zinc-900">Live Sessions</h2>
-              <p className="text-sm text-zinc-500">Schedule and manage your live events</p>
+            <div className="min-w-0">
+              <h2 className="text-xl sm:text-2xl font-bold text-zinc-900">Live Sessions</h2>
+              <p className="text-xs sm:text-sm text-zinc-500">Schedule and manage your live events</p>
             </div>
-            <div className="flex-1 h-px bg-gradient-to-r from-zinc-200 to-transparent" />
+            <div className="flex-1 h-px bg-gradient-to-r from-zinc-200 to-transparent hidden sm:block" />
           </div>
 
           {/* Webinar Events */}
-          <div className="mb-10 bg-zinc-50/50 border border-zinc-100 rounded-xl p-6">
-            <div className="flex justify-between items-center mb-6">
+          <div className="mb-6 sm:mb-10 bg-zinc-50/50 border border-zinc-100 rounded-xl p-4 sm:p-6">
+            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-4 sm:mb-6">
               <div className="flex items-center gap-3">
-                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-50">
-                  <Video className="h-4.5 w-4.5 text-emerald-600" />
+                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-50 shrink-0">
+                  <Video className="h-4 w-4 sm:h-5 sm:w-5 text-emerald-600" />
                 </div>
                 <div>
-                  <h3 className="text-lg font-semibold text-zinc-900">Webinar Events</h3>
-                  <p className="text-sm text-zinc-500">Live sessions with multiple participants</p>
+                  <h3 className="text-base sm:text-lg font-semibold text-zinc-900">Webinar Events</h3>
+                  <p className="text-xs sm:text-sm text-zinc-500">Live sessions with multiple participants</p>
                 </div>
               </div>
               <Button
                 onClick={() => setIsWebinarDialogOpen(true)}
-                className="bg-zinc-900 hover:bg-zinc-800 text-white font-medium gap-2"
+                className="bg-zinc-900 hover:bg-zinc-800 text-white font-medium gap-2 w-full sm:w-auto"
               >
                 <Plus className="h-4 w-4" />
                 New Webinar
@@ -547,20 +547,20 @@ export function EventManagementDashboard({
           </div>
 
           {/* Class Events */}
-          <div className="bg-zinc-50/50 border border-zinc-100 rounded-xl p-6">
-            <div className="flex justify-between items-center mb-6">
+          <div className="bg-zinc-50/50 border border-zinc-100 rounded-xl p-4 sm:p-6">
+            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-4 sm:mb-6">
               <div className="flex items-center gap-3">
-                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-amber-50">
-                  <GraduationCap className="h-4.5 w-4.5 text-amber-600" />
+                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-amber-50 shrink-0">
+                  <GraduationCap className="h-4 w-4 sm:h-5 sm:w-5 text-amber-600" />
                 </div>
                 <div>
-                  <h3 className="text-lg font-semibold text-zinc-900">Class Events</h3>
-                  <p className="text-sm text-zinc-500">Multi-session structured learning</p>
+                  <h3 className="text-base sm:text-lg font-semibold text-zinc-900">Class Events</h3>
+                  <p className="text-xs sm:text-sm text-zinc-500">Multi-session structured learning</p>
                 </div>
               </div>
               <Button
                 onClick={() => setIsClassDialogOpen(true)}
-                className="bg-zinc-900 hover:bg-zinc-800 text-white font-medium gap-2"
+                className="bg-zinc-900 hover:bg-zinc-800 text-white font-medium gap-2 w-full sm:w-auto"
               >
                 <Plus className="h-4 w-4" />
                 New Class
