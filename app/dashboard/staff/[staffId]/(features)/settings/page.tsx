@@ -14,14 +14,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -39,14 +31,17 @@ import {
   StaffProfile,
   User,
 } from "@prisma/client"; // Import types
-import Link from "next/link";
 import { ChangeEvent, use, useEffect, useState } from "react";
 
-// Define a type for the combined staff data
-type StaffData = User & {
-  staffProfile: StaffProfile | null;
+// Define a type for the user with preferences
+type UserWithPreferences = User & {
   notificationPreferences: NotificationPreference | null;
   cookiePreferences: CookiePreference | null;
+};
+
+// Define a type for the combined staff data (StaffProfile with nested user)
+type StaffData = StaffProfile & {
+  user: UserWithPreferences;
 };
 
 type PageProps = {
@@ -70,12 +65,15 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
       try {
         const response = await fetch(`/api/user/staff/${staffId}`);
         if (!response.ok) {
-          throw new Error(`Failed to fetch staff data: ${response.statusText}`);
+          const errorData = await response.json();
+          throw new Error(errorData.error || `Failed to fetch staff data: ${response.statusText}`);
         }
-        const data: StaffData = await response.json();
-        setStaffData(data);
-      } catch (err: any) {
-        setError(err.message || "An unknown error occurred");
+        const result = await response.json();
+        // API returns { data: StaffProfile } with user nested inside
+        setStaffData(result.data);
+      } catch (err: unknown) {
+        const errorMessage = err instanceof Error ? err.message : "An unknown error occurred";
+        setError(errorMessage);
         console.error("Fetch error:", err);
       } finally {
         setLoading(false);
@@ -85,37 +83,46 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
     fetchData();
   }, [staffId]);
 
-  // Handle input changes
-  const handleInputChange = (
+  // Handle input changes for user fields (name, email, phone, address, image)
+  const handleUserInputChange = (
     e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
   ) => {
     const { name, value } = e.target;
     setStaffData((prev) => {
       if (!prev) return null;
-      // Handle nested profile fields if necessary (not needed for these inputs)
-      return { ...prev, [name]: value };
+      return {
+        ...prev,
+        user: {
+          ...prev.user,
+          [name]: value,
+        },
+      };
     });
   };
 
-  const handleSelectChange = (value: string, name: string) => {
+  const handleUserSelectChange = (value: string, name: string) => {
     setStaffData((prev) => {
       if (!prev) return null;
-      return { ...prev, [name]: value };
+      return {
+        ...prev,
+        user: {
+          ...prev.user,
+          [name]: value,
+        },
+      };
     });
   };
 
+  // Handle input changes for staff profile fields (department, position, etc.)
   const handleProfileInputChange = (
     e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
   ) => {
     const { name, value } = e.target;
     setStaffData((prev) => {
-      if (!prev || !prev.staffProfile) return prev;
+      if (!prev) return prev;
       return {
         ...prev,
-        staffProfile: {
-          ...prev.staffProfile,
-          [name]: value,
-        },
+        [name]: value,
       };
     });
   };
@@ -126,13 +133,16 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
   ) => {
     setStaffData((prev) => {
       if (!prev) return prev;
-      const currentPrefs = prev.notificationPreferences ?? { userId: prev.id }; // Create stub if null
+      const currentPrefs = prev.user.notificationPreferences ?? { userId: prev.user.id }; // Create stub if null
       return {
         ...prev,
-        notificationPreferences: {
-          ...currentPrefs,
-          [name]: checked,
-        } as NotificationPreference, // Assert type
+        user: {
+          ...prev.user,
+          notificationPreferences: {
+            ...currentPrefs,
+            [name]: checked,
+          } as NotificationPreference, // Assert type
+        },
       };
     });
   };
@@ -143,16 +153,19 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
   ) => {
     setStaffData((prev) => {
       if (!prev) return prev;
-      const currentPrefs = prev.cookiePreferences ?? {
-        userId: prev.id,
+      const currentPrefs = prev.user.cookiePreferences ?? {
+        userId: prev.user.id,
         essential: true,
       }; // Create stub if null
       return {
         ...prev,
-        cookiePreferences: {
-          ...currentPrefs,
-          [name]: checked,
-        } as CookiePreference, // Assert type
+        user: {
+          ...prev.user,
+          cookiePreferences: {
+            ...currentPrefs,
+            [name]: checked,
+          } as CookiePreference, // Assert type
+        },
       };
     });
   };
@@ -165,58 +178,46 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
     setIsSaving(true);
     setError(null);
 
-    let payload: Partial<StaffData> = {};
+    // Build payload - API expects flat object with both user and profile fields
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let payload: Record<string, any> = {};
 
     // Construct payload based on section
     switch (section) {
       case "personal":
         payload = {
-          name: staffData.name,
-          email: staffData.email,
-          phone: staffData.phone,
-          address: staffData.address,
-          image: staffData.image,
+          name: staffData.user.name,
+          email: staffData.user.email,
+          phone: staffData.user.phone,
+          address: staffData.user.address,
+          image: staffData.user.image,
         };
         break;
       case "role":
         payload = {
-          staffProfile: {
-            department: staffData.staffProfile?.department,
-            position: staffData.staffProfile?.position,
-            employeeId: staffData.staffProfile?.employeeId,
-            hireDate: staffData.staffProfile?.hireDate,
-            reportsTo: staffData.staffProfile?.reportsTo,
-            skills: staffData.staffProfile?.skills,
-            workSchedule: staffData.staffProfile?.workSchedule,
-            // TODO: Handle responsibilities/permissions update if editable
-          },
-        } as any; // Type assertion needed for partial nested update
+          department: staffData.department,
+          position: staffData.position,
+          employeeId: staffData.employeeId,
+          hireDate: staffData.hireDate,
+          reportsTo: staffData.reportsTo,
+          skills: staffData.skills,
+          workSchedule: staffData.workSchedule,
+        };
         break;
       case "account":
         payload = {
-          timezone: staffData.timezone,
-          // Add other account fields if they become editable
+          timezone: staffData.user.timezone,
         };
         break;
       case "preferences":
         payload = {
-          notificationPreferences: staffData.notificationPreferences
-            ? {
-                allNotifications:
-                  staffData.notificationPreferences.allNotifications,
-                mentions: staffData.notificationPreferences.mentions,
-                directMessages:
-                  staffData.notificationPreferences.directMessages,
-                updates: staffData.notificationPreferences.updates,
-              }
-            : undefined,
-          cookiePreferences: staffData.cookiePreferences
-            ? {
-                analytics: staffData.cookiePreferences.analytics,
-                marketing: staffData.cookiePreferences.marketing,
-              }
-            : undefined,
-        } as any; // Type assertion needed
+          allNotifications: staffData.user.notificationPreferences?.allNotifications,
+          mentions: staffData.user.notificationPreferences?.mentions,
+          directMessages: staffData.user.notificationPreferences?.directMessages,
+          updates: staffData.user.notificationPreferences?.updates,
+          analytics: staffData.user.cookiePreferences?.analytics,
+          marketing: staffData.user.cookiePreferences?.marketing,
+        };
         break;
     }
 
@@ -230,7 +231,7 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
       if (!response.ok) {
         const errorData = await response.json();
         throw new Error(
-          errorData.message || `Failed to save ${section} settings`,
+          errorData.error || `Failed to save ${section} settings`,
         );
       }
 
@@ -239,12 +240,11 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
       alert(
         `${section.charAt(0).toUpperCase() + section.slice(1)} settings saved successfully!`,
       ); // Simple feedback
-    } catch (err: any) {
-      setError(
-        err.message || `An error occurred while saving ${section} settings`,
-      );
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : `An error occurred while saving ${section} settings`;
+      setError(errorMessage);
       console.error("Save error:", err);
-      alert(`Error saving ${section} settings: ${err.message}`); // Simple feedback
+      alert(`Error saving ${section} settings: ${errorMessage}`); // Simple feedback
     } finally {
       setIsSaving(false);
     }
@@ -275,104 +275,40 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
 
   // Main component render
   return (
-    <div className="grid min-h-screen w-full lg:grid-cols-[280px_1fr]">
-      {/* Simplified Sidebar */}
-      <div className="hidden border-r bg-gray-100/40 lg:block dark:bg-gray-800/40">
-        <div className="flex h-full max-h-screen flex-col gap-2">
-          <div className="flex h-[60px] items-center border-b px-6">
-            <Link
-              className="flex items-center gap-2 font-semibold"
-              href="/dashboard"
-            >
-              <BuildingIcon className="h-6 w-6" />
-              <span className="">Familiarise</span>
-            </Link>
-            <Button className="ml-auto h-8 w-8" size="icon" variant="outline">
-              <BellIcon className="h-4 w-4" />
-              <span className="sr-only">Toggle notifications</span>
-            </Button>
-          </div>
-          <div className="flex-1 overflow-auto py-2">
-            <nav className="grid items-start px-4 text-sm font-medium">
-              <Link
-                className="flex items-center gap-3 rounded-lg bg-gray-100 px-3 py-2 text-gray-900 transition-all hover:text-gray-900 dark:bg-gray-800 dark:text-gray-50 dark:hover:text-gray-50"
-                href={`/dashboard/staff/${staffId}/settings`} // Link to current page
-              >
-                <SettingsIcon className="h-4 w-4" />
-                Settings
-              </Link>
-            </nav>
-          </div>
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-center gap-4">
+        <Avatar className="h-16 w-16">
+          <AvatarImage
+            alt={staffData.user.name ?? "Staff"}
+            src={staffData.user.image ?? "/placeholder.svg"}
+          />
+          <AvatarFallback>
+            {staffData.user.name
+              ?.split(" ")
+              .map((n) => n[0])
+              .join("") ?? "ST"}
+          </AvatarFallback>
+        </Avatar>
+        <div>
+          <h1 className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">
+            Settings
+          </h1>
+          <p className="text-zinc-500 dark:text-zinc-400">
+            Manage profile and account settings for{" "}
+            {staffData.user.name ?? `Staff ID: ${staffId}`}.
+          </p>
         </div>
       </div>
-      <div className="flex flex-col">
-        {/* Header */}
-        <header className="flex h-14 lg:h-[60px] items-center gap-4 border-b bg-gray-100/40 px-6 dark:bg-gray-800/40">
-          <Link className="lg:hidden" href="#">
-            <BuildingIcon className="h-6 w-6" />
-            <span className="sr-only">Home</span>
-          </Link>
-          <div className="w-full flex-1">
-            <form>
-              <div className="relative">
-                <SearchIcon className="absolute left-2.5 top-2.5 h-4 w-4 text-gray-500 dark:text-gray-400" />
-                <Input
-                  className="w-full bg-white shadow-none appearance-none pl-8 md:w-2/3 lg:w-1/3 dark:bg-gray-950"
-                  placeholder="Search..."
-                  type="search"
-                />
-              </div>
-            </form>
-          </div>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Avatar className="h-9 w-9">
-                <AvatarImage alt="Admin Avatar" src="/placeholder-user.jpg" />
-                <AvatarFallback>AD</AvatarFallback>
-              </Avatar>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuLabel>My Account</DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem>Settings</DropdownMenuItem>
-              <DropdownMenuItem>Logout</DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </header>
-        {/* Main Content Area */}
-        <main className="flex flex-1 flex-col gap-4 p-4 md:gap-8 md:p-6">
-          <div className="flex items-center gap-4">
-            <Avatar className="h-16 w-16">
-              <AvatarImage
-                alt={staffData.name ?? "Staff"}
-                src={staffData.image ?? "/placeholder.svg"}
-              />
-              <AvatarFallback>
-                {staffData.name
-                  ?.split(" ")
-                  .map((n) => n[0])
-                  .join("") ?? "ST"}
-              </AvatarFallback>
-            </Avatar>
-            <div>
-              <h1 className="font-semibold text-lg md:text-2xl">
-                Staff Settings
-              </h1>
-              <p className="text-sm text-gray-500 dark:text-gray-400">
-                Manage profile and account settings for{" "}
-                {staffData.name ?? `Staff ID: ${staffId}`}.
-              </p>
-            </div>
-          </div>
 
-          {/* No longer using a single form, handle saves per card */}
-          <div className="grid gap-6">
+      {/* Settings Cards */}
+      <div className="grid gap-6">
             {/* Personal Information Card */}
             <Card>
               <CardHeader>
                 <CardTitle>Personal Information</CardTitle>
                 <CardDescription>
-                  Update the staff member's personal details.
+                  Update the staff member&apos;s personal details.
                 </CardDescription>
               </CardHeader>
               <CardContent className="grid gap-4 md:grid-cols-2">
@@ -382,8 +318,8 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
                     id="name"
                     name="name"
                     placeholder="Full Name"
-                    value={staffData.name ?? ""}
-                    onChange={handleInputChange}
+                    value={staffData.user.name ?? ""}
+                    onChange={handleUserInputChange}
                   />
                 </div>
                 <div className="space-y-2">
@@ -393,8 +329,8 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
                     name="email"
                     type="email"
                     placeholder="Email Address"
-                    value={staffData.email ?? ""}
-                    onChange={handleInputChange}
+                    value={staffData.user.email ?? ""}
+                    onChange={handleUserInputChange}
                   />
                 </div>
                 <div className="space-y-2">
@@ -404,8 +340,8 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
                     name="phone"
                     type="tel"
                     placeholder="Phone Number"
-                    value={staffData.phone ?? ""}
-                    onChange={handleInputChange}
+                    value={staffData.user.phone ?? ""}
+                    onChange={handleUserInputChange}
                   />
                 </div>
                 <div className="space-y-2">
@@ -414,8 +350,8 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
                     id="address"
                     name="address"
                     placeholder="Street Address"
-                    value={staffData.address ?? ""}
-                    onChange={handleInputChange}
+                    value={staffData.user.address ?? ""}
+                    onChange={handleUserInputChange}
                     className="min-h-[80px]"
                   />
                 </div>
@@ -425,8 +361,8 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
                     id="image"
                     name="image"
                     placeholder="https://example.com/avatar.png"
-                    value={staffData.image ?? ""}
-                    onChange={handleInputChange}
+                    value={staffData.user.image ?? ""}
+                    onChange={handleUserInputChange}
                   />
                 </div>
               </CardContent>
@@ -445,7 +381,7 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
               <CardHeader>
                 <CardTitle>Staff Role</CardTitle>
                 <CardDescription>
-                  Manage the staff member's role and responsibilities.
+                  Manage the staff member&apos;s role and responsibilities.
                 </CardDescription>
               </CardHeader>
               <CardContent className="grid gap-4 md:grid-cols-2">
@@ -455,7 +391,7 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
                     id="department"
                     name="department"
                     placeholder="e.g., Engineering, Marketing"
-                    value={staffData.staffProfile?.department ?? ""}
+                    value={staffData.department ?? ""}
                     onChange={handleProfileInputChange}
                   />
                 </div>
@@ -465,7 +401,7 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
                     id="position"
                     name="position"
                     placeholder="e.g., Software Engineer, Manager"
-                    value={staffData.staffProfile?.position ?? ""}
+                    value={staffData.position ?? ""}
                     onChange={handleProfileInputChange}
                   />
                 </div>
@@ -475,7 +411,7 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
                     id="employeeId"
                     name="employeeId"
                     placeholder="e.g., EMP-001"
-                    value={staffData.staffProfile?.employeeId ?? ""}
+                    value={staffData.employeeId ?? ""}
                     onChange={handleProfileInputChange}
                   />
                 </div>
@@ -485,7 +421,7 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
                     id="reportsTo"
                     name="reportsTo"
                     placeholder="Manager's name or ID"
-                    value={staffData.staffProfile?.reportsTo ?? ""}
+                    value={staffData.reportsTo ?? ""}
                     onChange={handleProfileInputChange}
                   />
                 </div>
@@ -495,8 +431,8 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
                     id="hireDate"
                     name="hireDate"
                     type="date"
-                    value={staffData.staffProfile?.hireDate
-                      ? new Date(staffData.staffProfile.hireDate).toISOString().split("T")[0]
+                    value={staffData.hireDate
+                      ? new Date(staffData.hireDate).toISOString().split("T")[0]
                       : ""}
                     onChange={handleProfileInputChange}
                   />
@@ -507,7 +443,7 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
                     id="workSchedule"
                     name="workSchedule"
                     placeholder="e.g., Mon-Fri 9AM-5PM"
-                    value={staffData.staffProfile?.workSchedule ?? ""}
+                    value={staffData.workSchedule ?? ""}
                     onChange={handleProfileInputChange}
                   />
                 </div>
@@ -516,20 +452,17 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
                   <Input
                     id="skills"
                     placeholder="e.g., Communication, Leadership (comma-separated)"
-                    value={(staffData.staffProfile?.skills as string[] ?? []).join(", ")}
+                    value={(staffData.skills ?? []).join(", ")}
                     onChange={(e) => {
                       const skills = e.target.value
                         .split(",")
                         .map((s) => s.trim())
                         .filter(Boolean);
                       setStaffData((prev) => {
-                        if (!prev || !prev.staffProfile) return prev;
+                        if (!prev) return prev;
                         return {
                           ...prev,
-                          staffProfile: {
-                            ...prev.staffProfile,
-                            skills: skills,
-                          },
+                          skills: skills,
                         };
                       });
                     }}
@@ -540,14 +473,14 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
                   <Label>Responsibilities</Label>
                   <p className="text-sm text-gray-500 dark:text-gray-400">
                     {/* TODO: Improve display/editing for JSON */}
-                    {JSON.stringify(staffData.staffProfile?.responsibilities) ??
+                    {JSON.stringify(staffData.responsibilities) ??
                       "Not specified"}
                   </p>
                 </div>
                 <div className="space-y-2 md:col-span-2">
                   <Label>Permissions</Label>
                   <p className="text-sm text-gray-500 dark:text-gray-400">
-                    {JSON.stringify(staffData.staffProfile?.permissions) ??
+                    {JSON.stringify(staffData.permissions) ??
                       "Not specified"}
                   </p>
                 </div>
@@ -572,9 +505,9 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
                   <Label htmlFor="timezone">Timezone</Label>
                   <Select
                     name="timezone"
-                    value={staffData.timezone ?? ""}
+                    value={staffData.user.timezone ?? ""}
                     onValueChange={(value) =>
-                      handleSelectChange(value, "timezone")
+                      handleUserSelectChange(value, "timezone")
                     }
                   >
                     <SelectTrigger>
@@ -629,7 +562,7 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
                       id="allNotifications"
                       name="allNotifications"
                       checked={
-                        staffData.notificationPreferences?.allNotifications ??
+                        staffData.user.notificationPreferences?.allNotifications ??
                         false
                       }
                       onCheckedChange={(checked) =>
@@ -651,7 +584,7 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
                       id="mentions"
                       name="mentions"
                       checked={
-                        staffData.notificationPreferences?.mentions ?? false
+                        staffData.user.notificationPreferences?.mentions ?? false
                       }
                       onCheckedChange={(checked) =>
                         handleNotificationChange(checked, "mentions")
@@ -672,7 +605,7 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
                       id="directMessages"
                       name="directMessages"
                       checked={
-                        staffData.notificationPreferences?.directMessages ??
+                        staffData.user.notificationPreferences?.directMessages ??
                         false
                       }
                       onCheckedChange={(checked) =>
@@ -694,7 +627,7 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
                       id="updates"
                       name="updates"
                       checked={
-                        staffData.notificationPreferences?.updates ?? false
+                        staffData.user.notificationPreferences?.updates ?? false
                       }
                       onCheckedChange={(checked) =>
                         handleNotificationChange(checked, "updates")
@@ -719,7 +652,7 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
                     <Switch
                       id="essentialCookies"
                       name="essential"
-                      checked={staffData.cookiePreferences?.essential ?? true}
+                      checked={staffData.user.cookiePreferences?.essential ?? true}
                       disabled
                     />
                   </div>
@@ -736,7 +669,7 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
                     <Switch
                       id="analyticsCookies"
                       name="analytics"
-                      checked={staffData.cookiePreferences?.analytics ?? false}
+                      checked={staffData.user.cookiePreferences?.analytics ?? false}
                       onCheckedChange={(checked) =>
                         handleCookieChange(checked, "analytics")
                       }
@@ -755,7 +688,7 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
                     <Switch
                       id="marketingCookies"
                       name="marketing"
-                      checked={staffData.cookiePreferences?.marketing ?? false}
+                      checked={staffData.user.cookiePreferences?.marketing ?? false}
                       onCheckedChange={(checked) =>
                         handleCookieChange(checked, "marketing")
                       }
@@ -773,99 +706,6 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
               </CardFooter>
             </Card>
           </div>
-        </main>
-      </div>
     </div>
-  );
-}
-
-// --- Icon Components ---
-
-function BuildingIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
-  return (
-    <svg
-      {...props}
-      xmlns="http://www.w3.org/2000/svg"
-      width="24"
-      height="24"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <rect width="16" height="20" x="4" y="2" rx="2" ry="2" />
-      <path d="M9 22v-4h6v4" />
-      <path d="M8 6h.01" />
-      <path d="M16 6h.01" />
-      <path d="M12 6h.01" />
-      <path d="M12 10h.01" />
-      <path d="M12 14h.01" />
-      <path d="M16 10h.01" />
-      <path d="M16 14h.01" />
-      <path d="M8 10h.01" />
-      <path d="M8 14h.01" />
-    </svg>
-  );
-}
-
-function BellIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
-  return (
-    <svg
-      {...props}
-      xmlns="http://www.w3.org/2000/svg"
-      width="24"
-      height="24"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
-      <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
-    </svg>
-  );
-}
-
-function SearchIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
-  return (
-    <svg
-      {...props}
-      xmlns="http://www.w3.org/2000/svg"
-      width="24"
-      height="24"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <circle cx="11" cy="11" r="8" />
-      <path d="m21 21-4.3-4.3" />
-    </svg>
-  );
-}
-
-function SettingsIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
-  return (
-    <svg
-      {...props}
-      xmlns="http://www.w3.org/2000/svg"
-      width="24"
-      height="24"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 .54 1.85l-.01.45a2 2 0 0 1-1 1.74l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 .54 1.85l-.01.45a2 2 0 0 1-1 1.74l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 .54 1.85v.19a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.1a2 2 0 0 1-.54-1.85l.01-.45a2 2 0 0 1 1-1.74l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.1a2 2 0 0 1-.54-1.85l.01-.45a2 2 0 0 1 1-1.74l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.1a2 2 0 0 1-.54-1.85v-.19a2 2 0 0 0-2-2z" />
-      <circle cx="12" cy="12" r="3" />
-    </svg>
   );
 }

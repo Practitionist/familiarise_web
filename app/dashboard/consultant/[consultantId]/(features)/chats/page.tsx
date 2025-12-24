@@ -3,7 +3,7 @@
 import { use } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
-import { DashboardHomeSkeleton } from "@/components/ui/dashboard-skeleton";
+import { ChatSkeleton } from "@/components/dashboard";
 import { createConsultantQueries } from "@/hooks/useCosultantPrefetchDashboard";
 import { ChatsTab } from "./ChatsTab";
 
@@ -19,7 +19,7 @@ export default function ChatsPage({
   const { data: consultantDetails, isLoading, error } = useQuery(detailsQuery);
 
   if (isLoading) {
-    return <DashboardHomeSkeleton />;
+    return <ChatSkeleton />;
   }
 
   if (error) {

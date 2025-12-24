@@ -12,6 +12,8 @@ import { TSlotTiming } from "@/types/slots";
 import { ConsultantReview, User } from "@prisma/client";
 import Link from "next/link";
 import { use, useCallback, useEffect, useState } from "react";
+import { motion } from "framer-motion";
+import { ArrowLeft, Users } from "lucide-react";
 import { AboutSection } from "./components/AboutSection";
 import { ClassesAndWebinars } from "./components/ClassesAndWebinars";
 import { ConsultantAvailability } from "./components/ConsultantAvailability";
@@ -47,7 +49,6 @@ export default function ExpertProfile(
   const [selectedSlot, setSelectedSlot] = useState<TSlotTiming | null>(null);
   const { toast } = useToast();
 
-  // Prioritize browser timezone over user timezone
   const timezone = browserTimezone || userDetails?.timezone;
 
   useEffect(() => {
@@ -90,9 +91,6 @@ export default function ExpertProfile(
     async function fetchSlots() {
       if (selectedDate && consultantDetails && timezone && !isTimezoneLoading) {
         try {
-          // console.log("Using timezone:", timezone);
-          // console.log("Selected date:", selectedDate.toISOString());
-
           const startDateInUtc = new Date(selectedDate);
           startDateInUtc.setHours(0, 0, 0, 0);
           const endDateInUtc = new Date(selectedDate);
@@ -112,21 +110,10 @@ export default function ExpertProfile(
           }
 
           const { data } = await response.json();
-
-          // Extract slots for the selected date specifically
-          // Use timezone-aware date formatting to match backend grouping
           const selectedDateKey = formatTz(selectedDate, "yyyy-MM-dd", {
             timeZone: timezone,
           });
           const slotsForSelectedDate = data[selectedDateKey] || [];
-
-          // console.log("Available dates in response:", Object.keys(data));
-          // console.log("Looking for date:", selectedDateKey);
-          // console.log(
-          //   "Slots found for selected date:",
-          //   slotsForSelectedDate.length
-          // );
-
           setSlotTimings(slotsForSelectedDate);
         } catch (error) {
           console.error("Error fetching slots:", error);
@@ -138,7 +125,6 @@ export default function ExpertProfile(
           });
         }
       } else {
-        // Clear slots if timezone is not available
         setSlotTimings([]);
       }
     }
@@ -152,13 +138,11 @@ export default function ExpertProfile(
       return;
     }
 
-    // Calculate duration in hours from slot times
     const startTime = new Date(selectedSlot.slotStartTimeInUTC);
     const endTime = new Date(selectedSlot.slotEndTimeInUTC);
     const durationInHours =
       (endTime.getTime() - startTime.getTime()) / (1000 * 60 * 60);
 
-    // Get the active consultation plan
     const activePlan = consultantDetails.consultationPlans.find(
       (plan) => plan.durationInHours === durationInHours,
     );
@@ -168,10 +152,7 @@ export default function ExpertProfile(
       return;
     }
 
-    // Construct URL with necessary params
     const params = new URLSearchParams();
-
-    // Add the original slot ID and the selected time window
     const slotStartTimeInUTC = new Date(selectedSlot.slotStartTimeInUTC);
     const slotEndTimeInUTC = new Date(selectedSlot.slotEndTimeInUTC);
 
@@ -193,10 +174,8 @@ export default function ExpertProfile(
     params.append("slotEndTimeInUTC", slotEndTimeInUTC.toISOString());
 
     const checkoutUrl = `/checkout/plans/consultation/${activePlan.id}?${params.toString()}`;
-
-    // Redirect to checkout page
     window.location.href = checkoutUrl;
-  }, [selectedSlot, consultantDetails, params.consultantId, toast]);
+  }, [selectedSlot, consultantDetails, toast]);
 
   const handleSubscriptionBooking = useCallback(
     async (
@@ -216,7 +195,6 @@ export default function ExpertProfile(
         return;
       }
 
-      // Get the active subscription plan
       const activePlan = consultantDetails.subscriptionPlans.find(
         (plan) => plan.durationInMonths === option.durationInMonths,
       );
@@ -226,11 +204,9 @@ export default function ExpertProfile(
         return;
       }
 
-      // Convert dates to UTC ISO strings for the backend
       const schedulingPeriodStartsAt = schedulingPeriod.startDate.toISOString();
       const schedulingPeriodEndsAt = schedulingPeriod.endDate.toISOString();
 
-      // Redirect to subscription checkout page with scheduling period
       const params = new URLSearchParams({
         schedulingPeriodStartsAt,
         schedulingPeriodEndsAt,
@@ -252,12 +228,11 @@ export default function ExpertProfile(
       1,
     ).getDay();
 
-    // Adjust for Monday as first day of week (0 = Monday, 1 = Tuesday, etc.)
     const adjustedFirstDay = firstDayOfMonth === 0 ? 6 : firstDayOfMonth - 1;
     const days = [];
 
     for (let i = 0; i < adjustedFirstDay; i++) {
-      days.push(<div key={`empty-${i}`} className="p-2"></div>);
+      days.push(<div key={`empty-${i}`} className="w-10 h-10 lg:w-11 lg:h-11"></div>);
     }
 
     for (let i = 1; i <= daysInMonth; i++) {
@@ -266,11 +241,18 @@ export default function ExpertProfile(
         currentDate.getMonth(),
         i,
       );
+      const isSelected = selectedDate?.getDate() === i && 
+        selectedDate?.getMonth() === currentDate.getMonth() &&
+        selectedDate?.getFullYear() === currentDate.getFullYear();
+      
       days.push(
         <button
           key={i}
-          className={`p-2 rounded-full hover:bg-white hover:bg-opacity-20 
-            ${selectedDate?.getDate() === i ? "bg-white text-black" : ""}`}
+          className={`w-10 h-10 lg:w-11 lg:h-11 rounded-full text-base font-medium transition-all duration-200 flex items-center justify-center
+            ${isSelected 
+              ? "bg-white text-zinc-900 shadow-md" 
+              : "text-zinc-300 hover:bg-zinc-700/60"
+            }`}
           onClick={() => {
             setSelectedDate(date);
             setSelectedSlot(null);
@@ -290,63 +272,134 @@ export default function ExpertProfile(
 
   if (error || !consultantDetails || !userDetails) {
     return (
-      <div className="flex flex-col items-center justify-center h-screen">
-        <h1 className="text-3xl font-bold mb-4">Oops! Consultant not found</h1>
-        <p className="text-lg mb-6">
-          Here are some other consultants you might want to try out
-        </p>
-        <Link href="/search">
-          <Button variant="night" className="rounded-full">
-            Search Consultants
-          </Button>
-        </Link>
+      <div className="min-h-screen bg-zinc-50 flex items-center justify-center px-4">
+        <motion.div 
+          className="text-center max-w-md"
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ duration: 0.3 }}
+        >
+          <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-zinc-200 flex items-center justify-center">
+            <Users className="w-10 h-10 text-zinc-400" />
+          </div>
+          <h1 className="text-2xl font-bold text-zinc-900 mb-3">Expert Not Found</h1>
+          <p className="text-zinc-500 mb-8">
+            We couldn&apos;t find this expert. They may have moved or the link might be incorrect.
+          </p>
+          <Link href="/explore/experts">
+            <Button className="bg-zinc-900 hover:bg-zinc-800 text-white rounded-xl px-6">
+              <ArrowLeft className="w-4 h-4 mr-2" />
+              Browse All Experts
+            </Button>
+          </Link>
+        </motion.div>
       </div>
     );
   }
 
   return (
-    <div key={params.consultantId} className="flex justify-center py-40">
-      <div className="flex flex-col w-1/2">
-        <div className="space-y-8">
-          <ProfileHeader
-            userDetails={userDetails}
-            consultantDetails={consultantDetails}
-          />
-
-          <AboutSection
-            userDetails={userDetails}
-            consultantDetails={consultantDetails}
-          />
-
-          <ConsultantAvailability
-            consultantDetails={consultantDetails}
-            timezone={timezone || "UTC"}
-          />
+    <main className="min-h-screen bg-zinc-50">
+      {/* Back Navigation */}
+      <div className="bg-white border-b border-zinc-200">
+        <div className="w-full px-4 md:px-8 lg:px-12 py-4">
+          <Link 
+            href="/explore/experts"
+            className="inline-flex items-center gap-2 text-sm text-zinc-500 hover:text-zinc-900 transition-colors"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            Back to Experts
+          </Link>
         </div>
-
-        <ClassesAndWebinars
-          classPlans={consultantDetails.classPlans}
-          webinarPlans={consultantDetails.webinarPlans}
-        />
-
-        <ReviewsSection reviews={reviews} />
       </div>
 
-      <ExpertPricing
-        userDetails={userDetails}
-        consultantDetails={consultantDetails}
-        handleConsultationBooking={handleConsultationBooking}
-        handleSubscriptionBooking={handleSubscriptionBooking}
-        selectedDate={selectedDate}
-        setSelectedDate={setSelectedDate}
-        currentDate={currentDate}
-        setCurrentDate={setCurrentDate}
-        renderCalendar={renderCalendar}
-        slotTimings={slotTimings}
-        selectedSlot={selectedSlot}
-        setSelectedSlot={setSelectedSlot}
-        timezone={timezone || "UTC"}
-      />
-    </div>
+      {/* Main Content Area - Profile, About, Availability + Pricing */}
+      <div className="w-full px-4 md:px-8 lg:px-12 py-8 md:py-12">
+        <div className="flex flex-col xl:flex-row gap-8 xl:gap-12">
+          {/* Main Content */}
+          <motion.div 
+            className="flex-1 min-w-0"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5 }}
+          >
+            <div className="space-y-8">
+              <ProfileHeader
+                userDetails={userDetails}
+                consultantDetails={consultantDetails}
+              />
+
+              <AboutSection
+                userDetails={userDetails}
+                consultantDetails={consultantDetails}
+              />
+
+              <ConsultantAvailability
+                consultantDetails={consultantDetails}
+                timezone={timezone || "UTC"}
+              />
+            </div>
+          </motion.div>
+
+          {/* Sidebar - Pricing */}
+          <motion.div
+            className="w-full xl:w-[450px] 2xl:w-[500px] flex-shrink-0"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, delay: 0.1 }}
+          >
+            <ExpertPricing
+              userDetails={userDetails}
+              consultantDetails={consultantDetails}
+              handleConsultationBooking={handleConsultationBooking}
+              handleSubscriptionBooking={handleSubscriptionBooking}
+              selectedDate={selectedDate}
+              setSelectedDate={setSelectedDate}
+              currentDate={currentDate}
+              setCurrentDate={setCurrentDate}
+              renderCalendar={renderCalendar}
+              slotTimings={slotTimings}
+              selectedSlot={selectedSlot}
+              setSelectedSlot={setSelectedSlot}
+              timezone={timezone || "UTC"}
+            />
+          </motion.div>
+        </div>
+      </div>
+
+      {/* Classes & Webinars - Below main content only, not under pricing */}
+      <div className="w-full px-4 md:px-8 lg:px-12 pb-8">
+        <div className="flex flex-col xl:flex-row gap-8 xl:gap-12">
+          <motion.div
+            className="flex-1 min-w-0"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, delay: 0.2 }}
+          >
+            <ClassesAndWebinars
+              classPlans={consultantDetails.classPlans}
+              webinarPlans={consultantDetails.webinarPlans}
+            />
+          </motion.div>
+          {/* Spacer to match pricing sidebar width */}
+          <div className="hidden xl:block w-[450px] 2xl:w-[500px] flex-shrink-0" />
+        </div>
+      </div>
+
+      {/* Reviews - Below main content only, not under pricing */}
+      <div className="w-full px-4 md:px-8 lg:px-12 pb-12">
+        <div className="flex flex-col xl:flex-row gap-8 xl:gap-12">
+          <motion.div
+            className="flex-1 min-w-0"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, delay: 0.3 }}
+          >
+            <ReviewsSection reviews={reviews} />
+          </motion.div>
+          {/* Spacer to match pricing sidebar width */}
+          <div className="hidden xl:block w-[450px] 2xl:w-[500px] flex-shrink-0" />
+        </div>
+      </div>
+    </main>
   );
 }

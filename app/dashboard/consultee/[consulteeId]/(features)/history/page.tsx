@@ -3,7 +3,7 @@
 import { use } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
-import { DashboardHomeSkeleton } from "@/components/ui/dashboard-skeleton";
+import { TableSkeleton } from "@/components/dashboard";
 import { createConsulteeQueries } from "@/hooks/useConsulteePrefetchDashboard";
 import { BookingHistoryTab } from "./BookingHistoryTab";
 
@@ -19,7 +19,7 @@ export default function HistoryPage({ params }: Readonly<PageProps>) {
   const { data: eventsData, isLoading, error } = useQuery(eventsQuery);
 
   if (isLoading) {
-    return <DashboardHomeSkeleton />;
+    return <TableSkeleton />;
   }
 
   if (error) {

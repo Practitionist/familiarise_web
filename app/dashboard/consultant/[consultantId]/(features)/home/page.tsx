@@ -3,7 +3,7 @@
 import { use } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
-import { DashboardHomeSkeleton } from "@/components/ui/dashboard-skeleton";
+import { HomeSkeleton } from "@/components/dashboard";
 import { createConsultantQueries } from "@/hooks/useCosultantPrefetchDashboard";
 import { BADGE_STYLES } from "../../types";
 import { HomeTab } from "./HomeTab";
@@ -31,7 +31,7 @@ export default function HomePage({
 
   // Show skeleton only for initial load when no data exists
   if (isLoading && !dashboardData) {
-    return <DashboardHomeSkeleton />;
+    return <HomeSkeleton />;
   }
 
   if (error && !dashboardData) {

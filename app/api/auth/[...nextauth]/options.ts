@@ -235,7 +235,9 @@ const authOptions: NextAuthOptions = {
       token: JWT;
     }): Promise<Session> {
       if (session?.user && token) {
-        // Update session with token data
+        // Update session with token data (already cached in JWT from jwt callback)
+        // PERFORMANCE FIX: Removed database query that was causing 300-500ms delay on every session check
+        // All essential data is already in the JWT token from the jwt callback
         session.user.id = token.sub as string;
         session.user.onboardingCompleted = token.onboardingCompleted as boolean;
         session.user.role = token.role as string;
@@ -249,35 +251,9 @@ const authOptions: NextAuthOptions = {
           | string
           | undefined;
 
-        try {
-          // Fetch additional user data from database
-          const user = await prisma.user.findUnique({
-            where: { email: session.user.email ?? "" },
-            select: {
-              email: true,
-              name: true,
-              image: true,
-              phone: true,
-              address: true,
-              timezone: true,
-            },
-          });
-
-          if (user) {
-            // Merge fetched user data with session
-            Object.assign(session.user, {
-              ...user,
-              phone: user.phone ?? "",
-              address: user.address ?? "",
-              timezone:
-                user.timezone ??
-                Intl.DateTimeFormat().resolvedOptions().timeZone,
-            });
-          }
-        } catch (error) {
-          console.error("Error fetching user data in session callback:", error);
-          // Keep existing session data if database query fails
-        }
+        // Use existing session data for name/email/image (already populated by NextAuth)
+        // Additional fields like phone/address/timezone can be fetched on demand
+        // in components that specifically need them, rather than on every session check
       }
       return session;
     },

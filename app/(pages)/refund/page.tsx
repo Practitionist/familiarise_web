@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { RefreshCw } from "lucide-react";
 import Link from "next/link";
+import { COMPANY_INFO, PAGE_META, POLICY_DATES, getMailtoLink } from "../constants";
 
 export default function RefundPolicyPage() {
   return (
@@ -15,11 +16,10 @@ export default function RefundPolicyPage() {
             <RefreshCw className="h-16 w-16 text-blue-600" />
           </div>
           <h1 className="text-4xl md:text-5xl font-bold mb-4">
-            Cancellation & Refund Policy
+            {PAGE_META.refund.title}
           </h1>
           <p className="text-muted-foreground max-w-3xl mx-auto">
-            Understanding our cancellation and refund procedures for all service
-            types
+            {PAGE_META.refund.description}
           </p>
         </div>
 
@@ -30,7 +30,7 @@ export default function RefundPolicyPage() {
                 Cancellation & Refund Policy
               </CardTitle>
               <p className="text-sm text-muted-foreground">
-                Last Updated: [LAST UPDATED]
+                Last Updated: {POLICY_DATES.refundLastUpdated}
               </p>
             </CardHeader>
             <CardContent className="prose prose-slate max-w-none">
@@ -38,7 +38,7 @@ export default function RefundPolicyPage() {
                 1. Introduction
               </h2>
               <p>
-                At Familiarise ("[COMPANY NAME]"), we understand that
+                At Familiarise ("{COMPANY_INFO.name}"), we understand that
                 circumstances change and plans may need to be adjusted. This
                 Cancellation & Refund Policy outlines the terms and conditions
                 for cancellations and refunds for all services offered on our
@@ -332,10 +332,10 @@ export default function RefundPolicyPage() {
               <p className="mt-3">
                 Alternatively, you can contact our support team at{" "}
                 <a
-                  href="mailto:[EMAIL]"
+                  href={getMailtoLink()}
                   className="text-blue-600 hover:underline"
                 >
-                  [EMAIL]
+                  {COMPANY_INFO.email}
                 </a>{" "}
                 with:
               </p>
@@ -541,10 +541,10 @@ export default function RefundPolicyPage() {
                 <li>
                   Contact our support team immediately at{" "}
                   <a
-                    href="mailto:[EMAIL]"
+                    href={getMailtoLink()}
                     className="text-blue-600 hover:underline"
                   >
-                    [EMAIL]
+                    {COMPANY_INFO.email}
                   </a>
                 </li>
                 <li>
@@ -678,18 +678,18 @@ export default function RefundPolicyPage() {
               </p>
               <div className="bg-muted p-4 rounded-lg mt-4">
                 <p>
-                  <strong>Company Name:</strong> [COMPANY NAME]
+                  <strong>Company Name:</strong> {COMPANY_INFO.name}
                 </p>
                 <p>
-                  <strong>Address:</strong> [ADDRESS]
+                  <strong>Address:</strong> {COMPANY_INFO.address}
                 </p>
                 <p>
                   <strong>Email:</strong>{" "}
                   <a
-                    href="mailto:[EMAIL]"
+                    href={getMailtoLink()}
                     className="text-blue-600 hover:underline"
                   >
-                    [EMAIL]
+                    {COMPANY_INFO.email}
                   </a>
                 </p>
                 <p>

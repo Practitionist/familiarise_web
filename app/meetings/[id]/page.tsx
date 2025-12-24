@@ -21,18 +21,35 @@ const MeetingPage = () => {
   const { call, isCallLoading, error } = useGetCallById(id as string);
   const [isSetupComplete, setIsSetupComplete] = useState(false);
 
-  // Cleanup on component unmount
+  // Cleanup on component unmount - disable media streams before leaving
   useEffect(() => {
     return () => {
       console.log("Meeting page unmounting, cleaning up call...");
 
-      // Cleanup call if still active
-      if (call?.state.callingState !== CallingState.LEFT) {
-        console.log("Leaving call on unmount");
-        call?.leave().catch((error) => {
-          console.warn("Error leaving call on unmount:", error);
-        });
-      }
+      const cleanup = async () => {
+        try {
+          // Disable media streams first to stop audio/video
+          await call?.camera.disable();
+          await call?.microphone.disable();
+          
+          // Disable screen share if active
+          if (call?.screenShare?.state?.status === "enabled") {
+            await call?.screenShare.disable();
+          }
+          
+          console.log("Media streams disabled");
+
+          // Leave the call if still connected
+          if (call?.state.callingState !== CallingState.LEFT) {
+            console.log("Leaving call on unmount");
+            await call?.leave();
+          }
+        } catch (error) {
+          console.warn("Error during cleanup on unmount:", error);
+        }
+      };
+
+      cleanup();
     };
   }, [call]);
 

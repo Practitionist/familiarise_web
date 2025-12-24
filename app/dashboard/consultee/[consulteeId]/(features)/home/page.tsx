@@ -58,6 +58,11 @@ export default function HomePage({ params }: Readonly<PageProps>) {
     return <ConsulteeDashboardSkeleton />;
   }
 
+  // If userDetails is not available, show skeleton
+  if (!userDetails) {
+    return <ConsulteeDashboardSkeleton />;
+  }
+
   return (
     <DashboardErrorBoundary>
       {/* Show subtle loading indicator when refreshing */}
@@ -68,7 +73,12 @@ export default function HomePage({ params }: Readonly<PageProps>) {
       )}
       <HomeTab
         eventsData={eventsData}
-        userDetails={userDetails}
+        userDetails={{
+          id: userDetails.id,
+          name: userDetails.name ?? "User",
+          email: userDetails.email ?? "",
+          image: userDetails.image ?? undefined,
+        }}
         isRefreshing={isLoading && !!eventsData}
         consulteeId={consulteeId}
       />

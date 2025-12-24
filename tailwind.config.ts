@@ -9,21 +9,32 @@ const config: Config = {
   ],
   theme: {
     extend: {
+      fontFamily: {
+        sans: ["var(--font-sora)", "system-ui", "sans-serif"],
+        display: ["var(--font-sora)", "system-ui", "sans-serif"],
+      },
       backgroundImage: {
         "gradient-radial": "radial-gradient(var(--tw-gradient-stops))",
         "gradient-conic":
           "conic-gradient(from 180deg at 50% 50%, var(--tw-gradient-stops))",
+        "gradient-silver": "linear-gradient(135deg, #ffffff, #d4d4d4, #a3a3a3, #d4d4d4, #ffffff)",
+        "gradient-dark": "linear-gradient(135deg, #0a0a0a, #1f1f1f, #0a0a0a)",
+        "gradient-metallic": "linear-gradient(145deg, #2a2a2a 0%, #1a1a1a 50%, #0f0f0f 100%)",
+        "gradient-steel": "linear-gradient(180deg, #3f3f46, #27272a, #18181b)",
       },
       screens: {
         sm: "640px",
         md: "768px",
         lg: "1024px",
         xl: "1280px",
+        "2xl": "1400px",
       },
       borderRadius: {
         lg: "var(--radius)",
         md: "calc(var(--radius) - 2px)",
         sm: "calc(var(--radius) - 4px)",
+        xl: "calc(var(--radius) + 4px)",
+        "2xl": "calc(var(--radius) + 8px)",
       },
       colors: {
         background: "hsl(var(--background))",

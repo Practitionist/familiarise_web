@@ -6,17 +6,22 @@ import NextAuthProvider from "@/providers/NextAuthSessionProvider";
 import ReactQueryProvider from "@/providers/ReactQueryProvider";
 import type { Metadata } from "next";
 import { getServerSession } from "next-auth";
-import { Inter } from "next/font/google";
+import { Sora } from "next/font/google";
 import authOptions from "./api/auth/[...nextauth]/options";
 
 import "@stream-io/video-react-sdk/dist/css/styles.css";
 import "./globals.css";
 
-const inter = Inter({ subsets: ["latin"] });
+const sora = Sora({ 
+  subsets: ["latin"],
+  variable: "--font-sora",
+  display: "swap",
+});
 
 export const metadata: Metadata = {
-  title: "Familiarise(formerly ConsultX)",
-  description: "A consulting platform for the future",
+  title: "Familiarise | Expert Consultations & Career Mentorship",
+  description: "Connect with world-class experts for 1-on-1 sessions, classes, webinars, and personalized career guidance. Transform your career with Familiarise.",
+  keywords: ["consulting", "mentorship", "career guidance", "expert sessions", "webinars", "professional development"],
 };
 
 export default async function RootLayout({
@@ -26,8 +31,8 @@ export default async function RootLayout({
 }>) {
   const session = await getServerSession(authOptions);
   return (
-    <html lang="en">
-      <body className={`${inter.className} flex flex-col min-h-screen`}>
+    <html lang="en" className={sora.variable} suppressHydrationWarning>
+      <body className={`${sora.className} flex flex-col min-h-screen antialiased`} suppressHydrationWarning>
         <ReactQueryProvider>
           <NextAuthProvider session={session}>
             <Toaster />

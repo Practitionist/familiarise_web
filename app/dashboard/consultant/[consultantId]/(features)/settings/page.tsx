@@ -2,7 +2,7 @@
 
 import { use } from "react";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
-import { DashboardHomeSkeleton } from "@/components/ui/dashboard-skeleton";
+import { SettingsSkeleton } from "@/components/dashboard";
 import { useQuery } from "@tanstack/react-query";
 import { fetchConsultantData } from "../../utils/fetchHelpers";
 import { SettingsTab } from "./SettingsTab";
@@ -28,7 +28,7 @@ export default function SettingsPage({
   });
 
   if (isLoading) {
-    return <DashboardHomeSkeleton />;
+    return <SettingsSkeleton />;
   }
 
   if (error) {

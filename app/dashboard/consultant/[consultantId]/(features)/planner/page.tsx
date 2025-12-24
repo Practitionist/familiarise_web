@@ -3,7 +3,7 @@
 import { useParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
-import { DashboardHomeSkeleton } from "@/components/ui/dashboard-skeleton";
+import { PlannerSkeleton } from "@/components/dashboard";
 import { createConsultantQueries } from "@/hooks/useCosultantPrefetchDashboard";
 import { EventManagementDashboard } from "./components/EventManagementDashboard";
 
@@ -16,7 +16,7 @@ export default function PlannerPage() {
   const { data: plannerData, isLoading, error } = useQuery(plannerQuery);
 
   if (isLoading) {
-    return <DashboardHomeSkeleton />;
+    return <PlannerSkeleton />;
   }
 
   if (error) {

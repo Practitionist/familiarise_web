@@ -1,3 +1,5 @@
+"use client";
+
 import Image from "next/image";
 import { User, ConsultationPlan, SubscriptionPlan } from "@prisma/client";
 import { TConsultantProfile } from "@/types/consultant";
@@ -5,15 +7,14 @@ import { TSlotTiming } from "@/types/slots";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import ConsultationPricingToggle from "./ConsultationPricingToggle";
 import SubscriptionPricingToggle from "./SubscriptionPricingToggle";
+import { Shield, Calendar, MessageSquare } from "lucide-react";
 
 import { PricingOption } from "../defaults";
 
-// Utility function to map duration hours to labels
 const getDurationLabel = (durationInHours: number): string => {
   return `${durationInHours} Hour${durationInHours > 1 ? "s" : ""}`;
 };
 
-// Utility function to map subscription duration months to labels
 const getSubscriptionDurationLabel = (durationInMonths: number): string => {
   return `${durationInMonths} Month${durationInMonths > 1 ? "s" : ""}`;
 };
@@ -60,20 +61,19 @@ export function ExpertPricing({
       if (type === "consultation" && "durationInHours" in plan) {
         const durationLabel = getDurationLabel(plan.durationInHours);
 
-        // Define features based on consultation duration
         let features: string[] = [];
         switch (plan.durationInHours) {
-          case 1: // Basic
+          case 1:
             features = ["Document verification", "1 on 1 call"];
             break;
-          case 2: // Extended
+          case 2:
             features = [
               "Document verification",
               "1 on 1 call",
               "Extended chat facility",
             ];
             break;
-          case 4: // Comprehensive
+          case 4:
             features = [
               "Document verification",
               "1 on 1 call",
@@ -145,27 +145,45 @@ export function ExpertPricing({
   const hasSubscriptions = subscriptionOptions.length > 0;
 
   return (
-    <div className="flex flex-col items-center w-1/4 ml-10">
-      <Image
-        alt="Profile"
-        className="rounded-full mb-6"
-        height="1350"
-        src={userDetails.image || "/placeholder.svg"}
-        style={{
-          aspectRatio: "1080/1350",
-          objectFit: "cover",
-        }}
-        width="1080"
-      />
+    <div className="sticky top-24 space-y-6">
+      {/* Profile Image Card */}
+      <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
+        <div className="aspect-[4/3] relative">
+          <Image
+            alt="Profile"
+            className="object-cover"
+            fill
+            src={userDetails.image || "/placeholder.svg"}
+            sizes="(max-width: 768px) 100vw, 400px"
+          />
+        </div>
+      </div>
 
-      {/* Blue bordered container */}
-      <div className="w-full p-6 border-2 border-blue-500 rounded-2xl bg-gradient-to-br from-gray-900 to-black shadow-2xl">
-        {/* If both consultation and subscription plans exist, show tabs */}
+      {/* Pricing Card */}
+      <div className="bg-zinc-950 rounded-2xl p-6 shadow-xl">
+        {/* Header */}
+        <div className="text-center mb-6">
+          <h3 className="text-xl font-bold text-white mb-2">Book a Session</h3>
+          <p className="text-sm text-zinc-400">Choose your preferred option</p>
+        </div>
+
         {hasConsultations && hasSubscriptions ? (
           <Tabs defaultValue="consultations" className="w-full">
-            <TabsList className="grid w-full grid-cols-2 mb-6">
-              <TabsTrigger value="consultations">Consultations</TabsTrigger>
-              <TabsTrigger value="subscriptions">Subscriptions</TabsTrigger>
+            <TabsList className="grid w-full grid-cols-2 mb-6 bg-zinc-900 p-1 rounded-xl">
+              <TabsTrigger 
+                value="consultations"
+                className="rounded-lg data-[state=active]:bg-white data-[state=active]:text-zinc-900 text-zinc-400"
+              >
+                <Calendar className="w-4 h-4 mr-2" />
+                One-time
+              </TabsTrigger>
+              <TabsTrigger 
+                value="subscriptions"
+                className="rounded-lg data-[state=active]:bg-white data-[state=active]:text-zinc-900 text-zinc-400"
+              >
+                <MessageSquare className="w-4 h-4 mr-2" />
+                Mentorship
+              </TabsTrigger>
             </TabsList>
             <TabsContent value="consultations">
               <ConsultationPricingToggle
@@ -193,7 +211,6 @@ export function ExpertPricing({
             </TabsContent>
           </Tabs>
         ) : hasConsultations ? (
-          // Only consultations available
           <ConsultationPricingToggle
             consultationOptions={consultationOptions}
             consultantDetails={consultantDetails}
@@ -209,7 +226,6 @@ export function ExpertPricing({
             timezone={timezone}
           />
         ) : hasSubscriptions ? (
-          // Only subscriptions available
           <SubscriptionPricingToggle
             subscriptionOptions={subscriptionOptions}
             consultantDetails={consultantDetails}
@@ -217,11 +233,18 @@ export function ExpertPricing({
             timezone={timezone}
           />
         ) : (
-          // No plans available
-          <div className="w-full p-8 text-center text-gray-300">
-            <p>No pricing plans available at the moment.</p>
+          <div className="text-center py-8">
+            <p className="text-zinc-400">No pricing plans available</p>
           </div>
         )}
+
+        {/* Trust Badges */}
+        <div className="mt-6 pt-6 border-t border-zinc-800">
+          <div className="flex items-center justify-center gap-2 text-sm text-zinc-400">
+            <Shield className="w-4 h-4" />
+            <span>Secure payments • Money-back guarantee</span>
+          </div>
+        </div>
       </div>
     </div>
   );

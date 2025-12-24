@@ -1,232 +1,321 @@
-import prisma from "@/lib/prisma"; // Use central instance
-import { Prisma } from "@prisma/client";
-import { NextResponse, type NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import prisma from "@/lib/prisma";
 
-// GET /api/user/staff/{id} - Fetch a single staff member by ID
+// GET /api/user/staff/{id} - Fetch a single staff member by profile ID
 export async function GET(
-  request: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
     const resolvedParams = await params;
-    const id = resolvedParams.id;
+    const { id } = resolvedParams;
 
-    const staffUser = await prisma.user.findUnique({
-      where: {
-        id,
-        role: "STAFF", // Ensure we only fetch staff members
-      },
+    const staffProfile = await prisma.staffProfile.findUnique({
+      where: { id: id },
       include: {
-        staffProfile: true, // Include related staff profile data
-        notificationPreferences: true, // Include notification preferences
-        cookiePreferences: true, // Include cookie preferences
+        user: {
+          include: {
+            notificationPreferences: true,
+            cookiePreferences: true,
+          },
+        },
       },
     });
 
-    if (!staffUser) {
+    if (!staffProfile) {
       return NextResponse.json(
-        { message: "Staff member not found" },
+        { error: "Staff profile not found" },
         { status: 404 },
       );
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    // const { password: _, ...userWithoutPassword } = staffUser;
-
-    return NextResponse.json(staffUser);
+    return NextResponse.json({ data: staffProfile }, { status: 200 });
   } catch (error) {
-    console.error("Error fetching staff member:", error);
+    if (error instanceof Error) {
+      console.error("Error: ", error.stack);
+    }
     return NextResponse.json(
-      { message: "Internal Server Error fetching staff member" },
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to get staff profile",
+      },
       { status: 500 },
     );
   }
 }
 
-// PUT /api/user/staff/{id} - Update a staff member by ID
-export async function PUT(
-  request: NextRequest,
+// POST /api/user/staff/{id} - Create a staff profile for a user
+export async function POST(
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
     const resolvedParams = await params;
-    const id = resolvedParams.id;
+    const { id } = resolvedParams;
 
-    const body = await request.json();
-    const {
-      email,
-      password, // Optional: Only include if changing password
-      name,
-      phone,
-      address,
-      currentTimezone,
-      onboardingCompleted,
-      department,
-      position,
-      responsibilities, // Expecting JSON or array
-      permissions, // Expecting JSON or array
-      // Add other fields from User or StaffProfile as needed
-      // Preference fields
-      allNotifications,
-      mentions,
-      directMessages,
-      updates,
-      analytics,
-      marketing,
-    } = body;
+    const body = await req.json();
+    const user = await prisma.user.findUnique({
+      where: { id: id },
+    });
 
-    // Prepare data for update
-    const userData: Prisma.UserUpdateInput = {};
-    const staffProfileData: Prisma.StaffProfileUpdateInput = {};
-    const notificationPrefsData: Prisma.NotificationPreferenceUpdateInput = {};
-    const cookiePrefsData: Prisma.CookiePreferenceUpdateInput = {};
-
-    if (email) userData.email = email;
-    if (name) userData.name = name;
-    if (phone) userData.phone = phone;
-    if (address) userData.address = address;
-    if (currentTimezone) userData.timezone = currentTimezone;
-    if (typeof onboardingCompleted === "boolean")
-      userData.onboardingCompleted = onboardingCompleted;
-
-    // If password is provided, hash it before updating
-    if (password) {
-      if (password.length < 6) {
-        return NextResponse.json(
-          { message: "Password must be at least 6 characters long" },
-          { status: 400 },
-        );
-      }
-      // userData.password = await hash(password, 10); // Hash new password
-    }
-
-    if (department) staffProfileData.department = department;
-    if (position) staffProfileData.position = position;
-    // Need to handle JSON fields potentially being null or undefined
-    if (responsibilities !== undefined)
-      staffProfileData.responsibilities = responsibilities;
-    if (permissions !== undefined) staffProfileData.permissions = permissions;
-
-    // --- Prepare Preferences Data ---
-    // Notification Preferences
-    if (typeof allNotifications === "boolean")
-      notificationPrefsData.allNotifications = allNotifications;
-    if (typeof mentions === "boolean")
-      notificationPrefsData.mentions = mentions;
-    if (typeof directMessages === "boolean")
-      notificationPrefsData.directMessages = directMessages;
-    if (typeof updates === "boolean") notificationPrefsData.updates = updates;
-
-    // Cookie Preferences (essential is usually not user-editable)
-    if (typeof analytics === "boolean") cookiePrefsData.analytics = analytics;
-    if (typeof marketing === "boolean") cookiePrefsData.marketing = marketing;
-    // ---------------------------------
-
-    // Check if there's any data to update
-    const hasUserData = Object.keys(userData).length > 0;
-    const hasStaffProfileData = Object.keys(staffProfileData).length > 0;
-    const hasNotificationPrefsData =
-      Object.keys(notificationPrefsData).length > 0;
-    const hasCookiePrefsData = Object.keys(cookiePrefsData).length > 0;
-
-    // Construct the update payload conditionally
-    const updateData: Prisma.UserUpdateArgs["data"] = {
-      ...(hasUserData && userData),
-      ...(hasStaffProfileData && {
-        staffProfile: { update: staffProfileData },
-      }),
-      ...(hasNotificationPrefsData && {
-        notificationPreferences: { update: notificationPrefsData },
-      }),
-      // Cookie prefs might be created if they don't exist, update otherwise
-      // Using upsert might be safer if preferences might not exist initially
-      ...(hasCookiePrefsData && {
-        cookiePreferences: { update: cookiePrefsData },
-      }),
-    };
-
-    // Prevent empty update
-    if (Object.keys(updateData).length === 0) {
+    if (!user) {
       return NextResponse.json(
-        { message: "No changes detected" },
-        { status: 400 },
+        { error: "User not found. Cannot create staff profile." },
+        { status: 404 },
       );
     }
 
-    // Update the user and potentially related records
-    const updatedUser = await prisma.user.update({
-      where: {
-        id,
-        role: "STAFF", // Ensure we only update staff members
+    const createdStaffProfile = await prisma.staffProfile.create({
+      data: {
+        department: body.department,
+        position: body.position,
+        permissions: body.permissions,
+        responsibilities: body.responsibilities,
+        employeeId: body.employeeId,
+        hireDate: body.hireDate ? new Date(body.hireDate) : null,
+        reportsTo: body.reportsTo,
+        skills: body.skills || [],
+        workSchedule: body.workSchedule,
+        user: { connect: { id: id } },
       },
-      data: updateData,
       include: {
-        staffProfile: true, // Include updated profile data
-        notificationPreferences: true,
-        cookiePreferences: true,
+        user: true,
       },
     });
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    // const { password: _, ...userWithoutPassword } = updatedUser;
-
-    return NextResponse.json(updatedUser);
+    return NextResponse.json(createdStaffProfile, { status: 201 });
   } catch (error) {
-    console.error("Error updating staff member:", error);
-    if (error instanceof Prisma.PrismaClientKnownRequestError) {
-      // Handle specific Prisma errors, e.g., record not found
-      if (error.code === "P2025") {
-        return NextResponse.json(
-          { message: "Staff member not found" },
-          { status: 404 },
-        );
-      }
-      // Handle unique constraint errors (e.g., email already exists)
-      if (error.code === "P2002" && error.meta?.target === "users_email_key") {
-        return NextResponse.json(
-          { message: "Email already in use" },
-          { status: 409 },
-        );
-      }
-    }
+    console.error("Error creating staff profile:", error);
     return NextResponse.json(
-      { message: "Internal Server Error updating staff member" },
+      {
+        error:
+          "An unexpected error occurred while creating the staff profile",
+        details: error instanceof Error ? error.message : "Unknown error",
+      },
       { status: 500 },
     );
   }
 }
 
-// DELETE /api/user/staff/{id} - Delete a staff member by ID
-export async function DELETE(
-  request: NextRequest,
+// PATCH /api/user/staff/{id} - Update a staff profile by ID
+export async function PATCH(
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
     const resolvedParams = await params;
-    const id = resolvedParams.id;
+    const { id } = resolvedParams;
 
-    await prisma.user.delete({
-      where: {
-        id,
-        role: "STAFF", // Ensure we only delete staff members
+    const body = await req.json();
+
+    const existingStaffProfile = await prisma.staffProfile.findUnique({
+      where: { id: id },
+    });
+
+    if (!existingStaffProfile) {
+      return NextResponse.json(
+        { error: "Staff profile not found for updating" },
+        { status: 404 },
+      );
+    }
+
+    const updatedStaffProfile = await prisma.staffProfile.update({
+      where: { id: id },
+      data: {
+        department: body.department,
+        position: body.position,
+        permissions: body.permissions,
+        responsibilities: body.responsibilities,
+        employeeId: body.employeeId,
+        hireDate: body.hireDate ? new Date(body.hireDate) : undefined,
+        reportsTo: body.reportsTo,
+        skills: body.skills,
+        workSchedule: body.workSchedule,
+      },
+      include: {
+        user: true,
       },
     });
 
-    // Return 204 No Content for successful deletion
-    return new NextResponse(null, { status: 204 });
+    return NextResponse.json(updatedStaffProfile, { status: 200 });
   } catch (error) {
-    console.error("Error deleting staff member:", error);
-    if (error instanceof Prisma.PrismaClientKnownRequestError) {
-      // Handle specific Prisma errors, e.g., record not found
-      if (error.code === "P2025") {
-        return NextResponse.json(
-          { message: "Staff member not found" },
-          { status: 404 },
-        );
-      }
-    }
+    console.error("Error updating staff profile:", error);
     return NextResponse.json(
-      { message: "Internal Server Error deleting staff member" },
+      {
+        error:
+          "An unexpected error occurred while updating the staff profile",
+        details: error instanceof Error ? error.message : "Unknown error",
+      },
+      { status: 500 },
+    );
+  }
+}
+
+// PUT /api/user/staff/{id} - Full update of staff profile by ID
+export async function PUT(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  try {
+    const resolvedParams = await params;
+    const { id } = resolvedParams;
+
+    const body = await req.json();
+
+    const existingStaffProfile = await prisma.staffProfile.findUnique({
+      where: { id: id },
+      include: { user: true },
+    });
+
+    if (!existingStaffProfile) {
+      return NextResponse.json(
+        { error: "Staff profile not found for updating" },
+        { status: 404 },
+      );
+    }
+
+    // Update staff profile
+    const updatedStaffProfile = await prisma.staffProfile.update({
+      where: { id: id },
+      data: {
+        department: body.department,
+        position: body.position,
+        permissions: body.permissions,
+        responsibilities: body.responsibilities,
+        employeeId: body.employeeId,
+        hireDate: body.hireDate ? new Date(body.hireDate) : undefined,
+        reportsTo: body.reportsTo,
+        skills: body.skills,
+        workSchedule: body.workSchedule,
+      },
+      include: {
+        user: {
+          include: {
+            notificationPreferences: true,
+            cookiePreferences: true,
+          },
+        },
+      },
+    });
+
+    // Also update user fields if provided
+    if (body.name || body.email || body.phone || body.address || body.image || body.timezone) {
+      await prisma.user.update({
+        where: { id: existingStaffProfile.userId },
+        data: {
+          name: body.name,
+          email: body.email,
+          phone: body.phone,
+          address: body.address,
+          image: body.image,
+          timezone: body.timezone,
+        },
+      });
+    }
+
+    // Update notification preferences if provided
+    if (body.allNotifications !== undefined || body.mentions !== undefined || 
+        body.directMessages !== undefined || body.updates !== undefined) {
+      await prisma.notificationPreference.upsert({
+        where: { userId: existingStaffProfile.userId },
+        update: {
+          allNotifications: body.allNotifications,
+          mentions: body.mentions,
+          directMessages: body.directMessages,
+          updates: body.updates,
+        },
+        create: {
+          userId: existingStaffProfile.userId,
+          allNotifications: body.allNotifications ?? false,
+          mentions: body.mentions ?? false,
+          directMessages: body.directMessages ?? false,
+          updates: body.updates ?? false,
+        },
+      });
+    }
+
+    // Update cookie preferences if provided
+    if (body.analytics !== undefined || body.marketing !== undefined) {
+      await prisma.cookiePreference.upsert({
+        where: { userId: existingStaffProfile.userId },
+        update: {
+          analytics: body.analytics,
+          marketing: body.marketing,
+        },
+        create: {
+          userId: existingStaffProfile.userId,
+          essential: true,
+          analytics: body.analytics ?? false,
+          marketing: body.marketing ?? false,
+        },
+      });
+    }
+
+    // Fetch fresh data with all relations
+    const freshStaffProfile = await prisma.staffProfile.findUnique({
+      where: { id: id },
+      include: {
+        user: {
+          include: {
+            notificationPreferences: true,
+            cookiePreferences: true,
+          },
+        },
+      },
+    });
+
+    return NextResponse.json(freshStaffProfile, { status: 200 });
+  } catch (error) {
+    console.error("Error updating staff profile:", error);
+    return NextResponse.json(
+      {
+        error:
+          "An unexpected error occurred while updating the staff profile",
+        details: error instanceof Error ? error.message : "Unknown error",
+      },
+      { status: 500 },
+    );
+  }
+}
+
+// DELETE /api/user/staff/{id} - Delete a staff profile by ID
+export async function DELETE(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  try {
+    const resolvedParams = await params;
+    const { id } = resolvedParams;
+
+    const existingStaffProfile = await prisma.staffProfile.findUnique({
+      where: { id: id },
+    });
+
+    if (!existingStaffProfile) {
+      return NextResponse.json(
+        { error: "Staff profile not found for deletion" },
+        { status: 404 },
+      );
+    }
+
+    const deletedStaffProfile = await prisma.staffProfile.delete({
+      where: { id: id },
+      include: {
+        user: true,
+      },
+    });
+
+    return NextResponse.json(deletedStaffProfile, { status: 200 });
+  } catch (error) {
+    console.error("Error deleting staff profile:", error);
+    return NextResponse.json(
+      {
+        error:
+          "An unexpected error occurred while deleting the staff profile",
+        details: error instanceof Error ? error.message : "Unknown error",
+      },
       { status: 500 },
     );
   }

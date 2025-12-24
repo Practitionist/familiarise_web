@@ -3,7 +3,7 @@
 import { use } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
-import { DashboardHomeSkeleton } from "@/components/ui/dashboard-skeleton";
+import { PageSkeleton } from "@/components/dashboard";
 import { createConsulteeQueries } from "@/hooks/useConsulteePrefetchDashboard";
 import { Overview } from "./Overview";
 import { Calendar } from "./Calendar";
@@ -23,7 +23,7 @@ export default function AppointmentsPage({ params }: Readonly<PageProps>) {
   const { data: eventsData, isLoading, error } = useQuery(eventsQuery);
 
   if (isLoading) {
-    return <DashboardHomeSkeleton />;
+    return <PageSkeleton />;
   }
 
   if (error) {

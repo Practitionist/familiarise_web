@@ -9,7 +9,7 @@ interface ChatsTabProps {
 
 export function ChatsTab({ userId }: Readonly<ChatsTabProps>) {
   return (
-    <div className="h-full w-full bg-white rounded-lg shadow-lg overflow-hidden">
+    <div className="flex-1 flex flex-col w-full bg-white rounded-xl border border-zinc-200 shadow-sm overflow-hidden m-4 lg:m-6">
       <ChatLayout />
     </div>
   );

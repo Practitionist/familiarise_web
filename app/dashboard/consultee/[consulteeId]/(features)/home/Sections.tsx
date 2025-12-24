@@ -33,9 +33,11 @@ export function UpcomingSection({ slots }: Readonly<UpcomingSectionProps>) {
   };
 
   return (
-    <div className="bg-white rounded-xl">
-      <div className="flex justify-between items-center px-6 py-4">
-        <h2 className="text-lg font-semibold">Upcoming Sessions</h2>
+    <div className="bg-white rounded-xl border border-zinc-200">
+      <div className="flex justify-between items-center px-6 py-4 border-b border-zinc-100">
+        <h2 className="text-lg font-semibold text-zinc-900">
+          Upcoming Sessions
+        </h2>
         <div className="flex gap-2">
           <Button
             variant="outline"
@@ -59,7 +61,7 @@ export function UpcomingSection({ slots }: Readonly<UpcomingSectionProps>) {
       </div>
       <div
         ref={carouselRef}
-        className="flex overflow-x-auto gap-6 px-6 pb-6 scrollbar-hide scroll-smooth"
+        className="flex overflow-x-auto gap-6 px-6 pb-6 pt-4 scrollbar-hide scroll-smooth"
         style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
         data-testid="upcoming-slot-list"
       >
@@ -79,7 +81,7 @@ export function UpcomingSection({ slots }: Readonly<UpcomingSectionProps>) {
         ))}
         {slots.length === 0 && (
           <div className="w-full text-center py-8">
-            <p className="text-gray-500">No upcoming sessions</p>
+            <p className="text-zinc-500">No upcoming sessions</p>
           </div>
         )}
       </div>
@@ -105,9 +107,9 @@ export function MonthlySection({
 }: Readonly<MonthlySectionProps>) {
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-      <div className="lg:col-span-8 bg-white rounded-xl">
-        <div className="flex justify-between items-center px-6 py-4 border-b">
-          <h2 className="text-lg font-semibold">
+      <div className="lg:col-span-8 bg-white rounded-xl border border-zinc-200">
+        <div className="flex justify-between items-center px-6 py-4 border-b border-zinc-100">
+          <h2 className="text-lg font-semibold text-zinc-900">
             {currentMonth.toLocaleString("default", {
               month: "long",
               year: "numeric",
@@ -135,7 +137,7 @@ export function MonthlySection({
           </div>
         </div>
         <div
-          className="divide-y max-h-[600px] overflow-y-auto"
+          className="divide-y divide-zinc-100 max-h-[600px] overflow-y-auto"
           data-testid="monthly-slot-list"
         >
           {events.map(({ event, slots }) => (
@@ -148,21 +150,21 @@ export function MonthlySection({
           ))}
           {events.length === 0 && (
             <div className="text-center py-8">
-              <p className="text-gray-500">No sessions this month</p>
+              <p className="text-zinc-500">No sessions this month</p>
             </div>
           )}
         </div>
       </div>
 
       <div className="lg:col-span-4">
-        <div className="bg-white rounded-xl p-6">
-          <h3 className="text-lg font-semibold mb-4">
+        <div className="bg-white rounded-xl border border-zinc-200 p-6">
+          <h3 className="text-lg font-semibold text-zinc-900 mb-4">
             Unlock Premium Features
           </h3>
           <div className="space-y-3">
-            <div className="flex items-center gap-2 text-sm text-gray-600">
+            <div className="flex items-center gap-2 text-sm text-zinc-600">
               <svg
-                className="w-4 h-4 text-blue-600"
+                className="w-4 h-4 text-zinc-900"
                 viewBox="0 0 20 20"
                 fill="currentColor"
               >
@@ -174,9 +176,9 @@ export function MonthlySection({
               </svg>
               <span>Unlimited Access to Expert Sessions</span>
             </div>
-            <div className="flex items-center gap-2 text-sm text-gray-600">
+            <div className="flex items-center gap-2 text-sm text-zinc-600">
               <svg
-                className="w-4 h-4 text-blue-600"
+                className="w-4 h-4 text-zinc-900"
                 viewBox="0 0 20 20"
                 fill="currentColor"
               >
@@ -188,9 +190,9 @@ export function MonthlySection({
               </svg>
               <span>24/7 Priority Support</span>
             </div>
-            <div className="flex items-center gap-2 text-sm text-gray-600">
+            <div className="flex items-center gap-2 text-sm text-zinc-600">
               <svg
-                className="w-4 h-4 text-blue-600"
+                className="w-4 h-4 text-zinc-900"
                 viewBox="0 0 20 20"
                 fill="currentColor"
               >
@@ -205,14 +207,14 @@ export function MonthlySection({
           </div>
           <div className="mt-6">
             <div className="flex items-baseline gap-1">
-              <span className="text-2xl font-bold text-blue-600">₹99</span>
-              <span className="text-sm text-gray-600">/month</span>
+              <span className="text-2xl font-bold text-zinc-900">₹99</span>
+              <span className="text-sm text-zinc-600">/month</span>
             </div>
-            <p className="text-sm text-blue-600 mt-1">
+            <p className="text-sm text-zinc-500 mt-1">
               Save 20% with annual billing
             </p>
           </div>
-          <Button className="w-full mt-4 bg-blue-600 hover:bg-blue-700 text-white">
+          <Button className="w-full mt-4 bg-zinc-900 hover:bg-zinc-800 text-white">
             Upgrade Now
           </Button>
         </div>
