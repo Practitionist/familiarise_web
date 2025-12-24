@@ -52,6 +52,7 @@ export async function GET(
               slotsOfAppointment: {
                 orderBy: { startsAt: "asc" },
               },
+              payment: true,
             },
           },
         },
@@ -76,6 +77,7 @@ export async function GET(
               slotsOfAppointment: {
                 orderBy: { startsAt: "asc" },
               },
+              payment: true,
             },
           },
         },
@@ -106,6 +108,7 @@ export async function GET(
               slotsOfAppointment: {
                 orderBy: { startsAt: "asc" },
               },
+              payment: true,
             },
           },
           waitlist: {
@@ -139,6 +142,7 @@ export async function GET(
               slotsOfAppointment: {
                 orderBy: { startsAt: "asc" },
               },
+              payment: true,
             },
           },
           waitlist: {

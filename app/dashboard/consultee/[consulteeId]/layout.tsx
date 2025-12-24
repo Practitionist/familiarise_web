@@ -9,7 +9,7 @@ import { DashboardSidebar, type NavItem } from "@/components/dashboard";
 import { signOut, useSession } from "next-auth/react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { use, useEffect } from "react";
+import { use, useEffect, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { UserProvider } from "./UserContext";
 import { motion } from "framer-motion";
@@ -235,6 +235,7 @@ function ConsulteeNav({
                         ? "bg-zinc-900 text-white"
                         : "text-zinc-600 hover:bg-zinc-100"
                     )}
+                    prefetch={true}
                     onClick={() => setMobileMenuOpen(false)}
                   >
                     {Icon && <Icon className="w-5 h-5" />}
@@ -297,7 +298,7 @@ export default function ConsulteeLayout({ children, params }: Readonly<PageProps
 
   const userId = getEffectiveUserId(session);
 
-  // Fetch user details
+  // Fetch user details with placeholderData to prevent loading flashes
   const {
     data: userDetails,
     error: userError,
@@ -309,9 +310,10 @@ export default function ConsulteeLayout({ children, params }: Readonly<PageProps
     staleTime: 5 * 60 * 1000,
     gcTime: 10 * 60 * 1000,
     retry: 2,
+    placeholderData: (previousData) => previousData, // Keep showing previous data while refetching
   });
 
-  // Fetch consultee profile
+  // Fetch consultee profile with placeholderData to prevent loading flashes
   const {
     data: profileDetails,
     error: profileError,
@@ -323,6 +325,7 @@ export default function ConsulteeLayout({ children, params }: Readonly<PageProps
     staleTime: 5 * 60 * 1000,
     gcTime: 10 * 60 * 1000,
     retry: 2,
+    placeholderData: (previousData) => previousData, // Keep showing previous data while refetching
   });
 
   // Prefetch
@@ -338,6 +341,24 @@ export default function ConsulteeLayout({ children, params }: Readonly<PageProps
 
   const isLoading = isLoadingUser || isLoadingProfile;
   const error = (userError || profileError) as Error | null;
+
+  // Memoize StreamProvider children to prevent re-initialization on tab switches
+  // Must be called before any early returns to comply with Rules of Hooks
+  const memoizedStreamContent = useMemo(
+    () =>
+      userDetails?.id ? (
+        <StreamProvider
+          userId={userDetails.id}
+          enableChat={true}
+          enableVideo={true}
+        >
+          <DashboardErrorBoundary>{children}</DashboardErrorBoundary>
+        </StreamProvider>
+      ) : (
+        <DashboardErrorBoundary>{children}</DashboardErrorBoundary>
+      ),
+    [userDetails?.id, children]
+  );
 
   // Auth check
   if (
@@ -374,13 +395,7 @@ export default function ConsulteeLayout({ children, params }: Readonly<PageProps
         />
 
         <main className="w-full px-4 sm:px-6 lg:px-8 xl:px-12 py-6 lg:py-8">
-          <StreamProvider
-            userId={userDetails.id}
-            enableChat={true}
-            enableVideo={true}
-          >
-            <DashboardErrorBoundary>{children}</DashboardErrorBoundary>
-          </StreamProvider>
+          {memoizedStreamContent}
         </main>
       </div>
     </UserProvider>

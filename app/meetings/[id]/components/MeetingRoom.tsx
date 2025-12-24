@@ -93,6 +93,55 @@ const MeetingRoom = () => {
     }
   }, [call]);
 
+  // Get proper dashboard URL based on user role and profile
+  const getDashboardUrl = () => {
+    if (!session?.user) return "/";
+
+    const { role, consultantProfileId, consulteeProfileId, staffProfileId } =
+      session.user;
+
+    if (role === "CONSULTANT" && consultantProfileId) {
+      return `/dashboard/consultant/${consultantProfileId}/home`;
+    }
+    if (role === "CONSULTEE" && consulteeProfileId) {
+      return `/dashboard/consultee/${consulteeProfileId}/home`;
+    }
+    if (role === "STAFF" && staffProfileId) {
+      return `/dashboard/staff/${staffProfileId}/home`;
+    }
+
+    return "/";
+  };
+
+  // Cleanup media streams and navigate - ensures audio/video stops before navigation
+  const cleanupAndNavigate = async (targetUrl: string) => {
+    try {
+      console.log("Starting media cleanup before navigation...");
+      
+      // Disable media streams first to stop audio/video
+      await call?.camera.disable();
+      await call?.microphone.disable();
+      
+      // Disable screen share if active
+      if (call?.screenShare?.state?.status === "enabled") {
+        await call?.screenShare.disable();
+      }
+      
+      console.log("Media streams disabled");
+
+      // Leave the call if still connected
+      if (call?.state.callingState !== CallingState.LEFT) {
+        await call?.leave();
+        console.log("Left call successfully");
+      }
+    } catch (error) {
+      console.warn("Error during cleanup:", error);
+    }
+
+    // Navigate after cleanup
+    router.push(targetUrl);
+  };
+
   const handleRejoinCall = async () => {
     if (!call) return;
 
@@ -106,6 +155,11 @@ const MeetingRoom = () => {
     }
   };
 
+  // Handle return to home with proper cleanup
+  const handleReturnHome = async () => {
+    await cleanupAndNavigate(getDashboardUrl());
+  };
+
   if ((callingState !== CallingState.JOINED && !callEndedAt) || isRejoining) {
     return <Loader />;
   }
@@ -115,6 +169,7 @@ const MeetingRoom = () => {
       <CallEnded
         message="The call has been ended by the host"
         onRejoin={handleRejoinCall}
+        onReturnHome={handleReturnHome}
       />
     );
   }
@@ -178,37 +233,7 @@ const MeetingRoom = () => {
               <CallControls
                 onLeave={async () => {
                   console.log("Participant leaving call");
-                  try {
-                    await call?.leave();
-
-                    if (session?.user) {
-                      const {
-                        role,
-                        consultantProfileId,
-                        consulteeProfileId,
-                        staffProfileId,
-                      } = session.user;
-
-                      if (role === "CONSULTANT" && consultantProfileId) {
-                        router.push(
-                          `/dashboard/consultant/${consultantProfileId}/home`,
-                        );
-                      } else if (role === "CONSULTEE" && consulteeProfileId) {
-                        router.push(
-                          `/dashboard/consultee/${consulteeProfileId}/home`,
-                        );
-                      } else if (role === "STAFF" && staffProfileId) {
-                        router.push(`/dashboard/staff/${staffProfileId}/home`);
-                      } else {
-                        router.push("/");
-                      }
-                    } else {
-                      router.push("/");
-                    }
-                  } catch (error) {
-                    console.error("Error leaving call:", error);
-                    router.push("/");
-                  }
+                  await cleanupAndNavigate(getDashboardUrl());
                 }}
               />
 
