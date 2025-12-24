@@ -9,8 +9,9 @@ import {
   useCallStateHooks,
   VideoPreview,
 } from "@stream-io/video-react-sdk";
-import { Mic, MicOff, Video, VideoOff } from "lucide-react";
+import { Mic, MicOff, Video, VideoOff, Settings, Loader2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { cn } from "@/utils/tailwind";
 
 interface MeetingSetupProps {
   setIsSetupComplete: (value: boolean) => void;
@@ -19,21 +20,17 @@ interface MeetingSetupProps {
 // Audio analyzer helper functions moved outside component
 const createAudioAnalyzer = async () => {
   try {
-    // Get user media for audio
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: true,
     });
 
-    // Create audio context and analyzer
     const audioContext = new AudioContext();
     const analyser = audioContext.createAnalyser();
     analyser.fftSize = 256;
 
-    // Connect microphone to analyzer
     const microphone = audioContext.createMediaStreamSource(stream);
     microphone.connect(analyser);
 
-    // Create data array for frequency data
     const bufferLength = analyser.frequencyBinCount;
     const dataArray = new Uint8Array(bufferLength) as Uint8Array<ArrayBuffer>;
 
@@ -50,19 +47,16 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
   const micState = useMicrophoneState();
   const camState = useCameraState();
 
-  // Initialize state based on actual device state
   const [isCameraOn, setIsCameraOn] = useState(false);
   const [isMicOn, setIsMicOn] = useState(true);
   const [micLevel, setMicLevel] = useState(0);
+  const [isJoining, setIsJoining] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
 
-  // Extracted device initialization function
   const initDevices = useCallback(async () => {
     try {
-      // Start with camera off
       await camState.camera.disable();
       setIsCameraOn(false);
-
-      // Start with mic on
       await micState.microphone.enable();
       setIsMicOn(true);
     } catch (error) {
@@ -70,35 +64,28 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
     }
   }, [camState.camera, micState.microphone]);
 
-  // Initialize devices on component mount
   useEffect(() => {
     if (call) {
       initDevices();
     }
   }, [call, initDevices]);
 
-  // Extracted audio level calculation function
   const calculateAudioLevel = (
     analyser: AnalyserNode,
     dataArray: Uint8Array<ArrayBuffer>,
     bufferLength: number,
   ) => {
     analyser.getByteFrequencyData(dataArray);
-    // Calculate average volume level
     const average = dataArray.reduce((a, b) => a + b, 0) / bufferLength;
-    return Math.min(average / 128, 1); // Normalize to 0-1
+    return Math.min(average / 128, 1);
   };
 
-  // Monitor microphone level for visual feedback using real mic input
   useEffect(() => {
     let animationFrame: number;
     let audioContext: AudioContext | null = null;
-    let analyser: AnalyserNode | null = null;
 
-    // Reset mic level when toggled
     setMicLevel(0);
 
-    // Extracted update level function
     const updateLevel = (
       analyser: AnalyserNode,
       dataArray: Uint8Array<ArrayBuffer>,
@@ -119,7 +106,6 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
       const analyzerData = await createAudioAnalyzer();
       if (!analyzerData) return;
 
-      // Destructure the analyzer components
       const {
         audioContext: context,
         analyser: analyzer,
@@ -127,15 +113,11 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
         bufferLength,
       } = analyzerData;
 
-      // Store references for cleanup
       audioContext = context;
-
-      // Start analyzing audio levels
       updateLevel(analyzer, dataArray, bufferLength);
     };
 
     if (isMicOn) {
-      // Small delay to ensure the mic is initialized
       const timer = setTimeout(setupAnalyzer, 100);
 
       return () => {
@@ -161,12 +143,10 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
 
   const handleJoinMeeting = async () => {
     try {
-      // Check if call exists
+      setIsJoining(true);
       if (call) {
-        // Use switch case for better readability
         switch (call.state.callingState) {
           case CallingState.JOINED:
-            // console.log("Call is already joined");
             toast({
               title: "Already joined meeting",
               description: "You are already connected to this meeting.",
@@ -175,7 +155,6 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
             return;
 
           case CallingState.JOINING:
-            // console.log("Call is currently joining");
             toast({
               title: "Joining in progress",
               description: "Please wait while we connect you to the meeting.",
@@ -183,7 +162,6 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
             return;
 
           case CallingState.RECONNECTING:
-            // console.log("Call is reconnecting");
             toast({
               title: "Reconnecting to meeting",
               description: "Please wait while we reconnect you to the meeting.",
@@ -191,16 +169,11 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
             return;
 
           case CallingState.IDLE:
-            // console.log("Call is in idle state, attempting to join");
             await call.join();
             setIsSetupComplete(true);
             return;
 
           default:
-            // For any other state, attempt to join
-            // console.log(
-            //   `Call is in ${call.state.callingState} state, attempting to join`
-            // );
             await call.join();
             setIsSetupComplete(true);
             return;
@@ -208,14 +181,14 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
       }
     } catch (error) {
       console.error("Error joining meeting:", error);
-
-      // Show error toast
       toast({
         title: "Failed to join meeting",
         description:
           "There was an error joining the meeting. Please try again.",
         variant: "destructive",
       });
+    } finally {
+      setIsJoining(false);
     }
   };
 
@@ -246,97 +219,154 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
   };
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-white p-4">
-      <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-md">
-        <h1 className="text-2xl font-bold mb-6 text-center text-gray-900">
-          {call?.state.custom?.title || "Join Meeting"}
-        </h1>
-
-        {/* Video preview */}
-        <div
-          className="mb-6 rounded-lg overflow-hidden bg-gray-900 relative"
-          style={{ height: "300px" }}
-        >
-          <div className="w-full h-full flex items-center justify-center">
-            <VideoPreview
-              mirror={true}
-              className="w-full h-full object-contain"
-            />
-          </div>
-          {!isCameraOn && (
-            <div className="absolute inset-0 flex items-center justify-center bg-gray-900 bg-opacity-70 text-white">
-              <p className="text-lg font-medium">Camera is disabled</p>
-            </div>
-          )}
-        </div>
-
-        {/* Mic level indicator */}
-        {isMicOn && (
-          <div className="mb-4">
-            <p className="text-sm text-gray-700 mb-1">Microphone Level</p>
-            <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
-              <div
-                className="h-full bg-green-500 transition-all duration-100"
-                style={{ width: `${micLevel * 100}%` }}
-              ></div>
-            </div>
-            <p className="text-xs text-gray-500 mt-1">
-              {micLevel < 0.05
-                ? "No sound detected. Try speaking..."
-                : "Sound detected!"}
+    <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-br from-zinc-900 via-zinc-800 to-zinc-900 p-4">
+      {/* Background pattern */}
+      <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZyBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPjxnIGZpbGw9IiMyMjIiIGZpbGwtb3BhY2l0eT0iMC4wNSI+PGNpcmNsZSBjeD0iMzAiIGN5PSIzMCIgcj0iMiIvPjwvZz48L2c+PC9zdmc+')] opacity-50" />
+      
+      <div className="relative z-10 w-full max-w-lg">
+        {/* Card */}
+        <div className="bg-white/95 backdrop-blur-xl rounded-2xl shadow-2xl border border-zinc-200/50 overflow-hidden">
+          {/* Header */}
+          <div className="px-8 pt-8 pb-4">
+            <h1 className="text-2xl font-bold text-zinc-900 text-center">
+              {call?.state.custom?.title || "Join Meeting"}
+            </h1>
+            <p className="text-zinc-500 text-sm text-center mt-1">
+              Configure your audio and video before joining
             </p>
           </div>
-        )}
 
-        {/* Controls with Device Settings */}
-        <div className="flex flex-col space-y-4 mb-6">
-          {/* Camera and Mic controls */}
-          <div className="flex justify-center space-x-4">
-            <Button
-              onClick={toggleCamera}
-              variant={isCameraOn ? "default" : "outline"}
-              className="w-1/2 flex items-center justify-center gap-2"
-            >
-              {isCameraOn ? (
-                <>
-                  <Video className="h-4 w-4" /> Camera On
-                </>
-              ) : (
-                <>
-                  <VideoOff className="h-4 w-4" /> Camera Off
-                </>
+          {/* Video Preview */}
+          <div className="px-6 pb-4">
+            <div className="relative rounded-xl overflow-hidden bg-zinc-900 shadow-inner" style={{ aspectRatio: "16/9" }}>
+              <VideoPreview
+                mirror={true}
+                className="w-full h-full object-cover"
+              />
+              {!isCameraOn && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-900">
+                  <div className="w-20 h-20 rounded-full bg-zinc-800 flex items-center justify-center mb-3">
+                    <VideoOff className="w-8 h-8 text-zinc-500" />
+                  </div>
+                  <p className="text-zinc-400 text-sm font-medium">Camera is off</p>
+                </div>
               )}
-            </Button>
-            <Button
-              onClick={toggleMic}
-              variant={isMicOn ? "default" : "outline"}
-              className="w-1/2 flex items-center justify-center gap-2"
-            >
-              {isMicOn ? (
-                <>
-                  <Mic className="h-4 w-4" /> Mic On
-                </>
-              ) : (
-                <>
-                  <MicOff className="h-4 w-4" /> Mic Off
-                </>
-              )}
-            </Button>
+              
+              {/* Camera/Mic status indicators */}
+              <div className="absolute bottom-3 left-3 flex gap-2">
+                <div className={cn(
+                  "px-2.5 py-1 rounded-full text-xs font-medium flex items-center gap-1.5 backdrop-blur-sm",
+                  isMicOn ? "bg-green-500/20 text-green-400" : "bg-red-500/20 text-red-400"
+                )}>
+                  {isMicOn ? <Mic className="w-3 h-3" /> : <MicOff className="w-3 h-3" />}
+                  {isMicOn ? "Mic on" : "Mic off"}
+                </div>
+                <div className={cn(
+                  "px-2.5 py-1 rounded-full text-xs font-medium flex items-center gap-1.5 backdrop-blur-sm",
+                  isCameraOn ? "bg-green-500/20 text-green-400" : "bg-red-500/20 text-red-400"
+                )}>
+                  {isCameraOn ? <Video className="w-3 h-3" /> : <VideoOff className="w-3 h-3" />}
+                  {isCameraOn ? "Camera on" : "Camera off"}
+                </div>
+              </div>
+            </div>
           </div>
 
-          {/* Device Settings */}
-          <div className="flex justify-center">
-            <DeviceSettings />
+          {/* Mic Level Indicator */}
+          {isMicOn && (
+            <div className="px-6 pb-4">
+              <div className="flex items-center gap-3">
+                <Mic className="w-4 h-4 text-zinc-400" />
+                <div className="flex-1">
+                  <div className="h-1.5 bg-zinc-200 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-gradient-to-r from-green-400 to-emerald-500 transition-all duration-75"
+                      style={{ width: `${Math.max(micLevel * 100, 2)}%` }}
+                    />
+                  </div>
+                </div>
+                <span className="text-xs text-zinc-500 w-20 text-right">
+                  {micLevel < 0.05 ? "Waiting..." : "Speaking"}
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* Controls */}
+          <div className="px-6 pb-6">
+            <div className="flex items-center justify-center gap-3">
+              {/* Mic Toggle */}
+              <button
+                onClick={toggleMic}
+                className={cn(
+                  "w-14 h-14 rounded-full flex items-center justify-center transition-all duration-200",
+                  isMicOn 
+                    ? "bg-zinc-900 text-white hover:bg-zinc-800" 
+                    : "bg-red-500 text-white hover:bg-red-600"
+                )}
+              >
+                {isMicOn ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
+              </button>
+
+              {/* Camera Toggle */}
+              <button
+                onClick={toggleCamera}
+                className={cn(
+                  "w-14 h-14 rounded-full flex items-center justify-center transition-all duration-200",
+                  isCameraOn 
+                    ? "bg-zinc-900 text-white hover:bg-zinc-800" 
+                    : "bg-red-500 text-white hover:bg-red-600"
+                )}
+              >
+                {isCameraOn ? <Video className="w-5 h-5" /> : <VideoOff className="w-5 h-5" />}
+              </button>
+
+              {/* Settings Toggle */}
+              <button
+                onClick={() => setShowSettings(!showSettings)}
+                className={cn(
+                  "w-14 h-14 rounded-full flex items-center justify-center transition-all duration-200",
+                  showSettings 
+                    ? "bg-zinc-900 text-white" 
+                    : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
+                )}
+              >
+                <Settings className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Device Settings */}
+            {showSettings && (
+              <div className="mt-4 p-4 bg-zinc-50 rounded-xl border border-zinc-200">
+                <p className="text-sm font-medium text-zinc-700 mb-3">Device Settings</p>
+                <DeviceSettings />
+              </div>
+            )}
+          </div>
+
+          {/* Join Button */}
+          <div className="px-6 pb-8">
+            <Button
+              onClick={handleJoinMeeting}
+              disabled={isJoining}
+              className="w-full h-12 bg-gradient-to-r from-emerald-500 to-green-500 hover:from-emerald-600 hover:to-green-600 text-white font-semibold rounded-xl shadow-lg shadow-green-500/25 transition-all duration-200 disabled:opacity-70"
+            >
+              {isJoining ? (
+                <>
+                  <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                  Joining...
+                </>
+              ) : (
+                "Join Meeting"
+              )}
+            </Button>
           </div>
         </div>
 
-        {/* Join button */}
-        <Button
-          onClick={handleJoinMeeting}
-          className="w-full bg-green-600 hover:bg-green-700"
-        >
-          Join Meeting
-        </Button>
+        {/* Footer tip */}
+        <p className="text-center text-zinc-500 text-xs mt-4">
+          Tip: Test your mic and camera before joining
+        </p>
       </div>
     </div>
   );

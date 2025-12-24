@@ -11,11 +11,16 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { motion } from "framer-motion";
-import { Clock, X, Upload, Video, Calendar, ChevronDown } from "lucide-react";
+import { Clock, X, Video, Calendar, Loader2 } from "lucide-react";
 import React from "react";
 import { DocumentUpload } from "./DocumentUpload";
 import { cn } from "@/utils/tailwind";
 import { format } from "date-fns";
+import { useRouter } from "next/navigation";
+import { useStreamVideoClient } from "@stream-io/video-react-sdk";
+import { getOrCreateAppointmentMeeting } from "@/lib/meeting";
+import type { TAppointment, TSlotOfAppointment } from "@/types/appointment";
+import type { SlotOfAppointment } from "@prisma/client";
 
 interface EventCardProps {
   title: string;
@@ -31,6 +36,8 @@ interface EventCardProps {
   isTentative?: boolean;
   appointmentId?: string;
   className?: string;
+  appointment?: TAppointment;
+  rawSlots?: SlotOfAppointment[];
 }
 
 function formatSlotDate(date: Date | string): string {
@@ -42,6 +49,9 @@ function formatSlotTime(date: Date | string): string {
   const d = typeof date === "string" ? new Date(date) : date;
   return format(d, "h:mm a");
 }
+
+// Default meeting duration in milliseconds (1 hour)
+const DEFAULT_MEETING_DURATION_MS = 60 * 60 * 1000;
 
 // Status configuration - refined professional colors
 const statusConfig: Record<string, { bg: string; text: string; dot: string }> = {
@@ -65,9 +75,14 @@ export function EventCard({
   isTentative = false,
   appointmentId,
   className = "",
+  appointment,
+  rawSlots = [],
 }: Readonly<EventCardProps>) {
   const { toast } = useToast();
+  const router = useRouter();
+  const client = useStreamVideoClient();
   const [isLoading, setIsLoading] = React.useState(false);
+  const [isJoining, setIsJoining] = React.useState(false);
 
   const showSessionDetails =
     (type === "Subscription" || type === "Class") &&
@@ -172,15 +187,111 @@ export function EventCard({
     }
   };
 
+  // Find the current/next joinable slot (within 10 minutes of start time or currently ongoing)
+  const getJoinableSlot = (): SlotOfAppointment | null => {
+    if (!rawSlots || rawSlots.length === 0) return null;
+    
+    const now = new Date();
+    
+    for (const slot of rawSlots) {
+      const startTime = new Date(slot.startsAt);
+      const endTime = slot.endsAt ? new Date(slot.endsAt) : new Date(startTime.getTime() + DEFAULT_MEETING_DURATION_MS);
+      
+      // Joinable if: current time is between (10 mins before start) and (actual end time)
+      const joinWindowStart = new Date(startTime.getTime() - 10 * 60 * 1000);
+      const isJoinable = now >= joinWindowStart && now <= endTime;
+      
+      if (!slot.isTentative && isJoinable) {
+        return slot;
+      }
+    }
+    
+    return null;
+  };
+
+  const joinableSlot = getJoinableSlot();
+  const isJoinable = !isTentative && !!joinableSlot && !!appointment;
+  
+  // Dev mode: check if any slot exists for testing
+  const isDev = process.env.NODE_ENV === "development";
+  const hasAnySlot = rawSlots && rawSlots.length > 0;
+  const canDevJoin = isDev && hasAnySlot && !!appointment;
+
+  const handleJoinSession = async (forceSlot?: SlotOfAppointment) => {
+    const slotToUse = forceSlot || joinableSlot;
+    
+    if (!client) {
+      toast({
+        title: "Not signed in",
+        description: "Video client not initialized. Please sign in to join the meeting.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!appointment || !slotToUse) {
+      toast({
+        title: "Unable to join",
+        description: "Meeting information is not available.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsJoining(true);
+    try {
+      // Convert SlotOfAppointment to TSlotOfAppointment format
+      // The meeting function only needs id, startsAt, endsAt, isTentative, appointmentId
+      // Using actual slot values where available, with type assertion for user[] mismatch
+      const slotStartTime = new Date(slotToUse.startsAt);
+      const tSlot = {
+        id: slotToUse.id,
+        startsAt: slotStartTime,
+        endsAt: slotToUse.endsAt ? new Date(slotToUse.endsAt) : new Date(slotStartTime.getTime() + DEFAULT_MEETING_DURATION_MS),
+        isTentative: slotToUse.isTentative,
+        appointmentId: slotToUse.appointmentId,
+        createdAt: slotToUse.createdAt,
+        updatedAt: slotToUse.updatedAt,
+        user: [], // Type mismatch: rawSlots doesn't include user relation, but getOrCreateAppointmentMeeting doesn't use it
+      } as TSlotOfAppointment;
+
+      const meetingId = await getOrCreateAppointmentMeeting(
+        client,
+        appointment,
+        tSlot,
+      );
+
+      toast({
+        title: "Joining meeting",
+        description: "You will now be redirected to the meeting room.",
+      });
+
+      router.push(`/meetings/${meetingId}`);
+    } catch (error) {
+      console.error("Error joining meeting:", error);
+      toast({
+        title: "Error joining meeting",
+        description: error instanceof Error ? error.message : "Unknown error occurred",
+        variant: "destructive",
+      });
+      setIsJoining(false);
+    }
+  };
+
   const isConfirmed =
     status?.toLowerCase() === "approved" ||
     status?.toLowerCase() === "scheduled" ||
     (!isTentative && actualSlots.length > 0);
 
+  // Determine if actions should be disabled (negative/terminal statuses)
+  const isInactiveStatus = 
+    status?.toLowerCase() === "cancelled" ||
+    status?.toLowerCase() === "rejected" ||
+    status?.toLowerCase() === "completed";
+
   const showDocumentUpload =
     (type === "Consultation" || type === "Subscription") &&
-    appointmentId &&
-    isConfirmed;
+    appointmentId;
 
   const statusStyle = statusConfig[status?.toUpperCase()] || statusConfig.PENDING;
   const displayStatus = isTentative ? "PENDING" : status?.toUpperCase();
@@ -267,7 +378,7 @@ export function EventCard({
                 </AccordionContent>
               </AccordionItem>
             </Accordion>
-          ) : (
+          ) : type !== "Consultation" && type !== "Webinar" ? (
             <div className="bg-zinc-50 rounded-lg p-3 border border-zinc-100">
               <div className="flex items-center gap-2 text-xs text-zinc-500 mb-1">
                 <Clock className="h-3.5 w-3.5" />
@@ -275,55 +386,101 @@ export function EventCard({
               </div>
               <div className="text-sm text-zinc-700">{date}</div>
             </div>
-          )}
+          ) : null}
         </div>
 
-        {/* Document Upload */}
+        {/* Document Upload - Always render for consistency, disabled when inactive */}
         {showDocumentUpload && (
-          <div className="mt-4 pt-4 border-t border-zinc-100">
+          <div className={cn(
+            "mt-4 pt-4 border-t border-zinc-100",
+            isInactiveStatus && "opacity-50 pointer-events-none"
+          )}>
             <DocumentUpload
-              appointmentId={appointmentId}
+              appointmentId={appointmentId!}
               appointmentTitle={title}
               appointmentType={type}
             />
           </div>
         )}
 
-        {/* Action Buttons */}
+        {/* Action Buttons - Always render for consistency */}
         <div className="flex items-center gap-2 mt-4 pt-4 border-t border-zinc-100">
-          {!isTentative && status?.toLowerCase() !== "cancelled" && (
+          {!isTentative && (
             <Button
               variant="outline"
               size="sm"
               onClick={handleReschedule}
-              disabled={isLoading}
-              className="flex-1 h-8 text-xs font-medium text-zinc-600 hover:text-zinc-900 hover:bg-zinc-50 border-zinc-200"
+              disabled={isLoading || isInactiveStatus}
+              className={cn(
+                "flex-1 h-8 text-xs font-medium border-zinc-200",
+                isInactiveStatus 
+                  ? "text-zinc-400 bg-zinc-50 cursor-not-allowed" 
+                  : "text-zinc-600 hover:text-zinc-900 hover:bg-zinc-50"
+              )}
             >
               <Clock className="h-3.5 w-3.5 mr-1.5" />
               Reschedule
             </Button>
           )}
-          {status?.toLowerCase() !== "cancelled" && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleCancel}
-              disabled={isLoading}
-              className="flex-1 h-8 text-xs font-medium text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200 hover:border-red-300"
-            >
-              <X className="h-3.5 w-3.5 mr-1.5" />
-              Cancel
-            </Button>
-          )}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleCancel}
+            disabled={isLoading || isInactiveStatus}
+            className={cn(
+              "flex-1 h-8 text-xs font-medium",
+              isInactiveStatus 
+                ? "text-zinc-400 bg-zinc-50 border-zinc-200 cursor-not-allowed" 
+                : "text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200 hover:border-red-300"
+            )}
+          >
+            <X className="h-3.5 w-3.5 mr-1.5" />
+            Cancel
+          </Button>
         </div>
 
-        {/* Join Button for confirmed appointments */}
-        {isConfirmed && status?.toLowerCase() !== "cancelled" && (
+        {/* Join Button - Always render for consistency */}
+        <Button
+          onClick={() => handleJoinSession()}
+          disabled={!isJoinable || isInactiveStatus || isJoining}
+          className={cn(
+            "w-full mt-3 h-9 font-medium text-sm",
+            isJoinable && !isInactiveStatus && !isJoining
+              ? "bg-zinc-900 hover:bg-zinc-800 text-white"
+              : "bg-zinc-100 text-zinc-400 cursor-not-allowed"
+          )}
+        >
+          {isJoining ? (
+            <>
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              Joining...
+            </>
+          ) : (
+            <>
+              <Video className="h-4 w-4 mr-2" />
+              Join Session
+            </>
+          )}
+        </Button>
+
+        {/* Dev-only Join Button - bypasses time check for testing */}
+        {canDevJoin && !isJoinable && (
           <Button
-            className="w-full mt-3 h-9 bg-zinc-900 hover:bg-zinc-800 text-white font-medium text-sm"
+            onClick={() => handleJoinSession(rawSlots[0])}
+            disabled={isInactiveStatus || isJoining}
+            className="w-full mt-2 h-8 font-medium text-xs bg-amber-500 hover:bg-amber-600 text-white"
           >
-            <Video className="h-4 w-4 mr-2" />
-            Join Session
+            {isJoining ? (
+              <>
+                <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                Joining...
+              </>
+            ) : (
+              <>
+                <Video className="h-3.5 w-3.5 mr-1.5" />
+                Join (dev)
+              </>
+            )}
           </Button>
         )}
       </div>

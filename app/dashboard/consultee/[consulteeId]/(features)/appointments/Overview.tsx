@@ -14,6 +14,7 @@ import {
 } from "../../utils/scheduleHelpers";
 import { EventCard } from "./EventCard";
 import type { SlotOfAppointment } from "@prisma/client";
+import type { TAppointment } from "@/types/appointment";
 import React, { useRef, useState, useEffect, useCallback } from "react";
 import { ChevronLeft, ChevronRight, Calendar, Video, Users, BookOpen } from "lucide-react";
 import { motion } from "framer-motion";
@@ -43,6 +44,8 @@ interface DashboardCardProps {
       endTime: Date;
     }>;
     appointmentId?: string;
+    appointment?: TAppointment;
+    rawSlots?: SlotOfAppointment[];
   }>;
 }
 
@@ -51,8 +54,8 @@ function formatDateFromSlot(slotInfo: SlotOfAppointment): string {
   return new Date(slotInfo.startsAt).toLocaleString();
 }
 
-function getNoSlotMessage(type: string): string {
-  return `No upcoming slots scheduled for this ${type.toLowerCase()}. Check details or wait for confirmation.`;
+function getNoSlotMessage(_type: string): string {
+  return "No slots available";
 }
 
 function getValidAppointmentSlots(event: EventWithType): Array<{
@@ -64,6 +67,32 @@ function getValidAppointmentSlots(event: EventWithType): Array<{
     startTime: new Date(slot.startsAt),
     endTime: new Date(slot.endsAt || slot.startsAt),
   }));
+}
+
+// Helper to check if a status is inactive (greyed out)
+function isInactiveStatus(status: string): boolean {
+  const inactive = ["cancelled", "rejected", "completed"];
+  return inactive.includes(status.toLowerCase());
+}
+
+// Sort items: active first, then inactive. Within each group, sort chronologically
+function sortEventItems<T extends { status: string; actualSlots?: Array<{ startTime: Date }> }>(
+  items: T[]
+): T[] {
+  return [...items].sort((a, b) => {
+    const aInactive = isInactiveStatus(a.status);
+    const bInactive = isInactiveStatus(b.status);
+    
+    // Active items come first
+    if (aInactive !== bInactive) {
+      return aInactive ? 1 : -1;
+    }
+    
+    // Within the same group, sort chronologically by first slot
+    const aTime = a.actualSlots?.[0]?.startTime?.getTime() ?? Infinity;
+    const bTime = b.actualSlots?.[0]?.startTime?.getTime() ?? Infinity;
+    return aTime - bTime;
+  });
 }
 
 const fadeInUp = {
@@ -89,8 +118,12 @@ export function Overview({
           title="Consultations"
           icon={Video}
           accentColor="blue"
-          items={consultations.map((consultation) => {
+          items={sortEventItems(consultations.map((consultation) => {
             const slotInfo = getActualNextSlotTime({
+              ...consultation,
+              type: "Consultation",
+            });
+            const rawSlots = getActualSlots({
               ...consultation,
               type: "Consultation",
             });
@@ -112,8 +145,10 @@ export function Overview({
                 type: "Consultation",
               }),
               appointmentId: consultation.appointment?.id,
+              appointment: consultation.appointment as TAppointment | undefined,
+              rawSlots,
             };
-          })}
+          }))}
         />
       </motion.div>
 
@@ -122,8 +157,12 @@ export function Overview({
           title="Subscriptions"
           icon={Calendar}
           accentColor="violet"
-          items={subscriptions.map((subscription) => {
+          items={sortEventItems(subscriptions.map((subscription) => {
             const slotInfo = getActualNextSlotTime({
+              ...subscription,
+              type: "Subscription",
+            });
+            const rawSlots = getActualSlots({
               ...subscription,
               type: "Subscription",
             });
@@ -145,8 +184,10 @@ export function Overview({
                 type: "Subscription",
               }),
               appointmentId: subscription.appointments?.[0]?.id,
+              appointment: subscription.appointments?.[0] as TAppointment | undefined,
+              rawSlots,
             };
-          })}
+          }))}
         />
       </motion.div>
 
@@ -155,8 +196,12 @@ export function Overview({
           title="Webinars"
           icon={Users}
           accentColor="amber"
-          items={webinars.map((webinar) => {
+          items={sortEventItems(webinars.map((webinar) => {
             const slotInfo = getActualNextSlotTime({
+              ...webinar,
+              type: "Webinar",
+            });
+            const rawSlots = getActualSlots({
               ...webinar,
               type: "Webinar",
             });
@@ -178,8 +223,10 @@ export function Overview({
                 type: "Webinar",
               }),
               appointmentId: webinar.appointment?.id,
+              appointment: webinar.appointment as TAppointment | undefined,
+              rawSlots,
             };
-          })}
+          }))}
         />
       </motion.div>
 
@@ -188,8 +235,12 @@ export function Overview({
           title="Classes"
           icon={BookOpen}
           accentColor="emerald"
-          items={classes.map((classItem) => {
+          items={sortEventItems(classes.map((classItem) => {
             const slotInfo = getActualNextSlotTime({
+              ...classItem,
+              type: "Class",
+            });
+            const rawSlots = getActualSlots({
               ...classItem,
               type: "Class",
             });
@@ -212,8 +263,10 @@ export function Overview({
                 type: "Class",
               }),
               appointmentId: classItem.appointments?.[0]?.id,
+              appointment: classItem.appointments?.[0] as TAppointment | undefined,
+              rawSlots,
             };
-          })}
+          }))}
         />
       </motion.div>
     </motion.div>
@@ -381,6 +434,8 @@ function DashboardCard({ title, icon: Icon, accentColor, items }: Readonly<Dashb
                   isTentative={item.isTentative}
                   actualSlots={item.actualSlots}
                   appointmentId={item.appointmentId}
+                  appointment={item.appointment}
+                  rawSlots={item.rawSlots}
                 />
               </div>
             ))}
@@ -403,6 +458,8 @@ function DashboardCard({ title, icon: Icon, accentColor, items }: Readonly<Dashb
                   isTentative={item.isTentative}
                   actualSlots={item.actualSlots}
                   appointmentId={item.appointmentId}
+                  appointment={item.appointment}
+                  rawSlots={item.rawSlots}
                 />
               </div>
             ))}

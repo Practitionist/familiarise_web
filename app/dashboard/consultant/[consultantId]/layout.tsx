@@ -7,7 +7,7 @@ import StreamProvider from "@/providers/StreamProvider";
 import { DashboardShell, DashboardSidebar, type NavItem } from "@/components/dashboard";
 import { signOut, useSession } from "next-auth/react";
 import { usePathname, useRouter } from "next/navigation";
-import { use, useEffect } from "react";
+import { use, useEffect, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { consultantFetchers, schedulePrefetch } from "@/lib/dashboard-queries";
 import { motion } from "framer-motion";
@@ -255,7 +255,7 @@ export default function ConsultantLayout({ children, params }: Readonly<PageProp
 
   const userId = getEffectiveUserId(session);
 
-  // Fetch consultant data with React Query
+  // Fetch consultant data with React Query and placeholderData to prevent loading flashes
   const {
     data: consultantData,
     error,
@@ -267,6 +267,7 @@ export default function ConsultantLayout({ children, params }: Readonly<PageProp
     staleTime: 5 * 60 * 1000,
     gcTime: 10 * 60 * 1000,
     retry: 2,
+    placeholderData: (previousData) => previousData, // Keep showing previous data while refetching
   });
 
   // Prefetch critical routes on mount
@@ -282,6 +283,24 @@ export default function ConsultantLayout({ children, params }: Readonly<PageProp
       router.prefetch(`/dashboard/consultant/${consultantId}/appointments`);
     }, 3000);
   }, [userId, consultantId, pathname, router]);
+
+  // Memoize StreamProvider children to prevent re-initialization on tab switches
+  // Must be called before any early returns to comply with Rules of Hooks
+  const memoizedStreamContent = useMemo(
+    () =>
+      consultantData?.user?.id ? (
+        <StreamProvider
+          userId={consultantData.user.id}
+          enableChat={true}
+          enableVideo={true}
+        >
+          <DashboardErrorBoundary>{children}</DashboardErrorBoundary>
+        </StreamProvider>
+      ) : (
+        <DashboardErrorBoundary>{children}</DashboardErrorBoundary>
+      ),
+    [consultantData?.user?.id, children]
+  );
 
   // Authentication check
   if (
@@ -321,17 +340,7 @@ export default function ConsultantLayout({ children, params }: Readonly<PageProp
 
   return (
     <DashboardShell sidebar={sidebar}>
-      {consultantData?.user?.id ? (
-        <StreamProvider
-          userId={consultantData.user.id}
-          enableChat={true}
-          enableVideo={true}
-        >
-          <DashboardErrorBoundary>{children}</DashboardErrorBoundary>
-        </StreamProvider>
-      ) : (
-        <DashboardErrorBoundary>{children}</DashboardErrorBoundary>
-      )}
+      {memoizedStreamContent}
     </DashboardShell>
   );
 }

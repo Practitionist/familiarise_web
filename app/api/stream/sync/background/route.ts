@@ -1,88 +1,78 @@
-import { performStreamUserSync, SyncSummary } from "@/jobs/stream-sync"; // Removed FailedDeletionEntry from import if not directly used, or ensure no local conflict
+/**
+ * Background Stream Sync API Route
+ *
+ * Designed for Vercel Cron Jobs or external schedulers.
+ * Triggers Stream user synchronization in background.
+ *
+ * Vercel Cron: Add to vercel.json:
+ * {
+ *   "crons": [{
+ *     "path": "/api/stream/sync/background?secret=YOUR_SECRET",
+ *     "schedule": "0 3 * * *"  // Daily at 3 AM
+ *   }]
+ * }
+ */
+
 import { NextResponse } from "next/server";
-import { StreamChat } from "stream-chat";
-
-const streamApiKey = process.env.NEXT_PUBLIC_STREAM_API_KEY;
-const streamApiSecret = process.env.STREAM_API_SECRET;
-
-console.log(
-  "[Stream Sync BG] Initializing. Key Loaded:",
-  !!streamApiKey,
-  "Secret Loaded:",
-  !!streamApiSecret,
-);
-
-if (!streamApiKey || !streamApiSecret) {
-  console.error(
-    "[Stream Sync BG] Critical: Stream API Key or Secret is not defined.",
-  );
-  // For a background job, throwing an error might be appropriate if it cannot run.
-  // However, for an API route trigger, returning a 500 is also an option.
-  // Corrected: The route handler must be exported, so can't return directly here.
-  // This top-level check is more for immediate feedback during deployment/startup if possible.
-  // The actual enforcement for a request will happen inside POST.
-}
-
-const serverStreamClient = StreamChat.getInstance(
-  streamApiKey!,
-  streamApiSecret!,
-  {
-    timeout: 30000, // Increased timeout for potentially longer operations (30 seconds)
-  },
-);
-
-interface FailedDeletionFromSDK {
-  user_id: string;
-  message: string;
-}
-
-const EXCLUDED_USER_IDS = new Set(["system", "teetangh"]); // Add any specific user IDs to always exclude
+import { performStreamUserSync, SyncSummary } from "@/jobs/stream-sync";
+import { streamLogger } from "@/lib/stream-logger";
 
 export async function POST(request: Request) {
-  // 1. Security Check
+  // Security check
   const { searchParams } = new URL(request.url);
   const secret = searchParams.get("secret");
+
   if (secret !== process.env.STREAM_SYNC_SECRET) {
-    console.warn("[Stream Sync API Route] Unauthorized attempt.");
+    streamLogger.warn("Unauthorized background sync attempt");
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  console.log("[Stream Sync API Route] Authorized. Triggering sync process...");
+
+  streamLogger.info("Background sync triggered");
 
   try {
-    // Call the reusable synchronization function
+    const startTime = Date.now();
     const summary: SyncSummary = await performStreamUserSync();
+    const duration = Date.now() - startTime;
 
-    console.log(
-      "[Stream Sync API Route] Synchronization process completed via API call.",
-    );
+    streamLogger.info("Background sync completed", {
+      durationMs: duration,
+      usersProcessed: summary.totalStreamUsersProcessed,
+      usersDeleted: summary.totalStaleUsersDeleted,
+    });
+
+    // Return minimal response for cron job
     return NextResponse.json(
       {
-        message:
-          "Stream user background synchronization triggered and completed.",
-        summary: summary,
+        success: true,
+        message: "Background sync completed",
+        durationMs: duration,
+        stats: {
+          processed: summary.totalStreamUsersProcessed,
+          identified: summary.totalStaleUsersIdentified,
+          deleted: summary.totalStaleUsersDeleted,
+          failed: summary.totalFailedDeletions,
+        },
       },
       { status: 200 },
     );
-  } catch (error: any) {
-    console.error(
-      "[Stream Sync API Route] Error during synchronization process:",
-      error.message,
-    );
-    // The performStreamUserSync function might throw errors (e.g., config errors)
-    // Or operational errors if not caught and rethrown by it.
+  } catch (error) {
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown error";
+    streamLogger.error("Background sync failed", error);
+
+    // Return error for cron job monitoring
     return NextResponse.json(
       {
-        error: "Internal Server Error during background sync via API call",
-        details: error.message,
-        // Optionally, you could return partial summary if performStreamUserSync provides it before throwing
+        success: false,
+        error: "Background sync failed",
+        details: errorMessage,
       },
       { status: 500 },
     );
   }
 }
 
-// Note: Vercel Cron Jobs call these API routes.
-// The job is considered successful if the route returns a 2xx status code.
-// For long-running jobs, ensure your serverless function timeout on Vercel is sufficient.
-// (Hobby plan: 10s-15s, Pro plan: up to 5 minutes, Enterprise: up to 15 minutes for background functions)
-// If this process takes longer than your plan allows, you'd need a different architecture (e.g., a queue and worker system).
+// Also support GET for Vercel Cron
+export async function GET(request: Request) {
+  return POST(request);
+}

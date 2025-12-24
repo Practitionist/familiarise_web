@@ -122,7 +122,7 @@ function UpcomingSessionCard({
     <motion.div
       whileHover={{ y: -2 }}
       onClick={onClick}
-      className="flex-shrink-0 w-[340px] h-[180px] bg-gradient-to-br from-zinc-900 via-zinc-900 to-zinc-800 rounded-xl border border-zinc-800 p-4 cursor-pointer hover:border-zinc-700 transition-all duration-200 shadow-lg flex flex-col"
+      className="flex-shrink-0 w-[340px] h-[180px] bg-gradient-to-br from-zinc-900 via-zinc-900 to-zinc-800 rounded-xl border border-zinc-800 p-4 hover:border-zinc-700 transition-all duration-200 shadow-lg flex flex-col"
     >
       {/* Row 1: Avatar + Title/Name + Time Badge - Fixed height 48px */}
       <div className="flex items-center gap-3 h-12 shrink-0">
@@ -581,9 +581,9 @@ export default function HomeTab({
                   <UpcomingSessionCard
                     key={event.id}
                     event={event}
-                    onClick={() =>
-                      router.push(`/dashboard/consultee/${consulteeId}/appointments`)
-                    }
+                    // onClick={() =>
+                    //   router.push(`/dashboard/consultee/${consulteeId}/appointments`)
+                    // }
                   />
                 ))}
               </div>
