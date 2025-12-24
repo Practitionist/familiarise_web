@@ -1,14 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  runAllCleanupTasks,
-  disconnectDatabase,
-} from "@/scripts/cleanup-invalid-appointments";
+import { timingSafeEqual } from "crypto";
+import { runAllCleanupTasks } from "@/scripts/cleanup-invalid-appointments";
 
 export async function POST(req: NextRequest) {
   try {
     // Verify this is called by a cron job or authorized service
+    // Use timing-safe comparison to prevent timing attacks
     const authHeader = req.headers.get("authorization");
-    if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+    const expectedAuth = `Bearer ${process.env.CRON_SECRET}`;
+
+    const providedAuthBuffer = Buffer.from(authHeader || "");
+    const expectedAuthBuffer = Buffer.from(expectedAuth);
+
+    if (
+      providedAuthBuffer.length !== expectedAuthBuffer.length ||
+      !timingSafeEqual(providedAuthBuffer, expectedAuthBuffer)
+    ) {
       return NextResponse.json(
         {
           error: "Unauthorized",
@@ -19,9 +26,8 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Run all cleanup tasks
+    // Run all cleanup tasks (handles its own database disconnection)
     const result = await runAllCleanupTasks();
-    await disconnectDatabase();
 
     return NextResponse.json({
       ...result,

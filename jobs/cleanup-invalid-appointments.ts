@@ -9,7 +9,6 @@
 
 import {
   runAllCleanupTasks,
-  disconnectDatabase,
   type CleanupResult,
 } from "../scripts/cleanup-invalid-appointments";
 
@@ -90,9 +89,8 @@ async function main(): Promise<void> {
     }
 
     process.exit(1);
-  } finally {
-    await disconnectDatabase();
   }
+  // Note: runAllCleanupTasks() handles database disconnection in its finally block
 }
 
 // Run the cleanup job

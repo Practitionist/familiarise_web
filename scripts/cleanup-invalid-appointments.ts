@@ -20,7 +20,7 @@
  * Action: Marks invalid records as CANCELLED (preserves audit trail)
  */
 
-import { PrismaClient, RequestStatus } from "@prisma/client";
+import { Prisma, PrismaClient, RequestStatus } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
@@ -81,7 +81,7 @@ export async function cleanupDuplicateConsultations(): Promise<{
             ORDER BY c."createdAt" ASC
           ) as rn
         FROM "Consultation" c
-        WHERE c."requestStatus" NOT IN ('CANCELLED', 'REJECTED', 'EXPIRED')
+        WHERE c."requestStatus" NOT IN (${Prisma.join(TERMINAL_STATUSES)})
       )
       SELECT
         r.id as duplicate_id,
@@ -106,8 +106,8 @@ export async function cleanupDuplicateConsultations(): Promise<{
         c1."consultationPlanId" = c2."consultationPlanId" AND
         ABS(EXTRACT(EPOCH FROM (c1."createdAt" - c2."createdAt"))) < 5 AND
         c1."createdAt" > c2."createdAt"
-      WHERE c1."requestStatus" NOT IN ('CANCELLED', 'REJECTED', 'EXPIRED')
-        AND c2."requestStatus" NOT IN ('CANCELLED', 'REJECTED', 'EXPIRED')
+      WHERE c1."requestStatus" NOT IN (${Prisma.join(TERMINAL_STATUSES)})
+        AND c2."requestStatus" NOT IN (${Prisma.join(TERMINAL_STATUSES)})
     `;
 
     console.log(`📊 Found ${duplicates.length} duplicate consultations`);
@@ -185,8 +185,8 @@ export async function cleanupDuplicateSubscriptions(): Promise<{
         s1."schedulingPeriodStartsAt" < s2."schedulingPeriodEndsAt" AND
         s1."schedulingPeriodEndsAt" > s2."schedulingPeriodStartsAt" AND
         s1."createdAt" > s2."createdAt"
-      WHERE s1."requestStatus" NOT IN ('CANCELLED', 'REJECTED', 'EXPIRED')
-        AND s2."requestStatus" NOT IN ('CANCELLED', 'REJECTED', 'EXPIRED')
+      WHERE s1."requestStatus" NOT IN (${Prisma.join(TERMINAL_STATUSES)})
+        AND s2."requestStatus" NOT IN (${Prisma.join(TERMINAL_STATUSES)})
 
       UNION ALL
 
@@ -202,8 +202,8 @@ export async function cleanupDuplicateSubscriptions(): Promise<{
         s1."subscriptionPlanId" = s2."subscriptionPlanId" AND
         ABS(EXTRACT(EPOCH FROM (s1."createdAt" - s2."createdAt"))) < 5 AND
         s1."createdAt" > s2."createdAt"
-      WHERE s1."requestStatus" NOT IN ('CANCELLED', 'REJECTED', 'EXPIRED')
-        AND s2."requestStatus" NOT IN ('CANCELLED', 'REJECTED', 'EXPIRED')
+      WHERE s1."requestStatus" NOT IN (${Prisma.join(TERMINAL_STATUSES)})
+        AND s2."requestStatus" NOT IN (${Prisma.join(TERMINAL_STATUSES)})
     `;
 
     console.log(`📊 Found ${duplicates.length} duplicate subscriptions`);
@@ -276,7 +276,7 @@ export async function cleanupInvalidDurationConsultations(): Promise<{
       JOIN "ConsultationPlan" cp ON c."consultationPlanId" = cp.id
       JOIN "Appointment" a ON a."consultationId" = c.id
       JOIN "SlotOfAppointment" s ON s."appointmentId" = a.id
-      WHERE c."requestStatus" NOT IN ('CANCELLED', 'REJECTED', 'EXPIRED')
+      WHERE c."requestStatus" NOT IN (${Prisma.join(TERMINAL_STATUSES)})
         AND ABS(cp."durationInHours" - EXTRACT(EPOCH FROM (s."endsAt" - s."startsAt"))/3600) > 0.01
     `;
 
@@ -355,7 +355,7 @@ export async function cleanupInvalidDurationSubscriptions(): Promise<{
         EXTRACT(YEAR FROM AGE(s."schedulingPeriodEndsAt", s."schedulingPeriodStartsAt")) * 12 as actual_months
       FROM "Subscription" s
       JOIN "SubscriptionPlan" sp ON s."subscriptionPlanId" = sp.id
-      WHERE s."requestStatus" NOT IN ('CANCELLED', 'REJECTED', 'EXPIRED')
+      WHERE s."requestStatus" NOT IN (${Prisma.join(TERMINAL_STATUSES)})
         AND (
           EXTRACT(MONTH FROM AGE(s."schedulingPeriodEndsAt", s."schedulingPeriodStartsAt")) +
           EXTRACT(YEAR FROM AGE(s."schedulingPeriodEndsAt", s."schedulingPeriodStartsAt")) * 12
