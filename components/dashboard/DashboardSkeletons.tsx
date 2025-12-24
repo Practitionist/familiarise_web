@@ -243,24 +243,47 @@ export function SettingsSkeleton() {
 // Help skeleton
 export function HelpSkeleton() {
   return (
-    <div className="p-6 lg:p-8">
-      <div className="space-y-6 max-w-3xl">
-        <div className="space-y-2">
-          <Skeleton className="h-8 w-48" />
-          <Skeleton className="h-4 w-64" />
-        </div>
+    <div className="min-h-screen bg-white">
+      <div className="max-w-4xl mx-auto px-6 py-8">
+        <div className="animate-pulse space-y-10">
+          {/* Header */}
+          <div className="space-y-6">
+            <div className="flex items-center gap-4">
+              <Skeleton className="h-14 w-14 rounded-2xl" />
+              <div className="space-y-2">
+                <Skeleton className="h-8 w-48" />
+                <Skeleton className="h-4 w-72" />
+              </div>
+            </div>
 
-        <Skeleton className="h-12 w-full rounded-xl" />
+            {/* Search */}
+            <Skeleton className="h-12 w-full max-w-xl rounded-xl" />
 
-        <div className="space-y-3">
-          {[1, 2, 3, 4, 5, 6].map((i) => (
+            {/* Category filters */}
+            <div className="flex gap-2">
+              {[1, 2, 3, 4, 5].map((i) => (
+                <Skeleton key={i} className="h-10 w-24 rounded-full" />
+              ))}
+            </div>
+          </div>
+
+          {/* FAQ Groups */}
+          {[1, 2, 3].map((group) => (
             <div
-              key={i}
-              className="bg-white rounded-xl border border-zinc-200 p-4"
+              key={group}
+              className="bg-zinc-50/50 border border-zinc-100 rounded-2xl p-6 space-y-4"
             >
-              <div className="flex items-center justify-between">
-                <Skeleton className="h-5 w-64" />
-                <Skeleton className="h-5 w-5" />
+              <div className="flex items-center gap-3">
+                <Skeleton className="h-10 w-10 rounded-xl" />
+                <div className="space-y-1">
+                  <Skeleton className="h-5 w-28" />
+                  <Skeleton className="h-3 w-20" />
+                </div>
+              </div>
+              <div className="space-y-2">
+                {[1, 2].map((item) => (
+                  <Skeleton key={item} className="h-14 w-full rounded-xl" />
+                ))}
               </div>
             </div>
           ))}

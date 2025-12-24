@@ -1,18 +1,16 @@
 "use client";
 
 import React from "react";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-  CardDescription,
-  CardFooter,
-} from "@/components/ui/card";
+import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
-import { Edit, Trash2 } from "lucide-react";
-import Link from "next/link";
 import { ChevronLeftIcon, ChevronRightIcon } from "@radix-ui/react-icons";
+import {
+  MessageSquare,
+  CalendarRange,
+  Video,
+  GraduationCap,
+} from "lucide-react";
+import { cn } from "@/utils/tailwind";
 import {
   WebinarEvent,
   ClassEvent,
@@ -20,8 +18,7 @@ import {
   SubscriptionPlanEvent,
   Event,
 } from "../types/event";
-import { Badge } from "@/components/ui/badge";
-import { WebinarStatus, ClassStatus } from "@prisma/client";
+import { EventCard } from "./EventCard";
 
 interface WebinarCarouselProps {
   events: WebinarEvent[];
@@ -77,6 +74,64 @@ function isSubscriptionPlanEvent(event: Event): event is SubscriptionPlanEvent {
   return event.type === "subscription";
 }
 
+// Empty state configuration
+const emptyStateConfig = {
+  webinar: {
+    icon: Video,
+    title: "No webinars scheduled",
+    description:
+      "Create your first webinar to start hosting live sessions with multiple participants.",
+    iconBg: "bg-emerald-50",
+    iconColor: "text-emerald-600",
+  },
+  class: {
+    icon: GraduationCap,
+    title: "No classes created",
+    description:
+      "Design structured learning experiences with multi-session classes.",
+    iconBg: "bg-amber-50",
+    iconColor: "text-amber-600",
+  },
+  consultation: {
+    icon: MessageSquare,
+    title: "No consultation plans",
+    description:
+      "Create consultation plans to offer one-on-one sessions to your clients.",
+    iconBg: "bg-blue-50",
+    iconColor: "text-blue-600",
+  },
+  subscription: {
+    icon: CalendarRange,
+    title: "No subscription plans",
+    description: "Set up subscription plans for ongoing mentorship relationships.",
+    iconBg: "bg-purple-50",
+    iconColor: "text-purple-600",
+  },
+};
+
+// Animation variants
+const containerVariants = {
+  hidden: { opacity: 0 },
+  visible: {
+    opacity: 1,
+    transition: {
+      staggerChildren: 0.08,
+    },
+  },
+};
+
+const itemVariants = {
+  hidden: { opacity: 0, y: 20 },
+  visible: {
+    opacity: 1,
+    y: 0,
+    transition: {
+      duration: 0.3,
+      ease: "easeOut",
+    },
+  },
+};
+
 export function EventCarousel({
   events,
   onEdit,
@@ -85,15 +140,14 @@ export function EventCarousel({
   participantCounts,
 }: EventCarouselProps) {
   const [currentPage, setCurrentPage] = React.useState(1);
-  const itemsPerPage = 8; // Show 8 items per page (adjust as needed)
+  const itemsPerPage = 8;
 
-  // Calculate pagination variables
+  // Calculate pagination
   const totalPages = Math.ceil(events.length / itemsPerPage);
   const startIndex = (currentPage - 1) * itemsPerPage;
   const endIndex = startIndex + itemsPerPage;
   const currentEvents = events.slice(startIndex, endIndex);
 
-  // Pagination handlers
   const goToNextPage = () => {
     setCurrentPage((prev) => Math.min(prev + 1, totalPages));
   };
@@ -103,107 +157,11 @@ export function EventCarousel({
   };
 
   const getEventTitle = (event: Event): string => {
-    if (isWebinarEvent(event)) {
-      return event.webinarPlan.title;
-    }
-    if (isClassEvent(event)) {
-      return event.classPlan.title;
-    }
-    if (isConsultationPlanEvent(event)) {
-      return event.consultationPlan.title;
-    }
-    if (isSubscriptionPlanEvent(event)) {
-      return event.subscriptionPlan.title;
-    }
-    throw new Error(`Unknown event type encountered.`);
-  };
-
-  const getEventDescription = (event: Event): string => {
-    if (isWebinarEvent(event)) {
-      return event.webinarPlan.description ?? "";
-    }
-    if (isClassEvent(event)) {
-      return event.classPlan.description ?? "";
-    }
-    if (isConsultationPlanEvent(event)) {
-      return event.consultationPlan.description ?? "";
-    }
-    if (isSubscriptionPlanEvent(event)) {
-      return event.subscriptionPlan.description ?? "";
-    }
-    throw new Error(`Unknown event type encountered.`);
-  };
-
-  const getEventPrice = (event: Event) => {
-    if (isWebinarEvent(event)) {
-      return event.webinarPlan.price;
-    }
-    if (isClassEvent(event)) {
-      return event.classPlan.price;
-    }
-    if (isConsultationPlanEvent(event)) {
-      return event.consultationPlan.price;
-    }
-    if (isSubscriptionPlanEvent(event)) {
-      return event.subscriptionPlan.price;
-    }
-    throw new Error(`Unknown event type encountered.`);
-  };
-
-  const getEventCurrency = (event: Event): string => {
-    if (isWebinarEvent(event)) {
-      return event.webinarPlan.priceCurrency ?? "INR";
-    }
-    if (isClassEvent(event)) {
-      return event.classPlan.priceCurrency ?? "INR";
-    }
-    if (isConsultationPlanEvent(event)) {
-      return event.consultationPlan.priceCurrency ?? "INR";
-    }
-    if (isSubscriptionPlanEvent(event)) {
-      return event.subscriptionPlan.priceCurrency ?? "INR";
-    }
-    throw new Error(`Unknown event type encountered.`);
-  };
-
-  const getEventDuration = (event: Event) => {
-    if (isWebinarEvent(event)) {
-      return `${event.webinarPlan.durationInHours} hours`;
-    }
-    if (isClassEvent(event)) {
-      return `${event.classPlan.durationInMonths} months`;
-    }
-    if (isConsultationPlanEvent(event)) {
-      return `${event.consultationPlan.durationInHours} hours`;
-    }
-    if (isSubscriptionPlanEvent(event)) {
-      return `${event.subscriptionPlan.durationInMonths} months`;
-    }
-    throw new Error(`Unknown event type encountered.`);
-  };
-
-  // No longer need local state or useEffect for participant counts
-  // Using the pre-fetched participantCounts prop
-
-  const getParticipantsCount = (event: Event) => {
-    let maxParticipants = 0;
-
-    if (isWebinarEvent(event)) {
-      maxParticipants = event.webinarPlan.maxParticipants;
-    } else if (isClassEvent(event)) {
-      maxParticipants = event.classPlan.maxParticipants;
-    } else if (isConsultationPlanEvent(event)) {
-      // Consultations are 1-on-1, so max participants is 1
-      maxParticipants = 1;
-    } else if (isSubscriptionPlanEvent(event)) {
-      // Subscriptions are 1-on-1, so max participants is 1
-      maxParticipants = 1;
-    }
-
-    return {
-      currentParticipants: participantCounts[event.id ?? ""] ?? 0,
-      maxParticipants,
-    };
+    if (isWebinarEvent(event)) return event.webinarPlan.title;
+    if (isClassEvent(event)) return event.classPlan.title;
+    if (isConsultationPlanEvent(event)) return event.consultationPlan.title;
+    if (isSubscriptionPlanEvent(event)) return event.subscriptionPlan.title;
+    return "";
   };
 
   const handleEdit = (event: Event) => {
@@ -227,183 +185,88 @@ export function EventCarousel({
     ) {
       try {
         await onDelete(event.id ?? "");
-        // Optionally show a success toast, though parent might handle it
       } catch (error) {
         console.error(`Error deleting ${eventType}:`, error);
-        // Optionally show an error toast
       }
     }
   };
 
-  // Helper function for participant display text
-  const getParticipantsDisplayText = (current: number, max: number) => {
-    return `${current}/${max} participants`;
-  };
+  // Empty state
+  if (events.length === 0) {
+    const config = emptyStateConfig[eventType];
+    const Icon = config.icon;
 
-  const getEventStatus = (event: Event): WebinarStatus | ClassStatus | null => {
-    if (isWebinarEvent(event)) {
-      return event.status ?? null;
-    }
-    if (isClassEvent(event)) {
-      return event.status ?? null;
-    }
-    return null;
-  };
-
-  const getEventStartDate = (event: Event): Date | null => {
-    if (isWebinarEvent(event)) {
-      const startTimeString =
-        event.appointment?.slotsOfAppointment?.[0]?.startsAt;
-      return startTimeString ? new Date(startTimeString) : null;
-    }
-    if (isClassEvent(event)) {
-      return event.schedulingPeriodStartsAt
-        ? new Date(event.schedulingPeriodStartsAt)
-        : null;
-    }
-    return null;
-  };
-
-  const formatDateTime = (date: Date | null): string => {
-    if (!date) return "Unscheduled";
-    try {
-      // Adjust locale and options as needed
-      return date.toLocaleString(undefined, {
-        dateStyle: "medium",
-        timeStyle: "short",
-      });
-    } catch (e) {
-      console.error("Error formatting date:", e);
-      return "Invalid Date";
-    }
-  };
-
-  // Helper function for status badge variant - Uses distinct valid variants
-  const getStatusVariant = (
-    status: WebinarStatus | ClassStatus,
-  ): "default" | "secondary" | "destructive" | "outline" => {
-    switch (status) {
-      case WebinarStatus.SCHEDULED:
-      case ClassStatus.SCHEDULED:
-        return "default"; // Black background
-      case WebinarStatus.IN_PROGRESS:
-      case ClassStatus.IN_PROGRESS:
-        return "secondary"; // Grey background for in progress
-      case WebinarStatus.COMPLETED:
-      case ClassStatus.COMPLETED:
-        return "outline"; // Outline variant for completed
-      case WebinarStatus.CANCELLED:
-      case ClassStatus.CANCELLED:
-        return "destructive"; // Red background for cancelled
-      // No default needed as the input type is constrained to the enums
-    }
-  };
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3 }}
+        className="flex flex-col items-center justify-center py-16 text-center rounded-xl border border-dashed border-zinc-200 bg-zinc-50/50"
+      >
+        <div
+          className={cn(
+            "mb-4 flex h-16 w-16 items-center justify-center rounded-2xl",
+            config.iconBg,
+          )}
+        >
+          <Icon className={cn("h-8 w-8", config.iconColor)} />
+        </div>
+        <h4 className="text-lg font-semibold text-zinc-900">{config.title}</h4>
+        <p className="mt-2 text-sm text-zinc-500 max-w-sm px-4">
+          {config.description}
+        </p>
+      </motion.div>
+    );
+  }
 
   return (
-    <div className="flex items-center gap-4">
-      {/* Main container for grid and pagination */}
-      <div className="w-full">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 w-full">
-          {/* Map over current page events */}
-          {currentEvents.map((event) => {
-            const { currentParticipants, maxParticipants } =
-              getParticipantsCount(event);
-            const status = getEventStatus(event);
-            const startDate = getEventStartDate(event);
+    <div className="w-full">
+      <motion.div
+        className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5 w-full"
+        variants={containerVariants}
+        initial="hidden"
+        animate="visible"
+        key={currentPage} // Re-animate on page change
+      >
+        {currentEvents.map((event) => (
+          <motion.div key={event.id} variants={itemVariants}>
+            <EventCard
+              event={event}
+              eventType={eventType}
+              participantCount={participantCounts[event.id ?? ""] ?? 0}
+              onEdit={() => handleEdit(event)}
+              onDelete={() => handleDelete(event)}
+            />
+          </motion.div>
+        ))}
+      </motion.div>
 
-            return (
-              <Card
-                key={event.id}
-                className="w-full bg-white shadow-lg rounded-lg overflow-hidden flex flex-col"
-              >
-                <CardHeader className="bg-gray-50 border-b flex-shrink-0 flex flex-row items-start justify-between p-4">
-                  <div className="flex-grow mr-2 space-y-1">
-                    <CardTitle className="text-lg font-semibold text-gray-800">
-                      {getEventTitle(event)}
-                    </CardTitle>
-                    <CardDescription className="text-sm text-gray-600">
-                      {getParticipantsDisplayText(
-                        currentParticipants,
-                        maxParticipants,
-                      )}
-                    </CardDescription>
-                    {/* Only show timing and status for scheduled events (webinar and class), not for plans (consultation and subscription) */}
-                    {(eventType === "webinar" || eventType === "class") && (
-                      <div className="flex items-center gap-x-2 text-sm">
-                        <span className="text-gray-500 font-medium whitespace-nowrap">
-                          {formatDateTime(startDate)}
-                        </span>
-                        {startDate && status !== null && (
-                          <Badge
-                            variant={getStatusVariant(status)}
-                            className="text-xs"
-                          >
-                            {status.toString().replace("_", " ")}
-                          </Badge>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                  <div className="flex items-center space-x-1 flex-shrink-0">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => handleEdit(event)}
-                      className="h-8 w-8"
-                    >
-                      <Edit className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => handleDelete(event)}
-                      className="h-8 w-8 text-red-500 hover:text-red-700"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </CardHeader>
-                <CardContent className="p-4 flex-grow">
-                  <p className="text-sm text-gray-700 mb-2 line-clamp-3">
-                    {getEventDescription(event)}
-                  </p>
-                  <p className="text-sm font-medium text-gray-900">
-                    Price: {getEventCurrency(event)} {getEventPrice(event)}
-                  </p>
-                  <p className="text-sm text-gray-600">
-                    Duration: {getEventDuration(event)}
-                  </p>
-                </CardContent>
-              </Card>
-            );
-          })}
+      {/* Pagination Controls */}
+      {totalPages > 1 && (
+        <div className="flex justify-center items-center gap-4 mt-8">
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={goToPreviousPage}
+            disabled={currentPage === 1}
+            className="h-9 w-9"
+          >
+            <ChevronLeftIcon className="h-4 w-4" />
+          </Button>
+          <span className="text-sm text-zinc-600">
+            Page {currentPage} of {totalPages}
+          </span>
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={goToNextPage}
+            disabled={currentPage === totalPages}
+            className="h-9 w-9"
+          >
+            <ChevronRightIcon className="h-4 w-4" />
+          </Button>
         </div>
-
-        {/* Pagination Controls */}
-        {totalPages > 1 && (
-          <div className="flex justify-center items-center gap-4 mt-6">
-            <Button
-              variant="outline"
-              size="icon"
-              onClick={goToPreviousPage}
-              disabled={currentPage === 1}
-            >
-              <ChevronLeftIcon className="h-4 w-4" />
-            </Button>
-            <span className="text-sm text-gray-700">
-              Page {currentPage} of {totalPages}
-            </span>
-            <Button
-              variant="outline"
-              size="icon"
-              onClick={goToNextPage}
-              disabled={currentPage === totalPages}
-            >
-              <ChevronRightIcon className="h-4 w-4" />
-            </Button>
-          </div>
-        )}
-      </div>
+      )}
     </div>
   );
 }

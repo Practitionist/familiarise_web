@@ -23,7 +23,7 @@ export function DashboardShell({
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 lg:ml-64 flex flex-col h-screen overflow-y-auto">
+      <main className="flex-1 lg:ml-64 flex flex-col h-screen overflow-y-auto bg-white">
         <AnimatePresence mode="wait">
           <motion.div
             initial={{ opacity: 0, y: 8 }}
@@ -54,7 +54,7 @@ export function DashboardHeader({
   breadcrumbs,
 }: DashboardHeaderProps) {
   return (
-    <div className="sticky top-0 z-30 bg-zinc-100/80 backdrop-blur-xl border-b border-zinc-200/50">
+    <div className="sticky top-0 z-30 bg-white/80 backdrop-blur-xl border-b border-zinc-200/50">
       <div className="px-6 py-4 lg:px-8">
         {breadcrumbs && breadcrumbs.length > 0 && (
           <nav className="flex items-center gap-2 text-sm text-zinc-500 mb-2">

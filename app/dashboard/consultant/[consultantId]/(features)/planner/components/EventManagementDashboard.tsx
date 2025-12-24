@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { EventCarousel } from "./EventCarousel";
 import { EventPlanner } from "./EventPlanner";
@@ -22,6 +23,16 @@ import {
   useSubscriptionPlanMutations,
   usePlannerRefresh,
 } from "../../../hooks/usePlanner";
+import {
+  LayoutTemplate,
+  Radio,
+  Plus,
+  MessageSquare,
+  CalendarRange,
+  Video,
+  GraduationCap,
+} from "lucide-react";
+import { cn } from "@/utils/tailwind";
 
 interface PlannerData {
   webinars: any[];
@@ -297,71 +308,134 @@ export function EventManagementDashboard({
 
   if (isLoading) {
     return (
-      <div className="container mx-auto p-4">
-        <div className="animate-pulse space-y-8">
-          <div className="h-8 bg-gray-200 rounded w-1/4"></div>
-          <div className="space-y-4">
-            <div className="h-4 bg-gray-200 rounded w-1/3"></div>
-            <div className="h-32 bg-gray-200 rounded"></div>
-          </div>
-          <div className="space-y-4">
-            <div className="h-4 bg-gray-200 rounded w-1/3"></div>
-            <div className="h-32 bg-gray-200 rounded"></div>
+      <div className="min-h-screen bg-white">
+        <div className="container mx-auto px-6 py-8">
+          <div className="animate-pulse space-y-12">
+            {/* Header skeleton */}
+            <div className="space-y-3">
+              <div className="h-10 bg-zinc-200 rounded-lg w-80"></div>
+              <div className="h-5 bg-zinc-200 rounded w-96"></div>
+              <div className="flex gap-3 mt-4">
+                <div className="h-8 bg-zinc-200 rounded-full w-28"></div>
+                <div className="h-8 bg-zinc-200 rounded-full w-32"></div>
+              </div>
+            </div>
+
+            {/* Section skeleton */}
+            <div className="space-y-6">
+              <div className="flex items-center gap-4">
+                <div className="h-12 w-12 bg-zinc-200 rounded-xl"></div>
+                <div className="space-y-2">
+                  <div className="h-6 bg-zinc-200 rounded w-40"></div>
+                  <div className="h-4 bg-zinc-200 rounded w-64"></div>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
+                {[...Array(4)].map((_, i) => (
+                  <div key={i} className="h-48 bg-zinc-200 rounded-xl"></div>
+                ))}
+              </div>
+            </div>
+
+            {/* Section skeleton */}
+            <div className="space-y-6">
+              <div className="flex items-center gap-4">
+                <div className="h-12 w-12 bg-zinc-200 rounded-xl"></div>
+                <div className="space-y-2">
+                  <div className="h-6 bg-zinc-200 rounded w-36"></div>
+                  <div className="h-4 bg-zinc-200 rounded w-56"></div>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
+                {[...Array(4)].map((_, i) => (
+                  <div key={i} className="h-48 bg-zinc-200 rounded-xl"></div>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
       </div>
     );
   }
 
+  // Calculate stats
+  const totalPlans = (consultationPlans?.length ?? 0) + (subscriptionPlans?.length ?? 0);
+  const totalSessions = webinars.length + classes.length;
+
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-white">
       <div className="container mx-auto px-6 py-8">
         {/* Page Header */}
-        <div className="mb-12">
-          <h1 className="text-4xl font-bold text-gray-900 tracking-tight">
-            Event Management Dashboard
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3 }}
+          className="mb-12"
+        >
+          <h1 className="text-4xl font-bold text-zinc-900 tracking-tight">
+            Event Management
           </h1>
-          <p className="mt-2 text-lg text-gray-600">
+          <p className="mt-2 text-lg text-zinc-500">
             Manage your service templates and scheduled sessions
           </p>
-        </div>
 
-        {/* Section Divider */}
-        <div className="relative mb-16">
-          <div className="absolute inset-0 flex items-center">
-            <div className="w-full border-t-2 border-gray-300"></div>
-          </div>
-          <div className="relative flex justify-center">
-            <div className="bg-gray-50 px-8 py-2">
-              <h2 className="text-3xl font-bold text-gray-900">
-                Plan Templates
-              </h2>
-              <p className="text-sm text-gray-600 text-center mt-1">
-                Create reusable service templates for consultations and
-                subscriptions
-              </p>
+          {/* Quick Stats */}
+          <div className="mt-6 flex items-center gap-3">
+            <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-zinc-100 border border-zinc-200/60">
+              <LayoutTemplate className="h-4 w-4 text-zinc-600" />
+              <span className="text-sm font-medium text-zinc-700">{totalPlans} Plans</span>
+            </div>
+            <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-zinc-100 border border-zinc-200/60">
+              <Radio className="h-4 w-4 text-zinc-600" />
+              <span className="text-sm font-medium text-zinc-700">{totalSessions} Live Sessions</span>
             </div>
           </div>
-        </div>
+        </motion.div>
 
         {/* Plan Templates Section */}
-        <section className="mb-16">
+        <motion.section
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4, delay: 0.1 }}
+          className="mb-16"
+        >
+          {/* Section Header */}
+          <div className="flex items-center gap-4 mb-8">
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-zinc-900">
+              <LayoutTemplate className="h-6 w-6 text-white" />
+            </div>
+            <div>
+              <h2 className="text-2xl font-bold text-zinc-900">Plan Templates</h2>
+              <p className="text-sm text-zinc-500">Create reusable service templates</p>
+            </div>
+            <div className="flex-1 h-px bg-gradient-to-r from-zinc-200 to-transparent" />
+          </div>
+
           {/* Consultation Plans */}
-          <div className="mb-12">
+          <div className="mb-10 bg-zinc-50/50 border border-zinc-100 rounded-xl p-6">
             <div className="flex justify-between items-center mb-6">
-              <h3 className="text-xl font-semibold text-gray-800">
-                Consultation Plans
-              </h3>
+              <div className="flex items-center gap-3">
+                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-50">
+                  <MessageSquare className="h-4.5 w-4.5 text-blue-600" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold text-zinc-900">Consultation Plans</h3>
+                  <p className="text-sm text-zinc-500">One-on-one session templates</p>
+                </div>
+              </div>
               <Button
                 onClick={() => setIsConsultationDialogOpen(true)}
-                className="bg-black hover:bg-gray-800 text-white font-medium"
+                className="bg-zinc-900 hover:bg-zinc-800 text-white font-medium gap-2"
               >
-                Create New Consultation Plan
+                <Plus className="h-4 w-4" />
+                New Plan
               </Button>
             </div>
             {consultationPlansLoading ? (
-              <div className="animate-pulse space-y-4">
-                <div className="h-32 bg-gray-200 rounded-lg"></div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
+                {[...Array(4)].map((_, i) => (
+                  <div key={i} className="h-48 bg-zinc-200 rounded-xl animate-pulse"></div>
+                ))}
               </div>
             ) : (
               <EventCarousel
@@ -381,21 +455,30 @@ export function EventManagementDashboard({
           </div>
 
           {/* Subscription Plans */}
-          <div className="mb-12">
+          <div className="bg-zinc-50/50 border border-zinc-100 rounded-xl p-6">
             <div className="flex justify-between items-center mb-6">
-              <h3 className="text-xl font-semibold text-gray-800">
-                Subscription Plans
-              </h3>
+              <div className="flex items-center gap-3">
+                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-purple-50">
+                  <CalendarRange className="h-4.5 w-4.5 text-purple-600" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold text-zinc-900">Subscription Plans</h3>
+                  <p className="text-sm text-zinc-500">Recurring mentorship offerings</p>
+                </div>
+              </div>
               <Button
                 onClick={() => setIsSubscriptionDialogOpen(true)}
-                className="bg-black hover:bg-gray-800 text-white font-medium"
+                className="bg-zinc-900 hover:bg-zinc-800 text-white font-medium gap-2"
               >
-                Create New Subscription Plan
+                <Plus className="h-4 w-4" />
+                New Plan
               </Button>
             </div>
             {subscriptionPlansLoading ? (
-              <div className="animate-pulse space-y-4">
-                <div className="h-32 bg-gray-200 rounded-lg"></div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
+                {[...Array(4)].map((_, i) => (
+                  <div key={i} className="h-48 bg-zinc-200 rounded-xl animate-pulse"></div>
+                ))}
               </div>
             ) : (
               <EventCarousel
@@ -413,38 +496,45 @@ export function EventManagementDashboard({
               />
             )}
           </div>
-        </section>
-
-        {/* Section Divider */}
-        <div className="relative my-16">
-          <div className="absolute inset-0 flex items-center">
-            <div className="w-full border-t-2 border-gray-300"></div>
-          </div>
-          <div className="relative flex justify-center">
-            <div className="bg-gray-50 px-8 py-2">
-              <h2 className="text-3xl font-bold text-gray-900">
-                Live Sessions
-              </h2>
-              <p className="text-sm text-gray-600 text-center mt-1">
-                Schedule and manage your live events
-              </p>
-            </div>
-          </div>
-        </div>
+        </motion.section>
 
         {/* Live Sessions Section */}
-        <section className="mb-16">
+        <motion.section
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4, delay: 0.2 }}
+          className="mb-16"
+        >
+          {/* Section Header */}
+          <div className="flex items-center gap-4 mb-8">
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-zinc-900">
+              <Radio className="h-6 w-6 text-white" />
+            </div>
+            <div>
+              <h2 className="text-2xl font-bold text-zinc-900">Live Sessions</h2>
+              <p className="text-sm text-zinc-500">Schedule and manage your live events</p>
+            </div>
+            <div className="flex-1 h-px bg-gradient-to-r from-zinc-200 to-transparent" />
+          </div>
+
           {/* Webinar Events */}
-          <div className="mb-12">
+          <div className="mb-10 bg-zinc-50/50 border border-zinc-100 rounded-xl p-6">
             <div className="flex justify-between items-center mb-6">
-              <h3 className="text-xl font-semibold text-gray-800">
-                Webinar Events
-              </h3>
+              <div className="flex items-center gap-3">
+                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-50">
+                  <Video className="h-4.5 w-4.5 text-emerald-600" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold text-zinc-900">Webinar Events</h3>
+                  <p className="text-sm text-zinc-500">Live sessions with multiple participants</p>
+                </div>
+              </div>
               <Button
                 onClick={() => setIsWebinarDialogOpen(true)}
-                className="bg-black hover:bg-gray-800 text-white font-medium"
+                className="bg-zinc-900 hover:bg-zinc-800 text-white font-medium gap-2"
               >
-                Create New Webinar
+                <Plus className="h-4 w-4" />
+                New Webinar
               </Button>
             </div>
             <EventCarousel
@@ -457,16 +547,23 @@ export function EventManagementDashboard({
           </div>
 
           {/* Class Events */}
-          <div className="mb-12">
+          <div className="bg-zinc-50/50 border border-zinc-100 rounded-xl p-6">
             <div className="flex justify-between items-center mb-6">
-              <h3 className="text-xl font-semibold text-gray-800">
-                Class Events
-              </h3>
+              <div className="flex items-center gap-3">
+                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-amber-50">
+                  <GraduationCap className="h-4.5 w-4.5 text-amber-600" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold text-zinc-900">Class Events</h3>
+                  <p className="text-sm text-zinc-500">Multi-session structured learning</p>
+                </div>
+              </div>
               <Button
                 onClick={() => setIsClassDialogOpen(true)}
-                className="bg-black hover:bg-gray-800 text-white font-medium"
+                className="bg-zinc-900 hover:bg-zinc-800 text-white font-medium gap-2"
               >
-                Create New Class
+                <Plus className="h-4 w-4" />
+                New Class
               </Button>
             </div>
             <EventCarousel
@@ -477,7 +574,7 @@ export function EventManagementDashboard({
               participantCounts={initialData?.participantCounts || {}}
             />
           </div>
-        </section>
+        </motion.section>
       </div>
 
       <EventPlanner
