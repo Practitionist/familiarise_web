@@ -269,15 +269,14 @@ export async function cleanupAbandonedPayments(): Promise<CleanupResult> {
                 await tx.consultation.delete({
                   where: { id: appointment.consultation.id },
                 });
+                // Appointment is cascade-deleted when Consultation is deleted (onDelete: Cascade)
               } else if (appointment.subscription) {
                 await tx.subscription.delete({
                   where: { id: appointment.subscription.id },
                 });
+                // Appointment is cascade-deleted when Subscription is deleted (onDelete: Cascade)
               }
 
-              await tx.appointment.delete({
-                where: { id: appointment.id },
-              });
               console.log(
                 `🗑️ Deleted entire abandoned ${appointment.consultation ? "consultation" : "subscription"} appointment: ${appointment.id}`,
               );
