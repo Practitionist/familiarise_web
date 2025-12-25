@@ -14,6 +14,10 @@ const nextConfig = {
   transpilePackages: ["react-day-picker", "date-fns"],
 
   images: {
+    // Enable modern image formats for better compression (50-80% smaller than JPEG/PNG)
+    formats: ["image/avif", "image/webp"],
+    // Cache optimized images for 60 seconds minimum
+    minimumCacheTTL: 60,
     remotePatterns: [
       {
         hostname: "lh3.googleusercontent.com",
