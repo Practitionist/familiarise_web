@@ -172,7 +172,8 @@ export async function reconcileDisputes(): Promise<DisputeReconciliationResult> 
       // Handle "dispute not found" case
       if (
         errorMessage.includes("resource_missing") ||
-        errorMessage.includes("not found")
+        errorMessage.includes("not found") ||
+        errorMessage.includes("No such")
       ) {
         const existingEvidence = (dispute.evidence ?? {}) as Record<
           string,

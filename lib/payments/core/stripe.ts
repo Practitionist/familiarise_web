@@ -315,7 +315,14 @@ export async function getStripeDispute(
         : undefined,
     };
   } catch (error) {
-    console.error("Stripe dispute retrieval failed:", error);
+    if (error instanceof Stripe.errors.StripeError) {
+      // Only log message for cleaner output, not the full error object
+      console.error(
+        `Stripe dispute retrieval failed: ${error.message} (code: ${error.code})`,
+      );
+    } else {
+      console.error("Stripe dispute retrieval failed:", error);
+    }
     throw handleStripeDisputeError(error);
   }
 }
