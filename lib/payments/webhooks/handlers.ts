@@ -15,6 +15,12 @@ import { calculateSubscriptionEndDate } from "@/utils/dateUtils";
 import { validateWebhookMetadata } from "@/schemas/webhooks/metadata";
 import { ZodError } from "zod";
 import { sendPaymentSuccessEmail, sendPaymentFailedEmail } from "@/lib/email";
+import {
+  createEarningsFromPayment,
+  refundEarnings,
+  createInvoiceFromPayment,
+  type AppointmentType,
+} from "@/lib/payments/payouts";
 
 // ============================================================================
 // Type Definitions
@@ -229,6 +235,115 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
       appointment.id,
       metadata.appointmentType,
     );
+
+    // Create earnings record for consultant payout (outside transaction for non-blocking)
+    // This runs after core payment processing is complete
+    try {
+      // Fetch payment with appointment and consultant profile for earnings calculation
+      const paymentWithAppointment = await tx.payment.findUnique({
+        where: { id: payment.id },
+        include: {
+          appointment: {
+            include: {
+              consultation: {
+                include: {
+                  consultationPlan: {
+                    include: { consultantProfile: true },
+                  },
+                },
+              },
+              subscription: {
+                include: {
+                  subscriptionPlan: {
+                    include: { consultantProfile: true },
+                  },
+                },
+              },
+              webinar: {
+                include: {
+                  webinarPlan: {
+                    include: { consultantProfile: true },
+                  },
+                },
+              },
+              class: {
+                include: {
+                  classPlan: {
+                    include: { consultantProfile: true },
+                  },
+                },
+              },
+            },
+          },
+        },
+      });
+
+      if (paymentWithAppointment?.appointment) {
+        // Get consultant profile from the appointment type
+        const consultantProfile =
+          paymentWithAppointment.appointment.consultation?.consultationPlan
+            ?.consultantProfile ||
+          paymentWithAppointment.appointment.subscription?.subscriptionPlan
+            ?.consultantProfile ||
+          paymentWithAppointment.appointment.webinar?.webinarPlan
+            ?.consultantProfile ||
+          paymentWithAppointment.appointment.class?.classPlan
+            ?.consultantProfile;
+
+        if (consultantProfile) {
+          // Map appointment type to earnings hold period type
+          const appointmentTypeMap: Record<string, AppointmentType> = {
+            CONSULTATION: "CONSULTATION",
+            SUBSCRIPTION: "SUBSCRIPTION",
+            WEBINAR: "WEBINAR",
+            CLASS: "CLASS",
+          };
+
+          const earningsAppointmentType =
+            appointmentTypeMap[metadata.appointmentType] || "CONSULTATION";
+
+          // Create earnings with consultant profile attached
+          const paymentForEarnings = {
+            ...paymentWithAppointment,
+            appointment: {
+              ...paymentWithAppointment.appointment,
+              consultantProfile: { id: consultantProfile.id },
+            },
+          };
+
+          await createEarningsFromPayment({
+            payment: paymentForEarnings as Parameters<
+              typeof createEarningsFromPayment
+            >[0]["payment"],
+            appointmentType: earningsAppointmentType,
+          });
+
+          console.log(
+            `💰 Earnings record created for payment ${payment.id}, consultant ${consultantProfile.id}`,
+          );
+        }
+      }
+    } catch (earningsError) {
+      // Log but don't fail the payment - earnings can be created manually if needed
+      console.error(
+        `⚠️ Failed to create earnings for payment ${payment.id}:`,
+        earningsError,
+      );
+    }
+
+    // Create invoice for the payment
+    try {
+      const invoiceId = await createInvoiceFromPayment(payment.id);
+      if (invoiceId) {
+        console.log(`📄 Invoice created for payment ${payment.id}`);
+      }
+    } catch (invoiceError) {
+      // Log but don't fail - invoice can be created manually if needed
+      console.error(
+        `⚠️ Failed to create invoice for payment ${payment.id}:`,
+        invoiceError,
+      );
+    }
 
     console.log(
       `✅ Payment ${paymentIntentId} processed successfully. Appointment ID: ${appointment.id}`,

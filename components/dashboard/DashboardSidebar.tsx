@@ -30,6 +30,11 @@ import {
   History,
   Ticket,
   Shield,
+  Wallet,
+  CheckCircle,
+  Loader,
+  ClipboardCheck,
+  RotateCcw,
 } from "lucide-react";
 import { ReactNode } from "react";
 
@@ -46,7 +51,7 @@ const iconMap: Record<string, typeof Home> = {
   overview: LayoutDashboard,
   payments: CreditCard,
   "approval-payments": Clock,
-  refunds: RefreshCw,
+  refunds: RotateCcw,
   disputes: AlertTriangle,
   analytics: BarChart3,
   users: Users,
@@ -54,6 +59,14 @@ const iconMap: Record<string, typeof Home> = {
   messages: MessageSquare,
   feedback: Ticket,
   policy: Shield,
+  // Payout related icons
+  wallet: Wallet,
+  "payouts/pending": ClipboardCheck,
+  "payouts/processing": Loader,
+  "payouts/completed": CheckCircle,
+  "payouts/earnings": Wallet,
+  subscriptions: RefreshCw,
+  invoices: FileText,
 };
 
 export interface NavItem {
@@ -63,12 +76,18 @@ export interface NavItem {
   badge?: number | string;
 }
 
+export interface NavSection {
+  title: string | null;
+  items: NavItem[];
+}
+
 interface DashboardSidebarProps {
   userImage?: string | null;
   userName?: string | null;
   userRole: "CONSULTANT" | "CONSULTEE" | "ADMIN" | "STAFF";
   basePath: string;
-  navItems: NavItem[];
+  navItems?: NavItem[];
+  navSections?: NavSection[];
   isLoading?: boolean;
   bottomNavItems?: NavItem[];
 }
@@ -78,13 +97,16 @@ export function DashboardSidebar({
   userName,
   userRole,
   basePath,
-  navItems,
+  navItems = [],
+  navSections = [],
   isLoading = false,
   bottomNavItems = [],
 }: DashboardSidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
-  const currentPath = pathname.split("/").pop();
+
+  // Get current path relative to basePath for matching
+  const relativePath = pathname.replace(basePath + "/", "");
 
   const getRoleColor = () => {
     switch (userRole) {
@@ -166,52 +188,114 @@ export function DashboardSidebar({
 
       {/* Navigation */}
       <nav className="flex-1 overflow-y-auto p-3">
-        <ul className="space-y-1">
-          {navItems.map((item) => {
-            const isActive = currentPath === item.path;
+        {/* Render sectioned navigation if navSections is provided */}
+        {navSections.length > 0 ? (
+          <div className="space-y-4">
+            {navSections.map((section, sectionIndex) => (
+              <div key={sectionIndex}>
+                {section.title && (
+                  <h3 className="px-3 py-2 text-xs font-semibold text-zinc-500 uppercase tracking-wider">
+                    {section.title}
+                  </h3>
+                )}
+                <ul className="space-y-1">
+                  {section.items.map((item) => {
+                    const isActive = relativePath === item.path || relativePath.startsWith(item.path + "/");
 
-            return (
-              <li key={item.path}>
-                <Link
-                  href={`${basePath}/${item.path}`}
-                  className={cn(
-                    "group flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-150",
-                    isActive
-                      ? "bg-zinc-800 text-white shadow-sm"
-                      : "text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-100",
-                  )}
-                  prefetch={true}
-                  onMouseEnter={() => handleNavHover(item.path)}
-                >
-                  <span
+                    return (
+                      <li key={item.path}>
+                        <Link
+                          href={`${basePath}/${item.path}`}
+                          className={cn(
+                            "group flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-150",
+                            isActive
+                              ? "bg-zinc-800 text-white shadow-sm"
+                              : "text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-100",
+                          )}
+                          prefetch={true}
+                          onMouseEnter={() => handleNavHover(item.path)}
+                        >
+                          <span
+                            className={cn(
+                              "flex h-8 w-8 items-center justify-center rounded-md transition-colors",
+                              isActive
+                                ? "bg-zinc-700 text-white"
+                                : "bg-zinc-800/50 text-zinc-500 group-hover:bg-zinc-700 group-hover:text-zinc-300",
+                            )}
+                          >
+                            {renderIcon(item.icon || item.path)}
+                          </span>
+                          <span className="flex-1">{item.name}</span>
+                          {item.badge && (
+                            <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-zinc-700 px-1.5 text-xs font-semibold text-zinc-200">
+                              {item.badge}
+                            </span>
+                          )}
+                          <ChevronRight
+                            className={cn(
+                              "w-4 h-4 transition-opacity",
+                              isActive
+                                ? "opacity-100 text-zinc-500"
+                                : "opacity-0 group-hover:opacity-50",
+                            )}
+                          />
+                        </Link>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            ))}
+          </div>
+        ) : (
+          /* Render flat navigation for backward compatibility */
+          <ul className="space-y-1">
+            {navItems.map((item) => {
+              const isActive = relativePath === item.path || relativePath.startsWith(item.path + "/");
+
+              return (
+                <li key={item.path}>
+                  <Link
+                    href={`${basePath}/${item.path}`}
                     className={cn(
-                      "flex h-8 w-8 items-center justify-center rounded-md transition-colors",
+                      "group flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-150",
                       isActive
-                        ? "bg-zinc-700 text-white"
-                        : "bg-zinc-800/50 text-zinc-500 group-hover:bg-zinc-700 group-hover:text-zinc-300",
+                        ? "bg-zinc-800 text-white shadow-sm"
+                        : "text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-100",
                     )}
+                    prefetch={true}
+                    onMouseEnter={() => handleNavHover(item.path)}
                   >
-                    {renderIcon(item.path)}
-                  </span>
-                  <span className="flex-1">{item.name}</span>
-                  {item.badge && (
-                    <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-zinc-700 px-1.5 text-xs font-semibold text-zinc-200">
-                      {item.badge}
+                    <span
+                      className={cn(
+                        "flex h-8 w-8 items-center justify-center rounded-md transition-colors",
+                        isActive
+                          ? "bg-zinc-700 text-white"
+                          : "bg-zinc-800/50 text-zinc-500 group-hover:bg-zinc-700 group-hover:text-zinc-300",
+                      )}
+                    >
+                      {renderIcon(item.icon || item.path)}
                     </span>
-                  )}
-                  <ChevronRight
-                    className={cn(
-                      "w-4 h-4 transition-opacity",
-                      isActive
-                        ? "opacity-100 text-zinc-500"
-                        : "opacity-0 group-hover:opacity-50",
+                    <span className="flex-1">{item.name}</span>
+                    {item.badge && (
+                      <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-zinc-700 px-1.5 text-xs font-semibold text-zinc-200">
+                        {item.badge}
+                      </span>
                     )}
-                  />
-                </Link>
-              </li>
-            );
-          })}
-        </ul>
+                    <ChevronRight
+                      className={cn(
+                        "w-4 h-4 transition-opacity",
+                        isActive
+                          ? "opacity-100 text-zinc-500"
+                          : "opacity-0 group-hover:opacity-50",
+                      )}
+                    />
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+        )}
       </nav>
 
       {/* Bottom Section */}
@@ -227,7 +311,7 @@ export function DashboardSidebar({
         </Link>
 
         {bottomNavItems.map((item) => {
-          const isActive = currentPath === item.path;
+          const isActive = relativePath === item.path || relativePath.startsWith(item.path + "/");
 
           return (
             <Link

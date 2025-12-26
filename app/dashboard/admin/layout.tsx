@@ -5,7 +5,7 @@ import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import {
   DashboardShell,
   DashboardSidebar,
-  type NavItem,
+  type NavSection,
 } from "@/components/dashboard";
 import { signOut, useSession } from "next-auth/react";
 import { usePathname, useRouter } from "next/navigation";
@@ -15,18 +15,42 @@ import { motion } from "framer-motion";
 import { schedulePrefetch } from "@/lib/dashboard-queries";
 import { useEffect } from "react";
 
-// Navigation configuration for admin
-const NAV_ITEMS: NavItem[] = [
-  { name: "Overview", path: "home" },
-  { name: "Payments", path: "payments" },
-  { name: "Approval Payments", path: "approval-payments" },
-  { name: "Refunds", path: "refunds" },
-  { name: "Disputes", path: "disputes" },
-  { name: "Analytics", path: "analytics" },
-  { name: "Users", path: "users" },
+// Navigation configuration for admin with sections
+const NAV_SECTIONS: NavSection[] = [
+  {
+    title: null,
+    items: [{ name: "Overview", path: "home" }],
+  },
+  {
+    title: "Payments",
+    items: [
+      { name: "All Payments", path: "payments" },
+      { name: "Approval Payments", path: "approval-payments" },
+      { name: "Subscriptions", path: "subscriptions" },
+      { name: "Refunds", path: "refunds" },
+      { name: "Disputes", path: "disputes" },
+    ],
+  },
+  {
+    title: "Payouts",
+    items: [
+      { name: "Pending Approval", path: "payouts/pending" },
+      { name: "Processing", path: "payouts/processing" },
+      { name: "Completed", path: "payouts/completed" },
+      { name: "Consultant Earnings", path: "payouts/earnings" },
+    ],
+  },
+  {
+    title: null,
+    items: [
+      { name: "Invoices", path: "invoices" },
+      { name: "Analytics", path: "analytics" },
+      { name: "Users", path: "users" },
+    ],
+  },
 ];
 
-const BOTTOM_NAV_ITEMS: NavItem[] = [{ name: "Settings", path: "settings" }];
+const BOTTOM_NAV_ITEMS = [{ name: "Settings", path: "settings" }];
 
 interface PageProps {
   children: React.ReactNode;
@@ -240,7 +264,7 @@ export default function AdminLayout({ children }: Readonly<PageProps>) {
       userName={userData?.name}
       userRole="ADMIN"
       basePath="/dashboard/admin"
-      navItems={NAV_ITEMS}
+      navSections={NAV_SECTIONS}
       bottomNavItems={BOTTOM_NAV_ITEMS}
       isLoading={isLoading}
     />

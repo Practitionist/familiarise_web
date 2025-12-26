@@ -5,7 +5,7 @@ export {
   DashboardContent,
   DashboardGrid,
 } from "./DashboardShell";
-export { DashboardSidebar, type NavItem } from "./DashboardSidebar";
+export { DashboardSidebar, type NavItem, type NavSection } from "./DashboardSidebar";
 
 // Cards & Data Display
 export { StatCard, StatCardSkeleton } from "./StatCard";

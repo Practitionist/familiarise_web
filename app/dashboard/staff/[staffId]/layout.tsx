@@ -15,6 +15,8 @@ import {
   Calendar,
   ChevronLeft,
   ChevronRight,
+  Wallet,
+  Receipt,
 } from "lucide-react";
 import Link from "next/link";
 import { useParams, usePathname } from "next/navigation";
@@ -34,6 +36,8 @@ const sidebarItems = [
   { name: "Content Moderation", icon: Shield, path: "moderation" },
   { name: "Appointments", icon: Calendar, path: "appointments" },
   { name: "Payments", icon: CreditCard, path: "payments" },
+  { name: "Payouts", icon: Wallet, path: "payouts" },
+  { name: "Invoices", icon: Receipt, path: "invoices" },
   { name: "Reports", icon: BarChart3, path: "reports" },
   { name: "Team Chat", icon: MessageSquare, path: "chat" },
   { name: "Knowledge Base", icon: FileText, path: "knowledge-base" },
