@@ -22,19 +22,27 @@ function AnimatedNumber({
   useEffect(() => {
     if (isInView) {
       const duration = 2000;
-      const steps = 60;
-      const increment = value / steps;
-      let current = 0;
-      const timer = setInterval(() => {
-        current += increment;
-        if (current >= value) {
-          setDisplayValue(value);
-          clearInterval(timer);
+      const startTime = performance.now();
+
+      const animate = (currentTime: number) => {
+        const elapsed = currentTime - startTime;
+        const progress = Math.min(elapsed / duration, 1);
+        
+        if (value % 1 !== 0) {
+          // Handle decimal values
+          setDisplayValue(Math.round(value * progress * 10) / 10);
         } else {
-          setDisplayValue(Math.floor(current));
+          setDisplayValue(Math.floor(value * progress));
         }
-      }, duration / steps);
-      return () => clearInterval(timer);
+
+        if (progress < 1) {
+          requestAnimationFrame(animate);
+        } else {
+          setDisplayValue(value);
+        }
+      };
+
+      requestAnimationFrame(animate);
     }
   }, [isInView, value]);
 

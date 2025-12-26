@@ -1,28 +1,101 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useQuery } from "@tanstack/react-query";
 
-import {
-  HeroSection,
-  TrustedBySection,
-  FeaturesSection,
-  CategoriesSection,
-  BenefitsSection,
-  SuccessStoriesSection,
-  FeaturedExpertsSection,
-  PlatformFeaturesSection,
-  TestimonialsSection,
-  UpcomingEventsSection,
-  TrustBadgesSection,
-  HowItWorksSection,
-  BecomeExpertSection,
-  FAQSection,
-} from "@/components/home";
+// Keep HeroSection static (above fold - critical for LCP)
+import { HeroSection } from "@/components/home";
 
 import type { SupabaseImageFile } from "@/lib/supabase";
 import { fetchImagesFromSupabaseStorage } from "@/lib/supabase";
 import type { TConsultantProfile } from "@/types/consultant";
 import type { ReviewWithProfiles } from "@/types/review";
+
+// Lazy load all below-fold sections to reduce initial JS bundle and TBT
+const TrustedBySection = dynamic(
+  () =>
+    import("@/components/home/TrustedBySection").then(
+      (m) => m.TrustedBySection
+    ),
+  { ssr: false }
+);
+const FeaturesSection = dynamic(
+  () =>
+    import("@/components/home/FeaturesSection").then((m) => m.FeaturesSection),
+  { ssr: false }
+);
+const CategoriesSection = dynamic(
+  () =>
+    import("@/components/home/CategoriesSection").then(
+      (m) => m.CategoriesSection
+    ),
+  { ssr: false }
+);
+const BenefitsSection = dynamic(
+  () =>
+    import("@/components/home/BenefitsSection").then((m) => m.BenefitsSection),
+  { ssr: false }
+);
+const SuccessStoriesSection = dynamic(
+  () =>
+    import("@/components/home/SuccessStoriesSection").then(
+      (m) => m.SuccessStoriesSection
+    ),
+  { ssr: false }
+);
+const FeaturedExpertsSection = dynamic(
+  () =>
+    import("@/components/home/FeaturedExpertsSection").then(
+      (m) => m.FeaturedExpertsSection
+    ),
+  { ssr: false }
+);
+const PlatformFeaturesSection = dynamic(
+  () =>
+    import("@/components/home/PlatformFeaturesSection").then(
+      (m) => m.PlatformFeaturesSection
+    ),
+  { ssr: false }
+);
+const TestimonialsSection = dynamic(
+  () =>
+    import("@/components/home/TestimonialsSection").then(
+      (m) => m.TestimonialsSection
+    ),
+  { ssr: false }
+);
+const UpcomingEventsSection = dynamic(
+  () =>
+    import("@/components/home/UpcomingEventsSection").then(
+      (m) => m.UpcomingEventsSection
+    ),
+  { ssr: false }
+);
+const TrustBadgesSection = dynamic(
+  () =>
+    import("@/components/home/TrustBadgesSection").then(
+      (m) => m.TrustBadgesSection
+    ),
+  { ssr: false }
+);
+const HowItWorksSection = dynamic(
+  () =>
+    import("@/components/home/HowItWorksSection").then(
+      (m) => m.HowItWorksSection
+    ),
+  { ssr: false }
+);
+const BecomeExpertSection = dynamic(
+  () =>
+    import("@/components/home/BecomeExpertSection").then(
+      (m) => m.BecomeExpertSection
+    ),
+  { ssr: false }
+);
+const FAQSection = dynamic(
+  () => import("@/components/home/FAQSection").then((m) => m.FAQSection),
+  { ssr: false }
+);
 
 // ===== FETCHERS =====
 const fetchHomePageData = async <T,>(url: string): Promise<T> => {
