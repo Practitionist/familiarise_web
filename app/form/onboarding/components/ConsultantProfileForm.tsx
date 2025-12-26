@@ -358,7 +358,7 @@ const ConsultantProfileForm: React.FC<Props> = ({
           name="scheduleType"
           control={control}
           render={({ field }) => (
-            <div className="flex gap-4">
+            <div className="flex gap-4 flex-wrap">
               <Button
                 type="button"
                 onClick={() => field.onChange("WEEKLY")}
