@@ -11,90 +11,59 @@ import { fetchImagesFromSupabaseStorage } from "@/lib/supabase";
 import type { TConsultantProfile } from "@/types/consultant";
 import type { ReviewWithProfiles } from "@/types/review";
 
-// Lazy load all below-fold sections to reduce initial JS bundle and TBT
-const TrustedBySection = dynamic(
-  () =>
-    import("@/components/home/TrustedBySection").then(
-      (m) => m.TrustedBySection
-    ),
-  { ssr: false }
+// Code-split below-fold sections (SSR enabled to prevent layout shift)
+const TrustedBySection = dynamic(() =>
+  import("@/components/home/TrustedBySection").then((m) => m.TrustedBySection)
 );
-const FeaturesSection = dynamic(
-  () =>
-    import("@/components/home/FeaturesSection").then((m) => m.FeaturesSection),
-  { ssr: false }
+const FeaturesSection = dynamic(() =>
+  import("@/components/home/FeaturesSection").then((m) => m.FeaturesSection)
 );
-const CategoriesSection = dynamic(
-  () =>
-    import("@/components/home/CategoriesSection").then(
-      (m) => m.CategoriesSection
-    ),
-  { ssr: false }
+const CategoriesSection = dynamic(() =>
+  import("@/components/home/CategoriesSection").then((m) => m.CategoriesSection)
 );
-const BenefitsSection = dynamic(
-  () =>
-    import("@/components/home/BenefitsSection").then((m) => m.BenefitsSection),
-  { ssr: false }
+const BenefitsSection = dynamic(() =>
+  import("@/components/home/BenefitsSection").then((m) => m.BenefitsSection)
 );
-const SuccessStoriesSection = dynamic(
-  () =>
-    import("@/components/home/SuccessStoriesSection").then(
-      (m) => m.SuccessStoriesSection
-    ),
-  { ssr: false }
+const SuccessStoriesSection = dynamic(() =>
+  import("@/components/home/SuccessStoriesSection").then(
+    (m) => m.SuccessStoriesSection
+  )
 );
-const FeaturedExpertsSection = dynamic(
-  () =>
-    import("@/components/home/FeaturedExpertsSection").then(
-      (m) => m.FeaturedExpertsSection
-    ),
-  { ssr: false }
+const FeaturedExpertsSection = dynamic(() =>
+  import("@/components/home/FeaturedExpertsSection").then(
+    (m) => m.FeaturedExpertsSection
+  )
 );
-const PlatformFeaturesSection = dynamic(
-  () =>
-    import("@/components/home/PlatformFeaturesSection").then(
-      (m) => m.PlatformFeaturesSection
-    ),
-  { ssr: false }
+const PlatformFeaturesSection = dynamic(() =>
+  import("@/components/home/PlatformFeaturesSection").then(
+    (m) => m.PlatformFeaturesSection
+  )
 );
-const TestimonialsSection = dynamic(
-  () =>
-    import("@/components/home/TestimonialsSection").then(
-      (m) => m.TestimonialsSection
-    ),
-  { ssr: false }
+const TestimonialsSection = dynamic(() =>
+  import("@/components/home/TestimonialsSection").then(
+    (m) => m.TestimonialsSection
+  )
 );
-const UpcomingEventsSection = dynamic(
-  () =>
-    import("@/components/home/UpcomingEventsSection").then(
-      (m) => m.UpcomingEventsSection
-    ),
-  { ssr: false }
+const UpcomingEventsSection = dynamic(() =>
+  import("@/components/home/UpcomingEventsSection").then(
+    (m) => m.UpcomingEventsSection
+  )
 );
-const TrustBadgesSection = dynamic(
-  () =>
-    import("@/components/home/TrustBadgesSection").then(
-      (m) => m.TrustBadgesSection
-    ),
-  { ssr: false }
+const TrustBadgesSection = dynamic(() =>
+  import("@/components/home/TrustBadgesSection").then(
+    (m) => m.TrustBadgesSection
+  )
 );
-const HowItWorksSection = dynamic(
-  () =>
-    import("@/components/home/HowItWorksSection").then(
-      (m) => m.HowItWorksSection
-    ),
-  { ssr: false }
+const HowItWorksSection = dynamic(() =>
+  import("@/components/home/HowItWorksSection").then((m) => m.HowItWorksSection)
 );
-const BecomeExpertSection = dynamic(
-  () =>
-    import("@/components/home/BecomeExpertSection").then(
-      (m) => m.BecomeExpertSection
-    ),
-  { ssr: false }
+const BecomeExpertSection = dynamic(() =>
+  import("@/components/home/BecomeExpertSection").then(
+    (m) => m.BecomeExpertSection
+  )
 );
-const FAQSection = dynamic(
-  () => import("@/components/home/FAQSection").then((m) => m.FAQSection),
-  { ssr: false }
+const FAQSection = dynamic(() =>
+  import("@/components/home/FAQSection").then((m) => m.FAQSection)
 );
 
 // ===== FETCHERS =====
