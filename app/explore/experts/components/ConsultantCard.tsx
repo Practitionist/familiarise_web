@@ -63,11 +63,11 @@ const SubscriptionPlanCard = ({ plan }: { plan: any }) => {
 
   return (
     <div className="bg-white rounded-xl p-5 border border-zinc-200">
-      <div className="flex items-baseline justify-between mb-4">
-        <div className="text-3xl font-bold text-zinc-900">
+      <div className="flex flex-wrap items-baseline justify-between gap-2 mb-4">
+        <div className="text-2xl sm:text-3xl font-bold text-zinc-900">
           {formatCurrency(plan.price / 100, plan.priceCurrency || "INR")}
         </div>
-        <div className="text-sm text-zinc-500 font-medium bg-zinc-100 px-3 py-1 rounded-full">
+        <div className="text-xs sm:text-sm text-zinc-500 font-medium bg-zinc-100 px-2 sm:px-3 py-1 rounded-full whitespace-nowrap">
           {formatDuration(plan.durationInMonths)}
         </div>
       </div>

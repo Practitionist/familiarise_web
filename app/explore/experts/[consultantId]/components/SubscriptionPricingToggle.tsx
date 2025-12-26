@@ -164,17 +164,16 @@ export default function SubscriptionPricingToggle({
       className="w-full space-y-6"
     >
       {/* Duration Toggle - Black/Silver Theme */}
-      <TabsList className="inline-flex p-1 bg-zinc-800/50 backdrop-blur-sm rounded-xl border border-zinc-700/50">
+      <TabsList className="flex w-full p-1 bg-zinc-800/50 backdrop-blur-sm rounded-xl border border-zinc-700/50">
         {subscriptionOptions.map((option) => (
           <TabsTrigger
             key={option.durationInMonths}
             value={option.title.toLowerCase().replace(" ", "-")}
-            className={`${
-              activeSubscriptionOption ===
+            className={`${activeSubscriptionOption ===
               option.title.toLowerCase().replace(" ", "-")
-                ? "bg-white text-zinc-900 shadow-sm"
-                : "text-zinc-400 hover:text-white hover:bg-zinc-700/50"
-            } px-4 py-2 rounded-lg font-medium transition-all duration-200`}
+              ? "bg-white text-zinc-900 shadow-sm"
+              : "text-zinc-400 hover:text-white hover:bg-zinc-700/50"
+              } flex-1 px-2 sm:px-4 py-2 rounded-lg font-medium text-xs sm:text-sm transition-all duration-200 whitespace-nowrap`}
           >
             {option.title}
           </TabsTrigger>
@@ -189,7 +188,7 @@ export default function SubscriptionPricingToggle({
             animate={{
               opacity:
                 activeSubscriptionOption ===
-                option.title.toLowerCase().replace(" ", "-")
+                  option.title.toLowerCase().replace(" ", "-")
                   ? 1
                   : 0,
               y: 0,
@@ -197,7 +196,7 @@ export default function SubscriptionPricingToggle({
             transition={{ duration: 0.2 }}
             className={
               activeSubscriptionOption ===
-              option.title.toLowerCase().replace(" ", "-")
+                option.title.toLowerCase().replace(" ", "-")
                 ? "block"
                 : "hidden"
             }
@@ -241,7 +240,7 @@ export default function SubscriptionPricingToggle({
                     Choose Plan
                   </Button>
                 </DialogTrigger>
-                <DialogContent className="sm:max-w-[550px] lg:max-w-[650px] bg-zinc-900 text-white p-0 border border-zinc-800 rounded-2xl shadow-2xl">
+                <DialogContent className="sm:max-w-[550px] lg:max-w-[650px] max-h-[calc(100vh-100px)] overflow-y-auto top-[80px] translate-y-0 bg-zinc-900 text-white p-0 border border-zinc-800 rounded-2xl shadow-2xl">
                   <DialogHeader className="p-6 border-b border-zinc-800">
                     <DialogTitle className="text-xl font-semibold">
                       Select Scheduling Period
@@ -348,14 +347,15 @@ export default function SubscriptionPricingToggle({
                       </p>
                     </div>
                   </div>
-                  <div className="bg-zinc-800/50 px-6 py-4 flex justify-end gap-3 rounded-b-2xl border-t border-zinc-800">
-                    <Button
+                  <div className="bg-zinc-800/50 px-6 py-4 flex justify-center gap-3 rounded-b-2xl border-t border-zinc-800">
+                    {/* this cancel button is not required */}
+                    {/* <Button
                       variant="ghost"
                       className="text-zinc-400 hover:text-white hover:bg-zinc-700/50"
                       onClick={() => setIsDialogOpen(false)}
                     >
                       Cancel
-                    </Button>
+                    </Button> */}
                     <Button
                       onClick={handleContinueToCheckout}
                       disabled={!validation.valid}

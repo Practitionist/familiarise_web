@@ -367,7 +367,7 @@ export function RequestSlotAllocationTab({
 
   if (loading) {
     return (
-      <Card>
+      <Card className="border-0 shadow-none rounded-none">
         <CardHeader>
           <CardTitle>Slot Allocation</CardTitle>
           <CardDescription>
@@ -385,7 +385,7 @@ export function RequestSlotAllocationTab({
 
   if (error) {
     return (
-      <Card>
+      <Card className="border-0 shadow-none rounded-none">
         <CardHeader>
           <CardTitle>Error</CardTitle>
           <CardDescription>{error}</CardDescription>
@@ -398,7 +398,7 @@ export function RequestSlotAllocationTab({
   }
 
   return (
-    <Card>
+    <Card className="border-0 shadow-none rounded-none">
       <CardHeader>
         <CardTitle>Slot Allocation</CardTitle>
         <CardDescription>

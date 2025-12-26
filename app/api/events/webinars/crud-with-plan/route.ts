@@ -2,17 +2,19 @@ import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { WebinarPlanSchema } from "@/schemas/plans";
-import { WebinarStatus } from "@prisma/client"; // Import Enum
+import { WebinarStatus } from "@prisma/client";
+import { getServerSession } from "next-auth";
+import authOptions from "@/app/api/auth/[...nextauth]/options";
 
 // Schema for POST request body based on WebinarPlanSchema
 const PostWebinarWithPlanBodySchema = WebinarPlanSchema.omit({
   consultantProfile: true, // We use consultantProfileId
-  topics: true, // We use topicIds instead
+  topics: true, // We redefine below with min(1) requirement
   scheduledAt: true, // We redefine below
   // priceCurrency is inherited from WebinarPlanSchema (which inherits from BaseEventPlanSchema)
 }).extend({
   consultantProfileId: z.string().min(1, "Consultant profile ID is required"),
-  topicIds: z.array(z.string()).min(1, "At least one topic ID is required"), // Expect topicIds
+  topics: z.array(z.string()).min(1, "At least one topic ID is required"),
   // scheduledAt: Allow string, null, or undefined. Validate string if provided.
   scheduledAt: z
     .string()
@@ -32,19 +34,28 @@ const PostWebinarWithPlanBodySchema = WebinarPlanSchema.omit({
 // Schema for PATCH request body
 // Inherits from corrected PostWebinarWithPlanBodySchema
 const PatchWebinarWithPlanBodySchema = PostWebinarWithPlanBodySchema.omit({
-  topicIds: true, // Make topicIds optional separately
+  topics: true, // Make topics optional separately
 })
   .partial()
   .extend({
     id: z.string().min(1, "Webinar Plan ID is required for update"), // Plan ID is required
     webinarId: z.string().optional().nullable(), // Webinar Instance ID is optional
-    topicIds: z.array(z.string()).optional(), // topicIds is optional for PATCH
+    topics: z.array(z.string()).optional(), // topics is optional for PATCH
     // scheduledAt is already optional via partial()
     // priceCurrency is already optional via partial() inherited from base
   });
 
 export async function POST(request: NextRequest) {
   try {
+    // Authentication check
+    const session = await getServerSession(authOptions);
+    if (!session?.user?.id) {
+      return NextResponse.json(
+        { error: "Authentication required" },
+        { status: 401 },
+      );
+    }
+
     const body = await request.json();
     console.log(
       "Received webinar creation request body:",
@@ -75,11 +86,26 @@ export async function POST(request: NextRequest) {
       learningOutcomes,
       priceCurrency,
       consultantProfileId,
-      topicIds, // Use validated topicIds directly
+      topics,
       scheduledAt,
       status,
     } = validatedData;
     // --- End Zod Validation ---
+
+    // Verify ownership - user must own this consultant profile
+    const consultantProfile = await prisma.consultantProfile.findFirst({
+      where: {
+        id: consultantProfileId,
+        userId: session.user.id,
+      },
+    });
+
+    if (!consultantProfile) {
+      return NextResponse.json(
+        { error: "You do not have permission to create webinars for this consultant profile" },
+        { status: 403 },
+      );
+    }
 
     // Log validated fields
     console.log("Validated fields:", {
@@ -89,7 +115,7 @@ export async function POST(request: NextRequest) {
       maxParticipants,
       consultantProfileId,
       scheduledAt,
-      topicIds,
+      topics,
       status,
     });
 
@@ -130,15 +156,15 @@ export async function POST(request: NextRequest) {
     const result = await prisma.$transaction(
       async (tx) => {
         // Verify all topics exist (still useful within transaction)
-        if (topicIds && topicIds.length > 0) {
-          const topics = await tx.topic.findMany({
-            where: { id: { in: topicIds } },
+        if (topics && topics.length > 0) {
+          const existingTopics = await tx.topic.findMany({
+            where: { id: { in: topics } },
             select: { id: true }, // Only select ID for verification
           });
 
-          if (topics.length !== topicIds.length) {
-            const missingIds = topicIds.filter(
-              (reqId) => !topics.some((dbTopic) => dbTopic.id === reqId),
+          if (existingTopics.length !== topics.length) {
+            const missingIds = topics.filter(
+              (reqId) => !existingTopics.some((dbTopic) => dbTopic.id === reqId),
             );
             throw new Error(
               `The following topic IDs do not exist: ${missingIds.join(", ")}`,
@@ -154,7 +180,7 @@ export async function POST(request: NextRequest) {
           price,
           maxParticipants,
           consultantProfileId,
-          topicIds, // Log topicIds
+          topics, // Log topics
         });
 
         const webinarPlan = await tx.webinarPlan.create({
@@ -172,8 +198,8 @@ export async function POST(request: NextRequest) {
             materialProvided,
             learningOutcomes,
             consultantProfile: { connect: { id: consultantProfileId } },
-            topics: topicIds
-              ? { connect: topicIds.map((id: string) => ({ id })) }
+            topics: topics
+              ? { connect: topics.map((id: string) => ({ id })) }
               : undefined,
           },
           include: {
@@ -285,6 +311,15 @@ export async function POST(request: NextRequest) {
 
 export async function PATCH(request: NextRequest) {
   try {
+    // Authentication check
+    const session = await getServerSession(authOptions);
+    if (!session?.user?.id) {
+      return NextResponse.json(
+        { error: "Authentication required" },
+        { status: 401 },
+      );
+    }
+
     const body = await request.json();
     console.log(
       "Received webinar update request body:",
@@ -317,10 +352,10 @@ export async function PATCH(request: NextRequest) {
       materialProvided,
       learningOutcomes,
       consultantProfileId,
-      topicIds, // Use validated topicIds directly
+      topics, // Use validated topics directly
       status,
       scheduledAt, // Optional string date
-      priceCurrency, // <-- Add this line back
+      priceCurrency,
     } = validatedData;
     // --- End Zod Validation ---
 
@@ -331,7 +366,7 @@ export async function PATCH(request: NextRequest) {
       title, // May be undefined
       durationInHours, // May be undefined
       // ... other fields if needed for logging ...
-      topicIds: topicIds ? `[${topicIds.length} topics]` : "undefined",
+      topics: topics ? `[${topics.length} topics]` : "undefined",
       status, // May be undefined
       scheduledAt, // May be undefined
     });
@@ -344,6 +379,7 @@ export async function PATCH(request: NextRequest) {
     const existingPlan = await prisma.webinarPlan.findUnique({
       where: { id },
       include: {
+        consultantProfile: true,
         topics: true,
         webinars: {
           include: {
@@ -361,6 +397,15 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json(
         { error: `Webinar plan with ID ${id} not found` },
         { status: 404 },
+      );
+    }
+
+    // Verify ownership - user must own this webinar plan
+    if (!existingPlan.consultantProfile ||
+        existingPlan.consultantProfile.userId !== session.user.id) {
+      return NextResponse.json(
+        { error: "You do not have permission to update this webinar" },
+        { status: 403 },
       );
     }
 
@@ -480,25 +525,25 @@ export async function PATCH(request: NextRequest) {
             connect: { id: consultantProfileId },
           };
 
-        // Determine how to handle topics (using validated 'topicIds')
-        if (topicIds !== undefined) {
-          // If topicIds are provided (can be empty array for removal), use set to sync
-          if (!Array.isArray(topicIds)) {
+        // Determine how to handle topics (using validated 'topics')
+        if (topics !== undefined) {
+          // If topics are provided (can be empty array for removal), use set to sync
+          if (!Array.isArray(topics)) {
             // This case should be caught by Zod validation, but double-check defensively
             console.error(
-              "topicIds was provided but is not an array:",
-              topicIds,
+              "topics was provided but is not an array:",
+              topics,
             );
-            throw new Error("Invalid format for topicIds");
+            throw new Error("Invalid format for topics");
           }
-          // Verify provided topicIds actually exist (important!)
-          const topics = await tx.topic.findMany({
-            where: { id: { in: topicIds } },
+          // Verify provided topics actually exist (important!)
+          const existingTopics = await tx.topic.findMany({
+            where: { id: { in: topics } },
             select: { id: true }, // Only need IDs
           });
-          if (topics.length !== topicIds.length) {
-            const missingIds = topicIds.filter(
-              (reqId) => !topics.some((dbTopic) => dbTopic.id === reqId),
+          if (existingTopics.length !== topics.length) {
+            const missingIds = topics.filter(
+              (reqId) => !existingTopics.some((dbTopic) => dbTopic.id === reqId),
             );
             console.error(
               "Attempted to set non-existent topic IDs:",
@@ -510,23 +555,23 @@ export async function PATCH(request: NextRequest) {
           }
 
           updateData.topics = {
-            set: topicIds.map((topicId: string) => ({ id: topicId })),
+            set: topics.map((topicId: string) => ({ id: topicId })),
           };
           console.log(
-            `Syncing topics with provided IDs: [${topicIds.join(", ")}]`,
+            `Syncing topics with provided IDs: [${topics.join(", ")}]`,
           );
         } else {
-          // If topicIds is undefined in the validated PATCH data, do *not* include the topics key
+          // If topics is undefined in the validated PATCH data, do *not* include the topics key
           // This leaves the existing topic relations untouched.
           console.log(
-            "topicIds is undefined in PATCH request. Existing topics will not be modified.",
+            "topics is undefined in PATCH request. Existing topics will not be modified.",
           );
         }
 
         // Execute the plan update only if there are changes
         let updatedWebinarPlan = existingPlan;
-        if (Object.keys(updateData).length > 0 || topicIds !== undefined) {
-          // Check topicIds for changes
+        if (Object.keys(updateData).length > 0 || topics !== undefined) {
+          // Check topics for changes
           updatedWebinarPlan = await tx.webinarPlan.update({
             where: { id },
             data: updateData,

@@ -339,8 +339,8 @@ export class PlannerService {
             learningOutcomes: webinarData.webinarPlan?.learningOutcomes,
             consultantProfileId: consultantId, // Should this be optional for PATCH? API expects it currently. Keep for now.
             scheduledAt: scheduledAtDate,
-            // API expects 'topicIds' for PATCH (inherited from POST schema definition)
-            topicIds:
+            // API expects 'topics' for PATCH
+            topics:
               allTopicIds.length > 0 // If we got IDs back from createTopics
                 ? allTopicIds
                 : topicNames.length === 0 // If input 'topicNames' was empty (explicit clear)
@@ -357,7 +357,7 @@ export class PlannerService {
             JSON.stringify(requestBody, null, 2),
           );
         } else {
-          // For POST, send all plan data + topicIds
+          // For POST, send all plan data + topics
           const postPlanData = { ...webinarData.webinarPlan };
           // Ensure nested topics array is removed before spreading
           delete postPlanData.topics;
@@ -365,7 +365,7 @@ export class PlannerService {
             ...postPlanData,
             consultantProfileId: consultantId,
             scheduledAt: scheduledAtDate,
-            topicIds: allTopicIds, // Send newly created/found topic IDs (API expects topicIds)
+            topics: allTopicIds, // Send newly created/found topic IDs
           };
           // Remove undefined fields before sending
           Object.keys(requestBody).forEach(

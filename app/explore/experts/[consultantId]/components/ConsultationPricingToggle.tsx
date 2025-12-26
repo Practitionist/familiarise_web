@@ -219,17 +219,16 @@ export default function ConsultationPricingToggle({
       className="w-full space-y-6"
     >
       {/* Duration Toggle - Black/Silver Theme */}
-      <TabsList className="inline-flex p-1 bg-zinc-800/50 backdrop-blur-sm rounded-xl border border-zinc-700/50">
+      <TabsList className="flex w-full p-1 bg-zinc-800/50 backdrop-blur-sm rounded-xl border border-zinc-700/50">
         {consultationOptions.map((option) => (
           <TabsTrigger
             key={option.durationInHours}
             value={option.title.toLowerCase().replace(" ", "-")}
-            className={`${
-              activeConsultationOption ===
+            className={`${activeConsultationOption ===
               option.title.toLowerCase().replace(" ", "-")
-                ? "bg-white text-zinc-900 shadow-sm"
-                : "text-zinc-400 hover:text-white hover:bg-zinc-700/50"
-            } px-4 py-2 rounded-lg font-medium transition-all duration-200`}
+              ? "bg-white text-zinc-900 shadow-sm"
+              : "text-zinc-400 hover:text-white hover:bg-zinc-700/50"
+              } flex-1 px-2 sm:px-4 py-2 rounded-lg font-medium text-xs sm:text-sm transition-all duration-200 whitespace-nowrap`}
           >
             {option.title}
           </TabsTrigger>
@@ -244,7 +243,7 @@ export default function ConsultationPricingToggle({
             animate={{
               opacity:
                 activeConsultationOption ===
-                option.title.toLowerCase().replace(" ", "-")
+                  option.title.toLowerCase().replace(" ", "-")
                   ? 1
                   : 0,
               y: 0,
@@ -252,7 +251,7 @@ export default function ConsultationPricingToggle({
             transition={{ duration: 0.2 }}
             className={
               activeConsultationOption ===
-              option.title.toLowerCase().replace(" ", "-")
+                option.title.toLowerCase().replace(" ", "-")
                 ? "block"
                 : "hidden"
             }
@@ -296,7 +295,7 @@ export default function ConsultationPricingToggle({
                     Book Now
                   </Button>
                 </DialogTrigger>
-                <DialogContent className="sm:max-w-[700px] lg:max-w-[950px] xl:max-w-[1050px] bg-zinc-900 text-white p-0 border border-zinc-800 rounded-2xl shadow-2xl">
+                <DialogContent className="sm:max-w-[700px] lg:max-w-[950px] xl:max-w-[1050px] max-h-[calc(100vh-100px)] overflow-y-auto top-[80px] translate-y-0 bg-zinc-900 text-white p-0 border border-zinc-800 rounded-2xl shadow-2xl">
                   <DialogHeader className="p-6 lg:p-8 border-b border-zinc-800">
                     <DialogTitle className="text-xl lg:text-2xl font-semibold">
                       Book {option.title} Consultation
@@ -380,11 +379,10 @@ export default function ConsultationPricingToggle({
                           <p className="text-sm text-zinc-400">
                             This consultant prefers{" "}
                             <span
-                              className={`px-2 py-1 rounded text-xs font-medium ${
-                                consultantDetails.scheduleType === "WEEKLY"
-                                  ? "bg-zinc-700 text-zinc-300"
-                                  : "bg-zinc-700 text-zinc-300"
-                              }`}
+                              className={`px-2 py-1 rounded text-xs font-medium ${consultantDetails.scheduleType === "WEEKLY"
+                                ? "bg-zinc-700 text-zinc-300"
+                                : "bg-zinc-700 text-zinc-300"
+                                }`}
                             >
                               {consultantDetails.scheduleType === "WEEKLY"
                                 ? "📅 Weekly"
@@ -400,20 +398,19 @@ export default function ConsultationPricingToggle({
                             const isSelected =
                               selectedSlot?.slotId === slot.slotId &&
                               selectedSlot?.localStartTime ===
-                                slot.localStartTime;
+                              slot.localStartTime;
                             const isAllocated = slot.isAllocated;
 
                             return (
                               <button
                                 key={`${slot.slotId}-${index}`}
                                 className={`w-full p-4 text-base font-medium transition-all duration-200 rounded-xl text-left
-                                    ${
-                                      isSelected
-                                        ? "bg-white text-zinc-900 shadow-md"
-                                        : isAllocated
-                                          ? "bg-amber-500/10 text-amber-400 border border-amber-500/30 hover:bg-amber-500/20"
-                                          : "bg-zinc-800/60 text-zinc-300 border border-zinc-700/50 hover:bg-zinc-700/80 hover:border-zinc-600"
-                                    }`}
+                                    ${isSelected
+                                    ? "bg-white text-zinc-900 shadow-md"
+                                    : isAllocated
+                                      ? "bg-amber-500/10 text-amber-400 border border-amber-500/30 hover:bg-amber-500/20"
+                                      : "bg-zinc-800/60 text-zinc-300 border border-zinc-700/50 hover:bg-zinc-700/80 hover:border-zinc-600"
+                                  }`}
                                 onClick={() => setSelectedSlot(slot)}
                               >
                                 <div className="flex items-center">

@@ -238,7 +238,7 @@ function MonthlyEventItem({
         onClick={onToggle}
         className="flex items-center gap-4 p-4 cursor-pointer hover:bg-zinc-50/50 transition-colors"
       >
-        <Avatar className="h-10 w-10 ring-1 ring-zinc-200">
+        <Avatar className="h-10 w-10 ring-1 ring-zinc-200 flex-shrink-0">
           <AvatarImage src={event.consultantImage} alt={event.consultantName} />
           <AvatarFallback className="bg-zinc-100 text-zinc-600 text-xs font-medium">
             {event.consultantName
@@ -248,27 +248,63 @@ function MonthlyEventItem({
           </AvatarFallback>
         </Avatar>
         <div className="flex-1 min-w-0">
-          <h4 className="font-medium text-zinc-900 text-sm">{event.title}</h4>
-          <p className="text-xs text-zinc-500">{event.consultantName}</p>
+          {/* Desktop: single row layout */}
+          <div className="hidden lg:flex items-center justify-between gap-3">
+            <div className="min-w-0 flex-1">
+              <h4 className="font-medium text-zinc-900 text-sm truncate">{event.title}</h4>
+              <p className="text-xs text-zinc-500 truncate">{event.consultantName}</p>
+            </div>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <Badge className="text-[10px] font-medium bg-transparent border border-zinc-300 text-zinc-600 rounded-md">
+                {typeLabel}
+              </Badge>
+              <Badge
+                className={cn(
+                  "text-[10px] font-medium border-0",
+                  statusStyle.bg,
+                  statusStyle.text,
+                )}
+              >
+                {event.status.replace(/_/g, " ")}
+              </Badge>
+              <ChevronRight
+                className={cn(
+                  "h-4 w-4 text-zinc-400 transition-transform duration-200",
+                  isExpanded && "rotate-90",
+                )}
+              />
+            </div>
+          </div>
+          {/* Mobile: stacked layout */}
+          <div className="lg:hidden">
+            <div className="flex items-start justify-between gap-2 mb-1">
+              <div className="min-w-0 flex-1">
+                <h4 className="font-medium text-zinc-900 text-sm truncate">{event.title}</h4>
+                <p className="text-xs text-zinc-500 truncate">{event.consultantName}</p>
+              </div>
+              <ChevronRight
+                className={cn(
+                  "h-4 w-4 text-zinc-400 transition-transform duration-200 flex-shrink-0 mt-0.5",
+                  isExpanded && "rotate-90",
+                )}
+              />
+            </div>
+            <div className="flex items-center gap-1.5 mt-1.5">
+              <Badge className="text-[10px] font-medium bg-transparent border border-zinc-300 text-zinc-600 rounded-md">
+                {typeLabel}
+              </Badge>
+              <Badge
+                className={cn(
+                  "text-[10px] font-medium border-0",
+                  statusStyle.bg,
+                  statusStyle.text,
+                )}
+              >
+                {event.status.replace(/_/g, " ")}
+              </Badge>
+            </div>
+          </div>
         </div>
-        <Badge className="text-[10px] font-medium bg-transparent border border-zinc-300 text-zinc-600 rounded-md">
-          {typeLabel}
-        </Badge>
-        <Badge
-          className={cn(
-            "text-[10px] font-medium border-0",
-            statusStyle.bg,
-            statusStyle.text,
-          )}
-        >
-          {event.status.replace(/_/g, " ")}
-        </Badge>
-        <ChevronRight
-          className={cn(
-            "h-4 w-4 text-zinc-400 transition-transform duration-200",
-            isExpanded && "rotate-90",
-          )}
-        />
       </div>
 
       {/* Expanded slots */}
@@ -625,9 +661,9 @@ export default function HomeTab({
                   <UpcomingSessionCard
                     key={event.id}
                     event={event}
-                    // onClick={() =>
-                    //   router.push(`/dashboard/consultee/${consulteeId}/appointments`)
-                    // }
+                  // onClick={() =>
+                  //   router.push(`/dashboard/consultee/${consulteeId}/appointments`)
+                  // }
                   />
                 ))}
               </div>

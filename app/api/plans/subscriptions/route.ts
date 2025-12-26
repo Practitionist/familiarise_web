@@ -1,6 +1,8 @@
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
-import { PlanEmailSupport } from "@prisma/client";
+import { getServerSession } from "next-auth";
+import authOptions from "@/app/api/auth/[...nextauth]/options";
+import { SubscriptionPlanSchema } from "@/schemas/plans";
 
 export async function GET(request: NextRequest) {
   try {
@@ -47,65 +49,73 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    // Authentication check
+    const session = await getServerSession(authOptions);
+    if (!session?.user?.id) {
+      return NextResponse.json(
+        { error: "Authentication required" },
+        { status: 401 },
+      );
+    }
+
     const body = await request.json();
-    const {
-      title,
-      description,
-      durationInMonths,
-      price,
-      callsPerWeek,
-      sessionDurationInHours = 1.0,
-      emailSupport,
-      language,
-      level,
-      prerequisites,
-      materialProvided,
-      learningOutcomes,
-      consultantProfileId,
-    } = body;
+    const { consultantProfileId, ...planData } = body;
+
+    if (!consultantProfileId) {
+      return NextResponse.json(
+        { error: "Consultant profile ID is required" },
+        { status: 400 },
+      );
+    }
+
+    // Verify ownership - user must own this consultant profile
+    const consultantProfile = await prisma.consultantProfile.findFirst({
+      where: {
+        id: consultantProfileId,
+        userId: session.user.id,
+      },
+    });
+
+    if (!consultantProfile) {
+      return NextResponse.json(
+        { error: "You do not have permission to create plans for this consultant profile" },
+        { status: 403 },
+      );
+    }
+
+    // Validate input with Zod schema
+    const validationResult = SubscriptionPlanSchema.safeParse(planData);
+    if (!validationResult.success) {
+      return NextResponse.json(
+        { error: "Validation failed", details: validationResult.error.issues },
+        { status: 400 },
+      );
+    }
+
+    const validatedData = validationResult.data;
 
     // Compute derived metrics
-    const totalSessions = (callsPerWeek || 1) * durationInMonths * 4;
+    const sessionDurationInHours = planData.sessionDurationInHours || 1.0;
+    const totalSessions = (validatedData.callsPerWeek || 1) * validatedData.durationInMonths * 4;
     const totalHours = totalSessions * sessionDurationInHours;
-
-    // Input validation
-    if (!title || !durationInMonths || !price || !consultantProfileId) {
-      return NextResponse.json(
-        { error: "Missing required fields" },
-        { status: 400 },
-      );
-    }
-
-    if (durationInMonths <= 0 || price <= 0 || callsPerWeek < 0) {
-      return NextResponse.json(
-        { error: "Invalid numeric values" },
-        { status: 400 },
-      );
-    }
-
-    if (!Object.values(PlanEmailSupport).includes(emailSupport)) {
-      return NextResponse.json(
-        { error: "Invalid email support value" },
-        { status: 400 },
-      );
-    }
 
     const newSubscriptionPlan = await prisma.subscriptionPlan.create({
       data: {
-        title,
-        description,
-        durationInMonths,
-        price,
-        callsPerWeek,
+        title: validatedData.title,
+        description: validatedData.description,
+        durationInMonths: validatedData.durationInMonths,
+        price: Math.round(validatedData.price),
+        priceCurrency: validatedData.priceCurrency,
+        callsPerWeek: validatedData.callsPerWeek,
         sessionDurationInHours,
         totalSessions,
         totalHours,
-        emailSupport,
-        language,
-        level,
-        prerequisites,
-        materialProvided,
-        learningOutcomes,
+        emailSupport: validatedData.emailSupport,
+        language: validatedData.language,
+        level: validatedData.level,
+        prerequisites: validatedData.prerequisites,
+        materialProvided: validatedData.materialProvided,
+        learningOutcomes: validatedData.learningOutcomes,
         consultantProfile: { connect: { id: consultantProfileId } },
       },
       include: {
