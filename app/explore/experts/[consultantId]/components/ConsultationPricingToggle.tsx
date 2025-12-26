@@ -225,9 +225,9 @@ export default function ConsultationPricingToggle({
             key={option.durationInHours}
             value={option.title.toLowerCase().replace(" ", "-")}
             className={`${activeConsultationOption ===
-                option.title.toLowerCase().replace(" ", "-")
-                ? "bg-white text-zinc-900 shadow-sm"
-                : "text-zinc-400 hover:text-white hover:bg-zinc-700/50"
+              option.title.toLowerCase().replace(" ", "-")
+              ? "bg-white text-zinc-900 shadow-sm"
+              : "text-zinc-400 hover:text-white hover:bg-zinc-700/50"
               } flex-1 px-2 sm:px-4 py-2 rounded-lg font-medium text-xs sm:text-sm transition-all duration-200 whitespace-nowrap`}
           >
             {option.title}
@@ -295,7 +295,7 @@ export default function ConsultationPricingToggle({
                     Book Now
                   </Button>
                 </DialogTrigger>
-                <DialogContent className="sm:max-w-[700px] lg:max-w-[950px] xl:max-w-[1050px] bg-zinc-900 text-white p-0 border border-zinc-800 rounded-2xl shadow-2xl">
+                <DialogContent className="sm:max-w-[700px] lg:max-w-[950px] xl:max-w-[1050px] max-h-[calc(100vh-100px)] overflow-y-auto top-[80px] translate-y-0 bg-zinc-900 text-white p-0 border border-zinc-800 rounded-2xl shadow-2xl">
                   <DialogHeader className="p-6 lg:p-8 border-b border-zinc-800">
                     <DialogTitle className="text-xl lg:text-2xl font-semibold">
                       Book {option.title} Consultation
@@ -380,8 +380,8 @@ export default function ConsultationPricingToggle({
                             This consultant prefers{" "}
                             <span
                               className={`px-2 py-1 rounded text-xs font-medium ${consultantDetails.scheduleType === "WEEKLY"
-                                  ? "bg-zinc-700 text-zinc-300"
-                                  : "bg-zinc-700 text-zinc-300"
+                                ? "bg-zinc-700 text-zinc-300"
+                                : "bg-zinc-700 text-zinc-300"
                                 }`}
                             >
                               {consultantDetails.scheduleType === "WEEKLY"
