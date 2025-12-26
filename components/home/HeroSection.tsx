@@ -54,18 +54,18 @@ function AnimatedNumber({
 export function HeroSection() {
   return (
     <section className="relative min-h-[95vh] flex items-center bg-black overflow-hidden">
-      {/* Animated gradient orbs */}
+      {/* Animated gradient orbs - reduced blur for better performance */}
       <div className="absolute inset-0 overflow-hidden">
-        <div className="absolute top-1/4 left-1/4 w-[600px] h-[600px] rounded-full bg-gradient-to-br from-zinc-800/50 to-transparent blur-[120px] animate-blob" />
-        <div className="absolute top-1/3 right-1/4 w-[500px] h-[500px] rounded-full bg-gradient-to-bl from-zinc-700/30 to-transparent blur-[100px] animate-blob animation-delay-2000" />
-        <div className="absolute bottom-1/4 left-1/2 w-[700px] h-[700px] rounded-full bg-gradient-to-t from-zinc-800/40 to-transparent blur-[130px] animate-blob animation-delay-4000" />
+        <div className="absolute top-1/4 left-1/4 w-[600px] h-[600px] rounded-full bg-gradient-to-br from-zinc-800/50 to-transparent blur-[40px] animate-blob" />
+        <div className="absolute top-1/3 right-1/4 w-[500px] h-[500px] rounded-full bg-gradient-to-bl from-zinc-700/30 to-transparent blur-[35px] animate-blob animation-delay-2000" />
+        <div className="absolute bottom-1/4 left-1/2 w-[700px] h-[700px] rounded-full bg-gradient-to-t from-zinc-800/40 to-transparent blur-[45px] animate-blob animation-delay-4000" />
       </div>
 
       {/* Grid pattern overlay */}
       <div className="absolute inset-0 grid-pattern opacity-30" />
 
-      {/* Spotlight effect */}
-      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[600px] bg-gradient-to-b from-zinc-800/20 via-transparent to-transparent blur-[80px]" />
+      {/* Spotlight effect - reduced blur for better performance */}
+      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[600px] bg-gradient-to-b from-zinc-800/20 via-transparent to-transparent blur-[30px]" />
 
       <div className="container mx-auto px-4 md:px-6 relative z-10 py-20 md:py-32">
         <div className="max-w-4xl mx-auto text-center">

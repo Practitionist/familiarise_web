@@ -46,6 +46,7 @@ export default function Blog() {
                 alt="Politics Story Image"
                 className="w-full h-64 object-cover object-center rounded-lg"
                 height="400"
+                loading="lazy"
                 src="/placeholder.svg"
                 style={{
                   aspectRatio: "600/400",
@@ -69,6 +70,7 @@ export default function Blog() {
                 alt="Politics Story Image"
                 className="w-full h-64 object-cover object-center rounded-lg"
                 height="400"
+                loading="lazy"
                 src="/placeholder.svg"
                 style={{
                   aspectRatio: "600/400",
@@ -92,6 +94,7 @@ export default function Blog() {
                 alt="Politics Story Image"
                 className="w-full h-64 object-cover object-center rounded-lg"
                 height="400"
+                loading="lazy"
                 src="/placeholder.svg"
                 style={{
                   aspectRatio: "600/400",
@@ -120,6 +123,7 @@ export default function Blog() {
                 alt="Business Story Image"
                 className="w-full h-64 object-cover object-center rounded-lg"
                 height="400"
+                loading="lazy"
                 src="/placeholder.svg"
                 style={{
                   aspectRatio: "600/400",
@@ -143,6 +147,7 @@ export default function Blog() {
                 alt="Business Story Image"
                 className="w-full h-64 object-cover object-center rounded-lg"
                 height="400"
+                loading="lazy"
                 src="/placeholder.svg"
                 style={{
                   aspectRatio: "600/400",
@@ -166,6 +171,7 @@ export default function Blog() {
                 alt="Business Story Image"
                 className="w-full h-64 object-cover object-center rounded-lg"
                 height="400"
+                loading="lazy"
                 src="/placeholder.svg"
                 style={{
                   aspectRatio: "600/400",
@@ -194,6 +200,7 @@ export default function Blog() {
                 alt="Tech Story Image"
                 className="w-full h-64 object-cover object-center rounded-lg"
                 height="400"
+                loading="lazy"
                 src="/placeholder.svg"
                 style={{
                   aspectRatio: "600/400",
@@ -217,6 +224,7 @@ export default function Blog() {
                 alt="Tech Story Image"
                 className="w-full h-64 object-cover object-center rounded-lg"
                 height="400"
+                loading="lazy"
                 src="/placeholder.svg"
                 style={{
                   aspectRatio: "600/400",
@@ -240,6 +248,7 @@ export default function Blog() {
                 alt="Tech Story Image"
                 className="w-full h-64 object-cover object-center rounded-lg"
                 height="400"
+                loading="lazy"
                 src="/placeholder.svg"
                 style={{
                   aspectRatio: "600/400",
@@ -268,6 +277,7 @@ export default function Blog() {
                 alt="Culture Story Image"
                 className="w-full h-64 object-cover object-center rounded-lg"
                 height="400"
+                loading="lazy"
                 src="/placeholder.svg"
                 style={{
                   aspectRatio: "600/400",
@@ -291,6 +301,7 @@ export default function Blog() {
                 alt="Culture Story Image"
                 className="w-full h-64 object-cover object-center rounded-lg"
                 height="400"
+                loading="lazy"
                 src="/placeholder.svg"
                 style={{
                   aspectRatio: "600/400",
@@ -314,6 +325,7 @@ export default function Blog() {
                 alt="Culture Story Image"
                 className="w-full h-64 object-cover object-center rounded-lg"
                 height="400"
+                loading="lazy"
                 src="/placeholder.svg"
                 style={{
                   aspectRatio: "600/400",
@@ -342,6 +354,7 @@ export default function Blog() {
                 alt="Sports Story Image"
                 className="w-full h-64 object-cover object-center rounded-lg"
                 height="400"
+                loading="lazy"
                 src="/placeholder.svg"
                 style={{
                   aspectRatio: "600/400",
@@ -365,6 +378,7 @@ export default function Blog() {
                 alt="Sports Story Image"
                 className="w-full h-64 object-cover object-center rounded-lg"
                 height="400"
+                loading="lazy"
                 src="/placeholder.svg"
                 style={{
                   aspectRatio: "600/400",
@@ -388,6 +402,7 @@ export default function Blog() {
                 alt="Sports Story Image"
                 className="w-full h-64 object-cover object-center rounded-lg"
                 height="400"
+                loading="lazy"
                 src="/placeholder.svg"
                 style={{
                   aspectRatio: "600/400",

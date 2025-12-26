@@ -1,3 +1,5 @@
+import "@stream-io/video-react-sdk/dist/css/styles.css";
+
 import StreamProvider from "@/providers/StreamProvider";
 import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";

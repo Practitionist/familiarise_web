@@ -1,6 +1,30 @@
 import { getToken } from "next-auth/jwt";
 import { NextRequest, NextResponse } from "next/server";
 
+/**
+ * Add preconnect Link headers to improve page load performance
+ * These headers hint the browser to establish early connections
+ */
+function addPreconnectHeaders(response: NextResponse): NextResponse {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  if (supabaseUrl) {
+    response.headers.append("Link", `<${supabaseUrl}>; rel=preconnect`);
+  }
+  response.headers.append(
+    "Link",
+    "<https://avatars.githubusercontent.com>; rel=preconnect",
+  );
+  return response;
+}
+
+/**
+ * Create a NextResponse.next() with preconnect headers for page requests
+ */
+function createPageResponse(): NextResponse {
+  const response = NextResponse.next();
+  return addPreconnectHeaders(response);
+}
+
 // Constants for common URLs and route patterns
 const URLS = {
   SIGNIN: "/auth/signin",
@@ -167,7 +191,7 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
       const dashboardUrl = getDashboardUrl(token);
       return NextResponse.redirect(new URL(dashboardUrl, req.url));
     }
-    return NextResponse.next();
+    return createPageResponse();
   }
 
   // Handle protected routes
@@ -207,7 +231,7 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
       }
     }
 
-    return NextResponse.next();
+    return createPageResponse();
   }
 
   // Handle root and other routes for authenticated users
@@ -221,8 +245,8 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
     }
   }
 
-  // Allow access to all other routes
-  return NextResponse.next();
+  // Allow access to all other routes (pages get preconnect headers)
+  return createPageResponse();
 }
 
 // Optimized matcher to reduce middleware execution

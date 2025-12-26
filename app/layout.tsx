@@ -1,7 +1,6 @@
 import AnnouncementBar from "@/components/AnnouncementBar";
 import Footer from "@/components/Footer";
 import Navbar from "@/components/Navbar";
-import { PreloadResources } from "@/components/PreloadResources";
 import { Toaster } from "@/components/ui/toaster";
 import NextAuthProvider from "@/providers/NextAuthSessionProvider";
 import ReactQueryProvider from "@/providers/ReactQueryProvider";
@@ -10,7 +9,6 @@ import { getServerSession } from "next-auth";
 import { Sora } from "next/font/google";
 import authOptions from "./api/auth/[...nextauth]/options";
 
-import "@stream-io/video-react-sdk/dist/css/styles.css";
 import "./globals.css";
 
 const sora = Sora({
@@ -45,7 +43,6 @@ export default async function RootLayout({
         className={`${sora.className} flex flex-col min-h-screen antialiased`}
         suppressHydrationWarning
       >
-        <PreloadResources />
         <ReactQueryProvider>
           <NextAuthProvider session={session}>
             <Toaster />
