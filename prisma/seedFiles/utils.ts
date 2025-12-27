@@ -766,3 +766,300 @@ export function generateAssignedRegions(): string[] {
   const count = faker.number.int({ min: 1, max: 3 });
   return faker.helpers.arrayElements(regions, count);
 }
+
+// ============================================================
+// PAYOUT SYSTEM UTILITIES
+// ============================================================
+
+/**
+ * Indian bank data for realistic payout account generation
+ */
+export const INDIAN_BANKS = [
+  { name: "HDFC Bank", ifscPrefix: "HDFC0" },
+  { name: "ICICI Bank", ifscPrefix: "ICIC0" },
+  { name: "State Bank of India", ifscPrefix: "SBIN0" },
+  { name: "Axis Bank", ifscPrefix: "UTIB0" },
+  { name: "Kotak Mahindra Bank", ifscPrefix: "KKBK0" },
+  { name: "Punjab National Bank", ifscPrefix: "PUNB0" },
+  { name: "Bank of Baroda", ifscPrefix: "BARB0" },
+  { name: "Yes Bank", ifscPrefix: "YESB0" },
+  { name: "IndusInd Bank", ifscPrefix: "INDB0" },
+  { name: "IDBI Bank", ifscPrefix: "IBKL0" },
+  { name: "Federal Bank", ifscPrefix: "FDRL0" },
+  { name: "Canara Bank", ifscPrefix: "CNRB0" },
+] as const;
+
+export type IndianBank = (typeof INDIAN_BANKS)[number];
+
+/**
+ * UPI suffixes for realistic UPI ID generation
+ */
+export const UPI_SUFFIXES = [
+  "@upi",
+  "@paytm",
+  "@gpay",
+  "@phonepe",
+  "@ybl",
+  "@okaxis",
+  "@okhdfcbank",
+  "@okicici",
+  "@oksbi",
+  "@apl",
+] as const;
+
+/**
+ * Generate realistic IFSC code for a bank
+ * IFSC format: 4 letter bank code + 0 + 6 digit branch code
+ */
+export function generateIfscCode(bank: IndianBank): string {
+  const branchCode = faker.string.numeric(6);
+  return `${bank.ifscPrefix}${branchCode}`;
+}
+
+/**
+ * Generate realistic UPI ID from user name
+ * Format: sanitizedname@suffix
+ */
+export function generateUpiId(userName: string): string {
+  const cleanName = userName
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "")
+    .slice(0, 20);
+  const suffix = faker.helpers.arrayElement(UPI_SUFFIXES);
+  // Add random numbers for uniqueness
+  const randomNum = faker.string.numeric({ length: { min: 0, max: 4 } });
+  return `${cleanName}${randomNum}${suffix}`;
+}
+
+/**
+ * Generate Razorpay Contact ID
+ * Format: cont_XXXXXXXXXXXX (14 alphanumeric chars)
+ */
+export function generateRazorpayContactId(): string {
+  return `cont_${faker.string.alphanumeric(14)}`;
+}
+
+/**
+ * Generate Razorpay Fund Account ID
+ * Format: fa_XXXXXXXXXXXX (14 alphanumeric chars)
+ */
+export function generateRazorpayFundAccountId(): string {
+  return `fa_${faker.string.alphanumeric(14)}`;
+}
+
+/**
+ * Generate Razorpay Payout ID
+ * Format: pout_XXXXXXXXXXXX (14 alphanumeric chars)
+ */
+export function generateRazorpayPayoutId(): string {
+  return `pout_${faker.string.alphanumeric(14)}`;
+}
+
+/**
+ * Generate Stripe Account ID (for Stripe Connect)
+ * Format: acct_XXXXXXXXXXXXXXXX (16 alphanumeric chars)
+ */
+export function generateStripeAccountId(): string {
+  return `acct_${faker.string.alphanumeric(16)}`;
+}
+
+/**
+ * Generate Stripe Payout ID
+ * Format: po_XXXXXXXXXXXXXXXXXXXXXXXX (24 alphanumeric chars)
+ */
+export function generateStripePayoutId(): string {
+  return `po_${faker.string.alphanumeric(24)}`;
+}
+
+/**
+ * Generate payout batch ID
+ * Format: PAYOUT-BATCH-YYYYMMDD-XXXX
+ */
+export function generateBatchId(date: Date = new Date()): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const sequence = faker.string.alphanumeric(4).toUpperCase();
+  return `PAYOUT-BATCH-${year}${month}${day}-${sequence}`;
+}
+
+/**
+ * Generate a unique idempotency key for Razorpay payouts
+ * Using UUID v4 format
+ */
+export function generateIdempotencyKey(): string {
+  return faker.string.uuid();
+}
+
+/**
+ * Generate sequential invoice number
+ * Format: FMR-YYYYMM-XXXXX
+ */
+let invoiceSequence = 0;
+export function generateInvoiceNumber(paymentDate: Date): string {
+  invoiceSequence++;
+  const year = paymentDate.getFullYear();
+  const month = String(paymentDate.getMonth() + 1).padStart(2, "0");
+  const sequence = String(invoiceSequence).padStart(5, "0");
+  return `FMR-${year}${month}-${sequence}`;
+}
+
+/**
+ * Reset invoice sequence (useful for testing)
+ */
+export function resetInvoiceSequence(): void {
+  invoiceSequence = 0;
+}
+
+/**
+ * Weighted random selection helper
+ * @param items Array of objects with value and weight properties
+ * @returns Selected value based on weighted probability
+ */
+export function weightedRandom<T>(
+  items: Array<{ value: T; weight: number }>,
+): T {
+  const totalWeight = items.reduce((sum, item) => sum + item.weight, 0);
+  let random = faker.number.float({ min: 0, max: totalWeight });
+
+  for (const item of items) {
+    random -= item.weight;
+    if (random <= 0) {
+      return item.value;
+    }
+  }
+  return items[items.length - 1].value;
+}
+
+/**
+ * Platform fee percentage (20%)
+ */
+export const PLATFORM_FEE_PERCENTAGE = 0.2;
+
+/**
+ * Consultant share percentage (80%)
+ */
+export const CONSULTANT_SHARE_PERCENTAGE = 0.8;
+
+/**
+ * Calculate platform fee from gross amount
+ * @param grossAmount Amount in smallest currency unit (paise/cents)
+ */
+export function calculatePlatformFee(grossAmount: number): number {
+  return Math.round(grossAmount * PLATFORM_FEE_PERCENTAGE);
+}
+
+/**
+ * Calculate consultant share from gross amount
+ * @param grossAmount Amount in smallest currency unit (paise/cents)
+ */
+export function calculateConsultantShare(grossAmount: number): number {
+  return Math.round(grossAmount * CONSULTANT_SHARE_PERCENTAGE);
+}
+
+/**
+ * GST tax rate for services in India (18%)
+ */
+export const GST_TAX_RATE = 0.18;
+
+/**
+ * HSN/SAC code for consulting/advisory services
+ */
+export const HSN_CODE_CONSULTING = "999293";
+
+/**
+ * Calculate tax breakdown from total amount (inclusive of tax)
+ * @param totalAmount Total amount including tax
+ * @param taxRate Tax rate (default 18% GST)
+ * @returns Object with baseAmount and taxAmount
+ */
+export function calculateTaxBreakdown(
+  totalAmount: number,
+  taxRate: number = GST_TAX_RATE,
+): { baseAmount: number; taxAmount: number } {
+  const baseAmount = Math.round(totalAmount / (1 + taxRate));
+  const taxAmount = totalAmount - baseAmount;
+  return { baseAmount, taxAmount };
+}
+
+/**
+ * Generate random account number last 4 digits
+ */
+export function generateAccountNumberLast4(): string {
+  return faker.string.numeric(4);
+}
+
+/**
+ * Generate random hold period in days (7-14 days)
+ */
+export function generateHoldPeriodDays(): number {
+  return faker.number.int({ min: 7, max: 14 });
+}
+
+/**
+ * Generate a date with hold period added
+ */
+export function generateHoldUntilDate(fromDate: Date): Date {
+  const holdDays = generateHoldPeriodDays();
+  const holdUntil = new Date(fromDate);
+  holdUntil.setDate(holdUntil.getDate() + holdDays);
+  return holdUntil;
+}
+
+/**
+ * Earning status distribution for seeding
+ */
+export const EARNING_STATUS_WEIGHTS = [
+  { value: "PAID" as const, weight: 0.3 },
+  { value: "READY" as const, weight: 0.3 },
+  { value: "PENDING" as const, weight: 0.25 },
+  { value: "HELD" as const, weight: 0.1 },
+  { value: "REFUNDED" as const, weight: 0.05 },
+];
+
+/**
+ * Payout status distribution for seeding
+ */
+export const PAYOUT_STATUS_WEIGHTS = [
+  { value: "COMPLETED" as const, weight: 0.5 },
+  { value: "PROCESSING" as const, weight: 0.2 },
+  { value: "PENDING" as const, weight: 0.15 },
+  { value: "APPROVED" as const, weight: 0.1 },
+  { value: "FAILED" as const, weight: 0.05 },
+];
+
+/**
+ * Payout provider distribution for seeding
+ */
+export const PAYOUT_PROVIDER_WEIGHTS = [
+  { value: "RAZORPAY" as const, weight: 0.85 },
+  { value: "STRIPE" as const, weight: 0.15 },
+];
+
+/**
+ * Payout account type distribution for seeding
+ */
+export const PAYOUT_ACCOUNT_TYPE_WEIGHTS = [
+  { value: "BANK_ACCOUNT" as const, weight: 0.6 },
+  { value: "UPI" as const, weight: 0.3 },
+  { value: "STRIPE_CONNECT" as const, weight: 0.1 },
+];
+
+/**
+ * Generate failure reason for failed payouts
+ */
+export function generatePayoutFailureReason(): string {
+  const reasons = [
+    "Insufficient funds in payout account",
+    "Invalid bank account details",
+    "Bank account closed",
+    "IFSC code mismatch",
+    "UPI ID inactive",
+    "Transfer limit exceeded",
+    "Bank server unavailable",
+    "Account holder name mismatch",
+    "Beneficiary bank rejected transfer",
+    "Timeout while processing",
+  ];
+  return faker.helpers.arrayElement(reasons);
+}
