@@ -11,7 +11,9 @@ import { upsertUsersToStream } from "./user.action";
 const channelTypeSchema = z.enum(["messaging", "team"]);
 const channelIdSchema = z.string().min(1, "Channel ID is required");
 const memberIdSchema = z.string().min(1, "Member ID is required");
-const membersSchema = z.array(memberIdSchema).min(1, "At least one member required");
+const membersSchema = z
+  .array(memberIdSchema)
+  .min(1, "At least one member required");
 
 const createChannelSchema = z.object({
   channelType: channelTypeSchema,
@@ -40,7 +42,9 @@ export async function createChannel(input: {
   const client = getStreamChatClient();
 
   // Ensure creator is always included in members list
-  const allMembers = Array.from(new Set([validated.createdById, ...validated.members]));
+  const allMembers = Array.from(
+    new Set([validated.createdById, ...validated.members]),
+  );
 
   streamLogger.debug("Creating channel", {
     channelId: validated.channelId,
@@ -70,7 +74,11 @@ export async function createChannel(input: {
     actualMemberCount: actualMembers.length,
   });
 
-  return { channelId: validated.channelId, members: actualMembers, channelData };
+  return {
+    channelId: validated.channelId,
+    members: actualMembers,
+    channelData,
+  };
 }
 
 /**
@@ -141,7 +149,9 @@ export async function createWebinarChannel(webinarId: string) {
       slot.user.map((u) => u.id),
     ) || [];
 
-  const allParticipantIds = Array.from(new Set([...waitlistIds, ...appointmentIds]));
+  const allParticipantIds = Array.from(
+    new Set([...waitlistIds, ...appointmentIds]),
+  );
 
   streamLogger.debug("Creating webinar channel", {
     webinarId,
@@ -202,7 +212,9 @@ export async function createClassChannel(classId: string) {
       apt.slotsOfAppointment?.flatMap((slot) => slot.user.map((u) => u.id)),
     ) || [];
 
-  const allParticipantIds = Array.from(new Set([...waitlistIds, ...appointmentIds]));
+  const allParticipantIds = Array.from(
+    new Set([...waitlistIds, ...appointmentIds]),
+  );
 
   streamLogger.debug("Creating class channel", {
     classId,
@@ -251,7 +263,9 @@ export async function createConsultationChannel(consultationId: string) {
   const consulteeId = consultation.requestedBy.user.id;
 
   if (!consultantId || !consulteeId) {
-    throw new Error(`Participants not found for consultation: ${consultationId}`);
+    throw new Error(
+      `Participants not found for consultation: ${consultationId}`,
+    );
   }
 
   return createChannel({
@@ -293,7 +307,9 @@ export async function createSubscriptionChannel(subscriptionId: string) {
   const consulteeId = subscription.requestedBy.user.id;
 
   if (!consultantId || !consulteeId) {
-    throw new Error(`Participants not found for subscription: ${subscriptionId}`);
+    throw new Error(
+      `Participants not found for subscription: ${subscriptionId}`,
+    );
   }
 
   return createChannel({
@@ -317,7 +333,9 @@ export async function initializeAllChannels() {
     prisma.webinar.findMany({
       include: {
         webinarPlan: {
-          include: { consultantProfile: { include: { user: { select: { id: true } } } } },
+          include: {
+            consultantProfile: { include: { user: { select: { id: true } } } },
+          },
         },
         waitlist: { select: { userId: true } },
       },
@@ -325,7 +343,9 @@ export async function initializeAllChannels() {
     prisma.class.findMany({
       include: {
         classPlan: {
-          include: { consultantProfile: { include: { user: { select: { id: true } } } } },
+          include: {
+            consultantProfile: { include: { user: { select: { id: true } } } },
+          },
         },
         waitlist: { select: { userId: true } },
       },
@@ -334,7 +354,9 @@ export async function initializeAllChannels() {
       where: { requestStatus: "APPROVED" },
       include: {
         consultationPlan: {
-          include: { consultantProfile: { include: { user: { select: { id: true } } } } },
+          include: {
+            consultantProfile: { include: { user: { select: { id: true } } } },
+          },
         },
         requestedBy: { include: { user: { select: { id: true } } } },
       },
@@ -343,7 +365,9 @@ export async function initializeAllChannels() {
       where: { requestStatus: "APPROVED" },
       include: {
         subscriptionPlan: {
-          include: { consultantProfile: { include: { user: { select: { id: true } } } } },
+          include: {
+            consultantProfile: { include: { user: { select: { id: true } } } },
+          },
         },
         requestedBy: { include: { user: { select: { id: true } } } },
       },
@@ -473,11 +497,16 @@ export async function addMemberToChannel(channelId: string, userId: string) {
 
   // Infer channel type from ID pattern
   const channelType =
-    channelId.startsWith("consultation-") || channelId.startsWith("subscription-")
+    channelId.startsWith("consultation-") ||
+    channelId.startsWith("subscription-")
       ? "messaging"
       : "team";
 
-  streamLogger.debug("Adding member to channel", { channelId, userId, channelType });
+  streamLogger.debug("Adding member to channel", {
+    channelId,
+    userId,
+    channelType,
+  });
 
   try {
     const channel = client.channel(channelType, channelId);
@@ -488,7 +517,10 @@ export async function addMemberToChannel(channelId: string, userId: string) {
     streamLogger.debug("Member added successfully", { channelId, userId });
     return { success: true, response };
   } catch (error) {
-    streamLogger.error("Failed to add member to channel", error, { channelId, userId });
+    streamLogger.error("Failed to add member to channel", error, {
+      channelId,
+      userId,
+    });
     throw error;
   }
 }

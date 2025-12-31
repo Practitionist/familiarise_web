@@ -12,7 +12,8 @@ const TESTIMONIALS = [
     company: "TechCorp",
     image: "/placeholder-user.jpg",
     rating: 5,
-    quote: "The expert I consulted with was incredibly knowledgeable and helped me solve my business challenges quickly. Their insights transformed my approach to product strategy.",
+    quote:
+      "The expert I consulted with was incredibly knowledgeable and helped me solve my business challenges quickly. Their insights transformed my approach to product strategy.",
   },
   {
     id: 2,
@@ -21,7 +22,8 @@ const TESTIMONIALS = [
     company: "StartupX",
     image: "/placeholder-user.jpg",
     rating: 5,
-    quote: "Found an amazing mentor through Familiarise. The guidance I received accelerated my career growth by years. Highly recommend!",
+    quote:
+      "Found an amazing mentor through Familiarise. The guidance I received accelerated my career growth by years. Highly recommend!",
   },
   {
     id: 3,
@@ -30,7 +32,8 @@ const TESTIMONIALS = [
     company: "BrandCo",
     image: "/placeholder-user.jpg",
     rating: 5,
-    quote: "The quality of experts on this platform is outstanding. I've had multiple sessions and each one has been incredibly valuable for my professional development.",
+    quote:
+      "The quality of experts on this platform is outstanding. I've had multiple sessions and each one has been incredibly valuable for my professional development.",
   },
 ];
 
@@ -55,13 +58,16 @@ export function SatisfiedTestimonial() {
         >
           <div className="inline-flex items-center gap-2 px-4 py-2 bg-zinc-800/50 backdrop-blur-sm border border-zinc-700/50 rounded-full mb-6">
             <Quote className="w-4 h-4 text-white" />
-            <span className="text-sm font-medium text-zinc-300">Testimonials</span>
+            <span className="text-sm font-medium text-zinc-300">
+              Testimonials
+            </span>
           </div>
           <h2 className="text-3xl md:text-4xl lg:text-5xl font-bold text-white mb-4">
             What Our <span className="silver-text">Customers</span> Say
           </h2>
           <p className="text-lg text-zinc-400 max-w-2xl mx-auto">
-            Hear from professionals who&apos;ve transformed their careers with our expert mentors
+            Hear from professionals who&apos;ve transformed their careers with
+            our expert mentors
           </p>
         </motion.div>
 
@@ -85,7 +91,10 @@ export function SatisfiedTestimonial() {
                 {/* Rating */}
                 <div className="flex gap-1 mb-4">
                   {[...Array(testimonial.rating)].map((_, i) => (
-                    <Star key={i} className="w-4 h-4 fill-amber-400 text-amber-400" />
+                    <Star
+                      key={i}
+                      className="w-4 h-4 fill-amber-400 text-amber-400"
+                    />
                   ))}
                 </div>
 
@@ -97,13 +106,18 @@ export function SatisfiedTestimonial() {
                 {/* Author */}
                 <div className="flex items-center gap-3 pt-4 border-t border-zinc-800">
                   <Avatar className="h-10 w-10">
-                    <AvatarImage src={testimonial.image} alt={testimonial.name} />
+                    <AvatarImage
+                      src={testimonial.image}
+                      alt={testimonial.name}
+                    />
                     <AvatarFallback className="bg-zinc-800 text-zinc-300">
                       {testimonial.name.charAt(0)}
                     </AvatarFallback>
                   </Avatar>
                   <div>
-                    <p className="font-medium text-white text-sm">{testimonial.name}</p>
+                    <p className="font-medium text-white text-sm">
+                      {testimonial.name}
+                    </p>
                     <p className="text-xs text-zinc-500">
                       {testimonial.role} at {testimonial.company}
                     </p>

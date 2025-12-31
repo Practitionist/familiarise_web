@@ -4,7 +4,9 @@ import { UserWithProfiles } from "./1a-create-users";
 
 const NUM_WAITLIST_ENTRIES = 75;
 
-export async function createWaitlists(users: UserWithProfiles[]): Promise<void> {
+export async function createWaitlists(
+  users: UserWithProfiles[],
+): Promise<void> {
   console.log(`Creating ${NUM_WAITLIST_ENTRIES} waitlist entries...`);
 
   // Filter to consultees (main users who would join waitlists)
@@ -43,7 +45,9 @@ export async function createWaitlists(users: UserWithProfiles[]): Promise<void> 
       const user = faker.helpers.arrayElement(consultees);
 
       // Randomly choose between webinar or class waitlist
-      const isWebinar = webinars.length > 0 && (classes.length === 0 || faker.datatype.boolean());
+      const isWebinar =
+        webinars.length > 0 &&
+        (classes.length === 0 || faker.datatype.boolean());
 
       let eventId: string;
       let entryKey: string;
@@ -105,7 +109,10 @@ export async function createWaitlists(users: UserWithProfiles[]): Promise<void> 
       }
     } catch (error) {
       // Handle unique constraint violations gracefully
-      if (error instanceof Error && error.message.includes("Unique constraint")) {
+      if (
+        error instanceof Error &&
+        error.message.includes("Unique constraint")
+      ) {
         continue;
       }
       console.error(`Failed to create waitlist entry:`, error);

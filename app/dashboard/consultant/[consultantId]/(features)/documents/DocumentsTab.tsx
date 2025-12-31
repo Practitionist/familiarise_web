@@ -141,7 +141,7 @@ export function DocumentsTab({ documents }: Readonly<DocumentsTabProps>) {
   };
 
   return (
-    <div className="bg-white p-6 rounded-lg shadow">
+    <div className="bg-white p-6">
       <div className="flex items-center justify-between mb-6">
         <div>
           <h2 className="text-xl font-semibold">Documents For Review</h2>

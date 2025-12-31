@@ -30,16 +30,21 @@ export function BecomeExpertSection() {
           viewport={{ once: true }}
           className="max-w-3xl mx-auto text-center"
         >
-          <Badge variant="secondary" className="mb-4 bg-zinc-900 text-white hover:bg-zinc-900">
+          <Badge
+            variant="secondary"
+            className="mb-4 bg-zinc-900 text-white hover:bg-zinc-900"
+          >
             Share Your Expertise
           </Badge>
           <h2 className="text-3xl md:text-4xl lg:text-5xl font-bold text-zinc-900 mb-6">
-            Become an expert on <span className="text-zinc-500">Familiarise</span>
+            Become an expert on{" "}
+            <span className="text-zinc-500">Familiarise</span>
           </h2>
           <p className="text-lg text-zinc-600 mb-8 max-w-2xl mx-auto">
-            Join our network of professionals. Share your knowledge, build your personal brand, and earn while helping others grow.
+            Join our network of professionals. Share your knowledge, build your
+            personal brand, and earn while helping others grow.
           </p>
-          
+
           {/* Expert benefits */}
           <div className="grid sm:grid-cols-3 gap-6 mb-10">
             {EXPERT_BENEFITS.map((item, i) => (
@@ -56,15 +61,22 @@ export function BecomeExpertSection() {
               </motion.div>
             ))}
           </div>
-          
+
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
             <Link href="/form/onboarding">
-              <Button size="lg" className="bg-zinc-900 hover:bg-zinc-800 text-white px-8 h-14 text-base rounded-xl shadow-xl shadow-zinc-400/30">
+              <Button
+                size="lg"
+                className="bg-zinc-900 hover:bg-zinc-800 text-white px-8 h-14 text-base rounded-xl shadow-xl shadow-zinc-400/30"
+              >
                 Apply as Expert
                 <ArrowRight className="ml-2 w-5 h-5" />
               </Button>
             </Link>
-            <Button size="lg" variant="outline" className="px-8 h-14 text-base rounded-xl border-zinc-400 hover:bg-zinc-100">
+            <Button
+              size="lg"
+              variant="outline"
+              className="px-8 h-14 text-base rounded-xl border-zinc-400 hover:bg-zinc-100"
+            >
               Learn More
             </Button>
           </div>
@@ -73,4 +85,3 @@ export function BecomeExpertSection() {
     </section>
   );
 }
-

@@ -121,7 +121,9 @@ const StaffProfileForm: React.FC<Props> = ({ onNext, onBack, initialData }) => {
                 disabled={!watchDepartment}
               >
                 <SelectTrigger
-                  className={!watchDepartment ? "opacity-50 cursor-not-allowed" : ""}
+                  className={
+                    !watchDepartment ? "opacity-50 cursor-not-allowed" : ""
+                  }
                 >
                   <SelectValue
                     placeholder={
@@ -153,8 +155,9 @@ const StaffProfileForm: React.FC<Props> = ({ onNext, onBack, initialData }) => {
       {watchDepartment && (
         <div className="bg-muted/50 rounded-lg p-4 text-sm text-muted-foreground">
           <p>
-            After selecting your department and position, you'll be able to choose
-            your specific responsibilities and permissions in the next step.
+            After selecting your department and position, you'll be able to
+            choose your specific responsibilities and permissions in the next
+            step.
           </p>
         </div>
       )}

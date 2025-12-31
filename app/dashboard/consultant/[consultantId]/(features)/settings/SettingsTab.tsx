@@ -744,14 +744,20 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
                           ...prev,
                           sessionTypes: checked
                             ? [...(prev.sessionTypes || []), type]
-                            : (prev.sessionTypes || []).filter((t) => t !== type),
+                            : (prev.sessionTypes || []).filter(
+                                (t) => t !== type,
+                              ),
                         }));
                       }}
                     />
-                    <Label htmlFor={`session-${type}`} className="text-sm cursor-pointer">
+                    <Label
+                      htmlFor={`session-${type}`}
+                      className="text-sm cursor-pointer"
+                    >
                       {type === "ONE_ON_ONE" && "1:1 Sessions"}
                       {type === "GROUP" && "Group Sessions"}
-                      {type === "ASYNC_REVIEW" && "Async Review (Code/Document)"}
+                      {type === "ASYNC_REVIEW" &&
+                        "Async Review (Code/Document)"}
                     </Label>
                   </div>
                 ))}
@@ -838,7 +844,10 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
                         .split(",")
                         .map((t) => t.trim())
                         .filter(Boolean);
-                      setFormData((prev) => ({ ...prev, toolsAndTechnologies }));
+                      setFormData((prev) => ({
+                        ...prev,
+                        toolsAndTechnologies,
+                      }));
                     }}
                     placeholder="React, Python, AWS (comma-separated)"
                     className="mt-1"

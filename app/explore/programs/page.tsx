@@ -11,17 +11,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { 
-  LayoutGrid, 
-  List, 
-  Search, 
-  GraduationCap, 
-  Video, 
-  Users, 
+import {
+  LayoutGrid,
+  List,
+  Search,
+  GraduationCap,
+  Video,
+  Users,
   Clock,
   ArrowRight,
   Filter,
-  Sparkles
+  Sparkles,
 } from "lucide-react";
 import { motion } from "framer-motion";
 import { useSession } from "next-auth/react";
@@ -110,7 +110,9 @@ export default function Programs() {
           >
             <div className="inline-flex items-center gap-2 px-4 py-2 bg-zinc-800/50 backdrop-blur-sm border border-zinc-700/50 rounded-full mb-8">
               <Sparkles className="w-4 h-4 text-white" />
-              <span className="text-sm font-medium text-zinc-300">Learn from the Best</span>
+              <span className="text-sm font-medium text-zinc-300">
+                Learn from the Best
+              </span>
             </div>
 
             <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold text-white mb-6">
@@ -118,7 +120,7 @@ export default function Programs() {
             </h1>
 
             <p className="text-lg md:text-xl text-zinc-400 mb-12 max-w-2xl mx-auto">
-              Expand your knowledge with expert-led classes and live webinars. 
+              Expand your knowledge with expert-led classes and live webinars.
               Learn at your own pace or join interactive sessions.
             </p>
 
@@ -135,7 +137,9 @@ export default function Programs() {
                   <div className="w-12 h-12 mx-auto mb-3 rounded-xl bg-zinc-800/50 border border-zinc-700/50 flex items-center justify-center">
                     <stat.icon className="w-6 h-6 text-white" />
                   </div>
-                  <div className="text-2xl md:text-3xl font-bold text-white">{stat.value}</div>
+                  <div className="text-2xl md:text-3xl font-bold text-white">
+                    {stat.value}
+                  </div>
                   <div className="text-sm text-zinc-500">{stat.label}</div>
                 </motion.div>
               ))}
@@ -148,7 +152,7 @@ export default function Programs() {
       <section className="py-16 md:py-20">
         <div className="max-w-[1600px] mx-auto px-4 md:px-8 lg:px-12">
           {/* Filters Card */}
-          <motion.div 
+          <motion.div
             className="bg-zinc-50 rounded-2xl p-6 border border-zinc-200 mb-12"
             initial={{ opacity: 0, y: 20 }}
             whileInView={{ opacity: 1, y: 0 }}
@@ -161,7 +165,9 @@ export default function Programs() {
               </div>
               <div>
                 <h3 className="font-semibold text-zinc-900">Filter Programs</h3>
-                <p className="text-sm text-zinc-500">Find the perfect program for you</p>
+                <p className="text-sm text-zinc-500">
+                  Find the perfect program for you
+                </p>
               </div>
             </div>
 
@@ -219,8 +225,12 @@ export default function Programs() {
                     <SelectValue placeholder="Select sorting" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="price-asc">Price: Low to High</SelectItem>
-                    <SelectItem value="price-desc">Price: High to Low</SelectItem>
+                    <SelectItem value="price-asc">
+                      Price: Low to High
+                    </SelectItem>
+                    <SelectItem value="price-desc">
+                      Price: High to Low
+                    </SelectItem>
                     <SelectItem value="title-asc">Title: A to Z</SelectItem>
                     <SelectItem value="title-desc">Title: Z to A</SelectItem>
                   </SelectContent>
@@ -275,7 +285,11 @@ export default function Programs() {
               {filteredAndSortedPrograms.map((item: Program, index: number) => (
                 <motion.div
                   key={item.id}
-                  ref={index === filteredAndSortedPrograms.length - 1 ? lastElementRef : null}
+                  ref={
+                    index === filteredAndSortedPrograms.length - 1
+                      ? lastElementRef
+                      : null
+                  }
                   initial={{ opacity: 0, y: 20 }}
                   whileInView={{ opacity: 1, y: 0 }}
                   viewport={{ once: true }}
@@ -304,11 +318,13 @@ export default function Programs() {
                         sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
                       />
                       <div className="absolute top-3 left-3 flex gap-2">
-                        <span className={`px-3 py-1 rounded-full text-xs font-medium ${
-                          item.type === "class" 
-                            ? "bg-zinc-900 text-white" 
-                            : "bg-white text-zinc-900"
-                        }`}>
+                        <span
+                          className={`px-3 py-1 rounded-full text-xs font-medium ${
+                            item.type === "class"
+                              ? "bg-zinc-900 text-white"
+                              : "bg-white text-zinc-900"
+                          }`}
+                        >
                           {item.type === "class" ? "Class" : "Webinar"}
                         </span>
                         {item.isRegistered && (
@@ -348,7 +364,11 @@ export default function Programs() {
               {filteredAndSortedPrograms.map((item: Program, index: number) => (
                 <motion.div
                   key={item.id}
-                  ref={index === filteredAndSortedPrograms.length - 1 ? lastElementRef : null}
+                  ref={
+                    index === filteredAndSortedPrograms.length - 1
+                      ? lastElementRef
+                      : null
+                  }
                   initial={{ opacity: 0, y: 20 }}
                   whileInView={{ opacity: 1, y: 0 }}
                   viewport={{ once: true }}
@@ -377,11 +397,13 @@ export default function Programs() {
                         sizes="256px"
                       />
                       <div className="absolute top-3 left-3">
-                        <span className={`px-3 py-1 rounded-full text-xs font-medium ${
-                          item.type === "class" 
-                            ? "bg-zinc-900 text-white" 
-                            : "bg-white text-zinc-900"
-                        }`}>
+                        <span
+                          className={`px-3 py-1 rounded-full text-xs font-medium ${
+                            item.type === "class"
+                              ? "bg-zinc-900 text-white"
+                              : "bg-white text-zinc-900"
+                          }`}
+                        >
                           {item.type === "class" ? "Class" : "Webinar"}
                         </span>
                       </div>
@@ -431,7 +453,7 @@ export default function Programs() {
 
           {/* Empty State */}
           {filteredAndSortedPrograms.length === 0 && !isLoading && (
-            <motion.div 
+            <motion.div
               className="text-center py-16"
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
@@ -444,7 +466,8 @@ export default function Programs() {
                 No programs found
               </h3>
               <p className="text-zinc-500 max-w-md mx-auto">
-                Try adjusting your filters or search terms to discover more programs
+                Try adjusting your filters or search terms to discover more
+                programs
               </p>
             </motion.div>
           )}

@@ -179,9 +179,8 @@ export async function POST(
     }
 
     // Import handlePaymentSuccess dynamically to avoid circular dependencies
-    const { handlePaymentSuccess } = await import(
-      "@/lib/payments/webhooks/handlers"
-    );
+    const { handlePaymentSuccess } =
+      await import("@/lib/payments/webhooks/handlers");
 
     // Retry appointment creation with corrected metadata
     try {

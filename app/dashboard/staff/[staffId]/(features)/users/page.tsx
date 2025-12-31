@@ -1,7 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -184,7 +190,9 @@ export default function UserManagementPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [roleFilter, setRoleFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
-  const [selectedUser, setSelectedUser] = useState<typeof users[0] | null>(null);
+  const [selectedUser, setSelectedUser] = useState<(typeof users)[0] | null>(
+    null,
+  );
 
   const filteredUsers = users.filter((user) => {
     const matchesSearch =
@@ -192,7 +200,8 @@ export default function UserManagementPage() {
       user.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
       user.phone.includes(searchQuery);
     const matchesRole = roleFilter === "all" || user.role === roleFilter;
-    const matchesStatus = statusFilter === "all" || user.status === statusFilter;
+    const matchesStatus =
+      statusFilter === "all" || user.status === statusFilter;
     return matchesSearch && matchesRole && matchesStatus;
   });
 
@@ -330,7 +339,10 @@ export default function UserManagementPage() {
                       <Avatar>
                         <AvatarImage src={user.avatar} />
                         <AvatarFallback>
-                          {user.name.split(" ").map((n) => n[0]).join("")}
+                          {user.name
+                            .split(" ")
+                            .map((n) => n[0])
+                            .join("")}
                         </AvatarFallback>
                       </Avatar>
                       <div>
@@ -345,12 +357,18 @@ export default function UserManagementPage() {
                     </div>
                   </TableCell>
                   <TableCell>
-                    <Badge className={getRoleColor(user.role)} variant="secondary">
+                    <Badge
+                      className={getRoleColor(user.role)}
+                      variant="secondary"
+                    >
                       {user.role.toLowerCase()}
                     </Badge>
                   </TableCell>
                   <TableCell>
-                    <Badge className={getStatusColor(user.status)} variant="secondary">
+                    <Badge
+                      className={getStatusColor(user.status)}
+                      variant="secondary"
+                    >
                       {user.status.replace("_", " ")}
                     </Badge>
                   </TableCell>
@@ -365,7 +383,10 @@ export default function UserManagementPage() {
                   </TableCell>
                   <TableCell>
                     <DropdownMenu>
-                      <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+                      <DropdownMenuTrigger
+                        asChild
+                        onClick={(e) => e.stopPropagation()}
+                      >
                         <Button variant="ghost" size="icon" className="h-8 w-8">
                           <MoreHorizontal className="h-4 w-4" />
                         </Button>
@@ -415,7 +436,10 @@ export default function UserManagementPage() {
                   <Avatar className="h-16 w-16">
                     <AvatarImage src={selectedUser.avatar} />
                     <AvatarFallback className="text-lg">
-                      {selectedUser.name.split(" ").map((n) => n[0]).join("")}
+                      {selectedUser.name
+                        .split(" ")
+                        .map((n) => n[0])
+                        .join("")}
                     </AvatarFallback>
                   </Avatar>
                   <div className="flex-1">
@@ -426,10 +450,16 @@ export default function UserManagementPage() {
                       )}
                     </h3>
                     <div className="flex items-center gap-2 mt-1">
-                      <Badge className={getRoleColor(selectedUser.role)} variant="secondary">
+                      <Badge
+                        className={getRoleColor(selectedUser.role)}
+                        variant="secondary"
+                      >
                         {selectedUser.role.toLowerCase()}
                       </Badge>
-                      <Badge className={getStatusColor(selectedUser.status)} variant="secondary">
+                      <Badge
+                        className={getStatusColor(selectedUser.status)}
+                        variant="secondary"
+                      >
                         {selectedUser.status.replace("_", " ")}
                       </Badge>
                     </div>
@@ -452,7 +482,9 @@ export default function UserManagementPage() {
                   </div>
                   <div className="flex items-center gap-2">
                     <Calendar className="h-4 w-4 text-zinc-400" />
-                    <span className="text-sm">Joined {formatDate(selectedUser.createdAt)}</span>
+                    <span className="text-sm">
+                      Joined {formatDate(selectedUser.createdAt)}
+                    </span>
                   </div>
                 </div>
 
@@ -460,19 +492,25 @@ export default function UserManagementPage() {
                 <div className="grid gap-4 sm:grid-cols-3">
                   <Card>
                     <CardContent className="p-3 text-center">
-                      <p className="text-2xl font-bold">{selectedUser.totalBookings}</p>
+                      <p className="text-2xl font-bold">
+                        {selectedUser.totalBookings}
+                      </p>
                       <p className="text-xs text-zinc-500">Total Bookings</p>
                     </CardContent>
                   </Card>
                   <Card>
                     <CardContent className="p-3 text-center">
-                      <p className="text-2xl font-bold">{formatLastActive(selectedUser.lastActive)}</p>
+                      <p className="text-2xl font-bold">
+                        {formatLastActive(selectedUser.lastActive)}
+                      </p>
                       <p className="text-xs text-zinc-500">Last Active</p>
                     </CardContent>
                   </Card>
                   <Card>
                     <CardContent className="p-3 text-center">
-                      <p className="text-2xl font-bold">{selectedUser.verified ? "Yes" : "No"}</p>
+                      <p className="text-2xl font-bold">
+                        {selectedUser.verified ? "Yes" : "No"}
+                      </p>
                       <p className="text-xs text-zinc-500">Verified</p>
                     </CardContent>
                   </Card>
@@ -494,4 +532,3 @@ export default function UserManagementPage() {
     </div>
   );
 }
-

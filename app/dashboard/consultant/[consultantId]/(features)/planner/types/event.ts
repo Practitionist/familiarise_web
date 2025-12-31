@@ -122,12 +122,12 @@ export interface ClassPlannerProps extends BasePlannerProps {
 
 export interface ConsultationPlannerProps extends BasePlannerProps {
   initialData?: ConsultationPlanEvent;
-  onSave: (data: Partial<ConsultationPlanEvent>) => void;
+  onSave: (data: Partial<ConsultationPlanEvent>) => void | Promise<void>;
 }
 
 export interface SubscriptionPlannerProps extends BasePlannerProps {
   initialData?: SubscriptionPlanEvent;
-  onSave: (data: Partial<SubscriptionPlanEvent>) => void;
+  onSave: (data: Partial<SubscriptionPlanEvent>) => void | Promise<void>;
 }
 
 // Define input type for ClassContent based on usage

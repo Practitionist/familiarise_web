@@ -41,7 +41,10 @@ const Navbar = () => {
 
     return () => {
       window.removeEventListener("storage", checkAnnouncementState);
-      window.removeEventListener("announcementBarClosed", checkAnnouncementState);
+      window.removeEventListener(
+        "announcementBarClosed",
+        checkAnnouncementState,
+      );
     };
   }, []);
 
@@ -55,8 +58,8 @@ const Navbar = () => {
   }, []);
 
   const handleNavigation = (path: string) => {
-      router.push(path);
-      closeMenu();
+    router.push(path);
+    closeMenu();
   };
 
   // Check if the current route should exclude navbar
@@ -109,23 +112,27 @@ const Navbar = () => {
             {/* Logo */}
             <Link href="/" className="flex-shrink-0">
               <div className="relative h-10 md:h-12 w-32 md:w-40">
-              <Image
-                  src={showDarkStyle ? familiariseLogoWhite : familiariseLogoTransparent}
-                alt="Familiarise Logo"
-                fill
+                <Image
+                  src={
+                    showDarkStyle
+                      ? familiariseLogoWhite
+                      : familiariseLogoTransparent
+                  }
+                  alt="Familiarise Logo"
+                  fill
                   className="object-contain object-left"
                   sizes="160px"
                   priority
-              />
-            </div>
-          </Link>
+                />
+              </div>
+            </Link>
 
             {/* Desktop Navigation */}
             <div className="hidden lg:flex items-center gap-1">
               {session?.user && (
                 <Link href="/dashboard">
-                  <Button 
-                    variant="ghost" 
+                  <Button
+                    variant="ghost"
                     className={`font-medium ${showDarkStyle ? "text-white hover:bg-white/10" : "text-zinc-700 hover:bg-zinc-100"}`}
                   >
                     Dashboard
@@ -134,8 +141,8 @@ const Navbar = () => {
               )}
               {navLinks.map((link) => (
                 <Link key={link.path} href={link.path}>
-                  <Button 
-                    variant="ghost" 
+                  <Button
+                    variant="ghost"
                     className={`font-medium ${showDarkStyle ? "text-white hover:bg-white/10" : "text-zinc-700 hover:bg-zinc-100"}`}
                   >
                     {link.label}
@@ -156,8 +163,8 @@ const Navbar = () => {
                       </AvatarFallback>
                     </Avatar>
                   </Link>
-                  <Button 
-                    variant="ghost" 
+                  <Button
+                    variant="ghost"
                     onClick={handleSignOut}
                     className={`text-sm ${showDarkStyle ? "text-zinc-300 hover:text-white hover:bg-white/10" : "text-zinc-600 hover:text-zinc-900"}`}
                   >
@@ -175,9 +182,10 @@ const Navbar = () => {
                   </Button>
                   <Button
                     onClick={() => handleNavigation("/auth/signin")}
-                    className={showDarkStyle 
-                      ? "bg-white text-zinc-900 hover:bg-zinc-200" 
-                      : "bg-zinc-900 text-white hover:bg-zinc-800"
+                    className={
+                      showDarkStyle
+                        ? "bg-white text-zinc-900 hover:bg-zinc-200"
+                        : "bg-zinc-900 text-white hover:bg-zinc-800"
                     }
                   >
                     Sign in
@@ -191,12 +199,16 @@ const Navbar = () => {
               onClick={toggleMenu}
               aria-label="Toggle Navigation"
               className={`lg:hidden p-2 rounded-lg transition-colors ${
-                showDarkStyle 
-                  ? "text-white hover:bg-white/10" 
+                showDarkStyle
+                  ? "text-white hover:bg-white/10"
                   : "text-zinc-700 hover:bg-zinc-100"
               }`}
             >
-              {isOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
+              {isOpen ? (
+                <X className="w-6 h-6" />
+              ) : (
+                <Menu className="w-6 h-6" />
+              )}
             </button>
           </div>
         </div>
@@ -204,69 +216,69 @@ const Navbar = () => {
 
       {/* Mobile Drawer */}
       <AnimatePresence>
-      {isOpen && (
-        <>
-          {/* Backdrop */}
+        {isOpen && (
+          <>
+            {/* Backdrop */}
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[1001] lg:hidden"
-            onClick={closeMenu}
-          />
+              onClick={closeMenu}
+            />
 
-          {/* Drawer */}
-          <motion.div
-            initial={{ x: "-100%" }}
-            animate={{ x: 0 }}
-            exit={{ x: "-100%" }}
+            {/* Drawer */}
+            <motion.div
+              initial={{ x: "-100%" }}
+              animate={{ x: 0 }}
+              exit={{ x: "-100%" }}
               transition={{ type: "spring", damping: 25, stiffness: 200 }}
               className="lg:hidden fixed top-0 left-0 h-full w-[85%] max-w-sm bg-zinc-950 z-[1002] shadow-2xl"
-          >
+            >
               {/* Drawer Header */}
               <div className="flex justify-between items-center p-5 border-b border-zinc-800">
                 <div className="relative h-8 w-28">
-                <Image
+                  <Image
                     src={familiariseLogoWhite}
-                  alt="Familiarise Logo"
-                  fill
+                    alt="Familiarise Logo"
+                    fill
                     className="object-contain object-left"
                     sizes="112px"
-                />
-              </div>
-              <button
-                onClick={closeMenu}
-                  className="w-9 h-9 flex items-center justify-center rounded-full bg-zinc-800 hover:bg-zinc-700 transition-colors text-white"
-              >
-                  <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Navigation Links */}
-              <div className="flex flex-col p-5 space-y-1">
-              {session?.user && (
-                <Link
-                  href="/dashboard"
-                    className="flex items-center gap-3 px-4 py-3 rounded-xl text-white hover:bg-zinc-800 transition-colors"
+                  />
+                </div>
+                <button
                   onClick={closeMenu}
+                  className="w-9 h-9 flex items-center justify-center rounded-full bg-zinc-800 hover:bg-zinc-700 transition-colors text-white"
                 >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Navigation Links */}
+              <div className="flex flex-col p-5 space-y-1">
+                {session?.user && (
+                  <Link
+                    href="/dashboard"
+                    className="flex items-center gap-3 px-4 py-3 rounded-xl text-white hover:bg-zinc-800 transition-colors"
+                    onClick={closeMenu}
+                  >
                     <span className="text-zinc-400">🎯</span>
                     <span className="font-medium">Dashboard</span>
-                </Link>
-              )}
-              {navLinks.map((link) => (
-                <Link
-                  key={link.path}
-                  href={link.path}
+                  </Link>
+                )}
+                {navLinks.map((link) => (
+                  <Link
+                    key={link.path}
+                    href={link.path}
                     className="flex items-center gap-3 px-4 py-3 rounded-xl text-white hover:bg-zinc-800 transition-colors"
-                  onClick={closeMenu}
-                >
+                    onClick={closeMenu}
+                  >
                     <span className="font-medium">{link.label}</span>
-                </Link>
-              ))}
-            </div>
+                  </Link>
+                ))}
+              </div>
 
-            {/* User Section */}
+              {/* User Section */}
               <div className="absolute bottom-0 left-0 right-0 p-5 border-t border-zinc-800 bg-zinc-900">
                 {session?.user ? (
                   <div className="flex items-center justify-between">
@@ -306,10 +318,10 @@ const Navbar = () => {
                     </Button>
                   </div>
                 )}
-            </div>
-          </motion.div>
-        </>
-      )}
+              </div>
+            </motion.div>
+          </>
+        )}
       </AnimatePresence>
     </>
   );

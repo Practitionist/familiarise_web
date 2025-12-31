@@ -7,7 +7,8 @@ export async function GET(request: NextRequest) {
     const consultantId = searchParams.get("consultantId");
     const page = parseInt(searchParams.get("page") || "1");
     const limit = parseInt(searchParams.get("limit") || "10");
-    const includeRegistration = searchParams.get("includeRegistration") === "true";
+    const includeRegistration =
+      searchParams.get("includeRegistration") === "true";
     const skip = (page - 1) * limit;
 
     const where = consultantId ? { consultantProfileId: consultantId } : {};

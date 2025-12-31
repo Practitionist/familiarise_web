@@ -4,7 +4,11 @@ import { getEffectiveUserId } from "@/utils/auth";
 import { Skeleton } from "@/components/ui/skeleton";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import StreamProvider from "@/providers/StreamProvider";
-import { DashboardShell, DashboardSidebar, type NavItem } from "@/components/dashboard";
+import {
+  DashboardShell,
+  DashboardSidebar,
+  type NavItem,
+} from "@/components/dashboard";
 import { signOut, useSession } from "next-auth/react";
 import { usePathname, useRouter } from "next/navigation";
 import { use, useEffect, useMemo } from "react";
@@ -23,9 +27,7 @@ const NAV_ITEMS: NavItem[] = [
   { name: "Help", path: "help" },
 ];
 
-const BOTTOM_NAV_ITEMS: NavItem[] = [
-  { name: "Settings", path: "settings" },
-];
+const BOTTOM_NAV_ITEMS: NavItem[] = [{ name: "Settings", path: "settings" }];
 
 interface PageProps {
   children: React.ReactNode;
@@ -33,7 +35,12 @@ interface PageProps {
 }
 
 // Error types and their configurations
-type ErrorType = "not-found" | "session-expired" | "no-profile" | "network" | "unknown";
+type ErrorType =
+  | "not-found"
+  | "session-expired"
+  | "no-profile"
+  | "network"
+  | "unknown";
 
 function getErrorConfig(errorMessage: string): {
   type: ErrorType;
@@ -44,64 +51,89 @@ function getErrorConfig(errorMessage: string): {
   secondaryAction?: { label: string; href: string };
 } {
   const lowerMessage = errorMessage.toLowerCase();
-  
+
   // Profile not found - user might not have a consultant profile
   if (lowerMessage.includes("not found") || lowerMessage.includes("404")) {
     return {
       type: "not-found",
       title: "Profile Not Found",
-      description: "We couldn't find your consultant profile. This might happen if you're logged into the wrong account or your profile hasn't been set up yet.",
-      suggestion: "Try signing out and logging back in with the correct account.",
-      primaryAction: { label: "Sign Out & Re-login", href: "/auth/signin?callbackUrl=/dashboard" },
+      description:
+        "We couldn't find your consultant profile. This might happen if you're logged into the wrong account or your profile hasn't been set up yet.",
+      suggestion:
+        "Try signing out and logging back in with the correct account.",
+      primaryAction: {
+        label: "Sign Out & Re-login",
+        href: "/auth/signin?callbackUrl=/dashboard",
+      },
       secondaryAction: { label: "Go to Home", href: "/" },
     };
   }
-  
+
   // Session expired or unauthorized
-  if (lowerMessage.includes("unauthorized") || lowerMessage.includes("401") || lowerMessage.includes("session")) {
+  if (
+    lowerMessage.includes("unauthorized") ||
+    lowerMessage.includes("401") ||
+    lowerMessage.includes("session")
+  ) {
     return {
       type: "session-expired",
       title: "Session Expired",
-      description: "Your session has expired or you've been signed out. Please sign in again to continue.",
+      description:
+        "Your session has expired or you've been signed out. Please sign in again to continue.",
       suggestion: "This is normal after being inactive for a while.",
-      primaryAction: { label: "Sign In Again", href: "/auth/signin?callbackUrl=/dashboard" },
+      primaryAction: {
+        label: "Sign In Again",
+        href: "/auth/signin?callbackUrl=/dashboard",
+      },
     };
   }
-  
+
   // Network or server error
-  if (lowerMessage.includes("network") || lowerMessage.includes("fetch") || lowerMessage.includes("500")) {
+  if (
+    lowerMessage.includes("network") ||
+    lowerMessage.includes("fetch") ||
+    lowerMessage.includes("500")
+  ) {
     return {
       type: "network",
       title: "Connection Issue",
-      description: "We're having trouble connecting to our servers. This is usually temporary.",
+      description:
+        "We're having trouble connecting to our servers. This is usually temporary.",
       suggestion: "Check your internet connection and try again.",
-      primaryAction: { label: "Try Again", onClick: () => window.location.reload() },
+      primaryAction: {
+        label: "Try Again",
+        onClick: () => window.location.reload(),
+      },
     };
   }
-  
+
   // Default/unknown error
   return {
     type: "unknown",
     title: "Something Went Wrong",
     description: "We encountered an unexpected issue loading your dashboard.",
-    suggestion: "If this keeps happening, try signing out and back in, or contact support.",
-    primaryAction: { label: "Sign Out & Re-login", href: "/auth/signin?callbackUrl=/dashboard" },
-    secondaryAction: { label: "Try Again", href: "#", },
+    suggestion:
+      "If this keeps happening, try signing out and back in, or contact support.",
+    primaryAction: {
+      label: "Sign Out & Re-login",
+      href: "/auth/signin?callbackUrl=/dashboard",
+    },
+    secondaryAction: { label: "Try Again", href: "#" },
   };
 }
 
 // Error display component
 function ErrorDisplay({ message }: { message: string }) {
   const config = getErrorConfig(message);
-  
+
   const iconColors = {
     "not-found": { bg: "bg-amber-100", icon: "text-amber-600" },
     "session-expired": { bg: "bg-blue-100", icon: "text-blue-600" },
     "no-profile": { bg: "bg-purple-100", icon: "text-purple-600" },
-    "network": { bg: "bg-orange-100", icon: "text-orange-600" },
-    "unknown": { bg: "bg-red-100", icon: "text-red-600" },
+    network: { bg: "bg-orange-100", icon: "text-orange-600" },
+    unknown: { bg: "bg-red-100", icon: "text-red-600" },
   };
-  
+
   const colors = iconColors[config.type];
 
   return (
@@ -111,30 +143,72 @@ function ErrorDisplay({ message }: { message: string }) {
         animate={{ opacity: 1, y: 0 }}
         className="bg-white p-8 rounded-2xl shadow-xl border border-zinc-200 max-w-md text-center mx-4"
       >
-        <div className={`w-16 h-16 mx-auto mb-4 rounded-full ${colors.bg} flex items-center justify-center`}>
+        <div
+          className={`w-16 h-16 mx-auto mb-4 rounded-full ${colors.bg} flex items-center justify-center`}
+        >
           {config.type === "not-found" || config.type === "no-profile" ? (
-            <svg className={`w-8 h-8 ${colors.icon}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+            <svg
+              className={`w-8 h-8 ${colors.icon}`}
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
+              />
             </svg>
           ) : config.type === "session-expired" ? (
-            <svg className={`w-8 h-8 ${colors.icon}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+            <svg
+              className={`w-8 h-8 ${colors.icon}`}
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
+              />
             </svg>
           ) : config.type === "network" ? (
-            <svg className={`w-8 h-8 ${colors.icon}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.141 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0" />
+            <svg
+              className={`w-8 h-8 ${colors.icon}`}
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.141 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0"
+              />
             </svg>
           ) : (
-            <svg className={`w-8 h-8 ${colors.icon}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            <svg
+              className={`w-8 h-8 ${colors.icon}`}
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+              />
             </svg>
           )}
         </div>
-        
+
         <h2 className="text-xl font-bold text-zinc-900 mb-2">{config.title}</h2>
         <p className="text-zinc-600 mb-3">{config.description}</p>
         <p className="text-sm text-zinc-500 italic mb-6">{config.suggestion}</p>
-        
+
         <div className="flex flex-col gap-3">
           {config.primaryAction.href ? (
             <a
@@ -151,11 +225,18 @@ function ErrorDisplay({ message }: { message: string }) {
               {config.primaryAction.label}
             </button>
           )}
-          
+
           {config.secondaryAction && (
             <a
               href={config.secondaryAction.href}
-              onClick={config.secondaryAction.href === "#" ? (e) => { e.preventDefault(); window.location.reload(); } : undefined}
+              onClick={
+                config.secondaryAction.href === "#"
+                  ? (e) => {
+                      e.preventDefault();
+                      window.location.reload();
+                    }
+                  : undefined
+              }
               className="w-full px-6 py-2.5 bg-zinc-100 text-zinc-700 rounded-lg font-medium hover:bg-zinc-200 transition-colors"
             >
               {config.secondaryAction.label}
@@ -177,12 +258,26 @@ function AuthRequired() {
         className="bg-white p-8 rounded-2xl shadow-xl border border-zinc-200 max-w-md text-center"
       >
         <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-amber-100 flex items-center justify-center">
-          <svg className="w-8 h-8 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+          <svg
+            className="w-8 h-8 text-amber-600"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
+            />
           </svg>
         </div>
-        <h2 className="text-xl font-bold text-zinc-900 mb-2">Authentication Required</h2>
-        <p className="text-zinc-600">Please sign in to access your dashboard.</p>
+        <h2 className="text-xl font-bold text-zinc-900 mb-2">
+          Authentication Required
+        </h2>
+        <p className="text-zinc-600">
+          Please sign in to access your dashboard.
+        </p>
         <a
           href="/auth/signin"
           className="inline-block mt-6 px-6 py-2.5 bg-zinc-900 text-white rounded-lg font-medium hover:bg-zinc-800 transition-colors"
@@ -245,7 +340,10 @@ function DashboardSkeleton() {
 }
 
 // Main layout component
-export default function ConsultantLayout({ children, params }: Readonly<PageProps>) {
+export default function ConsultantLayout({
+  children,
+  params,
+}: Readonly<PageProps>) {
   const resolvedParams = use(params);
   const consultantId = resolvedParams.consultantId;
   const pathname = usePathname();
@@ -299,7 +397,7 @@ export default function ConsultantLayout({ children, params }: Readonly<PageProp
       ) : (
         <DashboardErrorBoundary>{children}</DashboardErrorBoundary>
       ),
-    [consultantData?.user?.id, children]
+    [consultantData?.user?.id, children],
   );
 
   // Authentication check
@@ -320,7 +418,9 @@ export default function ConsultantLayout({ children, params }: Readonly<PageProp
   if (error && !consultantData) {
     return (
       <ErrorDisplay
-        message={error instanceof Error ? error.message : "Failed to load dashboard"}
+        message={
+          error instanceof Error ? error.message : "Failed to load dashboard"
+        }
       />
     );
   }
@@ -339,8 +439,6 @@ export default function ConsultantLayout({ children, params }: Readonly<PageProp
   );
 
   return (
-    <DashboardShell sidebar={sidebar}>
-      {memoizedStreamContent}
-    </DashboardShell>
+    <DashboardShell sidebar={sidebar}>{memoizedStreamContent}</DashboardShell>
   );
 }

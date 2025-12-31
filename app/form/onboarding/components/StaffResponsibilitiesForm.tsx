@@ -80,7 +80,8 @@ const StaffResponsibilitiesForm: React.FC<Props> = ({
     return (
       <div className="bg-destructive/10 rounded-lg p-6 text-center">
         <p className="text-destructive">
-          Invalid department or position. Please go back and select valid options.
+          Invalid department or position. Please go back and select valid
+          options.
         </p>
       </div>
     );
@@ -113,7 +114,8 @@ const StaffResponsibilitiesForm: React.FC<Props> = ({
           Responsibilities & Permissions
         </h3>
         <p className="text-sm text-muted-foreground">
-          Select your responsibilities and permissions for the {position} role in {department}
+          Select your responsibilities and permissions for the {position} role
+          in {department}
         </p>
       </div>
 
@@ -131,7 +133,9 @@ const StaffResponsibilitiesForm: React.FC<Props> = ({
                       key={category}
                       className="space-y-3 p-3 rounded-lg bg-muted/50"
                     >
-                      <Label className="font-semibold text-sm">{category}</Label>
+                      <Label className="font-semibold text-sm">
+                        {category}
+                      </Label>
                       {items.map((item, index) => (
                         <div
                           key={index}
@@ -141,7 +145,10 @@ const StaffResponsibilitiesForm: React.FC<Props> = ({
                             id={`responsibility-${category}-${index}`}
                             checked={!!responsibilities[item]}
                             onCheckedChange={(checked) =>
-                              handleResponsibilityChange(item, checked as boolean)
+                              handleResponsibilityChange(
+                                item,
+                                checked as boolean,
+                              )
                             }
                           />
                           <Label
@@ -153,7 +160,7 @@ const StaffResponsibilitiesForm: React.FC<Props> = ({
                         </div>
                       ))}
                     </div>
-                  )
+                  ),
                 )}
               </div>
               {errors.responsibilities && (
@@ -176,7 +183,9 @@ const StaffResponsibilitiesForm: React.FC<Props> = ({
                       key={category}
                       className="space-y-3 p-3 rounded-lg bg-muted/50"
                     >
-                      <Label className="font-semibold text-sm">{category}</Label>
+                      <Label className="font-semibold text-sm">
+                        {category}
+                      </Label>
                       {items.map((item, index) => (
                         <div
                           key={index}
@@ -198,7 +207,7 @@ const StaffResponsibilitiesForm: React.FC<Props> = ({
                         </div>
                       ))}
                     </div>
-                  )
+                  ),
                 )}
               </div>
               {errors.permissions && (

@@ -1,0 +1,210 @@
+/**
+ * Admin Subscriptions API
+ * View and manage platform subscriptions
+ */
+
+import { NextRequest, NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
+import authOptions from "@/app/api/auth/[...nextauth]/options";
+import prisma from "@/lib/prisma";
+
+/**
+ * GET /api/admin/subscriptions
+ * Get all subscriptions with optional filters
+ */
+export async function GET(req: NextRequest) {
+  try {
+    const session = await getServerSession(authOptions);
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // Check admin role
+    const user = await prisma.user.findUnique({
+      where: { id: session.user.id },
+      select: { role: true },
+    });
+
+    if (user?.role !== "ADMIN") {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+
+    // Parse query parameters
+    const { searchParams } = new URL(req.url);
+    const status = searchParams.get("status"); // active, expired, cancelled
+    const search = searchParams.get("search");
+    const limit = parseInt(searchParams.get("limit") || "20");
+    const offset = parseInt(searchParams.get("offset") || "0");
+
+    const now = new Date();
+    const soonThreshold = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000); // 7 days from now
+
+    // Build subscription date filter based on status
+    let subscriptionDateFilter: any = {};
+    if (status === "active") {
+      // Active = ends more than 7 days from now (includes expiring_soon for "active" filter)
+      subscriptionDateFilter = {
+        schedulingPeriodEndsAt: { gt: now },
+      };
+    } else if (status === "expiring_soon") {
+      // Expiring soon = ends within 7 days but not expired
+      subscriptionDateFilter = {
+        schedulingPeriodEndsAt: { gt: now, lte: soonThreshold },
+      };
+    } else if (status === "expired") {
+      // Expired = ends in the past
+      subscriptionDateFilter = {
+        schedulingPeriodEndsAt: { lte: now },
+      };
+    }
+
+    // Build where clause with status filter in the database query
+    let where: any = {
+      appointment: {
+        appointmentType: "SUBSCRIPTION",
+        subscription: Object.keys(subscriptionDateFilter).length > 0
+          ? subscriptionDateFilter
+          : undefined,
+      },
+    };
+
+    if (search) {
+      where.OR = [
+        {
+          user: {
+            OR: [
+              { name: { contains: search, mode: "insensitive" } },
+              { email: { contains: search, mode: "insensitive" } },
+            ],
+          },
+        },
+      ];
+    }
+
+    // Base where clause for all subscription queries (without status filter)
+    const baseWhere = {
+      paymentStatus: "SUCCEEDED" as const,
+      appointment: {
+        appointmentType: "SUBSCRIPTION" as const,
+      },
+    };
+
+    // Get subscription payments and stats in parallel
+    const [subscriptions, total, activeCount, expiringCount, expiredCount] = await Promise.all([
+      prisma.payment.findMany({
+        where: {
+          ...where,
+          paymentStatus: "SUCCEEDED",
+        },
+        include: {
+          user: {
+            select: { name: true, email: true },
+          },
+          appointment: {
+            include: {
+              subscription: {
+                include: {
+                  subscriptionPlan: {
+                    include: {
+                      consultantProfile: {
+                        include: { user: { select: { name: true } } },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        orderBy: { createdAt: "desc" },
+        take: limit,
+        skip: offset,
+      }),
+      prisma.payment.count({
+        where: {
+          ...where,
+          paymentStatus: "SUCCEEDED",
+        },
+      }),
+      // Count active subscriptions (ends > 7 days from now)
+      prisma.payment.count({
+        where: {
+          ...baseWhere,
+          appointment: {
+            appointmentType: "SUBSCRIPTION",
+            subscription: { schedulingPeriodEndsAt: { gt: soonThreshold } },
+          },
+        },
+      }),
+      // Count expiring soon subscriptions (ends within 7 days)
+      prisma.payment.count({
+        where: {
+          ...baseWhere,
+          appointment: {
+            appointmentType: "SUBSCRIPTION",
+            subscription: { schedulingPeriodEndsAt: { gt: now, lte: soonThreshold } },
+          },
+        },
+      }),
+      // Count expired subscriptions
+      prisma.payment.count({
+        where: {
+          ...baseWhere,
+          appointment: {
+            appointmentType: "SUBSCRIPTION",
+            subscription: { schedulingPeriodEndsAt: { lte: now } },
+          },
+        },
+      }),
+    ]);
+
+    // Format subscriptions with status
+    const formattedSubscriptions = subscriptions.map((s) => {
+      const subscription = s.appointment?.subscription;
+      const endDate = subscription?.schedulingPeriodEndsAt;
+      const isActive = endDate && new Date(endDate) > now;
+      const isExpiringSoon =
+        endDate &&
+        new Date(endDate) > now &&
+        new Date(endDate) < new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+
+      return {
+        id: s.id,
+        paymentId: s.id,
+        amount: s.amount,
+        currency: s.currency,
+        gateway: s.paymentGateway,
+        userName: s.user?.name || "Unknown",
+        userEmail: s.user?.email || "",
+        consultantName: subscription?.subscriptionPlan?.consultantProfile?.user?.name,
+        startDate: subscription?.schedulingPeriodStartsAt,
+        endDate: subscription?.schedulingPeriodEndsAt,
+        subscriptionStatus: subscription?.requestStatus,
+        status: isActive ? (isExpiringSoon ? "expiring_soon" : "active") : "expired",
+        createdAt: s.createdAt,
+      };
+    });
+
+    // Status filtering now happens in the database query, so pagination is correct
+    return NextResponse.json({
+      subscriptions: formattedSubscriptions,
+      stats: {
+        activeCount,
+        expiringCount,
+        expiredCount,
+      },
+      pagination: {
+        total,
+        limit,
+        offset,
+        hasMore: offset + limit < total,
+      },
+    });
+  } catch (error) {
+    console.error("Error fetching subscriptions:", error);
+    return NextResponse.json(
+      { error: "Failed to fetch subscriptions" },
+      { status: 500 }
+    );
+  }
+}

@@ -66,13 +66,17 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
         const response = await fetch(`/api/user/staff/${staffId}`);
         if (!response.ok) {
           const errorData = await response.json();
-          throw new Error(errorData.error || `Failed to fetch staff data: ${response.statusText}`);
+          throw new Error(
+            errorData.error ||
+              `Failed to fetch staff data: ${response.statusText}`,
+          );
         }
         const result = await response.json();
         // API returns { data: StaffProfile } with user nested inside
         setStaffData(result.data);
       } catch (err: unknown) {
-        const errorMessage = err instanceof Error ? err.message : "An unknown error occurred";
+        const errorMessage =
+          err instanceof Error ? err.message : "An unknown error occurred";
         setError(errorMessage);
         console.error("Fetch error:", err);
       } finally {
@@ -133,7 +137,9 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
   ) => {
     setStaffData((prev) => {
       if (!prev) return prev;
-      const currentPrefs = prev.user.notificationPreferences ?? { userId: prev.user.id }; // Create stub if null
+      const currentPrefs = prev.user.notificationPreferences ?? {
+        userId: prev.user.id,
+      }; // Create stub if null
       return {
         ...prev,
         user: {
@@ -211,9 +217,11 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
         break;
       case "preferences":
         payload = {
-          allNotifications: staffData.user.notificationPreferences?.allNotifications,
+          allNotifications:
+            staffData.user.notificationPreferences?.allNotifications,
           mentions: staffData.user.notificationPreferences?.mentions,
-          directMessages: staffData.user.notificationPreferences?.directMessages,
+          directMessages:
+            staffData.user.notificationPreferences?.directMessages,
           updates: staffData.user.notificationPreferences?.updates,
           analytics: staffData.user.cookiePreferences?.analytics,
           marketing: staffData.user.cookiePreferences?.marketing,
@@ -241,7 +249,10 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
         `${section.charAt(0).toUpperCase() + section.slice(1)} settings saved successfully!`,
       ); // Simple feedback
     } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : `An error occurred while saving ${section} settings`;
+      const errorMessage =
+        err instanceof Error
+          ? err.message
+          : `An error occurred while saving ${section} settings`;
       setError(errorMessage);
       console.error("Save error:", err);
       alert(`Error saving ${section} settings: ${errorMessage}`); // Simple feedback
@@ -303,409 +314,400 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
 
       {/* Settings Cards */}
       <div className="grid gap-6">
-            {/* Personal Information Card */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Personal Information</CardTitle>
-                <CardDescription>
-                  Update the staff member&apos;s personal details.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="grid gap-4 md:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor="name">Name</Label>
-                  <Input
-                    id="name"
-                    name="name"
-                    placeholder="Full Name"
-                    value={staffData.user.name ?? ""}
-                    onChange={handleUserInputChange}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="email">Email</Label>
-                  <Input
-                    id="email"
-                    name="email"
-                    type="email"
-                    placeholder="Email Address"
-                    value={staffData.user.email ?? ""}
-                    onChange={handleUserInputChange}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="phone">Phone</Label>
-                  <Input
-                    id="phone"
-                    name="phone"
-                    type="tel"
-                    placeholder="Phone Number"
-                    value={staffData.user.phone ?? ""}
-                    onChange={handleUserInputChange}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="address">Address</Label>
-                  <Textarea
-                    id="address"
-                    name="address"
-                    placeholder="Street Address"
-                    value={staffData.user.address ?? ""}
-                    onChange={handleUserInputChange}
-                    className="min-h-[80px]"
-                  />
-                </div>
-                <div className="space-y-2 md:col-span-2">
-                  <Label htmlFor="image">Profile Picture URL</Label>
-                  <Input
-                    id="image"
-                    name="image"
-                    placeholder="https://example.com/avatar.png"
-                    value={staffData.user.image ?? ""}
-                    onChange={handleUserInputChange}
-                  />
-                </div>
-              </CardContent>
-              <CardFooter className="border-t px-6 py-4">
-                <Button
-                  onClick={() => handleSave("personal")}
-                  disabled={isSaving}
-                >
-                  {isSaving ? "Saving..." : "Save Personal Info"}
-                </Button>
-              </CardFooter>
-            </Card>
+        {/* Personal Information Card */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Personal Information</CardTitle>
+            <CardDescription>
+              Update the staff member&apos;s personal details.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="name">Name</Label>
+              <Input
+                id="name"
+                name="name"
+                placeholder="Full Name"
+                value={staffData.user.name ?? ""}
+                onChange={handleUserInputChange}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="email">Email</Label>
+              <Input
+                id="email"
+                name="email"
+                type="email"
+                placeholder="Email Address"
+                value={staffData.user.email ?? ""}
+                onChange={handleUserInputChange}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="phone">Phone</Label>
+              <Input
+                id="phone"
+                name="phone"
+                type="tel"
+                placeholder="Phone Number"
+                value={staffData.user.phone ?? ""}
+                onChange={handleUserInputChange}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="address">Address</Label>
+              <Textarea
+                id="address"
+                name="address"
+                placeholder="Street Address"
+                value={staffData.user.address ?? ""}
+                onChange={handleUserInputChange}
+                className="min-h-[80px]"
+              />
+            </div>
+            <div className="space-y-2 md:col-span-2">
+              <Label htmlFor="image">Profile Picture URL</Label>
+              <Input
+                id="image"
+                name="image"
+                placeholder="https://example.com/avatar.png"
+                value={staffData.user.image ?? ""}
+                onChange={handleUserInputChange}
+              />
+            </div>
+          </CardContent>
+          <CardFooter className="border-t px-6 py-4">
+            <Button onClick={() => handleSave("personal")} disabled={isSaving}>
+              {isSaving ? "Saving..." : "Save Personal Info"}
+            </Button>
+          </CardFooter>
+        </Card>
 
-            {/* Staff Role Card */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Staff Role</CardTitle>
-                <CardDescription>
-                  Manage the staff member&apos;s role and responsibilities.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="grid gap-4 md:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor="department">Department</Label>
-                  <Input
-                    id="department"
-                    name="department"
-                    placeholder="e.g., Engineering, Marketing"
-                    value={staffData.department ?? ""}
-                    onChange={handleProfileInputChange}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="position">Position</Label>
-                  <Input
-                    id="position"
-                    name="position"
-                    placeholder="e.g., Software Engineer, Manager"
-                    value={staffData.position ?? ""}
-                    onChange={handleProfileInputChange}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="employeeId">Employee ID</Label>
-                  <Input
-                    id="employeeId"
-                    name="employeeId"
-                    placeholder="e.g., EMP-001"
-                    value={staffData.employeeId ?? ""}
-                    onChange={handleProfileInputChange}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="reportsTo">Reports To</Label>
-                  <Input
-                    id="reportsTo"
-                    name="reportsTo"
-                    placeholder="Manager's name or ID"
-                    value={staffData.reportsTo ?? ""}
-                    onChange={handleProfileInputChange}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="hireDate">Hire Date</Label>
-                  <Input
-                    id="hireDate"
-                    name="hireDate"
-                    type="date"
-                    value={staffData.hireDate
-                      ? new Date(staffData.hireDate).toISOString().split("T")[0]
-                      : ""}
-                    onChange={handleProfileInputChange}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="workSchedule">Work Schedule</Label>
-                  <Input
-                    id="workSchedule"
-                    name="workSchedule"
-                    placeholder="e.g., Mon-Fri 9AM-5PM"
-                    value={staffData.workSchedule ?? ""}
-                    onChange={handleProfileInputChange}
-                  />
-                </div>
-                <div className="space-y-2 md:col-span-2">
-                  <Label htmlFor="skills">Skills</Label>
-                  <Input
-                    id="skills"
-                    placeholder="e.g., Communication, Leadership (comma-separated)"
-                    value={(staffData.skills ?? []).join(", ")}
-                    onChange={(e) => {
-                      const skills = e.target.value
-                        .split(",")
-                        .map((s) => s.trim())
-                        .filter(Boolean);
-                      setStaffData((prev) => {
-                        if (!prev) return prev;
-                        return {
-                          ...prev,
-                          skills: skills,
-                        };
-                      });
-                    }}
-                  />
-                </div>
-                {/* Displaying Responsibilities/Permissions as read-only */}
-                <div className="space-y-2 md:col-span-2">
-                  <Label>Responsibilities</Label>
-                  <p className="text-sm text-gray-500 dark:text-gray-400">
-                    {/* TODO: Improve display/editing for JSON */}
-                    {JSON.stringify(staffData.responsibilities) ??
-                      "Not specified"}
-                  </p>
-                </div>
-                <div className="space-y-2 md:col-span-2">
-                  <Label>Permissions</Label>
-                  <p className="text-sm text-gray-500 dark:text-gray-400">
-                    {JSON.stringify(staffData.permissions) ??
-                      "Not specified"}
-                  </p>
-                </div>
-              </CardContent>
-              <CardFooter className="border-t px-6 py-4">
-                <Button onClick={() => handleSave("role")} disabled={isSaving}>
-                  {isSaving ? "Saving..." : "Save Role Info"}
-                </Button>
-              </CardFooter>
-            </Card>
+        {/* Staff Role Card */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Staff Role</CardTitle>
+            <CardDescription>
+              Manage the staff member&apos;s role and responsibilities.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="department">Department</Label>
+              <Input
+                id="department"
+                name="department"
+                placeholder="e.g., Engineering, Marketing"
+                value={staffData.department ?? ""}
+                onChange={handleProfileInputChange}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="position">Position</Label>
+              <Input
+                id="position"
+                name="position"
+                placeholder="e.g., Software Engineer, Manager"
+                value={staffData.position ?? ""}
+                onChange={handleProfileInputChange}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="employeeId">Employee ID</Label>
+              <Input
+                id="employeeId"
+                name="employeeId"
+                placeholder="e.g., EMP-001"
+                value={staffData.employeeId ?? ""}
+                onChange={handleProfileInputChange}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="reportsTo">Reports To</Label>
+              <Input
+                id="reportsTo"
+                name="reportsTo"
+                placeholder="Manager's name or ID"
+                value={staffData.reportsTo ?? ""}
+                onChange={handleProfileInputChange}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="hireDate">Hire Date</Label>
+              <Input
+                id="hireDate"
+                name="hireDate"
+                type="date"
+                value={
+                  staffData.hireDate
+                    ? new Date(staffData.hireDate).toISOString().split("T")[0]
+                    : ""
+                }
+                onChange={handleProfileInputChange}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="workSchedule">Work Schedule</Label>
+              <Input
+                id="workSchedule"
+                name="workSchedule"
+                placeholder="e.g., Mon-Fri 9AM-5PM"
+                value={staffData.workSchedule ?? ""}
+                onChange={handleProfileInputChange}
+              />
+            </div>
+            <div className="space-y-2 md:col-span-2">
+              <Label htmlFor="skills">Skills</Label>
+              <Input
+                id="skills"
+                placeholder="e.g., Communication, Leadership (comma-separated)"
+                value={(staffData.skills ?? []).join(", ")}
+                onChange={(e) => {
+                  const skills = e.target.value
+                    .split(",")
+                    .map((s) => s.trim())
+                    .filter(Boolean);
+                  setStaffData((prev) => {
+                    if (!prev) return prev;
+                    return {
+                      ...prev,
+                      skills: skills,
+                    };
+                  });
+                }}
+              />
+            </div>
+            {/* Displaying Responsibilities/Permissions as read-only */}
+            <div className="space-y-2 md:col-span-2">
+              <Label>Responsibilities</Label>
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                {/* TODO: Improve display/editing for JSON */}
+                {JSON.stringify(staffData.responsibilities) ?? "Not specified"}
+              </p>
+            </div>
+            <div className="space-y-2 md:col-span-2">
+              <Label>Permissions</Label>
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                {JSON.stringify(staffData.permissions) ?? "Not specified"}
+              </p>
+            </div>
+          </CardContent>
+          <CardFooter className="border-t px-6 py-4">
+            <Button onClick={() => handleSave("role")} disabled={isSaving}>
+              {isSaving ? "Saving..." : "Save Role Info"}
+            </Button>
+          </CardFooter>
+        </Card>
 
-            {/* Account Settings Card */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Account Settings</CardTitle>
-                <CardDescription>
-                  Manage account-related settings.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="grid gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="timezone">Timezone</Label>
-                  <Select
-                    name="timezone"
-                    value={staffData.user.timezone ?? ""}
-                    onValueChange={(value) =>
-                      handleUserSelectChange(value, "timezone")
-                    }
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select timezone" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {/* Populate with actual timezones - Placeholder */}
-                      <SelectItem value="America/New_York">
-                        Eastern Time (US & Canada)
-                      </SelectItem>
-                      <SelectItem value="Europe/London">London</SelectItem>
-                      <SelectItem value="Asia/Kolkata">
-                        India Standard Time
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </CardContent>
-              <CardFooter className="border-t px-6 py-4">
-                <Button
-                  onClick={() => handleSave("account")}
-                  disabled={isSaving}
-                >
-                  {isSaving ? "Saving..." : "Save Account Settings"}
-                </Button>
-              </CardFooter>
-            </Card>
+        {/* Account Settings Card */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Account Settings</CardTitle>
+            <CardDescription>Manage account-related settings.</CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="timezone">Timezone</Label>
+              <Select
+                name="timezone"
+                value={staffData.user.timezone ?? ""}
+                onValueChange={(value) =>
+                  handleUserSelectChange(value, "timezone")
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select timezone" />
+                </SelectTrigger>
+                <SelectContent>
+                  {/* Populate with actual timezones - Placeholder */}
+                  <SelectItem value="America/New_York">
+                    Eastern Time (US & Canada)
+                  </SelectItem>
+                  <SelectItem value="Europe/London">London</SelectItem>
+                  <SelectItem value="Asia/Kolkata">
+                    India Standard Time
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </CardContent>
+          <CardFooter className="border-t px-6 py-4">
+            <Button onClick={() => handleSave("account")} disabled={isSaving}>
+              {isSaving ? "Saving..." : "Save Account Settings"}
+            </Button>
+          </CardFooter>
+        </Card>
 
-            {/* Preferences Card */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Preferences</CardTitle>
-                <CardDescription>
-                  Manage notification and cookie preferences.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="grid gap-6">
-                {/* Notification Preferences */}
-                <div className="space-y-4">
-                  <h3 className="font-medium">Notifications</h3>
-                  <div className="flex items-center justify-between space-x-2">
-                    <Label
-                      htmlFor="allNotifications"
-                      className="flex flex-col space-y-1 cursor-pointer"
-                    >
-                      <span>All Notifications</span>
-                      <span className="font-normal leading-snug text-muted-foreground">
-                        Enable or disable all notifications globally.
-                      </span>
-                    </Label>
-                    <Switch
-                      id="allNotifications"
-                      name="allNotifications"
-                      checked={
-                        staffData.user.notificationPreferences?.allNotifications ??
-                        false
-                      }
-                      onCheckedChange={(checked) =>
-                        handleNotificationChange(checked, "allNotifications")
-                      }
-                    />
-                  </div>
-                  <div className="flex items-center justify-between space-x-2">
-                    <Label
-                      htmlFor="mentions"
-                      className="flex flex-col space-y-1 cursor-pointer"
-                    >
-                      <span>Mentions</span>
-                      <span className="font-normal leading-snug text-muted-foreground">
-                        Receive notifications for @mentions.
-                      </span>
-                    </Label>
-                    <Switch
-                      id="mentions"
-                      name="mentions"
-                      checked={
-                        staffData.user.notificationPreferences?.mentions ?? false
-                      }
-                      onCheckedChange={(checked) =>
-                        handleNotificationChange(checked, "mentions")
-                      }
-                    />
-                  </div>
-                  <div className="flex items-center justify-between space-x-2">
-                    <Label
-                      htmlFor="directMessages"
-                      className="flex flex-col space-y-1 cursor-pointer"
-                    >
-                      <span>Direct Messages</span>
-                      <span className="font-normal leading-snug text-muted-foreground">
-                        Receive notifications for direct messages.
-                      </span>
-                    </Label>
-                    <Switch
-                      id="directMessages"
-                      name="directMessages"
-                      checked={
-                        staffData.user.notificationPreferences?.directMessages ??
-                        false
-                      }
-                      onCheckedChange={(checked) =>
-                        handleNotificationChange(checked, "directMessages")
-                      }
-                    />
-                  </div>
-                  <div className="flex items-center justify-between space-x-2">
-                    <Label
-                      htmlFor="updates"
-                      className="flex flex-col space-y-1 cursor-pointer"
-                    >
-                      <span>Platform Updates</span>
-                      <span className="font-normal leading-snug text-muted-foreground">
-                        Receive notifications about platform updates and news.
-                      </span>
-                    </Label>
-                    <Switch
-                      id="updates"
-                      name="updates"
-                      checked={
-                        staffData.user.notificationPreferences?.updates ?? false
-                      }
-                      onCheckedChange={(checked) =>
-                        handleNotificationChange(checked, "updates")
-                      }
-                    />
-                  </div>
-                </div>
-                {/* Cookie Preferences */}
-                <div className="space-y-4">
-                  <h3 className="font-medium">Cookie Preferences</h3>
-                  <div className="flex items-center justify-between space-x-2">
-                    <Label
-                      htmlFor="essentialCookies"
-                      className="flex flex-col space-y-1"
-                    >
-                      <span>Essential Cookies</span>
-                      <span className="font-normal leading-snug text-muted-foreground">
-                        Required for basic site functionality. Cannot be
-                        disabled.
-                      </span>
-                    </Label>
-                    <Switch
-                      id="essentialCookies"
-                      name="essential"
-                      checked={staffData.user.cookiePreferences?.essential ?? true}
-                      disabled
-                    />
-                  </div>
-                  <div className="flex items-center justify-between space-x-2">
-                    <Label
-                      htmlFor="analyticsCookies"
-                      className="flex flex-col space-y-1 cursor-pointer"
-                    >
-                      <span>Analytics Cookies</span>
-                      <span className="font-normal leading-snug text-muted-foreground">
-                        Allow us to collect anonymous usage data.
-                      </span>
-                    </Label>
-                    <Switch
-                      id="analyticsCookies"
-                      name="analytics"
-                      checked={staffData.user.cookiePreferences?.analytics ?? false}
-                      onCheckedChange={(checked) =>
-                        handleCookieChange(checked, "analytics")
-                      }
-                    />
-                  </div>
-                  <div className="flex items-center justify-between space-x-2">
-                    <Label
-                      htmlFor="marketingCookies"
-                      className="flex flex-col space-y-1 cursor-pointer"
-                    >
-                      <span>Marketing Cookies</span>
-                      <span className="font-normal leading-snug text-muted-foreground">
-                        Used for tracking and advertising purposes.
-                      </span>
-                    </Label>
-                    <Switch
-                      id="marketingCookies"
-                      name="marketing"
-                      checked={staffData.user.cookiePreferences?.marketing ?? false}
-                      onCheckedChange={(checked) =>
-                        handleCookieChange(checked, "marketing")
-                      }
-                    />
-                  </div>
-                </div>
-              </CardContent>
-              <CardFooter className="border-t px-6 py-4">
-                <Button
-                  onClick={() => handleSave("preferences")}
-                  disabled={isSaving}
+        {/* Preferences Card */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Preferences</CardTitle>
+            <CardDescription>
+              Manage notification and cookie preferences.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-6">
+            {/* Notification Preferences */}
+            <div className="space-y-4">
+              <h3 className="font-medium">Notifications</h3>
+              <div className="flex items-center justify-between space-x-2">
+                <Label
+                  htmlFor="allNotifications"
+                  className="flex flex-col space-y-1 cursor-pointer"
                 >
-                  {isSaving ? "Saving..." : "Save Preferences"}
-                </Button>
-              </CardFooter>
-            </Card>
-          </div>
+                  <span>All Notifications</span>
+                  <span className="font-normal leading-snug text-muted-foreground">
+                    Enable or disable all notifications globally.
+                  </span>
+                </Label>
+                <Switch
+                  id="allNotifications"
+                  name="allNotifications"
+                  checked={
+                    staffData.user.notificationPreferences?.allNotifications ??
+                    false
+                  }
+                  onCheckedChange={(checked) =>
+                    handleNotificationChange(checked, "allNotifications")
+                  }
+                />
+              </div>
+              <div className="flex items-center justify-between space-x-2">
+                <Label
+                  htmlFor="mentions"
+                  className="flex flex-col space-y-1 cursor-pointer"
+                >
+                  <span>Mentions</span>
+                  <span className="font-normal leading-snug text-muted-foreground">
+                    Receive notifications for @mentions.
+                  </span>
+                </Label>
+                <Switch
+                  id="mentions"
+                  name="mentions"
+                  checked={
+                    staffData.user.notificationPreferences?.mentions ?? false
+                  }
+                  onCheckedChange={(checked) =>
+                    handleNotificationChange(checked, "mentions")
+                  }
+                />
+              </div>
+              <div className="flex items-center justify-between space-x-2">
+                <Label
+                  htmlFor="directMessages"
+                  className="flex flex-col space-y-1 cursor-pointer"
+                >
+                  <span>Direct Messages</span>
+                  <span className="font-normal leading-snug text-muted-foreground">
+                    Receive notifications for direct messages.
+                  </span>
+                </Label>
+                <Switch
+                  id="directMessages"
+                  name="directMessages"
+                  checked={
+                    staffData.user.notificationPreferences?.directMessages ??
+                    false
+                  }
+                  onCheckedChange={(checked) =>
+                    handleNotificationChange(checked, "directMessages")
+                  }
+                />
+              </div>
+              <div className="flex items-center justify-between space-x-2">
+                <Label
+                  htmlFor="updates"
+                  className="flex flex-col space-y-1 cursor-pointer"
+                >
+                  <span>Platform Updates</span>
+                  <span className="font-normal leading-snug text-muted-foreground">
+                    Receive notifications about platform updates and news.
+                  </span>
+                </Label>
+                <Switch
+                  id="updates"
+                  name="updates"
+                  checked={
+                    staffData.user.notificationPreferences?.updates ?? false
+                  }
+                  onCheckedChange={(checked) =>
+                    handleNotificationChange(checked, "updates")
+                  }
+                />
+              </div>
+            </div>
+            {/* Cookie Preferences */}
+            <div className="space-y-4">
+              <h3 className="font-medium">Cookie Preferences</h3>
+              <div className="flex items-center justify-between space-x-2">
+                <Label
+                  htmlFor="essentialCookies"
+                  className="flex flex-col space-y-1"
+                >
+                  <span>Essential Cookies</span>
+                  <span className="font-normal leading-snug text-muted-foreground">
+                    Required for basic site functionality. Cannot be disabled.
+                  </span>
+                </Label>
+                <Switch
+                  id="essentialCookies"
+                  name="essential"
+                  checked={staffData.user.cookiePreferences?.essential ?? true}
+                  disabled
+                />
+              </div>
+              <div className="flex items-center justify-between space-x-2">
+                <Label
+                  htmlFor="analyticsCookies"
+                  className="flex flex-col space-y-1 cursor-pointer"
+                >
+                  <span>Analytics Cookies</span>
+                  <span className="font-normal leading-snug text-muted-foreground">
+                    Allow us to collect anonymous usage data.
+                  </span>
+                </Label>
+                <Switch
+                  id="analyticsCookies"
+                  name="analytics"
+                  checked={staffData.user.cookiePreferences?.analytics ?? false}
+                  onCheckedChange={(checked) =>
+                    handleCookieChange(checked, "analytics")
+                  }
+                />
+              </div>
+              <div className="flex items-center justify-between space-x-2">
+                <Label
+                  htmlFor="marketingCookies"
+                  className="flex flex-col space-y-1 cursor-pointer"
+                >
+                  <span>Marketing Cookies</span>
+                  <span className="font-normal leading-snug text-muted-foreground">
+                    Used for tracking and advertising purposes.
+                  </span>
+                </Label>
+                <Switch
+                  id="marketingCookies"
+                  name="marketing"
+                  checked={staffData.user.cookiePreferences?.marketing ?? false}
+                  onCheckedChange={(checked) =>
+                    handleCookieChange(checked, "marketing")
+                  }
+                />
+              </div>
+            </div>
+          </CardContent>
+          <CardFooter className="border-t px-6 py-4">
+            <Button
+              onClick={() => handleSave("preferences")}
+              disabled={isSaving}
+            >
+              {isSaving ? "Saving..." : "Save Preferences"}
+            </Button>
+          </CardFooter>
+        </Card>
+      </div>
     </div>
   );
 }

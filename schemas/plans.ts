@@ -69,32 +69,154 @@ export const ConsultantProfileSchema = z.object({
 
 export const ConsultationPlanSchema = z.object({
   id: z.string().optional(),
-  title: z.string(),
-  description: z.string().optional(),
-  durationInHours: z.number(),
-  price: z.number(),
+  title: z
+    .string()
+    .min(1, "Title is required")
+    .max(100, "Title must be 100 characters or less")
+    .refine(
+      meaningfulContentRefinement,
+      "Title contains nonsensical text or gibberish",
+    )
+    .refine(profanityFreeRefinement, "Title contains inappropriate language"),
+  description: z
+    .string()
+    .optional()
+    .refine(
+      (val) => !val || meaningfulContentRefinement(val),
+      "Description contains nonsensical text or gibberish",
+    )
+    .refine(
+      (val) => !val || profanityFreeRefinement(val),
+      "Description contains inappropriate language",
+    ),
+  durationInHours: z
+    .number()
+    .min(0.5, "Duration must be at least 30 minutes")
+    .max(8, "Duration cannot exceed 8 hours"),
+  price: z.number().min(0, "Price must be non-negative"),
   priceCurrency: z.string().min(1, "Currency is required").default("INR"),
-  language: z.string(),
-  level: z.string(),
-  prerequisites: z.string().optional(),
-  materialProvided: z.string().optional(),
-  learningOutcomes: z.array(z.string()),
+  language: z.string().min(1, "Language is required"),
+  level: z.string().min(1, "Level is required"),
+  prerequisites: z
+    .string()
+    .optional()
+    .nullable()
+    .refine(
+      (val) => !val || meaningfulContentRefinement(val),
+      "Prerequisites contain nonsensical text or gibberish",
+    )
+    .refine(
+      (val) => !val || profanityFreeRefinement(val),
+      "Prerequisites contain inappropriate language",
+    ),
+  materialProvided: z
+    .string()
+    .optional()
+    .nullable()
+    .refine(
+      (val) => !val || meaningfulContentRefinement(val),
+      "Materials contain nonsensical text or gibberish",
+    )
+    .refine(
+      (val) => !val || profanityFreeRefinement(val),
+      "Materials contain inappropriate language",
+    ),
+  learningOutcomes: z
+    .array(z.string().min(1, "Learning outcome cannot be empty"))
+    .min(1, "At least one learning outcome is required")
+    .refine(
+      noDuplicatesRefinement,
+      "Duplicate learning outcomes are not allowed",
+    )
+    .refine(
+      meaningfulArrayContentRefinement,
+      "Learning outcomes contain nonsensical text or gibberish",
+    )
+    .refine(
+      profanityFreeArrayRefinement,
+      "Learning outcomes contain inappropriate language",
+    ),
 });
 
 export const SubscriptionPlanSchema = z.object({
   id: z.string().optional(),
-  title: z.string(),
-  description: z.string().optional(),
-  durationInMonths: z.number(),
-  price: z.number(),
+  title: z
+    .string()
+    .min(1, "Title is required")
+    .max(100, "Title must be 100 characters or less")
+    .refine(
+      meaningfulContentRefinement,
+      "Title contains nonsensical text or gibberish",
+    )
+    .refine(profanityFreeRefinement, "Title contains inappropriate language"),
+  description: z
+    .string()
+    .optional()
+    .refine(
+      (val) => !val || meaningfulContentRefinement(val),
+      "Description contains nonsensical text or gibberish",
+    )
+    .refine(
+      (val) => !val || profanityFreeRefinement(val),
+      "Description contains inappropriate language",
+    ),
+  durationInMonths: z
+    .number()
+    .min(1, "Duration must be at least 1 month")
+    .max(24, "Duration cannot exceed 24 months"),
+  price: z.number().min(0, "Price must be non-negative"),
   priceCurrency: z.string().min(1, "Currency is required").default("INR"),
-  callsPerWeek: z.number(),
+  callsPerWeek: z
+    .number()
+    .min(0, "Calls per week cannot be negative")
+    .max(7, "Cannot exceed 7 calls per week"),
+  sessionDurationInHours: z
+    .number()
+    .min(0.5, "Session duration must be at least 30 minutes")
+    .max(4, "Session duration cannot exceed 4 hours")
+    .default(1),
   emailSupport: z.enum(["GENERAL", "PRIORITY", "DEDICATED"]),
-  language: z.string(),
-  level: z.string(),
-  prerequisites: z.string().optional(),
-  materialProvided: z.string().optional(),
-  learningOutcomes: z.array(z.string()),
+  language: z.string().min(1, "Language is required"),
+  level: z.string().min(1, "Level is required"),
+  prerequisites: z
+    .string()
+    .optional()
+    .nullable()
+    .refine(
+      (val) => !val || meaningfulContentRefinement(val),
+      "Prerequisites contain nonsensical text or gibberish",
+    )
+    .refine(
+      (val) => !val || profanityFreeRefinement(val),
+      "Prerequisites contain inappropriate language",
+    ),
+  materialProvided: z
+    .string()
+    .optional()
+    .nullable()
+    .refine(
+      (val) => !val || meaningfulContentRefinement(val),
+      "Materials contain nonsensical text or gibberish",
+    )
+    .refine(
+      (val) => !val || profanityFreeRefinement(val),
+      "Materials contain inappropriate language",
+    ),
+  learningOutcomes: z
+    .array(z.string().min(1, "Learning outcome cannot be empty"))
+    .min(1, "At least one learning outcome is required")
+    .refine(
+      noDuplicatesRefinement,
+      "Duplicate learning outcomes are not allowed",
+    )
+    .refine(
+      meaningfulArrayContentRefinement,
+      "Learning outcomes contain nonsensical text or gibberish",
+    )
+    .refine(
+      profanityFreeArrayRefinement,
+      "Learning outcomes contain inappropriate language",
+    ),
 });
 
 // Base schema for common fields

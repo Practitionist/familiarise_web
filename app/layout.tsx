@@ -12,7 +12,7 @@ import authOptions from "./api/auth/[...nextauth]/options";
 import "@stream-io/video-react-sdk/dist/css/styles.css";
 import "./globals.css";
 
-const sora = Sora({ 
+const sora = Sora({
   subsets: ["latin"],
   variable: "--font-sora",
   display: "swap",
@@ -20,8 +20,16 @@ const sora = Sora({
 
 export const metadata: Metadata = {
   title: "Familiarise | Expert Consultations & Career Mentorship",
-  description: "Connect with world-class experts for 1-on-1 sessions, classes, webinars, and personalized career guidance. Transform your career with Familiarise.",
-  keywords: ["consulting", "mentorship", "career guidance", "expert sessions", "webinars", "professional development"],
+  description:
+    "Connect with world-class experts for 1-on-1 sessions, classes, webinars, and personalized career guidance. Transform your career with Familiarise.",
+  keywords: [
+    "consulting",
+    "mentorship",
+    "career guidance",
+    "expert sessions",
+    "webinars",
+    "professional development",
+  ],
 };
 
 export default async function RootLayout({
@@ -32,7 +40,10 @@ export default async function RootLayout({
   const session = await getServerSession(authOptions);
   return (
     <html lang="en" className={sora.variable} suppressHydrationWarning>
-      <body className={`${sora.className} flex flex-col min-h-screen antialiased`} suppressHydrationWarning>
+      <body
+        className={`${sora.className} flex flex-col min-h-screen antialiased`}
+        suppressHydrationWarning
+      >
         <ReactQueryProvider>
           <NextAuthProvider session={session}>
             <Toaster />
@@ -46,28 +57,3 @@ export default async function RootLayout({
     </html>
   );
 }
-
-///////////////////////////////////////// CLIENT VERSION /////////////////////////////////////////
-
-// "use client";
-// import React from "react";
-// import { Provider as ReduxProvider } from "react-redux";
-// import { SessionProvider } from "next-auth/react";
-// import store from "@/redux/store";
-// import "./globals.css";
-
-// export default function RootLayout({
-//   children,
-// }: Readonly<{
-//   children: React.ReactNode;
-// }>) {
-//   return (
-//     <html lang="en">
-//       <body>
-//         <SessionProvider>
-//           <ReduxProvider store={store}>{children}</ReduxProvider>
-//         </SessionProvider>
-//       </body>
-//     </html>
-//   );
-// }

@@ -25,7 +25,10 @@ const REFUND_REASONS = [
 ];
 
 function getWeightedStatus(): RefundStatus {
-  const totalWeight = STATUS_WEIGHTS.reduce((sum, item) => sum + item.weight, 0);
+  const totalWeight = STATUS_WEIGHTS.reduce(
+    (sum, item) => sum + item.weight,
+    0,
+  );
   let random = faker.number.int({ min: 1, max: totalWeight });
 
   for (const item of STATUS_WEIGHTS) {

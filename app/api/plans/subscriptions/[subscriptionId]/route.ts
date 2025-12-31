@@ -1,22 +1,9 @@
 import prisma from "@/lib/prisma";
-import { Prisma, PlanEmailSupport } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
-
-interface UpdateSubscriptionPlanRequest {
-  title?: string;
-  description?: string;
-  durationInMonths?: number;
-  price?: number;
-  callsPerWeek?: number;
-  sessionDurationInHours?: number;
-  emailSupport?: PlanEmailSupport;
-  language?: string;
-  level?: string;
-  prerequisites?: string;
-  materialProvided?: string;
-  learningOutcomes?: string[];
-  consultantProfileId?: string;
-}
+import { getServerSession } from "next-auth";
+import authOptions from "@/app/api/auth/[...nextauth]/options";
+import { SubscriptionPlanSchema } from "@/schemas/plans";
 
 export async function GET(
   request: NextRequest,
@@ -82,94 +69,85 @@ export async function PUT(
   { params }: { params: Promise<{ subscriptionId: string }> },
 ) {
   try {
+    // Authentication check
+    const session = await getServerSession(authOptions);
+    if (!session?.user?.id) {
+      return NextResponse.json(
+        { error: "Authentication required" },
+        { status: 401 },
+      );
+    }
+
     const { subscriptionId } = await params;
-    const body: UpdateSubscriptionPlanRequest = await request.json();
 
-    // Input validation
-    if (body.durationInMonths && body.durationInMonths <= 0) {
+    // Verify ownership - user must own this subscription plan
+    const existingPlan = await prisma.subscriptionPlan.findUnique({
+      where: { id: subscriptionId },
+      include: { consultantProfile: true },
+    });
+
+    if (!existingPlan) {
       return NextResponse.json(
-        { error: "Duration must be a positive number" },
+        { error: "Subscription plan not found" },
+        { status: 404 },
+      );
+    }
+
+    if (existingPlan.consultantProfile.userId !== session.user.id) {
+      return NextResponse.json(
+        { error: "You do not have permission to update this subscription plan" },
+        { status: 403 },
+      );
+    }
+
+    const body = await request.json();
+
+    // Validate input with Zod schema (partial for updates)
+    const validationResult = SubscriptionPlanSchema.partial().safeParse(body);
+    if (!validationResult.success) {
+      return NextResponse.json(
+        { error: "Validation failed", details: validationResult.error.issues },
         { status: 400 },
       );
     }
 
-    if (body.price && body.price <= 0) {
-      return NextResponse.json(
-        { error: "Price must be a positive number" },
-        { status: 400 },
-      );
-    }
-
-    if (body.callsPerWeek && body.callsPerWeek < 0) {
-      return NextResponse.json(
-        { error: "Calls per week must be a non-negative number" },
-        { status: 400 },
-      );
-    }
-
-    if (
-      body.emailSupport &&
-      !Object.values(PlanEmailSupport).includes(body.emailSupport)
-    ) {
-      return NextResponse.json(
-        { error: "Invalid email support value" },
-        { status: 400 },
-      );
-    }
+    const validatedData = validationResult.data;
 
     // Recompute derived metrics if base fields are being updated
     let totalSessions: number | undefined;
     let totalHours: number | undefined;
 
     if (
-      body.callsPerWeek !== undefined ||
-      body.durationInMonths !== undefined ||
+      validatedData.callsPerWeek !== undefined ||
+      validatedData.durationInMonths !== undefined ||
       body.sessionDurationInHours !== undefined
     ) {
-      // Fetch existing plan to get current values for fields not being updated
-      const existingPlan = await prisma.subscriptionPlan.findUnique({
-        where: { id: subscriptionId },
-        select: {
-          callsPerWeek: true,
-          durationInMonths: true,
-          sessionDurationInHours: true,
-        },
-      });
+      const callsPerWeek = validatedData.callsPerWeek ?? existingPlan.callsPerWeek;
+      const durationInMonths = validatedData.durationInMonths ?? existingPlan.durationInMonths;
+      const sessionDurationInHours = body.sessionDurationInHours ?? existingPlan.sessionDurationInHours;
 
-      if (existingPlan) {
-        const callsPerWeek = body.callsPerWeek ?? existingPlan.callsPerWeek;
-        const durationInMonths =
-          body.durationInMonths ?? existingPlan.durationInMonths;
-        const sessionDurationInHours =
-          body.sessionDurationInHours ?? existingPlan.sessionDurationInHours;
-
-        totalSessions = callsPerWeek * durationInMonths * 4;
-        totalHours = totalSessions * sessionDurationInHours;
-      }
+      totalSessions = callsPerWeek * durationInMonths * 4;
+      totalHours = totalSessions * sessionDurationInHours;
     }
 
     const subscriptionPlan = await prisma.subscriptionPlan.update({
       where: { id: subscriptionId },
       data: {
-        title: body.title,
-        description: body.description,
-        durationInMonths: body.durationInMonths,
-        price: body.price ? Math.round(body.price) : undefined, // Ensure price is an integer
-        callsPerWeek: body.callsPerWeek,
+        title: validatedData.title,
+        description: validatedData.description,
+        durationInMonths: validatedData.durationInMonths,
+        price: validatedData.price !== undefined ? Math.round(validatedData.price) : undefined,
+        priceCurrency: validatedData.priceCurrency,
+        callsPerWeek: validatedData.callsPerWeek,
         sessionDurationInHours: body.sessionDurationInHours,
         totalSessions,
         totalHours,
-        emailSupport: body.emailSupport,
-        language: body.language,
-        level: body.level,
-        prerequisites: body.prerequisites,
-        materialProvided: body.materialProvided,
-        learningOutcomes: body.learningOutcomes,
-        consultantProfile: body.consultantProfileId
-          ? {
-              connect: { id: body.consultantProfileId },
-            }
-          : undefined,
+        emailSupport: validatedData.emailSupport,
+        language: validatedData.language,
+        level: validatedData.level,
+        prerequisites: validatedData.prerequisites,
+        materialProvided: validatedData.materialProvided,
+        learningOutcomes: validatedData.learningOutcomes,
       },
       include: {
         consultantProfile: {
@@ -227,7 +205,36 @@ export async function DELETE(
   { params }: { params: Promise<{ subscriptionId: string }> },
 ) {
   try {
+    // Authentication check
+    const session = await getServerSession(authOptions);
+    if (!session?.user?.id) {
+      return NextResponse.json(
+        { error: "Authentication required" },
+        { status: 401 },
+      );
+    }
+
     const { subscriptionId } = await params;
+
+    // Verify ownership - user must own this subscription plan
+    const existingPlan = await prisma.subscriptionPlan.findUnique({
+      where: { id: subscriptionId },
+      include: { consultantProfile: true },
+    });
+
+    if (!existingPlan) {
+      return NextResponse.json(
+        { error: "Subscription plan not found" },
+        { status: 404 },
+      );
+    }
+
+    if (existingPlan.consultantProfile.userId !== session.user.id) {
+      return NextResponse.json(
+        { error: "You do not have permission to delete this subscription plan" },
+        { status: 403 },
+      );
+    }
 
     // Check if there are any associated subscriptions
     const associatedSubscriptions = await prisma.subscription.findMany({

@@ -36,7 +36,9 @@ export function FeaturedExperts() {
         {hasHalfStar && (
           <StarHalf className="w-4 h-4 fill-amber-400 text-amber-400" />
         )}
-        <span className="text-sm font-medium text-zinc-700 ml-1">{rating.toFixed(1)}</span>
+        <span className="text-sm font-medium text-zinc-700 ml-1">
+          {rating.toFixed(1)}
+        </span>
       </div>
     );
   };
@@ -48,7 +50,7 @@ export function FeaturedExperts() {
 
       <div className="max-w-[1600px] mx-auto px-4 md:px-8 lg:px-12 relative z-10">
         {/* Section Header */}
-        <motion.div 
+        <motion.div
           className="text-center mb-16"
           initial={{ opacity: 0, y: 20 }}
           whileInView={{ opacity: 1, y: 0 }}
@@ -57,34 +59,38 @@ export function FeaturedExperts() {
         >
           <div className="inline-flex items-center gap-2 px-4 py-2 bg-zinc-900 rounded-full mb-6">
             <Award className="w-4 h-4 text-white" />
-            <span className="text-sm font-medium text-white">Featured Experts</span>
+            <span className="text-sm font-medium text-white">
+              Featured Experts
+            </span>
           </div>
           <h2 className="text-3xl md:text-4xl lg:text-5xl font-bold text-zinc-900 mb-4">
             Top <span className="silver-text">Consultants</span>
           </h2>
           <p className="text-lg text-zinc-600 max-w-2xl mx-auto">
-            Discover the best of the best. Our top consultants are ready to 
-            help you achieve your goals.
+            Discover the best of the best. Our top consultants are ready to help
+            you achieve your goals.
           </p>
         </motion.div>
 
         {/* Experts Grid */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-6">
           {isLoading
-            ? Array(5).fill(0).map((_, index) => (
-                <div
-                  key={index}
-                  className="bg-white rounded-2xl p-6 shadow-sm border border-zinc-200 animate-pulse"
-                >
-                  <div className="w-20 h-20 rounded-full bg-zinc-200 mx-auto mb-4" />
-                  <div className="h-5 bg-zinc-200 rounded w-3/4 mx-auto mb-3" />
-                  <div className="h-4 bg-zinc-200 rounded w-1/2 mx-auto mb-4" />
-                  <div className="flex gap-2 justify-center">
-                    <div className="h-6 bg-zinc-200 rounded-full w-16" />
-                    <div className="h-6 bg-zinc-200 rounded-full w-16" />
+            ? Array(5)
+                .fill(0)
+                .map((_, index) => (
+                  <div
+                    key={index}
+                    className="bg-white rounded-2xl p-6 shadow-sm border border-zinc-200 animate-pulse"
+                  >
+                    <div className="w-20 h-20 rounded-full bg-zinc-200 mx-auto mb-4" />
+                    <div className="h-5 bg-zinc-200 rounded w-3/4 mx-auto mb-3" />
+                    <div className="h-4 bg-zinc-200 rounded w-1/2 mx-auto mb-4" />
+                    <div className="flex gap-2 justify-center">
+                      <div className="h-6 bg-zinc-200 rounded-full w-16" />
+                      <div className="h-6 bg-zinc-200 rounded-full w-16" />
+                    </div>
                   </div>
-                </div>
-              ))
+                ))
             : experts.map((expert, index) => (
                 <motion.div
                   key={expert.id}

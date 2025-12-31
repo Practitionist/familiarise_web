@@ -8,7 +8,13 @@ import { useRef, useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { STATS } from "./data";
 
-function AnimatedNumber({ value, suffix = "" }: { value: number; suffix: string }) {
+function AnimatedNumber({
+  value,
+  suffix = "",
+}: {
+  value: number;
+  suffix: string;
+}) {
   const ref = useRef(null);
   const isInView = useInView(ref, { once: true });
   const [displayValue, setDisplayValue] = useState(0);
@@ -37,7 +43,10 @@ function AnimatedNumber({ value, suffix = "" }: { value: number; suffix: string 
       ref={ref}
       className="text-4xl md:text-5xl font-bold text-white tabular-nums"
     >
-      {value % 1 !== 0 ? displayValue.toFixed(1) : displayValue.toLocaleString()}{suffix}
+      {value % 1 !== 0
+        ? displayValue.toFixed(1)
+        : displayValue.toLocaleString()}
+      {suffix}
     </motion.span>
   );
 }
@@ -51,10 +60,10 @@ export function HeroSection() {
         <div className="absolute top-1/3 right-1/4 w-[500px] h-[500px] rounded-full bg-gradient-to-bl from-zinc-700/30 to-transparent blur-[100px] animate-blob animation-delay-2000" />
         <div className="absolute bottom-1/4 left-1/2 w-[700px] h-[700px] rounded-full bg-gradient-to-t from-zinc-800/40 to-transparent blur-[130px] animate-blob animation-delay-4000" />
       </div>
-      
+
       {/* Grid pattern overlay */}
       <div className="absolute inset-0 grid-pattern opacity-30" />
-      
+
       {/* Spotlight effect */}
       <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[600px] bg-gradient-to-b from-zinc-800/20 via-transparent to-transparent blur-[80px]" />
 
@@ -93,8 +102,9 @@ export function HeroSection() {
             transition={{ duration: 0.6, delay: 0.2 }}
             className="text-lg md:text-xl text-zinc-500 mb-10 max-w-2xl mx-auto leading-relaxed"
           >
-            Connect with world-class experts for personalized 1-on-1 sessions, interactive classes, 
-            and live webinars. Your career transformation starts here.
+            Connect with world-class experts for personalized 1-on-1 sessions,
+            interactive classes, and live webinars. Your career transformation
+            starts here.
           </motion.p>
 
           {/* CTAs */}
@@ -105,12 +115,19 @@ export function HeroSection() {
             className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-16"
           >
             <Link href="/explore/experts">
-              <Button size="lg" className="bg-white text-black hover:bg-zinc-200 px-8 h-14 text-base rounded-xl shadow-lg shadow-white/10 group font-medium">
+              <Button
+                size="lg"
+                className="bg-white text-black hover:bg-zinc-200 px-8 h-14 text-base rounded-xl shadow-lg shadow-white/10 group font-medium"
+              >
                 Find Your Expert
                 <ArrowRight className="ml-2 w-5 h-5 group-hover:translate-x-1 transition-transform" />
               </Button>
             </Link>
-            <Button size="lg" variant="outline" className="border-zinc-700 bg-transparent text-white hover:bg-zinc-900 hover:text-white px-8 h-14 text-base rounded-xl group">
+            <Button
+              size="lg"
+              variant="outline"
+              className="border-zinc-700 bg-transparent text-white hover:bg-zinc-900 hover:text-white px-8 h-14 text-base rounded-xl group"
+            >
               <Play className="mr-2 w-5 h-5" />
               Watch Demo
             </Button>
@@ -138,4 +155,3 @@ export function HeroSection() {
     </section>
   );
 }
-

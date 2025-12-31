@@ -68,11 +68,23 @@ function ErrorDisplay({ message }: { message: string }) {
         className="bg-white p-8 rounded-2xl shadow-xl border border-zinc-200 max-w-md text-center"
       >
         <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-red-100 flex items-center justify-center">
-          <svg className="w-8 h-8 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          <svg
+            className="w-8 h-8 text-red-600"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+            />
           </svg>
         </div>
-        <h2 className="text-xl font-bold text-zinc-900 mb-2">Something went wrong</h2>
+        <h2 className="text-xl font-bold text-zinc-900 mb-2">
+          Something went wrong
+        </h2>
         <p className="text-zinc-600">{message}</p>
         <button
           onClick={() => window.location.reload()}
@@ -95,12 +107,26 @@ function AuthRequired() {
         className="bg-white p-8 rounded-2xl shadow-xl border border-zinc-200 max-w-md text-center"
       >
         <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-amber-100 flex items-center justify-center">
-          <svg className="w-8 h-8 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+          <svg
+            className="w-8 h-8 text-amber-600"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
+            />
           </svg>
         </div>
-        <h2 className="text-xl font-bold text-zinc-900 mb-2">Authentication Required</h2>
-        <p className="text-zinc-600">Please sign in to access your dashboard.</p>
+        <h2 className="text-xl font-bold text-zinc-900 mb-2">
+          Authentication Required
+        </h2>
+        <p className="text-zinc-600">
+          Please sign in to access your dashboard.
+        </p>
         <a
           href="/auth/signin"
           className="inline-block mt-6 px-6 py-2.5 bg-zinc-900 text-white rounded-lg font-medium hover:bg-zinc-800 transition-colors"
@@ -142,7 +168,9 @@ function ConsulteeNav({
             <div className="h-8 w-8 rounded-lg bg-zinc-900 flex items-center justify-center">
               <span className="text-white font-bold text-sm">F</span>
             </div>
-            <span className="font-semibold text-zinc-900 hidden sm:block">Familiarise</span>
+            <span className="font-semibold text-zinc-900 hidden sm:block">
+              Familiarise
+            </span>
           </Link>
 
           {/* Desktop Navigation - Center */}
@@ -159,7 +187,7 @@ function ConsulteeNav({
                     "px-3 py-2 rounded-lg text-sm font-medium transition-all whitespace-nowrap",
                     isActive
                       ? "bg-zinc-900 text-white"
-                      : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900"
+                      : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900",
                   )}
                   prefetch={true}
                   onMouseEnter={() => handleNavHover(item.path)}
@@ -177,7 +205,10 @@ function ConsulteeNav({
             ) : (
               <div className="flex items-center gap-3">
                 <span className="hidden xl:block text-sm text-zinc-600">
-                  Welcome, <span className="font-medium text-zinc-900">{userName?.split(" ")[0]}</span>
+                  Welcome,{" "}
+                  <span className="font-medium text-zinc-900">
+                    {userName?.split(" ")[0]}
+                  </span>
                 </span>
                 <Button
                   variant="ghost"
@@ -189,7 +220,10 @@ function ConsulteeNav({
                 </Button>
                 <Link href="/profile">
                   <Avatar className="h-9 w-9 ring-2 ring-zinc-100 hover:ring-zinc-300 transition-all cursor-pointer">
-                    <AvatarImage src={userImage || "/placeholder-user.jpg"} alt={userName || ""} />
+                    <AvatarImage
+                      src={userImage || "/placeholder-user.jpg"}
+                      alt={userName || ""}
+                    />
                     <AvatarFallback className="bg-zinc-100 text-zinc-600">
                       {userName?.charAt(0) || "U"}
                     </AvatarFallback>
@@ -233,7 +267,7 @@ function ConsulteeNav({
                       "flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-all",
                       isActive
                         ? "bg-zinc-900 text-white"
-                        : "text-zinc-600 hover:bg-zinc-100"
+                        : "text-zinc-600 hover:bg-zinc-100",
                     )}
                     prefetch={true}
                     onClick={() => setMobileMenuOpen(false)}
@@ -288,7 +322,10 @@ function DashboardSkeleton() {
 }
 
 // Main layout
-export default function ConsulteeLayout({ children, params }: Readonly<PageProps>) {
+export default function ConsulteeLayout({
+  children,
+  params,
+}: Readonly<PageProps>) {
   const resolvedParams = use(params);
   const consulteeId = resolvedParams.consulteeId;
   const pathname = usePathname();
@@ -357,7 +394,7 @@ export default function ConsulteeLayout({ children, params }: Readonly<PageProps
       ) : (
         <DashboardErrorBoundary>{children}</DashboardErrorBoundary>
       ),
-    [userDetails?.id, children]
+    [userDetails?.id, children],
   );
 
   // Auth check
@@ -376,7 +413,9 @@ export default function ConsulteeLayout({ children, params }: Readonly<PageProps
 
   // Error state
   if (error) {
-    return <ErrorDisplay message={error.message || "Failed to load dashboard"} />;
+    return (
+      <ErrorDisplay message={error.message || "Failed to load dashboard"} />
+    );
   }
 
   if (!userDetails) {

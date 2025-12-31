@@ -95,11 +95,11 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
         formattedWeeklySlots[day].push({
           startTime: extractTimeFromUtcSlot(
             slot.availabilityStartsAt.toString(),
-            timezone
+            timezone,
           ),
           endTime: extractTimeFromUtcSlot(
             slot.availabilityEndsAt.toString(),
-            timezone
+            timezone,
           ),
           isValid: true,
         });
@@ -126,11 +126,11 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
           formattedCustomSlots[dateString].push({
             startTime: convertUtcToTimezone(
               slot.availabilityStartsAt.toString(),
-              timezone
+              timezone,
             ),
             endTime: convertUtcToTimezone(
               slot.availabilityEndsAt.toString(),
-              timezone
+              timezone,
             ),
             isValid: true,
           });
@@ -141,7 +141,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
 
       Object.keys(formattedCustomSlots).forEach((dateString) => {
         formattedCustomSlots[dateString] = sortSlotsByTime(
-          formattedCustomSlots[dateString]
+          formattedCustomSlots[dateString],
         );
       });
 
@@ -168,12 +168,12 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
           const startUTC = convertTimezoneToUtc(
             slot.startTime,
             baseDate,
-            timezone
+            timezone,
           );
           const endUTC = convertTimezoneToUtc(
             slot.endTime,
             overnight ? nextDate : baseDate,
-            timezone
+            timezone,
           );
 
           if (!startUTC || !endUTC) {
@@ -195,12 +195,12 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
             const midnightUTC = convertTimezoneToUtc(
               "00:00",
               nextDate,
-              timezone
+              timezone,
             );
             if (!midnightUTC) return [];
 
             const justBeforeMidnightUTC = new Date(
-              new Date(midnightUTC).getTime() - 1000
+              new Date(midnightUTC).getTime() - 1000,
             );
 
             const startDay = day.toUpperCase() as DayOfWeek;
@@ -231,7 +231,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
             },
           ];
         });
-      }
+      },
     );
     setValue("weeklySlots", formattedWeeklySlots);
   }, [weeklySlots, setValue, timezone]);
@@ -256,12 +256,12 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
           const startUTC = convertTimezoneToUtc(
             slot.startTime,
             dateString,
-            timezone
+            timezone,
           );
           const endUTC = convertTimezoneToUtc(
             slot.endTime,
             overnight ? nextDateStr : dateString,
-            timezone
+            timezone,
           );
 
           if (!startUTC || !endUTC) return [];
@@ -279,12 +279,12 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
             const midnightUTC = convertTimezoneToUtc(
               "00:00",
               nextDateStr,
-              timezone
+              timezone,
             );
             if (!midnightUTC) return [];
 
             const justBeforeMidnightUTC = new Date(
-              new Date(midnightUTC).getTime() - 1000
+              new Date(midnightUTC).getTime() - 1000,
             );
 
             return [
@@ -306,7 +306,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
             },
           ];
         });
-      }
+      },
     );
     setValue("customSlots", formattedCustomSlots);
   }, [customSlots, setValue, timezone]);
@@ -315,7 +315,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
     (
       day: string,
       _slots: SlotsType,
-      setSlots: React.Dispatch<React.SetStateAction<SlotsType>>
+      setSlots: React.Dispatch<React.SetStateAction<SlotsType>>,
     ) => {
       setSlots((prev) => {
         const newSlots = {
@@ -331,7 +331,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
         return newSlots;
       });
     },
-    []
+    [],
   );
 
   const handleUpdateSlot = useCallback(
@@ -341,20 +341,20 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
       field: "startTime" | "endTime",
       value: string,
       _slots: SlotsType,
-      setSlots: React.Dispatch<React.SetStateAction<SlotsType>>
+      setSlots: React.Dispatch<React.SetStateAction<SlotsType>>,
     ) => {
       setSlots((prev) => {
         const updatedSlots = {
           ...prev,
           [day]: prev[day].map((slot, i) =>
-            i === index ? { ...slot, [field]: value } : slot
+            i === index ? { ...slot, [field]: value } : slot,
           ),
         };
         const validationResult = validateTimeSlot(
           updatedSlots[day][index],
           updatedSlots[day].filter((_, i) => i !== index),
           day,
-          scheduleType === "WEEKLY"
+          scheduleType === "WEEKLY",
         );
         updatedSlots[day][index] = validationResult.slot;
 
@@ -365,7 +365,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
         return updatedSlots;
       });
     },
-    [scheduleType]
+    [scheduleType],
   );
 
   const handleDeleteSlot = useCallback(
@@ -373,7 +373,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
       day: string,
       index: number,
       _slots: SlotsType,
-      setSlots: React.Dispatch<React.SetStateAction<SlotsType>>
+      setSlots: React.Dispatch<React.SetStateAction<SlotsType>>,
     ) => {
       setSlots((prev) => {
         const updatedSlots = {
@@ -388,14 +388,14 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
         return updatedSlots;
       });
     },
-    []
+    [],
   );
 
   const renderSlots = useCallback(
     (
       day: DayOfWeek,
       slots: SlotsType,
-      setSlots: React.Dispatch<React.SetStateAction<SlotsType>>
+      setSlots: React.Dispatch<React.SetStateAction<SlotsType>>,
     ) => {
       const dayKey = day.toLowerCase();
       return (
@@ -417,7 +417,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
                       "startTime",
                       e.target.value,
                       slots,
-                      setSlots
+                      setSlots,
                     )
                   }
                   className={`col-span-2 h-10 ${
@@ -436,7 +436,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
                       "endTime",
                       e.target.value,
                       slots,
-                      setSlots
+                      setSlots,
                     )
                   }
                   className={`col-span-2 h-10 ${
@@ -468,7 +468,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
         </div>
       );
     },
-    [handleAddSlot, handleUpdateSlot, handleDeleteSlot]
+    [handleAddSlot, handleUpdateSlot, handleDeleteSlot],
   );
 
   const allSlotsValid = useCallback(() => {
@@ -510,20 +510,20 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
 
       onNext(data);
     },
-    [getValidationFeedback, onNext]
+    [getValidationFeedback, onNext],
   );
 
   const [currentDate, setCurrentDate] = useState(new Date());
 
   const handlePrevMonth = () => {
     setCurrentDate(
-      new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1)
+      new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1),
     );
   };
 
   const handleNextMonth = () => {
     setCurrentDate(
-      new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1)
+      new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1),
     );
   };
 
@@ -540,7 +540,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
       const date = new Date(
         currentDate.getFullYear(),
         currentDate.getMonth(),
-        i
+        i,
       );
       const dateString = getLocalDateString(date);
       const isSelected = customSlots[dateString] !== undefined;
@@ -566,7 +566,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
           }}
         >
           {i}
-        </button>
+        </button>,
       );
     }
 
@@ -603,7 +603,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
                   "startTime",
                   e.target.value,
                   customSlots,
-                  setCustomSlots
+                  setCustomSlots,
                 )
               }
               className={`col-span-2 h-10 ${
@@ -622,7 +622,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
                   "endTime",
                   e.target.value,
                   customSlots,
-                  setCustomSlots
+                  setCustomSlots,
                 )
               }
               className={`col-span-2 h-10 ${
@@ -649,7 +649,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
               >
                 {slot.errorMessage}
               </p>
-            )
+            ),
         )}
         <Button
           type="button"
@@ -741,7 +741,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
                   }`}
                 >
                   {DAYS_OF_WEEK.map((day) =>
-                    renderSlots(day, weeklySlots, setWeeklySlots)
+                    renderSlots(day, weeklySlots, setWeeklySlots),
                   )}
                 </div>
               </div>

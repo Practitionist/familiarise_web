@@ -31,12 +31,12 @@ const MeetingPage = () => {
           // Disable media streams first to stop audio/video
           await call?.camera.disable();
           await call?.microphone.disable();
-          
+
           // Disable screen share if active
           if (call?.screenShare?.state?.status === "enabled") {
             await call?.screenShare.disable();
           }
-          
+
           console.log("Media streams disabled");
 
           // Leave the call if still connected

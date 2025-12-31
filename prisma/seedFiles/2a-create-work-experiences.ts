@@ -14,10 +14,10 @@ import {
  * Should be called after users are created
  */
 export async function createWorkExperiences(
-  consultants: UserWithProfiles[]
+  consultants: UserWithProfiles[],
 ): Promise<void> {
   console.log(
-    `Creating work experiences for ${consultants.length} consultants...`
+    `Creating work experiences for ${consultants.length} consultants...`,
   );
 
   for (const consultant of consultants) {
@@ -42,7 +42,11 @@ export async function createWorkExperiences(
         const endYear = isCurrent ? null : currentYear;
         const startYear = (endYear || currentYear) - yearsInRole;
 
-        const startDate = new Date(startYear, faker.number.int({ min: 0, max: 11 }), 1);
+        const startDate = new Date(
+          startYear,
+          faker.number.int({ min: 0, max: 11 }),
+          1,
+        );
         const endDate = endYear
           ? new Date(endYear, faker.number.int({ min: 0, max: 11 }), 28)
           : null;
@@ -65,7 +69,7 @@ export async function createWorkExperiences(
     } catch (error) {
       console.error(
         `Failed to create work experiences for consultant ${consultant.id}:`,
-        error
+        error,
       );
     }
   }

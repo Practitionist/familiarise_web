@@ -130,7 +130,7 @@ export default function CheckoutSuccessPage() {
               <p className="text-zinc-600 mb-4">
                 We couldn&apos;t verify your payment. Please contact support.
               </p>
-              <Button 
+              <Button
                 onClick={() => router.push("/dashboard")}
                 className="bg-zinc-900 hover:bg-zinc-800 text-white"
               >
@@ -169,7 +169,9 @@ export default function CheckoutSuccessPage() {
               <span className="text-zinc-600">Status:</span>
               <div className="flex items-center gap-2">
                 {statusInfo.statusIcon}
-                <span className="font-medium text-zinc-900">{statusInfo.statusText}</span>
+                <span className="font-medium text-zinc-900">
+                  {statusInfo.statusText}
+                </span>
               </div>
             </div>
 
@@ -189,8 +191,8 @@ export default function CheckoutSuccessPage() {
         </Card>
 
         <div className="flex gap-4 justify-center">
-          <Button 
-            variant="outline" 
+          <Button
+            variant="outline"
             onClick={() => router.push("/dashboard")}
             className="border-zinc-300 text-zinc-700 hover:bg-zinc-100"
           >
@@ -209,7 +211,10 @@ export default function CheckoutSuccessPage() {
         <div className="mt-8 text-center text-sm text-zinc-500">
           <p>
             Need help? Contact our{" "}
-            <a href="/support" className="text-zinc-900 font-medium hover:underline">
+            <a
+              href="/support"
+              className="text-zinc-900 font-medium hover:underline"
+            >
               support team
             </a>
           </p>

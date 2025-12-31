@@ -85,7 +85,7 @@ export function AppointmentCard({
       className={cn(
         "group relative overflow-hidden rounded-xl border border-zinc-200/80 bg-white p-4 transition-all hover:shadow-lg hover:shadow-zinc-200/50",
         onClick && "cursor-pointer",
-        className
+        className,
       )}
       onClick={onClick}
     >
@@ -102,7 +102,9 @@ export function AppointmentCard({
         <div className="flex-1 min-w-0">
           <div className="flex items-start justify-between gap-2">
             <div>
-              <h3 className="font-semibold text-zinc-900 truncate">{userName}</h3>
+              <h3 className="font-semibold text-zinc-900 truncate">
+                {userName}
+              </h3>
               <p className="text-sm text-zinc-500 truncate">
                 {appointmentType}
                 {planName && ` • ${planName}`}
@@ -136,7 +138,9 @@ export function AppointmentCard({
               <div className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-100">
                 <motion.div
                   initial={{ width: 0 }}
-                  animate={{ width: `${(sessionInfo.completed / sessionInfo.total) * 100}%` }}
+                  animate={{
+                    width: `${(sessionInfo.completed / sessionInfo.total) * 100}%`,
+                  }}
                   transition={{ duration: 0.5, ease: "easeOut" }}
                   className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-blue-500"
                 />
@@ -192,4 +196,3 @@ export function AppointmentCardSkeleton() {
     </div>
   );
 }
-

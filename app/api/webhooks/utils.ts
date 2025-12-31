@@ -1,8 +1,12 @@
 import prisma from "../../../lib/prisma";
-import { Prisma } from "@prisma/client";
+import { Prisma, PaymentGateway } from "@prisma/client";
 import crypto from "crypto";
 import { stripeClient } from "@/lib/payments/core/stripe";
 import { razorpayClient } from "@/lib/payments/core/razorpay";
+import {
+  handlePayoutWebhook,
+  refundEarnings,
+} from "@/lib/payments/payouts";
 
 // Re-export payment handlers from lib (architectural fix)
 export {
@@ -111,6 +115,20 @@ export async function handleRefundCreated(
     });
 
     console.log(`✅ Refund ${refundId} created for payment ${payment.id}`);
+
+    // Update earnings if refund succeeded
+    if (mapRefundStatus(status) === "SUCCEEDED") {
+      try {
+        await refundEarnings(payment.id);
+        console.log(`💰 Earnings refunded for payment ${payment.id}`);
+      } catch (earningsError) {
+        // Log but don't fail - earnings can be manually updated
+        console.error(
+          `⚠️ Failed to refund earnings for payment ${payment.id}:`,
+          earningsError,
+        );
+      }
+    }
   });
 }
 
@@ -286,5 +304,182 @@ function mapDisputeStatus(
       return "LOST";
     default:
       return "NEEDS_RESPONSE";
+  }
+}
+
+// ============================================================================
+// Webhook Event Logging
+// ============================================================================
+
+/**
+ * Log webhook event for audit trail and debugging
+ * Prevents duplicate processing via unique eventId constraint
+ */
+export async function logWebhookEvent(
+  provider: string,
+  eventId: string,
+  eventType: string,
+  payload: unknown,
+  signature?: string,
+): Promise<{ isNew: boolean; eventRecordId?: string }> {
+  try {
+    // Check if event already processed (idempotency)
+    const existing = await prisma.webhookEvent.findUnique({
+      where: { eventId },
+    });
+
+    if (existing) {
+      console.log(`⚠️ Webhook event ${eventId} already received, skipping`);
+      return { isNew: false, eventRecordId: existing.id };
+    }
+
+    // Create new event record
+    const event = await prisma.webhookEvent.create({
+      data: {
+        provider,
+        eventId,
+        eventType,
+        payload: payload as Prisma.InputJsonValue,
+        signature,
+        processed: false,
+      },
+    });
+
+    return { isNew: true, eventRecordId: event.id };
+  } catch (error) {
+    // Handle unique constraint violation (race condition)
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    ) {
+      console.log(`⚠️ Webhook event ${eventId} duplicate (race condition)`);
+      return { isNew: false };
+    }
+    throw error;
+  }
+}
+
+/**
+ * Mark webhook event as processed
+ */
+export async function markWebhookEventProcessed(
+  eventId: string,
+  error?: string,
+): Promise<void> {
+  await prisma.webhookEvent.update({
+    where: { eventId },
+    data: {
+      processed: true,
+      processedAt: new Date(),
+      error,
+    },
+  });
+}
+
+// ============================================================================
+// Payout Webhook Handlers
+// ============================================================================
+
+/**
+ * Handle RazorpayX payout webhook events
+ */
+export async function handleRazorpayPayoutWebhook(
+  eventType: string,
+  payoutData: {
+    id: string;
+    status: string;
+    failure_reason?: string;
+  },
+): Promise<void> {
+  // Map RazorpayX status to our internal status
+  const statusMap: Record<
+    string,
+    "PENDING" | "PROCESSING" | "COMPLETED" | "FAILED" | "CANCELLED"
+  > = {
+    queued: "PENDING",
+    pending: "PENDING",
+    processing: "PROCESSING",
+    processed: "COMPLETED",
+    reversed: "FAILED",
+    rejected: "FAILED",
+    cancelled: "CANCELLED",
+  };
+
+  const status = statusMap[payoutData.status] || "PENDING";
+
+  await handlePayoutWebhook(
+    PaymentGateway.RAZORPAY,
+    payoutData.id,
+    status,
+    payoutData.failure_reason,
+  );
+
+  console.log(
+    `✅ RazorpayX payout ${payoutData.id} webhook processed: ${status}`,
+  );
+}
+
+/**
+ * Handle Stripe Connect payout/transfer webhook events
+ */
+export async function handleStripePayoutWebhook(
+  eventType: string,
+  payoutData: {
+    id: string;
+    status: string;
+    failure_code?: string;
+    failure_message?: string;
+  },
+): Promise<void> {
+  // Map Stripe status to our internal status
+  const statusMap: Record<
+    string,
+    "PENDING" | "PROCESSING" | "COMPLETED" | "FAILED" | "CANCELLED"
+  > = {
+    pending: "PENDING",
+    in_transit: "PROCESSING",
+    paid: "COMPLETED",
+    failed: "FAILED",
+    canceled: "CANCELLED",
+  };
+
+  const status = statusMap[payoutData.status] || "PENDING";
+  const failureReason = payoutData.failure_message || payoutData.failure_code;
+
+  await handlePayoutWebhook(
+    PaymentGateway.STRIPE,
+    payoutData.id,
+    status,
+    failureReason,
+  );
+
+  console.log(
+    `✅ Stripe payout ${payoutData.id} webhook processed: ${status}`,
+  );
+}
+
+/**
+ * Handle refund event - update earnings status
+ */
+export async function handleRefundForEarnings(
+  paymentIntentId: string,
+): Promise<void> {
+  // Find the payment by intent
+  const payment = await prisma.payment.findUnique({
+    where: { paymentIntent: paymentIntentId },
+  });
+
+  if (!payment) {
+    console.warn(`Payment not found for refund earnings update: ${paymentIntentId}`);
+    return;
+  }
+
+  // Refund the earnings (will mark as REFUNDED and update consultant balance)
+  const success = await refundEarnings(payment.id);
+
+  if (success) {
+    console.log(`✅ Earnings refunded for payment ${payment.id}`);
+  } else {
+    console.warn(`⚠️ Could not refund earnings for payment ${payment.id}`);
   }
 }

@@ -14,7 +14,8 @@ import prisma from "@/lib/prisma";
 
 // Only allow in development or with explicit production flag
 const ALLOW_IN_PRODUCTION = process.env.ALLOW_DEBUG_IN_PRODUCTION === "true";
-const DEBUG_SECRET = process.env.STREAM_DEBUG_SECRET || process.env.STREAM_SYNC_SECRET;
+const DEBUG_SECRET =
+  process.env.STREAM_DEBUG_SECRET || process.env.STREAM_SYNC_SECRET;
 
 export async function GET(req: NextRequest) {
   // Security checks
@@ -90,7 +91,9 @@ export async function GET(req: NextRequest) {
       user.consultantProfileId
         ? prisma.consultation.count({
             where: {
-              consultationPlan: { consultantProfileId: user.consultantProfileId },
+              consultationPlan: {
+                consultantProfileId: user.consultantProfileId,
+              },
               requestStatus: "APPROVED",
             },
           })
@@ -105,7 +108,9 @@ export async function GET(req: NextRequest) {
       user.consultantProfileId
         ? prisma.subscription.count({
             where: {
-              subscriptionPlan: { consultantProfileId: user.consultantProfileId },
+              subscriptionPlan: {
+                consultantProfileId: user.consultantProfileId,
+              },
               requestStatus: "APPROVED",
             },
           })

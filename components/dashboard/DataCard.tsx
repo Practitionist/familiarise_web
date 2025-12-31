@@ -36,7 +36,7 @@ export function DataCard({
       transition={{ duration: 0.3 }}
       className={cn(
         "overflow-hidden rounded-xl border border-zinc-200/80 bg-white shadow-sm",
-        className
+        className,
       )}
     >
       {/* Header */}
@@ -80,7 +80,12 @@ interface EmptyStateProps {
   action?: ReactNode;
 }
 
-export function EmptyState({ icon: Icon, title, description, action }: EmptyStateProps) {
+export function EmptyState({
+  icon: Icon,
+  title,
+  description,
+  action,
+}: EmptyStateProps) {
   return (
     <div className="flex flex-col items-center justify-center py-12 text-center">
       {Icon && (
@@ -105,7 +110,13 @@ interface ActivityItemProps {
   onClick?: () => void;
 }
 
-export function ActivityItem({ avatar, name, action, time, onClick }: ActivityItemProps) {
+export function ActivityItem({
+  avatar,
+  name,
+  action,
+  time,
+  onClick,
+}: ActivityItemProps) {
   const initials = name
     .split(" ")
     .map((n) => n[0])
@@ -116,7 +127,8 @@ export function ActivityItem({ avatar, name, action, time, onClick }: ActivityIt
     <div
       className={cn(
         "flex items-center gap-3 py-3",
-        onClick && "cursor-pointer hover:bg-zinc-50 -mx-2 px-2 rounded-lg transition-colors"
+        onClick &&
+          "cursor-pointer hover:bg-zinc-50 -mx-2 px-2 rounded-lg transition-colors",
       )}
       onClick={onClick}
     >
@@ -159,4 +171,3 @@ export function DataCardSkeleton() {
     </div>
   );
 }
-

@@ -42,10 +42,14 @@ export function NewsletterSection() {
             Stay in the <span className="silver-text">loop</span>
           </h2>
           <p className="text-lg text-zinc-500 mb-8">
-            Get expert tips, career advice, and exclusive offers delivered to your inbox weekly.
+            Get expert tips, career advice, and exclusive offers delivered to
+            your inbox weekly.
           </p>
-          
-          <form className="flex flex-col sm:flex-row gap-3 max-w-md mx-auto" onSubmit={handleSubmit}>
+
+          <form
+            className="flex flex-col sm:flex-row gap-3 max-w-md mx-auto"
+            onSubmit={handleSubmit}
+          >
             <Input
               type="email"
               placeholder="Enter your email"
@@ -53,18 +57,21 @@ export function NewsletterSection() {
               onChange={(e) => setEmail(e.target.value)}
               className="h-14 bg-zinc-900 border-zinc-800 text-white placeholder:text-zinc-600 rounded-xl focus:border-zinc-600 focus:ring-zinc-600"
             />
-            <Button 
+            <Button
               type="submit"
-              size="lg" 
+              size="lg"
               className="h-14 bg-white text-zinc-900 hover:bg-zinc-200 px-8 rounded-xl font-medium shrink-0"
             >
               Subscribe
             </Button>
           </form>
-          
+
           <p className="text-sm text-zinc-600 mt-4">
             No spam, unsubscribe anytime.{" "}
-            <Link href="/privacy" className="underline hover:text-zinc-400 transition-colors">
+            <Link
+              href="/privacy"
+              className="underline hover:text-zinc-400 transition-colors"
+            >
               Privacy Policy
             </Link>
           </p>
@@ -73,4 +80,3 @@ export function NewsletterSection() {
     </section>
   );
 }
-

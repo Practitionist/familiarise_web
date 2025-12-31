@@ -58,9 +58,7 @@ export default function AdminAnalyticsPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold text-gray-900">Analytics</h1>
-        <p className="text-gray-600 mt-1">
-          Platform usage and growth metrics
-        </p>
+        <p className="text-gray-600 mt-1">Platform usage and growth metrics</p>
       </div>
 
       {/* User Stats */}
@@ -207,7 +205,7 @@ export default function AdminAnalyticsPage() {
               {data.topDomains.map(
                 (
                   domain: { name: string; consultantCount: number },
-                  index: number
+                  index: number,
                 ) => (
                   <div
                     key={domain.name}
@@ -223,7 +221,7 @@ export default function AdminAnalyticsPage() {
                       {domain.consultantCount} consultants
                     </span>
                   </div>
-                )
+                ),
               )}
             </div>
           ) : (

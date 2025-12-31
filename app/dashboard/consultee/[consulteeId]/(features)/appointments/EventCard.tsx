@@ -54,15 +54,36 @@ function formatSlotTime(date: Date | string): string {
 const DEFAULT_MEETING_DURATION_MS = 60 * 60 * 1000;
 
 // Status configuration - refined professional colors
-const statusConfig: Record<string, { bg: string; text: string; dot: string }> = {
-  APPROVED: { bg: "bg-teal-50", text: "text-teal-600", dot: "bg-teal-500" },              // Teal - sophisticated success
-  PENDING: { bg: "bg-orange-50", text: "text-orange-600", dot: "bg-orange-500" },         // Orange - warm urgency
-  SCHEDULED: { bg: "bg-indigo-50", text: "text-indigo-600", dot: "bg-indigo-500" },       // Indigo - elegant upcoming
-  IN_PROGRESS: { bg: "bg-cyan-50", text: "text-cyan-600", dot: "bg-cyan-500" },           // Cyan - bright active
-  COMPLETED: { bg: "bg-slate-100", text: "text-slate-500", dot: "bg-slate-400" },         // Slate - warm done
-  CANCELLED: { bg: "bg-stone-100", text: "text-stone-400", dot: "bg-stone-400" },         // Stone - neutral inactive
-  REJECTED: { bg: "bg-red-50", text: "text-red-600", dot: "bg-red-500" },                 // Red - clear negative
-};
+const statusConfig: Record<string, { bg: string; text: string; dot: string }> =
+  {
+    APPROVED: { bg: "bg-teal-50", text: "text-teal-600", dot: "bg-teal-500" }, // Teal - sophisticated success
+    PENDING: {
+      bg: "bg-orange-50",
+      text: "text-orange-600",
+      dot: "bg-orange-500",
+    }, // Orange - warm urgency
+    SCHEDULED: {
+      bg: "bg-indigo-50",
+      text: "text-indigo-600",
+      dot: "bg-indigo-500",
+    }, // Indigo - elegant upcoming
+    IN_PROGRESS: {
+      bg: "bg-cyan-50",
+      text: "text-cyan-600",
+      dot: "bg-cyan-500",
+    }, // Cyan - bright active
+    COMPLETED: {
+      bg: "bg-slate-100",
+      text: "text-slate-500",
+      dot: "bg-slate-400",
+    }, // Slate - warm done
+    CANCELLED: {
+      bg: "bg-stone-100",
+      text: "text-stone-400",
+      dot: "bg-stone-400",
+    }, // Stone - neutral inactive
+    REJECTED: { bg: "bg-red-50", text: "text-red-600", dot: "bg-red-500" }, // Red - clear negative
+  };
 
 export function EventCard({
   title,
@@ -126,7 +147,9 @@ export function EventCard({
       toast({
         title: "Error",
         description:
-          error instanceof Error ? error.message : "Failed to request reschedule",
+          error instanceof Error
+            ? error.message
+            : "Failed to request reschedule",
         variant: "destructive",
       });
     } finally {
@@ -179,7 +202,9 @@ export function EventCard({
       toast({
         title: "Error",
         description:
-          error instanceof Error ? error.message : "Failed to cancel appointment",
+          error instanceof Error
+            ? error.message
+            : "Failed to cancel appointment",
         variant: "destructive",
       });
     } finally {
@@ -190,28 +215,30 @@ export function EventCard({
   // Find the current/next joinable slot (within 10 minutes of start time or currently ongoing)
   const getJoinableSlot = (): SlotOfAppointment | null => {
     if (!rawSlots || rawSlots.length === 0) return null;
-    
+
     const now = new Date();
-    
+
     for (const slot of rawSlots) {
       const startTime = new Date(slot.startsAt);
-      const endTime = slot.endsAt ? new Date(slot.endsAt) : new Date(startTime.getTime() + DEFAULT_MEETING_DURATION_MS);
-      
+      const endTime = slot.endsAt
+        ? new Date(slot.endsAt)
+        : new Date(startTime.getTime() + DEFAULT_MEETING_DURATION_MS);
+
       // Joinable if: current time is between (10 mins before start) and (actual end time)
       const joinWindowStart = new Date(startTime.getTime() - 10 * 60 * 1000);
       const isJoinable = now >= joinWindowStart && now <= endTime;
-      
+
       if (!slot.isTentative && isJoinable) {
         return slot;
       }
     }
-    
+
     return null;
   };
 
   const joinableSlot = getJoinableSlot();
   const isJoinable = !isTentative && !!joinableSlot && !!appointment;
-  
+
   // Dev mode: check if any slot exists for testing
   const isDev = process.env.NODE_ENV === "development";
   const hasAnySlot = rawSlots && rawSlots.length > 0;
@@ -219,11 +246,12 @@ export function EventCard({
 
   const handleJoinSession = async (forceSlot?: SlotOfAppointment) => {
     const slotToUse = forceSlot || joinableSlot;
-    
+
     if (!client) {
       toast({
         title: "Not signed in",
-        description: "Video client not initialized. Please sign in to join the meeting.",
+        description:
+          "Video client not initialized. Please sign in to join the meeting.",
         variant: "destructive",
       });
       return;
@@ -247,7 +275,9 @@ export function EventCard({
       const tSlot = {
         id: slotToUse.id,
         startsAt: slotStartTime,
-        endsAt: slotToUse.endsAt ? new Date(slotToUse.endsAt) : new Date(slotStartTime.getTime() + DEFAULT_MEETING_DURATION_MS),
+        endsAt: slotToUse.endsAt
+          ? new Date(slotToUse.endsAt)
+          : new Date(slotStartTime.getTime() + DEFAULT_MEETING_DURATION_MS),
         isTentative: slotToUse.isTentative,
         appointmentId: slotToUse.appointmentId,
         createdAt: slotToUse.createdAt,
@@ -271,7 +301,8 @@ export function EventCard({
       console.error("Error joining meeting:", error);
       toast({
         title: "Error joining meeting",
-        description: error instanceof Error ? error.message : "Unknown error occurred",
+        description:
+          error instanceof Error ? error.message : "Unknown error occurred",
         variant: "destructive",
       });
       setIsJoining(false);
@@ -284,16 +315,16 @@ export function EventCard({
     (!isTentative && actualSlots.length > 0);
 
   // Determine if actions should be disabled (negative/terminal statuses)
-  const isInactiveStatus = 
+  const isInactiveStatus =
     status?.toLowerCase() === "cancelled" ||
     status?.toLowerCase() === "rejected" ||
     status?.toLowerCase() === "completed";
 
   const showDocumentUpload =
-    (type === "Consultation" || type === "Subscription") &&
-    appointmentId;
+    (type === "Consultation" || type === "Subscription") && appointmentId;
 
-  const statusStyle = statusConfig[status?.toUpperCase()] || statusConfig.PENDING;
+  const statusStyle =
+    statusConfig[status?.toUpperCase()] || statusConfig.PENDING;
   const displayStatus = isTentative ? "PENDING" : status?.toUpperCase();
   const displayStatusStyle = isTentative ? statusConfig.PENDING : statusStyle;
 
@@ -311,14 +342,24 @@ export function EventCard({
           <Avatar className="h-11 w-11 ring-2 ring-zinc-100">
             <AvatarImage alt={consultant} src={image || undefined} />
             <AvatarFallback className="bg-gradient-to-br from-zinc-100 to-zinc-200 text-zinc-600 text-sm font-semibold">
-              {consultant?.split(" ").slice(0, 2).map((name) => name[0]).join("")}
+              {consultant
+                ?.split(" ")
+                .slice(0, 2)
+                .map((name) => name[0])
+                .join("")}
             </AvatarFallback>
           </Avatar>
           <div className="flex-1 min-w-0">
-            <h3 className="font-semibold text-zinc-900 text-sm leading-tight line-clamp-2 mb-1" title={title}>
+            <h3
+              className="font-semibold text-zinc-900 text-sm leading-tight line-clamp-2 mb-1"
+              title={title}
+            >
               {title}
             </h3>
-            <p className="text-xs text-zinc-500 line-clamp-1" title={consultant}>
+            <p
+              className="text-xs text-zinc-500 line-clamp-1"
+              title={consultant}
+            >
               {consultant}
             </p>
           </div>
@@ -329,8 +370,16 @@ export function EventCard({
           <Badge className="text-[10px] font-medium px-2 py-0.5 bg-transparent border border-zinc-300 text-zinc-600 rounded-md">
             {type}
           </Badge>
-          <Badge className={cn("text-[10px] font-semibold px-2 py-0.5 border-0 flex items-center gap-1", displayStatusStyle.bg, displayStatusStyle.text)}>
-            <span className={cn("h-1.5 w-1.5 rounded-full", displayStatusStyle.dot)} />
+          <Badge
+            className={cn(
+              "text-[10px] font-semibold px-2 py-0.5 border-0 flex items-center gap-1",
+              displayStatusStyle.bg,
+              displayStatusStyle.text,
+            )}
+          >
+            <span
+              className={cn("h-1.5 w-1.5 rounded-full", displayStatusStyle.dot)}
+            />
             {displayStatus?.replace(/_/g, " ")}
           </Badge>
         </div>
@@ -347,12 +396,16 @@ export function EventCard({
                 {formatSlotDate(actualSlots[0].startTime)}
               </div>
               <div className="text-sm text-zinc-500">
-                {formatSlotTime(actualSlots[0].startTime)} - {formatSlotTime(actualSlots[0].endTime)}
+                {formatSlotTime(actualSlots[0].startTime)} -{" "}
+                {formatSlotTime(actualSlots[0].endTime)}
               </div>
             </div>
           ) : showSessionDetails ? (
             <Accordion type="single" collapsible className="w-full">
-              <AccordionItem value="sessions" className="border border-zinc-100 rounded-lg overflow-hidden">
+              <AccordionItem
+                value="sessions"
+                className="border border-zinc-100 rounded-lg overflow-hidden"
+              >
                 <AccordionTrigger className="py-2.5 px-3 hover:no-underline hover:bg-zinc-50 text-left [&[data-state=open]>svg]:rotate-180">
                   <div className="flex items-center gap-2 text-sm text-zinc-700 font-medium">
                     <Calendar className="h-4 w-4 text-zinc-400" />
@@ -370,7 +423,8 @@ export function EventCard({
                           {formatSlotDate(slot.startTime)}
                         </span>
                         <span className="text-zinc-500">
-                          {formatSlotTime(slot.startTime)} - {formatSlotTime(slot.endTime)}
+                          {formatSlotTime(slot.startTime)} -{" "}
+                          {formatSlotTime(slot.endTime)}
                         </span>
                       </div>
                     ))}
@@ -391,10 +445,12 @@ export function EventCard({
 
         {/* Document Upload - Always render for consistency, disabled when inactive */}
         {showDocumentUpload && (
-          <div className={cn(
-            "mt-4 pt-4 border-t border-zinc-100",
-            isInactiveStatus && "opacity-50 pointer-events-none"
-          )}>
+          <div
+            className={cn(
+              "mt-4 pt-4 border-t border-zinc-100",
+              isInactiveStatus && "opacity-50 pointer-events-none",
+            )}
+          >
             <DocumentUpload
               appointmentId={appointmentId!}
               appointmentTitle={title}
@@ -413,9 +469,9 @@ export function EventCard({
               disabled={isLoading || isInactiveStatus}
               className={cn(
                 "flex-1 h-8 text-xs font-medium border-zinc-200",
-                isInactiveStatus 
-                  ? "text-zinc-400 bg-zinc-50 cursor-not-allowed" 
-                  : "text-zinc-600 hover:text-zinc-900 hover:bg-zinc-50"
+                isInactiveStatus
+                  ? "text-zinc-400 bg-zinc-50 cursor-not-allowed"
+                  : "text-zinc-600 hover:text-zinc-900 hover:bg-zinc-50",
               )}
             >
               <Clock className="h-3.5 w-3.5 mr-1.5" />
@@ -429,9 +485,9 @@ export function EventCard({
             disabled={isLoading || isInactiveStatus}
             className={cn(
               "flex-1 h-8 text-xs font-medium",
-              isInactiveStatus 
-                ? "text-zinc-400 bg-zinc-50 border-zinc-200 cursor-not-allowed" 
-                : "text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200 hover:border-red-300"
+              isInactiveStatus
+                ? "text-zinc-400 bg-zinc-50 border-zinc-200 cursor-not-allowed"
+                : "text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200 hover:border-red-300",
             )}
           >
             <X className="h-3.5 w-3.5 mr-1.5" />
@@ -447,7 +503,7 @@ export function EventCard({
             "w-full mt-3 h-9 font-medium text-sm",
             isJoinable && !isInactiveStatus && !isJoining
               ? "bg-zinc-900 hover:bg-zinc-800 text-white"
-              : "bg-zinc-100 text-zinc-400 cursor-not-allowed"
+              : "bg-zinc-100 text-zinc-400 cursor-not-allowed",
           )}
         >
           {isJoining ? (

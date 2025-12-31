@@ -48,6 +48,12 @@ import { createMeetingSessions } from "./seedFiles/11b-create-meeting-sessions";
 import { createRefunds } from "./seedFiles/12a-create-refunds";
 import { createDisputes } from "./seedFiles/12b-create-disputes";
 
+// Phase 13: Payout System
+import { createPayoutAccounts } from "./seedFiles/13a-create-payout-accounts";
+import { createConsultantEarnings } from "./seedFiles/13b-create-consultant-earnings";
+import { createPayouts } from "./seedFiles/13c-create-payouts";
+import { createInvoices } from "./seedFiles/13d-create-invoices";
+
 dotenv.config({ path: ".env" });
 
 async function seed() {
@@ -152,6 +158,20 @@ async function seed() {
 
     console.log("Creating disputes...");
     await createDisputes();
+
+    // Phase 13: Payout System
+    console.log("\n[Phase 13] Creating payout system data...");
+    console.log("Creating payout accounts...");
+    await createPayoutAccounts();
+
+    console.log("Creating consultant earnings...");
+    await createConsultantEarnings();
+
+    console.log("Creating payouts...");
+    await createPayouts();
+
+    console.log("Creating invoices...");
+    await createInvoices();
 
     // Summary
     const endTime = Date.now();

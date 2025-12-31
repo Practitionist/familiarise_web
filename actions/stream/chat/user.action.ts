@@ -9,7 +9,9 @@ import { markUserSynced, isUserSynced } from "@/lib/stream-cache";
 
 // Input validation schemas
 const userIdSchema = z.string().min(1, "User ID is required");
-const userIdsSchema = z.array(userIdSchema).min(1, "At least one user ID required");
+const userIdsSchema = z
+  .array(userIdSchema)
+  .min(1, "At least one user ID required");
 const searchTermSchema = z.string().min(1, "Search term is required").max(100);
 
 /**
@@ -24,7 +26,9 @@ export const upsertUserToStream = async (userId: string) => {
 
   // Check cache first - skip if recently synced
   if (isUserSynced(validatedUserId)) {
-    streamLogger.debug("User already synced recently, skipping", { userId: validatedUserId });
+    streamLogger.debug("User already synced recently, skipping", {
+      userId: validatedUserId,
+    });
     return null;
   }
 
@@ -48,7 +52,10 @@ export const upsertUserToStream = async (userId: string) => {
     const client = getStreamChatClient();
     const streamRole = mapRoleToStream(user.role);
 
-    streamLogger.debug("Upserting user to Stream", { userId: user.id, role: streamRole });
+    streamLogger.debug("Upserting user to Stream", {
+      userId: user.id,
+      role: streamRole,
+    });
 
     // Upsert the user to Stream Chat
     const streamUser = await client.upsertUser({
@@ -64,7 +71,9 @@ export const upsertUserToStream = async (userId: string) => {
 
     return streamUser;
   } catch (error) {
-    streamLogger.error("Failed to upsert user to Stream", error, { userId: validatedUserId });
+    streamLogger.error("Failed to upsert user to Stream", error, {
+      userId: validatedUserId,
+    });
     throw error;
   }
 };
@@ -103,7 +112,9 @@ export const upsertUsersToStream = async (userIds: string[]) => {
     });
 
     if (users.length === 0) {
-      streamLogger.warn("No users found for batch upsert", { requestedIds: unsyncedIds });
+      streamLogger.warn("No users found for batch upsert", {
+        requestedIds: unsyncedIds,
+      });
       return { users: {} };
     }
 
@@ -190,7 +201,10 @@ export const searchUsersWithRelationships = async (
     // Check relationships in parallel for better performance
     const usersWithRelationships = await Promise.all(
       users.map(async (user) => {
-        const hasRelationship = await checkUserRelationship(validatedUserId, user.id);
+        const hasRelationship = await checkUserRelationship(
+          validatedUserId,
+          user.id,
+        );
         return {
           id: user.id,
           name: user.name,
@@ -216,7 +230,9 @@ export const searchUsersWithRelationships = async (
 
     return usersWithRelationships;
   } catch (error) {
-    streamLogger.error("User search failed", error, { searchTerm: validatedTerm });
+    streamLogger.error("User search failed", error, {
+      searchTerm: validatedTerm,
+    });
     throw error;
   }
 };
@@ -255,7 +271,10 @@ export const checkUserRelationship = async (
 
     return relationshipChecks.some(Boolean);
   } catch (error) {
-    streamLogger.error("Relationship check failed", error, { userId1, userId2 });
+    streamLogger.error("Relationship check failed", error, {
+      userId1,
+      userId2,
+    });
     return false; // Default to no relationship on error
   }
 };
@@ -264,8 +283,14 @@ export const checkUserRelationship = async (
  * Check consultation relationships between two users
  */
 async function checkConsultationRelationship(
-  user1: { consultantProfileId: string | null; consulteeProfileId: string | null },
-  user2: { consultantProfileId: string | null; consulteeProfileId: string | null },
+  user1: {
+    consultantProfileId: string | null;
+    consulteeProfileId: string | null;
+  },
+  user2: {
+    consultantProfileId: string | null;
+    consulteeProfileId: string | null;
+  },
 ): Promise<boolean> {
   if (!user1.consultantProfileId && !user1.consulteeProfileId) return false;
   if (!user2.consultantProfileId && !user2.consulteeProfileId) return false;
@@ -278,7 +303,9 @@ async function checkConsultationRelationship(
       prisma.consultation
         .findFirst({
           where: {
-            consultationPlan: { consultantProfileId: user1.consultantProfileId },
+            consultationPlan: {
+              consultantProfileId: user1.consultantProfileId,
+            },
             requestedById: user2.consulteeProfileId,
             requestStatus: { in: ["APPROVED", "SCHEDULED"] },
           },
@@ -294,7 +321,9 @@ async function checkConsultationRelationship(
       prisma.consultation
         .findFirst({
           where: {
-            consultationPlan: { consultantProfileId: user2.consultantProfileId },
+            consultationPlan: {
+              consultantProfileId: user2.consultantProfileId,
+            },
             requestedById: user1.consulteeProfileId,
             requestStatus: { in: ["APPROVED", "SCHEDULED"] },
           },
@@ -314,8 +343,14 @@ async function checkConsultationRelationship(
  * Check subscription relationships between two users
  */
 async function checkSubscriptionRelationship(
-  user1: { consultantProfileId: string | null; consulteeProfileId: string | null },
-  user2: { consultantProfileId: string | null; consulteeProfileId: string | null },
+  user1: {
+    consultantProfileId: string | null;
+    consulteeProfileId: string | null;
+  },
+  user2: {
+    consultantProfileId: string | null;
+    consulteeProfileId: string | null;
+  },
 ): Promise<boolean> {
   if (!user1.consultantProfileId && !user1.consulteeProfileId) return false;
   if (!user2.consultantProfileId && !user2.consulteeProfileId) return false;
@@ -327,7 +362,9 @@ async function checkSubscriptionRelationship(
       prisma.subscription
         .findFirst({
           where: {
-            subscriptionPlan: { consultantProfileId: user1.consultantProfileId },
+            subscriptionPlan: {
+              consultantProfileId: user1.consultantProfileId,
+            },
             requestedById: user2.consulteeProfileId,
             requestStatus: { in: ["APPROVED", "SCHEDULED"] },
             schedulingPeriodEndsAt: { gte: new Date() },
@@ -343,7 +380,9 @@ async function checkSubscriptionRelationship(
       prisma.subscription
         .findFirst({
           where: {
-            subscriptionPlan: { consultantProfileId: user2.consultantProfileId },
+            subscriptionPlan: {
+              consultantProfileId: user2.consultantProfileId,
+            },
             requestedById: user1.consulteeProfileId,
             requestStatus: { in: ["APPROVED", "SCHEDULED"] },
             schedulingPeriodEndsAt: { gte: new Date() },
@@ -422,7 +461,9 @@ export const searchUsers = async (searchTerm: string) => {
 
     return users;
   } catch (error) {
-    streamLogger.error("Legacy user search failed", error, { searchTerm: validatedTerm });
+    streamLogger.error("Legacy user search failed", error, {
+      searchTerm: validatedTerm,
+    });
     throw error;
   }
 };

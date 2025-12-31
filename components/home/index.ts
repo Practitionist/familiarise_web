@@ -17,4 +17,3 @@ export { NewsletterSection } from "./NewsletterSection";
 
 // Re-export data for use in other places if needed
 export * from "./data";
-

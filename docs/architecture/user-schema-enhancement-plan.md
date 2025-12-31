@@ -43,18 +43,19 @@ This document outlines a comprehensive plan to enhance the user architecture acr
 
 ### Platforms Analyzed
 
-| Platform | Focus | Key Insights |
-|----------|-------|--------------|
-| [Topmate.io](https://topmate.io/) | 1:1 Mentorship | Social links, testimonials, masked emails for privacy, smart reminders |
-| [Preplaced.in](https://www.preplaced.in/) | Long-term Mentorship | Mentee capacity, placement tracking, mentor-mentee matching filters |
-| [GrowthMentor](https://www.growthmentor.com/) | Startup Mentorship | Detailed profiles with tools/projects, 3000-char bio, specialties required |
-| [UpGrad](https://www.upgrad.com/) | EdTech | Learner 360 platform, personalized mentor tracking, career coaching |
-| [Edureka](https://www.edureka.co/) | Technical Training | Industry experts with 10+ years experience, revenue sharing model |
-| [ProPeers.in](https://propeers.in/) | Peer Mentorship | (Limited data available) |
+| Platform                                      | Focus                | Key Insights                                                               |
+| --------------------------------------------- | -------------------- | -------------------------------------------------------------------------- |
+| [Topmate.io](https://topmate.io/)             | 1:1 Mentorship       | Social links, testimonials, masked emails for privacy, smart reminders     |
+| [Preplaced.in](https://www.preplaced.in/)     | Long-term Mentorship | Mentee capacity, placement tracking, mentor-mentee matching filters        |
+| [GrowthMentor](https://www.growthmentor.com/) | Startup Mentorship   | Detailed profiles with tools/projects, 3000-char bio, specialties required |
+| [UpGrad](https://www.upgrad.com/)             | EdTech               | Learner 360 platform, personalized mentor tracking, career coaching        |
+| [Edureka](https://www.edureka.co/)            | Technical Training   | Industry experts with 10+ years experience, revenue sharing model          |
+| [ProPeers.in](https://propeers.in/)           | Peer Mentorship      | (Limited data available)                                                   |
 
 ### Key Biodata Fields from Competitors
 
 #### For Mentors/Consultants
+
 - **Profile basics:** Headline/tagline, bio (up to 3000 chars), profile picture
 - **Professional:** Work experience history, certifications, education
 - **Social presence:** LinkedIn, Twitter, GitHub, portfolio website
@@ -63,6 +64,7 @@ This document outlines a comprehensive plan to enhance the user architecture acr
 - **Trust signals:** Verification status, testimonials, ratings, placement count
 
 #### For Mentees/Consultees
+
 - **Career context:** Career stage, current company, industry
 - **Goals:** Skills to develop, career goals, budget preferences
 - **Professional:** LinkedIn profile, education background
@@ -165,12 +167,12 @@ model StaffProfile {
 
 ### Overview
 
-| Category | Action | Count |
-|----------|--------|-------|
-| New Models | Create | 4 |
-| New Fields | Add | 25+ |
-| Deprecated Fields | Remove | 4 |
-| New Enums | Create | 5 |
+| Category          | Action | Count |
+| ----------------- | ------ | ----- |
+| New Models        | Create | 4     |
+| New Fields        | Add    | 25+   |
+| Deprecated Fields | Remove | 4     |
+| New Enums         | Create | 5     |
 
 ---
 
@@ -284,52 +286,52 @@ model AdminProfile {
 
 ### User Model Additions
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `dateOfBirth` | DateTime? | No | User's date of birth |
-| `gender` | Gender? | No | Gender identity |
-| `city` | String? | No | City of residence |
-| `country` | String? | No | Country of residence |
-| `linkedinUrl` | String? | No | LinkedIn profile URL |
-| `bio` | String? | No | Short tagline/bio (max 160 chars) |
+| Field         | Type      | Required | Description                       |
+| ------------- | --------- | -------- | --------------------------------- |
+| `dateOfBirth` | DateTime? | No       | User's date of birth              |
+| `gender`      | Gender?   | No       | Gender identity                   |
+| `city`        | String?   | No       | City of residence                 |
+| `country`     | String?   | No       | Country of residence              |
+| `linkedinUrl` | String?   | No       | LinkedIn profile URL              |
+| `bio`         | String?   | No       | Short tagline/bio (max 160 chars) |
 
 ### ConsultantProfile Additions
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `headline` | String? | No | Professional headline (max 120 chars) |
-| `websiteUrl` | String? | No | Personal/portfolio website |
-| `twitterUrl` | String? | No | Twitter/X profile |
-| `githubUrl` | String? | No | GitHub profile |
-| `videoIntroUrl` | String? | No | Introduction video URL |
-| `languages` | String[] | No | Languages spoken |
-| `toolsAndTechnologies` | String[] | No | Tools and tech expertise |
-| `mentoringStyle` | String? | No | Description of mentoring approach |
-| `sessionTypes` | SessionType[] | No | Preferred session types (optional) |
-| `profileCompletionPercentage` | Int | No | Auto-calculated completion % |
-| `isVerified` | Boolean | No | Profile verification status |
-| `totalMenteesHelped` | Int | No | Track record counter |
+| Field                         | Type          | Required | Description                           |
+| ----------------------------- | ------------- | -------- | ------------------------------------- |
+| `headline`                    | String?       | No       | Professional headline (max 120 chars) |
+| `websiteUrl`                  | String?       | No       | Personal/portfolio website            |
+| `twitterUrl`                  | String?       | No       | Twitter/X profile                     |
+| `githubUrl`                   | String?       | No       | GitHub profile                        |
+| `videoIntroUrl`               | String?       | No       | Introduction video URL                |
+| `languages`                   | String[]      | No       | Languages spoken                      |
+| `toolsAndTechnologies`        | String[]      | No       | Tools and tech expertise              |
+| `mentoringStyle`              | String?       | No       | Description of mentoring approach     |
+| `sessionTypes`                | SessionType[] | No       | Preferred session types (optional)    |
+| `profileCompletionPercentage` | Int           | No       | Auto-calculated completion %          |
+| `isVerified`                  | Boolean       | No       | Profile verification status           |
+| `totalMenteesHelped`          | Int           | No       | Track record counter                  |
 
 ### ConsulteeProfile Additions
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `careerStage` | CareerStage? | No | Current career stage |
-| `currentCompany` | String? | No | Current employer |
-| `industry` | String? | No | Industry sector |
-| `skillsToDevelop` | String[] | No | Target skills to learn |
-| `linkedinUrl` | String? | No | LinkedIn profile URL |
-| `budgetPreference` | BudgetPreference? | No | Budget range preference |
+| Field              | Type              | Required | Description             |
+| ------------------ | ----------------- | -------- | ----------------------- |
+| `careerStage`      | CareerStage?      | No       | Current career stage    |
+| `currentCompany`   | String?           | No       | Current employer        |
+| `industry`         | String?           | No       | Industry sector         |
+| `skillsToDevelop`  | String[]          | No       | Target skills to learn  |
+| `linkedinUrl`      | String?           | No       | LinkedIn profile URL    |
+| `budgetPreference` | BudgetPreference? | No       | Budget range preference |
 
 ### StaffProfile Additions
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `employeeId` | String? | No | Internal employee ID |
-| `hireDate` | DateTime? | No | Date of hire |
-| `reportsTo` | String? | No | Manager's user ID |
-| `skills` | String[] | No | Professional skills |
-| `workSchedule` | String? | No | Work schedule/shift info |
+| Field          | Type      | Required | Description              |
+| -------------- | --------- | -------- | ------------------------ |
+| `employeeId`   | String?   | No       | Internal employee ID     |
+| `hireDate`     | DateTime? | No       | Date of hire             |
+| `reportsTo`    | String?   | No       | Manager's user ID        |
+| `skills`       | String[]  | No       | Professional skills      |
+| `workSchedule` | String?   | No       | Work schedule/shift info |
 
 ---
 
@@ -337,12 +339,12 @@ model AdminProfile {
 
 Fields to be deprecated and removed:
 
-| Model | Field | Reason |
-|-------|-------|--------|
-| ConsultantProfile | `qualifications` | Replaced by Certification model |
-| ConsultantProfile | `specialization` | Redundant with subDomains + tags + headline |
-| ConsulteeProfile | `specialRequirements` | Merge into `goals` or `aboutMe` |
-| ConsulteeProfile | `interests` | Redundant with `skillsToDevelop` and domain preferences |
+| Model             | Field                 | Reason                                                  |
+| ----------------- | --------------------- | ------------------------------------------------------- |
+| ConsultantProfile | `qualifications`      | Replaced by Certification model                         |
+| ConsultantProfile | `specialization`      | Redundant with subDomains + tags + headline             |
+| ConsulteeProfile  | `specialRequirements` | Merge into `goals` or `aboutMe`                         |
+| ConsulteeProfile  | `interests`           | Redundant with `skillsToDevelop` and domain preferences |
 
 ### Migration Strategy for Removals
 
@@ -419,40 +421,40 @@ enum SessionType {
 
 **Full system access with no restrictions.**
 
-| Permission Category | Access |
-|---------------------|--------|
-| User Management | Create, read, update, delete ALL users including other admins |
-| Financial | Full access to payments, refunds, disputes; can process refunds |
-| System Config | Modify application settings, feature flags |
-| Content | Manage domains, subdomains, tags, topics |
-| Data | Export all data, view audit logs |
-| Support | Handle all support tickets, moderate all content |
+| Permission Category | Access                                                          |
+| ------------------- | --------------------------------------------------------------- |
+| User Management     | Create, read, update, delete ALL users including other admins   |
+| Financial           | Full access to payments, refunds, disputes; can process refunds |
+| System Config       | Modify application settings, feature flags                      |
+| Content             | Manage domains, subdomains, tags, topics                        |
+| Data                | Export all data, view audit logs                                |
+| Support             | Handle all support tickets, moderate all content                |
 
 #### ADMIN
 
 **High-level management with some restrictions.**
 
-| Permission Category | Access |
-|---------------------|--------|
-| User Management | Manage staff, consultants, consultees; cannot modify other admins |
-| Financial | View reports, handle disputes/refunds up to threshold |
-| System Config | Limited access to non-critical settings |
-| Content | Full content management |
-| Data | View reports, limited export |
-| Support | Handle escalated support tickets |
+| Permission Category | Access                                                            |
+| ------------------- | ----------------------------------------------------------------- |
+| User Management     | Manage staff, consultants, consultees; cannot modify other admins |
+| Financial           | View reports, handle disputes/refunds up to threshold             |
+| System Config       | Limited access to non-critical settings                           |
+| Content             | Full content management                                           |
+| Data                | View reports, limited export                                      |
+| Support             | Handle escalated support tickets                                  |
 
 #### MODERATOR
 
 **Day-to-day operations focus.**
 
-| Permission Category | Access |
-|---------------------|--------|
-| User Management | View profiles, limited editing (e.g., verification status) |
-| Financial | No access |
-| System Config | No access |
-| Content | Moderate reviews, feedback; flag inappropriate content |
-| Data | View operational dashboards only |
-| Support | Handle standard support tickets |
+| Permission Category | Access                                                     |
+| ------------------- | ---------------------------------------------------------- |
+| User Management     | View profiles, limited editing (e.g., verification status) |
+| Financial           | No access                                                  |
+| System Config       | No access                                                  |
+| Content             | Moderate reviews, feedback; flag inappropriate content     |
+| Data                | View operational dashboards only                           |
+| Support             | Handle standard support tickets                            |
 
 ### Access Scope JSON Structure
 
@@ -504,12 +506,14 @@ interface AccessScope {
 ### Proposed Changes
 
 #### Remove
+
 - Festival-based auto theme switching
 - Animated blob backgrounds
 - Excessive glassmorphism effects
 - Complex gradient systems
 
 #### Implement
+
 - **Clean, minimal card-based design**
 - **White/light backgrounds** with subtle shadows
 - **Progressive disclosure** - show relevant fields based on selections
@@ -553,9 +557,11 @@ Step 5: Review & Complete
 ## Implementation Phases
 
 ### Phase 1: Schema Enhancement
+
 **Duration estimate: Not applicable - focusing on what, not when**
 
 **Tasks:**
+
 - [ ] Create WorkExperience model
 - [ ] Create Certification model
 - [ ] Create Education model
@@ -570,11 +576,14 @@ Step 5: Review & Complete
 - [ ] Update seed data
 
 **Files affected:**
+
 - `prisma/schema.prisma`
 - `prisma/seed.ts`
 
 ### Phase 2: Zod & Validation
+
 **Tasks:**
+
 - [ ] Create WorkExperienceSchema
 - [ ] Create CertificationSchema
 - [ ] Create EducationSchema
@@ -587,12 +596,15 @@ Step 5: Review & Complete
 - [ ] Add enum validation
 
 **Files affected:**
+
 - `schemas/user.ts`
 - `utils/onboarding.ts`
 - New: `schemas/professional.ts` (for experience, certification, education)
 
 ### Phase 3: Simplified Onboarding UI
+
 **Tasks:**
+
 - [ ] Remove theme system files
 - [ ] Create new minimal form components
 - [ ] Implement progressive multi-step form
@@ -604,6 +616,7 @@ Step 5: Review & Complete
 - [ ] Improve error messages
 
 **Files affected:**
+
 - `app/form/onboarding/page.tsx`
 - `app/form/onboarding/themes.ts` (DELETE)
 - `app/form/onboarding/themeUtils.ts` (DELETE)
@@ -611,7 +624,9 @@ Step 5: Review & Complete
 - All form components in `app/form/onboarding/`
 
 ### Phase 4: API & Server Actions
+
 **Tasks:**
+
 - [ ] Create CRUD endpoints for WorkExperience
 - [ ] Create CRUD endpoints for Certification
 - [ ] Create CRUD endpoints for Education
@@ -624,6 +639,7 @@ Step 5: Review & Complete
 - [ ] Add proper error handling
 
 **Files affected:**
+
 - `app/api/user/[id]/route.ts`
 - `app/api/user/consultants/[id]/route.ts`
 - `app/api/user/consultees/[id]/route.ts`
@@ -636,7 +652,9 @@ Step 5: Review & Complete
 - `utils/onboarding.ts`
 
 ### Phase 5: Settings Forms
+
 **Tasks:**
+
 - [ ] Update Consultant settings with new fields
 - [ ] Add Experience management to Consultant settings
 - [ ] Add Certification management to Consultant settings
@@ -648,13 +666,16 @@ Step 5: Review & Complete
 - [ ] Add success/error toast notifications
 
 **Files affected:**
+
 - `app/dashboard/consultant/[consultantId]/(features)/settings/SettingsTab.tsx`
 - `app/dashboard/consultee/[consulteeId]/(features)/settings/SettingsTab.tsx`
 - `app/dashboard/staff/[staffId]/(features)/settings/page.tsx`
 - New: `app/dashboard/admin/[adminId]/(features)/settings/page.tsx`
 
 ### Phase 6: Dashboard Fixes & Cleanup
+
 **Tasks:**
+
 - [ ] Complete Staff dashboard features
 - [ ] Complete Admin dashboard features
 - [ ] Add admin user management UI
@@ -666,6 +687,7 @@ Step 5: Review & Complete
 - [ ] Test all flows end-to-end
 
 **Files affected:**
+
 - `app/dashboard/staff/[staffId]/`
 - `app/dashboard/admin/[adminId]/`
 - `prisma/schema.prisma` (remove deprecated fields)
@@ -681,17 +703,17 @@ Step 5: Review & Complete
 ```typescript
 // Migration script pseudocode
 const consultants = await prisma.consultantProfile.findMany({
-  where: { qualifications: { not: null } }
+  where: { qualifications: { not: null } },
 });
 
 for (const consultant of consultants) {
   // Parse qualifications string and create Certification entries
   const certs = parseQualifications(consultant.qualifications);
   await prisma.certification.createMany({
-    data: certs.map(cert => ({
+    data: certs.map((cert) => ({
       ...cert,
-      consultantProfileId: consultant.id
-    }))
+      consultantProfileId: consultant.id,
+    })),
   });
 }
 ```
@@ -719,24 +741,24 @@ await prisma.$executeRaw`
 
 ### New Endpoints
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET/POST | `/api/user/consultants/[id]/experience` | List/create work experience |
-| PUT/DELETE | `/api/user/consultants/[id]/experience/[expId]` | Update/delete experience |
-| GET/POST | `/api/user/consultants/[id]/certifications` | List/create certifications |
-| PUT/DELETE | `/api/user/consultants/[id]/certifications/[certId]` | Update/delete certification |
-| GET/POST | `/api/user/[id]/education` | List/create education entries |
-| PUT/DELETE | `/api/user/[id]/education/[eduId]` | Update/delete education |
-| GET/PUT | `/api/user/admin/[id]` | Get/update admin profile |
+| Method     | Endpoint                                             | Description                   |
+| ---------- | ---------------------------------------------------- | ----------------------------- |
+| GET/POST   | `/api/user/consultants/[id]/experience`              | List/create work experience   |
+| PUT/DELETE | `/api/user/consultants/[id]/experience/[expId]`      | Update/delete experience      |
+| GET/POST   | `/api/user/consultants/[id]/certifications`          | List/create certifications    |
+| PUT/DELETE | `/api/user/consultants/[id]/certifications/[certId]` | Update/delete certification   |
+| GET/POST   | `/api/user/[id]/education`                           | List/create education entries |
+| PUT/DELETE | `/api/user/[id]/education/[eduId]`                   | Update/delete education       |
+| GET/PUT    | `/api/user/admin/[id]`                               | Get/update admin profile      |
 
 ### Updated Endpoints
 
-| Method | Endpoint | Changes |
-|--------|----------|---------|
-| GET/PUT | `/api/user/[id]` | Add new User fields |
-| GET/PUT | `/api/user/consultants/[id]` | Add new ConsultantProfile fields, include relations |
-| GET/PATCH | `/api/user/consultees/[id]` | Add new ConsulteeProfile fields |
-| GET/PUT | `/api/user/staff/[id]` | Add new StaffProfile fields |
+| Method    | Endpoint                     | Changes                                             |
+| --------- | ---------------------------- | --------------------------------------------------- |
+| GET/PUT   | `/api/user/[id]`             | Add new User fields                                 |
+| GET/PUT   | `/api/user/consultants/[id]` | Add new ConsultantProfile fields, include relations |
+| GET/PATCH | `/api/user/consultees/[id]`  | Add new ConsulteeProfile fields                     |
+| GET/PUT   | `/api/user/staff/[id]`       | Add new StaffProfile fields                         |
 
 ---
 
@@ -787,16 +809,16 @@ await prisma.$executeRaw`
 
 ### A. Field Validation Rules
 
-| Field | Validation |
-|-------|------------|
-| `bio` | Max 160 characters |
-| `headline` | Max 120 characters |
-| `linkedinUrl` | Valid URL, must contain linkedin.com |
-| `twitterUrl` | Valid URL, must contain twitter.com or x.com |
-| `githubUrl` | Valid URL, must contain github.com |
-| `websiteUrl` | Valid URL |
+| Field           | Validation                                       |
+| --------------- | ------------------------------------------------ |
+| `bio`           | Max 160 characters                               |
+| `headline`      | Max 120 characters                               |
+| `linkedinUrl`   | Valid URL, must contain linkedin.com             |
+| `twitterUrl`    | Valid URL, must contain twitter.com or x.com     |
+| `githubUrl`     | Valid URL, must contain github.com               |
+| `websiteUrl`    | Valid URL                                        |
 | `videoIntroUrl` | Valid URL (YouTube, Vimeo, or direct video link) |
-| `dateOfBirth` | Must be in the past, user must be 13+ years old |
+| `dateOfBirth`   | Must be in the past, user must be 13+ years old  |
 
 ### B. Profile Completion Calculation
 
@@ -809,9 +831,9 @@ function calculateProfileCompletion(profile: ConsultantProfile): number {
     subDomains: 10,
     languages: 5,
     toolsAndTechnologies: 10,
-    workExperiences: 15,  // At least 1
-    certifications: 10,   // At least 1
-    education: 10,        // At least 1
+    workExperiences: 15, // At least 1
+    certifications: 10, // At least 1
+    education: 10, // At least 1
     scheduleType: 5,
   };
 
@@ -823,18 +845,18 @@ function calculateProfileCompletion(profile: ConsultantProfile): number {
 
 ### C. Error Message Guidelines
 
-| Context | Bad Example | Good Example |
-|---------|-------------|--------------|
-| Required field | "Required" | "Please enter your name" |
-| Invalid email | "Invalid" | "Please enter a valid email address (e.g., name@example.com)" |
-| URL validation | "Invalid URL" | "Please enter a valid LinkedIn URL (e.g., linkedin.com/in/yourprofile)" |
-| Date validation | "Invalid date" | "Please select a date in the past" |
-| Server error | "Error" | "Unable to save your changes. Please try again or contact support if the issue persists." |
+| Context         | Bad Example    | Good Example                                                                              |
+| --------------- | -------------- | ----------------------------------------------------------------------------------------- |
+| Required field  | "Required"     | "Please enter your name"                                                                  |
+| Invalid email   | "Invalid"      | "Please enter a valid email address (e.g., name@example.com)"                             |
+| URL validation  | "Invalid URL"  | "Please enter a valid LinkedIn URL (e.g., linkedin.com/in/yourprofile)"                   |
+| Date validation | "Invalid date" | "Please select a date in the past"                                                        |
+| Server error    | "Error"        | "Unable to save your changes. Please try again or contact support if the issue persists." |
 
 ---
 
 ## Changelog
 
-| Version | Date | Changes |
-|---------|------|---------|
-| 1.0 | Dec 6, 2025 | Initial plan document |
+| Version | Date        | Changes               |
+| ------- | ----------- | --------------------- |
+| 1.0     | Dec 6, 2025 | Initial plan document |

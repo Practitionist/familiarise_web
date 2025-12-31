@@ -1,6 +1,12 @@
 "use client";
 
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -54,8 +60,16 @@ const categoryBreakdown = [
 ];
 
 const recentActivity = [
-  { action: "Resolved ticket #TKT-156", time: "10 minutes ago", type: "success" },
-  { action: "Escalated ticket #TKT-155 to admin", time: "25 minutes ago", type: "warning" },
+  {
+    action: "Resolved ticket #TKT-156",
+    time: "10 minutes ago",
+    type: "success",
+  },
+  {
+    action: "Escalated ticket #TKT-155 to admin",
+    time: "25 minutes ago",
+    type: "warning",
+  },
   { action: "Approved refund #REF-042", time: "1 hour ago", type: "success" },
   { action: "Verified profile #PRF-089", time: "2 hours ago", type: "success" },
   { action: "Resolved ticket #TKT-154", time: "3 hours ago", type: "success" },
@@ -127,7 +141,9 @@ export default function ReportsAnalyticsPage() {
               </Badge>
             </div>
             <div className="mt-4">
-              <p className="text-3xl font-bold">{performanceStats.ticketsResolved.value}</p>
+              <p className="text-3xl font-bold">
+                {performanceStats.ticketsResolved.value}
+              </p>
               <p className="text-sm text-zinc-500">Tickets Resolved</p>
             </div>
           </CardContent>
@@ -152,7 +168,9 @@ export default function ReportsAnalyticsPage() {
               </Badge>
             </div>
             <div className="mt-4">
-              <p className="text-3xl font-bold">{performanceStats.avgResolutionTime.value}</p>
+              <p className="text-3xl font-bold">
+                {performanceStats.avgResolutionTime.value}
+              </p>
               <p className="text-sm text-zinc-500">Avg Resolution Time</p>
             </div>
           </CardContent>
@@ -173,7 +191,9 @@ export default function ReportsAnalyticsPage() {
               </Badge>
             </div>
             <div className="mt-4">
-              <p className="text-3xl font-bold">{performanceStats.customerSatisfaction.value}</p>
+              <p className="text-3xl font-bold">
+                {performanceStats.customerSatisfaction.value}
+              </p>
               <p className="text-sm text-zinc-500">Customer Satisfaction</p>
             </div>
           </CardContent>
@@ -194,7 +214,9 @@ export default function ReportsAnalyticsPage() {
               </Badge>
             </div>
             <div className="mt-4">
-              <p className="text-3xl font-bold">{performanceStats.activeTickets.value}</p>
+              <p className="text-3xl font-bold">
+                {performanceStats.activeTickets.value}
+              </p>
               <p className="text-sm text-zinc-500">Active Tickets</p>
             </div>
           </CardContent>
@@ -206,13 +228,17 @@ export default function ReportsAnalyticsPage() {
         <Card className="lg:col-span-2">
           <CardHeader>
             <CardTitle>Weekly Ticket Volume</CardTitle>
-            <CardDescription>Tickets received vs resolved this week</CardDescription>
+            <CardDescription>
+              Tickets received vs resolved this week
+            </CardDescription>
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
               {weeklyData.map((day) => (
                 <div key={day.day} className="flex items-center gap-4">
-                  <span className="w-10 text-sm font-medium text-zinc-500">{day.day}</span>
+                  <span className="w-10 text-sm font-medium text-zinc-500">
+                    {day.day}
+                  </span>
                   <div className="flex-1 flex items-center gap-2">
                     <div className="flex-1 bg-zinc-100 dark:bg-zinc-800 rounded-full h-4 overflow-hidden">
                       <div
@@ -220,7 +246,9 @@ export default function ReportsAnalyticsPage() {
                         style={{ width: `${(day.tickets / 40) * 100}%` }}
                       />
                     </div>
-                    <span className="w-8 text-sm text-zinc-500">{day.tickets}</span>
+                    <span className="w-8 text-sm text-zinc-500">
+                      {day.tickets}
+                    </span>
                   </div>
                   <div className="flex-1 flex items-center gap-2">
                     <div className="flex-1 bg-zinc-100 dark:bg-zinc-800 rounded-full h-4 overflow-hidden">
@@ -229,7 +257,9 @@ export default function ReportsAnalyticsPage() {
                         style={{ width: `${(day.resolved / 40) * 100}%` }}
                       />
                     </div>
-                    <span className="w-8 text-sm text-zinc-500">{day.resolved}</span>
+                    <span className="w-8 text-sm text-zinc-500">
+                      {day.resolved}
+                    </span>
                   </div>
                 </div>
               ))}
@@ -258,7 +288,9 @@ export default function ReportsAnalyticsPage() {
               {categoryBreakdown.map((item) => (
                 <div key={item.category} className="space-y-2">
                   <div className="flex items-center justify-between text-sm">
-                    <span className="text-zinc-600 dark:text-zinc-400">{item.category}</span>
+                    <span className="text-zinc-600 dark:text-zinc-400">
+                      {item.category}
+                    </span>
                     <span className="font-medium">{item.count}</span>
                   </div>
                   <div className="h-2 bg-zinc-100 dark:bg-zinc-800 rounded-full overflow-hidden">
@@ -323,10 +355,10 @@ export default function ReportsAnalyticsPage() {
                         index === 0
                           ? "bg-yellow-100 text-yellow-700"
                           : index === 1
-                          ? "bg-zinc-200 text-zinc-700"
-                          : index === 2
-                          ? "bg-amber-100 text-amber-700"
-                          : "bg-zinc-100 text-zinc-600"
+                            ? "bg-zinc-200 text-zinc-700"
+                            : index === 2
+                              ? "bg-amber-100 text-amber-700"
+                              : "bg-zinc-100 text-zinc-600"
                       }`}
                     >
                       {index + 1}
@@ -335,11 +367,15 @@ export default function ReportsAnalyticsPage() {
                   </div>
                   <div className="flex items-center gap-4">
                     <div className="text-right">
-                      <p className="text-sm font-medium">{member.ticketsResolved}</p>
+                      <p className="text-sm font-medium">
+                        {member.ticketsResolved}
+                      </p>
                       <p className="text-xs text-zinc-400">resolved</p>
                     </div>
                     <div className="text-right">
-                      <p className="text-sm font-medium">{member.satisfaction}%</p>
+                      <p className="text-sm font-medium">
+                        {member.satisfaction}%
+                      </p>
                       <p className="text-xs text-zinc-400">satisfaction</p>
                     </div>
                   </div>
@@ -352,4 +388,3 @@ export default function ReportsAnalyticsPage() {
     </div>
   );
 }
-

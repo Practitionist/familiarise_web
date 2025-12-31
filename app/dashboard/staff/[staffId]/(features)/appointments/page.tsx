@@ -1,7 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -203,8 +209,12 @@ export default function AppointmentsSupportPage() {
   const [activeTab, setActiveTab] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
-  const [selectedAppointment, setSelectedAppointment] = useState<typeof appointments[0] | null>(null);
-  const [selectedIssue, setSelectedIssue] = useState<typeof issues[0] | null>(null);
+  const [selectedAppointment, setSelectedAppointment] = useState<
+    (typeof appointments)[0] | null
+  >(null);
+  const [selectedIssue, setSelectedIssue] = useState<(typeof issues)[0] | null>(
+    null,
+  );
 
   const filteredAppointments = appointments.filter((apt) => {
     const matchesSearch =
@@ -266,7 +276,9 @@ export default function AppointmentsSupportPage() {
               <Clock className="h-5 w-5 text-emerald-600" />
             </div>
             <div>
-              <p className="text-2xl font-bold">{appointmentCounts.scheduled}</p>
+              <p className="text-2xl font-bold">
+                {appointmentCounts.scheduled}
+              </p>
               <p className="text-sm text-zinc-500">Upcoming</p>
             </div>
           </CardContent>
@@ -277,7 +289,9 @@ export default function AppointmentsSupportPage() {
               <CheckCircle2 className="h-5 w-5 text-green-600" />
             </div>
             <div>
-              <p className="text-2xl font-bold">{appointmentCounts.completed}</p>
+              <p className="text-2xl font-bold">
+                {appointmentCounts.completed}
+              </p>
               <p className="text-sm text-zinc-500">Completed</p>
             </div>
           </CardContent>
@@ -357,7 +371,10 @@ export default function AppointmentsSupportPage() {
                         </div>
                       </TableCell>
                       <TableCell>
-                        <Badge className={getTypeColor(apt.type)} variant="secondary">
+                        <Badge
+                          className={getTypeColor(apt.type)}
+                          variant="secondary"
+                        >
                           {apt.type}
                         </Badge>
                       </TableCell>
@@ -366,7 +383,10 @@ export default function AppointmentsSupportPage() {
                           <Avatar className="h-6 w-6">
                             <AvatarImage src={apt.consultant.avatar} />
                             <AvatarFallback className="text-xs">
-                              {apt.consultant.name.split(" ").map((n) => n[0]).join("")}
+                              {apt.consultant.name
+                                .split(" ")
+                                .map((n) => n[0])
+                                .join("")}
                             </AvatarFallback>
                           </Avatar>
                           <span className="text-sm">{apt.consultant.name}</span>
@@ -380,7 +400,10 @@ export default function AppointmentsSupportPage() {
                             <Avatar className="h-6 w-6">
                               <AvatarImage src={apt.consultee.avatar} />
                               <AvatarFallback className="text-xs">
-                                {apt.consultee.name.split(" ").map((n) => n[0]).join("")}
+                                {apt.consultee.name
+                                  .split(" ")
+                                  .map((n) => n[0])
+                                  .join("")}
                               </AvatarFallback>
                             </Avatar>
                           )}
@@ -394,14 +417,24 @@ export default function AppointmentsSupportPage() {
                         {apt.duration} min
                       </TableCell>
                       <TableCell>
-                        <Badge className={getStatusColor(apt.status)} variant="secondary">
+                        <Badge
+                          className={getStatusColor(apt.status)}
+                          variant="secondary"
+                        >
                           {apt.status.replace("_", " ")}
                         </Badge>
                       </TableCell>
                       <TableCell>
                         <DropdownMenu>
-                          <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                            <Button variant="ghost" size="icon" className="h-8 w-8">
+                          <DropdownMenuTrigger
+                            asChild
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8"
+                            >
                               <MoreHorizontal className="h-4 w-4" />
                             </Button>
                           </DropdownMenuTrigger>
@@ -447,8 +480,13 @@ export default function AppointmentsSupportPage() {
                       <div>
                         <div className="flex items-center gap-2">
                           <p className="font-medium">{issue.id}</p>
-                          <Badge variant="outline">Apt: {issue.appointmentId}</Badge>
-                          <Badge className={getPriorityColor(issue.priority)} variant="secondary">
+                          <Badge variant="outline">
+                            Apt: {issue.appointmentId}
+                          </Badge>
+                          <Badge
+                            className={getPriorityColor(issue.priority)}
+                            variant="secondary"
+                          >
                             {issue.priority}
                           </Badge>
                         </div>
@@ -474,7 +512,10 @@ export default function AppointmentsSupportPage() {
       </Tabs>
 
       {/* Appointment Detail Dialog */}
-      <Dialog open={!!selectedAppointment} onOpenChange={() => setSelectedAppointment(null)}>
+      <Dialog
+        open={!!selectedAppointment}
+        onOpenChange={() => setSelectedAppointment(null)}
+      >
         <DialogContent className="max-w-2xl">
           {selectedAppointment && (
             <>
@@ -489,10 +530,16 @@ export default function AppointmentsSupportPage() {
               </DialogHeader>
               <div className="space-y-4">
                 <div className="flex items-center gap-2">
-                  <Badge className={getTypeColor(selectedAppointment.type)} variant="secondary">
+                  <Badge
+                    className={getTypeColor(selectedAppointment.type)}
+                    variant="secondary"
+                  >
                     {selectedAppointment.type}
                   </Badge>
-                  <Badge className={getStatusColor(selectedAppointment.status)} variant="secondary">
+                  <Badge
+                    className={getStatusColor(selectedAppointment.status)}
+                    variant="secondary"
+                  >
                     {selectedAppointment.status.replace("_", " ")}
                   </Badge>
                   {selectedAppointment.hasIssue && (
@@ -508,10 +555,15 @@ export default function AppointmentsSupportPage() {
                     <div className="flex items-center gap-2 mt-1">
                       <Avatar className="h-8 w-8">
                         <AvatarFallback>
-                          {selectedAppointment.consultant.name.split(" ").map((n) => n[0]).join("")}
+                          {selectedAppointment.consultant.name
+                            .split(" ")
+                            .map((n) => n[0])
+                            .join("")}
                         </AvatarFallback>
                       </Avatar>
-                      <span className="font-medium">{selectedAppointment.consultant.name}</span>
+                      <span className="font-medium">
+                        {selectedAppointment.consultant.name}
+                      </span>
                     </div>
                   </div>
                   <div className="p-3 rounded-lg bg-zinc-50 dark:bg-zinc-900">
@@ -519,21 +571,32 @@ export default function AppointmentsSupportPage() {
                     <div className="flex items-center gap-2 mt-1">
                       <Avatar className="h-8 w-8">
                         <AvatarFallback>
-                          {selectedAppointment.consultee.name.split(" ").map((n) => n[0]).join("")}
+                          {selectedAppointment.consultee.name
+                            .split(" ")
+                            .map((n) => n[0])
+                            .join("")}
                         </AvatarFallback>
                       </Avatar>
-                      <span className="font-medium">{selectedAppointment.consultee.name}</span>
+                      <span className="font-medium">
+                        {selectedAppointment.consultee.name}
+                      </span>
                     </div>
                   </div>
                 </div>
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div>
-                    <Label className="text-sm text-zinc-500">Scheduled Time</Label>
-                    <p className="font-medium">{formatDateTime(selectedAppointment.scheduledAt)}</p>
+                    <Label className="text-sm text-zinc-500">
+                      Scheduled Time
+                    </Label>
+                    <p className="font-medium">
+                      {formatDateTime(selectedAppointment.scheduledAt)}
+                    </p>
                   </div>
                   <div>
                     <Label className="text-sm text-zinc-500">Duration</Label>
-                    <p className="font-medium">{selectedAppointment.duration} minutes</p>
+                    <p className="font-medium">
+                      {selectedAppointment.duration} minutes
+                    </p>
                   </div>
                 </div>
                 <div>
@@ -546,7 +609,10 @@ export default function AppointmentsSupportPage() {
                 </div>
               </div>
               <DialogFooter className="gap-2">
-                <Button variant="outline" onClick={() => setSelectedAppointment(null)}>
+                <Button
+                  variant="outline"
+                  onClick={() => setSelectedAppointment(null)}
+                >
                   Close
                 </Button>
                 <Button variant="outline">
@@ -564,7 +630,10 @@ export default function AppointmentsSupportPage() {
       </Dialog>
 
       {/* Issue Detail Dialog */}
-      <Dialog open={!!selectedIssue} onOpenChange={() => setSelectedIssue(null)}>
+      <Dialog
+        open={!!selectedIssue}
+        onOpenChange={() => setSelectedIssue(null)}
+      >
         <DialogContent>
           {selectedIssue && (
             <>
@@ -579,14 +648,21 @@ export default function AppointmentsSupportPage() {
               </DialogHeader>
               <div className="space-y-4">
                 <div className="flex items-center gap-2">
-                  <Badge variant="outline">Appointment: {selectedIssue.appointmentId}</Badge>
-                  <Badge className={getPriorityColor(selectedIssue.priority)} variant="secondary">
+                  <Badge variant="outline">
+                    Appointment: {selectedIssue.appointmentId}
+                  </Badge>
+                  <Badge
+                    className={getPriorityColor(selectedIssue.priority)}
+                    variant="secondary"
+                  >
                     {selectedIssue.priority} priority
                   </Badge>
                 </div>
                 <div>
                   <Label className="text-sm text-zinc-500">Issue Type</Label>
-                  <p className="font-medium capitalize">{selectedIssue.type.replace("_", " ")}</p>
+                  <p className="font-medium capitalize">
+                    {selectedIssue.type.replace("_", " ")}
+                  </p>
                 </div>
                 <div>
                   <Label className="text-sm text-zinc-500">Description</Label>
@@ -606,7 +682,10 @@ export default function AppointmentsSupportPage() {
                 </div>
               </div>
               <DialogFooter className="gap-2">
-                <Button variant="outline" onClick={() => setSelectedIssue(null)}>
+                <Button
+                  variant="outline"
+                  onClick={() => setSelectedIssue(null)}
+                >
                   Cancel
                 </Button>
                 <Button>
@@ -621,4 +700,3 @@ export default function AppointmentsSupportPage() {
     </div>
   );
 }
-

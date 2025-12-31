@@ -1,6 +1,6 @@
 /**
  * Centralized Dashboard Query Factory
- * 
+ *
  * This module provides optimized query configurations for all dashboard types.
  * Key optimizations:
  * 1. Parallel data fetching with Promise.all
@@ -38,7 +38,7 @@ export interface DashboardQueryResult<T> {
 
 async function fetchWithErrorHandling<T>(
   url: string,
-  errorPrefix: string
+  errorPrefix: string,
 ): Promise<T> {
   const response = await fetch(url);
   if (!response.ok) {
@@ -65,43 +65,70 @@ interface ConsultantDetailsData {
 // Consultant fetchers
 export const consultantFetchers = {
   dashboard: (consultantId: string) =>
-    fetchWithErrorHandling<Record<string, unknown>>(`/api/dashboard/consultant/${consultantId}`, "Dashboard fetch failed"),
+    fetchWithErrorHandling<Record<string, unknown>>(
+      `/api/dashboard/consultant/${consultantId}`,
+      "Dashboard fetch failed",
+    ),
 
   appointments: (consultantId: string) =>
     fetchWithErrorHandling<unknown[]>(
       `/api/slots/appointments?consultantProfileId=${consultantId}&consultationStatus=APPROVED&subscriptionStatus=APPROVED&webinarStatus=APPROVED&classStatus=APPROVED`,
-      "Appointments fetch failed"
+      "Appointments fetch failed",
     ),
 
   details: (consultantId: string) =>
-    fetchWithErrorHandling<ConsultantDetailsData>(`/api/user/consultants/${consultantId}`, "Consultant details fetch failed"),
+    fetchWithErrorHandling<ConsultantDetailsData>(
+      `/api/user/consultants/${consultantId}`,
+      "Consultant details fetch failed",
+    ),
 
   requests: (consultantId: string) =>
-    fetchWithErrorHandling<unknown[]>(`/api/dashboard/consultant/${consultantId}/requests`, "Requests fetch failed"),
+    fetchWithErrorHandling<unknown[]>(
+      `/api/dashboard/consultant/${consultantId}/requests`,
+      "Requests fetch failed",
+    ),
 
   planner: (consultantId: string) =>
-    fetchWithErrorHandling<Record<string, unknown>>(`/api/dashboard/consultant/${consultantId}/planner`, "Planner fetch failed"),
+    fetchWithErrorHandling<Record<string, unknown>>(
+      `/api/dashboard/consultant/${consultantId}/planner`,
+      "Planner fetch failed",
+    ),
 
   documents: (consultantId: string) =>
-    fetchWithErrorHandling<unknown[]>(`/api/dashboard/consultant/${consultantId}/documents`, "Documents fetch failed"),
+    fetchWithErrorHandling<unknown[]>(
+      `/api/dashboard/consultant/${consultantId}/documents`,
+      "Documents fetch failed",
+    ),
 };
 
 // Consultee fetchers
 export const consulteeFetchers = {
   events: (consulteeId: string) =>
-    fetchWithErrorHandling(`/api/dashboard/consultee/${consulteeId}/events`, "Events fetch failed"),
+    fetchWithErrorHandling(
+      `/api/dashboard/consultee/${consulteeId}/events`,
+      "Events fetch failed",
+    ),
 
   profile: (consulteeId: string) =>
-    fetchWithErrorHandling(`/api/user/consultees/${consulteeId}`, "Profile fetch failed"),
+    fetchWithErrorHandling(
+      `/api/user/consultees/${consulteeId}`,
+      "Profile fetch failed",
+    ),
 
   feedback: () =>
     fetchWithErrorHandling(`/api/user/feedbacks`, "Feedback fetch failed"),
 
   supportTickets: () =>
-    fetchWithErrorHandling(`/api/user/support-tickets`, "Support tickets fetch failed"),
+    fetchWithErrorHandling(
+      `/api/user/support-tickets`,
+      "Support tickets fetch failed",
+    ),
 
   messages: (consulteeId: string) =>
-    fetchWithErrorHandling(`/api/dashboard/consultee/${consulteeId}/messages`, "Messages fetch failed").catch(() => []),
+    fetchWithErrorHandling(
+      `/api/dashboard/consultee/${consulteeId}/messages`,
+      "Messages fetch failed",
+    ).catch(() => []),
 };
 
 // Admin fetchers
@@ -109,11 +136,13 @@ export const adminFetchers = {
   stats: () =>
     fetchWithErrorHandling(`/api/admin/stats`, "Admin stats fetch failed"),
 
-  users: () =>
-    fetchWithErrorHandling(`/api/admin/users`, "Users fetch failed"),
+  users: () => fetchWithErrorHandling(`/api/admin/users`, "Users fetch failed"),
 
   payments: (page = 1, limit = 20) =>
-    fetchWithErrorHandling(`/api/admin/payments?page=${page}&limit=${limit}`, "Payments fetch failed"),
+    fetchWithErrorHandling(
+      `/api/admin/payments?page=${page}&limit=${limit}`,
+      "Payments fetch failed",
+    ),
 
   analytics: () =>
     fetchWithErrorHandling(`/api/admin/analytics`, "Analytics fetch failed"),
@@ -137,11 +166,11 @@ export const userFetchers = {
 
 // Stale time constants (in ms)
 const STALE_TIMES = {
-  INSTANT: 0,           // Always refetch
-  SHORT: 30 * 1000,     // 30 seconds
+  INSTANT: 0, // Always refetch
+  SHORT: 30 * 1000, // 30 seconds
   MEDIUM: 2 * 60 * 1000, // 2 minutes
-  LONG: 5 * 60 * 1000,   // 5 minutes
-  STATIC: Infinity,      // Never refetch
+  LONG: 5 * 60 * 1000, // 5 minutes
+  STATIC: Infinity, // Never refetch
 };
 
 // Garbage collection time (how long to keep unused data)
@@ -357,13 +386,13 @@ export function getPrefetchDelay(priority: PrefetchPriority): number {
 export async function batchPrefetch(
   queryClient: any,
   queries: QueryConfig[],
-  priority: PrefetchPriority = "medium"
+  priority: PrefetchPriority = "medium",
 ): Promise<void> {
   const delay = getPrefetchDelay(priority);
 
   const execute = async () => {
     await Promise.allSettled(
-      queries.map((query) => queryClient.prefetchQuery(query))
+      queries.map((query) => queryClient.prefetchQuery(query)),
     );
   };
 
@@ -392,20 +421,28 @@ export function schedulePrefetch(callback: () => void, timeout = 2000): void {
 export const queryKeys = {
   consultant: {
     all: (consultantId: string) => ["consultant", consultantId] as const,
-    dashboard: (consultantId: string) => ["consultant-dashboard", consultantId] as const,
-    appointments: (consultantId: string) => ["consultant-appointments", consultantId] as const,
-    details: (consultantId: string) => ["consultant-details", consultantId] as const,
-    requests: (consultantId: string) => ["consultant-requests", consultantId] as const,
-    planner: (consultantId: string) => ["consultant-planner", consultantId] as const,
-    documents: (consultantId: string) => ["consultant-documents", consultantId] as const,
+    dashboard: (consultantId: string) =>
+      ["consultant-dashboard", consultantId] as const,
+    appointments: (consultantId: string) =>
+      ["consultant-appointments", consultantId] as const,
+    details: (consultantId: string) =>
+      ["consultant-details", consultantId] as const,
+    requests: (consultantId: string) =>
+      ["consultant-requests", consultantId] as const,
+    planner: (consultantId: string) =>
+      ["consultant-planner", consultantId] as const,
+    documents: (consultantId: string) =>
+      ["consultant-documents", consultantId] as const,
   },
   consultee: {
     all: (consulteeId: string) => ["consultee", consulteeId] as const,
     events: (consulteeId: string) => ["consultee-events", consulteeId] as const,
-    profile: (consulteeId: string) => ["consultee-profile", consulteeId] as const,
+    profile: (consulteeId: string) =>
+      ["consultee-profile", consulteeId] as const,
     feedback: () => ["consultee-feedback"] as const,
     supportTickets: () => ["consultee-support-tickets"] as const,
-    messages: (consulteeId: string) => ["consultee-messages", consulteeId] as const,
+    messages: (consulteeId: string) =>
+      ["consultee-messages", consulteeId] as const,
   },
   admin: {
     all: () => ["admin"] as const,
@@ -419,4 +456,3 @@ export const queryKeys = {
     details: (userId: string) => ["user-details", userId] as const,
   },
 };
-

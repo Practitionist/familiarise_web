@@ -1,21 +1,21 @@
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
-// Remove Zod import if no longer needed, or keep if used elsewhere
-// import { z } from "zod";
-
-// Remove UUID schema
-// const uuidSchema = z.string().uuid();
+import { getServerSession } from "next-auth";
+import authOptions from "@/app/api/auth/[...nextauth]/options";
 
 export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ classId: string }> },
 ) {
   try {
-    // Add session check if needed
-    // const session = await getServerSession(authOptions);
-    // if (!session) {
-    //   return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    // }
+    // Authentication check
+    const session = await getServerSession(authOptions);
+    if (!session?.user?.id) {
+      return NextResponse.json(
+        { error: "Authentication required" },
+        { status: 401 },
+      );
+    }
 
     const awaitedParams = await params;
     const { classId } = awaitedParams;
@@ -33,18 +33,30 @@ export async function DELETE(
     // Start transaction
     const result = await prisma.$transaction(
       async (tx) => {
-        // 1. Find the class instance, get plan ID AND plan title
+        // 1. Find the class instance, get plan ID, title, and owner info
         const classInstance = await tx.class.findUnique({
           where: { id: classId },
           select: {
             classPlanId: true,
-            // Include the related plan to get its title
-            classPlan: { select: { title: true } },
+            classPlan: {
+              select: {
+                title: true,
+                consultantProfile: {
+                  select: { userId: true },
+                },
+              },
+            },
           },
         });
 
         if (!classInstance) {
           throw new Error(`Class instance with ID ${classId} not found.`);
+        }
+
+        // Verify ownership - user must own this class
+        if (!classInstance.classPlan.consultantProfile ||
+            classInstance.classPlan.consultantProfile.userId !== session.user.id) {
+          throw new Error("You do not have permission to delete this class");
         }
 
         const classPlanId = classInstance.classPlanId;
@@ -100,10 +112,13 @@ export async function DELETE(
     );
   } catch (error) {
     console.error("Error deleting class:", error);
-    // Remove specific ZodError check if Zod is fully removed
-    // if (error instanceof z.ZodError) { ... }
-    if (error instanceof Error && error.message.includes("not found")) {
-      return NextResponse.json({ error: error.message }, { status: 404 });
+    if (error instanceof Error) {
+      if (error.message.includes("not found")) {
+        return NextResponse.json({ error: error.message }, { status: 404 });
+      }
+      if (error.message.includes("permission")) {
+        return NextResponse.json({ error: error.message }, { status: 403 });
+      }
     }
     return NextResponse.json(
       { error: "An error occurred during class deletion" },

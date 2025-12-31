@@ -28,15 +28,16 @@ You remit ₹180 GST to government (minus any Input Tax Credit)
 
 ### Key Concept: You Are a Tax Collector
 
-| What Happens | Who Does It |
-|--------------|-------------|
-| Customer pays service + tax | Customer |
-| Full amount lands in your bank | Payment gateway |
-| Tax portion sits in your account | You (temporarily) |
-| File returns, calculate net tax | You |
-| Remit collected tax to government | You |
+| What Happens                      | Who Does It       |
+| --------------------------------- | ----------------- |
+| Customer pays service + tax       | Customer          |
+| Full amount lands in your bank    | Payment gateway   |
+| Tax portion sits in your account  | You (temporarily) |
+| File returns, calculate net tax   | You               |
+| Remit collected tax to government | You               |
 
 **Important**: Payment gateways do NOT automatically split or remit tax. They transfer the full amount to you. You are responsible for:
+
 1. Tracking how much tax you collected
 2. Filing accurate returns
 3. Paying the government what you owe
@@ -57,6 +58,7 @@ This is called Input Tax Credit (ITC) - it prevents tax cascading.
 ### What This Means for Your Code
 
 The `math.ts` checkout utilities calculate tax for **display and invoicing purposes**. The actual tax compliance happens outside the codebase through:
+
 - Accounting software (Zoho Books, Tally, etc.)
 - CA/tax professional filing returns
 - Manual or automated bank transfers to government

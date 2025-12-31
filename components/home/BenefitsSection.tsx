@@ -16,11 +16,11 @@ export function BenefitsSection({ images }: BenefitsSectionProps) {
   return (
     <section className="py-20 md:py-32 bg-gradient-to-b from-zinc-100 to-white relative overflow-hidden">
       <div className="absolute inset-0 grid-pattern-dark opacity-50" />
-      
+
       {/* Decorative elements */}
       <div className="absolute top-20 left-10 w-72 h-72 bg-zinc-200/50 rounded-full blur-[100px]" />
       <div className="absolute bottom-20 right-10 w-96 h-96 bg-zinc-300/30 rounded-full blur-[120px]" />
-      
+
       <div className="container mx-auto px-4 md:px-6 relative z-10">
         <div className="grid lg:grid-cols-2 gap-16 items-center">
           <motion.div
@@ -29,7 +29,10 @@ export function BenefitsSection({ images }: BenefitsSectionProps) {
             transition={{ duration: 0.6 }}
             viewport={{ once: true }}
           >
-            <Badge variant="secondary" className="mb-4 bg-zinc-200 text-zinc-700 hover:bg-zinc-200 border-0">
+            <Badge
+              variant="secondary"
+              className="mb-4 bg-zinc-200 text-zinc-700 hover:bg-zinc-200 border-0"
+            >
               Why Familiarise?
             </Badge>
             <h2 className="text-3xl md:text-4xl lg:text-5xl font-bold text-zinc-900 mb-6">
@@ -37,9 +40,10 @@ export function BenefitsSection({ images }: BenefitsSectionProps) {
               <span className="text-zinc-500">expert guidance</span>
             </h2>
             <p className="text-lg text-zinc-600 mb-8">
-              Join thousands of professionals who have accelerated their careers through personalized mentorship and expert guidance.
+              Join thousands of professionals who have accelerated their careers
+              through personalized mentorship and expert guidance.
             </p>
-            
+
             <div className="space-y-6">
               {BENEFITS.map((benefit, index) => (
                 <motion.div
@@ -54,8 +58,12 @@ export function BenefitsSection({ images }: BenefitsSectionProps) {
                     <benefit.icon className="w-6 h-6 text-white" />
                   </div>
                   <div>
-                    <h4 className="font-semibold text-zinc-900 mb-1">{benefit.title}</h4>
-                    <p className="text-zinc-600 text-sm leading-relaxed">{benefit.description}</p>
+                    <h4 className="font-semibold text-zinc-900 mb-1">
+                      {benefit.title}
+                    </h4>
+                    <p className="text-zinc-600 text-sm leading-relaxed">
+                      {benefit.description}
+                    </p>
                   </div>
                 </motion.div>
               ))}
@@ -79,7 +87,9 @@ export function BenefitsSection({ images }: BenefitsSectionProps) {
                   <CheckCircle2 className="w-5 h-5 text-white" />
                 </div>
                 <div>
-                  <p className="font-semibold text-zinc-900 text-sm">Session Complete</p>
+                  <p className="font-semibold text-zinc-900 text-sm">
+                    Session Complete
+                  </p>
                   <p className="text-xs text-zinc-500">Great progress today!</p>
                 </div>
               </div>
@@ -90,4 +100,3 @@ export function BenefitsSection({ images }: BenefitsSectionProps) {
     </section>
   );
 }
-

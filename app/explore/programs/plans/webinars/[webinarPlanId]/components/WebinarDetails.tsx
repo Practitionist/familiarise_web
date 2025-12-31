@@ -13,16 +13,16 @@ import {
   GlobeIcon,
   CertificateIcon,
 } from "../icons";
-import { 
-  ArrowLeft, 
-  CheckCircle2, 
-  Calendar, 
-  Clock, 
-  Users, 
-  Video, 
-  Globe, 
+import {
+  ArrowLeft,
+  CheckCircle2,
+  Calendar,
+  Clock,
+  Users,
+  Video,
+  Globe,
   GraduationCap,
-  Play 
+  Play,
 } from "lucide-react";
 import { ClientWebinarRegistration } from "./ClientWebinarRegistration";
 import { generateProgramImageUrl } from "../../../../utils";
@@ -72,7 +72,11 @@ const FeatureItem = ({ icon, label, value }: FeatureItemProps) => (
   </div>
 );
 
-type SessionStatus = "Upcoming" | "Happening Now" | "Completed" | "To be announced";
+type SessionStatus =
+  | "Upcoming"
+  | "Happening Now"
+  | "Completed"
+  | "To be announced";
 
 interface WebinarDetailsProps {
   readonly plan: WebinarPlanData;
@@ -80,30 +84,46 @@ interface WebinarDetailsProps {
   readonly webinarId?: string;
 }
 
-export function WebinarDetails({ plan, nextSession, webinarId }: WebinarDetailsProps) {
+export function WebinarDetails({
+  plan,
+  nextSession,
+  webinarId,
+}: WebinarDetailsProps) {
   let sessionStatus: SessionStatus = "To be announced";
   let formattedNextSessionDisplay = "To be announced";
 
-  if (nextSession && plan.durationInHours !== null && plan.durationInHours !== undefined) {
+  if (
+    nextSession &&
+    plan.durationInHours !== null &&
+    plan.durationInHours !== undefined
+  ) {
     const sessionStart = new Date(nextSession);
     const durationInMilliseconds = plan.durationInHours * 60 * 60 * 1000;
-    const sessionEnd = new Date(sessionStart.getTime() + durationInMilliseconds);
+    const sessionEnd = new Date(
+      sessionStart.getTime() + durationInMilliseconds,
+    );
     const now = new Date();
     const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
     if (now > sessionEnd) {
       sessionStatus = "Completed";
-      formattedNextSessionDisplay = `Ended on ${sessionEnd.toLocaleString(undefined, {
-        dateStyle: "long",
-        timeStyle: "short",
-        timeZone,
-      })}`;
+      formattedNextSessionDisplay = `Ended on ${sessionEnd.toLocaleString(
+        undefined,
+        {
+          dateStyle: "long",
+          timeStyle: "short",
+          timeZone,
+        },
+      )}`;
     } else if (now >= sessionStart && now <= sessionEnd) {
       sessionStatus = "Happening Now";
-      formattedNextSessionDisplay = `Ends at ${sessionEnd.toLocaleTimeString(undefined, {
-        timeStyle: "short",
-        timeZone,
-      })}`;
+      formattedNextSessionDisplay = `Ends at ${sessionEnd.toLocaleTimeString(
+        undefined,
+        {
+          timeStyle: "short",
+          timeZone,
+        },
+      )}`;
     } else if (now < sessionStart) {
       sessionStatus = "Upcoming";
       formattedNextSessionDisplay = sessionStart.toLocaleString(undefined, {
@@ -114,11 +134,14 @@ export function WebinarDetails({ plan, nextSession, webinarId }: WebinarDetailsP
     }
   } else if (nextSession) {
     sessionStatus = "Upcoming";
-    formattedNextSessionDisplay = new Date(nextSession).toLocaleString(undefined, {
-      dateStyle: "long",
-      timeStyle: "short",
-      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-    });
+    formattedNextSessionDisplay = new Date(nextSession).toLocaleString(
+      undefined,
+      {
+        dateStyle: "long",
+        timeStyle: "short",
+        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      },
+    );
   }
 
   const getStatusBadgeClass = (status: SessionStatus) => {
@@ -146,11 +169,11 @@ export function WebinarDetails({ plan, nextSession, webinarId }: WebinarDetailsP
           priority
         />
         <div className="absolute inset-0 bg-gradient-to-t from-zinc-950 via-zinc-950/60 to-transparent" />
-        
+
         {/* Back Navigation */}
         <div className="absolute top-0 left-0 right-0 z-10">
           <div className="max-w-[1600px] mx-auto px-4 md:px-8 lg:px-12 py-6">
-            <Link 
+            <Link
               href="/explore/programs"
               className="inline-flex items-center gap-2 text-sm text-white/80 hover:text-white transition-colors"
             >
@@ -165,7 +188,9 @@ export function WebinarDetails({ plan, nextSession, webinarId }: WebinarDetailsP
           <div className="max-w-[1600px] mx-auto px-4 md:px-8 lg:px-12 pb-8">
             <div className="flex items-center gap-3 mb-4">
               <Badge className="bg-white text-zinc-900">Webinar</Badge>
-              <Badge className={getStatusBadgeClass(sessionStatus)}>{sessionStatus}</Badge>
+              <Badge className={getStatusBadgeClass(sessionStatus)}>
+                {sessionStatus}
+              </Badge>
             </div>
             <h1 className="text-3xl md:text-4xl lg:text-5xl font-bold text-white mb-2">
               {plan.title}
@@ -185,7 +210,7 @@ export function WebinarDetails({ plan, nextSession, webinarId }: WebinarDetailsP
       <div className="w-full max-w-[92%] xl:max-w-[88%] 2xl:max-w-[1600px] mx-auto py-8 md:py-12">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 lg:gap-12">
           {/* Main Content */}
-          <motion.div 
+          <motion.div
             className="lg:col-span-2 space-y-8"
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -195,7 +220,12 @@ export function WebinarDetails({ plan, nextSession, webinarId }: WebinarDetailsP
             <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
               <FeatureItem
                 icon={<Calendar className="h-5 w-5" />}
-                label={sessionStatus === "Happening Now" || sessionStatus === "Completed" ? "Status" : "Next Session"}
+                label={
+                  sessionStatus === "Happening Now" ||
+                  sessionStatus === "Completed"
+                    ? "Status"
+                    : "Next Session"
+                }
                 value={formattedNextSessionDisplay}
               />
               <FeatureItem
@@ -228,7 +258,9 @@ export function WebinarDetails({ plan, nextSession, webinarId }: WebinarDetailsP
             {/* About */}
             <Card className="border-zinc-200 shadow-sm">
               <CardContent className="p-6 md:p-8">
-                <h2 className="text-xl font-semibold text-zinc-900 mb-4">About this Webinar</h2>
+                <h2 className="text-xl font-semibold text-zinc-900 mb-4">
+                  About this Webinar
+                </h2>
                 <p className="text-zinc-600 whitespace-pre-line leading-relaxed">
                   {plan.description}
                 </p>
@@ -239,7 +271,9 @@ export function WebinarDetails({ plan, nextSession, webinarId }: WebinarDetailsP
             {plan.learningOutcomes && plan.learningOutcomes.length > 0 && (
               <Card className="border-zinc-200 shadow-sm">
                 <CardContent className="p-6 md:p-8">
-                  <h2 className="text-xl font-semibold text-zinc-900 mb-4">What you&apos;ll learn</h2>
+                  <h2 className="text-xl font-semibold text-zinc-900 mb-4">
+                    What you&apos;ll learn
+                  </h2>
                   <div className="grid md:grid-cols-2 gap-3">
                     {plan.learningOutcomes.map((outcome: string) => (
                       <div key={outcome} className="flex items-start gap-3">
@@ -255,10 +289,15 @@ export function WebinarDetails({ plan, nextSession, webinarId }: WebinarDetailsP
             {/* Topics */}
             <Card className="border-zinc-200 shadow-sm">
               <CardContent className="p-6 md:p-8">
-                <h2 className="text-xl font-semibold text-zinc-900 mb-4">Topics Covered</h2>
+                <h2 className="text-xl font-semibold text-zinc-900 mb-4">
+                  Topics Covered
+                </h2>
                 <div className="flex flex-wrap gap-2">
                   {plan.topics.map((topic: Topic) => (
-                    <Badge key={topic.id} className="bg-zinc-100 text-zinc-700 hover:bg-zinc-200 px-3 py-1">
+                    <Badge
+                      key={topic.id}
+                      className="bg-zinc-100 text-zinc-700 hover:bg-zinc-200 px-3 py-1"
+                    >
                       {topic.name}
                     </Badge>
                   ))}
@@ -284,7 +323,10 @@ export function WebinarDetails({ plan, nextSession, webinarId }: WebinarDetailsP
                   <div className="flex items-center gap-4 mb-4">
                     <div className="relative h-16 w-16 rounded-full overflow-hidden ring-2 ring-zinc-100">
                       <Image
-                        src={plan.consultantProfile?.user?.image ?? "/placeholder-user.jpg"}
+                        src={
+                          plan.consultantProfile?.user?.image ??
+                          "/placeholder-user.jpg"
+                        }
                         alt={plan.consultantProfile?.user?.name ?? "Instructor"}
                         fill
                         className="object-cover"
@@ -298,9 +340,10 @@ export function WebinarDetails({ plan, nextSession, webinarId }: WebinarDetailsP
                     </div>
                   </div>
                   <p className="text-sm text-zinc-600">
-                    An experienced professional dedicated to sharing knowledge and expertise.
+                    An experienced professional dedicated to sharing knowledge
+                    and expertise.
                   </p>
-                  <Link 
+                  <Link
                     href={`/explore/experts/${plan.consultantProfile?.id}`}
                     className="inline-flex items-center gap-1 text-sm font-medium text-zinc-900 hover:text-zinc-700 mt-3"
                   >
@@ -316,7 +359,9 @@ export function WebinarDetails({ plan, nextSession, webinarId }: WebinarDetailsP
                 webinarId={webinarId}
                 price={plan.price}
                 currency={plan.priceCurrency}
-                nextSessionDate={nextSession ? new Date(nextSession) : undefined}
+                nextSessionDate={
+                  nextSession ? new Date(nextSession) : undefined
+                }
                 sessionStatus={sessionStatus}
                 appointment={plan.webinars?.[0]?.appointment}
               />

@@ -1,20 +1,17 @@
 import { faker } from "@faker-js/faker";
 import prisma from "../../lib/prisma";
 import { UserWithProfiles } from "./1a-create-users";
-import {
-  generateInstitution,
-  generateDegree,
-} from "./utils";
+import { generateInstitution, generateDegree } from "./utils";
 
 /**
  * Create education history for consultees
  * Should be called after users are created
  */
 export async function createConsulteeEducation(
-  consultees: UserWithProfiles[]
+  consultees: UserWithProfiles[],
 ): Promise<void> {
   console.log(
-    `Creating education history for ${consultees.length} consultees...`
+    `Creating education history for ${consultees.length} consultees...`,
   );
 
   for (const consultee of consultees) {
@@ -31,11 +28,14 @@ export async function createConsulteeEducation(
       });
 
       if (profile?.careerStage === "STUDENT") {
-        currentEndYear = new Date().getFullYear() + faker.number.int({ min: 1, max: 3 });
+        currentEndYear =
+          new Date().getFullYear() + faker.number.int({ min: 1, max: 3 });
       } else if (profile?.careerStage === "EARLY_CAREER") {
-        currentEndYear = new Date().getFullYear() - faker.number.int({ min: 0, max: 3 });
+        currentEndYear =
+          new Date().getFullYear() - faker.number.int({ min: 0, max: 3 });
       } else {
-        currentEndYear = new Date().getFullYear() - faker.number.int({ min: 3, max: 15 });
+        currentEndYear =
+          new Date().getFullYear() - faker.number.int({ min: 3, max: 15 });
       }
 
       for (let j = 0; j < numEducation; j++) {
@@ -64,7 +64,8 @@ export async function createConsulteeEducation(
             degree: generateDegree(),
             fieldOfStudy: faker.helpers.arrayElement(fields),
             startYear,
-            endYear: profile?.careerStage === "STUDENT" && j === 0 ? null : endYear,
+            endYear:
+              profile?.careerStage === "STUDENT" && j === 0 ? null : endYear,
             grade: faker.datatype.boolean({ probability: 0.5 })
               ? faker.helpers.arrayElement([
                   "3.3 GPA",
@@ -92,7 +93,7 @@ export async function createConsulteeEducation(
     } catch (error) {
       console.error(
         `Failed to create education for consultee ${consultee.id}:`,
-        error
+        error,
       );
     }
   }

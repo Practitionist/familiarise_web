@@ -24,11 +24,7 @@ import { CreditCard as CreditCardIcon } from "lucide-react";
 import { use, useCallback, useEffect, useMemo, useState } from "react";
 import RazorpayCheckout from "../../../components/RazorpayCheckout";
 import StripeCheckout from "../../../components/StripeCheckout";
-import {
-  calculatePricing,
-  formatCurrency,
-  formatPercentage,
-} from "../../math";
+import { calculatePricing, formatCurrency, formatPercentage } from "../../math";
 
 type ConsultationPlanWithConsultant = ConsultationPlan & {
   consultantProfile: ConsultantProfile & {
@@ -523,13 +519,17 @@ export default function ConsultationCheckoutPage({
       <div className="flex flex-col gap-8 p-8 bg-white">
         <Card className="border-zinc-200 shadow-sm">
           <CardHeader>
-            <CardTitle className="text-zinc-900">Consultation Pricing</CardTitle>
+            <CardTitle className="text-zinc-900">
+              Consultation Pricing
+            </CardTitle>
           </CardHeader>
           <CardContent className="grid gap-4">
             <div className="grid gap-2">
               <div className="flex items-center justify-between">
                 <div>Session Fee</div>
-                <div>{formatCurrency(eventData?.data?.price || 0, currency)}</div>
+                <div>
+                  {formatCurrency(eventData?.data?.price || 0, currency)}
+                </div>
               </div>
               <div className="flex items-center justify-between">
                 <div className="flex items-center">
@@ -617,7 +617,9 @@ export default function ConsultationCheckoutPage({
                   <div className="flex items-center gap-4">
                     <CreditCardIcon className="w-8 h-8 text-zinc-600" />
                     <div>
-                      <div className="font-semibold text-zinc-900">Credit/Debit Card</div>
+                      <div className="font-semibold text-zinc-900">
+                        Credit/Debit Card
+                      </div>
                       <div className="text-sm text-zinc-500">
                         {gateway.description}
                       </div>

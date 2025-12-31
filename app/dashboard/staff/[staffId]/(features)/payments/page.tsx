@@ -1,7 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -194,8 +200,12 @@ export default function PaymentsAssistancePage() {
   const [activeTab, setActiveTab] = useState("payments");
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
-  const [selectedPayment, setSelectedPayment] = useState<typeof payments[0] | null>(null);
-  const [selectedRefund, setSelectedRefund] = useState<typeof refundRequests[0] | null>(null);
+  const [selectedPayment, setSelectedPayment] = useState<
+    (typeof payments)[0] | null
+  >(null);
+  const [selectedRefund, setSelectedRefund] = useState<
+    (typeof refundRequests)[0] | null
+  >(null);
 
   const filteredPayments = payments.filter((payment) => {
     const matchesSearch =
@@ -203,13 +213,16 @@ export default function PaymentsAssistancePage() {
       payment.transactionId.toLowerCase().includes(searchQuery.toLowerCase()) ||
       payment.user.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       payment.user.email.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesStatus = statusFilter === "all" || payment.status === statusFilter;
+    const matchesStatus =
+      statusFilter === "all" || payment.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
 
   const stats = {
     totalTransactions: payments.length,
-    totalAmount: payments.filter((p) => p.status === "completed").reduce((sum, p) => sum + p.amount, 0),
+    totalAmount: payments
+      .filter((p) => p.status === "completed")
+      .reduce((sum, p) => sum + p.amount, 0),
     pendingRefunds: refundRequests.filter((r) => r.status === "pending").length,
     failedPayments: payments.filter((p) => p.status === "failed").length,
   };
@@ -247,7 +260,9 @@ export default function PaymentsAssistancePage() {
               <IndianRupee className="h-5 w-5 text-emerald-600" />
             </div>
             <div>
-              <p className="text-2xl font-bold">{formatCurrency(stats.totalAmount)}</p>
+              <p className="text-2xl font-bold">
+                {formatCurrency(stats.totalAmount)}
+              </p>
               <p className="text-sm text-zinc-500">Processed Today</p>
             </div>
           </CardContent>
@@ -311,7 +326,9 @@ export default function PaymentsAssistancePage() {
                     <SelectItem value="completed">Completed</SelectItem>
                     <SelectItem value="pending">Pending</SelectItem>
                     <SelectItem value="failed">Failed</SelectItem>
-                    <SelectItem value="refund_requested">Refund Requested</SelectItem>
+                    <SelectItem value="refund_requested">
+                      Refund Requested
+                    </SelectItem>
                     <SelectItem value="refunded">Refunded</SelectItem>
                   </SelectContent>
                 </Select>
@@ -344,19 +361,26 @@ export default function PaymentsAssistancePage() {
                       <TableCell>
                         <div>
                           <p className="font-mono text-sm">{payment.id}</p>
-                          <p className="text-xs text-zinc-400">{payment.transactionId}</p>
+                          <p className="text-xs text-zinc-400">
+                            {payment.transactionId}
+                          </p>
                         </div>
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2">
                           <Avatar className="h-6 w-6">
                             <AvatarFallback className="text-xs">
-                              {payment.user.name.split(" ").map((n) => n[0]).join("")}
+                              {payment.user.name
+                                .split(" ")
+                                .map((n) => n[0])
+                                .join("")}
                             </AvatarFallback>
                           </Avatar>
                           <div>
                             <p className="text-sm">{payment.user.name}</p>
-                            <p className="text-xs text-zinc-400">{payment.user.email}</p>
+                            <p className="text-xs text-zinc-400">
+                              {payment.user.email}
+                            </p>
                           </div>
                         </div>
                       </TableCell>
@@ -364,7 +388,10 @@ export default function PaymentsAssistancePage() {
                         {formatCurrency(payment.amount)}
                       </TableCell>
                       <TableCell>
-                        <Badge className={getTypeColor(payment.type)} variant="secondary">
+                        <Badge
+                          className={getTypeColor(payment.type)}
+                          variant="secondary"
+                        >
                           {payment.type}
                         </Badge>
                       </TableCell>
@@ -372,7 +399,10 @@ export default function PaymentsAssistancePage() {
                         {payment.paymentMethod}
                       </TableCell>
                       <TableCell>
-                        <Badge className={getStatusColor(payment.status)} variant="secondary">
+                        <Badge
+                          className={getStatusColor(payment.status)}
+                          variant="secondary"
+                        >
                           {payment.status.replace("_", " ")}
                         </Badge>
                       </TableCell>
@@ -381,8 +411,15 @@ export default function PaymentsAssistancePage() {
                       </TableCell>
                       <TableCell>
                         <DropdownMenu>
-                          <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                            <Button variant="ghost" size="icon" className="h-8 w-8">
+                          <DropdownMenuTrigger
+                            asChild
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8"
+                            >
                               <MoreHorizontal className="h-4 w-4" />
                             </Button>
                           </DropdownMenuTrigger>
@@ -426,17 +463,25 @@ export default function PaymentsAssistancePage() {
                     <div className="flex items-start gap-3">
                       <Avatar>
                         <AvatarFallback>
-                          {refund.user.name.split(" ").map((n) => n[0]).join("")}
+                          {refund.user.name
+                            .split(" ")
+                            .map((n) => n[0])
+                            .join("")}
                         </AvatarFallback>
                       </Avatar>
                       <div>
                         <div className="flex items-center gap-2">
                           <p className="font-medium">{refund.user.name}</p>
-                          <Badge className={getStatusColor(refund.status)} variant="secondary">
+                          <Badge
+                            className={getStatusColor(refund.status)}
+                            variant="secondary"
+                          >
                             {refund.status}
                           </Badge>
                         </div>
-                        <p className="text-sm text-zinc-500">{refund.user.email}</p>
+                        <p className="text-sm text-zinc-500">
+                          {refund.user.email}
+                        </p>
                         <p className="text-sm text-zinc-600 dark:text-zinc-400 mt-1">
                           {refund.reason}
                         </p>
@@ -452,11 +497,18 @@ export default function PaymentsAssistancePage() {
                   </div>
                   {refund.status === "pending" && (
                     <div className="flex justify-end gap-2 mt-4">
-                      <Button variant="outline" size="sm" className="text-red-600">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="text-red-600"
+                      >
                         <XCircle className="h-4 w-4 mr-1" />
                         Reject
                       </Button>
-                      <Button size="sm" className="bg-green-600 hover:bg-green-700">
+                      <Button
+                        size="sm"
+                        className="bg-green-600 hover:bg-green-700"
+                      >
                         <CheckCircle2 className="h-4 w-4 mr-1" />
                         Approve Refund
                       </Button>
@@ -470,7 +522,10 @@ export default function PaymentsAssistancePage() {
       </Tabs>
 
       {/* Payment Detail Dialog */}
-      <Dialog open={!!selectedPayment} onOpenChange={() => setSelectedPayment(null)}>
+      <Dialog
+        open={!!selectedPayment}
+        onOpenChange={() => setSelectedPayment(null)}
+      >
         <DialogContent className="max-w-lg">
           {selectedPayment && (
             <>
@@ -488,17 +543,27 @@ export default function PaymentsAssistancePage() {
                   <div className="flex items-center gap-3">
                     <Avatar>
                       <AvatarFallback>
-                        {selectedPayment.user.name.split(" ").map((n) => n[0]).join("")}
+                        {selectedPayment.user.name
+                          .split(" ")
+                          .map((n) => n[0])
+                          .join("")}
                       </AvatarFallback>
                     </Avatar>
                     <div>
                       <p className="font-medium">{selectedPayment.user.name}</p>
-                      <p className="text-sm text-zinc-500">{selectedPayment.user.email}</p>
+                      <p className="text-sm text-zinc-500">
+                        {selectedPayment.user.email}
+                      </p>
                     </div>
                   </div>
                   <div className="text-right">
-                    <p className="text-2xl font-bold">{formatCurrency(selectedPayment.amount)}</p>
-                    <Badge className={getStatusColor(selectedPayment.status)} variant="secondary">
+                    <p className="text-2xl font-bold">
+                      {formatCurrency(selectedPayment.amount)}
+                    </p>
+                    <Badge
+                      className={getStatusColor(selectedPayment.status)}
+                      variant="secondary"
+                    >
                       {selectedPayment.status.replace("_", " ")}
                     </Badge>
                   </div>
@@ -509,7 +574,9 @@ export default function PaymentsAssistancePage() {
                     <p className="capitalize">{selectedPayment.type}</p>
                   </div>
                   <div>
-                    <Label className="text-xs text-zinc-500">Payment Method</Label>
+                    <Label className="text-xs text-zinc-500">
+                      Payment Method
+                    </Label>
                     <p>{selectedPayment.paymentMethod}</p>
                   </div>
                   <div>
@@ -517,13 +584,19 @@ export default function PaymentsAssistancePage() {
                     <p>{formatDate(selectedPayment.createdAt)}</p>
                   </div>
                   <div>
-                    <Label className="text-xs text-zinc-500">Transaction ID</Label>
-                    <p className="font-mono text-sm">{selectedPayment.transactionId}</p>
+                    <Label className="text-xs text-zinc-500">
+                      Transaction ID
+                    </Label>
+                    <p className="font-mono text-sm">
+                      {selectedPayment.transactionId}
+                    </p>
                   </div>
                 </div>
                 {selectedPayment.failureReason && (
                   <div className="p-3 rounded-lg bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800">
-                    <Label className="text-xs text-red-600">Failure Reason</Label>
+                    <Label className="text-xs text-red-600">
+                      Failure Reason
+                    </Label>
                     <p className="text-sm text-red-700 dark:text-red-300">
                       {selectedPayment.failureReason}
                     </p>
@@ -531,7 +604,9 @@ export default function PaymentsAssistancePage() {
                 )}
                 {selectedPayment.refundReason && (
                   <div className="p-3 rounded-lg bg-purple-50 dark:bg-purple-950 border border-purple-200 dark:border-purple-800">
-                    <Label className="text-xs text-purple-600">Refund Reason</Label>
+                    <Label className="text-xs text-purple-600">
+                      Refund Reason
+                    </Label>
                     <p className="text-sm text-purple-700 dark:text-purple-300">
                       {selectedPayment.refundReason}
                     </p>
@@ -547,7 +622,10 @@ export default function PaymentsAssistancePage() {
                 </div>
               </div>
               <DialogFooter>
-                <Button variant="outline" onClick={() => setSelectedPayment(null)}>
+                <Button
+                  variant="outline"
+                  onClick={() => setSelectedPayment(null)}
+                >
                   Close
                 </Button>
                 <Button variant="outline">
@@ -562,4 +640,3 @@ export default function PaymentsAssistancePage() {
     </div>
   );
 }
-

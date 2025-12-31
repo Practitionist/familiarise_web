@@ -346,10 +346,18 @@ export default function SettingsTab({ consulteeId }: SettingsTabProps) {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value={CareerStage.STUDENT}>Student</SelectItem>
-                  <SelectItem value={CareerStage.EARLY_CAREER}>Early Career (0-3 years)</SelectItem>
-                  <SelectItem value={CareerStage.MID_CAREER}>Mid Career (3-10 years)</SelectItem>
-                  <SelectItem value={CareerStage.SENIOR}>Senior (10+ years)</SelectItem>
-                  <SelectItem value={CareerStage.EXECUTIVE}>Executive</SelectItem>
+                  <SelectItem value={CareerStage.EARLY_CAREER}>
+                    Early Career (0-3 years)
+                  </SelectItem>
+                  <SelectItem value={CareerStage.MID_CAREER}>
+                    Mid Career (3-10 years)
+                  </SelectItem>
+                  <SelectItem value={CareerStage.SENIOR}>
+                    Senior (10+ years)
+                  </SelectItem>
+                  <SelectItem value={CareerStage.EXECUTIVE}>
+                    Executive
+                  </SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -368,10 +376,18 @@ export default function SettingsTab({ consulteeId }: SettingsTabProps) {
                   <SelectValue placeholder="Select budget preference" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value={BudgetPreference.BUDGET}>Budget</SelectItem>
-                  <SelectItem value={BudgetPreference.MODERATE}>Moderate</SelectItem>
-                  <SelectItem value={BudgetPreference.PREMIUM}>Premium</SelectItem>
-                  <SelectItem value={BudgetPreference.FLEXIBLE}>Flexible</SelectItem>
+                  <SelectItem value={BudgetPreference.BUDGET}>
+                    Budget
+                  </SelectItem>
+                  <SelectItem value={BudgetPreference.MODERATE}>
+                    Moderate
+                  </SelectItem>
+                  <SelectItem value={BudgetPreference.PREMIUM}>
+                    Premium
+                  </SelectItem>
+                  <SelectItem value={BudgetPreference.FLEXIBLE}>
+                    Flexible
+                  </SelectItem>
                 </SelectContent>
               </Select>
             </div>

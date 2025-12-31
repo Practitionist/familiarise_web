@@ -148,7 +148,8 @@ export default function AdminHomePage() {
                               {payment.amount} {payment.currency}
                             </p>
                             <p className="text-sm text-zinc-500">
-                              {payment.paymentGateway} • {payment.appointmentType}
+                              {payment.paymentGateway} •{" "}
+                              {payment.appointmentType}
                             </p>
                           </div>
                         </div>
@@ -160,7 +161,7 @@ export default function AdminHomePage() {
                                 ? "bg-emerald-50 text-emerald-700"
                                 : payment.paymentStatus === "PENDING"
                                   ? "bg-amber-50 text-amber-700"
-                                  : "bg-red-50 text-red-700"
+                                  : "bg-red-50 text-red-700",
                             )}
                           >
                             {payment.paymentStatus}
@@ -216,7 +217,7 @@ export default function AdminHomePage() {
                                 ? "bg-emerald-50 text-emerald-700"
                                 : refund.status === "PENDING"
                                   ? "bg-amber-50 text-amber-700"
-                                  : "bg-red-50 text-red-700"
+                                  : "bg-red-50 text-red-700",
                             )}
                           >
                             {refund.status}
@@ -241,40 +242,51 @@ export default function AdminHomePage() {
           <motion.div variants={fadeInUp}>
             <DataCard title="Payment Gateway Status" icon={Zap}>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                {["STRIPE", "RAZORPAY", "LEMON_SQUEEZY", "XFLOW"].map((gateway) => {
-                  const isActive = gateway === "STRIPE" || gateway === "RAZORPAY";
-                  const count = stats?.gatewayStats?.[gateway]?.count || 0;
-                  const value = stats?.gatewayStats?.[gateway]?.value || "$0";
+                {["STRIPE", "RAZORPAY", "LEMON_SQUEEZY", "XFLOW"].map(
+                  (gateway) => {
+                    const isActive =
+                      gateway === "STRIPE" || gateway === "RAZORPAY";
+                    const count = stats?.gatewayStats?.[gateway]?.count || 0;
+                    const value = stats?.gatewayStats?.[gateway]?.value || "$0";
 
-                  return (
-                    <div
-                      key={gateway}
-                      className="p-4 rounded-xl border border-zinc-100 hover:border-zinc-200 transition-all"
-                    >
-                      <div className="flex items-center justify-between mb-3">
-                        <span className="font-medium text-zinc-900">{gateway}</span>
-                        <div className="flex items-center gap-2">
-                          <div
-                            className={cn(
-                              "h-2.5 w-2.5 rounded-full",
-                              isActive ? "bg-emerald-500" : "bg-zinc-300"
-                            )}
-                          />
-                          <span className={cn(
-                            "text-xs font-medium",
-                            isActive ? "text-emerald-600" : "text-zinc-400"
-                          )}>
-                            {isActive ? "Active" : "Inactive"}
+                    return (
+                      <div
+                        key={gateway}
+                        className="p-4 rounded-xl border border-zinc-100 hover:border-zinc-200 transition-all"
+                      >
+                        <div className="flex items-center justify-between mb-3">
+                          <span className="font-medium text-zinc-900">
+                            {gateway}
                           </span>
+                          <div className="flex items-center gap-2">
+                            <div
+                              className={cn(
+                                "h-2.5 w-2.5 rounded-full",
+                                isActive ? "bg-emerald-500" : "bg-zinc-300",
+                              )}
+                            />
+                            <span
+                              className={cn(
+                                "text-xs font-medium",
+                                isActive ? "text-emerald-600" : "text-zinc-400",
+                              )}
+                            >
+                              {isActive ? "Active" : "Inactive"}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="space-y-1">
+                          <p className="text-2xl font-bold text-zinc-900">
+                            {count}
+                          </p>
+                          <p className="text-sm text-zinc-500">
+                            payments • {value}
+                          </p>
                         </div>
                       </div>
-                      <div className="space-y-1">
-                        <p className="text-2xl font-bold text-zinc-900">{count}</p>
-                        <p className="text-sm text-zinc-500">payments • {value}</p>
-                      </div>
-                    </div>
-                  );
-                })}
+                    );
+                  },
+                )}
               </div>
             </DataCard>
           </motion.div>

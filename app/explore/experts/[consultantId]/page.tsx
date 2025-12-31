@@ -232,7 +232,9 @@ export default function ExpertProfile(
     const days = [];
 
     for (let i = 0; i < adjustedFirstDay; i++) {
-      days.push(<div key={`empty-${i}`} className="w-10 h-10 lg:w-11 lg:h-11"></div>);
+      days.push(
+        <div key={`empty-${i}`} className="w-10 h-10 lg:w-11 lg:h-11"></div>,
+      );
     }
 
     for (let i = 1; i <= daysInMonth; i++) {
@@ -241,17 +243,19 @@ export default function ExpertProfile(
         currentDate.getMonth(),
         i,
       );
-      const isSelected = selectedDate?.getDate() === i && 
+      const isSelected =
+        selectedDate?.getDate() === i &&
         selectedDate?.getMonth() === currentDate.getMonth() &&
         selectedDate?.getFullYear() === currentDate.getFullYear();
-      
+
       days.push(
         <button
           key={i}
           className={`w-10 h-10 lg:w-11 lg:h-11 rounded-full text-base font-medium transition-all duration-200 flex items-center justify-center
-            ${isSelected 
-              ? "bg-white text-zinc-900 shadow-md" 
-              : "text-zinc-300 hover:bg-zinc-700/60"
+            ${
+              isSelected
+                ? "bg-white text-zinc-900 shadow-md"
+                : "text-zinc-300 hover:bg-zinc-700/60"
             }`}
           onClick={() => {
             setSelectedDate(date);
@@ -273,7 +277,7 @@ export default function ExpertProfile(
   if (error || !consultantDetails || !userDetails) {
     return (
       <div className="min-h-screen bg-zinc-50 flex items-center justify-center px-4">
-        <motion.div 
+        <motion.div
           className="text-center max-w-md"
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
@@ -282,9 +286,12 @@ export default function ExpertProfile(
           <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-zinc-200 flex items-center justify-center">
             <Users className="w-10 h-10 text-zinc-400" />
           </div>
-          <h1 className="text-2xl font-bold text-zinc-900 mb-3">Expert Not Found</h1>
+          <h1 className="text-2xl font-bold text-zinc-900 mb-3">
+            Expert Not Found
+          </h1>
           <p className="text-zinc-500 mb-8">
-            We couldn&apos;t find this expert. They may have moved or the link might be incorrect.
+            We couldn&apos;t find this expert. They may have moved or the link
+            might be incorrect.
           </p>
           <Link href="/explore/experts">
             <Button className="bg-zinc-900 hover:bg-zinc-800 text-white rounded-xl px-6">
@@ -302,7 +309,7 @@ export default function ExpertProfile(
       {/* Back Navigation */}
       <div className="bg-white border-b border-zinc-200">
         <div className="w-full px-4 md:px-8 lg:px-12 py-4">
-          <Link 
+          <Link
             href="/explore/experts"
             className="inline-flex items-center gap-2 text-sm text-zinc-500 hover:text-zinc-900 transition-colors"
           >
@@ -316,7 +323,7 @@ export default function ExpertProfile(
       <div className="w-full px-4 md:px-8 lg:px-12 py-8 md:py-12">
         <div className="flex flex-col xl:flex-row gap-8 xl:gap-12">
           {/* Main Content */}
-          <motion.div 
+          <motion.div
             className="flex-1 min-w-0"
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}

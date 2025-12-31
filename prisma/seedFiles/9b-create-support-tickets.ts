@@ -4,7 +4,13 @@ import prisma from "../../lib/prisma";
 import { UserWithProfiles } from "./1a-create-users";
 
 // Support ticket categories
-const TICKET_CATEGORIES = ["Account", "Billing", "Technical", "Scheduling", "Other"];
+const TICKET_CATEGORIES = [
+  "Account",
+  "Billing",
+  "Technical",
+  "Scheduling",
+  "Other",
+];
 
 // Priority distribution: 10% URGENT, 20% HIGH, 50% MEDIUM, 20% LOW
 const PRIORITY_WEIGHTS: { priority: SupportPriority; weight: number }[] = [
@@ -24,7 +30,10 @@ const STATUS_WEIGHTS: { status: SupportTicketStatus; weight: number }[] = [
 ];
 
 // Ticket templates by category
-const TICKET_TEMPLATES: Record<string, { titles: string[]; descriptions: string[] }> = {
+const TICKET_TEMPLATES: Record<
+  string,
+  { titles: string[]; descriptions: string[] }
+> = {
   Account: {
     titles: [
       "Cannot reset my password",
@@ -152,7 +161,10 @@ const STAFF_RESPONSES = {
 };
 
 function getWeightedPriority(): SupportPriority {
-  const totalWeight = PRIORITY_WEIGHTS.reduce((sum, item) => sum + item.weight, 0);
+  const totalWeight = PRIORITY_WEIGHTS.reduce(
+    (sum, item) => sum + item.weight,
+    0,
+  );
   let random = faker.number.int({ min: 1, max: totalWeight });
 
   for (const item of PRIORITY_WEIGHTS) {
@@ -165,7 +177,10 @@ function getWeightedPriority(): SupportPriority {
 }
 
 function getWeightedStatus(): SupportTicketStatus {
-  const totalWeight = STATUS_WEIGHTS.reduce((sum, item) => sum + item.weight, 0);
+  const totalWeight = STATUS_WEIGHTS.reduce(
+    (sum, item) => sum + item.weight,
+    0,
+  );
   let random = faker.number.int({ min: 1, max: totalWeight });
 
   for (const item of STATUS_WEIGHTS) {
@@ -179,14 +194,16 @@ function getWeightedStatus(): SupportTicketStatus {
 
 const NUM_TICKETS = 40;
 
-export async function createSupportTickets(users: UserWithProfiles[]): Promise<void> {
+export async function createSupportTickets(
+  users: UserWithProfiles[],
+): Promise<void> {
   console.log(`Creating ${NUM_TICKETS} support tickets with responses...`);
 
   // Get users by role
   const consultees = users.filter((user) => user.role === "CONSULTEE");
   const consultants = users.filter((user) => user.role === "CONSULTANT");
   const staffAndAdmins = users.filter(
-    (user) => user.role === "STAFF" || user.role === "ADMIN"
+    (user) => user.role === "STAFF" || user.role === "ADMIN",
   );
 
   const ticketCreators = [...consultees, ...consultants];
@@ -231,9 +248,10 @@ export async function createSupportTickets(users: UserWithProfiles[]): Promise<v
       ticketsCreated++;
 
       // Create responses based on status
-      const numResponses = status === "OPEN"
-        ? faker.number.int({ min: 0, max: 2 })
-        : faker.number.int({ min: 1, max: 5 });
+      const numResponses =
+        status === "OPEN"
+          ? faker.number.int({ min: 0, max: 2 })
+          : faker.number.int({ min: 1, max: 5 });
 
       let lastResponseDate = new Date(ticketDate);
 
@@ -276,12 +294,16 @@ export async function createSupportTickets(users: UserWithProfiles[]): Promise<v
       }
 
       if (ticketsCreated % 10 === 0) {
-        console.log(`Created ${ticketsCreated} tickets, ${responsesCreated} responses...`);
+        console.log(
+          `Created ${ticketsCreated} tickets, ${responsesCreated} responses...`,
+        );
       }
     } catch (error) {
       console.error(`Failed to create support ticket ${i + 1}:`, error);
     }
   }
 
-  console.log(`Created ${ticketsCreated} support tickets with ${responsesCreated} responses`);
+  console.log(
+    `Created ${ticketsCreated} support tickets with ${responsesCreated} responses`,
+  );
 }

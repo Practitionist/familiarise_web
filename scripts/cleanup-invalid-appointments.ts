@@ -1,0 +1,523 @@
+#!/usr/bin/env node
+
+/**
+ * Invalid Appointment Cleanup Script
+ *
+ * Core library for cleaning up duplicate and invalid appointments.
+ *
+ * This module exports functions that can be used by:
+ * - Local development: `npx tsx scripts/cleanup-invalid-appointments.ts`
+ * - GitHub Actions: `jobs/cleanup-invalid-appointments.ts`
+ * - API routes: Can import and call functions directly
+ *
+ * Cleanup Categories:
+ * 1. Duplicate consultations (same user + consultant + plan + same day)
+ * 2. Duplicate subscriptions (overlapping scheduling periods)
+ * 3. Exact duplicates (records created within 5 seconds - double-submit bugs)
+ * 4. Invalid duration consultations (slot duration != plan duration)
+ * 5. Invalid duration subscriptions (period != plan.durationInMonths)
+ *
+ * Action: Marks invalid records as CANCELLED (preserves audit trail)
+ */
+
+import { PrismaClient, RequestStatus } from "@prisma/client";
+
+const prisma = new PrismaClient();
+
+/**
+ * Result structure for cleanup operations
+ */
+export interface CleanupResult {
+  duplicateConsultationsCancelled: number;
+  duplicateSubscriptionsCancelled: number;
+  invalidDurationConsultationsCancelled: number;
+  invalidDurationSubscriptionsCancelled: number;
+  totalCancelled: number;
+  errors: string[];
+  success: boolean;
+}
+
+// Statuses that should not be cleaned up (already terminal)
+const TERMINAL_STATUSES: RequestStatus[] = [
+  RequestStatus.CANCELLED,
+  RequestStatus.REJECTED,
+  RequestStatus.EXPIRED,
+];
+
+/**
+ * Calculate the difference in months between two dates
+ */
+function monthsDiff(start: Date, end: Date): number {
+  return (
+    (end.getFullYear() - start.getFullYear()) * 12 +
+    (end.getMonth() - start.getMonth())
+  );
+}
+
+/**
+ * Clean up duplicate consultations
+ *
+ * Finds consultations where:
+ * - Same requestedById (user)
+ * - Same consultationPlanId (plan)
+ * - Created on the same day OR within 5 seconds of each other
+ *
+ * Keeps the oldest record, cancels the newer duplicates.
+ */
+export async function cleanupDuplicateConsultations(): Promise<{
+  count: number;
+  errors: string[];
+}> {
+  console.log("🔍 Finding duplicate consultations...");
+
+  const errors: string[] = [];
+  let cancelledCount = 0;
+
+  try {
+    // Fetch all non-terminal consultations
+    const consultations = await prisma.consultation.findMany({
+      where: { requestStatus: { notIn: TERMINAL_STATUSES } },
+      select: {
+        id: true,
+        requestedById: true,
+        consultationPlanId: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: "asc" },
+    });
+
+    const duplicatesToCancel = new Set<string>();
+
+    // Group by user + plan (like subscriptions) for efficient comparison
+    const groupedByUserPlan = new Map<string, typeof consultations>();
+    for (const c of consultations) {
+      const key = `${c.requestedById}-${c.consultationPlanId}`;
+      if (!groupedByUserPlan.has(key)) groupedByUserPlan.set(key, []);
+      groupedByUserPlan.get(key)!.push(c);
+    }
+
+    // Check within each group for duplicates
+    groupedByUserPlan.forEach((group) => {
+      // Track seen dates for same-day duplicates
+      const seenDates = new Map<string, string>(); // date -> oldest id
+
+      for (let i = 0; i < group.length; i++) {
+        const c = group[i];
+        const dateKey = c.createdAt.toISOString().split("T")[0];
+
+        // Check same-day duplicate
+        if (seenDates.has(dateKey)) {
+          duplicatesToCancel.add(c.id);
+          console.log(
+            `  Found same-day duplicate: ${c.id} (original: ${seenDates.get(dateKey)})`,
+          );
+        } else {
+          seenDates.set(dateKey, c.id);
+        }
+
+        // Check within-5-second duplicates (break early since sorted by createdAt)
+        for (let j = i + 1; j < group.length; j++) {
+          const c2 = group[j];
+          if (c2.createdAt.getTime() - c.createdAt.getTime() >= 5000) {
+            break; // No more items within 5 seconds
+          }
+          duplicatesToCancel.add(c2.id);
+          console.log(
+            `  Found exact duplicate (within 5s): ${c2.id} (original: ${c.id})`,
+          );
+        }
+      }
+    });
+
+    console.log(`📊 Found ${duplicatesToCancel.size} duplicate consultations`);
+
+    // Batch cancel duplicates
+    if (duplicatesToCancel.size > 0) {
+      const result = await prisma.consultation.updateMany({
+        where: { id: { in: Array.from(duplicatesToCancel) } },
+        data: { requestStatus: RequestStatus.CANCELLED },
+      });
+      cancelledCount = result.count;
+      console.log(`✅ Cancelled ${cancelledCount} duplicate consultations`);
+    }
+  } catch (error) {
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown error";
+    errors.push(`Duplicate consultation cleanup failed: ${errorMessage}`);
+    console.error(
+      "❌ Failed to cleanup duplicate consultations:",
+      errorMessage,
+    );
+  }
+
+  return { count: cancelledCount, errors };
+}
+
+/**
+ * Clean up duplicate subscriptions
+ *
+ * Finds subscriptions where:
+ * - Same requestedById (user)
+ * - Same subscriptionPlanId (plan)
+ * - Overlapping scheduling periods OR within 5 seconds of each other
+ *
+ * Keeps the oldest record, cancels the newer duplicates.
+ */
+export async function cleanupDuplicateSubscriptions(): Promise<{
+  count: number;
+  errors: string[];
+}> {
+  console.log("🔍 Finding duplicate subscriptions...");
+
+  const errors: string[] = [];
+  let cancelledCount = 0;
+
+  try {
+    // Fetch all non-terminal subscriptions
+    const subscriptions = await prisma.subscription.findMany({
+      where: { requestStatus: { notIn: TERMINAL_STATUSES } },
+      select: {
+        id: true,
+        requestedById: true,
+        subscriptionPlanId: true,
+        schedulingPeriodStartsAt: true,
+        schedulingPeriodEndsAt: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: "asc" },
+    });
+
+    const duplicatesToCancel = new Set<string>();
+    const seenByUserPlan = new Map<string, typeof subscriptions>();
+
+    // Group by user + plan
+    for (const s of subscriptions) {
+      const key = `${s.requestedById}-${s.subscriptionPlanId}`;
+      if (!seenByUserPlan.has(key)) seenByUserPlan.set(key, []);
+      seenByUserPlan.get(key)!.push(s);
+    }
+
+    // Check for overlaps within each group
+    seenByUserPlan.forEach((group) => {
+      for (let i = 0; i < group.length; i++) {
+        for (let j = i + 1; j < group.length; j++) {
+          const s1 = group[i];
+          const s2 = group[j];
+
+          // Check overlap
+          const overlaps =
+            s1.schedulingPeriodStartsAt < s2.schedulingPeriodEndsAt &&
+            s1.schedulingPeriodEndsAt > s2.schedulingPeriodStartsAt;
+
+          // Check within 5 seconds
+          const within5s =
+            Math.abs(s1.createdAt.getTime() - s2.createdAt.getTime()) < 5000;
+
+          if (overlaps) {
+            duplicatesToCancel.add(s2.id); // Cancel newer one
+            console.log(
+              `  Found overlapping subscription: ${s2.id} (overlaps with: ${s1.id})`,
+            );
+          } else if (within5s) {
+            duplicatesToCancel.add(s2.id); // Cancel newer one
+            console.log(
+              `  Found exact duplicate (within 5s): ${s2.id} (original: ${s1.id})`,
+            );
+          }
+        }
+      }
+    });
+
+    console.log(`📊 Found ${duplicatesToCancel.size} duplicate subscriptions`);
+
+    // Batch cancel duplicates
+    if (duplicatesToCancel.size > 0) {
+      const result = await prisma.subscription.updateMany({
+        where: { id: { in: Array.from(duplicatesToCancel) } },
+        data: { requestStatus: RequestStatus.CANCELLED },
+      });
+      cancelledCount = result.count;
+      console.log(`✅ Cancelled ${cancelledCount} duplicate subscriptions`);
+    }
+  } catch (error) {
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown error";
+    errors.push(`Duplicate subscription cleanup failed: ${errorMessage}`);
+    console.error(
+      "❌ Failed to cleanup duplicate subscriptions:",
+      errorMessage,
+    );
+  }
+
+  return { count: cancelledCount, errors };
+}
+
+/**
+ * Clean up consultations with invalid slot durations
+ *
+ * Finds consultations where the total slot duration doesn't match
+ * the plan's durationInHours (with 1% tolerance for floating point).
+ */
+export async function cleanupInvalidDurationConsultations(): Promise<{
+  count: number;
+  errors: string[];
+}> {
+  console.log("🔍 Finding consultations with invalid slot durations...");
+
+  const errors: string[] = [];
+  let cancelledCount = 0;
+
+  try {
+    // Fetch consultations with their plan and slots
+    const consultations = await prisma.consultation.findMany({
+      where: { requestStatus: { notIn: TERMINAL_STATUSES } },
+      include: {
+        consultationPlan: { select: { durationInHours: true } },
+        appointment: {
+          include: {
+            slotsOfAppointment: { select: { startsAt: true, endsAt: true } },
+          },
+        },
+      },
+    });
+
+    const invalidIds: string[] = [];
+
+    for (const c of consultations) {
+      if (!c.appointment?.slotsOfAppointment?.length) continue;
+
+      const expectedHours = c.consultationPlan.durationInHours;
+      // Sum duration of ALL slots (not just the first one)
+      const totalSlotMillis = c.appointment.slotsOfAppointment.reduce(
+        (total, slot) =>
+          total + (slot.endsAt.getTime() - slot.startsAt.getTime()),
+        0,
+      );
+      const actualHours = totalSlotMillis / (1000 * 60 * 60);
+
+      if (Math.abs(expectedHours - actualHours) > 0.01) {
+        invalidIds.push(c.id);
+        console.log(
+          `  Found invalid duration: ${c.id} (expected: ${expectedHours}h, actual: ${actualHours.toFixed(2)}h)`,
+        );
+      }
+    }
+
+    console.log(
+      `📊 Found ${invalidIds.length} consultations with invalid durations`,
+    );
+
+    // Batch cancel invalid consultations
+    if (invalidIds.length > 0) {
+      const result = await prisma.consultation.updateMany({
+        where: { id: { in: invalidIds } },
+        data: { requestStatus: RequestStatus.CANCELLED },
+      });
+      cancelledCount = result.count;
+      console.log(
+        `✅ Cancelled ${cancelledCount} invalid duration consultations`,
+      );
+    }
+  } catch (error) {
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown error";
+    errors.push(
+      `Invalid duration consultation cleanup failed: ${errorMessage}`,
+    );
+    console.error(
+      "❌ Failed to cleanup invalid duration consultations:",
+      errorMessage,
+    );
+  }
+
+  return { count: cancelledCount, errors };
+}
+
+/**
+ * Clean up subscriptions with invalid scheduling periods
+ *
+ * Finds subscriptions where the scheduling period doesn't match
+ * the plan's durationInMonths.
+ */
+export async function cleanupInvalidDurationSubscriptions(): Promise<{
+  count: number;
+  errors: string[];
+}> {
+  console.log("🔍 Finding subscriptions with invalid scheduling periods...");
+
+  const errors: string[] = [];
+  let cancelledCount = 0;
+
+  try {
+    // Fetch subscriptions with their plans
+    const subscriptions = await prisma.subscription.findMany({
+      where: { requestStatus: { notIn: TERMINAL_STATUSES } },
+      include: {
+        subscriptionPlan: { select: { durationInMonths: true } },
+      },
+    });
+
+    const invalidIds: string[] = [];
+
+    for (const s of subscriptions) {
+      const expectedMonths = s.subscriptionPlan.durationInMonths;
+      const actualMonths = monthsDiff(
+        s.schedulingPeriodStartsAt,
+        s.schedulingPeriodEndsAt,
+      );
+
+      if (actualMonths !== expectedMonths) {
+        invalidIds.push(s.id);
+        console.log(
+          `  Found invalid period: ${s.id} (expected: ${expectedMonths} months, actual: ${actualMonths} months)`,
+        );
+      }
+    }
+
+    console.log(
+      `📊 Found ${invalidIds.length} subscriptions with invalid periods`,
+    );
+
+    // Batch cancel invalid subscriptions
+    if (invalidIds.length > 0) {
+      const result = await prisma.subscription.updateMany({
+        where: { id: { in: invalidIds } },
+        data: { requestStatus: RequestStatus.CANCELLED },
+      });
+      cancelledCount = result.count;
+      console.log(
+        `✅ Cancelled ${cancelledCount} invalid duration subscriptions`,
+      );
+    }
+  } catch (error) {
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown error";
+    errors.push(
+      `Invalid duration subscription cleanup failed: ${errorMessage}`,
+    );
+    console.error(
+      "❌ Failed to cleanup invalid duration subscriptions:",
+      errorMessage,
+    );
+  }
+
+  return { count: cancelledCount, errors };
+}
+
+/**
+ * Run all cleanup tasks
+ *
+ * Executes all four cleanup operations:
+ * 1. Duplicate consultations
+ * 2. Duplicate subscriptions
+ * 3. Invalid duration consultations
+ * 4. Invalid duration subscriptions
+ *
+ * @returns Combined results from all cleanup operations
+ */
+export async function runAllCleanupTasks(): Promise<CleanupResult> {
+  const startTime = Date.now();
+  console.log(
+    `\n🚀 Starting invalid appointment cleanup at ${new Date().toISOString()}\n`,
+  );
+
+  const result: CleanupResult = {
+    duplicateConsultationsCancelled: 0,
+    duplicateSubscriptionsCancelled: 0,
+    invalidDurationConsultationsCancelled: 0,
+    invalidDurationSubscriptionsCancelled: 0,
+    totalCancelled: 0,
+    errors: [],
+    success: false,
+  };
+
+  try {
+    // 1. Cleanup duplicate consultations
+    console.log("\n📋 Step 1/4: Duplicate Consultations");
+    const dupConsultations = await cleanupDuplicateConsultations();
+    result.duplicateConsultationsCancelled = dupConsultations.count;
+    result.errors.push(...dupConsultations.errors);
+
+    // 2. Cleanup duplicate subscriptions
+    console.log("\n📋 Step 2/4: Duplicate Subscriptions");
+    const dupSubscriptions = await cleanupDuplicateSubscriptions();
+    result.duplicateSubscriptionsCancelled = dupSubscriptions.count;
+    result.errors.push(...dupSubscriptions.errors);
+
+    // 3. Cleanup invalid duration consultations
+    console.log("\n📋 Step 3/4: Invalid Duration Consultations");
+    const invalidConsultations = await cleanupInvalidDurationConsultations();
+    result.invalidDurationConsultationsCancelled = invalidConsultations.count;
+    result.errors.push(...invalidConsultations.errors);
+
+    // 4. Cleanup invalid duration subscriptions
+    console.log("\n📋 Step 4/4: Invalid Duration Subscriptions");
+    const invalidSubscriptions = await cleanupInvalidDurationSubscriptions();
+    result.invalidDurationSubscriptionsCancelled = invalidSubscriptions.count;
+    result.errors.push(...invalidSubscriptions.errors);
+
+    // Calculate totals
+    result.totalCancelled =
+      result.duplicateConsultationsCancelled +
+      result.duplicateSubscriptionsCancelled +
+      result.invalidDurationConsultationsCancelled +
+      result.invalidDurationSubscriptionsCancelled;
+
+    result.success = result.errors.length === 0;
+
+    // Summary
+    const duration = (Date.now() - startTime) / 1000;
+    console.log(`\n📊 Cleanup Summary:`);
+    console.log(
+      `   🔄 Duplicate consultations cancelled: ${result.duplicateConsultationsCancelled}`,
+    );
+    console.log(
+      `   🔄 Duplicate subscriptions cancelled: ${result.duplicateSubscriptionsCancelled}`,
+    );
+    console.log(
+      `   ⏱️ Invalid duration consultations cancelled: ${result.invalidDurationConsultationsCancelled}`,
+    );
+    console.log(
+      `   ⏱️ Invalid duration subscriptions cancelled: ${result.invalidDurationSubscriptionsCancelled}`,
+    );
+    console.log(`   📈 Total cancelled: ${result.totalCancelled}`);
+    console.log(`   ⏱️ Duration: ${duration.toFixed(2)}s`);
+
+    if (result.errors.length > 0) {
+      console.log(`\n⚠️ Errors (${result.errors.length}):`);
+      result.errors.forEach((error, i) => {
+        console.log(`   ${i + 1}. ${error}`);
+      });
+    }
+
+    return result;
+  } finally {
+    await prisma.$disconnect();
+  }
+}
+
+/**
+ * Disconnect from the database
+ * Call this when done using the cleanup functions if not using runAllCleanupTasks
+ */
+export async function disconnectDatabase(): Promise<void> {
+  await prisma.$disconnect();
+}
+
+// Run the cleanup if this script is executed directly
+if (import.meta.url === `file://${process.argv[1]}`) {
+  runAllCleanupTasks()
+    .then((result) => {
+      if (result.success) {
+        console.log("\n🎉 Cleanup job completed successfully");
+        process.exit(0);
+      } else {
+        console.error("\n❌ Cleanup job completed with errors");
+        process.exit(1);
+      }
+    })
+    .catch((error) => {
+      console.error("\n💥 Cleanup job failed:", error);
+      process.exit(1);
+    });
+}

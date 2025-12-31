@@ -32,126 +32,162 @@ export async function GET(
 
     // PERFORMANCE FIX: Use direct Prisma queries instead of internal HTTP fetches
     // This avoids network overhead and reduces response time from 11+ seconds to <1 second
-    const [consultations, subscriptions, webinars, classes] = await Promise.all([
-      prisma.consultation.findMany({
-        where: { requestedById: consulteeId },
-        include: {
-          consultationPlan: {
-            include: {
-              consultantProfile: {
-                include: {
-                  user: {
-                    select: { id: true, name: true, image: true, email: true },
+    const [consultations, subscriptions, webinars, classes] = await Promise.all(
+      [
+        prisma.consultation.findMany({
+          where: { requestedById: consulteeId },
+          include: {
+            consultationPlan: {
+              include: {
+                consultantProfile: {
+                  include: {
+                    user: {
+                      select: {
+                        id: true,
+                        name: true,
+                        image: true,
+                        email: true,
+                      },
+                    },
                   },
                 },
               },
             },
-          },
-          appointment: {
-            include: {
-              slotsOfAppointment: {
-                orderBy: { startsAt: "asc" },
+            appointment: {
+              include: {
+                slotsOfAppointment: {
+                  orderBy: { startsAt: "asc" },
+                },
+                payment: true,
               },
-              payment: true,
             },
           },
-        },
-        orderBy: { requestedAt: "desc" },
-      }),
-      prisma.subscription.findMany({
-        where: { requestedById: consulteeId },
-        include: {
-          subscriptionPlan: {
-            include: {
-              consultantProfile: {
-                include: {
-                  user: {
-                    select: { id: true, name: true, image: true, email: true },
+          orderBy: { requestedAt: "desc" },
+        }),
+        prisma.subscription.findMany({
+          where: { requestedById: consulteeId },
+          include: {
+            subscriptionPlan: {
+              include: {
+                consultantProfile: {
+                  include: {
+                    user: {
+                      select: {
+                        id: true,
+                        name: true,
+                        image: true,
+                        email: true,
+                      },
+                    },
                   },
                 },
               },
             },
-          },
-          appointments: {
-            include: {
-              slotsOfAppointment: {
-                orderBy: { startsAt: "asc" },
+            appointments: {
+              include: {
+                slotsOfAppointment: {
+                  orderBy: { startsAt: "asc" },
+                },
+                payment: true,
               },
-              payment: true,
             },
           },
-        },
-        orderBy: { requestedAt: "desc" },
-      }),
-      // Webinars: User registered via waitlist or via appointment slots
-      prisma.webinar.findMany({
-        where: {
-          OR: [
-            { waitlist: { some: { userId } } },
-            { appointment: { slotsOfAppointment: { some: { user: { some: { id: userId } } } } } },
-          ],
-        },
-        include: {
-          webinarPlan: {
-            include: {
-              consultantProfile: {
-                include: {
-                  user: {
-                    select: { id: true, name: true, image: true, email: true },
+          orderBy: { requestedAt: "desc" },
+        }),
+        // Webinars: User registered via waitlist or via appointment slots
+        prisma.webinar.findMany({
+          where: {
+            OR: [
+              { waitlist: { some: { userId } } },
+              {
+                appointment: {
+                  slotsOfAppointment: {
+                    some: { user: { some: { id: userId } } },
+                  },
+                },
+              },
+            ],
+          },
+          include: {
+            webinarPlan: {
+              include: {
+                consultantProfile: {
+                  include: {
+                    user: {
+                      select: {
+                        id: true,
+                        name: true,
+                        image: true,
+                        email: true,
+                      },
+                    },
                   },
                 },
               },
             },
-          },
-          appointment: {
-            include: {
-              slotsOfAppointment: {
-                orderBy: { startsAt: "asc" },
+            appointment: {
+              include: {
+                slotsOfAppointment: {
+                  orderBy: { startsAt: "asc" },
+                },
+                payment: true,
               },
-              payment: true,
+            },
+            waitlist: {
+              where: { userId },
             },
           },
-          waitlist: {
-            where: { userId },
+          orderBy: { createdAt: "desc" },
+        }),
+        // Classes: User registered via waitlist or via appointment slots
+        prisma.class.findMany({
+          where: {
+            OR: [
+              { waitlist: { some: { userId } } },
+              {
+                appointments: {
+                  some: {
+                    slotsOfAppointment: {
+                      some: { user: { some: { id: userId } } },
+                    },
+                  },
+                },
+              },
+            ],
           },
-        },
-        orderBy: { createdAt: "desc" },
-      }),
-      // Classes: User registered via waitlist or via appointment slots
-      prisma.class.findMany({
-        where: {
-          OR: [
-            { waitlist: { some: { userId } } },
-            { appointments: { some: { slotsOfAppointment: { some: { user: { some: { id: userId } } } } } } },
-          ],
-        },
-        include: {
-          classPlan: {
-            include: {
-              consultantProfile: {
-                include: {
-                  user: {
-                    select: { id: true, name: true, image: true, email: true },
+          include: {
+            classPlan: {
+              include: {
+                consultantProfile: {
+                  include: {
+                    user: {
+                      select: {
+                        id: true,
+                        name: true,
+                        image: true,
+                        email: true,
+                      },
+                    },
                   },
                 },
               },
             },
-          },
-          appointments: {
-            include: {
-              slotsOfAppointment: {
-                orderBy: { startsAt: "asc" },
+            appointments: {
+              include: {
+                slotsOfAppointment: {
+                  orderBy: { startsAt: "asc" },
+                },
+                payment: true,
               },
-              payment: true,
+            },
+            waitlist: {
+              where: { userId },
             },
           },
-          waitlist: {
-            where: { userId },
-          },
-        },
-        orderBy: { createdAt: "desc" },
-      }),
-    ]);
+          orderBy: { createdAt: "desc" },
+        }),
+      ],
+    );
 
     return NextResponse.json({
       data: {

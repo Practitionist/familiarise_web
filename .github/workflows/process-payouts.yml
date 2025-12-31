@@ -1,0 +1,50 @@
+name: Process Payouts
+
+on:
+  schedule:
+    # Run weekly on Mondays at 9:00 PM UTC (2:30 AM IST next day)
+    - cron: "0 21 * * 1"
+  workflow_dispatch: # Allow manual triggering
+
+jobs:
+  process-payouts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      # Database connection (required for Prisma)
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DIRECT_URL: ${{ secrets.DIRECT_URL }}
+
+      # RazorpayX credentials for payouts
+      RAZORPAY_KEY_ID: ${{ secrets.RAZORPAY_KEY_ID }}
+      RAZORPAY_KEY_SECRET: ${{ secrets.RAZORPAY_KEY_SECRET }}
+      RAZORPAYX_ACCOUNT_NUMBER: ${{ secrets.RAZORPAYX_ACCOUNT_NUMBER }}
+
+      # Stripe credentials for Connect transfers
+      STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Run process payouts job
+        run: npx tsx jobs/process-payouts.ts
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "Process payouts job failed"
+          # Add notification logic here (Slack, email, etc.)

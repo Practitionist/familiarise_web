@@ -22,7 +22,10 @@ const STATUS_WEIGHTS: { status: FeedbackStatus; weight: number }[] = [
 ];
 
 // Feedback templates by category
-const FEEDBACK_TEMPLATES: Record<string, { titles: string[]; descriptions: string[] }> = {
+const FEEDBACK_TEMPLATES: Record<
+  string,
+  { titles: string[]; descriptions: string[] }
+> = {
   "Bug Report": {
     titles: [
       "Login page not loading properly",
@@ -65,7 +68,7 @@ const FEEDBACK_TEMPLATES: Record<string, { titles: string[]; descriptions: strin
       "As someone who works with international clients, having better timezone support with automatic conversion would save a lot of confusion when booking appointments.",
     ],
   },
-  "General": {
+  General: {
     titles: [
       "Great experience overall",
       "Suggestion for onboarding process",
@@ -107,7 +110,7 @@ const FEEDBACK_TEMPLATES: Record<string, { titles: string[]; descriptions: strin
       "The date picker for scheduling is hard to use on mobile. Consider using a native date picker or a more touch-friendly design.",
     ],
   },
-  "Performance": {
+  Performance: {
     titles: [
       "Page load times are slow",
       "Dashboard takes too long to load",
@@ -131,7 +134,10 @@ const FEEDBACK_TEMPLATES: Record<string, { titles: string[]; descriptions: strin
 };
 
 function getWeightedStatus(): FeedbackStatus {
-  const totalWeight = STATUS_WEIGHTS.reduce((sum, item) => sum + item.weight, 0);
+  const totalWeight = STATUS_WEIGHTS.reduce(
+    (sum, item) => sum + item.weight,
+    0,
+  );
   let random = faker.number.int({ min: 1, max: totalWeight });
 
   for (const item of STATUS_WEIGHTS) {
@@ -175,12 +181,14 @@ function generateFeedbackData(category: string) {
 
 const NUM_FEEDBACKS = 75;
 
-export async function createFeedbacks(users: UserWithProfiles[]): Promise<void> {
+export async function createFeedbacks(
+  users: UserWithProfiles[],
+): Promise<void> {
   console.log(`Creating ${NUM_FEEDBACKS} feedback entries...`);
 
   // Filter to users who can submit feedback (consultees and consultants)
   const eligibleUsers = users.filter(
-    (user) => user.role === "CONSULTEE" || user.role === "CONSULTANT"
+    (user) => user.role === "CONSULTEE" || user.role === "CONSULTANT",
   );
 
   if (eligibleUsers.length === 0) {

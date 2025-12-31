@@ -80,7 +80,10 @@ function getTimeAway(date: Date): { text: string; urgent: boolean } {
   if (hoursAway < 1) return { text: "Starting soon", urgent: true };
   if (hoursAway < 24) {
     const mins = Math.floor((hoursAway % 1) * 60);
-    return { text: `${Math.floor(hoursAway)}h ${mins > 0 ? `${mins}m` : ""} away`, urgent: hoursAway < 2 };
+    return {
+      text: `${Math.floor(hoursAway)}h ${mins > 0 ? `${mins}m` : ""} away`,
+      urgent: hoursAway < 2,
+    };
   }
   if (daysAway === 1) return { text: "1 day away", urgent: false };
   return { text: `${daysAway} days away`, urgent: false };
@@ -106,13 +109,13 @@ function UpcomingSessionCard({
 
   // Status badges - refined professional colors
   const statusConfig: Record<string, { bg: string; text: string }> = {
-    APPROVED: { bg: "bg-teal-500/15", text: "text-teal-400" },            // Teal - sophisticated success
-    PENDING: { bg: "bg-orange-500/15", text: "text-orange-400" },         // Orange - warm urgency
-    SCHEDULED: { bg: "bg-indigo-500/15", text: "text-indigo-400" },       // Indigo - elegant upcoming
-    IN_PROGRESS: { bg: "bg-cyan-500/15", text: "text-cyan-400" },         // Cyan - bright active
-    COMPLETED: { bg: "bg-slate-500/15", text: "text-slate-400" },         // Slate - warm done
-    CANCELLED: { bg: "bg-stone-500/15", text: "text-stone-400" },         // Stone - neutral inactive
-    REJECTED: { bg: "bg-red-500/15", text: "text-red-400" },              // Red - clear negative
+    APPROVED: { bg: "bg-teal-500/15", text: "text-teal-400" }, // Teal - sophisticated success
+    PENDING: { bg: "bg-orange-500/15", text: "text-orange-400" }, // Orange - warm urgency
+    SCHEDULED: { bg: "bg-indigo-500/15", text: "text-indigo-400" }, // Indigo - elegant upcoming
+    IN_PROGRESS: { bg: "bg-cyan-500/15", text: "text-cyan-400" }, // Cyan - bright active
+    COMPLETED: { bg: "bg-slate-500/15", text: "text-slate-400" }, // Slate - warm done
+    CANCELLED: { bg: "bg-stone-500/15", text: "text-stone-400" }, // Stone - neutral inactive
+    REJECTED: { bg: "bg-red-500/15", text: "text-red-400" }, // Red - clear negative
   };
 
   const typeLabel = typeLabels[event.type] || "EVENT";
@@ -129,21 +132,27 @@ function UpcomingSessionCard({
         <Avatar className="h-10 w-10 ring-2 ring-zinc-700 shrink-0">
           <AvatarImage src={event.consultantImage} alt={event.consultantName} />
           <AvatarFallback className="bg-zinc-700 text-zinc-300 text-xs font-semibold">
-            {event.consultantName.split(" ").map((n) => n[0]).join("").slice(0, 2)}
+            {event.consultantName
+              .split(" ")
+              .map((n) => n[0])
+              .join("")
+              .slice(0, 2)}
           </AvatarFallback>
         </Avatar>
         <div className="flex-1 min-w-0 overflow-hidden">
           <h4 className="font-semibold text-white text-sm leading-tight truncate">
             {event.title}
           </h4>
-          <p className="text-xs text-zinc-400 truncate">{event.consultantName}</p>
+          <p className="text-xs text-zinc-400 truncate">
+            {event.consultantName}
+          </p>
         </div>
         <Badge
           className={cn(
             "shrink-0 text-[10px] font-medium px-2 py-0.5 border-0 whitespace-nowrap",
             timeAway.urgent
               ? "bg-rose-500/20 text-rose-400"
-              : "bg-zinc-700 text-zinc-300"
+              : "bg-zinc-700 text-zinc-300",
           )}
         >
           {timeAway.text}
@@ -153,7 +162,9 @@ function UpcomingSessionCard({
       {/* Row 2: Date and time - Fixed height with top margin */}
       <div className="flex items-center gap-1.5 text-xs text-zinc-400 mt-3 h-5 shrink-0">
         <Calendar className="h-3.5 w-3.5 shrink-0" />
-        <span className="truncate">{format(event.startsAt, "EEE, d MMM yyyy")}</span>
+        <span className="truncate">
+          {format(event.startsAt, "EEE, d MMM yyyy")}
+        </span>
         <span className="text-zinc-600 shrink-0">•</span>
         <span className="shrink-0">{format(event.startsAt, "h:mm a")}</span>
       </div>
@@ -167,7 +178,13 @@ function UpcomingSessionCard({
           <Badge className="text-[10px] font-medium px-2 py-0.5 bg-transparent border border-zinc-600 text-zinc-300 shrink-0 rounded-md">
             {typeLabel}
           </Badge>
-          <Badge className={cn("text-[10px] font-semibold px-2 py-0.5 border-0 shrink-0", statusStyle.bg, statusStyle.text)}>
+          <Badge
+            className={cn(
+              "text-[10px] font-semibold px-2 py-0.5 border-0 shrink-0",
+              statusStyle.bg,
+              statusStyle.text,
+            )}
+          >
             {event.status.replace(/_/g, " ")}
           </Badge>
         </div>
@@ -203,13 +220,13 @@ function MonthlyEventItem({
 
   // Status badges - refined professional colors for light background
   const statusConfig: Record<string, { bg: string; text: string }> = {
-    APPROVED: { bg: "bg-teal-50", text: "text-teal-600" },            // Teal - sophisticated success
-    PENDING: { bg: "bg-orange-50", text: "text-orange-600" },         // Orange - warm urgency
-    SCHEDULED: { bg: "bg-indigo-50", text: "text-indigo-600" },       // Indigo - elegant upcoming
-    IN_PROGRESS: { bg: "bg-cyan-50", text: "text-cyan-600" },         // Cyan - bright active
-    COMPLETED: { bg: "bg-slate-100", text: "text-slate-500" },        // Slate - warm done
-    CANCELLED: { bg: "bg-stone-100", text: "text-stone-400" },        // Stone - neutral inactive
-    REJECTED: { bg: "bg-red-50", text: "text-red-600" },              // Red - clear negative
+    APPROVED: { bg: "bg-teal-50", text: "text-teal-600" }, // Teal - sophisticated success
+    PENDING: { bg: "bg-orange-50", text: "text-orange-600" }, // Orange - warm urgency
+    SCHEDULED: { bg: "bg-indigo-50", text: "text-indigo-600" }, // Indigo - elegant upcoming
+    IN_PROGRESS: { bg: "bg-cyan-50", text: "text-cyan-600" }, // Cyan - bright active
+    COMPLETED: { bg: "bg-slate-100", text: "text-slate-500" }, // Slate - warm done
+    CANCELLED: { bg: "bg-stone-100", text: "text-stone-400" }, // Stone - neutral inactive
+    REJECTED: { bg: "bg-red-50", text: "text-red-600" }, // Red - clear negative
   };
 
   const typeLabel = typeLabels[event.type] || "Event";
@@ -221,28 +238,73 @@ function MonthlyEventItem({
         onClick={onToggle}
         className="flex items-center gap-4 p-4 cursor-pointer hover:bg-zinc-50/50 transition-colors"
       >
-        <Avatar className="h-10 w-10 ring-1 ring-zinc-200">
+        <Avatar className="h-10 w-10 ring-1 ring-zinc-200 flex-shrink-0">
           <AvatarImage src={event.consultantImage} alt={event.consultantName} />
           <AvatarFallback className="bg-zinc-100 text-zinc-600 text-xs font-medium">
-            {event.consultantName.split(" ").map((n) => n[0]).join("")}
+            {event.consultantName
+              .split(" ")
+              .map((n) => n[0])
+              .join("")}
           </AvatarFallback>
         </Avatar>
         <div className="flex-1 min-w-0">
-          <h4 className="font-medium text-zinc-900 text-sm">{event.title}</h4>
-          <p className="text-xs text-zinc-500">{event.consultantName}</p>
+          {/* Desktop: single row layout */}
+          <div className="hidden lg:flex items-center justify-between gap-3">
+            <div className="min-w-0 flex-1">
+              <h4 className="font-medium text-zinc-900 text-sm truncate">{event.title}</h4>
+              <p className="text-xs text-zinc-500 truncate">{event.consultantName}</p>
+            </div>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <Badge className="text-[10px] font-medium bg-transparent border border-zinc-300 text-zinc-600 rounded-md">
+                {typeLabel}
+              </Badge>
+              <Badge
+                className={cn(
+                  "text-[10px] font-medium border-0",
+                  statusStyle.bg,
+                  statusStyle.text,
+                )}
+              >
+                {event.status.replace(/_/g, " ")}
+              </Badge>
+              <ChevronRight
+                className={cn(
+                  "h-4 w-4 text-zinc-400 transition-transform duration-200",
+                  isExpanded && "rotate-90",
+                )}
+              />
+            </div>
+          </div>
+          {/* Mobile: stacked layout */}
+          <div className="lg:hidden">
+            <div className="flex items-start justify-between gap-2 mb-1">
+              <div className="min-w-0 flex-1">
+                <h4 className="font-medium text-zinc-900 text-sm truncate">{event.title}</h4>
+                <p className="text-xs text-zinc-500 truncate">{event.consultantName}</p>
+              </div>
+              <ChevronRight
+                className={cn(
+                  "h-4 w-4 text-zinc-400 transition-transform duration-200 flex-shrink-0 mt-0.5",
+                  isExpanded && "rotate-90",
+                )}
+              />
+            </div>
+            <div className="flex items-center gap-1.5 mt-1.5">
+              <Badge className="text-[10px] font-medium bg-transparent border border-zinc-300 text-zinc-600 rounded-md">
+                {typeLabel}
+              </Badge>
+              <Badge
+                className={cn(
+                  "text-[10px] font-medium border-0",
+                  statusStyle.bg,
+                  statusStyle.text,
+                )}
+              >
+                {event.status.replace(/_/g, " ")}
+              </Badge>
+            </div>
+          </div>
         </div>
-        <Badge className="text-[10px] font-medium bg-transparent border border-zinc-300 text-zinc-600 rounded-md">
-          {typeLabel}
-        </Badge>
-        <Badge className={cn("text-[10px] font-medium border-0", statusStyle.bg, statusStyle.text)}>
-          {event.status.replace(/_/g, " ")}
-        </Badge>
-        <ChevronRight
-          className={cn(
-            "h-4 w-4 text-zinc-400 transition-transform duration-200",
-            isExpanded && "rotate-90"
-          )}
-        />
       </div>
 
       {/* Expanded slots */}
@@ -263,7 +325,8 @@ function MonthlyEventItem({
                   {format(slot.startsAt, "EEE d MMM")}
                 </span>
                 <span className="text-zinc-500">
-                  {format(slot.startsAt, "h:mm a")} - {format(slot.endsAt, "h:mm a")}
+                  {format(slot.startsAt, "h:mm a")} -{" "}
+                  {format(slot.endsAt, "h:mm a")}
                 </span>
               </div>
             ))}
@@ -289,14 +352,17 @@ function PremiumFeaturesCard() {
         </div>
         <h3 className="font-semibold text-white">Unlock Premium</h3>
       </div>
-      
+
       <div className="space-y-3 mb-6">
         {[
           "Unlimited Access to Expert Sessions",
           "24/7 Priority Support",
           "Exclusive Webinars & Workshops",
         ].map((feature) => (
-          <div key={feature} className="flex items-center gap-2.5 text-sm text-zinc-300">
+          <div
+            key={feature}
+            className="flex items-center gap-2.5 text-sm text-zinc-300"
+          >
             <div className="h-5 w-5 rounded-full bg-emerald-500/20 flex items-center justify-center">
               <Check className="h-3 w-3 text-emerald-400" />
             </div>
@@ -304,7 +370,7 @@ function PremiumFeaturesCard() {
           </div>
         ))}
       </div>
-      
+
       <div className="mb-5">
         <span className="text-3xl font-bold text-white">$99</span>
         <span className="text-zinc-400">/month</span>
@@ -313,7 +379,7 @@ function PremiumFeaturesCard() {
           Save 20% with annual billing
         </p>
       </div>
-      
+
       <Button className="w-full bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-500 hover:to-purple-500 text-white font-semibold h-11">
         <Crown className="h-4 w-4 mr-2" />
         Upgrade Now
@@ -346,7 +412,8 @@ export default function HomeTab({
           id: c.id,
           type: "consultation",
           title: c.consultationPlan?.title || "Consultation",
-          consultantName: c.consultationPlan?.consultantProfile?.user?.name || "Expert",
+          consultantName:
+            c.consultationPlan?.consultantProfile?.user?.name || "Expert",
           consultantImage: c.consultationPlan?.consultantProfile?.user?.image,
           startsAt: new Date(firstSlot.startsAt),
           endsAt: new Date(firstSlot.endsAt),
@@ -374,13 +441,15 @@ export default function HomeTab({
 
       if (allSlots.length > 0) {
         allSlots.sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime());
-        const nextSlot = allSlots.find((slot) => slot.startsAt > new Date()) || allSlots[0];
+        const nextSlot =
+          allSlots.find((slot) => slot.startsAt > new Date()) || allSlots[0];
 
         events.push({
           id: s.id,
           type: "subscription",
           title: s.subscriptionPlan?.title || "Subscription",
-          consultantName: s.subscriptionPlan?.consultantProfile?.user?.name || "Expert",
+          consultantName:
+            s.subscriptionPlan?.consultantProfile?.user?.name || "Expert",
           consultantImage: s.subscriptionPlan?.consultantProfile?.user?.image,
           startsAt: nextSlot.startsAt,
           endsAt: nextSlot.endsAt,
@@ -395,7 +464,7 @@ export default function HomeTab({
     eventsData.webinars?.forEach((w: any) => {
       const webinarData = w.webinar || w;
       const slots: Array<{ startsAt: Date; endsAt: Date }> = [];
-      
+
       webinarData.appointments?.forEach((a: any) => {
         a.slotsOfAppointment?.forEach((slot: any) => {
           slots.push({
@@ -407,14 +476,17 @@ export default function HomeTab({
 
       if (slots.length > 0) {
         slots.sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime());
-        const nextSlot = slots.find((slot) => slot.startsAt > new Date()) || slots[0];
+        const nextSlot =
+          slots.find((slot) => slot.startsAt > new Date()) || slots[0];
 
         events.push({
           id: w.id,
           type: "webinar",
           title: webinarData.webinarPlan?.title || "Webinar",
-          consultantName: webinarData.webinarPlan?.consultantProfile?.user?.name || "Expert",
-          consultantImage: webinarData.webinarPlan?.consultantProfile?.user?.image,
+          consultantName:
+            webinarData.webinarPlan?.consultantProfile?.user?.name || "Expert",
+          consultantImage:
+            webinarData.webinarPlan?.consultantProfile?.user?.image,
           startsAt: nextSlot.startsAt,
           endsAt: nextSlot.endsAt,
           status: w.status || "APPROVED",
@@ -428,7 +500,7 @@ export default function HomeTab({
     eventsData.classes?.forEach((c: any) => {
       const classData = c.class || c;
       const slots: Array<{ startsAt: Date; endsAt: Date }> = [];
-      
+
       classData.appointments?.forEach((a: any) => {
         a.slotsOfAppointment?.forEach((slot: any) => {
           slots.push({
@@ -440,13 +512,15 @@ export default function HomeTab({
 
       if (slots.length > 0) {
         slots.sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime());
-        const nextSlot = slots.find((slot) => slot.startsAt > new Date()) || slots[0];
+        const nextSlot =
+          slots.find((slot) => slot.startsAt > new Date()) || slots[0];
 
         events.push({
           id: c.id,
           type: "class",
           title: classData.classPlan?.title || "Class",
-          consultantName: classData.classPlan?.consultantProfile?.user?.name || "Expert",
+          consultantName:
+            classData.classPlan?.consultantProfile?.user?.name || "Expert",
           consultantImage: classData.classPlan?.consultantProfile?.user?.image,
           startsAt: nextSlot.startsAt,
           endsAt: nextSlot.endsAt,
@@ -471,7 +545,7 @@ export default function HomeTab({
   // Get events for current month
   const monthlyEvents = useMemo(() => {
     return processedEvents.filter((e) =>
-      e.slots.some((s) => isSameMonth(s.startsAt, currentMonth))
+      e.slots.some((s) => isSameMonth(s.startsAt, currentMonth)),
     );
   }, [processedEvents, currentMonth]);
 
@@ -513,7 +587,7 @@ export default function HomeTab({
         <div className="bg-gradient-to-br from-zinc-900 via-zinc-900 to-zinc-800 rounded-2xl p-8 border border-zinc-800 shadow-2xl relative overflow-hidden">
           {/* Subtle grid pattern */}
           <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.02)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.02)_1px,transparent_1px)] bg-[size:32px_32px]" />
-          
+
           <div className="relative">
             <h1 className="text-3xl md:text-4xl font-bold text-white mb-2">
               Welcome back, {userDetails.name?.split(" ")[0]}
@@ -521,10 +595,14 @@ export default function HomeTab({
             <p className="text-zinc-400 text-lg">
               Here's what's coming up in your learning journey
             </p>
-            
+
             <div className="mt-6 flex flex-wrap gap-3">
               <Button
-                onClick={() => router.push(`/dashboard/consultee/${consulteeId}/appointments`)}
+                onClick={() =>
+                  router.push(
+                    `/dashboard/consultee/${consulteeId}/appointments`,
+                  )
+                }
                 className="bg-white hover:bg-zinc-100 text-zinc-900 font-semibold h-11 px-5"
               >
                 <Calendar className="h-4 w-4 mr-2" />
@@ -547,7 +625,9 @@ export default function HomeTab({
       <motion.div variants={fadeInUp}>
         <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden shadow-sm">
           <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-100">
-            <h2 className="font-semibold text-zinc-900 text-lg">Upcoming Sessions</h2>
+            <h2 className="font-semibold text-zinc-900 text-lg">
+              Upcoming Sessions
+            </h2>
             {upcomingEvents.length > 3 && (
               <div className="flex items-center gap-2">
                 <Button
@@ -581,9 +661,9 @@ export default function HomeTab({
                   <UpcomingSessionCard
                     key={event.id}
                     event={event}
-                    // onClick={() =>
-                    //   router.push(`/dashboard/consultee/${consulteeId}/appointments`)
-                    // }
+                  // onClick={() =>
+                  //   router.push(`/dashboard/consultee/${consulteeId}/appointments`)
+                  // }
                   />
                 ))}
               </div>
@@ -592,7 +672,9 @@ export default function HomeTab({
                 <div className="mx-auto h-16 w-16 rounded-2xl bg-zinc-100 flex items-center justify-center mb-4">
                   <Calendar className="h-8 w-8 text-zinc-400" />
                 </div>
-                <h4 className="font-semibold text-zinc-900 text-lg">No upcoming sessions</h4>
+                <h4 className="font-semibold text-zinc-900 text-lg">
+                  No upcoming sessions
+                </h4>
                 <p className="text-sm text-zinc-500 mt-1 mb-5">
                   Book a session with an expert to get started
                 </p>
@@ -610,7 +692,10 @@ export default function HomeTab({
       </motion.div>
 
       {/* Main content grid */}
-      <motion.div variants={fadeInUp} className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <motion.div
+        variants={fadeInUp}
+        className="grid grid-cols-1 lg:grid-cols-3 gap-6"
+      >
         {/* Monthly Schedule */}
         <div className="lg:col-span-2">
           <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden shadow-sm">
@@ -625,7 +710,11 @@ export default function HomeTab({
                   className="h-8 w-8 rounded-lg"
                   onClick={() =>
                     setCurrentMonth(
-                      new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1, 1)
+                      new Date(
+                        currentMonth.getFullYear(),
+                        currentMonth.getMonth() - 1,
+                        1,
+                      ),
                     )
                   }
                 >
@@ -637,7 +726,11 @@ export default function HomeTab({
                   className="h-8 w-8 rounded-lg"
                   onClick={() =>
                     setCurrentMonth(
-                      new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1)
+                      new Date(
+                        currentMonth.getFullYear(),
+                        currentMonth.getMonth() + 1,
+                        1,
+                      ),
                     )
                   }
                 >
@@ -659,7 +752,9 @@ export default function HomeTab({
               ) : (
                 <div className="text-center py-16">
                   <Calendar className="h-10 w-10 text-zinc-300 mx-auto mb-3" />
-                  <p className="text-zinc-500">No sessions scheduled for this month</p>
+                  <p className="text-zinc-500">
+                    No sessions scheduled for this month
+                  </p>
                 </div>
               )}
             </div>

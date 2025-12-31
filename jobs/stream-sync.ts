@@ -126,12 +126,17 @@ export async function performStreamUserSync(
       () => null, // Fallback if Redis is down - proceed without lock
     );
   } catch (error) {
-    console.warn("[Stream Sync] Failed to acquire lock, proceeding without distributed lock:", error);
+    console.warn(
+      "[Stream Sync] Failed to acquire lock, proceeding without distributed lock:",
+      error,
+    );
   }
 
   if (lockToken === null) {
     // Check if this is because sync is already running or Redis failed
-    console.warn("[Stream Sync] Could not acquire lock - sync may already be in progress or Redis unavailable");
+    console.warn(
+      "[Stream Sync] Could not acquire lock - sync may already be in progress or Redis unavailable",
+    );
     // We'll proceed anyway but log a warning - this is a best-effort lock
   } else {
     console.log("[Stream Sync] Acquired distributed lock");
@@ -217,10 +222,13 @@ export async function performStreamUserSync(
 
       // Delete stale users from Stream
       try {
-        const deleteResponse = await serverStreamClient.deleteUsers(staleUsers, {
-          user: "hard",
-          messages: "hard",
-        });
+        const deleteResponse = await serverStreamClient.deleteUsers(
+          staleUsers,
+          {
+            user: "hard",
+            messages: "hard",
+          },
+        );
 
         // Check for failed deletions
         const sdkFailedDeletions: FailedDeletionFromSDK[] =
@@ -239,7 +247,8 @@ export async function performStreamUserSync(
           );
         }
 
-        const successfullyDeleted = staleUsers.length - sdkFailedDeletions.length;
+        const successfullyDeleted =
+          staleUsers.length - sdkFailedDeletions.length;
         totalStaleUsersDeleted += successfullyDeleted;
 
         console.log(

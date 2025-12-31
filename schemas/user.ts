@@ -30,7 +30,12 @@ export const BudgetPreferenceEnum = z.enum([
 
 export const SessionTypeEnum = z.enum(["ONE_ON_ONE", "GROUP", "ASYNC_REVIEW"]);
 
-export const UserRoleEnum = z.enum(["CONSULTANT", "CONSULTEE", "ADMIN", "STAFF"]);
+export const UserRoleEnum = z.enum([
+  "CONSULTANT",
+  "CONSULTEE",
+  "ADMIN",
+  "STAFF",
+]);
 
 export const ScheduleTypeEnum = z.enum(["WEEKLY", "CUSTOM"]);
 
@@ -55,7 +60,7 @@ const linkedinUrlSchema = z
   .url("Please enter a valid URL")
   .refine(
     (url) => url.includes("linkedin.com"),
-    "Please enter a valid LinkedIn URL (e.g., linkedin.com/in/yourprofile)"
+    "Please enter a valid LinkedIn URL (e.g., linkedin.com/in/yourprofile)",
   )
   .optional()
   .or(z.literal(""));
@@ -65,7 +70,7 @@ const twitterUrlSchema = z
   .url("Please enter a valid URL")
   .refine(
     (url) => url.includes("twitter.com") || url.includes("x.com"),
-    "Please enter a valid Twitter/X URL"
+    "Please enter a valid Twitter/X URL",
   )
   .optional()
   .or(z.literal(""));
@@ -75,7 +80,7 @@ const githubUrlSchema = z
   .url("Please enter a valid URL")
   .refine(
     (url) => url.includes("github.com"),
-    "Please enter a valid GitHub URL"
+    "Please enter a valid GitHub URL",
   )
   .optional()
   .or(z.literal(""));
@@ -107,10 +112,7 @@ export const PersonalInfoAndRoleSchema = z.object({
   city: z.string().optional(),
   country: z.string().optional(),
   linkedinUrl: linkedinUrlSchema,
-  bio: z
-    .string()
-    .max(160, "Bio must be 160 characters or less")
-    .optional(),
+  bio: z.string().max(160, "Bio must be 160 characters or less").optional(),
 });
 
 export type PersonalInfoAndRole = z.infer<typeof PersonalInfoAndRoleSchema>;
@@ -220,14 +222,14 @@ export const ConsultantProfileSchema = z.object({
       id: z.string(),
       name: z.string(),
       domainId: z.string(),
-    })
+    }),
   ),
   tags: z.array(
     z.object({
       id: z.string(),
       name: z.string(),
       domainId: z.string(),
-    })
+    }),
   ),
 
   // Scheduling
@@ -310,35 +312,45 @@ export type StaffProfile = z.infer<typeof StaffProfileSchema>;
 // #region Admin Profile Schema (NEW)
 
 export const AdminAccessScopeSchema = z.object({
-  users: z.object({
-    create: z.boolean().default(false),
-    read: z.boolean().default(true),
-    update: z.boolean().default(false),
-    delete: z.boolean().default(false),
-    roles: z.array(UserRoleEnum).default([]),
-  }).optional(),
-  financial: z.object({
-    viewPayments: z.boolean().default(false),
-    processRefunds: z.boolean().default(false),
-    refundLimit: z.number().optional(),
-    handleDisputes: z.boolean().default(false),
-  }).optional(),
-  content: z.object({
-    manageDomains: z.boolean().default(false),
-    moderateReviews: z.boolean().default(false),
-    manageTopics: z.boolean().default(false),
-  }).optional(),
-  system: z.object({
-    viewLogs: z.boolean().default(false),
-    exportData: z.boolean().default(false),
-    modifySettings: z.boolean().default(false),
-  }).optional(),
-  support: z.object({
-    viewTickets: z.boolean().default(true),
-    respondTickets: z.boolean().default(true),
-    escalateTickets: z.boolean().default(false),
-    closeTickets: z.boolean().default(false),
-  }).optional(),
+  users: z
+    .object({
+      create: z.boolean().default(false),
+      read: z.boolean().default(true),
+      update: z.boolean().default(false),
+      delete: z.boolean().default(false),
+      roles: z.array(UserRoleEnum).default([]),
+    })
+    .optional(),
+  financial: z
+    .object({
+      viewPayments: z.boolean().default(false),
+      processRefunds: z.boolean().default(false),
+      refundLimit: z.number().optional(),
+      handleDisputes: z.boolean().default(false),
+    })
+    .optional(),
+  content: z
+    .object({
+      manageDomains: z.boolean().default(false),
+      moderateReviews: z.boolean().default(false),
+      manageTopics: z.boolean().default(false),
+    })
+    .optional(),
+  system: z
+    .object({
+      viewLogs: z.boolean().default(false),
+      exportData: z.boolean().default(false),
+      modifySettings: z.boolean().default(false),
+    })
+    .optional(),
+  support: z
+    .object({
+      viewTickets: z.boolean().default(true),
+      respondTickets: z.boolean().default(true),
+      escalateTickets: z.boolean().default(false),
+      closeTickets: z.boolean().default(false),
+    })
+    .optional(),
 });
 
 export type AdminAccessScope = z.infer<typeof AdminAccessScopeSchema>;
@@ -355,25 +367,75 @@ export type AdminProfile = z.infer<typeof AdminProfileSchema>;
 // Default access scopes for each admin level
 export const DEFAULT_ADMIN_ACCESS_SCOPES: Record<string, AdminAccessScope> = {
   SUPER_ADMIN: {
-    users: { create: true, read: true, update: true, delete: true, roles: ["CONSULTANT", "CONSULTEE", "ADMIN", "STAFF"] },
-    financial: { viewPayments: true, processRefunds: true, handleDisputes: true },
+    users: {
+      create: true,
+      read: true,
+      update: true,
+      delete: true,
+      roles: ["CONSULTANT", "CONSULTEE", "ADMIN", "STAFF"],
+    },
+    financial: {
+      viewPayments: true,
+      processRefunds: true,
+      handleDisputes: true,
+    },
     content: { manageDomains: true, moderateReviews: true, manageTopics: true },
     system: { viewLogs: true, exportData: true, modifySettings: true },
-    support: { viewTickets: true, respondTickets: true, escalateTickets: true, closeTickets: true },
+    support: {
+      viewTickets: true,
+      respondTickets: true,
+      escalateTickets: true,
+      closeTickets: true,
+    },
   },
   ADMIN: {
-    users: { create: true, read: true, update: true, delete: false, roles: ["CONSULTANT", "CONSULTEE", "STAFF"] },
-    financial: { viewPayments: true, processRefunds: true, refundLimit: 10000, handleDisputes: true },
+    users: {
+      create: true,
+      read: true,
+      update: true,
+      delete: false,
+      roles: ["CONSULTANT", "CONSULTEE", "STAFF"],
+    },
+    financial: {
+      viewPayments: true,
+      processRefunds: true,
+      refundLimit: 10000,
+      handleDisputes: true,
+    },
     content: { manageDomains: true, moderateReviews: true, manageTopics: true },
     system: { viewLogs: true, exportData: true, modifySettings: false },
-    support: { viewTickets: true, respondTickets: true, escalateTickets: true, closeTickets: true },
+    support: {
+      viewTickets: true,
+      respondTickets: true,
+      escalateTickets: true,
+      closeTickets: true,
+    },
   },
   MODERATOR: {
-    users: { create: false, read: true, update: false, delete: false, roles: [] },
-    financial: { viewPayments: false, processRefunds: false, handleDisputes: false },
-    content: { manageDomains: false, moderateReviews: true, manageTopics: false },
+    users: {
+      create: false,
+      read: true,
+      update: false,
+      delete: false,
+      roles: [],
+    },
+    financial: {
+      viewPayments: false,
+      processRefunds: false,
+      handleDisputes: false,
+    },
+    content: {
+      manageDomains: false,
+      moderateReviews: true,
+      manageTopics: false,
+    },
     system: { viewLogs: false, exportData: false, modifySettings: false },
-    support: { viewTickets: true, respondTickets: true, escalateTickets: false, closeTickets: false },
+    support: {
+      viewTickets: true,
+      respondTickets: true,
+      escalateTickets: false,
+      closeTickets: false,
+    },
   },
 };
 
@@ -408,7 +470,9 @@ export const NotificationPreferenceSchema = z.object({
   updates: z.boolean().default(false),
 });
 
-export type NotificationPreference = z.infer<typeof NotificationPreferenceSchema>;
+export type NotificationPreference = z.infer<
+  typeof NotificationPreferenceSchema
+>;
 
 // #endregion
 

@@ -2,7 +2,11 @@
 
 import { Skeleton } from "@/components/ui/skeleton";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
-import { DashboardShell, DashboardSidebar, type NavItem } from "@/components/dashboard";
+import {
+  DashboardShell,
+  DashboardSidebar,
+  type NavSection,
+} from "@/components/dashboard";
 import { signOut, useSession } from "next-auth/react";
 import { usePathname, useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
@@ -11,20 +15,42 @@ import { motion } from "framer-motion";
 import { schedulePrefetch } from "@/lib/dashboard-queries";
 import { useEffect } from "react";
 
-// Navigation configuration for admin
-const NAV_ITEMS: NavItem[] = [
-  { name: "Overview", path: "home" },
-  { name: "Payments", path: "payments" },
-  { name: "Approval Payments", path: "approval-payments" },
-  { name: "Refunds", path: "refunds" },
-  { name: "Disputes", path: "disputes" },
-  { name: "Analytics", path: "analytics" },
-  { name: "Users", path: "users" },
+// Navigation configuration for admin with sections
+const NAV_SECTIONS: NavSection[] = [
+  {
+    title: null,
+    items: [{ name: "Overview", path: "home" }],
+  },
+  {
+    title: "Payments",
+    items: [
+      { name: "All Payments", path: "payments" },
+      { name: "Approval Payments", path: "approval-payments" },
+      { name: "Subscriptions", path: "subscriptions" },
+      { name: "Refunds", path: "refunds" },
+      { name: "Disputes", path: "disputes" },
+    ],
+  },
+  {
+    title: "Payouts",
+    items: [
+      { name: "Pending Approval", path: "payouts/pending" },
+      { name: "Processing", path: "payouts/processing" },
+      { name: "Completed", path: "payouts/completed" },
+      { name: "Consultant Earnings", path: "payouts/earnings" },
+    ],
+  },
+  {
+    title: null,
+    items: [
+      { name: "Invoices", path: "invoices" },
+      { name: "Analytics", path: "analytics" },
+      { name: "Users", path: "users" },
+    ],
+  },
 ];
 
-const BOTTOM_NAV_ITEMS: NavItem[] = [
-  { name: "Settings", path: "settings" },
-];
+const BOTTOM_NAV_ITEMS = [{ name: "Settings", path: "settings" }];
 
 interface PageProps {
   children: React.ReactNode;
@@ -50,11 +76,23 @@ function ErrorDisplay({ message }: { message: string }) {
         className="bg-white p-8 rounded-2xl shadow-xl border border-zinc-200 max-w-md text-center"
       >
         <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-red-100 flex items-center justify-center">
-          <svg className="w-8 h-8 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          <svg
+            className="w-8 h-8 text-red-600"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+            />
           </svg>
         </div>
-        <h2 className="text-xl font-bold text-zinc-900 mb-2">Something went wrong</h2>
+        <h2 className="text-xl font-bold text-zinc-900 mb-2">
+          Something went wrong
+        </h2>
         <p className="text-zinc-600">{message}</p>
         <button
           onClick={() => window.location.reload()}
@@ -77,8 +115,18 @@ function AccessDenied({ title, message }: { title: string; message: string }) {
         className="bg-white p-8 rounded-2xl shadow-xl border border-zinc-200 max-w-md text-center"
       >
         <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-amber-100 flex items-center justify-center">
-          <svg className="w-8 h-8 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+          <svg
+            className="w-8 h-8 text-amber-600"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
+            />
           </svg>
         </div>
         <h2 className="text-xl font-bold text-zinc-900 mb-2">{title}</h2>
@@ -202,7 +250,9 @@ export default function AdminLayout({ children }: Readonly<PageProps>) {
   if (error) {
     return (
       <ErrorDisplay
-        message={error instanceof Error ? error.message : "Failed to load dashboard"}
+        message={
+          error instanceof Error ? error.message : "Failed to load dashboard"
+        }
       />
     );
   }
@@ -214,7 +264,7 @@ export default function AdminLayout({ children }: Readonly<PageProps>) {
       userName={userData?.name}
       userRole="ADMIN"
       basePath="/dashboard/admin"
-      navItems={NAV_ITEMS}
+      navSections={NAV_SECTIONS}
       bottomNavItems={BOTTOM_NAV_ITEMS}
       isLoading={isLoading}
     />

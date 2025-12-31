@@ -100,11 +100,11 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
           priority
         />
         <div className="absolute inset-0 bg-gradient-to-t from-zinc-950 via-zinc-950/60 to-transparent" />
-        
+
         {/* Back Navigation */}
         <div className="absolute top-0 left-0 right-0 z-10">
           <div className="max-w-[1600px] mx-auto px-4 md:px-8 lg:px-12 py-6">
-            <Link 
+            <Link
               href="/explore/programs"
               className="inline-flex items-center gap-2 text-sm text-white/80 hover:text-white transition-colors"
             >
@@ -136,7 +136,7 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
       <div className="w-full max-w-[92%] xl:max-w-[88%] 2xl:max-w-[1600px] mx-auto py-8 md:py-12">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 lg:gap-12">
           {/* Main Content */}
-          <motion.div 
+          <motion.div
             className="lg:col-span-2 space-y-8"
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -169,7 +169,9 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
             {/* About */}
             <Card className="border-zinc-200 shadow-sm">
               <CardContent className="p-6 md:p-8">
-                <h2 className="text-xl font-semibold text-zinc-900 mb-4">About this Class</h2>
+                <h2 className="text-xl font-semibold text-zinc-900 mb-4">
+                  About this Class
+                </h2>
                 <p className="text-zinc-600 whitespace-pre-line leading-relaxed">
                   {plan.description}
                 </p>
@@ -189,7 +191,11 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
                   </div>
                   <div className="flex items-center gap-2 text-sm text-zinc-600">
                     <Award className="h-4 w-4 text-zinc-400" />
-                    <span>{plan.certificateProvided ? "Certificate Included" : "No Certificate"}</span>
+                    <span>
+                      {plan.certificateProvided
+                        ? "Certificate Included"
+                        : "No Certificate"}
+                    </span>
                   </div>
                 </div>
               </CardContent>
@@ -198,7 +204,9 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
             {/* What You'll Learn */}
             <Card className="border-zinc-200 shadow-sm">
               <CardContent className="p-6 md:p-8">
-                <h2 className="text-xl font-semibold text-zinc-900 mb-4">What you&apos;ll learn</h2>
+                <h2 className="text-xl font-semibold text-zinc-900 mb-4">
+                  What you&apos;ll learn
+                </h2>
                 <div className="grid md:grid-cols-2 gap-3">
                   {plan.learningOutcomes.map((outcome: string) => (
                     <div key={outcome} className="flex items-start gap-3">
@@ -213,9 +221,12 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
             {/* Prerequisites */}
             <Card className="border-zinc-200 shadow-sm">
               <CardContent className="p-6 md:p-8">
-                <h2 className="text-xl font-semibold text-zinc-900 mb-4">Prerequisites</h2>
+                <h2 className="text-xl font-semibold text-zinc-900 mb-4">
+                  Prerequisites
+                </h2>
                 <p className="text-zinc-600">
-                  {plan.prerequisites ?? "No prerequisites required. This class is suitable for beginners."}
+                  {plan.prerequisites ??
+                    "No prerequisites required. This class is suitable for beginners."}
                 </p>
               </CardContent>
             </Card>
@@ -223,7 +234,9 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
             {/* Course Content */}
             <Card className="border-zinc-200 shadow-sm">
               <CardContent className="p-6 md:p-8">
-                <h2 className="text-xl font-semibold text-zinc-900 mb-6">Course Content</h2>
+                <h2 className="text-xl font-semibold text-zinc-900 mb-6">
+                  Course Content
+                </h2>
                 <div className="space-y-4">
                   {plan.classContents.map((content, index) => (
                     <div
@@ -234,8 +247,12 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
                         {index + 1}
                       </div>
                       <div>
-                        <h3 className="font-semibold text-zinc-900">{content.title}</h3>
-                        <p className="text-sm text-zinc-500 mt-1">{content.description}</p>
+                        <h3 className="font-semibold text-zinc-900">
+                          {content.title}
+                        </h3>
+                        <p className="text-sm text-zinc-500 mt-1">
+                          {content.description}
+                        </p>
                       </div>
                     </div>
                   ))}
@@ -246,10 +263,15 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
             {/* Topics */}
             <Card className="border-zinc-200 shadow-sm">
               <CardContent className="p-6 md:p-8">
-                <h2 className="text-xl font-semibold text-zinc-900 mb-4">Topics Covered</h2>
+                <h2 className="text-xl font-semibold text-zinc-900 mb-4">
+                  Topics Covered
+                </h2>
                 <div className="flex flex-wrap gap-2">
                   {plan.topics.map((topic: Topic) => (
-                    <Badge key={topic.id} className="bg-zinc-100 text-zinc-700 hover:bg-zinc-200 px-3 py-1">
+                    <Badge
+                      key={topic.id}
+                      className="bg-zinc-100 text-zinc-700 hover:bg-zinc-200 px-3 py-1"
+                    >
                       {topic.name}
                     </Badge>
                   ))}
@@ -260,11 +282,16 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
             {/* Schedule */}
             <Card className="border-zinc-200 shadow-sm">
               <CardContent className="p-6 md:p-8">
-                <h2 className="text-xl font-semibold text-zinc-900 mb-6">Class Schedule</h2>
+                <h2 className="text-xl font-semibold text-zinc-900 mb-6">
+                  Class Schedule
+                </h2>
                 {plan.classes && plan.classes.length > 0 ? (
                   <div className="space-y-4">
                     {plan.classes.map((classInstance, classIndex) => (
-                      <div key={classInstance.id} className="p-4 border border-zinc-200 rounded-xl">
+                      <div
+                        key={classInstance.id}
+                        className="p-4 border border-zinc-200 rounded-xl"
+                      >
                         {plan.classes.length > 1 && (
                           <h3 className="font-medium text-zinc-900 mb-3">
                             Session {classIndex + 1}
@@ -274,57 +301,76 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
                           classInstance.appointments.map((appointment) => (
                             <div key={appointment.id} className="space-y-2">
                               {appointment.slotsOfAppointment?.length > 0 ? (
-                                appointment.slotsOfAppointment.map((slot, slotIndex) => {
-                                  const startTime = new Date(slot.startsAt);
-                                  const userTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-                                  const formattedStartTime = new Intl.DateTimeFormat(
-                                    navigator.language,
-                                    {
-                                      dateStyle: "full",
-                                      timeStyle: "long",
-                                      timeZone: userTimeZone,
-                                    },
-                                  ).format(startTime);
+                                appointment.slotsOfAppointment.map(
+                                  (slot, slotIndex) => {
+                                    const startTime = new Date(slot.startsAt);
+                                    const userTimeZone =
+                                      Intl.DateTimeFormat().resolvedOptions()
+                                        .timeZone;
+                                    const formattedStartTime =
+                                      new Intl.DateTimeFormat(
+                                        navigator.language,
+                                        {
+                                          dateStyle: "full",
+                                          timeStyle: "long",
+                                          timeZone: userTimeZone,
+                                        },
+                                      ).format(startTime);
 
-                                  const now = new Date();
-                                  const endTime = slot.endsAt ? new Date(slot.endsAt) : null;
-                                  let status = "Upcoming";
-                                  if (endTime && now > endTime) {
-                                    status = "Completed";
-                                  } else if (now >= startTime && (!endTime || now < endTime)) {
-                                    status = "Happening Now";
-                                  }
+                                    const now = new Date();
+                                    const endTime = slot.endsAt
+                                      ? new Date(slot.endsAt)
+                                      : null;
+                                    let status = "Upcoming";
+                                    if (endTime && now > endTime) {
+                                      status = "Completed";
+                                    } else if (
+                                      now >= startTime &&
+                                      (!endTime || now < endTime)
+                                    ) {
+                                      status = "Happening Now";
+                                    }
 
-                                  return (
-                                    <div
-                                      key={slot.id}
-                                      className="flex items-center justify-between p-3 bg-zinc-50 rounded-lg"
-                                    >
-                                      <div className="flex items-center gap-3">
-                                        <Play className="w-4 h-4 text-zinc-400" />
-                                        <span className="text-sm text-zinc-700">
-                                          Session {slotIndex + 1}: {formattedStartTime}
-                                        </span>
+                                    return (
+                                      <div
+                                        key={slot.id}
+                                        className="flex items-center justify-between p-3 bg-zinc-50 rounded-lg"
+                                      >
+                                        <div className="flex items-center gap-3">
+                                          <Play className="w-4 h-4 text-zinc-400" />
+                                          <span className="text-sm text-zinc-700">
+                                            Session {slotIndex + 1}:{" "}
+                                            {formattedStartTime}
+                                          </span>
+                                        </div>
+                                        <Badge
+                                          variant={getBadgeVariant(status)}
+                                        >
+                                          {status}
+                                        </Badge>
                                       </div>
-                                      <Badge variant={getBadgeVariant(status)}>
-                                        {status}
-                                      </Badge>
-                                    </div>
-                                  );
-                                })
+                                    );
+                                  },
+                                )
                               ) : (
-                                <p className="text-sm text-zinc-500">Schedule to be announced</p>
+                                <p className="text-sm text-zinc-500">
+                                  Schedule to be announced
+                                </p>
                               )}
                             </div>
                           ))
                         ) : (
-                          <p className="text-sm text-zinc-500">Schedule to be announced</p>
+                          <p className="text-sm text-zinc-500">
+                            Schedule to be announced
+                          </p>
                         )}
                       </div>
                     ))}
                   </div>
                 ) : (
-                  <p className="text-zinc-500">Class schedule to be announced.</p>
+                  <p className="text-zinc-500">
+                    Class schedule to be announced.
+                  </p>
                 )}
               </CardContent>
             </Card>
@@ -347,7 +393,10 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
                   <div className="flex items-center gap-4 mb-4">
                     <div className="relative h-16 w-16 rounded-full overflow-hidden ring-2 ring-zinc-100">
                       <Image
-                        src={plan.consultantProfile?.user?.image ?? "/placeholder-user.jpg"}
+                        src={
+                          plan.consultantProfile?.user?.image ??
+                          "/placeholder-user.jpg"
+                        }
                         alt={plan.consultantProfile?.user?.name ?? "Instructor"}
                         fill
                         className="object-cover"
@@ -361,9 +410,10 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
                     </div>
                   </div>
                   <p className="text-sm text-zinc-600">
-                    An experienced professional dedicated to sharing knowledge and expertise.
+                    An experienced professional dedicated to sharing knowledge
+                    and expertise.
                   </p>
-                  <Link 
+                  <Link
                     href={`/explore/experts/${plan.consultantProfile?.id}`}
                     className="inline-flex items-center gap-1 text-sm font-medium text-zinc-900 hover:text-zinc-700 mt-3"
                   >

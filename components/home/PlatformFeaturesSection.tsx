@@ -6,15 +6,15 @@ import { LucideIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { PLATFORM_FEATURES } from "./data";
 
-function PlatformFeatureCard({ 
-  feature, 
-  index 
-}: { 
-  feature: { icon: LucideIcon; title: string; description: string }; 
-  index: number 
+function PlatformFeatureCard({
+  feature,
+  index,
+}: {
+  feature: { icon: LucideIcon; title: string; description: string };
+  index: number;
 }) {
   const Icon = feature.icon;
-  
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
@@ -36,7 +36,7 @@ export function PlatformFeaturesSection() {
   return (
     <section className="py-20 md:py-32 bg-gradient-to-b from-zinc-50 to-white relative overflow-hidden">
       <div className="absolute inset-0 diagonal-stripes" />
-      
+
       <div className="container mx-auto px-4 md:px-6 relative z-10">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -45,11 +45,15 @@ export function PlatformFeaturesSection() {
           viewport={{ once: true }}
           className="text-center mb-16"
         >
-          <Badge variant="secondary" className="mb-4 bg-zinc-200 text-zinc-700 hover:bg-zinc-200 border-0">
+          <Badge
+            variant="secondary"
+            className="mb-4 bg-zinc-200 text-zinc-700 hover:bg-zinc-200 border-0"
+          >
             Platform Features
           </Badge>
           <h2 className="text-3xl md:text-4xl lg:text-5xl font-bold text-zinc-900 mb-4">
-            Everything you need to <span className="text-zinc-500">succeed</span>
+            Everything you need to{" "}
+            <span className="text-zinc-500">succeed</span>
           </h2>
           <p className="text-lg text-zinc-600 max-w-2xl mx-auto">
             A seamless experience built for learning and growth
@@ -58,11 +62,14 @@ export function PlatformFeaturesSection() {
 
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-10 md:gap-12">
           {PLATFORM_FEATURES.map((feature, index) => (
-            <PlatformFeatureCard key={feature.title} feature={feature} index={index} />
+            <PlatformFeatureCard
+              key={feature.title}
+              feature={feature}
+              index={index}
+            />
           ))}
         </div>
       </div>
     </section>
   );
 }
-

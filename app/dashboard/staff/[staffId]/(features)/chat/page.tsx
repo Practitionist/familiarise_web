@@ -63,7 +63,8 @@ const messages = [
   {
     id: "1",
     user: { name: "Admin User", avatar: "" },
-    content: "Good morning team! Just a reminder - we have a platform maintenance scheduled for tonight at 2 AM IST.",
+    content:
+      "Good morning team! Just a reminder - we have a platform maintenance scheduled for tonight at 2 AM IST.",
     time: "9:00 AM",
     isOwn: false,
   },
@@ -84,7 +85,8 @@ const messages = [
   {
     id: "4",
     user: { name: "Admin User", avatar: "" },
-    content: "Yes, please draft an email and share it here for review before sending.",
+    content:
+      "Yes, please draft an email and share it here for review before sending.",
     time: "9:10 AM",
     isOwn: false,
   },
@@ -160,14 +162,12 @@ export default function TeamChatPage() {
                     "w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors",
                     selectedChannel === channel.id
                       ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
-                      : "hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-600 dark:text-zinc-400"
+                      : "hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-600 dark:text-zinc-400",
                   )}
                 >
                   <Hash className="h-4 w-4" />
                   <span className="flex-1 text-left">{channel.name}</span>
-                  {channel.pinned && (
-                    <Pin className="h-3 w-3 text-zinc-400" />
-                  )}
+                  {channel.pinned && <Pin className="h-3 w-3 text-zinc-400" />}
                   {channel.unread > 0 && (
                     <Badge variant="destructive" className="h-5 min-w-5 px-1.5">
                       {channel.unread}
@@ -190,20 +190,23 @@ export default function TeamChatPage() {
                     "w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors",
                     selectedChannel === dm.id
                       ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
-                      : "hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                      : "hover:bg-zinc-100 dark:hover:bg-zinc-800",
                   )}
                 >
                   <div className="relative">
                     <Avatar className="h-8 w-8">
                       <AvatarImage src={dm.user.avatar} />
                       <AvatarFallback className="text-xs">
-                        {dm.user.name.split(" ").map((n) => n[0]).join("")}
+                        {dm.user.name
+                          .split(" ")
+                          .map((n) => n[0])
+                          .join("")}
                       </AvatarFallback>
                     </Avatar>
                     <div
                       className={cn(
                         "absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full border-2 border-white dark:border-zinc-900",
-                        getStatusColor(dm.user.status)
+                        getStatusColor(dm.user.status),
                       )}
                     />
                   </div>
@@ -216,7 +219,10 @@ export default function TeamChatPage() {
                   <div className="flex flex-col items-end gap-1">
                     <span className="text-xs text-zinc-400">{dm.time}</span>
                     {dm.unread > 0 && (
-                      <Badge variant="destructive" className="h-5 min-w-5 px-1.5">
+                      <Badge
+                        variant="destructive"
+                        className="h-5 min-w-5 px-1.5"
+                      >
                         {dm.unread}
                       </Badge>
                     )}
@@ -235,7 +241,9 @@ export default function TeamChatPage() {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Hash className="h-5 w-5 text-zinc-400" />
-              <h2 className="font-semibold">{selectedChannelData?.name || "general"}</h2>
+              <h2 className="font-semibold">
+                {selectedChannelData?.name || "general"}
+              </h2>
               <Badge variant="secondary" className="text-xs">
                 <Users className="h-3 w-3 mr-1" />
                 12 members
@@ -264,25 +272,25 @@ export default function TeamChatPage() {
                   key={message.id}
                   className={cn(
                     "flex gap-3",
-                    message.isOwn && "flex-row-reverse"
+                    message.isOwn && "flex-row-reverse",
                   )}
                 >
                   <Avatar className="h-8 w-8 flex-shrink-0">
                     <AvatarImage src={message.user.avatar} />
                     <AvatarFallback className="text-xs">
-                      {message.user.name.split(" ").map((n) => n[0]).join("")}
+                      {message.user.name
+                        .split(" ")
+                        .map((n) => n[0])
+                        .join("")}
                     </AvatarFallback>
                   </Avatar>
                   <div
-                    className={cn(
-                      "max-w-[70%]",
-                      message.isOwn && "text-right"
-                    )}
+                    className={cn("max-w-[70%]", message.isOwn && "text-right")}
                   >
                     <div
                       className={cn(
                         "flex items-baseline gap-2",
-                        message.isOwn && "flex-row-reverse"
+                        message.isOwn && "flex-row-reverse",
                       )}
                     >
                       <span className="text-sm font-medium">
@@ -297,7 +305,7 @@ export default function TeamChatPage() {
                         "mt-1 px-4 py-2 rounded-2xl text-sm",
                         message.isOwn
                           ? "bg-blue-600 text-white rounded-br-md"
-                          : "bg-zinc-100 dark:bg-zinc-800 rounded-bl-md"
+                          : "bg-zinc-100 dark:bg-zinc-800 rounded-bl-md",
                       )}
                     >
                       {message.content}
@@ -349,4 +357,3 @@ export default function TeamChatPage() {
     </div>
   );
 }
-

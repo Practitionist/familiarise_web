@@ -32,7 +32,9 @@ export default function ContactUsPage() {
           <div className="flex justify-center mb-4">
             <MessageSquare className="h-16 w-16 text-blue-600" />
           </div>
-          <h1 className="text-4xl md:text-5xl font-bold mb-4">{PAGE_META.contact.title}</h1>
+          <h1 className="text-4xl md:text-5xl font-bold mb-4">
+            {PAGE_META.contact.title}
+          </h1>
           <p className="text-xl text-muted-foreground max-w-3xl mx-auto">
             {PAGE_META.contact.description}
           </p>

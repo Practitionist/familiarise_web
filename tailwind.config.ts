@@ -17,9 +17,11 @@ const config: Config = {
         "gradient-radial": "radial-gradient(var(--tw-gradient-stops))",
         "gradient-conic":
           "conic-gradient(from 180deg at 50% 50%, var(--tw-gradient-stops))",
-        "gradient-silver": "linear-gradient(135deg, #ffffff, #d4d4d4, #a3a3a3, #d4d4d4, #ffffff)",
+        "gradient-silver":
+          "linear-gradient(135deg, #ffffff, #d4d4d4, #a3a3a3, #d4d4d4, #ffffff)",
         "gradient-dark": "linear-gradient(135deg, #0a0a0a, #1f1f1f, #0a0a0a)",
-        "gradient-metallic": "linear-gradient(145deg, #2a2a2a 0%, #1a1a1a 50%, #0f0f0f 100%)",
+        "gradient-metallic":
+          "linear-gradient(145deg, #2a2a2a 0%, #1a1a1a 50%, #0f0f0f 100%)",
         "gradient-steel": "linear-gradient(180deg, #3f3f46, #27272a, #18181b)",
       },
       screens: {

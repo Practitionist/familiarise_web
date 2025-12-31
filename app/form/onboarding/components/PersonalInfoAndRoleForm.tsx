@@ -24,7 +24,10 @@ interface Props {
   initialData: Partial<FormData>;
 }
 
-const ROLE_DESCRIPTIONS: Record<string, { title: string; description: string }> = {
+const ROLE_DESCRIPTIONS: Record<
+  string,
+  { title: string; description: string }
+> = {
   CONSULTANT: {
     title: "Consultant",
     description: "Share your expertise and mentor others",
@@ -228,7 +231,8 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
 
         <div className="space-y-2">
           <Label htmlFor="linkedinUrl">
-            LinkedIn Profile <span className="text-muted-foreground">(Optional)</span>
+            LinkedIn Profile{" "}
+            <span className="text-muted-foreground">(Optional)</span>
           </Label>
           <Input
             id="linkedinUrl"

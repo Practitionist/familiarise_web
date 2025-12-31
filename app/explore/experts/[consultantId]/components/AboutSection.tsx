@@ -26,11 +26,12 @@ export function AboutSection({
         <p className="text-zinc-600 leading-relaxed">
           {consultantDetails.description || (
             <>
-              {userDetails.name} is a seasoned {consultantDetails.specialization}{" "}
-              with {consultantDetails.experience} of experience in the{" "}
+              {userDetails.name} is a seasoned{" "}
+              {consultantDetails.specialization} with{" "}
+              {consultantDetails.experience} of experience in the{" "}
               {consultantDetails.domain.name} sector. They specialize in helping
-              professionals and businesses achieve their goals through expert guidance
-              and mentorship.
+              professionals and businesses achieve their goals through expert
+              guidance and mentorship.
             </>
           )}
         </p>
@@ -42,18 +43,20 @@ export function AboutSection({
           <div className="w-8 h-8 rounded-lg bg-zinc-100 flex items-center justify-center">
             <GraduationCap className="w-4 h-4 text-zinc-600" />
           </div>
-          <h3 className="text-lg font-semibold text-zinc-900">Education & Background</h3>
+          <h3 className="text-lg font-semibold text-zinc-900">
+            Education & Background
+          </h3>
         </div>
         <p className="text-zinc-600 leading-relaxed">
           {consultantDetails.qualifications || (
             <>
-              {userDetails.name} has extensive experience across multiple industries, 
-              with a particular focus on{" "}
+              {userDetails.name} has extensive experience across multiple
+              industries, with a particular focus on{" "}
               {consultantDetails?.subDomains
                 ?.map((domain: { name: string }) => domain.name)
                 .join(", ") || consultantDetails.domain.name}
-              . Their background includes working with diverse clients and organizations
-              to deliver measurable results.
+              . Their background includes working with diverse clients and
+              organizations to deliver measurable results.
             </>
           )}
         </p>
@@ -65,7 +68,9 @@ export function AboutSection({
           <div className="w-8 h-8 rounded-lg bg-zinc-100 flex items-center justify-center">
             <Sparkles className="w-4 h-4 text-zinc-600" />
           </div>
-          <h3 className="text-lg font-semibold text-zinc-900">Skills & Specialties</h3>
+          <h3 className="text-lg font-semibold text-zinc-900">
+            Skills & Specialties
+          </h3>
         </div>
         <div className="flex flex-wrap gap-2">
           {consultantDetails.tags?.map((tag: { id: string; name: string }) => (
@@ -78,7 +83,8 @@ export function AboutSection({
           ))}
           {(!consultantDetails.tags || consultantDetails.tags.length === 0) && (
             <p className="text-zinc-500 text-sm">
-              Specializes in {consultantDetails.specialization} within {consultantDetails.domain.name}
+              Specializes in {consultantDetails.specialization} within{" "}
+              {consultantDetails.domain.name}
             </p>
           )}
         </div>

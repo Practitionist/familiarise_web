@@ -3,7 +3,12 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { FileText } from "lucide-react";
-import { COMPANY_INFO, PAGE_META, POLICY_DATES, getMailtoLink } from "../constants";
+import {
+  COMPANY_INFO,
+  PAGE_META,
+  POLICY_DATES,
+  getMailtoLink,
+} from "../constants";
 
 export default function TermsPage() {
   return (
@@ -330,10 +335,10 @@ export default function TermsPage() {
               </h3>
               <p>
                 The Familiarise platform, including its design, features, code,
-                logos, and trademarks, is owned by {COMPANY_INFO.name} and protected
-                by intellectual property laws. You may not copy, modify,
-                distribute, or create derivative works without our express
-                written permission.
+                logos, and trademarks, is owned by {COMPANY_INFO.name} and
+                protected by intellectual property laws. You may not copy,
+                modify, distribute, or create derivative works without our
+                express written permission.
               </p>
 
               <h3 className="text-xl font-semibold mt-4 mb-2">
@@ -444,8 +449,8 @@ export default function TermsPage() {
                 10.3 Limitation of Liability
               </h3>
               <p>
-                To the maximum extent permitted by law, {COMPANY_INFO.name} shall not
-                be liable for:
+                To the maximum extent permitted by law, {COMPANY_INFO.name}{" "}
+                shall not be liable for:
               </p>
               <ul>
                 <li>Indirect, incidental, special, or consequential damages</li>
@@ -477,9 +482,10 @@ export default function TermsPage() {
                 11. Indemnification
               </h2>
               <p>
-                You agree to indemnify, defend, and hold harmless {COMPANY_INFO.name}, its officers, directors, employees, and agents from any
-                claims, damages, losses, liabilities, and expenses (including
-                legal fees) arising from:
+                You agree to indemnify, defend, and hold harmless{" "}
+                {COMPANY_INFO.name}, its officers, directors, employees, and
+                agents from any claims, damages, losses, liabilities, and
+                expenses (including legal fees) arising from:
               </p>
               <ul>
                 <li>Your use of the platform</li>
@@ -523,8 +529,8 @@ export default function TermsPage() {
               </h3>
               <p>
                 These Terms shall be governed by and construed in accordance
-                with the laws of {COMPANY_INFO.jurisdiction}, without regard to its conflict
-                of law provisions.
+                with the laws of {COMPANY_INFO.jurisdiction}, without regard to
+                its conflict of law provisions.
               </p>
 
               <h3 className="text-xl font-semibold mt-4 mb-2">
@@ -532,7 +538,8 @@ export default function TermsPage() {
               </h3>
               <p>
                 You agree to submit to the exclusive jurisdiction of the courts
-                located in {COMPANY_INFO.jurisdiction} for the resolution of any disputes.
+                located in {COMPANY_INFO.jurisdiction} for the resolution of any
+                disputes.
               </p>
 
               <Separator className="my-6" />
@@ -590,8 +597,8 @@ export default function TermsPage() {
               <p>
                 These Terms, together with our Privacy Policy and Cancellation &
                 Refund Policy, constitute the entire agreement between you and
-                {COMPANY_INFO.name} regarding your use of the platform and supersede
-                all prior agreements and understandings.
+                {COMPANY_INFO.name} regarding your use of the platform and
+                supersede all prior agreements and understandings.
               </p>
 
               <Separator className="my-6" />
