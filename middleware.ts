@@ -210,15 +210,19 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
     return NextResponse.next();
   }
 
-  // Handle root and other routes for authenticated users
-  if (isAuthenticated && pathname === "/") {
+  // Handle root path for authenticated users
+  if (isAuthenticated && pathname === "/" && token) {
     if (!isOnboarded) {
       return NextResponse.redirect(new URL(URLS.ONBOARDING, req.url));
     }
-    if (token) {
-      const dashboardUrl = getDashboardUrl(token);
-      return NextResponse.redirect(new URL(dashboardUrl, req.url));
-    }
+    const dashboardUrl = getDashboardUrl(token);
+    return NextResponse.redirect(new URL(dashboardUrl, req.url));
+  }
+
+  // Enforce onboarding for all authenticated users on any route (production only)
+  // This ensures new signups via OAuth are redirected to onboarding
+  if (isAuthenticated && !isOnboarded && pathname !== URLS.ONBOARDING) {
+    return NextResponse.redirect(new URL(URLS.ONBOARDING, req.url));
   }
 
   // Allow access to all other routes
