@@ -57,28 +57,3 @@ export default async function RootLayout({
     </html>
   );
 }
-
-///////////////////////////////////////// CLIENT VERSION /////////////////////////////////////////
-
-// "use client";
-// import React from "react";
-// import { Provider as ReduxProvider } from "react-redux";
-// import { SessionProvider } from "next-auth/react";
-// import store from "@/redux/store";
-// import "./globals.css";
-
-// export default function RootLayout({
-//   children,
-// }: Readonly<{
-//   children: React.ReactNode;
-// }>) {
-//   return (
-//     <html lang="en">
-//       <body>
-//         <SessionProvider>
-//           <ReduxProvider store={store}>{children}</ReduxProvider>
-//         </SessionProvider>
-//       </body>
-//     </html>
-//   );
-// }
