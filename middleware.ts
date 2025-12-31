@@ -211,7 +211,7 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
   }
 
   // Handle root path for authenticated users
-  if (isAuthenticated && pathname === "/" && token) {
+  if (token && pathname === "/") {
     if (!isOnboarded) {
       return NextResponse.redirect(new URL(URLS.ONBOARDING, req.url));
     }
