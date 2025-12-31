@@ -569,32 +569,32 @@ export function transformOnboardingFormToServerData(
             domain: { connect: { id: formData.domain.id } },
             subDomains: formData.subDomains?.length
               ? {
-                  connect: formData.subDomains
-                    .filter((sd) => sd.id !== undefined && sd.id !== null)
-                    .map((sd) => ({ id: sd.id })),
-                }
+                connect: formData.subDomains
+                  .filter((sd) => sd.id !== undefined && sd.id !== null)
+                  .map((sd) => ({ id: sd.id })),
+              }
               : undefined,
             tags: formData.tags?.length
               ? {
-                  connect: formData.tags
-                    .filter((t) => t.id !== undefined && t.id !== null)
-                    .map((t) => ({ id: t.id })),
-                }
+                connect: formData.tags
+                  .filter((t) => t.id !== undefined && t.id !== null)
+                  .map((t) => ({ id: t.id })),
+              }
               : undefined,
             slotsOfAvailabilityWeekly: formData.weeklySlots?.length
               ? { create: formData.weeklySlots }
               : undefined,
             slotsOfAvailabilityCustom: formData.customSlots?.length
               ? {
-                  create: formData.customSlots.map((slot) => ({
-                    availabilityStartsAt: new Date(
-                      slot.availabilityStartsAt,
-                    ).toISOString(),
-                    availabilityEndsAt: new Date(
-                      slot.availabilityEndsAt,
-                    ).toISOString(),
-                  })),
-                }
+                create: formData.customSlots.map((slot) => ({
+                  availabilityStartsAt: new Date(
+                    slot.availabilityStartsAt,
+                  ).toISOString(),
+                  availabilityEndsAt: new Date(
+                    slot.availabilityEndsAt,
+                  ).toISOString(),
+                })),
+              }
               : undefined,
             // New consultant fields
             headline: formData.headline,
@@ -772,23 +772,23 @@ function transformConsultantProfile(
     },
     subDomains: profile.subDomains?.length
       ? {
-          connect: profile.subDomains.map((sub) => ({ id: sub.id })),
-        }
+        connect: profile.subDomains.map((sub) => ({ id: sub.id })),
+      }
       : undefined,
     tags: profile.tags?.length
       ? {
-          connect: profile.tags.map((tag) => ({ id: tag.id })),
-        }
+        connect: profile.tags.map((tag) => ({ id: tag.id })),
+      }
       : undefined,
     slotsOfAvailabilityWeekly: profile.weeklySlots?.length
       ? {
-          create: profile.weeklySlots,
-        }
+        create: profile.weeklySlots,
+      }
       : undefined,
     slotsOfAvailabilityCustom: profile.customSlots?.length
       ? {
-          create: profile.customSlots,
-        }
+        create: profile.customSlots,
+      }
       : undefined,
     // New fields
     headline: profile.headline,
@@ -1288,6 +1288,9 @@ export async function processOnboardingData(
           adminProfile: true,
         },
       });
+    }, {
+      maxWait: 10000,  // Max time to wait to acquire transaction lock (10s)
+      timeout: 30000,  // Max transaction execution time (30s)
     });
 
     return { success: true, user: updatedUser };
