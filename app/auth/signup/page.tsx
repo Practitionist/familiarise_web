@@ -67,7 +67,7 @@ export default function SignUp() {
         router.push("/auth/signin");
       } else if (signInResult?.ok) {
         toast({ title: "Signed In Successfully!" });
-        router.push("/"); // Redirect to home/dashboard
+        router.push("/form/onboarding"); // New users always need to complete onboarding
       } else {
         toast({
           title: "Sign In Failed After Signup",

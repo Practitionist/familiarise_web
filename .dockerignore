@@ -1,8 +1,51 @@
-.next
+# Dependencies
 node_modules
+.pnp
+.pnp.js
+
+# Build outputs
+.next
+out
 build
+dist
+
+# Docker files (prevent recursive copying)
+Dockerfile*
+docker-compose*.yml
 .dockerignore
-Dockerfile
-Dockerfile.dev
-Dockerfile.prod
-docker-compose.yml
+
+# Git
+.git
+.gitignore
+
+# Environment files (use env_file in compose)
+.env*
+!.env.sample
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Testing
+coverage
+__tests__
+*.test.ts
+*.test.tsx
+*.spec.ts
+*.spec.tsx
+
+# Misc
+.DS_Store
+*.pem
+*.log
+npm-debug.log*
+
+# Development tools
+.eslintcache
+.prettierignore
+
+# Claude/AI tools
+.claude
+.mcp.json*

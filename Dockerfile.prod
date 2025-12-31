@@ -1,30 +1,72 @@
-# Install dependencies only when needed
-FROM node:lts-alpine AS deps
+# Production Dockerfile for Familiarise
+# Multi-stage build for optimal image size
 
-WORKDIR /usr/app
+# Stage 1: Dependencies
+FROM node:20-alpine AS deps
+RUN apk add --no-cache libc6-compat python3 make g++
+WORKDIR /app
+
 COPY package.json package-lock.json ./
-RUN yarn install --frozen-lockfile
+RUN npm ci
 
-# Rebuild the source code only when needed
-# This is where because may be the case that you would try
-# to build the app based on some `X_TAG` in my case (Git commit hash)
-# but the code hasn't changed.
-FROM node:lts-alpine AS builder
+# Stage 2: Builder
+FROM node:20-alpine AS builder
+RUN apk add --no-cache libc6-compat
+WORKDIR /app
 
-ENV NODE_ENV=production
-WORKDIR /usr/app
+COPY package.json package-lock.json ./
+COPY --from=deps /app/node_modules ./node_modules
+
+COPY prisma ./prisma/
+RUN npx prisma generate
+
 COPY . .
-COPY --from=deps /usr/app/node_modules ./node_modules
-RUN yarn build
 
-# Production image, copy all the files and run next
-FROM node:lts-alpine AS runner
+# Build arguments for environment variables needed at build time
+ARG NEXT_PUBLIC_SUPABASE_URL
+ARG NEXT_PUBLIC_SUPABASE_ANON_KEY
+ARG NEXT_PUBLIC_STREAM_API_KEY
+ARG NEXT_PUBLIC_SENTRY_DSN
 
-ARG X_TAG
-WORKDIR /usr/app
+ENV NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL
+ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY
+ENV NEXT_PUBLIC_STREAM_API_KEY=$NEXT_PUBLIC_STREAM_API_KEY
+ENV NEXT_PUBLIC_SENTRY_DSN=$NEXT_PUBLIC_SENTRY_DSN
+
+# Build the application
 ENV NODE_ENV=production
-COPY --from=builder /usr/app/next.config.js ./
-COPY --from=builder /usr/app/public ./public
-COPY --from=builder /usr/app/.next ./.next
-COPY --from=builder /usr/app/node_modules ./node_modules
-CMD ["node_modules/.bin/next", "start"]
+RUN npm run build
+
+# Stage 3: Runner
+FROM node:20-alpine AS runner
+WORKDIR /app
+
+ENV NODE_ENV=production
+
+# Create non-root user for security
+RUN addgroup --system --gid 1001 nodejs
+RUN adduser --system --uid 1001 nextjs
+
+# Copy necessary files from builder
+COPY --from=builder /app/public ./public
+COPY --from=builder /app/package.json ./package.json
+COPY --from=builder /app/.next ./.next
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/next.config.mjs ./next.config.mjs
+COPY --from=builder /app/prisma ./prisma
+
+# Set correct permissions
+RUN chown -R nextjs:nodejs /app
+
+USER nextjs
+
+EXPOSE 3000
+
+ENV PORT=3000
+ENV HOSTNAME="0.0.0.0"
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:3000/api/health || exit 1
+
+CMD ["npm", "start"]
