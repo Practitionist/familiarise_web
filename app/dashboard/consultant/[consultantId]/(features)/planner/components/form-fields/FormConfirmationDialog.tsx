@@ -36,7 +36,7 @@ export function FormConfirmationDialog({
   variant = "default",
 }: Readonly<FormConfirmationDialogProps>) {
   return (
-    <AlertDialog open={isOpen} onOpenChange={(open) => !open && onCancel()}>
+    <AlertDialog open={isOpen} onOpenChange={(open: boolean) => !open && onCancel()}>
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>{title}</AlertDialogTitle>

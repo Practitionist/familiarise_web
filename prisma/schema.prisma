@@ -260,6 +260,15 @@ model ConsultantProfile {
   user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   userId String @unique
 
+  // Payout relations
+  earnings       ConsultantEarnings[]
+  payouts        Payout[]
+  payoutAccounts PayoutAccount[]
+
+  // Cached balances (in smallest currency unit, e.g., paise)
+  totalRevenue   Int @default(0)
+  pendingRevenue Int @default(0)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -949,6 +958,10 @@ model Payment {
   refunds  Refund[]  // Refunds associated with this payment
   disputes Dispute[] // Disputes associated with this payment
 
+  // Payout relations
+  earnings ConsultantEarnings?
+  invoice  Invoice?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1032,6 +1045,175 @@ enum DisputeStatus {
   CHARGE_REFUNDED          // Charge was refunded
   WON                      // Dispute won
   LOST                     // Dispute lost
+}
+
+////////////////////////////////////////////// PAYOUT SYSTEM ////////////////////////////////////////////////////
+
+enum EarningStatus {
+  PENDING   // In hold period
+  HELD      // Extended hold (dispute)
+  READY     // Ready for payout
+  PAID      // Successfully paid
+  REFUNDED  // Refunded to consultee
+}
+
+enum PayoutStatus {
+  PENDING    // Awaiting approval
+  APPROVED   // Admin approved
+  PROCESSING // Being processed
+  COMPLETED  // Successfully sent
+  FAILED     // Provider rejected
+  CANCELLED  // Manually cancelled
+}
+
+enum PayoutMethod {
+  BANK_TRANSFER
+  UPI
+  STRIPE_TRANSFER
+}
+
+enum PayoutAccountType {
+  BANK_ACCOUNT
+  UPI
+  STRIPE_CONNECT
+}
+
+model ConsultantEarnings {
+  id                  String        @id @default(cuid())
+  consultantProfileId String
+  paymentId           String        @unique
+  payoutId            String?
+
+  // Revenue breakdown
+  grossAmount     Int // Total sale price
+  platformFee     Int // Platform cut (20%)
+  consultantShare Int // Consultant cut (80%)
+
+  // Status tracking
+  status    EarningStatus @default(PENDING)
+  holdUntil DateTime      // Release after hold period
+  paidAt    DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  consultantProfile ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  payment           Payment           @relation(fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  payout            Payout?           @relation(fields: [payoutId], references: [id])
+
+  @@index([consultantProfileId, status])
+  @@index([status, holdUntil])
+  @@index([payoutId])
+}
+
+model Payout {
+  id                  String         @id @default(cuid())
+  consultantProfileId String
+  provider            PaymentGateway
+  providerPayoutId    String?        @unique
+  amount              Int
+  currency            String         @default("INR")
+  status              PayoutStatus   @default(PENDING)
+  method              PayoutMethod
+  batchId             String?
+
+  // Processing
+  failureReason String?
+  retryCount    Int       @default(0)
+  processedAt   DateTime?
+  approvedAt    DateTime?
+  approvedBy    String?
+
+  // Idempotency (required by Razorpay from March 2025)
+  idempotencyKey String? @unique
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  consultantProfile ConsultantProfile    @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  earnings          ConsultantEarnings[]
+
+  @@index([consultantProfileId, status])
+  @@index([batchId])
+  @@index([status])
+}
+
+model PayoutAccount {
+  id                  String            @id @default(cuid())
+  consultantProfileId String
+  provider            PaymentGateway
+  accountType         PayoutAccountType @default(BANK_ACCOUNT)
+
+  // Bank details (store only masked, full via gateway)
+  accountHolderName  String?
+  bankName           String?
+  accountNumberLast4 String? // Only last 4 digits
+  ifscCode           String?
+
+  // UPI
+  upiId String?
+
+  // Gateway IDs
+  stripeAccountId     String? @unique
+  stripeAccountStatus String?
+  razorpayContactId   String?
+  razorpayFundAccId   String? @unique
+
+  // Verification
+  isVerified Boolean @default(false)
+  isDefault  Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  consultantProfile ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+
+  @@index([consultantProfileId])
+  @@index([isDefault])
+}
+
+model Invoice {
+  id            String        @id @default(cuid())
+  paymentId     String?       @unique
+  invoiceNumber String        @unique // INV-YYYYMM-XXXXX
+  amount        Int
+  currency      String        @default("INR")
+  status        PaymentStatus @default(PENDING)
+  items         Json // Line items with HSN codes
+  pdfUrl        String?
+  dueDate       DateTime?
+  paidAt        DateTime?
+
+  // Tax breakdown
+  taxAmount Int?   // GST amount in paise
+  taxRate   Float? // 18% for services
+  hsnCode   String? // SAC code (999293 for consulting)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  payment Payment? @relation(fields: [paymentId], references: [id])
+
+  @@index([invoiceNumber])
+  @@index([status])
+  @@index([paymentId])
+}
+
+model WebhookEvent {
+  id          String    @id @default(cuid())
+  provider    String // razorpay, stripe, etc.
+  eventId     String    @unique
+  eventType   String
+  payload     Json
+  signature   String?
+  processed   Boolean   @default(false)
+  processedAt DateTime?
+  error       String?
+  receivedAt  DateTime  @default(now())
+
+  @@index([provider])
+  @@index([processed])
+  @@index([eventType])
 }
 
 model DiscountCode {

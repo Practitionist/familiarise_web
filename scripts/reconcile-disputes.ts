@@ -168,12 +168,16 @@ export async function reconcileDisputes(): Promise<DisputeReconciliationResult> 
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : String(error);
+      // Also check error code as fallback for StripeError
+      const errorCode = (error as { code?: string })?.code;
 
-      // Handle "dispute not found" case
+      // Handle "dispute not found" case - check both error code and message patterns
       if (
+        errorCode === "resource_missing" ||
         errorMessage.includes("resource_missing") ||
         errorMessage.includes("not found") ||
-        errorMessage.includes("No such")
+        errorMessage.includes("No such") ||
+        errorMessage.includes("does not exist")
       ) {
         const existingEvidence = (dispute.evidence ?? {}) as Record<
           string,
