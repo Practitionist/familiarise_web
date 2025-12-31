@@ -69,22 +69,41 @@ async function handleMockPaymentCaptured(
 ): Promise<MockWebhookResponse> {
   const { paymentId, orderId, appointmentId, release } = request;
 
-  // Find the payment
+  // Find the payment with appointment details to get consultant ID
+  const paymentInclude = {
+    appointment: {
+      include: {
+        consultation: {
+          include: { consultationPlan: { select: { consultantProfileId: true } } },
+        },
+        subscription: {
+          include: { subscriptionPlan: { select: { consultantProfileId: true } } },
+        },
+        webinar: {
+          include: { webinarPlan: { select: { consultantProfileId: true } } },
+        },
+        class: {
+          include: { classPlan: { select: { consultantProfileId: true } } },
+        },
+      },
+    },
+  };
+
   let payment;
   if (paymentId) {
     payment = await prisma.payment.findUnique({
       where: { id: paymentId },
-      include: { appointment: true },
+      include: paymentInclude,
     });
   } else if (orderId) {
     payment = await prisma.payment.findFirst({
       where: { paymentIntent: orderId },
-      include: { appointment: true },
+      include: paymentInclude,
     });
   } else if (appointmentId) {
     payment = await prisma.payment.findFirst({
       where: { appointmentId },
-      include: { appointment: true },
+      include: paymentInclude,
     });
   }
 
@@ -104,12 +123,25 @@ async function handleMockPaymentCaptured(
     });
   }
 
-  // Build metadata for handlePaymentSuccess
+  // Extract consultant profile ID from the appointment's plan
+  const getConsultantProfileId = () => {
+    const apt = payment.appointment;
+    if (!apt) return "";
+    return (
+      apt.consultation?.consultationPlan?.consultantProfileId ||
+      apt.subscription?.subscriptionPlan?.consultantProfileId ||
+      apt.webinar?.webinarPlan?.consultantProfileId ||
+      apt.class?.classPlan?.consultantProfileId ||
+      ""
+    );
+  };
+
+  // Build metadata for handlePaymentSuccess with real IDs
   const metadata: Record<string, string> = {
     appointmentId: payment.appointmentId || "",
     appointmentType: payment.appointment?.appointmentType || "CONSULTATION",
-    consulteeId: "",
-    consultantId: "",
+    consulteeId: payment.userId || "",
+    consultantId: getConsultantProfileId(),
   };
 
   try {

@@ -81,8 +81,16 @@ export async function GET(req: NextRequest) {
       ];
     }
 
-    // Get subscription payments (status filtering now happens in the database)
-    const [subscriptions, total] = await Promise.all([
+    // Base where clause for all subscription queries (without status filter)
+    const baseWhere = {
+      paymentStatus: "SUCCEEDED" as const,
+      appointment: {
+        appointmentType: "SUBSCRIPTION" as const,
+      },
+    };
+
+    // Get subscription payments and stats in parallel
+    const [subscriptions, total, activeCount, expiringCount, expiredCount] = await Promise.all([
       prisma.payment.findMany({
         where: {
           ...where,
@@ -118,6 +126,36 @@ export async function GET(req: NextRequest) {
           paymentStatus: "SUCCEEDED",
         },
       }),
+      // Count active subscriptions (ends > 7 days from now)
+      prisma.payment.count({
+        where: {
+          ...baseWhere,
+          appointment: {
+            appointmentType: "SUBSCRIPTION",
+            subscription: { schedulingPeriodEndsAt: { gt: soonThreshold } },
+          },
+        },
+      }),
+      // Count expiring soon subscriptions (ends within 7 days)
+      prisma.payment.count({
+        where: {
+          ...baseWhere,
+          appointment: {
+            appointmentType: "SUBSCRIPTION",
+            subscription: { schedulingPeriodEndsAt: { gt: now, lte: soonThreshold } },
+          },
+        },
+      }),
+      // Count expired subscriptions
+      prisma.payment.count({
+        where: {
+          ...baseWhere,
+          appointment: {
+            appointmentType: "SUBSCRIPTION",
+            subscription: { schedulingPeriodEndsAt: { lte: now } },
+          },
+        },
+      }),
     ]);
 
     // Format subscriptions with status
@@ -150,6 +188,11 @@ export async function GET(req: NextRequest) {
     // Status filtering now happens in the database query, so pagination is correct
     return NextResponse.json({
       subscriptions: formattedSubscriptions,
+      stats: {
+        activeCount,
+        expiringCount,
+        expiredCount,
+      },
       pagination: {
         total,
         limit,

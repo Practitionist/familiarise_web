@@ -117,15 +117,9 @@ export default function AdminSubscriptionsPage() {
     );
   }
 
-  // Count by status for summary
-  const activeCount =
-    data?.subscriptions?.filter(
-      (s: Subscription) => s.status === "active" || s.status === "expiring_soon"
-    ).length || 0;
-  const expiringCount =
-    data?.subscriptions?.filter(
-      (s: Subscription) => s.status === "expiring_soon"
-    ).length || 0;
+  // Use stats from API (includes total counts, not just current page)
+  const activeCount = (data?.stats?.activeCount || 0) + (data?.stats?.expiringCount || 0);
+  const expiringCount = data?.stats?.expiringCount || 0;
 
   return (
     <div className="space-y-6">

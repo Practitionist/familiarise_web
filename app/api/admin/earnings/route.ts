@@ -32,7 +32,11 @@ export async function GET(req: NextRequest) {
 
     // Parse query parameters
     const { searchParams } = new URL(req.url);
-    const status = searchParams.get("status") as EarningStatus | null;
+    const statusParam = searchParams.get("status");
+    const validStatuses = Object.values(EarningStatus);
+    const status = statusParam && validStatuses.includes(statusParam as EarningStatus)
+      ? (statusParam as EarningStatus)
+      : null;
     const limit = parseInt(searchParams.get("limit") || "20");
     const offset = parseInt(searchParams.get("offset") || "0");
 
