@@ -7,7 +7,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import authOptions from "@/app/api/auth/[...nextauth]/options";
 import prisma from "@/lib/prisma";
-import { PaymentStatus } from "@prisma/client";
+import { PaymentStatus, Prisma } from "@prisma/client";
 
 /**
  * GET /api/admin/invoices
@@ -38,7 +38,7 @@ export async function GET(req: NextRequest) {
     const offset = parseInt(searchParams.get("offset") || "0");
 
     // Build where clause
-    const where: any = {};
+    const where: Prisma.PaymentWhereInput = {};
     if (status) {
       where.paymentStatus = status;
     }

@@ -37,11 +37,34 @@ export async function GET(req: NextRequest) {
     const offset = parseInt(searchParams.get("offset") || "0");
 
     const now = new Date();
+    const soonThreshold = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000); // 7 days from now
 
-    // Build where clause based on status
+    // Build subscription date filter based on status
+    let subscriptionDateFilter: any = {};
+    if (status === "active") {
+      // Active = ends more than 7 days from now (includes expiring_soon for "active" filter)
+      subscriptionDateFilter = {
+        schedulingPeriodEndsAt: { gt: now },
+      };
+    } else if (status === "expiring_soon") {
+      // Expiring soon = ends within 7 days but not expired
+      subscriptionDateFilter = {
+        schedulingPeriodEndsAt: { gt: now, lte: soonThreshold },
+      };
+    } else if (status === "expired") {
+      // Expired = ends in the past
+      subscriptionDateFilter = {
+        schedulingPeriodEndsAt: { lte: now },
+      };
+    }
+
+    // Build where clause with status filter in the database query
     let where: any = {
       appointment: {
         appointmentType: "SUBSCRIPTION",
+        subscription: Object.keys(subscriptionDateFilter).length > 0
+          ? subscriptionDateFilter
+          : undefined,
       },
     };
 
@@ -58,7 +81,7 @@ export async function GET(req: NextRequest) {
       ];
     }
 
-    // Get subscription payments
+    // Get subscription payments (status filtering now happens in the database)
     const [subscriptions, total] = await Promise.all([
       prisma.payment.findMany({
         where: {
@@ -124,26 +147,11 @@ export async function GET(req: NextRequest) {
       };
     });
 
-    // Filter by status if provided
-    let filteredSubscriptions = formattedSubscriptions;
-    if (status === "active") {
-      filteredSubscriptions = formattedSubscriptions.filter(
-        (s) => s.status === "active" || s.status === "expiring_soon"
-      );
-    } else if (status === "expired") {
-      filteredSubscriptions = formattedSubscriptions.filter(
-        (s) => s.status === "expired"
-      );
-    } else if (status === "expiring_soon") {
-      filteredSubscriptions = formattedSubscriptions.filter(
-        (s) => s.status === "expiring_soon"
-      );
-    }
-
+    // Status filtering now happens in the database query, so pagination is correct
     return NextResponse.json({
-      subscriptions: filteredSubscriptions,
+      subscriptions: formattedSubscriptions,
       pagination: {
-        total: status ? filteredSubscriptions.length : total,
+        total,
         limit,
         offset,
         hasMore: offset + limit < total,

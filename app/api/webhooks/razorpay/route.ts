@@ -9,7 +9,6 @@ import {
   logWebhookEvent,
   markWebhookEventProcessed,
   handleRazorpayPayoutWebhook,
-  handleRefundForEarnings,
 } from "../utils";
 import {
   razorpayBaseEventSchema,
@@ -103,8 +102,6 @@ export async function POST(req: NextRequest) {
             refundEvent.status,
             "RAZORPAY",
           );
-          // Also update earnings status
-          await handleRefundForEarnings(refundEvent.payment_id);
           break;
         }
 

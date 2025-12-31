@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { CheckCircle, Download } from "lucide-react";
 
 interface Payout {
@@ -22,11 +22,17 @@ interface Payout {
   createdAt: string;
 }
 
-async function fetchCompletedPayouts(page: number, limit: number) {
+async function fetchCompletedPayouts(page: number, limit: number, search: string) {
   const offset = (page - 1) * limit;
-  const response = await fetch(
-    `/api/admin/payouts?status=COMPLETED&limit=${limit}&offset=${offset}`
-  );
+  const params = new URLSearchParams({
+    status: "COMPLETED",
+    limit: limit.toString(),
+    offset: offset.toString(),
+  });
+  if (search) {
+    params.set("search", search);
+  }
+  const response = await fetch(`/api/admin/payouts?${params.toString()}`);
   if (!response.ok) {
     throw new Error("Failed to fetch payouts");
   }
@@ -38,19 +44,26 @@ export default function CompletedPayoutsPage() {
   const [search, setSearch] = useState("");
   const limit = 20;
 
+  // Debounced search for API calls
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+
+  // Debounce search input
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(search);
+      setPage(1); // Reset to page 1 when search changes
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [search]);
+
   const { data, isLoading, error } = useQuery({
-    queryKey: ["admin-payouts-completed", page],
-    queryFn: () => fetchCompletedPayouts(page, limit),
+    queryKey: ["admin-payouts-completed", page, debouncedSearch],
+    queryFn: () => fetchCompletedPayouts(page, limit, debouncedSearch),
     staleTime: 60 * 1000,
   });
 
-  // Filter payouts by search
-  const filteredPayouts = data?.payouts?.filter(
-    (p: Payout) =>
-      !search ||
-      p.consultantName.toLowerCase().includes(search.toLowerCase()) ||
-      p.consultantEmail.toLowerCase().includes(search.toLowerCase())
-  );
+  // Payouts are now filtered server-side
+  const filteredPayouts = data?.payouts;
 
   const exportToCSV = () => {
     if (!data?.payouts?.length) return;

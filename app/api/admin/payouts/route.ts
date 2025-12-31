@@ -34,11 +34,25 @@ export async function GET(req: NextRequest) {
     // Parse query parameters
     const { searchParams } = new URL(req.url);
     const status = searchParams.get("status") as PayoutStatus | null;
+    const search = searchParams.get("search");
     const limit = parseInt(searchParams.get("limit") || "50");
     const offset = parseInt(searchParams.get("offset") || "0");
 
-    // Build where clause
-    const where = status ? { status } : {};
+    // Build where clause with optional status and search filters
+    const where: any = {};
+    if (status) {
+      where.status = status;
+    }
+    if (search) {
+      where.consultantProfile = {
+        user: {
+          OR: [
+            { name: { contains: search, mode: "insensitive" } },
+            { email: { contains: search, mode: "insensitive" } },
+          ],
+        },
+      };
+    }
 
     // Get payouts
     const [payouts, total] = await Promise.all([

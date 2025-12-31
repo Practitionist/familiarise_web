@@ -9,7 +9,6 @@ import {
   logWebhookEvent,
   markWebhookEventProcessed,
   handleStripePayoutWebhook,
-  handleRefundForEarnings,
 } from "../utils";
 import {
   stripeBaseEventSchema,
@@ -91,8 +90,6 @@ export async function POST(req: NextRequest) {
               latestRefund.status,
               "STRIPE",
             );
-            // Also update earnings status
-            await handleRefundForEarnings(refundEvent.payment_intent || refundEvent.id);
           }
           break;
         }

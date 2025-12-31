@@ -50,21 +50,23 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
       );
     }
 
-    // Handle setting as default
+    // Handle setting as default (use transaction for atomicity)
     if (body.isDefault === true) {
-      // Unset other defaults
-      await prisma.payoutAccount.updateMany({
-        where: {
-          consultantProfileId: consultantProfile.id,
-          isDefault: true,
-        },
-        data: { isDefault: false },
-      });
+      await prisma.$transaction(async (tx) => {
+        // Unset other defaults
+        await tx.payoutAccount.updateMany({
+          where: {
+            consultantProfileId: consultantProfile.id,
+            isDefault: true,
+          },
+          data: { isDefault: false },
+        });
 
-      // Set this as default
-      await prisma.payoutAccount.update({
-        where: { id },
-        data: { isDefault: true },
+        // Set this as default
+        await tx.payoutAccount.update({
+          where: { id },
+          data: { isDefault: true },
+        });
       });
     }
 
@@ -137,25 +139,28 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
       );
     }
 
-    // Delete the account
-    await prisma.payoutAccount.delete({
-      where: { id },
-    });
-
-    // If this was default, set another as default
-    if (account.isDefault) {
-      const anotherAccount = await prisma.payoutAccount.findFirst({
-        where: { consultantProfileId: consultantProfile.id },
-        orderBy: { createdAt: "desc" },
+    // Delete the account and reassign default if needed (use transaction for atomicity)
+    await prisma.$transaction(async (tx) => {
+      // Delete the account
+      await tx.payoutAccount.delete({
+        where: { id },
       });
 
-      if (anotherAccount) {
-        await prisma.payoutAccount.update({
-          where: { id: anotherAccount.id },
-          data: { isDefault: true },
+      // If this was default, set another as default
+      if (account.isDefault) {
+        const anotherAccount = await tx.payoutAccount.findFirst({
+          where: { consultantProfileId: consultantProfile.id },
+          orderBy: { createdAt: "desc" },
         });
+
+        if (anotherAccount) {
+          await tx.payoutAccount.update({
+            where: { id: anotherAccount.id },
+            data: { isDefault: true },
+          });
+        }
       }
-    }
+    });
 
     return NextResponse.json({ success: true });
   } catch (error) {
