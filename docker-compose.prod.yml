@@ -1,0 +1,17 @@
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+      args:
+        - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
+        - NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+        - NEXT_PUBLIC_STREAM_API_KEY=${NEXT_PUBLIC_STREAM_API_KEY}
+        - NEXT_PUBLIC_SENTRY_DSN=${NEXT_PUBLIC_SENTRY_DSN}
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+    restart: unless-stopped

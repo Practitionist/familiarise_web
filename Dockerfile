@@ -1,23 +1,32 @@
-# Start with the official Node.js image.
-FROM node:latest
+# Development Dockerfile for Familiarise
+FROM node:20-alpine
 
-# Set the working directory in the Docker container.
-WORKDIR /usr/app
+# Install dependencies for native modules (bcrypt, sharp)
+RUN apk add --no-cache libc6-compat python3 make g++
 
-# Copy the package.json and package-lock.json files (needed for production).
-COPY package*.json ./
+WORKDIR /app
 
-# Install the application dependencies.
-RUN npm install
+# Copy package files
+COPY package.json package-lock.json ./
 
-# Copy the application files (needed for production) [except for node_modules].
+# Install dependencies
+RUN npm ci
+
+# Copy prisma schema for generation
+COPY prisma ./prisma/
+
+# Generate Prisma client
+RUN npx prisma generate
+
+# Copy application files (volumes will override in dev)
 COPY . .
 
-# Build the Next.js application.
-RUN npm run build
-
-# The application listens on port 3000, so let's expose it.
+# Expose port
 EXPOSE 3000
 
-# Define the command to run the application.
-CMD [ "npm", "run", "start-watch" ]
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:3000/api/health || exit 1
+
+# Start development server
+CMD ["npm", "run", "dev"]

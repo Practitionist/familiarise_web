@@ -1,10 +1,18 @@
-version: "3"
 services:
   web:
-    image: familiarise-docker
-    stdin_open: true
+    build:
+      context: .
+      dockerfile: Dockerfile
     ports:
       - "3000:3000"
     volumes:
-      - "./:/usr/app:delegated"
-      - "/usr/app/node_modules"
+      - .:/app
+      - /app/node_modules
+      - /app/.next
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=development
+      - WATCHPACK_POLLING=true
+    stdin_open: true
+    tty: true

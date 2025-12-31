@@ -1,99 +1,234 @@
-# Familiarise(formerly ConsultX) - The One-stop Platform for Mentors, Advisors, Teachers, and Students
+# Familiarise
 
-Familiarise(formerly ConsultX) is going to be the one-stop platform for all experts, mentors, coaches, consultants, teachers and advisors to share their wisdom with the masses.
-Kind of like Swiggy with different restaurants for people.
+> **Note:** This project was formerly known as **ConsultX** (2022-2023) and is planned to be rebranded as **Elluminar** in the future.
+
+## What is Familiarise?
+
+Familiarise is a **B2B/B2C marketplace platform** that connects world-class experts—mentors, consultants, coaches, and instructors—with learners seeking personalized guidance, mentorship, and education.
+
+Think of it as the "Airbnb for expertise": a platform where professionals can monetize their knowledge through one-on-one sessions, ongoing mentorship programs, structured courses, and live webinars, while learners get direct access to industry experts who can accelerate their careers and skill development.
+
+### Who is it for?
+
+**For Experts (Consultants):**
+- Industry professionals looking to monetize their expertise
+- Career coaches and mentors
+- Subject matter experts and educators
+- Entrepreneurs sharing startup knowledge
+- Specialists in tech, business, design, marketing, and more
+
+**For Learners (Consultees):**
+- Career changers breaking into new fields
+- Professionals seeking advancement
+- Students wanting industry guidance
+- Entrepreneurs needing business mentorship
+- Anyone seeking personalized skill development
+
+### Key Features
+
+| Feature | Description |
+|---------|-------------|
+| **1-on-1 Consultations** | Single sessions for career advice, mock interviews, code reviews, design feedback |
+| **Subscriptions** | Ongoing 4-12 week mentorship programs with recurring sessions |
+| **Classes** | Structured multi-week courses with materials, recordings, and certifications |
+| **Webinars** | Live group learning events with Q&A and waitlist management |
+| **Video Calls** | HD video via Stream.io with screen sharing and recording |
+| **In-App Messaging** | Direct communication and document sharing between sessions |
+| **Document Review** | Upload resumes, portfolios, or code for expert feedback |
+| **Smart Scheduling** | Timezone-aware booking with weekly and custom availability |
+| **Secure Payments** | Stripe (global) and Razorpay (India) with escrow protection |
+| **Earnings Dashboard** | 80/20 revenue split with transparent payout tracking |
+
+### Platform Stats
+
+- 500+ verified expert mentors
+- 8+ domains (Technology, Business, Design, Marketing, Career Coaching, Education, Startups, Languages)
+- Multiple session types to fit any learning style
+- Money-back guarantee for unsatisfied sessions
+
+## Quick Start
+
+### Prerequisites
+
+- [Docker](https://docs.docker.com/get-docker/) and Docker Compose
+- OR Node.js 20+ and npm
+
+### Option 1: Docker (Recommended)
+
+```bash
+# 1. Clone the repository
+git clone <repository_url>
+cd familiarise_web
+
+# 2. Create environment file
+cp .env.sample .env
+# Edit .env with your credentials (see Environment Variables section)
+
+# 3. Start development server
+docker compose up --build
+
+# App runs at http://localhost:3000
+```
+
+### Option 2: Local Development
+
+```bash
+# 1. Clone and install
+git clone <repository_url>
+cd familiarise_web
+npm install
+
+# 2. Setup environment
+cp .env.sample .env
+# Edit .env with your credentials
+
+# 3. Generate Prisma client
+npx prisma generate
+
+# 4. Start development server
+npm run dev
+```
+
+## Environment Variables
+
+Create a `.env` file based on `.env.sample`. Required variables:
+
+| Variable | Description |
+|----------|-------------|
+| `DATABASE_URL` | Supabase connection string (pooled) |
+| `DIRECT_URL` | Supabase direct connection |
+| `NEXTAUTH_URL` | App URL (http://localhost:3000) |
+| `NEXTAUTH_SECRET` | Random secret for NextAuth |
+| `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anon key |
+
+<details>
+<summary>All Environment Variables</summary>
+
+### Authentication
+- `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` - Google OAuth
+- `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` - GitHub OAuth
+- `FACEBOOK_CLIENT_ID`, `FACEBOOK_CLIENT_SECRET` - Facebook OAuth
+- `JWT_SECRET` - JWT signing key
+
+### Payments
+- `STRIPE_API_KEY`, `STRIPE_WEBHOOK_SECRET` - Stripe
+- `RAZORPAY_KEY_ID`, `RAZORPAY_SECRET` - Razorpay
+
+### Real-time Features
+- `NEXT_PUBLIC_STREAM_API_KEY`, `STREAM_API_SECRET` - Stream.io
+
+### Other Services
+- `RESEND_API_KEY` - Email service
+- `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` - Redis/caching
+- `NEXT_PUBLIC_SENTRY_DSN` - Error monitoring
+
+</details>
+
+## Docker Commands
+
+### Development
+
+```bash
+# Start with hot-reload
+docker compose up --build
+
+# Start in background
+docker compose up -d --build
+
+# View logs
+docker compose logs -f web
+
+# Stop
+docker compose down
+
+# Rebuild from scratch
+docker compose down -v && docker compose up --build
+```
+
+### Production
+
+```bash
+# Build and run production
+docker compose -f docker-compose.prod.yml up --build -d
+
+# View logs
+docker compose -f docker-compose.prod.yml logs -f
+
+# Stop
+docker compose -f docker-compose.prod.yml down
+```
+
+## Development
+
+### Available Scripts
+
+```bash
+npm run dev          # Start development server
+npm run build        # Build for production
+npm run start        # Start production server
+npm run lint         # Run ESLint
+npm run format:write # Format with Prettier
+npm run studio       # Open Prisma Studio
+npm run db:push      # Push schema to database
+```
+
+### Database (Prisma)
+
+```bash
+# Generate client after schema changes
+npx prisma generate
+
+# Push schema changes to Supabase
+npx prisma db push
+
+# Open database GUI
+npx prisma studio
+```
 
 ## Architecture
 
-### Entity Relationship Diagram
+- **Framework:** Next.js 15 with App Router
+- **Database:** PostgreSQL via Supabase
+- **ORM:** Prisma 6
+- **Auth:** NextAuth.js
+- **Payments:** Stripe, Razorpay
+- **Real-time:** Stream.io
+- **Styling:** Tailwind CSS
 
-[Check this out](https://claude.site/artifacts/cba3bcba-1810-49d4-93f4-2e5c63bde35e) (Last updated: 31st October 2024)
+[View Entity Relationship Diagram](https://claude.site/artifacts/cba3bcba-1810-49d4-93f4-2e5c63bde35e)
 
-## Setting Up Environment Variables for Development
+## Troubleshooting
 
-Welcome to our development team! To help you get started, we've outlined the essential environment variables you need to configure for our projects. These environment variables are used to securely store sensitive information like API keys, secrets, and credentials.
+### Docker Issues
 
-### Prerequisites:
-
-Before you start, make sure you have the following installed and configured on your development machine:
-
-- Node.js (version 18 or higher)
-- npm or yarn
-- Git
-
-## Step 1: Clone the Project Repository
-
-First, clone the project repository from our version control system (e.g., GitHub, Bitbucket, or GitLab) to your local machine.
-
+**Container won't start:**
 ```bash
-# Please clone using SSH instead of HTTPS (since we'll be making the repository private later on)
-git clone <repository_url>
-cd <repository_directory>
+# Check logs
+docker compose logs web
+
+# Ensure .env file exists and has required variables
+cat .env | grep -E "^(DATABASE_URL|NEXTAUTH)"
 ```
 
-## Step 2: Create a .env File
-
-Create a `.env` file in the root directory of the project. This file will contain all the environment variables you need to set up. For security reasons, this file is not committed to the project repository. We'll be taking variables from `.env.sample` file and putting them in the `.env` file.
-
-### The NextAuth.js Variables
-
+**Hot reload not working:**
 ```bash
-NEXTAUTH_URL="http://localhost:3000"
-NEXTAUTH_SECRET="anything"
-JWT_SECRET="anything"
-```
-
-### The OAuth Variables (Google, Github, Facebook)
-
-You can manually create OAuth apps for Google, Github, and Facebook. Or you can use the ones we have already created. If you want to use the ones we have already created, then ask the team for the credentials. If you want to create your own OAuth apps, then follow the instructions below.
-
-```bash
-# You can ask the team for the credentials
-GOOGLE_CLIENT_ID="your_google_client_id"
-GOOGLE_CLIENT_SECRET="your_google_client_secret"
-
-GITHUB_CLIENT_ID="your_github_client_id"
-GITHUB_CLIENT_SECRET="your_github_client_secret"
-
-FACEBOOK_CLIENT_ID="your_facebook_client_id"
-FACEBOOK_CLIENT_SECRET="your_facebook_client_secret"
-```
-
-### Supabase Database Variables
-
-You need to log in to Supabase with the Familiarise account where we have already created a database. Then go to the database settings scroll down to the bottom and click on the connect button. Copy the connection string and paste it into the `.env` file.
-
-```bash
-# You can ask the team for the connection string
-DATABASE_URL="your_supabase_connection_string"
-DIRECT_URL="your_supabase_direct_url"
-```
-
-## Docker [Not working yet]
-
-Use this approach if you want to run the project in a Docker container.
-This is useful if:
-
-- you cannot install Node.js and npm on your machine
-- you want to run the project in an isolated environment
-- the experiments you are running could potentially break your machine or your OS
-- the experiments you are running could potentially break your Node.js or npm installation
-- you want to run the project on a different OS than the one you are using.
-
-### Running it through just docker
-
-```bash
-# Build and run
-docker build -t familiarise-docker .
-docker run -p 3000:3000 familiarise-docker
-```
-
-### Running it through docker-compose
-
-```bash
-# Get latest docker
-sudo snap refresh docker --channel=latest/edge\n
-
-# Build and run
+# Restart with fresh volumes
+docker compose down -v
 docker compose up --build
+```
+
+**Prisma errors:**
+```bash
+# Regenerate client inside container
+docker compose exec web npx prisma generate
+```
+
+### Build Issues
+
+**bcrypt/sharp errors:**
+These require native compilation. In Docker, this is handled automatically. For local development:
+```bash
+npm rebuild bcrypt
+npm rebuild sharp
 ```
