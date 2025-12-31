@@ -111,7 +111,7 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
             </div>
             {/* Price Tag */}
             <div className="absolute bottom-4 left-1/2 -translate-x-1/2">
-              <span className="px-4 py-2 bg-white rounded-full text-lg font-bold text-zinc-900 shadow-lg">
+              <span className="px-3 py-1.5 sm:px-4 sm:py-2 bg-white rounded-full text-sm sm:text-base lg:text-lg font-bold text-zinc-900 shadow-lg whitespace-nowrap">
                 {formatCurrency(
                   classPlan.price,
                   classPlan.priceCurrency || "INR",
@@ -121,49 +121,49 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
           </div>
 
           {/* Content */}
-          <div className="p-5 md:p-6 flex flex-col flex-1">
-            <h3 className="text-lg font-semibold text-zinc-900 mb-2 line-clamp-1 group-hover:text-zinc-700 transition-colors">
+          <div className="p-4 sm:p-5 md:p-6 flex flex-col flex-1 min-w-0">
+            <h3 className="text-base sm:text-lg font-semibold text-zinc-900 mb-2 line-clamp-2 group-hover:text-zinc-700 transition-colors min-h-[2.5rem] sm:min-h-[3rem]">
               {classPlan.title}
             </h3>
 
-            <p className="text-sm text-zinc-500 mb-4 line-clamp-2 flex-1">
+            <p className="text-xs sm:text-sm text-zinc-500 mb-3 sm:mb-4 line-clamp-3 min-h-[3rem] sm:min-h-[3.75rem]">
               {classPlan.description}
             </p>
 
             {/* Stats Row */}
-            <div className="flex flex-wrap gap-3 mb-4">
-              <div className="flex items-center gap-1.5 text-xs text-zinc-500">
-                <Clock className="w-3.5 h-3.5" />
-                <span>
+            <div className="flex flex-wrap gap-x-3 gap-y-1 mb-3 sm:mb-4">
+              <div className="flex items-center gap-1 sm:gap-1.5 text-[11px] sm:text-xs text-zinc-500">
+                <Clock className="w-3 h-3 sm:w-3.5 sm:h-3.5 flex-shrink-0" />
+                <span className="whitespace-nowrap">
                   {classPlan.durationInMonths} month
                   {classPlan.durationInMonths > 1 ? "s" : ""}
                 </span>
               </div>
-              <div className="flex items-center gap-1.5 text-xs text-zinc-500">
-                <Users className="w-3.5 h-3.5" />
-                <span>{classPlan.maxParticipants} max</span>
+              <div className="flex items-center gap-1 sm:gap-1.5 text-[11px] sm:text-xs text-zinc-500">
+                <Users className="w-3 h-3 sm:w-3.5 sm:h-3.5 flex-shrink-0" />
+                <span className="whitespace-nowrap">{classPlan.maxParticipants} max</span>
               </div>
-              <div className="flex items-center gap-1.5 text-xs text-zinc-500">
-                <GraduationCap className="w-3.5 h-3.5" />
+              <div className="flex items-center gap-1 sm:gap-1.5 text-[11px] sm:text-xs text-zinc-500">
+                <GraduationCap className="w-3 h-3 sm:w-3.5 sm:h-3.5 flex-shrink-0" />
                 <span>{classPlan.level}</span>
               </div>
             </div>
 
             {/* Tags */}
-            <div className="flex flex-wrap gap-1.5 mb-4">
+            <div className="flex flex-wrap gap-1.5 sm:gap-2 mb-4">
               <Badge
                 variant="secondary"
-                className="text-xs bg-zinc-100 text-zinc-600"
+                className="text-[10px] sm:text-xs bg-zinc-100 text-zinc-600 h-fit"
               >
-                <Globe className="w-3 h-3 mr-1" />
+                <Globe className="w-2.5 h-2.5 sm:w-3 sm:h-3 mr-0.5 sm:mr-1" />
                 {classPlan.language}
               </Badge>
               {classPlan.certificateProvided && (
                 <Badge
                   variant="secondary"
-                  className="text-xs bg-emerald-50 text-emerald-700"
+                  className="text-[10px] sm:text-xs bg-emerald-50 text-emerald-700 h-fit"
                 >
-                  <Sparkles className="w-3 h-3 mr-1" />
+                  <Sparkles className="w-2.5 h-2.5 sm:w-3 sm:h-3 mr-0.5 sm:mr-1" />
                   Certificate
                 </Badge>
               )}
@@ -171,7 +171,7 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
 
             {/* CTA */}
             <Button
-              className="w-full bg-zinc-900 hover:bg-zinc-800 text-white rounded-xl h-11 font-medium group/btn"
+              className="w-full bg-zinc-900 hover:bg-zinc-800 text-white rounded-xl h-10 sm:h-11 text-sm font-medium group/btn mt-auto"
               onClick={(e) => {
                 e.stopPropagation();
                 router.push(`/explore/programs/plans/classes/${classPlan.id}`);
@@ -224,7 +224,7 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
             </div>
             {/* Price Tag */}
             <div className="absolute bottom-4 left-1/2 -translate-x-1/2">
-              <span className="px-4 py-2 bg-white rounded-full text-lg font-bold text-zinc-900 shadow-lg">
+              <span className="px-3 py-1.5 sm:px-4 sm:py-2 bg-white rounded-full text-sm sm:text-base lg:text-lg font-bold text-zinc-900 shadow-lg whitespace-nowrap">
                 {formatCurrency(
                   webinarPlan.price,
                   webinarPlan.priceCurrency || "INR",
@@ -234,55 +234,55 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
           </div>
 
           {/* Content */}
-          <div className="p-5 md:p-6 flex flex-col flex-1">
-            <h3 className="text-lg font-semibold text-zinc-900 mb-2 line-clamp-1 group-hover:text-zinc-700 transition-colors">
+          <div className="p-4 sm:p-5 md:p-6 flex flex-col flex-1 min-w-0">
+            <h3 className="text-base sm:text-lg font-semibold text-zinc-900 mb-2 line-clamp-2 group-hover:text-zinc-700 transition-colors min-h-[2.5rem] sm:min-h-[3rem]">
               {webinarPlan.title}
             </h3>
 
-            <p className="text-sm text-zinc-500 mb-4 line-clamp-2 flex-1">
+            <p className="text-xs sm:text-sm text-zinc-500 mb-3 sm:mb-4 line-clamp-3 min-h-[3rem] sm:min-h-[3.75rem]">
               {webinarPlan.description}
             </p>
 
             {/* Stats Row */}
-            <div className="flex flex-wrap gap-3 mb-4">
-              <div className="flex items-center gap-1.5 text-xs text-zinc-500">
-                <Clock className="w-3.5 h-3.5" />
-                <span>
+            <div className="flex flex-wrap gap-x-3 gap-y-1 mb-3 sm:mb-4">
+              <div className="flex items-center gap-1 sm:gap-1.5 text-[11px] sm:text-xs text-zinc-500">
+                <Clock className="w-3 h-3 sm:w-3.5 sm:h-3.5 flex-shrink-0" />
+                <span className="whitespace-nowrap">
                   {webinarPlan.durationInHours} hour
                   {webinarPlan.durationInHours > 1 ? "s" : ""}
                 </span>
               </div>
-              <div className="flex items-center gap-1.5 text-xs text-zinc-500">
-                <Users className="w-3.5 h-3.5" />
-                <span>{webinarPlan.maxParticipants} max</span>
+              <div className="flex items-center gap-1 sm:gap-1.5 text-[11px] sm:text-xs text-zinc-500">
+                <Users className="w-3 h-3 sm:w-3.5 sm:h-3.5 flex-shrink-0" />
+                <span className="whitespace-nowrap">{webinarPlan.maxParticipants} max</span>
               </div>
-              <div className="flex items-center gap-1.5 text-xs text-zinc-500">
-                <GraduationCap className="w-3.5 h-3.5" />
+              <div className="flex items-center gap-1 sm:gap-1.5 text-[11px] sm:text-xs text-zinc-500">
+                <GraduationCap className="w-3 h-3 sm:w-3.5 sm:h-3.5 flex-shrink-0" />
                 <span>{webinarPlan.level}</span>
               </div>
             </div>
 
             {/* Tags */}
-            <div className="flex flex-wrap gap-1.5 mb-4">
+            <div className="flex flex-wrap gap-1.5 sm:gap-2 mb-4">
               <Badge
                 variant="secondary"
-                className="text-xs bg-zinc-100 text-zinc-600"
+                className="text-[10px] sm:text-xs bg-zinc-100 text-zinc-600 h-fit"
               >
-                <Globe className="w-3 h-3 mr-1" />
+                <Globe className="w-2.5 h-2.5 sm:w-3 sm:h-3 mr-0.5 sm:mr-1" />
                 {webinarPlan.language}
               </Badge>
               <Badge
                 variant="secondary"
-                className="text-xs bg-zinc-100 text-zinc-600"
+                className="text-[10px] sm:text-xs bg-zinc-100 text-zinc-600 h-fit"
               >
-                <Video className="w-3 h-3 mr-1" />
+                <Video className="w-2.5 h-2.5 sm:w-3 sm:h-3 mr-0.5 sm:mr-1" />
                 Live
               </Badge>
             </div>
 
             {/* CTA */}
             <Button
-              className="w-full bg-zinc-900 hover:bg-zinc-800 text-white rounded-xl h-11 font-medium group/btn"
+              className="w-full bg-zinc-900 hover:bg-zinc-800 text-white rounded-xl h-10 sm:h-11 text-sm font-medium group/btn mt-auto"
               onClick={(e) => {
                 e.stopPropagation();
                 router.push(
@@ -385,7 +385,7 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: 20 }}
                 transition={{ duration: 0.3 }}
-                className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-6 md:gap-8"
+                className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5 sm:gap-6 lg:gap-8"
               >
                 {classPlans.map((classPlan, index) =>
                   renderClassCard(classPlan, index),
@@ -400,7 +400,7 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: 20 }}
                 transition={{ duration: 0.3 }}
-                className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-6 md:gap-8"
+                className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5 sm:gap-6 lg:gap-8"
               >
                 {webinarPlans.map((webinarPlan, index) =>
                   renderWebinarCard(webinarPlan, index),
