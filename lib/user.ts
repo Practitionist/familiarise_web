@@ -1,27 +1,12 @@
-// Server-side data fetching functions
+// Data fetching functions using relative URLs
+// These work in both client and server components
 import { User, ConsultantReview } from "@prisma/client";
 import { TConsultantProfile } from "@/types/consultant";
 import { TConsulteeProfile } from "@/types/consultee";
 import { TStaffProfile } from "@/types/staff";
 
-// Helper function to get the base URL for server-side API calls
-const getBaseUrl = () => {
-  // For server-side API calls in Next.js, we need to use absolute URLs
-  // First try to get the base URL from environment variables
-  if (process.env.NEXT_PUBLIC_SITE_URL) {
-    return `https://${process.env.NEXT_PUBLIC_SITE_URL}`;
-  }
-  if (process.env.VERCEL_URL) {
-    return `https://${process.env.VERCEL_URL}`;
-  }
-
-  // Default to localhost for development
-  return "http://localhost:3000";
-};
-
 export const fetchUserDetails = async (userId: string): Promise<User> => {
-  const baseUrl = getBaseUrl();
-  const response = await fetch(`${baseUrl}/api/user/${userId}`);
+  const response = await fetch(`/api/user/${userId}`);
   if (!response.ok)
     throw new Error(`Failed to fetch user details: ${response.statusText}`);
   const userData: { data: User } = await response.json();
@@ -31,10 +16,7 @@ export const fetchUserDetails = async (userId: string): Promise<User> => {
 export const fetchConsultantDetails = async (
   consultantId: string,
 ): Promise<TConsultantProfile> => {
-  const baseUrl = getBaseUrl();
-  const response = await fetch(
-    `${baseUrl}/api/user/consultants/${consultantId}`,
-  );
+  const response = await fetch(`/api/user/consultants/${consultantId}`);
   if (!response.ok)
     throw new Error(
       `Failed to fetch consultant details: ${response.statusText}`,
@@ -46,8 +28,7 @@ export const fetchConsultantDetails = async (
 export const fetchConsulteeDetails = async (
   consulteeId: string,
 ): Promise<TConsulteeProfile> => {
-  const baseUrl = getBaseUrl();
-  const response = await fetch(`${baseUrl}/api/user/consultees/${consulteeId}`);
+  const response = await fetch(`/api/user/consultees/${consulteeId}`);
   if (!response.ok)
     throw new Error(
       `Failed to fetch consultee details: ${response.statusText}`,
@@ -59,8 +40,7 @@ export const fetchConsulteeDetails = async (
 export const fetchStaffDetails = async (
   staffId: string,
 ): Promise<TStaffProfile> => {
-  const baseUrl = getBaseUrl();
-  const response = await fetch(`${baseUrl}/api/user/staff/${staffId}`);
+  const response = await fetch(`/api/user/staff/${staffId}`);
   if (!response.ok)
     throw new Error(`Failed to fetch staff details: ${response.statusText}`);
   const staffData: { data: TStaffProfile } = await response.json();
@@ -70,9 +50,8 @@ export const fetchStaffDetails = async (
 export const fetchReviews = async (
   consultantId: string,
 ): Promise<ConsultantReview[]> => {
-  const baseUrl = getBaseUrl();
   const response = await fetch(
-    `${baseUrl}/api/user/reviews?consultantId=${consultantId}`,
+    `/api/user/reviews?consultantId=${consultantId}`,
   );
   if (!response.ok)
     throw new Error(`Failed to fetch reviews: ${response.statusText}`);
