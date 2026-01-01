@@ -1315,6 +1315,11 @@ model DiscountCode {
   description   String
   discountType  DiscountType
   discountValue Float
+  isActive      Boolean      @default(true)
+  expiresAt     DateTime?
+  maxUses       Int?
+  currentUses   Int          @default(0)
+  maxDiscount   Float?
 
   Payment Payment[]
 
