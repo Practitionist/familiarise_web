@@ -2,6 +2,10 @@ import prisma from "@/lib/prisma";
 import { getServerSession } from "next-auth";
 import { NextRequest, NextResponse } from "next/server";
 import authOptions from "@/app/api/auth/[...nextauth]/options";
+import {
+  ReschedulePolicyError,
+  AppointmentNotFoundError,
+} from "@/utils/errors/RescheduleErrors";
 
 const MINIMUM_HOURS_BEFORE_RESCHEDULE = 24;
 
@@ -86,7 +90,7 @@ export async function POST(
         });
 
         if (!appointment) {
-          throw new Error("Appointment not found");
+          throw new AppointmentNotFoundError("appointment", appointmentId);
         }
 
         // Determine which slots will be affected
@@ -102,7 +106,7 @@ export async function POST(
             (s) => s.id === slotId,
           );
           if (!targetSlot) {
-            throw new Error("Specified slot not found in this appointment");
+            throw new AppointmentNotFoundError("slot", slotId);
           }
           slotsToReschedule = [targetSlot];
         }
@@ -116,9 +120,9 @@ export async function POST(
             (1000 * 60 * 60);
 
           if (hoursUntilSlot < MINIMUM_HOURS_BEFORE_RESCHEDULE) {
-            throw new Error(
-              `Cannot reschedule within ${MINIMUM_HOURS_BEFORE_RESCHEDULE} hours of the session. ` +
-                `The earliest session starts in ${Math.max(0, Math.floor(hoursUntilSlot))} hours.`,
+            throw new ReschedulePolicyError(
+              hoursUntilSlot,
+              MINIMUM_HOURS_BEFORE_RESCHEDULE,
             );
           }
         }
@@ -188,17 +192,13 @@ export async function POST(
   } catch (error) {
     console.error("Error requesting reschedule:", error);
 
-    // Return specific error messages for known error types
-    if (error instanceof Error) {
-      if (error.message.includes("Cannot reschedule within")) {
-        return NextResponse.json({ error: error.message }, { status: 400 });
-      }
-      if (
-        error.message.includes("not found") ||
-        error.message.includes("Specified slot")
-      ) {
-        return NextResponse.json({ error: error.message }, { status: 404 });
-      }
+    // Type-safe error handling using custom error classes
+    if (error instanceof ReschedulePolicyError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+
+    if (error instanceof AppointmentNotFoundError) {
+      return NextResponse.json({ error: error.message }, { status: 404 });
     }
 
     return NextResponse.json(
