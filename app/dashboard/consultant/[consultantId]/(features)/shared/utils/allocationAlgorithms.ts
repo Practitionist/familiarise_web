@@ -265,7 +265,6 @@ export class AllocationAlgorithms {
             filteredSlots,
             requiredSlots,
             options.callsPerWeek || 1,
-            options.durationInMonths || 1,
             preferences,
             options,
           );
@@ -438,6 +437,7 @@ export class AllocationAlgorithms {
 
   /**
    * FIXED: Allocate consecutive slots for consultations
+   * FIX for #215: Only return valid consecutive blocks or empty array
    */
   private static allocateConsultationSlots(
     availableSlots: TimeSlot[],
@@ -450,18 +450,16 @@ export class AllocationAlgorithms {
       return sortedSlots.slice(0, 1);
     }
 
-    // FIXED: Find consecutive slots for multi-hour consultations
+    // Find consecutive slots for multi-hour consultations
     const sortedSlots = availableSlots.sort(
       (a, b) => a.startTime.getTime() - b.startTime.getTime(),
     );
 
-    let selectedSlots: TimeSlot[] = []; // to store best found slots if exact consecutive not found fo better error handling
-
-    // FIXED: Use Math.ceil(durationHours) to handle non-integer durations (e.g., 1.5 hours)
+    // FIX #215: Use Math.ceil(durationHours) to handle non-integer durations (e.g., 1.5 hours)
     const oneHourSlotsNeeded = Math.ceil(durationHours);
     for (let i = 0; i <= sortedSlots.length - oneHourSlotsNeeded; i++) {
-      const consecutiveSlots = [];
-      const consecutive1HourSlots = []; // for storing original 1-hour slots to validate consecutiveness
+      const consecutiveSlots: TimeSlot[] = [];
+      const consecutive1HourSlots: TimeSlot[] = [];
       let isConsecutive = true;
 
       // Check if we have enough consecutive 1-hour slots starting from this position
@@ -482,12 +480,12 @@ export class AllocationAlgorithms {
 
         consecutive1HourSlots.push(currentSlot);
 
-        // breaking of 1 hour slots into 2 >> 30 min slots in order to fulfill the required slot duration and validation
+        // Breaking of 1 hour slots into 2 >> 30 min slots in order to fulfill the required slot duration and validation
         // 1 hour slots are not supported in the current system
         const originalStartTime = new Date(currentSlot.startTime);
         const originalEndTime = new Date(currentSlot.endTime);
 
-        // breakpoint of 1 hour slot into 2 30-minute slots
+        // Breakpoint of 1 hour slot into 2 30-minute slots
         const midPointTime = new Date(originalStartTime.getTime() + 30 * 60000);
 
         // 1st 30 minute slot (e.g., 10:00 - 10:30)
@@ -504,20 +502,19 @@ export class AllocationAlgorithms {
           endTime: originalEndTime,
         };
 
-        // save both 30-minute slots
+        // Save both 30-minute slots
         consecutiveSlots.push(slotOne, slotTwo);
       }
 
-      if (consecutiveSlots.length >= selectedSlots.length) {
-        selectedSlots = consecutiveSlots;
-      }
-
+      // FIX #215: Only return when we have a VALID consecutive block of the required length
       if (isConsecutive && consecutiveSlots.length === requiredSlots) {
         return consecutiveSlots;
       }
     }
 
-    return selectedSlots; // No consecutive slots found
+    // FIX #215: Return empty array if no valid consecutive block found
+    // This makes the caller's responsibility simpler - only check if array is empty
+    return [];
   }
 
   /**
@@ -571,12 +568,12 @@ export class AllocationAlgorithms {
 
   /**
    * Allocate slots for recurring events (subscriptions/classes)
+   * Note: Duration is calculated from options.startDate/endDate via countSundayWeeksInclusive
    */
   private static allocateRecurringSlots(
     availableSlots: TimeSlot[],
     totalSlots: number,
     callsPerWeek: number,
-    durationInMonths: number,
     preferences: AutoAllocationPreferences,
     options: AllocationOptions,
   ): TimeSlot[] {
