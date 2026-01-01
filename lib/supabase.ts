@@ -378,6 +378,128 @@ const listAppointmentDocuments = async (
   }
 };
 
+// Support ticket attachment types
+export interface SupportAttachmentUploadOptions {
+  ticketId: string;
+  file: File;
+}
+
+/**
+ * Upload support ticket attachment to Supabase storage
+ */
+const uploadSupportTicketAttachment = async (
+  options: SupportAttachmentUploadOptions
+): Promise<DocumentUploadResult> => {
+  try {
+    const { ticketId, file } = options;
+
+    // Validate file
+    if (!file) {
+      return { success: false, error: "No file provided" };
+    }
+
+    // Check file size (max 10MB)
+    const maxSize = 10 * 1024 * 1024; // 10MB
+    if (file.size > maxSize) {
+      return { success: false, error: "File size exceeds 10MB limit" };
+    }
+
+    // Validate file type (common document types + images)
+    const allowedTypes = [
+      "application/pdf",
+      "application/msword",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "image/jpeg",
+      "image/png",
+      "image/gif",
+      "image/webp",
+      "text/plain",
+    ];
+
+    if (!allowedTypes.includes(file.type)) {
+      return { success: false, error: "File type not supported" };
+    }
+
+    // Ensure the support-attachments bucket exists
+    const bucketReady = await ensureBucketExists("support-attachments");
+    if (!bucketReady) {
+      return {
+        success: false,
+        error:
+          "Support attachments storage bucket not found. Please create a 'support-attachments' bucket in your Supabase dashboard with public access enabled.",
+      };
+    }
+
+    // Generate unique filename
+    const timestamp = Date.now();
+    const safeFileName = file.name.replace(/[^a-zA-Z0-9.-]/g, "_");
+    const fileName = `${timestamp}_${safeFileName}`;
+
+    // Create folder structure: support-tickets/{ticketId}/
+    const folderPath = `support-tickets/${ticketId}`;
+    const storagePath = `${folderPath}/${fileName}`;
+
+    // Ensure folder structure exists
+    await ensureFolderExists("support-attachments", folderPath);
+
+    // Upload file to Supabase storage
+    const { data: _uploadData, error: uploadError } = await supabase.storage
+      .from("support-attachments")
+      .upload(storagePath, file, {
+        cacheControl: "3600",
+        upsert: false,
+      });
+
+    if (uploadError) {
+      console.error("Supabase upload error:", uploadError);
+      return { success: false, error: uploadError.message };
+    }
+
+    // Get public URL
+    const { data: urlData } = supabase.storage
+      .from("support-attachments")
+      .getPublicUrl(storagePath);
+
+    return {
+      success: true,
+      fileUrl: urlData.publicUrl,
+      storagePath,
+      fileName,
+      fileSize: file.size,
+      mimeType: file.type,
+    };
+  } catch (error) {
+    console.error("Error uploading support attachment:", error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Upload failed",
+    };
+  }
+};
+
+/**
+ * Delete support ticket attachment from Supabase storage
+ */
+const deleteSupportTicketAttachment = async (
+  storagePath: string
+): Promise<boolean> => {
+  try {
+    const { error } = await supabase.storage
+      .from("support-attachments")
+      .remove([storagePath]);
+
+    if (error) {
+      console.error("Error deleting support attachment:", error);
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    console.error("Error deleting support attachment:", error);
+    return false;
+  }
+};
+
 /**
  * Get manual bucket creation instructions
  */
@@ -406,6 +528,8 @@ export {
   uploadAppointmentDocument,
   deleteAppointmentDocument,
   listAppointmentDocuments,
+  uploadSupportTicketAttachment,
+  deleteSupportTicketAttachment,
   ensureBucketExists,
   ensureFolderExists,
   getManualBucketInstructions,

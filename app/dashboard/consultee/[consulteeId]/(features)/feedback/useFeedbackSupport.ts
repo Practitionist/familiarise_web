@@ -3,6 +3,7 @@
 import {
   Feedback,
   SupportPriority,
+  SupportIssueType,
   SupportTicket,
   SupportResponse as PrismaSupportResponse,
   UserRole,
@@ -21,6 +22,7 @@ interface SupportTicketFormData {
   title: string;
   description: string;
   priority: SupportPriority;
+  issueType?: SupportIssueType;
   category?: string;
 }
 
@@ -186,6 +188,7 @@ export function useFeedbackSupport() {
         title: "",
         description: "",
         priority: SupportPriority.MEDIUM,
+        issueType: undefined,
       });
       loadTickets();
     } catch (error: any) {
