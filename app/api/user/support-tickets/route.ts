@@ -103,54 +103,46 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Validate entity links - ensure they belong to this user
-    if (body.consultationId) {
-      const consultation = await prisma.consultation.findFirst({
-        where: {
-          id: body.consultationId,
-          requestedBy: {
-            userId: session.user.id,
-          },
-        },
-      });
-      if (!consultation) {
-        return NextResponse.json(
-          { error: "Invalid consultation ID" },
-          { status: 400 }
-        );
-      }
-    }
+    // Validate entity links in parallel - ensure they belong to this user
+    const validations = await Promise.all([
+      body.consultationId
+        ? prisma.consultation
+            .findFirst({
+              where: {
+                id: body.consultationId,
+                requestedBy: { userId: session.user.id },
+              },
+            })
+            .then((c) => ({ type: "consultation", valid: !!c }))
+        : Promise.resolve({ type: "consultation", valid: true }),
+      body.subscriptionId
+        ? prisma.subscription
+            .findFirst({
+              where: {
+                id: body.subscriptionId,
+                requestedBy: { userId: session.user.id },
+              },
+            })
+            .then((s) => ({ type: "subscription", valid: !!s }))
+        : Promise.resolve({ type: "subscription", valid: true }),
+      body.paymentId
+        ? prisma.payment
+            .findFirst({
+              where: {
+                id: body.paymentId,
+                userId: session.user.id,
+              },
+            })
+            .then((p) => ({ type: "payment", valid: !!p }))
+        : Promise.resolve({ type: "payment", valid: true }),
+    ]);
 
-    if (body.subscriptionId) {
-      const subscription = await prisma.subscription.findFirst({
-        where: {
-          id: body.subscriptionId,
-          requestedBy: {
-            userId: session.user.id,
-          },
-        },
-      });
-      if (!subscription) {
-        return NextResponse.json(
-          { error: "Invalid subscription ID" },
-          { status: 400 }
-        );
-      }
-    }
-
-    if (body.paymentId) {
-      const payment = await prisma.payment.findFirst({
-        where: {
-          id: body.paymentId,
-          userId: session.user.id,
-        },
-      });
-      if (!payment) {
-        return NextResponse.json(
-          { error: "Invalid payment ID" },
-          { status: 400 }
-        );
-      }
+    const invalidEntity = validations.find((v) => !v.valid);
+    if (invalidEntity) {
+      return NextResponse.json(
+        { error: `Invalid ${invalidEntity.type} ID` },
+        { status: 400 }
+      );
     }
 
     const ticket = await prisma.supportTicket.create({

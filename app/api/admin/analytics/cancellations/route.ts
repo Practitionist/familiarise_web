@@ -194,17 +194,24 @@ export async function GET(req: NextRequest) {
       _count: true,
     });
 
-    // Recent cancellations (last 7 days)
+    // Recent cancellations - single loop for both 7 and 30 day counts
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-    const last7Days = allCancellations.filter(
-      (c) => c.cancelledAt && new Date(c.cancelledAt) >= sevenDaysAgo
-    ).length;
-
-    // Last 30 days
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-    const last30Days = allCancellations.filter(
-      (c) => c.cancelledAt && new Date(c.cancelledAt) >= thirtyDaysAgo
-    ).length;
+
+    let last7Days = 0;
+    let last30Days = 0;
+
+    for (const c of allCancellations) {
+      if (c.cancelledAt) {
+        const cancelDate = new Date(c.cancelledAt);
+        if (cancelDate >= thirtyDaysAgo) {
+          last30Days++;
+          if (cancelDate >= sevenDaysAgo) {
+            last7Days++;
+          }
+        }
+      }
+    }
 
     return NextResponse.json({
       summary: {

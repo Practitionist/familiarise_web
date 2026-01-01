@@ -76,93 +76,88 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: "Ticket not found" }, { status: 404 });
     }
 
-    // Fetch linked entities if they exist
-    let linkedConsultation = null;
-    let linkedSubscription = null;
-    let linkedPayment = null;
-    let linkedRefund = null;
-
-    if (ticket.consultationId) {
-      linkedConsultation = await prisma.consultation.findUnique({
-        where: { id: ticket.consultationId },
-        include: {
-          consultationPlan: {
-            select: {
-              title: true,
-              price: true,
-              priceCurrency: true,
-              consultantProfile: {
-                include: {
-                  user: { select: { name: true, email: true } },
+    // Fetch linked entities in parallel for better performance
+    const [linkedConsultation, linkedSubscription, linkedPayment, linkedRefund] =
+      await Promise.all([
+        ticket.consultationId
+          ? prisma.consultation.findUnique({
+              where: { id: ticket.consultationId },
+              include: {
+                consultationPlan: {
+                  select: {
+                    title: true,
+                    price: true,
+                    priceCurrency: true,
+                    consultantProfile: {
+                      include: {
+                        user: { select: { name: true, email: true } },
+                      },
+                    },
+                  },
+                },
+                appointment: {
+                  select: {
+                    id: true,
+                    slotsOfAppointment: {
+                      select: {
+                        startsAt: true,
+                      },
+                      orderBy: {
+                        startsAt: "asc",
+                      },
+                      take: 1,
+                    },
+                  },
                 },
               },
-            },
-          },
-          appointment: {
-            select: {
-              id: true,
-              slotsOfAppointment: {
-                select: {
-                  startsAt: true,
-                },
-                orderBy: {
-                  startsAt: "asc",
-                },
-                take: 1,
-              },
-            },
-          },
-        },
-      });
-    }
-
-    if (ticket.subscriptionId) {
-      linkedSubscription = await prisma.subscription.findUnique({
-        where: { id: ticket.subscriptionId },
-        include: {
-          subscriptionPlan: {
-            select: {
-              title: true,
-              price: true,
-              priceCurrency: true,
-              consultantProfile: {
-                include: {
-                  user: { select: { name: true, email: true } },
+            })
+          : Promise.resolve(null),
+        ticket.subscriptionId
+          ? prisma.subscription.findUnique({
+              where: { id: ticket.subscriptionId },
+              include: {
+                subscriptionPlan: {
+                  select: {
+                    title: true,
+                    price: true,
+                    priceCurrency: true,
+                    consultantProfile: {
+                      include: {
+                        user: { select: { name: true, email: true } },
+                      },
+                    },
+                  },
                 },
               },
-            },
-          },
-        },
-      });
-    }
-
-    if (ticket.paymentId) {
-      linkedPayment = await prisma.payment.findUnique({
-        where: { id: ticket.paymentId },
-        select: {
-          id: true,
-          amount: true,
-          currency: true,
-          paymentStatus: true,
-          paymentGateway: true,
-          createdAt: true,
-        },
-      });
-    }
-
-    if (ticket.refundId) {
-      linkedRefund = await prisma.refund.findUnique({
-        where: { id: ticket.refundId },
-        select: {
-          id: true,
-          amount: true,
-          currency: true,
-          status: true,
-          reason: true,
-          createdAt: true,
-        },
-      });
-    }
+            })
+          : Promise.resolve(null),
+        ticket.paymentId
+          ? prisma.payment.findUnique({
+              where: { id: ticket.paymentId },
+              select: {
+                id: true,
+                amount: true,
+                currency: true,
+                paymentStatus: true,
+                paymentGateway: true,
+                createdAt: true,
+              },
+            })
+          : Promise.resolve(null),
+        ticket.refundId
+          ? prisma.refund.findUnique({
+              where: { id: ticket.refundId },
+              select: {
+                id: true,
+                amount: true,
+                currency: true,
+                status: true,
+                reason: true,
+                createdAt: true,
+              },
+            })
+          : Promise.resolve(null),
+      ]);
 
     return NextResponse.json({
       ...ticket,

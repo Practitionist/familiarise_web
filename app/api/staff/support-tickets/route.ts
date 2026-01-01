@@ -91,11 +91,11 @@ export async function GET(req: NextRequest) {
               image: true,
             },
           },
-          responses: {
-            select: { id: true },
-          },
-          attachments: {
-            select: { id: true },
+          _count: {
+            select: {
+              responses: true,
+              attachments: true,
+            },
           },
         },
         orderBy: [
@@ -119,8 +119,8 @@ export async function GET(req: NextRequest) {
       issueType: ticket.issueType,
       user: ticket.user,
       assignedToId: ticket.assignedToId,
-      responseCount: ticket.responses.length,
-      attachmentCount: ticket.attachments.length,
+      responseCount: ticket._count.responses,
+      attachmentCount: ticket._count.attachments,
       // Entity links
       consultationId: ticket.consultationId,
       subscriptionId: ticket.subscriptionId,
