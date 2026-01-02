@@ -34,18 +34,15 @@ import {
   Sparkles,
   Link2,
 } from "lucide-react";
-import { ISSUE_TYPE_LABELS, ISSUE_TYPE_CATEGORIES } from "@/utils/supportTicketUrl";
+import {
+  ISSUE_TYPE_LABELS,
+  ISSUE_TYPE_CATEGORIES,
+  PRIORITY_OPTIONS,
+} from "@/utils/supportTicketUrl";
 
 interface FeedbackSupportTabProps {
   consulteeId: string;
 }
-
-const PRIORITY_OPTIONS: { value: SupportPriority; label: string; color: string }[] = [
-  { value: "LOW", label: "Low", color: "text-green-600" },
-  { value: "MEDIUM", label: "Medium", color: "text-amber-600" },
-  { value: "HIGH", label: "High", color: "text-orange-600" },
-  { value: "URGENT", label: "Urgent", color: "text-red-600" },
-];
 
 export default function FeedbackSupportTab({
   // eslint-disable-next-line @typescript-eslint/no-unused-vars

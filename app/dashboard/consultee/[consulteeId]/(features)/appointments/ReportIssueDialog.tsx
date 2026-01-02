@@ -33,6 +33,7 @@ import {
 import {
   getFilteredIssueTypes,
   ISSUE_TYPE_LABELS,
+  PRIORITY_OPTIONS,
   type AppointmentStatus,
 } from "@/utils/supportTicketUrl";
 import { format } from "date-fns";
@@ -47,13 +48,6 @@ interface ReportIssueDialogProps {
   scheduledAt?: string;
   onSuccess?: () => void;
 }
-
-const PRIORITY_OPTIONS: { value: SupportPriority; label: string; color: string }[] = [
-  { value: "LOW", label: "Low", color: "text-green-600" },
-  { value: "MEDIUM", label: "Medium", color: "text-amber-600" },
-  { value: "HIGH", label: "High", color: "text-orange-600" },
-  { value: "URGENT", label: "Urgent", color: "text-red-600" },
-];
 
 export function ReportIssueDialog({
   open,

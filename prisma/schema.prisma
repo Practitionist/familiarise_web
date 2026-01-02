@@ -204,16 +204,28 @@ enum CancellationReason {
 
 // Issue types for support tickets (Swiggy-style categorization)
 enum SupportIssueType {
-  // Booking Issues
+  // Session Issues
   CONSULTANT_NO_SHOW
+  CONSULTANT_LATE
+  SESSION_ENDED_EARLY
   SESSION_QUALITY_POOR
+  COMMUNICATION_ISSUE
   TECHNICAL_ISSUES
   WRONG_CONSULTANT
+
+  // Access & Scheduling
+  ACCESS_ISSUE
+  TIMEZONE_CONFUSION
+  RESCHEDULING_HELP
 
   // Payment Issues
   PAYMENT_FAILED
   CHARGED_TWICE
   REFUND_REQUEST
+  BILLING_QUESTION
+
+  // Documents
+  DOCUMENT_ISSUE
 
   // Cancellation
   WANT_TO_CANCEL

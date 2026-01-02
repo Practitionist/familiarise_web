@@ -21,7 +21,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { motion } from "framer-motion";
-import { Clock, X, Video, Calendar, Loader2, CalendarClock, CalendarRange, AlertCircle, CheckSquare, Square, Check } from "lucide-react";
+import { Clock, X, Video, Calendar, Loader2, CalendarClock, CalendarRange, AlertCircle, CheckSquare, Check } from "lucide-react";
 import React from "react";
 import { DocumentUpload } from "./DocumentUpload";
 import { cn } from "@/utils/tailwind";
@@ -498,7 +498,21 @@ export function EventCard({
                 </AccordionContent>
               </AccordionItem>
             </Accordion>
-          ) : type !== "Consultation" && type !== "Webinar" ? (
+          ) : type === "Consultation" && rawSlots.length > 0 ? (
+            <div className="bg-zinc-50 rounded-lg p-3 border border-zinc-100">
+              <div className="flex items-center gap-2 text-xs text-zinc-500 mb-1.5">
+                <Calendar className="h-3.5 w-3.5" />
+                <span>Scheduled Time</span>
+              </div>
+              <div className="text-sm text-zinc-700 font-medium">
+                {formatSlotDate(rawSlots[0].startsAt)}
+              </div>
+              <div className="text-sm text-zinc-500">
+                {formatSlotTime(rawSlots[0].startsAt)} -{" "}
+                {formatSlotTime(rawSlots[0].endsAt)}
+              </div>
+            </div>
+          ) : type !== "Webinar" ? (
             <div className="bg-zinc-50 rounded-lg p-3 border border-zinc-100">
               <div className="flex items-center gap-2 text-xs text-zinc-500 mb-1">
                 <Clock className="h-3.5 w-3.5" />
@@ -544,21 +558,18 @@ export function EventCard({
               Reschedule
             </Button>
           )}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleCancelClick}
-            disabled={isLoading || isInactiveStatus}
-            className={cn(
-              "flex-1 h-8 text-xs font-medium",
-              isInactiveStatus
-                ? "text-zinc-400 bg-zinc-50 border-zinc-200 cursor-not-allowed"
-                : "text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200 hover:border-red-300",
-            )}
-          >
-            <X className="h-3.5 w-3.5 mr-1.5" />
-            Cancel
-          </Button>
+          {!isInactiveStatus && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleCancelClick}
+              disabled={isLoading}
+              className="flex-1 h-8 text-xs font-medium text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200 hover:border-red-300"
+            >
+              <X className="h-3.5 w-3.5 mr-1.5" />
+              Cancel
+            </Button>
+          )}
         </div>
 
         {/* Report Issue Button - Always visible for getting help with appointments */}

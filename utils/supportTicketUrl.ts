@@ -1,4 +1,4 @@
-import { SupportIssueType } from "@prisma/client";
+import { SupportIssueType, SupportPriority } from "@prisma/client";
 
 /**
  * Support ticket URL utility for contextual ticket creation
@@ -8,18 +8,38 @@ import { SupportIssueType } from "@prisma/client";
 export type AppointmentStatus = "COMPLETED" | "UPCOMING";
 
 /**
+ * Priority options for support tickets
+ */
+export const PRIORITY_OPTIONS: {
+  value: SupportPriority;
+  label: string;
+  color: string;
+}[] = [
+  { value: "LOW", label: "Low", color: "text-green-600" },
+  { value: "MEDIUM", label: "Medium", color: "text-amber-600" },
+  { value: "HIGH", label: "High", color: "text-orange-600" },
+  { value: "URGENT", label: "Urgent", color: "text-red-600" },
+];
+
+/**
  * Issue types filtered by context
  * Based on GitHub Issue #298 requirements
  */
 export const CONTEXTUAL_ISSUE_TYPES = {
   COMPLETED: [
     SupportIssueType.CONSULTANT_NO_SHOW,
+    SupportIssueType.CONSULTANT_LATE,
+    SupportIssueType.SESSION_ENDED_EARLY,
     SupportIssueType.SESSION_QUALITY_POOR,
+    SupportIssueType.COMMUNICATION_ISSUE,
     SupportIssueType.TECHNICAL_ISSUES,
     SupportIssueType.OTHER,
   ],
   UPCOMING: [
     SupportIssueType.WANT_TO_CANCEL,
+    SupportIssueType.RESCHEDULING_HELP,
+    SupportIssueType.ACCESS_ISSUE,
+    SupportIssueType.TIMEZONE_CONFUSION,
     SupportIssueType.TECHNICAL_ISSUES,
     SupportIssueType.OTHER,
   ],
@@ -27,6 +47,7 @@ export const CONTEXTUAL_ISSUE_TYPES = {
     SupportIssueType.CHARGED_TWICE,
     SupportIssueType.REFUND_REQUEST,
     SupportIssueType.PAYMENT_FAILED,
+    SupportIssueType.BILLING_QUESTION,
     SupportIssueType.OTHER,
   ],
 } as const;
@@ -109,16 +130,28 @@ export function getFilteredIssueTypes(
  * Human-readable labels for issue types
  */
 export const ISSUE_TYPE_LABELS: Record<SupportIssueType, string> = {
-  // Booking Issues
+  // Session Issues
   [SupportIssueType.CONSULTANT_NO_SHOW]: "Consultant didn't show up",
+  [SupportIssueType.CONSULTANT_LATE]: "Consultant was late",
+  [SupportIssueType.SESSION_ENDED_EARLY]: "Session ended earlier than expected",
   [SupportIssueType.SESSION_QUALITY_POOR]: "Poor session quality",
+  [SupportIssueType.COMMUNICATION_ISSUE]: "Audio/video problems during call",
   [SupportIssueType.TECHNICAL_ISSUES]: "Technical issues",
   [SupportIssueType.WRONG_CONSULTANT]: "Wrong consultant assigned",
+
+  // Access & Scheduling
+  [SupportIssueType.ACCESS_ISSUE]: "Cannot join or access session",
+  [SupportIssueType.TIMEZONE_CONFUSION]: "Wrong time zone displayed",
+  [SupportIssueType.RESCHEDULING_HELP]: "Need help rescheduling",
 
   // Payment Issues
   [SupportIssueType.PAYMENT_FAILED]: "Payment failed",
   [SupportIssueType.CHARGED_TWICE]: "Charged twice",
   [SupportIssueType.REFUND_REQUEST]: "Refund request",
+  [SupportIssueType.BILLING_QUESTION]: "Invoice or receipt inquiry",
+
+  // Documents
+  [SupportIssueType.DOCUMENT_ISSUE]: "Materials not received or incorrect",
 
   // Cancellation
   [SupportIssueType.WANT_TO_CANCEL]: "Want to cancel booking",
@@ -134,17 +167,27 @@ export const ISSUE_TYPE_LABELS: Record<SupportIssueType, string> = {
  * Issue type categories for grouped display
  */
 export const ISSUE_TYPE_CATEGORIES = {
-  "Booking Issues": [
+  "Session Issues": [
     SupportIssueType.CONSULTANT_NO_SHOW,
+    SupportIssueType.CONSULTANT_LATE,
+    SupportIssueType.SESSION_ENDED_EARLY,
     SupportIssueType.SESSION_QUALITY_POOR,
+    SupportIssueType.COMMUNICATION_ISSUE,
     SupportIssueType.TECHNICAL_ISSUES,
     SupportIssueType.WRONG_CONSULTANT,
+  ],
+  "Access & Scheduling": [
+    SupportIssueType.ACCESS_ISSUE,
+    SupportIssueType.TIMEZONE_CONFUSION,
+    SupportIssueType.RESCHEDULING_HELP,
   ],
   "Payment Issues": [
     SupportIssueType.PAYMENT_FAILED,
     SupportIssueType.CHARGED_TWICE,
     SupportIssueType.REFUND_REQUEST,
+    SupportIssueType.BILLING_QUESTION,
   ],
+  Documents: [SupportIssueType.DOCUMENT_ISSUE],
   Cancellation: [
     SupportIssueType.WANT_TO_CANCEL,
     SupportIssueType.CANCELLATION_ISSUE,
