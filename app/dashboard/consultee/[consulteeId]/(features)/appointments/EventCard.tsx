@@ -21,7 +21,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { motion } from "framer-motion";
-import { Clock, X, Video, Calendar, Loader2, CalendarClock, CalendarRange } from "lucide-react";
+import { Clock, X, Video, Calendar, Loader2, CalendarClock, CalendarRange, AlertCircle } from "lucide-react";
 import React from "react";
 import { DocumentUpload } from "./DocumentUpload";
 import { cn } from "@/utils/tailwind";
@@ -29,6 +29,8 @@ import { format } from "date-fns";
 import { useRouter } from "next/navigation";
 import { useStreamVideoClient } from "@stream-io/video-react-sdk";
 import { getOrCreateAppointmentMeeting } from "@/lib/meeting";
+import { ReportIssueDialog } from "./ReportIssueDialog";
+import type { AppointmentStatus } from "@/utils/supportTicketUrl";
 import type { TAppointment, TSlotOfAppointment } from "@/types/appointment";
 import type { SlotOfAppointment } from "@prisma/client";
 
@@ -119,6 +121,22 @@ export function EventCard({
   const [showRescheduleDialog, setShowRescheduleDialog] = React.useState(false);
   const [rescheduleType, setRescheduleType] = React.useState<"individual" | "entire">("entire");
   const [selectedSlotId, setSelectedSlotId] = React.useState<string | null>(null);
+
+  // Report Issue dialog state
+  const [showReportDialog, setShowReportDialog] = React.useState(false);
+
+  // Get appointment status and type for issue filtering
+  const appointmentStatus: AppointmentStatus =
+    status?.toLowerCase() === "completed" ? "COMPLETED" : "UPCOMING";
+  
+  const appointmentType: "CONSULTATION" | "SUBSCRIPTION" =
+    type === "Subscription" ? "SUBSCRIPTION" : "CONSULTATION";
+
+  // Get the first slot's scheduled time for context
+  const scheduledAt =
+    rawSlots && rawSlots.length > 0
+      ? new Date(rawSlots[0].startsAt).toISOString()
+      : undefined;
 
   const showSessionDetails =
     (type === "Subscription" || type === "Class") &&
@@ -541,6 +559,18 @@ export function EventCard({
           </Button>
         </div>
 
+        {/* Report Issue Button - Always visible for getting help with appointments */}
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setShowReportDialog(true)}
+          disabled={!appointmentId}
+          className="w-full mt-2 h-8 text-xs font-medium text-amber-600 hover:text-amber-700 hover:bg-amber-50 border-amber-200 hover:border-amber-300"
+        >
+          <AlertCircle className="h-3.5 w-3.5 mr-1.5" />
+          Report Issue
+        </Button>
+
         {/* Join Button - Always render for consistency */}
         <Button
           onClick={() => handleJoinSession()}
@@ -747,6 +777,22 @@ export function EventCard({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Report Issue Dialog for appointment-linked issues */}
+      {appointmentId && (
+        <ReportIssueDialog
+          open={showReportDialog}
+          onOpenChange={setShowReportDialog}
+          appointmentId={appointmentId}
+          appointmentType={appointmentType}
+          appointmentStatus={appointmentStatus}
+          consultantName={consultant}
+          scheduledAt={scheduledAt}
+          onSuccess={() => {
+            setShowReportDialog(false);
+          }}
+        />
+      )}
     </motion.div>
   );
 }

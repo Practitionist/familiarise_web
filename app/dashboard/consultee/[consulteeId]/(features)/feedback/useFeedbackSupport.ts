@@ -37,7 +37,7 @@ interface EnrichedSupportTicketResponse extends PrismaSupportResponse {
   } | null;
 }
 
-interface SupportTicketWithResponses extends SupportTicket {
+export interface SupportTicketWithResponses extends SupportTicket {
   responses: EnrichedSupportTicketResponse[];
 }
 
@@ -83,13 +83,14 @@ export function useFeedbackSupport() {
       }
       const data = await response.json();
       setFeedbacks(data);
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Failed to load feedbacks:", error);
       toast({
         title: "Error",
         description:
-          error.message ||
-          "Unable to load your feedback history. Please try refreshing the page.",
+          error instanceof Error
+            ? error.message
+            : "Unable to load your feedback history. Please try refreshing the page.",
         variant: "destructive",
       });
     } finally {
@@ -109,13 +110,14 @@ export function useFeedbackSupport() {
       }
       const data = await response.json();
       setTickets(data);
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Failed to load support tickets:", error);
       toast({
         title: "Error",
         description:
-          error.message ||
-          "Unable to load your support tickets. Please try refreshing the page.",
+          error instanceof Error
+            ? error.message
+            : "Unable to load your support tickets. Please try refreshing the page.",
         variant: "destructive",
       });
     } finally {
@@ -149,13 +151,14 @@ export function useFeedbackSupport() {
 
       setFeedbackForm({ title: "", description: "" });
       loadFeedbacks();
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Failed to submit feedback:", error);
       toast({
         title: "Error",
         description:
-          error.message ||
-          "Unable to submit your feedback. Please check your input and try again.",
+          error instanceof Error
+            ? error.message
+            : "Unable to submit your feedback. Please check your input and try again.",
         variant: "destructive",
       });
     } finally {
@@ -166,6 +169,7 @@ export function useFeedbackSupport() {
   const handleTicketSubmit = async () => {
     try {
       setIsLoading(true);
+
       const response = await fetch("/api/user/support-tickets", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -190,14 +194,16 @@ export function useFeedbackSupport() {
         priority: SupportPriority.MEDIUM,
         issueType: undefined,
       });
+
       loadTickets();
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Failed to create support ticket:", error);
       toast({
         title: "Error",
         description:
-          error.message ||
-          "Unable to create your support ticket. Please check your input and try again.",
+          error instanceof Error
+            ? error.message
+            : "Unable to create your support ticket. Please check your input and try again.",
         variant: "destructive",
       });
     } finally {
@@ -229,13 +235,14 @@ export function useFeedbackSupport() {
 
       setResponseForm({ message: "" });
       loadTickets(); // Reload tickets to show the new response
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Failed to submit response:", error);
       toast({
         title: "Error",
         description:
-          error.message ||
-          "Unable to submit your response. Please check your message and try again.",
+          error instanceof Error
+            ? error.message
+            : "Unable to submit your response. Please check your message and try again.",
         variant: "destructive",
       });
     } finally {
