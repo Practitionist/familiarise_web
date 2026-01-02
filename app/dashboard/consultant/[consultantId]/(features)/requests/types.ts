@@ -28,6 +28,7 @@ export interface AppointmentSlot {
   id: string;
   startsAt: string;
   endsAt: string;
+  isTentative?: boolean; // Indicates if slot needs rescheduling
 }
 
 export interface AppointmentInfo {
