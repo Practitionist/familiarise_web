@@ -125,7 +125,7 @@ export function ReportIssueDialog({
 
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.message || "Failed to create support ticket");
+        throw new Error(errorData.error || errorData.message || "Failed to create support ticket");
       }
 
       toast({
@@ -206,11 +206,15 @@ export function ReportIssueDialog({
                 <SelectValue placeholder="Select issue type" />
               </SelectTrigger>
               <SelectContent>
-                {filteredIssueTypes.map((type) => (
-                  <SelectItem key={type} value={type}>
-                    {ISSUE_TYPE_LABELS[type]}
-                  </SelectItem>
-                ))}
+                {filteredIssueTypes.map((type) => {
+                  const label = ISSUE_TYPE_LABELS[type];
+                  if (!label) return null;
+                  return (
+                    <SelectItem key={type} value={type}>
+                      {label}
+                    </SelectItem>
+                  );
+                })}
               </SelectContent>
             </Select>
           </div>
