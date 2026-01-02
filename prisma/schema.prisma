@@ -93,21 +93,37 @@ model SupportTicket {
   priority    SupportPriority     @default(MEDIUM)
   status      SupportTicketStatus @default(OPEN)
   category    String?
+  issueType   SupportIssueType?
 
   user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   userId String
 
-  responses SupportResponse[]
+  responses   SupportResponse[]
+  attachments SupportTicketAttachment[]
+
+  // Entity links for Swiggy-style context (link ticket to booking/payment)
+  consultationId String?
+  subscriptionId String?
+  paymentId      String?
+  refundId       String? // If refund was initiated from this ticket
+
+  // Staff assignment
+  assignedToId String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([userId])
+  @@index([status])
+  @@index([assignedToId])
+  @@index([consultationId])
+  @@index([paymentId])
 }
 
 model SupportResponse {
-  id      String @id @default(uuid())
-  message String @db.Text
+  id         String  @id @default(uuid())
+  message    String  @db.Text
+  isInternal Boolean @default(false) // Internal notes not visible to user
 
   supportTicket   SupportTicket @relation(fields: [supportTicketId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   supportTicketId String
@@ -119,6 +135,23 @@ model SupportResponse {
   updatedAt DateTime @updatedAt
 
   @@index([supportTicketId])
+}
+
+model SupportTicketAttachment {
+  id           String @id @default(uuid())
+  fileName     String
+  originalName String
+  fileSize     Int
+  mimeType     String
+  fileUrl      String
+  storagePath  String
+
+  ticket   SupportTicket @relation(fields: [ticketId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  ticketId String
+
+  uploadedAt DateTime @default(now())
+
+  @@index([ticketId])
 }
 
 enum FeedbackStatus {
@@ -142,6 +175,54 @@ enum SupportPriority {
   MEDIUM
   HIGH
   URGENT
+}
+
+// Cancellation reasons for Consultations and Subscriptions
+enum CancellationReason {
+  // User-initiated
+  SCHEDULE_CONFLICT
+  FOUND_ALTERNATIVE
+  FINANCIAL_REASONS
+  PERSONAL_EMERGENCY
+  NO_LONGER_NEEDED
+
+  // Consultant-initiated
+  CONSULTANT_UNAVAILABLE
+  CONSULTANT_EMERGENCY
+
+  // System-initiated
+  PAYMENT_FAILED
+  EXPIRED
+
+  // Issue-related
+  CONSULTANT_ISSUE
+  TECHNICAL_ISSUE
+
+  // Other
+  OTHER
+}
+
+// Issue types for support tickets (Swiggy-style categorization)
+enum SupportIssueType {
+  // Booking Issues
+  CONSULTANT_NO_SHOW
+  SESSION_QUALITY_POOR
+  TECHNICAL_ISSUES
+  WRONG_CONSULTANT
+
+  // Payment Issues
+  PAYMENT_FAILED
+  CHARGED_TWICE
+  REFUND_REQUEST
+
+  // Cancellation
+  WANT_TO_CANCEL
+  CANCELLATION_ISSUE
+
+  // General
+  ACCOUNT_ISSUE
+  GENERAL_INQUIRY
+  OTHER
 }
 
 model CookiePreference {
@@ -211,24 +292,24 @@ model VerificationToken {
 //////////////////////////////////////////////////// USER PROFILES and SLOTTING MECHANISM ////////////////////////////////////////////////////
 
 model ConsultantProfile {
-  id             String  @id @default(uuid())
-  description    String? @db.Text
-  experience     Float?
-  rating         Float   @default(0)
+  id          String  @id @default(uuid())
+  description String? @db.Text
+  experience  Float?
+  rating      Float   @default(0)
 
   // New fields for enhanced consultant profile
-  headline              String?       @db.VarChar(120) // Professional headline, max 120 chars
-  websiteUrl            String?
-  twitterUrl            String?
-  githubUrl             String?
-  videoIntroUrl         String?
-  languages             String[]      @default([])
-  toolsAndTechnologies  String[]      @default([])
-  mentoringStyle        String?       @db.Text
-  sessionTypes          SessionType[] @default([])
-  profileCompletionPercentage Int     @default(0)
-  isVerified            Boolean       @default(false)
-  totalMenteesHelped    Int           @default(0)
+  headline                    String?       @db.VarChar(120) // Professional headline, max 120 chars
+  websiteUrl                  String?
+  twitterUrl                  String?
+  githubUrl                   String?
+  videoIntroUrl               String?
+  languages                   String[]      @default([])
+  toolsAndTechnologies        String[]      @default([])
+  mentoringStyle              String?       @db.Text
+  sessionTypes                SessionType[] @default([])
+  profileCompletionPercentage Int           @default(0)
+  isVerified                  Boolean       @default(false)
+  totalMenteesHelped          Int           @default(0)
 
   // Deprecated fields - to be removed in Phase 6
   // @deprecated Use Certification and Education models instead
@@ -390,9 +471,9 @@ model StaffProfile {
   // New fields for enhanced staff profile
   employeeId   String?
   hireDate     DateTime?
-  reportsTo    String?   // Manager's user ID
+  reportsTo    String? // Manager's user ID
   skills       String[]  @default([])
-  workSchedule String?   // e.g., "9 AM - 5 PM", "Shift A", etc.
+  workSchedule String? // e.g., "9 AM - 5 PM", "Shift A", etc.
 
   user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   userId String @unique
@@ -408,7 +489,7 @@ model StaffProfile {
 model AdminProfile {
   id              String     @id @default(uuid())
   adminLevel      AdminLevel
-  accessScope     Json?      // Granular permissions JSON
+  accessScope     Json? // Granular permissions JSON
   assignedRegions String[]   @default([]) // Geographic or domain regions
   notes           String?    @db.Text
 
@@ -561,6 +642,12 @@ model Consultation {
   feedbackFromConsultant String?
   rating                 Float?
 
+  // Cancellation tracking
+  cancellationReason CancellationReason?
+  cancellationNotes  String?             @db.Text
+  cancelledAt        DateTime?           @db.Timestamptz()
+  cancelledBy        String? // userId who cancelled
+
   appointment Appointment?
 
   createdAt DateTime @default(now()) @db.Timestamptz()
@@ -576,7 +663,7 @@ model SubscriptionPlan {
   priceCurrency          String           @default("INR")
   callsPerWeek           Int              @default(1)
   sessionDurationInHours Float            @default(1.0) // Duration of each session in hours
-  totalSessions          Int              @default(4)   // callsPerWeek × durationInMonths × 4
+  totalSessions          Int              @default(4) // callsPerWeek × durationInMonths × 4
   totalHours             Float            @default(4.0) // totalSessions × sessionDurationInHours
   emailSupport           PlanEmailSupport @default(GENERAL)
   language               String           @default("English")
@@ -610,6 +697,12 @@ model Subscription {
   feedbackFromConsultee  String?
   feedbackFromConsultant String?
   rating                 Float?
+
+  // Cancellation tracking
+  cancellationReason CancellationReason?
+  cancellationNotes  String?             @db.Text
+  cancelledAt        DateTime?           @db.Timestamptz()
+  cancelledBy        String? // userId who cancelled
 
   subscriptionPlan   SubscriptionPlan @relation(fields: [subscriptionPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   subscriptionPlanId String
@@ -697,7 +790,7 @@ model ClassPlan {
   durationInMonths       Int              @default(1) // Duration in months
   meetingsPerWeek        Int              @default(1)
   sessionDurationInHours Float            @default(1.0) // Duration of each session in hours
-  totalSessions          Int              @default(4)   // meetingsPerWeek × durationInMonths × 4
+  totalSessions          Int              @default(4) // meetingsPerWeek × durationInMonths × 4
   totalHours             Float            @default(4.0) // totalSessions × sessionDurationInHours
   emailSupport           PlanEmailSupport @default(GENERAL)
   maxParticipants        Int              @default(1)
@@ -955,7 +1048,7 @@ model Payment {
   discountCode   DiscountCode? @relation(fields: [discountCodeId], references: [id], onUpdate: Cascade, onDelete: SetNull)
   discountCodeId String?
 
-  refunds  Refund[]  // Refunds associated with this payment
+  refunds  Refund[] // Refunds associated with this payment
   disputes Dispute[] // Disputes associated with this payment
 
   // Payout relations
@@ -965,9 +1058,9 @@ model Payment {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@unique([userId, appointmentId]) // Allow multiple users to pay for same appointment (webinars/classes)
   @@index([expiresAt, paymentStatus])
   @@index([isMockPayment])
-  @@unique([userId, appointmentId]) // Allow multiple users to pay for same appointment (webinars/classes)
 }
 
 enum PaymentGateway {
@@ -986,13 +1079,13 @@ enum PaymentStatus {
 
 model Refund {
   id             String         @id @default(uuid())
-  amount         Int            // Amount refunded in smallest currency unit (e.g., cents for USD)
+  amount         Int // Amount refunded in smallest currency unit (e.g., cents for USD)
   currency       String
-  reason         String?        // Reason for refund
+  reason         String? // Reason for refund
   status         RefundStatus
   refundId       String         @unique // Gateway-specific refund ID (Stripe/Razorpay)
   paymentGateway PaymentGateway
-  metadata       Json?          // Additional gateway-specific metadata
+  metadata       Json? // Additional gateway-specific metadata
 
   payment   Payment @relation(fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   paymentId String
@@ -1006,23 +1099,23 @@ model Refund {
 }
 
 enum RefundStatus {
-  PENDING    // Refund initiated but not yet processed
-  SUCCEEDED  // Refund completed successfully
-  FAILED     // Refund failed
-  CANCELLED  // Refund cancelled
+  PENDING // Refund initiated but not yet processed
+  SUCCEEDED // Refund completed successfully
+  FAILED // Refund failed
+  CANCELLED // Refund cancelled
 }
 
 model Dispute {
-  id             String         @id @default(uuid())
-  amount         Int            // Disputed amount in smallest currency unit
-  currency       String
-  reason         String         // Dispute reason from gateway
-  status         DisputeStatus
-  disputeId      String         @unique // Gateway-specific dispute ID
-  paymentGateway PaymentGateway
-  evidence       Json?          // Evidence submitted to gateway
-  dueBy          DateTime?      // Deadline to respond to dispute
-  isChargeRefundable Boolean    @default(true)
+  id                 String         @id @default(uuid())
+  amount             Int // Disputed amount in smallest currency unit
+  currency           String
+  reason             String // Dispute reason from gateway
+  status             DisputeStatus
+  disputeId          String         @unique // Gateway-specific dispute ID
+  paymentGateway     PaymentGateway
+  evidence           Json? // Evidence submitted to gateway
+  dueBy              DateTime? // Deadline to respond to dispute
+  isChargeRefundable Boolean        @default(true)
 
   payment   Payment @relation(fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   paymentId String
@@ -1037,33 +1130,33 @@ model Dispute {
 }
 
 enum DisputeStatus {
-  WARNING_NEEDS_RESPONSE   // Early fraud warning, needs response
-  WARNING_UNDER_REVIEW     // Early fraud warning under review
-  WARNING_CLOSED           // Early fraud warning closed
-  NEEDS_RESPONSE           // Dispute filed, needs evidence
-  UNDER_REVIEW             // Evidence submitted, under review
-  CHARGE_REFUNDED          // Charge was refunded
-  WON                      // Dispute won
-  LOST                     // Dispute lost
+  WARNING_NEEDS_RESPONSE // Early fraud warning, needs response
+  WARNING_UNDER_REVIEW // Early fraud warning under review
+  WARNING_CLOSED // Early fraud warning closed
+  NEEDS_RESPONSE // Dispute filed, needs evidence
+  UNDER_REVIEW // Evidence submitted, under review
+  CHARGE_REFUNDED // Charge was refunded
+  WON // Dispute won
+  LOST // Dispute lost
 }
 
 ////////////////////////////////////////////// PAYOUT SYSTEM ////////////////////////////////////////////////////
 
 enum EarningStatus {
-  PENDING   // In hold period
-  HELD      // Extended hold (dispute)
-  READY     // Ready for payout
-  PAID      // Successfully paid
-  REFUNDED  // Refunded to consultee
+  PENDING // In hold period
+  HELD // Extended hold (dispute)
+  READY // Ready for payout
+  PAID // Successfully paid
+  REFUNDED // Refunded to consultee
 }
 
 enum PayoutStatus {
-  PENDING    // Awaiting approval
-  APPROVED   // Admin approved
+  PENDING // Awaiting approval
+  APPROVED // Admin approved
   PROCESSING // Being processed
-  COMPLETED  // Successfully sent
-  FAILED     // Provider rejected
-  CANCELLED  // Manually cancelled
+  COMPLETED // Successfully sent
+  FAILED // Provider rejected
+  CANCELLED // Manually cancelled
 }
 
 enum PayoutMethod {
@@ -1079,9 +1172,9 @@ enum PayoutAccountType {
 }
 
 model ConsultantEarnings {
-  id                  String        @id @default(cuid())
+  id                  String  @id @default(cuid())
   consultantProfileId String
-  paymentId           String        @unique
+  paymentId           String  @unique
   payoutId            String?
 
   // Revenue breakdown
@@ -1091,7 +1184,7 @@ model ConsultantEarnings {
 
   // Status tracking
   status    EarningStatus @default(PENDING)
-  holdUntil DateTime      // Release after hold period
+  holdUntil DateTime // Release after hold period
   paidAt    DateTime?
 
   createdAt DateTime @default(now())
@@ -1185,7 +1278,7 @@ model Invoice {
   paidAt        DateTime?
 
   // Tax breakdown
-  taxAmount Int?   // GST amount in paise
+  taxAmount Int? // GST amount in paise
   taxRate   Float? // 18% for services
   hsnCode   String? // SAC code (999293 for consulting)
 
@@ -1222,6 +1315,11 @@ model DiscountCode {
   description   String
   discountType  DiscountType
   discountValue Float
+  isActive      Boolean      @default(true)
+  expiresAt     DateTime?
+  maxUses       Int?
+  currentUses   Int          @default(0)
+  maxDiscount   Float?
 
   Payment Payment[]
 
@@ -1283,27 +1381,27 @@ enum Gender {
 
 enum CareerStage {
   STUDENT
-  EARLY_CAREER   // 0-3 years experience
-  MID_CAREER     // 3-10 years experience
-  SENIOR         // 10+ years experience
-  EXECUTIVE      // C-level or equivalent
+  EARLY_CAREER // 0-3 years experience
+  MID_CAREER // 3-10 years experience
+  SENIOR // 10+ years experience
+  EXECUTIVE // C-level or equivalent
 }
 
 enum AdminLevel {
-  SUPER_ADMIN    // Full system access
-  ADMIN          // High-level management
-  MODERATOR      // Day-to-day operations
+  SUPER_ADMIN // Full system access
+  ADMIN // High-level management
+  MODERATOR // Day-to-day operations
 }
 
 enum BudgetPreference {
-  BUDGET         // Looking for affordable options
-  MODERATE       // Mid-range pricing
-  PREMIUM        // Willing to pay for premium
-  FLEXIBLE       // No specific preference
+  BUDGET // Looking for affordable options
+  MODERATE // Mid-range pricing
+  PREMIUM // Willing to pay for premium
+  FLEXIBLE // No specific preference
 }
 
 enum SessionType {
-  ONE_ON_ONE     // 1:1 video/audio sessions
-  GROUP          // Group sessions
-  ASYNC_REVIEW   // Asynchronous document/code review
+  ONE_ON_ONE // 1:1 video/audio sessions
+  GROUP // Group sessions
+  ASYNC_REVIEW // Asynchronous document/code review
 }

@@ -17,6 +17,7 @@ import {
   ChevronRight,
   Wallet,
   Receipt,
+  Star,
 } from "lucide-react";
 import Link from "next/link";
 import { useParams, usePathname } from "next/navigation";
@@ -32,6 +33,7 @@ import {
 const sidebarItems = [
   { name: "Home", icon: Home, path: "home" },
   { name: "Support Tickets", icon: Ticket, path: "tickets" },
+  { name: "User Feedback", icon: Star, path: "feedback" },
   { name: "Users", icon: Users, path: "users" },
   { name: "Content Moderation", icon: Shield, path: "moderation" },
   { name: "Appointments", icon: Calendar, path: "appointments" },
