@@ -384,7 +384,8 @@ export function EventCard({
   const isInactiveStatus =
     status?.toLowerCase() === "cancelled" ||
     status?.toLowerCase() === "rejected" ||
-    status?.toLowerCase() === "completed";
+    status?.toLowerCase() === "completed" ||
+    status?.toLowerCase() === "expired";;
 
   const showDocumentUpload =
     (type === "Consultation" || type === "Subscription") && appointmentId;

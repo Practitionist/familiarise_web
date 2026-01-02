@@ -142,6 +142,10 @@ export class SlotAllocationService {
           }
         }
 
+        // CRITICAL FIX: Delete existing appointments before creating new ones
+        // This prevents duplicate appointments when auto-allocating on reschedule
+        await this.deleteExistingAppointments(tx, eventType, eventId);
+
         // Create appointments
         const appointments = await this.createAppointments(
           tx,
@@ -376,6 +380,16 @@ export class SlotAllocationService {
           requestedSlots[0],
           config,
         );
+
+        // CRITICAL FIX: Clear isTentative flag on all slots after approval
+        // This ensures slots are no longer marked as pending reschedule
+        const appointmentIds = existingAppointments.map((app: any) => app.id);
+        await tx.slotOfAppointment.updateMany({
+          where: {
+            appointmentId: { in: appointmentIds },
+          },
+          data: { isTentative: false },
+        });
 
         return {
           success: true,
