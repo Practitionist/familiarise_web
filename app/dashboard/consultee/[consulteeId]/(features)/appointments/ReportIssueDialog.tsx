@@ -120,12 +120,8 @@ export function ReportIssueDialog({
         issueType,
       };
 
-      // Add appointment context based on type
-      if (appointmentType === "CONSULTATION") {
-        requestBody.consultationId = appointmentId;
-      } else if (appointmentType === "SUBSCRIPTION") {
-        requestBody.subscriptionId = appointmentId;
-      }
+      // Link to appointment - API will resolve to correct consultation/subscription
+      requestBody.appointmentId = appointmentId;
 
       const response = await fetch("/api/user/support-tickets", {
         method: "POST",

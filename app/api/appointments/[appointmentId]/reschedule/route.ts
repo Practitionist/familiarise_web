@@ -12,24 +12,24 @@ const MINIMUM_HOURS_BEFORE_RESCHEDULE = 24;
 /**
  * POST /api/appointments/[appointmentId]/reschedule
  *
- * Reschedule an appointment or specific session within a subscription.
+ * Reschedule an appointment or specific session(s) within a subscription.
  *
  * Query Parameters:
  * - type: AppointmentType (CONSULTATION, SUBSCRIPTION, WEBINAR, CLASS)
  *
  * Body (optional):
- * - slotId: string - For SUBSCRIPTION type only. If provided, only this specific
- *                    session/slot will be marked as tentative. If not provided,
- *                    all slots in the subscription will be marked as tentative.
+ * - slotIds: string[] - For SUBSCRIPTION type only. If provided, only these specific
+ *                       slots will be marked as tentative. If not provided,
+ *                       all slots in the subscription will be marked as tentative.
  *
  * Behavior:
  * - For CONSULTATION: Marks all slots as tentative, reverts status to PENDING
- * - For SUBSCRIPTION with slotId: Marks only the specified slot as tentative (individual session reschedule)
- * - For SUBSCRIPTION without slotId: Marks ALL slots as tentative (entire subscription reschedule)
+ * - For SUBSCRIPTION with slotIds: Marks only specified slots as tentative (individual/multiple session reschedule)
+ * - For SUBSCRIPTION without slotIds: Marks ALL slots as tentative (entire subscription reschedule)
  * - For WEBINAR/CLASS: Marks all slots as tentative
  *
  * 24-Hour Restriction:
- * - Cannot reschedule if the earliest slot to be rescheduled is within 24 hours
+ * - Cannot reschedule if ANY slot to be rescheduled is within 24 hours
  */
 export async function POST(
   request: NextRequest,
@@ -45,13 +45,19 @@ export async function POST(
     const { searchParams } = new URL(request.url);
     const appointmentType = searchParams.get("type");
 
-    // Parse request body for optional slotId (used for individual session reschedule)
-    let slotId: string | undefined;
+    // Parse request body for optional slotIds (used for individual/multiple session reschedule)
+    let slotIds: string[] | undefined;
     try {
       const body = await request.json();
-      slotId = body?.slotId;
+      // Support both single slotId (legacy) and slotIds array
+      if (body?.slotIds && Array.isArray(body.slotIds)) {
+        slotIds = body.slotIds;
+      } else if (body?.slotId) {
+        // Legacy support: convert single slotId to array
+        slotIds = [body.slotId];
+      }
     } catch {
-      // No body or invalid JSON - that's fine, slotId is optional
+      // No body or invalid JSON - that's fine, slotIds is optional
     }
 
     // Start transaction
@@ -96,27 +102,31 @@ export async function POST(
         // Determine which slots will be affected
         let slotsToReschedule = appointment.slotsOfAppointment;
 
-        // For SUBSCRIPTION with slotId, only reschedule the specific slot
+        // For SUBSCRIPTION with slotIds, only reschedule the specific slots
         if (
           appointmentType === "SUBSCRIPTION" &&
-          slotId &&
+          slotIds &&
+          slotIds.length > 0 &&
           appointment.subscription
         ) {
-          const targetSlot = appointment.slotsOfAppointment.find(
-            (s) => s.id === slotId,
+          // Filter to only the requested slots
+          slotsToReschedule = appointment.slotsOfAppointment.filter((s) =>
+            slotIds.includes(s.id),
           );
-          if (!targetSlot) {
-            throw new AppointmentNotFoundError("slot", slotId);
+
+          // Validate all requested slots exist
+          if (slotsToReschedule.length !== slotIds.length) {
+            const foundIds = slotsToReschedule.map((s) => s.id);
+            const missingIds = slotIds.filter((id) => !foundIds.includes(id));
+            throw new AppointmentNotFoundError("slot", missingIds.join(", "));
           }
-          slotsToReschedule = [targetSlot];
         }
 
-        // 24-hour restriction check
+        // 24-hour restriction check - validate ALL selected slots
         const now = new Date();
-        const earliestSlot = slotsToReschedule[0];
-        if (earliestSlot) {
+        for (const slot of slotsToReschedule) {
           const hoursUntilSlot =
-            (new Date(earliestSlot.startsAt).getTime() - now.getTime()) /
+            (new Date(slot.startsAt).getTime() - now.getTime()) /
             (1000 * 60 * 60);
 
           if (hoursUntilSlot < MINIMUM_HOURS_BEFORE_RESCHEDULE) {
@@ -130,12 +140,16 @@ export async function POST(
         // Mark the appropriate slots as tentative
         if (
           appointmentType === "SUBSCRIPTION" &&
-          slotId &&
+          slotIds &&
+          slotIds.length > 0 &&
           appointment.subscription
         ) {
-          // Individual session reschedule - only mark the specific slot
-          await tx.slotOfAppointment.update({
-            where: { id: slotId },
+          // Individual/multiple session reschedule - only mark the specific slots
+          await tx.slotOfAppointment.updateMany({
+            where: {
+              id: { in: slotIds },
+              appointmentId, // Security: ensure slots belong to this appointment
+            },
             data: { isTentative: true },
           });
         } else {
@@ -169,18 +183,28 @@ export async function POST(
           });
         }
 
+        // Determine reschedule type for response
+        const getRescheduleType = () => {
+          if (appointmentType !== "SUBSCRIPTION" || !slotIds || slotIds.length === 0) {
+            return "entire_booking";
+          }
+          if (slotIds.length === 1) {
+            return "individual_session";
+          }
+          return "multiple_sessions";
+        };
+
+        const rescheduleType = getRescheduleType();
+
         // Return detailed response
         return {
           success: true,
-          rescheduleType:
-            appointmentType === "SUBSCRIPTION" && slotId
-              ? "individual_session"
-              : "entire_booking",
+          rescheduleType,
           slotsAffected: slotsToReschedule.length,
           message:
-            appointmentType === "SUBSCRIPTION" && slotId
-              ? "Session marked for rescheduling. Please select a new time."
-              : "All sessions marked for rescheduling. Please select new times.",
+            rescheduleType === "entire_booking"
+              ? "All sessions marked for rescheduling. Please select new times."
+              : `${slotsToReschedule.length} session(s) marked for rescheduling. Please select new time(s).`,
         };
       },
       {

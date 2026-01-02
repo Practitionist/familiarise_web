@@ -21,7 +21,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { motion } from "framer-motion";
-import { Clock, X, Video, Calendar, Loader2, CalendarClock, CalendarRange, AlertCircle } from "lucide-react";
+import { Clock, X, Video, Calendar, Loader2, CalendarClock, CalendarRange, AlertCircle, CheckSquare, Square, Check } from "lucide-react";
 import React from "react";
 import { DocumentUpload } from "./DocumentUpload";
 import { cn } from "@/utils/tailwind";
@@ -30,6 +30,7 @@ import { useRouter } from "next/navigation";
 import { useStreamVideoClient } from "@stream-io/video-react-sdk";
 import { getOrCreateAppointmentMeeting } from "@/lib/meeting";
 import { ReportIssueDialog } from "./ReportIssueDialog";
+import { CancelConfirmationDialog } from "./CancelConfirmationDialog";
 import type { AppointmentStatus } from "@/utils/supportTicketUrl";
 import type { TAppointment, TSlotOfAppointment } from "@/types/appointment";
 import type { SlotOfAppointment } from "@prisma/client";
@@ -119,11 +120,14 @@ export function EventCard({
 
   // Reschedule dialog state
   const [showRescheduleDialog, setShowRescheduleDialog] = React.useState(false);
-  const [rescheduleType, setRescheduleType] = React.useState<"individual" | "entire">("entire");
-  const [selectedSlotId, setSelectedSlotId] = React.useState<string | null>(null);
+  const [rescheduleType, setRescheduleType] = React.useState<"individual" | "multiple" | "entire">("entire");
+  const [selectedSlotIds, setSelectedSlotIds] = React.useState<string[]>([]);
 
   // Report Issue dialog state
   const [showReportDialog, setShowReportDialog] = React.useState(false);
+
+  // Cancel confirmation dialog state
+  const [showCancelDialog, setShowCancelDialog] = React.useState(false);
 
   // Get appointment status and type for issue filtering
   const appointmentStatus: AppointmentStatus =
@@ -151,7 +155,7 @@ export function EventCard({
     if (isMultiSessionSubscription) {
       // Reset dialog state
       setRescheduleType("entire");
-      setSelectedSlotId(null);
+      setSelectedSlotIds([]);
       setShowRescheduleDialog(true);
     } else {
       // For consultations or single-session subscriptions, reschedule directly
@@ -160,7 +164,7 @@ export function EventCard({
   };
 
   // Execute the reschedule API call
-  const handleReschedule = async (slotId?: string) => {
+  const handleReschedule = async (slotIds?: string[]) => {
     if (!appointmentId) {
       toast({
         title: "Error",
@@ -182,8 +186,8 @@ export function EventCard({
       const response = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        // Include slotId in body for individual session reschedule
-        body: slotId ? JSON.stringify({ slotId }) : undefined,
+        // Include slotIds in body for individual/multiple session reschedule
+        body: slotIds && slotIds.length > 0 ? JSON.stringify({ slotIds }) : undefined,
       });
 
       const data = await response.json();
@@ -192,13 +196,13 @@ export function EventCard({
         throw new Error(data.error || "Failed to request reschedule");
       }
 
-      const isIndividualReschedule = data.rescheduleType === "individual_session";
+      const slotsAffected = data.slotsAffected ?? slotIds?.length ?? rawSlots.length;
 
       toast({
         title: "Reschedule initiated",
-        description: isIndividualReschedule
+        description: slotsAffected === 1
           ? `Your session has been marked for rescheduling. Please select a new time.`
-          : `All sessions have been marked for rescheduling. Please select new times.`,
+          : `${slotsAffected} sessions have been marked for rescheduling. Please select new times.`,
       });
 
       window.location.reload();
@@ -219,14 +223,15 @@ export function EventCard({
 
   // Handle dialog confirmation
   const handleRescheduleConfirm = () => {
-    if (rescheduleType === "individual" && selectedSlotId) {
-      handleReschedule(selectedSlotId);
+    if ((rescheduleType === "individual" || rescheduleType === "multiple") && selectedSlotIds.length > 0) {
+      handleReschedule(selectedSlotIds);
     } else {
       handleReschedule();
     }
   };
 
-  const handleCancel = async () => {
+  // Open cancel confirmation dialog
+  const handleCancelClick = () => {
     if (!appointmentId) {
       toast({
         title: "Error",
@@ -235,15 +240,11 @@ export function EventCard({
       });
       return;
     }
+    setShowCancelDialog(true);
+  };
 
-    if (
-      !window.confirm(
-        `Are you sure you want to cancel "${title}" with ${consultant}? This action cannot be undone.`,
-      )
-    ) {
-      return;
-    }
-
+  // Execute the cancel API call
+  const handleCancelConfirm = async () => {
     setIsLoading(true);
     try {
       const response = await fetch(
@@ -265,6 +266,7 @@ export function EventCard({
         description: `Your ${type.toLowerCase()} "${title}" has been cancelled successfully.`,
       });
 
+      setShowCancelDialog(false);
       window.location.reload();
     } catch (error) {
       console.error("Error cancelling appointment:", error);
@@ -545,7 +547,7 @@ export function EventCard({
           <Button
             variant="outline"
             size="sm"
-            onClick={handleCancel}
+            onClick={handleCancelClick}
             disabled={isLoading || isInactiveStatus}
             className={cn(
               "flex-1 h-8 text-xs font-medium",
@@ -634,9 +636,12 @@ export function EventCard({
             <RadioGroup
               value={rescheduleType}
               onValueChange={(value) => {
-                setRescheduleType(value as "individual" | "entire");
+                setRescheduleType(value as "individual" | "multiple" | "entire");
                 if (value === "entire") {
-                  setSelectedSlotId(null);
+                  setSelectedSlotIds([]);
+                } else if (value === "individual") {
+                  // Reset to single selection mode
+                  setSelectedSlotIds(selectedSlotIds.slice(0, 1));
                 }
               }}
               className="space-y-3"
@@ -656,6 +661,25 @@ export function EventCard({
                   </div>
                   <p className="text-xs text-zinc-500 mt-1">
                     Only the selected session will be rescheduled. Other sessions remain unchanged.
+                  </p>
+                </Label>
+              </div>
+
+              {/* Reschedule Multiple Sessions Option */}
+              <div className={cn(
+                "flex items-start space-x-3 p-3 rounded-lg border transition-colors",
+                rescheduleType === "multiple"
+                  ? "border-zinc-900 bg-zinc-50"
+                  : "border-zinc-200 hover:border-zinc-300"
+              )}>
+                <RadioGroupItem value="multiple" id="multiple" className="mt-1" />
+                <Label htmlFor="multiple" className="flex-1 cursor-pointer">
+                  <div className="flex items-center gap-2 font-medium text-zinc-900">
+                    <CheckSquare className="h-4 w-4" />
+                    Reschedule Multiple Sessions
+                  </div>
+                  <p className="text-xs text-zinc-500 mt-1">
+                    Select specific sessions to reschedule. Other sessions remain unchanged.
                   </p>
                 </Label>
               </div>
@@ -680,11 +704,13 @@ export function EventCard({
               </div>
             </RadioGroup>
 
-            {/* Session Selector - shown when "individual" is selected */}
-            {rescheduleType === "individual" && (
+            {/* Session Selector - shown when "individual" or "multiple" is selected */}
+            {(rescheduleType === "individual" || rescheduleType === "multiple") && (
               <div className="mt-4 space-y-2">
                 <Label className="text-sm font-medium text-zinc-700">
-                  Select the session to reschedule:
+                  {rescheduleType === "individual"
+                    ? "Select the session to reschedule:"
+                    : "Select sessions to reschedule:"}
                 </Label>
                 <div className="max-h-48 overflow-y-auto space-y-2 rounded-lg border border-zinc-200 p-2">
                   {rawSlots
@@ -693,15 +719,31 @@ export function EventCard({
                     .map((slot) => {
                       const startTime = new Date(slot.startsAt);
                       const endTime = new Date(slot.endsAt);
-                      const isSelected = selectedSlotId === slot.id;
+                      const isSelected = selectedSlotIds.includes(slot.id);
                       const hoursUntil = (startTime.getTime() - Date.now()) / (1000 * 60 * 60);
                       const isWithin24Hours = hoursUntil < 24;
+
+                      const handleSlotClick = () => {
+                        if (isWithin24Hours) return;
+
+                        if (rescheduleType === "individual") {
+                          // Single select mode - replace selection
+                          setSelectedSlotIds([slot.id]);
+                        } else {
+                          // Multi-select mode - toggle selection
+                          setSelectedSlotIds(prev =>
+                            prev.includes(slot.id)
+                              ? prev.filter(id => id !== slot.id)
+                              : [...prev, slot.id]
+                          );
+                        }
+                      };
 
                       return (
                         <button
                           key={slot.id}
                           type="button"
-                          onClick={() => !isWithin24Hours && setSelectedSlotId(slot.id)}
+                          onClick={handleSlotClick}
                           disabled={isWithin24Hours}
                           className={cn(
                             "w-full flex items-center justify-between p-2.5 rounded-md text-left transition-colors",
@@ -712,15 +754,30 @@ export function EventCard({
                                 : "bg-zinc-50 hover:bg-zinc-100 text-zinc-700"
                           )}
                         >
-                          <div>
-                            <div className="text-sm font-medium">
-                              {formatSlotDate(startTime)}
-                            </div>
-                            <div className={cn(
-                              "text-xs",
-                              isSelected ? "text-zinc-300" : "text-zinc-500"
-                            )}>
-                              {formatSlotTime(startTime)} - {formatSlotTime(endTime)}
+                          <div className="flex items-center gap-2">
+                            {/* Checkbox indicator for multi-select mode */}
+                            {rescheduleType === "multiple" && (
+                              <div className={cn(
+                                "w-4 h-4 rounded border flex items-center justify-center",
+                                isSelected
+                                  ? "bg-white border-white"
+                                  : isWithin24Hours
+                                    ? "border-zinc-300"
+                                    : "border-zinc-400"
+                              )}>
+                                {isSelected && <Check className="h-3 w-3 text-zinc-900" />}
+                              </div>
+                            )}
+                            <div>
+                              <div className="text-sm font-medium">
+                                {formatSlotDate(startTime)}
+                              </div>
+                              <div className={cn(
+                                "text-xs",
+                                isSelected ? "text-zinc-300" : "text-zinc-500"
+                              )}>
+                                {formatSlotTime(startTime)} - {formatSlotTime(endTime)}
+                              </div>
                             </div>
                           </div>
                           {isWithin24Hours && (
@@ -735,6 +792,11 @@ export function EventCard({
                 {rawSlots.filter((s) => !s.isTentative).length === 0 && (
                   <p className="text-sm text-zinc-500 text-center py-4">
                     No confirmed sessions available to reschedule.
+                  </p>
+                )}
+                {rescheduleType === "multiple" && selectedSlotIds.length > 0 && (
+                  <p className="text-sm text-zinc-600 font-medium">
+                    {selectedSlotIds.length} session{selectedSlotIds.length > 1 ? "s" : ""} selected
                   </p>
                 )}
               </div>
@@ -761,7 +823,7 @@ export function EventCard({
               onClick={handleRescheduleConfirm}
               disabled={
                 isLoading ||
-                (rescheduleType === "individual" && !selectedSlotId)
+                ((rescheduleType === "individual" || rescheduleType === "multiple") && selectedSlotIds.length === 0)
               }
               className="bg-zinc-900 hover:bg-zinc-800"
             >
@@ -793,6 +855,17 @@ export function EventCard({
           }}
         />
       )}
+
+      {/* Cancel Confirmation Dialog */}
+      <CancelConfirmationDialog
+        isOpen={showCancelDialog}
+        onConfirm={handleCancelConfirm}
+        onCancel={() => setShowCancelDialog(false)}
+        title={title}
+        consultant={consultant}
+        appointmentType={type}
+        isLoading={isLoading}
+      />
     </motion.div>
   );
 }

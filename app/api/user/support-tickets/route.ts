@@ -70,6 +70,7 @@ interface CreateTicketBody {
   consultationId?: string;
   subscriptionId?: string;
   paymentId?: string;
+  appointmentId?: string; // Can be used to auto-resolve to consultationId/subscriptionId
 }
 
 export async function POST(req: NextRequest) {
@@ -103,23 +104,58 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Resolve appointmentId to consultationId/subscriptionId if provided
+    let resolvedConsultationId = body.consultationId;
+    let resolvedSubscriptionId = body.subscriptionId;
+
+    if (body.appointmentId) {
+      const appointment = await prisma.appointment.findFirst({
+        where: {
+          id: body.appointmentId,
+          OR: [
+            { consultation: { requestedBy: { userId: session.user.id } } },
+            { subscription: { requestedBy: { userId: session.user.id } } },
+          ],
+        },
+        include: {
+          consultation: true,
+          subscription: true,
+        },
+      });
+
+      if (!appointment) {
+        return NextResponse.json(
+          { error: "Invalid appointment ID or unauthorized" },
+          { status: 400 }
+        );
+      }
+
+      // Resolve to actual consultation/subscription IDs
+      if (appointment.consultation) {
+        resolvedConsultationId = appointment.consultation.id;
+      } else if (appointment.subscription) {
+        resolvedSubscriptionId = appointment.subscription.id;
+      }
+    }
+
     // Validate entity links in parallel - ensure they belong to this user
+    // Skip validation for IDs resolved from appointmentId (already validated above)
     const validations = await Promise.all([
-      body.consultationId
+      resolvedConsultationId && !body.appointmentId
         ? prisma.consultation
             .findFirst({
               where: {
-                id: body.consultationId,
+                id: resolvedConsultationId,
                 requestedBy: { userId: session.user.id },
               },
             })
             .then((c) => ({ type: "consultation", valid: !!c }))
         : Promise.resolve({ type: "consultation", valid: true }),
-      body.subscriptionId
+      resolvedSubscriptionId && !body.appointmentId
         ? prisma.subscription
             .findFirst({
               where: {
-                id: body.subscriptionId,
+                id: resolvedSubscriptionId,
                 requestedBy: { userId: session.user.id },
               },
             })
@@ -152,8 +188,8 @@ export async function POST(req: NextRequest) {
         priority: body.priority || "MEDIUM",
         category: body.category,
         issueType: body.issueType,
-        consultationId: body.consultationId,
-        subscriptionId: body.subscriptionId,
+        consultationId: resolvedConsultationId,
+        subscriptionId: resolvedSubscriptionId,
         paymentId: body.paymentId,
         user: { connect: { id: session.user.id } },
       },

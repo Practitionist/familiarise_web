@@ -466,15 +466,19 @@ export function RequestSlotAllocationTab({
                         {request.tentativeSlotCount === request.totalSlotCount ? (
                           <div className="flex items-center gap-1.5 text-xs font-medium text-blue-600 bg-blue-50 px-2 py-1 rounded-md">
                             <RefreshCw className="h-3 w-3" />
-                            Full Reschedule ({request.totalSlotCount} session
-                            {request.totalSlotCount !== 1 ? "s" : ""} need new times)
+                            Full Reschedule (all {request.totalSlotCount} session
+                            {request.totalSlotCount !== 1 ? "s" : ""})
+                          </div>
+                        ) : request.tentativeSlotCount === 1 ? (
+                          <div className="flex items-center gap-1.5 text-xs font-medium text-amber-600 bg-amber-50 px-2 py-1 rounded-md">
+                            <AlertTriangle className="h-3 w-3" />
+                            Individual Session (1 of {request.totalSlotCount} needs new time)
                           </div>
                         ) : (
                           <div className="flex items-center gap-1.5 text-xs font-medium text-amber-600 bg-amber-50 px-2 py-1 rounded-md">
                             <AlertTriangle className="h-3 w-3" />
-                            Partial Reschedule ({request.tentativeSlotCount} of{" "}
-                            {request.totalSlotCount} session
-                            {request.tentativeSlotCount !== 1 ? "s" : ""} need new times)
+                            Multiple Sessions ({request.tentativeSlotCount} of{" "}
+                            {request.totalSlotCount} need new times)
                           </div>
                         )}
                       </div>
