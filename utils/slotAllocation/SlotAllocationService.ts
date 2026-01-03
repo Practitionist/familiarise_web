@@ -89,11 +89,41 @@ export class SlotAllocationService {
 
         const { consultant, config, consulteeUserId } = eventData;
 
-        // Calculate required slots
-        const requiredSlots = SlotCalculationService.calculateRequiredSlots(
-          eventType,
-          config,
+        // CRITICAL FIX: Check for existing appointments to detect reschedule scenario
+        // If tentative slots exist, this is a reschedule and we should preserve the original slot count
+        const relationField = this.getEventRelationField(eventType);
+        const existingAppointments = await (tx as any).appointment.findMany({
+          where: { [`${relationField}Id`]: eventId },
+          include: { slotsOfAppointment: true },
+        });
+
+        // Count existing slots by tentative status
+        const existingNonTentativeSlotCount = existingAppointments.reduce(
+          (count: number, app: any) =>
+            count + app.slotsOfAppointment.filter((s: any) => !s.isTentative).length,
+          0,
         );
+        const tentativeSlotCount = existingAppointments.reduce(
+          (count: number, app: any) =>
+            count + app.slotsOfAppointment.filter((s: any) => s.isTentative).length,
+          0,
+        );
+        const isReschedule = tentativeSlotCount > 0;
+
+        // Calculate required slots - preserve count during reschedule
+        let requiredSlots: number;
+        if (isReschedule) {
+          // RESCHEDULE: Preserve the original total slot count
+          // This prevents slot count from changing when rescheduling
+          requiredSlots = existingNonTentativeSlotCount + tentativeSlotCount;
+        } else {
+          // INITIAL ALLOCATION: Calculate from config
+          requiredSlots = SlotCalculationService.calculateRequiredSlots(
+            eventType,
+            config,
+          );
+        }
+
         const slotsPerCall = SlotCalculationService.getSlotsPerCall(
           config.sessionDurationInHours || config.durationInHours || 1,
         );
@@ -143,8 +173,9 @@ export class SlotAllocationService {
         }
 
         // CRITICAL FIX: Delete existing appointments before creating new ones
-        // This prevents duplicate appointments when auto-allocating on reschedule
-        await this.deleteExistingAppointments(tx, eventType, eventId);
+        // For reschedules: only delete appointments with tentative slots (preserve confirmed ones)
+        // For initial allocation: delete all (shouldn't be any, but safety measure)
+        await this.deleteExistingAppointments(tx, eventType, eventId, isReschedule);
 
         // Create appointments
         const appointments = await this.createAppointments(
@@ -828,16 +859,32 @@ export class SlotAllocationService {
 
   /**
    * Delete existing appointments for an event
+   *
+   * @param onlyTentative - If true, only delete appointments that have at least one tentative slot.
+   *                        This is used for partial reschedules where we want to preserve
+   *                        confirmed appointments and only replace the rescheduled ones.
    */
   private static async deleteExistingAppointments(
     tx: PrismaTransaction,
     eventType: EventType,
     eventId: string,
+    onlyTentative: boolean = false,
   ): Promise<void> {
     const relationField = this.getEventRelationField(eventType);
 
+    // Build where clause - optionally filter to only appointments with tentative slots
+    const whereClause: any = { [`${relationField}Id`]: eventId };
+
+    if (onlyTentative) {
+      // Only delete appointments that have at least one tentative slot
+      // This preserves confirmed appointments during partial reschedules
+      whereClause.slotsOfAppointment = {
+        some: { isTentative: true },
+      };
+    }
+
     const existing = await (tx as any).appointment.findMany({
-      where: { [`${relationField}Id`]: eventId },
+      where: whereClause,
     });
 
     await Promise.all(
