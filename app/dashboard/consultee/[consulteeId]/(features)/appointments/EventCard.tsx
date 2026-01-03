@@ -606,7 +606,7 @@ export function EventCard({
 
         {/* Action Buttons - Always render for consistency */}
         <div className="flex items-center gap-2 mt-4 pt-4 border-t border-zinc-100">
-          {!isTentative && (
+          {!isTentative && status?.toUpperCase() === "APPROVED" && (
             <Button
               variant="outline"
               size="sm"
