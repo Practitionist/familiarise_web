@@ -142,6 +142,70 @@ export function EventCard({
       ? new Date(rawSlots[0].startsAt).toISOString()
       : undefined;
 
+  // Memoize expensive session grouping - only re-runs when rawSlots changes
+  const groupedSessions = React.useMemo(() => {
+    const sortedSlots = rawSlots
+      .filter((slot) => !slot.isTentative)
+      .sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime());
+
+    // Helper to create session object (eliminates duplication)
+    const createSession = (slots: typeof sortedSlots) => {
+      if (slots.length === 0) return null;
+      return {
+        slots: [...slots],
+        startTime: new Date(slots[0].startsAt),
+        endTime: new Date(slots[slots.length - 1].endsAt),
+      };
+    };
+
+    const sessions: Array<{
+      slots: typeof sortedSlots;
+      startTime: Date;
+      endTime: Date;
+    }> = [];
+
+    let currentSessionSlots: typeof sortedSlots = [];
+
+    for (let i = 0; i < sortedSlots.length; i++) {
+      const slot = sortedSlots[i];
+      const prevSlot = sortedSlots[i - 1];
+
+      if (i === 0) {
+        currentSessionSlots.push(slot);
+      } else {
+        const prevEnd = new Date(prevSlot.endsAt).getTime();
+        const currStart = new Date(slot.startsAt).getTime();
+
+        if (currStart === prevEnd) {
+          currentSessionSlots.push(slot);
+        } else {
+          const session = createSession(currentSessionSlots);
+          if (session) sessions.push(session);
+          currentSessionSlots = [slot];
+        }
+      }
+    }
+
+    // Last session (using helper - no duplication)
+    const lastSession = createSession(currentSessionSlots);
+    if (lastSession) sessions.push(lastSession);
+
+    return sessions;
+  }, [rawSlots]);
+
+  // Derive dynamic isWithin24Hours on each render (cheap operation, stays fresh)
+  const sessionsWithDynamicProps = groupedSessions.map(session => ({
+    ...session,
+    isWithin24Hours: (session.startTime.getTime() - Date.now()) / (1000 * 60 * 60) < 24,
+  }));
+
+  // Memoize selected session count calculation
+  const selectedSessionCount = React.useMemo(() => {
+    return groupedSessions.filter(session =>
+      session.slots.every(slot => selectedSlotIds.includes(slot.id))
+    ).length;
+  }, [groupedSessions, selectedSlotIds]);
+
   const showSessionDetails =
     (type === "Subscription" || type === "Class") &&
     actualSlots &&
@@ -717,69 +781,7 @@ export function EventCard({
             </RadioGroup>
 
             {/* Session Selector - shown when "individual" or "multiple" is selected */}
-            {(rescheduleType === "individual" || rescheduleType === "multiple") && (() => {
-              // CRITICAL FIX: Group slots into sessions by TIME CONTINUITY
-              // Consecutive slots (no time gap) = same session
-              // This handles both 30-min and 1-hour sessions automatically
-              const sortedSlots = rawSlots
-                .filter((slot) => !slot.isTentative)
-                .sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime());
-
-              // Group consecutive slots into sessions (no gap = same session)
-              const sessions: Array<{
-                slots: typeof sortedSlots;
-                startTime: Date;
-                endTime: Date;
-                isWithin24Hours: boolean;
-              }> = [];
-
-              let currentSessionSlots: typeof sortedSlots = [];
-
-              for (let i = 0; i < sortedSlots.length; i++) {
-                const slot = sortedSlots[i];
-                const prevSlot = sortedSlots[i - 1];
-
-                if (i === 0) {
-                  currentSessionSlots.push(slot);
-                } else {
-                  const prevEnd = new Date(prevSlot.endsAt).getTime();
-                  const currStart = new Date(slot.startsAt).getTime();
-
-                  // If this slot starts exactly when previous ended, same session
-                  if (currStart === prevEnd) {
-                    currentSessionSlots.push(slot);
-                  } else {
-                    // Gap found - save current session, start new one
-                    if (currentSessionSlots.length > 0) {
-                      const startTime = new Date(currentSessionSlots[0].startsAt);
-                      const endTime = new Date(currentSessionSlots[currentSessionSlots.length - 1].endsAt);
-                      const hoursUntil = (startTime.getTime() - Date.now()) / (1000 * 60 * 60);
-                      sessions.push({
-                        slots: [...currentSessionSlots],
-                        startTime,
-                        endTime,
-                        isWithin24Hours: hoursUntil < 24,
-                      });
-                    }
-                    currentSessionSlots = [slot];
-                  }
-                }
-              }
-
-              // Don't forget the last session
-              if (currentSessionSlots.length > 0) {
-                const startTime = new Date(currentSessionSlots[0].startsAt);
-                const endTime = new Date(currentSessionSlots[currentSessionSlots.length - 1].endsAt);
-                const hoursUntil = (startTime.getTime() - Date.now()) / (1000 * 60 * 60);
-                sessions.push({
-                  slots: [...currentSessionSlots],
-                  startTime,
-                  endTime,
-                  isWithin24Hours: hoursUntil < 24,
-                });
-              }
-
-              return (
+            {(rescheduleType === "individual" || rescheduleType === "multiple") && (
               <div className="mt-4 space-y-2">
                 <Label className="text-sm font-medium text-zinc-700">
                   {rescheduleType === "individual"
@@ -787,7 +789,7 @@ export function EventCard({
                     : "Select sessions to reschedule:"}
                 </Label>
                 <div className="max-h-48 overflow-y-auto space-y-2 rounded-lg border border-zinc-200 p-2">
-                  {sessions.map((session, sessionIndex) => {
+                  {sessionsWithDynamicProps.map((session, sessionIndex) => {
                     // Get all slot IDs for this session
                     const sessionSlotIds = session.slots.map(s => s.id);
                     // Session is selected if ALL its slots are in selectedSlotIds
@@ -866,25 +868,18 @@ export function EventCard({
                     );
                   })}
                 </div>
-                {sessions.length === 0 && (
+                {sessionsWithDynamicProps.length === 0 && (
                   <p className="text-sm text-zinc-500 text-center py-4">
                     No confirmed sessions available to reschedule.
                   </p>
                 )}
-                {rescheduleType === "multiple" && selectedSlotIds.length > 0 && (() => {
-                  // Count how many sessions have all their slots selected
-                  const selectedSessionCount = sessions.filter(session =>
-                    session.slots.every(slot => selectedSlotIds.includes(slot.id))
-                  ).length;
-                  return (
-                    <p className="text-sm text-zinc-600 font-medium">
-                      {selectedSessionCount} session{selectedSessionCount > 1 ? "s" : ""} selected
-                    </p>
-                  );
-                })()}
+                {rescheduleType === "multiple" && selectedSlotIds.length > 0 && (
+                  <p className="text-sm text-zinc-600 font-medium">
+                    {selectedSessionCount} session{selectedSessionCount > 1 ? "s" : ""} selected
+                  </p>
+                )}
               </div>
-              );
-            })()}
+            )}
 
             {/* Warning notice */}
             <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
