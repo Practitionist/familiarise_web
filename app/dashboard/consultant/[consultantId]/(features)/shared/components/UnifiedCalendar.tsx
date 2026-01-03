@@ -183,32 +183,6 @@ function countCompletedSelectedCallsForWeek(
   return completed;
 }
 
-/** Counts in-progress (started but not complete) selected calls for a week. */
-function countInProgressSelectedCallsForWeek(
-  selectedSlots: TimeSlot[],
-  slotsPerCall: number,
-  weekStart: Date,
-  weekEnd: Date,
-): number {
-  if (!selectedSlots?.length) return 0;
-  const byDay = new Map<string, TimeSlot[]>();
-  for (const s of selectedSlots) {
-    const start = s.startTime;
-    if (start < weekStart || start > weekEnd) continue;
-    const key = start.toDateString();
-    if (!byDay.has(key)) byDay.set(key, []);
-    byDay.get(key)!.push(s);
-  }
-
-  // (moved down) countCompletedSelectedClasses / computeClassFooter helpers
-  let started = 0;
-  byDay.forEach((daySlots) => {
-    if (daySlots.length === 0) return;
-    if (daySlots.length < slotsPerCall) started += 1;
-  });
-  return started;
-}
-
 /**
  * Subscription footer: Clear, action-oriented progress text
  * Removes confusing "past completed" concept and technical jargon
@@ -240,13 +214,13 @@ function computeSubscriptionFooter(
   const duration = sessionDurationInHours || 1;
   const durationText = duration === 1 ? "1 hour" : `${duration} hours`;
 
-  // Clear, action-oriented text based on progress
+  // Clear, user-friendly text based on progress
   if (scheduled === 0) {
-    return `📅 Select slots for ${maxTotalCalls} calls (${durationText} each) | Limit: ${callsPerWeek}/week`;
+    return `📅 Choose times for ${maxTotalCalls} sessions (${durationText} each)`;
   } else if (remaining > 0) {
-    return `✅ ${scheduled}/${maxTotalCalls} calls scheduled | ⏳ ${remaining} remaining (${durationText} each) | Limit: ${callsPerWeek}/week`;
+    return `✅ ${scheduled} of ${maxTotalCalls} sessions scheduled • ${remaining} more to go`;
   } else {
-    return `✅ All ${maxTotalCalls} calls scheduled`;
+    return `✅ All ${maxTotalCalls} sessions scheduled!`;
   }
 }
 
@@ -1165,15 +1139,12 @@ export function UnifiedCalendar({
               }
             })()}
           </div>
-          <div className="text-xs text-muted-foreground">
-            {eventType === "consultation"
-              ? `Required: ${durationInHours || 1}h consultation (${Math.ceil((durationInHours || 1) / 0.5)} consecutive slots)`
-              : eventType === "subscription"
-                ? `Required: ${sessionDurationInHours || 1}h per call (${Math.ceil((sessionDurationInHours || 1) / 0.5)} consecutive slots per call)`
-                : eventType === "webinar"
-                  ? `Required: ${durationInHours || 1}h webinar (${Math.ceil((durationInHours || 1) / 0.5)} consecutive slots)`
-                  : `Required: ${sessionDurationInHours || 1}h per class (${Math.ceil((sessionDurationInHours || 1) / 0.5)} consecutive slots)`}
-          </div>
+          {/* Only show weekly limit for subscriptions - other event types don't need secondary info */}
+          {eventType === "subscription" && (
+            <div className="text-xs text-muted-foreground">
+              Max {callsPerWeek || 1} session{(callsPerWeek || 1) > 1 ? "s" : ""} per week
+            </div>
+          )}
           {allocationError && (
             <div className="text-sm text-red-600">{allocationError}</div>
           )}
