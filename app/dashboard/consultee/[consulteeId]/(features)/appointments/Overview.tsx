@@ -78,7 +78,7 @@ function getValidAppointmentSlots(event: EventWithType): Array<{
 
 // Helper to check if a status is inactive (greyed out)
 function isInactiveStatus(status: string): boolean {
-  const inactive = ["cancelled", "rejected", "completed"];
+  const inactive = ["cancelled", "rejected", "completed", "expired"];
   return inactive.includes(status.toLowerCase());
 }
 

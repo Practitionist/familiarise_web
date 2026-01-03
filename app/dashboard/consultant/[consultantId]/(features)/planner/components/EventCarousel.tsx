@@ -19,6 +19,7 @@ import {
   Event,
 } from "../types/event";
 import { EventCard } from "./EventCard";
+import { FormConfirmationDialog } from "./form-fields/FormConfirmationDialog";
 
 interface WebinarCarouselProps {
   events: WebinarEvent[];
@@ -142,6 +143,11 @@ export function EventCarousel({
   const [currentPage, setCurrentPage] = React.useState(1);
   const itemsPerPage = 8;
 
+  // Delete confirmation dialog state
+  const [showDeleteDialog, setShowDeleteDialog] = React.useState(false);
+  const [eventToDelete, setEventToDelete] = React.useState<Event | null>(null);
+  const [isDeleting, setIsDeleting] = React.useState(false);
+
   // Calculate pagination
   const totalPages = Math.ceil(events.length / itemsPerPage);
   const startIndex = (currentPage - 1) * itemsPerPage;
@@ -176,19 +182,31 @@ export function EventCarousel({
     }
   };
 
-  const handleDelete = async (event: Event) => {
-    const eventTitle = getEventTitle(event);
-    if (
-      window.confirm(
-        `Are you sure you want to delete "${eventTitle}"? This action cannot be undone.`,
-      )
-    ) {
-      try {
-        await onDelete(event.id ?? "");
-      } catch (error) {
-        console.error(`Error deleting ${eventType}:`, error);
-      }
+  // Open delete confirmation dialog
+  const handleDeleteClick = (event: Event) => {
+    setEventToDelete(event);
+    setShowDeleteDialog(true);
+  };
+
+  // Execute the delete operation
+  const handleDeleteConfirm = async () => {
+    if (!eventToDelete) return;
+
+    setIsDeleting(true);
+    try {
+      await onDelete(eventToDelete.id ?? "");
+      setShowDeleteDialog(false);
+      setEventToDelete(null);
+    } catch (error) {
+      console.error(`Error deleting ${eventType}:`, error);
+    } finally {
+      setIsDeleting(false);
     }
+  };
+
+  const handleDeleteCancel = () => {
+    setShowDeleteDialog(false);
+    setEventToDelete(null);
   };
 
   // Empty state
@@ -235,7 +253,7 @@ export function EventCarousel({
               eventType={eventType}
               participantCount={participantCounts[event.id ?? ""] ?? 0}
               onEdit={() => handleEdit(event)}
-              onDelete={() => handleDelete(event)}
+              onDelete={() => handleDeleteClick(event)}
             />
           </motion.div>
         ))}
@@ -267,6 +285,19 @@ export function EventCarousel({
           </Button>
         </div>
       )}
+
+      {/* Delete Confirmation Dialog */}
+      <FormConfirmationDialog
+        isOpen={showDeleteDialog}
+        onConfirm={handleDeleteConfirm}
+        onCancel={handleDeleteCancel}
+        title={`Delete ${eventType}?`}
+        description={`Are you sure you want to delete "${eventToDelete ? getEventTitle(eventToDelete) : ""}"? This action cannot be undone.`}
+        isLoading={isDeleting}
+        confirmText="Delete"
+        cancelText="Cancel"
+        variant="destructive"
+      />
     </div>
   );
 }

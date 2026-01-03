@@ -32,34 +32,17 @@ import {
   Loader2,
   ChevronRight,
   Sparkles,
+  Link2,
 } from "lucide-react";
+import {
+  ISSUE_TYPE_LABELS,
+  ISSUE_TYPE_CATEGORIES,
+  PRIORITY_OPTIONS,
+} from "@/utils/supportTicketUrl";
 
 interface FeedbackSupportTabProps {
   consulteeId: string;
 }
-
-// Human-readable labels for issue types
-const ISSUE_TYPE_OPTIONS: { value: SupportIssueType; label: string; description: string }[] = [
-  { value: "CONSULTANT_NO_SHOW", label: "Consultant didn't show up", description: "Expert was absent from scheduled session" },
-  { value: "SESSION_QUALITY_POOR", label: "Poor session quality", description: "Unsatisfied with consultation quality" },
-  { value: "TECHNICAL_ISSUES", label: "Technical problems", description: "Audio, video, or connection issues" },
-  { value: "WRONG_CONSULTANT", label: "Wrong consultant assigned", description: "Matched with incorrect expert" },
-  { value: "PAYMENT_FAILED", label: "Payment failed", description: "Issue completing payment" },
-  { value: "CHARGED_TWICE", label: "Charged twice", description: "Duplicate charge on payment" },
-  { value: "REFUND_REQUEST", label: "Refund request", description: "Request money back for a booking" },
-  { value: "WANT_TO_CANCEL", label: "Want to cancel booking", description: "Need to cancel an upcoming session" },
-  { value: "CANCELLATION_ISSUE", label: "Cancellation problem", description: "Issue with cancellation process" },
-  { value: "ACCOUNT_ISSUE", label: "Account issue", description: "Profile, login, or settings problem" },
-  { value: "GENERAL_INQUIRY", label: "General inquiry", description: "Questions about the platform" },
-  { value: "OTHER", label: "Other", description: "Something else not listed" },
-];
-
-const PRIORITY_OPTIONS: { value: SupportPriority; label: string; color: string }[] = [
-  { value: "LOW", label: "Low", color: "text-green-600" },
-  { value: "MEDIUM", label: "Medium", color: "text-amber-600" },
-  { value: "HIGH", label: "High", color: "text-orange-600" },
-  { value: "URGENT", label: "Urgent", color: "text-red-600" },
-];
 
 export default function FeedbackSupportTab({
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -132,8 +115,7 @@ export default function FeedbackSupportTab({
 
   const formatIssueType = (issueType: SupportIssueType | null) => {
     if (!issueType) return null;
-    const option = ISSUE_TYPE_OPTIONS.find(o => o.value === issueType);
-    return option?.label || issueType.replace(/_/g, " ");
+    return ISSUE_TYPE_LABELS[issueType] || issueType.replace(/_/g, " ");
   };
 
   return (
@@ -337,37 +319,18 @@ export default function FeedbackSupportTab({
                       <SelectValue placeholder="Select issue type" />
                     </SelectTrigger>
                     <SelectContent>
-                      <div className="py-1 px-2 text-xs font-medium text-zinc-500 uppercase tracking-wide">Booking Issues</div>
-                      {ISSUE_TYPE_OPTIONS.slice(0, 4).map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          <div className="flex flex-col">
-                            <span>{option.label}</span>
+                      {Object.entries(ISSUE_TYPE_CATEGORIES).map(([category, types], idx) => (
+                        <React.Fragment key={category}>
+                          {idx > 0 && <div className="my-1" />}
+                          <div className="py-1 px-2 text-xs font-medium text-zinc-500 uppercase tracking-wide">
+                            {category}
                           </div>
-                        </SelectItem>
-                      ))}
-                      <div className="py-1 px-2 text-xs font-medium text-zinc-500 uppercase tracking-wide mt-2">Payment Issues</div>
-                      {ISSUE_TYPE_OPTIONS.slice(4, 7).map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          <div className="flex flex-col">
-                            <span>{option.label}</span>
-                          </div>
-                        </SelectItem>
-                      ))}
-                      <div className="py-1 px-2 text-xs font-medium text-zinc-500 uppercase tracking-wide mt-2">Cancellation</div>
-                      {ISSUE_TYPE_OPTIONS.slice(7, 9).map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          <div className="flex flex-col">
-                            <span>{option.label}</span>
-                          </div>
-                        </SelectItem>
-                      ))}
-                      <div className="py-1 px-2 text-xs font-medium text-zinc-500 uppercase tracking-wide mt-2">General</div>
-                      {ISSUE_TYPE_OPTIONS.slice(9).map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          <div className="flex flex-col">
-                            <span>{option.label}</span>
-                          </div>
-                        </SelectItem>
+                          {types.map((issueType) => (
+                            <SelectItem key={issueType} value={issueType}>
+                              <span>{ISSUE_TYPE_LABELS[issueType]}</span>
+                            </SelectItem>
+                          ))}
+                        </React.Fragment>
                       ))}
                     </SelectContent>
                   </Select>
@@ -461,11 +424,22 @@ export default function FeedbackSupportTab({
                     <div className="flex justify-between items-start gap-4 mb-2">
                       <div className="flex-1 min-w-0">
                         <h4 className="font-medium text-zinc-900 dark:text-white truncate">{ticket.title}</h4>
-                        {ticket.issueType && (
-                          <span className="text-xs text-zinc-500 dark:text-zinc-400">
-                            {formatIssueType(ticket.issueType)}
-                          </span>
-                        )}
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {ticket.issueType && (
+                            <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                              {formatIssueType(ticket.issueType)}
+                            </span>
+                          )}
+                          {/* Context indicator for linked tickets */}
+                          {(ticket.consultationId || ticket.subscriptionId || ticket.paymentId) && (
+                            <span className="inline-flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400">
+                              <Link2 className="h-3 w-3" />
+                              {ticket.paymentId && !ticket.consultationId && !ticket.subscriptionId
+                                ? "Linked to payment"
+                                : "Linked to appointment"}
+                            </span>
+                          )}
+                        </div>
                       </div>
                       <div className="flex gap-2 shrink-0">
                         <Badge variant="outline" className={`${getPriorityColor(ticket.priority as SupportPriority)} text-xs`}>
