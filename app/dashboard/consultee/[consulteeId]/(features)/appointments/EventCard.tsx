@@ -717,7 +717,69 @@ export function EventCard({
             </RadioGroup>
 
             {/* Session Selector - shown when "individual" or "multiple" is selected */}
-            {(rescheduleType === "individual" || rescheduleType === "multiple") && (
+            {(rescheduleType === "individual" || rescheduleType === "multiple") && (() => {
+              // CRITICAL FIX: Group slots into sessions by TIME CONTINUITY
+              // Consecutive slots (no time gap) = same session
+              // This handles both 30-min and 1-hour sessions automatically
+              const sortedSlots = rawSlots
+                .filter((slot) => !slot.isTentative)
+                .sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime());
+
+              // Group consecutive slots into sessions (no gap = same session)
+              const sessions: Array<{
+                slots: typeof sortedSlots;
+                startTime: Date;
+                endTime: Date;
+                isWithin24Hours: boolean;
+              }> = [];
+
+              let currentSessionSlots: typeof sortedSlots = [];
+
+              for (let i = 0; i < sortedSlots.length; i++) {
+                const slot = sortedSlots[i];
+                const prevSlot = sortedSlots[i - 1];
+
+                if (i === 0) {
+                  currentSessionSlots.push(slot);
+                } else {
+                  const prevEnd = new Date(prevSlot.endsAt).getTime();
+                  const currStart = new Date(slot.startsAt).getTime();
+
+                  // If this slot starts exactly when previous ended, same session
+                  if (currStart === prevEnd) {
+                    currentSessionSlots.push(slot);
+                  } else {
+                    // Gap found - save current session, start new one
+                    if (currentSessionSlots.length > 0) {
+                      const startTime = new Date(currentSessionSlots[0].startsAt);
+                      const endTime = new Date(currentSessionSlots[currentSessionSlots.length - 1].endsAt);
+                      const hoursUntil = (startTime.getTime() - Date.now()) / (1000 * 60 * 60);
+                      sessions.push({
+                        slots: [...currentSessionSlots],
+                        startTime,
+                        endTime,
+                        isWithin24Hours: hoursUntil < 24,
+                      });
+                    }
+                    currentSessionSlots = [slot];
+                  }
+                }
+              }
+
+              // Don't forget the last session
+              if (currentSessionSlots.length > 0) {
+                const startTime = new Date(currentSessionSlots[0].startsAt);
+                const endTime = new Date(currentSessionSlots[currentSessionSlots.length - 1].endsAt);
+                const hoursUntil = (startTime.getTime() - Date.now()) / (1000 * 60 * 60);
+                sessions.push({
+                  slots: [...currentSessionSlots],
+                  startTime,
+                  endTime,
+                  isWithin24Hours: hoursUntil < 24,
+                });
+              }
+
+              return (
               <div className="mt-4 space-y-2">
                 <Label className="text-sm font-medium text-zinc-700">
                   {rescheduleType === "individual"
@@ -725,94 +787,104 @@ export function EventCard({
                     : "Select sessions to reschedule:"}
                 </Label>
                 <div className="max-h-48 overflow-y-auto space-y-2 rounded-lg border border-zinc-200 p-2">
-                  {rawSlots
-                    .filter((slot) => !slot.isTentative)
-                    .sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime())
-                    .map((slot) => {
-                      const startTime = new Date(slot.startsAt);
-                      const endTime = new Date(slot.endsAt);
-                      const isSelected = selectedSlotIds.includes(slot.id);
-                      const hoursUntil = (startTime.getTime() - Date.now()) / (1000 * 60 * 60);
-                      const isWithin24Hours = hoursUntil < 24;
+                  {sessions.map((session, sessionIndex) => {
+                    // Get all slot IDs for this session
+                    const sessionSlotIds = session.slots.map(s => s.id);
+                    // Session is selected if ALL its slots are in selectedSlotIds
+                    const isSelected = sessionSlotIds.every(id => selectedSlotIds.includes(id));
 
-                      const handleSlotClick = () => {
-                        if (isWithin24Hours) return;
+                    const handleSessionClick = () => {
+                      if (session.isWithin24Hours) return;
 
-                        if (rescheduleType === "individual") {
-                          // Single select mode - replace selection
-                          setSelectedSlotIds([slot.id]);
-                        } else {
-                          // Multi-select mode - toggle selection
+                      if (rescheduleType === "individual") {
+                        // Single select mode - select ALL slots in this session
+                        setSelectedSlotIds(sessionSlotIds);
+                      } else {
+                        // Multi-select mode - toggle ALL slots in this session
+                        if (isSelected) {
+                          // Deselect all slots in this session
                           setSelectedSlotIds(prev =>
-                            prev.includes(slot.id)
-                              ? prev.filter(id => id !== slot.id)
-                              : [...prev, slot.id]
+                            prev.filter(id => !sessionSlotIds.includes(id))
                           );
+                        } else {
+                          // Select all slots in this session
+                          setSelectedSlotIds(prev => {
+                            const combined = [...prev, ...sessionSlotIds];
+                            return Array.from(new Set(combined));
+                          });
                         }
-                      };
+                      }
+                    };
 
-                      return (
-                        <button
-                          key={slot.id}
-                          type="button"
-                          onClick={handleSlotClick}
-                          disabled={isWithin24Hours}
-                          className={cn(
-                            "w-full flex items-center justify-between p-2.5 rounded-md text-left transition-colors",
-                            isSelected
-                              ? "bg-zinc-900 text-white"
-                              : isWithin24Hours
-                                ? "bg-zinc-100 text-zinc-400 cursor-not-allowed"
-                                : "bg-zinc-50 hover:bg-zinc-100 text-zinc-700"
+                    return (
+                      <button
+                        key={`session-${sessionIndex}`}
+                        type="button"
+                        onClick={handleSessionClick}
+                        disabled={session.isWithin24Hours}
+                        className={cn(
+                          "w-full flex items-center justify-between p-2.5 rounded-md text-left transition-colors",
+                          isSelected
+                            ? "bg-zinc-900 text-white"
+                            : session.isWithin24Hours
+                              ? "bg-zinc-100 text-zinc-400 cursor-not-allowed"
+                              : "bg-zinc-50 hover:bg-zinc-100 text-zinc-700"
+                        )}
+                      >
+                        <div className="flex items-center gap-2">
+                          {/* Checkbox indicator for multi-select mode */}
+                          {rescheduleType === "multiple" && (
+                            <div className={cn(
+                              "w-4 h-4 rounded border flex items-center justify-center",
+                              isSelected
+                                ? "bg-white border-white"
+                                : session.isWithin24Hours
+                                  ? "border-zinc-300"
+                                  : "border-zinc-400"
+                            )}>
+                              {isSelected && <Check className="h-3 w-3 text-zinc-900" />}
+                            </div>
                           )}
-                        >
-                          <div className="flex items-center gap-2">
-                            {/* Checkbox indicator for multi-select mode */}
-                            {rescheduleType === "multiple" && (
-                              <div className={cn(
-                                "w-4 h-4 rounded border flex items-center justify-center",
-                                isSelected
-                                  ? "bg-white border-white"
-                                  : isWithin24Hours
-                                    ? "border-zinc-300"
-                                    : "border-zinc-400"
-                              )}>
-                                {isSelected && <Check className="h-3 w-3 text-zinc-900" />}
-                              </div>
-                            )}
-                            <div>
-                              <div className="text-sm font-medium">
-                                {formatSlotDate(startTime)}
-                              </div>
-                              <div className={cn(
-                                "text-xs",
-                                isSelected ? "text-zinc-300" : "text-zinc-500"
-                              )}>
-                                {formatSlotTime(startTime)} - {formatSlotTime(endTime)}
-                              </div>
+                          <div>
+                            <div className="text-sm font-medium">
+                              {formatSlotDate(session.startTime)}
+                            </div>
+                            <div className={cn(
+                              "text-xs",
+                              isSelected ? "text-zinc-300" : "text-zinc-500"
+                            )}>
+                              {formatSlotTime(session.startTime)} - {formatSlotTime(session.endTime)}
                             </div>
                           </div>
-                          {isWithin24Hours && (
-                            <span className="text-xs bg-orange-100 text-orange-600 px-2 py-0.5 rounded">
-                              Within 24h
-                            </span>
-                          )}
-                        </button>
-                      );
-                    })}
+                        </div>
+                        {session.isWithin24Hours && (
+                          <span className="text-xs bg-orange-100 text-orange-600 px-2 py-0.5 rounded">
+                            Within 24h
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
                 </div>
-                {rawSlots.filter((s) => !s.isTentative).length === 0 && (
+                {sessions.length === 0 && (
                   <p className="text-sm text-zinc-500 text-center py-4">
                     No confirmed sessions available to reschedule.
                   </p>
                 )}
-                {rescheduleType === "multiple" && selectedSlotIds.length > 0 && (
-                  <p className="text-sm text-zinc-600 font-medium">
-                    {selectedSlotIds.length} session{selectedSlotIds.length > 1 ? "s" : ""} selected
-                  </p>
-                )}
+                {rescheduleType === "multiple" && selectedSlotIds.length > 0 && (() => {
+                  // Count how many sessions have all their slots selected
+                  const selectedSessionCount = sessions.filter(session =>
+                    session.slots.every(slot => selectedSlotIds.includes(slot.id))
+                  ).length;
+                  return (
+                    <p className="text-sm text-zinc-600 font-medium">
+                      {selectedSessionCount} session{selectedSessionCount > 1 ? "s" : ""} selected
+                    </p>
+                  );
+                })()}
               </div>
-            )}
+              );
+            })()}
 
             {/* Warning notice */}
             <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
