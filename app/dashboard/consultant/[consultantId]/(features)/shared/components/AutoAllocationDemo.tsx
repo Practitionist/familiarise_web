@@ -203,8 +203,8 @@ export function AutoAllocationDemo({
     if (filteredSlots.length < requiredSlots) {
       toast({
         variant: "destructive",
-        title: "Not Enough Slots",
-        description: `Need ${requiredSlots} slots but only ${filteredSlots.length} available after filtering.`,
+        title: "Not enough available slots",
+        description: `${requiredSlots} slots needed, but only ${filteredSlots.length} match your preferences.`,
       });
       return;
     }
@@ -247,8 +247,8 @@ export function AutoAllocationDemo({
 
         // SUCCESS FEEDBACK: Show strategy used and slots allocated
         toast({
-          title: "Auto Allocation Successful! 🎉",
-          description: `${result.selectedSlots.length} slots allocated using ${result.strategy} strategy.`,
+          title: "Schedule created!",
+          description: `${result.selectedSlots.length} sessions scheduled at optimal times.`,
         });
       } else {
         // ERROR FEEDBACK: Show specific error message

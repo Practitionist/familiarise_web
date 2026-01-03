@@ -349,8 +349,8 @@ export function RequestSlotAllocationTab({
 
       // Success handling
       toast({
-        title: "Success",
-        description: `Slots have been allocated as requested${override ? " (with override)" : ""}`,
+        title: "Times confirmed",
+        description: "Your requested times have been scheduled.",
         variant: "default",
       });
 
@@ -378,8 +378,8 @@ export function RequestSlotAllocationTab({
   // Handle allocation complete from UnifiedCalendar
   const handleAllocationComplete = async () => {
     toast({
-      title: "Success",
-      description: "Slots have been allocated successfully",
+      title: "Schedule confirmed",
+      description: "All session times have been scheduled.",
       variant: "default",
     });
 
