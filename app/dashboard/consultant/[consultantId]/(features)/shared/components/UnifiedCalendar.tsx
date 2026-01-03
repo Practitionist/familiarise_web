@@ -691,7 +691,7 @@ export function UnifiedCalendar({
       }
 
       let cellClassName =
-        "h-8 w-full relative transition-colors duration-150 ease-in-out border border-transparent rounded-sm text-[10px] leading-tight px-1 py-0.5";
+        "h-8 w-full relative transition-colors duration-150 ease-in-out border border-transparent rounded-sm text-[10px] leading-tight px-1 py-0.5 disabled:pointer-events-none disabled:opacity-50";
       let buttonText = "";
       const showTooltip =
         ((status.isBookedForDisplay || status.isPartiallyBooked) &&
@@ -724,15 +724,15 @@ export function UnifiedCalendar({
         if (status.isInPast) {
           // Past available slot - faded, clickable (shows toast)
           cellClassName +=
-            " bg-green-300 text-green-950 opacity-50 cursor-pointer border-green-400";
+            " bg-green-300 text-green-950 opacity-50 cursor-pointer hover:bg-green-400 border-green-400";
           buttonText = isOutsideAllowedRange ? "Outside Period" : "Available";
         } else {
           // Future available slot - unfaded, clickable
-          const hoverClass =
-            eventType === "consultation"
-              ? " hover:bg-green-400 hover:shadow-md"
-              : " hover:bg-green-400";
-          cellClassName += ` bg-green-300 text-green-950${hoverClass} border-green-400`;
+          cellClassName +=
+            " bg-green-300 text-green-950 cursor-pointer hover:bg-green-400 border-green-400";
+          if (eventType === "consultation") {
+            cellClassName += " hover:shadow-md";
+          }
           buttonText = isOutsideAllowedRange ? "Outside Period" : "Available";
         }
       } else {
@@ -749,14 +749,14 @@ export function UnifiedCalendar({
         mode === "view" || (!status.isAvailable && !status.isBooked);
 
       const buttonElement = (
-        <Button
-          variant="ghost"
+        <button
+          type="button"
           className={cellClassName}
           onClick={() => handleSlotClick(interval, date)}
           disabled={isButtonDisabled}
         >
           {buttonText}
-        </Button>
+        </button>
       );
 
       if (showTooltip) {

@@ -639,7 +639,12 @@ export function useCalendarData(
   // PERFORMANCE: Auto-load data with proper dependency tracking
   useEffect(() => {
     if (autoLoad && consultantId) {
-      setLoading(true);
+      // FIX: Only show loading spinner on initial load, not on background refetches
+      // This prevents "Loading calendar..." from showing when toast triggers re-render
+      const isInitialLoad = !consultantDetails && rawAvailabilitySlots.weekly.length === 0;
+      if (isInitialLoad) {
+        setLoading(true);
+      }
       setError(null);
 
       // OPTIMIZATION: Parallel data fetching on mount and dependency changes
