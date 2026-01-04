@@ -134,7 +134,7 @@ export default function ExpertProfile(
 
   const handleConsultationBooking = useCallback(async () => {
     if (!selectedSlot || !consultantDetails) {
-      toast({ title: "Please select a time slot", variant: "destructive" });
+      toast({ title: "Please select a slot", variant: "destructive" });
       return;
     }
 
@@ -148,7 +148,7 @@ export default function ExpertProfile(
     );
 
     if (!activePlan) {
-      toast({ title: "Invalid consultation plan", variant: "destructive" });
+      toast({ title: "Consultation unavailable", variant: "destructive" });
       return;
     }
 
@@ -200,7 +200,7 @@ export default function ExpertProfile(
       );
 
       if (!activePlan) {
-        toast({ title: "Invalid subscription plan", variant: "destructive" });
+        toast({ title: "Subscription unavailable", variant: "destructive" });
         return;
       }
 

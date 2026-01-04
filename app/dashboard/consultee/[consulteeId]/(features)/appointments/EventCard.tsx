@@ -263,10 +263,10 @@ export function EventCard({
       const slotsAffected = data.slotsAffected ?? slotIds?.length ?? rawSlots.length;
 
       toast({
-        title: "Reschedule initiated",
+        title: "Ready to reschedule",
         description: slotsAffected === 1
-          ? `Your session has been marked for rescheduling. Please select a new time.`
-          : `${slotsAffected} sessions have been marked for rescheduling. Please select new times.`,
+          ? `Select a new time for your session.`
+          : `Select new times for your ${slotsAffected} sessions.`,
       });
 
       window.location.reload();

@@ -504,8 +504,8 @@ export function UnifiedCalendar({
                 : "event";
           toast({
             variant: "destructive",
-            title: "Slot outside allowed period",
-            description: `This ${label} allows scheduling only between ${formatAllowedRange(allowedStart, allowedEnd)}.`,
+            title: "Outside scheduling window",
+            description: `You can only schedule between ${formatAllowedRange(allowedStart, allowedEnd)}.`,
           });
           return;
         }
@@ -546,8 +546,8 @@ export function UnifiedCalendar({
           if (totalCompletedThisWeek >= (callsPerWeek || 1)) {
             toast({
               variant: "destructive",
-              title: "Weekly Call Limit Reached",
-              description: `Week of ${weekStart.toLocaleDateString()} already has ${totalCompletedThisWeek}/${callsPerWeek} completed call(s). Start a call in another week.`,
+              title: "Weekly limit reached",
+              description: `You've scheduled ${totalCompletedThisWeek} sessions this week (max ${callsPerWeek}). Choose a different week.`,
             });
             return;
           }
@@ -558,8 +558,8 @@ export function UnifiedCalendar({
       if (status.isInPast) {
         toast({
           variant: "destructive",
-          title: "Cannot select past slot",
-          description: "This time slot is in the past and cannot be selected.",
+          title: "Slot has passed",
+          description: "This slot is no longer available.",
         });
         return;
       }
@@ -573,8 +573,8 @@ export function UnifiedCalendar({
           variant: "destructive",
           title: "Slot unavailable",
           description: status.isBookedForDisplay
-            ? "This time slot is already booked."
-            : "This time slot is not available for booking.",
+            ? "This slot is already booked."
+            : "This slot is not available.",
         });
         return;
       }
