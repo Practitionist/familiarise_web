@@ -992,9 +992,7 @@ export async function handleSubscriptionCheckout(
   const subscription = await tx.subscription.create({
     data: {
       subscriptionPlanId: plan.id,
-      requestStatus: skipPayment
-        ? RequestStatus.APPROVED
-        : RequestStatus.PENDING,
+      requestStatus: RequestStatus.PENDING, // Always PENDING until consultant allocates slots
       requestedById: consulteeProfileId,
       requestNotes: data.notes,
       bookingSource: "DIRECT_CHECKOUT",
