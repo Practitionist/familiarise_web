@@ -99,6 +99,19 @@ export async function POST(
           throw new AppointmentNotFoundError("appointment", appointmentId);
         }
 
+        // For SUBSCRIPTION type, we need to get ALL slots across ALL appointments in the subscription
+        // because the UI collects slots from all appointments but only passes one appointmentId
+        let allSubscriptionSlots: typeof appointment.slotsOfAppointment = [];
+
+        if (appointmentType === "SUBSCRIPTION" && appointment.subscription) {
+          // Fetch all appointments for this subscription with their slots
+          const allAppointments = await tx.appointment.findMany({
+            where: { subscriptionId: appointment.subscription.id },
+            include: { slotsOfAppointment: { orderBy: { startsAt: "asc" } } },
+          });
+          allSubscriptionSlots = allAppointments.flatMap(apt => apt.slotsOfAppointment);
+        }
+
         // Determine which slots will be affected
         let slotsToReschedule = appointment.slotsOfAppointment;
 
@@ -109,8 +122,8 @@ export async function POST(
           slotIds.length > 0 &&
           appointment.subscription
         ) {
-          // Filter to only the requested slots
-          slotsToReschedule = appointment.slotsOfAppointment.filter((s) =>
+          // Filter to only the requested slots from ALL subscription slots
+          slotsToReschedule = allSubscriptionSlots.filter((s) =>
             slotIds.includes(s.id),
           );
 
@@ -145,15 +158,27 @@ export async function POST(
           appointment.subscription
         ) {
           // Individual/multiple session reschedule - only mark the specific slots
+          // Use validated slot IDs from slotsToReschedule (already verified to exist)
+          const validatedSlotIds = slotsToReschedule.map(s => s.id);
           await tx.slotOfAppointment.updateMany({
             where: {
-              id: { in: slotIds },
-              appointmentId, // Security: ensure slots belong to this appointment
+              id: { in: validatedSlotIds },
             },
             data: { isTentative: true },
           });
+        } else if (appointmentType === "SUBSCRIPTION" && appointment.subscription) {
+          // Entire subscription reschedule - mark ALL slots in ALL appointments
+          const allAppointmentIds = (await tx.appointment.findMany({
+            where: { subscriptionId: appointment.subscription.id },
+            select: { id: true },
+          })).map(a => a.id);
+
+          await tx.slotOfAppointment.updateMany({
+            where: { appointmentId: { in: allAppointmentIds } },
+            data: { isTentative: true },
+          });
         } else {
-          // Entire appointment/subscription reschedule - mark all slots
+          // Non-subscription: mark all slots in the single appointment
           await tx.slotOfAppointment.updateMany({
             where: { appointmentId },
             data: { isTentative: true },
