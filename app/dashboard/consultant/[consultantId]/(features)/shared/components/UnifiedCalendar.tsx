@@ -852,14 +852,12 @@ export function UnifiedCalendar({
             return (
               <div
                 key={date.toISOString()}
-                className={`min-h-[100px] border p-1 flex flex-col ${
-                  isCurrentDay ? "ring-2 ring-primary" : ""
-                } ${isPastDay ? "bg-gray-100 text-gray-400" : "bg-white"}`}
+                className={`min-h-[100px] border p-1 flex flex-col ${isCurrentDay ? "ring-2 ring-primary" : ""
+                  } ${isPastDay ? "bg-gray-100 text-gray-400" : "bg-white"}`}
               >
                 <div
-                  className={`font-bold mb-1 text-xs ${
-                    isCurrentDay ? "text-primary" : ""
-                  } ${isPastDay ? "" : "text-gray-700"}`}
+                  className={`font-bold mb-1 text-xs ${isCurrentDay ? "text-primary" : ""
+                    } ${isPastDay ? "" : "text-gray-700"}`}
                 >
                   {i + 1}
                 </div>
@@ -1020,7 +1018,7 @@ export function UnifiedCalendar({
 
       {/* Calendar View */}
       {view === "week" ? (
-        <div className="flex flex-col h-[calc(100vh-20rem)] md:h-[65vh] max-h-[700px]">
+        <div className="flex flex-col h-[calc(100vh-24rem)] xl:h-[65vh] max-h-[500px]">
           {/* Week header */}
           <div className="grid grid-cols-8 gap-0.5 md:gap-1 sticky top-0 bg-background z-20 pb-1">
             <div className="w-14 md:w-20"></div>
@@ -1034,14 +1032,12 @@ export function UnifiedCalendar({
               return (
                 <div
                   key={DAYS[index]}
-                  className={`text-center p-1 md:p-2 ${
-                    isInPeriod ? "bg-blue-50 border-x-2 border-blue-200" : ""
-                  }`}
+                  className={`text-center p-1 md:p-2 ${isInPeriod ? "bg-blue-50 border-x-2 border-blue-200" : ""
+                    }`}
                 >
                   <div
-                    className={`font-bold text-xs md:text-base ${
-                      isToday ? "text-primary" : ""
-                    }`}
+                    className={`font-bold text-xs md:text-base ${isToday ? "text-primary" : ""
+                      }`}
                   >
                     {DAYS[index].slice(0, 3)}
                   </div>
