@@ -1,0 +1,47 @@
+name: Reconcile Payment Status
+
+on:
+  schedule:
+    # Run every 30 minutes
+    - cron: "*/30 * * * *"
+  workflow_dispatch: # Allow manual triggering
+
+jobs:
+  reconcile-payment-status:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      # Database connection (required for Prisma)
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DIRECT_URL: ${{ secrets.DIRECT_URL }}
+
+      # Payment gateway credentials
+      STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+      RAZORPAY_KEY_ID: ${{ secrets.RAZORPAY_KEY_ID }}
+      RAZORPAY_KEY_SECRET: ${{ secrets.RAZORPAY_KEY_SECRET }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Run payment status reconciliation
+        run: npx tsx jobs/reconcile-payment-status.ts
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "Payment status reconciliation failed"
+          # Add notification logic here (Slack, email, etc.)

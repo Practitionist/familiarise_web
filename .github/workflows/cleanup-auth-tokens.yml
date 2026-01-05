@@ -1,0 +1,42 @@
+name: Cleanup Auth Tokens
+
+on:
+  schedule:
+    # Run daily at midnight UTC
+    - cron: "0 0 * * *"
+  workflow_dispatch: # Allow manual triggering
+
+jobs:
+  cleanup-auth-tokens:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      # Database connection (required for Prisma)
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DIRECT_URL: ${{ secrets.DIRECT_URL }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Run auth token cleanup
+        run: npx tsx jobs/cleanup-auth-tokens.ts
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "Auth token cleanup failed"
+          # Add notification logic here (Slack, email, etc.)

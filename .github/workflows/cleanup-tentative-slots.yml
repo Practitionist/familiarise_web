@@ -1,0 +1,42 @@
+name: Cleanup Tentative Slots
+
+on:
+  schedule:
+    # Run every 2 hours
+    - cron: "0 */2 * * *"
+  workflow_dispatch: # Allow manual triggering
+
+jobs:
+  cleanup-tentative-slots:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      # Database connection (required for Prisma)
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DIRECT_URL: ${{ secrets.DIRECT_URL }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Cleanup tentative slots
+        run: npx tsx jobs/cleanup-tentative-slots.ts
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "Tentative slot cleanup job failed"
+          # Add notification logic here (Slack, email, etc.)

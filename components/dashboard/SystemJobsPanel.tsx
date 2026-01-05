@@ -17,6 +17,13 @@ import {
   Loader2,
   CheckCircle2,
   XCircle,
+  Trash2,
+  Key,
+  FileCheck,
+  Database,
+  Archive,
+  Tag,
+  Bell,
 } from "lucide-react";
 
 // Job configuration
@@ -25,7 +32,7 @@ export interface SystemJob {
   name: string;
   description: string;
   schedule: string;
-  category: "Payments" | "Refunds" | "Disputes" | "Earnings" | "Appointments" | "Payouts";
+  category: "Payments" | "Refunds" | "Disputes" | "Earnings" | "Appointments" | "Payouts" | "Cleanup" | "Reconciliation" | "Alerts";
 }
 
 const SYSTEM_JOBS: SystemJob[] = [
@@ -112,6 +119,108 @@ const SYSTEM_JOBS: SystemJob[] = [
     schedule: "Weekly (Mon 9PM UTC)",
     category: "Payouts",
   },
+  {
+    id: "handle-stuck-payouts",
+    name: "Handle Stuck Payouts",
+    description: "Retry payouts stuck in PROCESSING >24h, query gateway status",
+    schedule: "Every 4 hours",
+    category: "Payouts",
+  },
+  {
+    id: "reconcile-payout-status",
+    name: "Reconcile Payout Status",
+    description: "Sync PENDING/PROCESSING payout status with gateways",
+    schedule: "Every 6 hours",
+    category: "Reconciliation",
+  },
+  // Alerts
+  {
+    id: "alert-orphaned-payments",
+    name: "Alert Orphaned Payments",
+    description: "Find SUCCEEDED payments with no appointment (CRITICAL)",
+    schedule: "Every 6 hours",
+    category: "Alerts",
+  },
+  {
+    id: "alert-dispute-deadlines",
+    name: "Alert Dispute Deadlines",
+    description: "Alert when dispute dueBy is within 48h (URGENT)",
+    schedule: "Hourly",
+    category: "Alerts",
+  },
+  // Cleanup
+  {
+    id: "auth-tokens",
+    name: "Auth Token Cleanup",
+    description: "Delete expired sessions, verification tokens, password reset tokens",
+    schedule: "Daily",
+    category: "Cleanup",
+  },
+  {
+    id: "tentative-slots",
+    name: "Tentative Slot Cleanup",
+    description: "Release slots held for abandoned booking flows >7 days",
+    schedule: "Every 2 hours",
+    category: "Cleanup",
+  },
+  {
+    id: "stale-pending-consultations",
+    name: "Stale Pending Consultations",
+    description: "Cancel APPROVED consultations with no payment >7 days",
+    schedule: "Hourly",
+    category: "Cleanup",
+  },
+  {
+    id: "expire-stale-requests",
+    name: "Expire Stale Requests",
+    description: "Auto-expire PENDING requests >30 days, APPROVED_PENDING_PAYMENT >7 days",
+    schedule: "Daily",
+    category: "Cleanup",
+  },
+  {
+    id: "archive-webhook-events",
+    name: "Archive Webhook Events",
+    description: "Delete processed webhook events >30 days",
+    schedule: "Weekly",
+    category: "Cleanup",
+  },
+  {
+    id: "deactivate-expired-discounts",
+    name: "Deactivate Expired Discounts",
+    description: "Deactivate discount codes past expiresAt or at max uses",
+    schedule: "Daily",
+    category: "Cleanup",
+  },
+  // Reconciliation
+  {
+    id: "reconcile-payment-status",
+    name: "Reconcile Payment Status",
+    description: "Query Stripe/Razorpay for actual status on stale PENDING payments",
+    schedule: "Every 30 minutes",
+    category: "Reconciliation",
+  },
+  {
+    id: "reconcile-slot-availability",
+    name: "Reconcile Slot Availability",
+    description: "Fix tentative flags, detect double-bookings",
+    schedule: "Hourly",
+    category: "Reconciliation",
+  },
+  {
+    id: "reconcile-document-storage",
+    name: "Reconcile Document Storage",
+    description: "Find orphaned/missing files in Supabase storage",
+    schedule: "Daily",
+    category: "Reconciliation",
+  },
+  // Appointments
+  {
+    id: "auto-complete-appointments",
+    name: "Auto-Complete Appointments",
+    description: "Move webinars/classes to COMPLETED after session ends",
+    schedule: "Hourly",
+    category: "Appointments",
+  },
 ];
 
 const CATEGORY_CONFIG: Record<SystemJob["category"], { icon: typeof CreditCard; color: string }> = {
@@ -121,6 +230,9 @@ const CATEGORY_CONFIG: Record<SystemJob["category"], { icon: typeof CreditCard; 
   Earnings: { icon: DollarSign, color: "emerald" },
   Appointments: { icon: Calendar, color: "indigo" },
   Payouts: { icon: Wallet, color: "pink" },
+  Cleanup: { icon: Trash2, color: "gray" },
+  Reconciliation: { icon: Database, color: "cyan" },
+  Alerts: { icon: Bell, color: "red" },
 };
 
 interface JobCardProps {
@@ -140,6 +252,9 @@ function JobCard({ job, isRunning, onRun }: JobCardProps) {
     emerald: { bg: "bg-emerald-50", text: "text-emerald-600", badge: "bg-emerald-100 text-emerald-700" },
     indigo: { bg: "bg-indigo-50", text: "text-indigo-600", badge: "bg-indigo-100 text-indigo-700" },
     pink: { bg: "bg-pink-50", text: "text-pink-600", badge: "bg-pink-100 text-pink-700" },
+    gray: { bg: "bg-zinc-50", text: "text-zinc-600", badge: "bg-zinc-100 text-zinc-700" },
+    cyan: { bg: "bg-cyan-50", text: "text-cyan-600", badge: "bg-cyan-100 text-cyan-700" },
+    red: { bg: "bg-red-50", text: "text-red-600", badge: "bg-red-100 text-red-700" },
   };
 
   const colors = colorClasses[config.color];

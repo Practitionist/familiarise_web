@@ -28,6 +28,21 @@ import { releaseEarningsFromHold } from "@/scripts/release-earnings";
 import { runAllCleanupTasks as cleanupInvalidAppointments } from "@/scripts/cleanup-invalid-appointments";
 import { createPayoutBatch } from "@/scripts/create-payout-batch";
 import { processApprovedPayouts } from "@/scripts/process-payouts";
+// New job imports
+import { alertOrphanedPayments } from "@/scripts/alert-orphaned-payments";
+import { handleStuckPayouts } from "@/scripts/handle-stuck-payouts";
+import { cleanupAuthTokens } from "@/scripts/cleanup-auth-tokens";
+import { reconcilePaymentStatus } from "@/scripts/reconcile-payment-status";
+import { reconcilePayoutStatus } from "@/scripts/reconcile-payout-status";
+import { alertDisputeDeadlines } from "@/scripts/alert-dispute-deadlines";
+import { autoCompleteAppointments } from "@/scripts/auto-complete-appointments";
+import { expireStaleRequests } from "@/scripts/expire-stale-requests";
+import { cleanupTentativeSlots } from "@/scripts/cleanup-tentative-slots";
+import { cleanupStalePendingConsultations } from "@/scripts/cleanup-stale-pending-consultations";
+import { archiveWebhookEvents } from "@/scripts/archive-webhook-events";
+import { reconcileSlotAvailability } from "@/scripts/reconcile-slot-availability";
+import { reconcileDocumentStorage } from "@/scripts/reconcile-document-storage";
+import { deactivateExpiredDiscounts } from "@/scripts/deactivate-expired-discounts";
 
 // Job ID to function mapping
 type JobResult = {
@@ -147,6 +162,154 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
       succeededCount: result.succeeded,
       failedCount: result.failed,
       errorCount: result.failed,
+    };
+  },
+  // New jobs
+  "alert-orphaned-payments": async () => {
+    const result = await alertOrphanedPayments();
+    return {
+      success: result.success,
+      totalProcessed: result.orphanedCount,
+      orphanedCount: result.orphanedCount,
+      criticalAlerts: result.orphanedCount,
+    };
+  },
+  "handle-stuck-payouts": async () => {
+    const result = await handleStuckPayouts();
+    return {
+      success: result.success,
+      totalProcessed: result.totalProcessed,
+      reconciledCount: result.reconciledCount,
+      retriedCount: result.retriedCount,
+      failedCount: result.failedCount,
+      errorCount: result.errors.length,
+    };
+  },
+  "auth-tokens": async () => {
+    const result = await cleanupAuthTokens();
+    return {
+      success: result.success,
+      totalProcessed: result.totalCleaned,
+      cleanedCount: result.totalCleaned,
+      verificationTokensDeleted: result.verificationTokensDeleted,
+      sessionsDeleted: result.sessionsDeleted,
+      passwordResetTokensCleared: result.passwordResetTokensCleared,
+    };
+  },
+  "reconcile-payment-status": async () => {
+    const result = await reconcilePaymentStatus();
+    return {
+      success: result.success,
+      totalProcessed: result.totalProcessed,
+      reconciledCount: result.reconciledCount,
+      succeededCount: result.succeededCount,
+      failedCount: result.failedCount,
+      errorCount: result.errors.length,
+    };
+  },
+  "reconcile-payout-status": async () => {
+    const result = await reconcilePayoutStatus();
+    return {
+      success: result.success,
+      totalProcessed: result.totalProcessed,
+      reconciledCount: result.reconciledCount,
+      completedCount: result.completedCount,
+      failedCount: result.failedCount,
+      discrepanciesCount: result.discrepancies.length,
+      errorCount: result.errors.length,
+    };
+  },
+  "alert-dispute-deadlines": async () => {
+    const result = await alertDisputeDeadlines();
+    return {
+      success: result.success,
+      urgentCount: result.urgentCount,
+      criticalCount: result.criticalCount,
+      totalAlerts: result.urgentCount,
+    };
+  },
+  "auto-complete-appointments": async () => {
+    const result = await autoCompleteAppointments();
+    return {
+      success: result.success,
+      webinarsCompleted: result.webinarsCompleted,
+      classesCompleted: result.classesCompleted,
+      totalProcessed: result.webinarsCompleted + result.classesCompleted,
+      errorCount: result.errors.length,
+    };
+  },
+  "expire-stale-requests": async () => {
+    const result = await expireStaleRequests();
+    return {
+      success: result.success,
+      consultationsExpired: result.consultationsExpired,
+      subscriptionsExpired: result.subscriptionsExpired,
+      paymentPendingExpired: result.paymentPendingExpired,
+      totalProcessed: result.consultationsExpired + result.subscriptionsExpired + result.paymentPendingExpired,
+      errorCount: result.errors.length,
+    };
+  },
+  "tentative-slots": async () => {
+    const result = await cleanupTentativeSlots();
+    return {
+      success: result.success,
+      slotsReleased: result.slotsReleased,
+      appointmentsAffected: result.appointmentsAffected,
+      cleanedCount: result.slotsReleased,
+      errorCount: result.errors.length,
+    };
+  },
+  "stale-pending-consultations": async () => {
+    const result = await cleanupStalePendingConsultations();
+    return {
+      success: result.success,
+      consultationsCancelled: result.consultationsCancelled,
+      slotsReleased: result.slotsReleased,
+      cleanedCount: result.consultationsCancelled,
+      errorCount: result.errors.length,
+    };
+  },
+  "archive-webhook-events": async () => {
+    const result = await archiveWebhookEvents();
+    return {
+      success: result.success,
+      processedEventsDeleted: result.processedEventsDeleted,
+      failedEventsDeleted: result.failedEventsDeleted,
+      totalDeleted: result.totalDeleted,
+      cleanedCount: result.totalDeleted,
+      errorCount: result.errors.length,
+    };
+  },
+  "reconcile-slot-availability": async () => {
+    const result = await reconcileSlotAvailability();
+    return {
+      success: result.success,
+      tentativeFlagsCleared: result.tentativeFlagsCleared,
+      doubleBookingsDetected: result.doubleBookingsDetected,
+      reconciledCount: result.tentativeFlagsCleared,
+      errorCount: result.errors.length,
+    };
+  },
+  "reconcile-document-storage": async () => {
+    const result = await reconcileDocumentStorage();
+    return {
+      success: result.success,
+      orphanedFilesFound: result.orphanedFilesFound,
+      orphanedFilesDeleted: result.orphanedFilesDeleted,
+      missingFilesFound: result.missingFilesFound,
+      cleanedCount: result.orphanedFilesDeleted,
+      errorCount: result.errors.length,
+    };
+  },
+  "deactivate-expired-discounts": async () => {
+    const result = await deactivateExpiredDiscounts();
+    return {
+      success: result.success,
+      expiredByDateCount: result.expiredByDateCount,
+      maxUsesReachedCount: result.maxUsesReachedCount,
+      totalDeactivated: result.totalDeactivated,
+      cleanedCount: result.totalDeactivated,
+      errorCount: result.errors.length,
     };
   },
 };
