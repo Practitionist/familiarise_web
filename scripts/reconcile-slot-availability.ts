@@ -206,13 +206,16 @@ async function detectDoubleBookings(): Promise<{
     }
 
     // Check for overlaps within each consultant's slots
-    for (const [consultantId, slots] of slotsByConsultant) {
+    for (const [consultantId, slots] of Array.from(slotsByConsultant.entries())) {
       // Sort by start time
-      slots.sort((a, b) => a.slot.startsAt.getTime() - b.slot.startsAt.getTime());
+      const sortedSlots = [...slots].sort(
+        (a: { slot: { startsAt: Date } }, b: { slot: { startsAt: Date } }) =>
+          a.slot.startsAt.getTime() - b.slot.startsAt.getTime()
+      );
 
-      for (let i = 0; i < slots.length - 1; i++) {
-        const current = slots[i];
-        const next = slots[i + 1];
+      for (let i = 0; i < sortedSlots.length - 1; i++) {
+        const current = sortedSlots[i];
+        const next = sortedSlots[i + 1];
 
         // Check if slots overlap
         if (current.slot.endsAt > next.slot.startsAt) {

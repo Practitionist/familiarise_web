@@ -169,9 +169,10 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
     const result = await alertOrphanedPayments();
     return {
       success: result.success,
-      totalProcessed: result.orphanedCount,
-      orphanedCount: result.orphanedCount,
-      criticalAlerts: result.orphanedCount,
+      totalProcessed: result.totalOrphaned,
+      orphanedCount: result.totalOrphaned,
+      criticalAlerts: result.criticalCount,
+      totalAmount: result.totalAmount,
     };
   },
   "handle-stuck-payouts": async () => {

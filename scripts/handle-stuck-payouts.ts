@@ -270,7 +270,7 @@ export async function handleStuckPayouts(): Promise<StuckPayoutsResult> {
             mappedStatus === PayoutStatus.FAILED
               ? gatewayStatus.failureMessage || gatewayStatus.failureReason
               : undefined,
-          completedAt:
+          processedAt:
             mappedStatus === PayoutStatus.COMPLETED ? new Date() : undefined,
         },
       });

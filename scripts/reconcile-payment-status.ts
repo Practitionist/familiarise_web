@@ -190,12 +190,14 @@ export async function reconcilePaymentStatus(): Promise<PaymentReconciliationRes
         lt: minAge,
         gte: maxAge,
       },
-      // Only payments with gateway reference
-      paymentIntent: { not: null },
+      // Only payments with gateway reference - not an empty string
+      NOT: {
+        paymentIntent: "",
+      },
     },
     include: {
       user: { select: { email: true, name: true } },
-      appointment: { select: { id: true, status: true } },
+      appointment: { select: { id: true } },
     },
     orderBy: { createdAt: "asc" },
   });
