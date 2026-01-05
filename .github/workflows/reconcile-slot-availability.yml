@@ -33,7 +33,7 @@ jobs:
         run: npx prisma generate
 
       - name: Reconcile slot availability
-        run: npx tsx jobs/reconcile-slot-availability.ts
+        run: npx tsx jobs/appointments/reconcile-slot-availability.ts
 
       - name: Notify on double bookings
         if: failure()

@@ -8,7 +8,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { reconcilePendingRefunds } from "@/scripts/reconcile-pending-refunds";
+import { reconcilePendingRefunds } from "@/scripts/refunds/reconcile-pending-refunds";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {

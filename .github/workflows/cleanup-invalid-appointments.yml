@@ -33,7 +33,7 @@ jobs:
         run: npx prisma generate
 
       - name: Run invalid appointments cleanup
-        run: npx tsx jobs/cleanup-invalid-appointments.ts
+        run: npx tsx jobs/appointments/cleanup-invalid-appointments.ts
 
       - name: Notify on failure
         if: failure()

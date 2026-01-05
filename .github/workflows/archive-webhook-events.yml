@@ -33,7 +33,7 @@ jobs:
         run: npx prisma generate
 
       - name: Archive webhook events
-        run: npx tsx jobs/archive-webhook-events.ts
+        run: npx tsx jobs/cleanup/archive-webhook-events.ts
 
       - name: Notify on failure
         if: failure()

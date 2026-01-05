@@ -37,7 +37,7 @@ jobs:
         run: npx prisma generate
 
       - name: Reconcile document storage
-        run: npx tsx jobs/reconcile-document-storage.ts
+        run: npx tsx jobs/cleanup/reconcile-document-storage.ts
 
       - name: Notify on failure
         if: failure()

@@ -33,7 +33,7 @@ jobs:
         run: npx prisma generate
 
       - name: Run auth token cleanup
-        run: npx tsx jobs/cleanup-auth-tokens.ts
+        run: npx tsx jobs/cleanup/cleanup-auth-tokens.ts
 
       - name: Notify on failure
         if: failure()

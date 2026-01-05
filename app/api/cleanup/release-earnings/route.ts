@@ -8,7 +8,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { releaseEarningsFromHold } from "@/scripts/release-earnings";
+import { releaseEarningsFromHold } from "@/scripts/earnings/release-earnings";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {

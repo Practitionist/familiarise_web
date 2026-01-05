@@ -8,7 +8,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { createPayoutBatch } from "@/scripts/create-payout-batch";
+import { createPayoutBatch } from "@/scripts/payouts/create-payout-batch";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {

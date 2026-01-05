@@ -33,7 +33,7 @@ jobs:
         run: npx prisma generate
 
       - name: Deactivate expired discounts
-        run: npx tsx jobs/deactivate-expired-discounts.ts
+        run: npx tsx jobs/cleanup/deactivate-expired-discounts.ts
 
       - name: Notify on failure
         if: failure()

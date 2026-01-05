@@ -33,7 +33,7 @@ jobs:
         run: npx prisma generate
 
       - name: Run orphaned payments alert
-        run: npx tsx jobs/alert-orphaned-payments.ts
+        run: npx tsx jobs/alerts/alert-orphaned-payments.ts
 
       - name: Notify on critical findings
         if: failure()

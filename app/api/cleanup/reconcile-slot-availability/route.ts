@@ -8,7 +8,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { reconcileSlotAvailability } from "@/scripts/reconcile-slot-availability";
+import { reconcileSlotAvailability } from "@/scripts/appointments/reconcile-slot-availability";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {

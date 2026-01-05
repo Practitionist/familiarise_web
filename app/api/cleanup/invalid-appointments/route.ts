@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { timingSafeEqual } from "crypto";
-import { runAllCleanupTasks } from "@/scripts/cleanup-invalid-appointments";
+import { runAllCleanupTasks } from "@/scripts/appointments/cleanup-invalid-appointments";
 
 export async function POST(req: NextRequest) {
   try {

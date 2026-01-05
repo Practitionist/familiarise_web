@@ -33,7 +33,7 @@ jobs:
         run: npx prisma generate
 
       - name: Auto-complete appointments
-        run: npx tsx jobs/auto-complete-appointments.ts
+        run: npx tsx jobs/appointments/auto-complete-appointments.ts
 
       - name: Notify on failure
         if: failure()

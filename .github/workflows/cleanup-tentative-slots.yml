@@ -33,7 +33,7 @@ jobs:
         run: npx prisma generate
 
       - name: Cleanup tentative slots
-        run: npx tsx jobs/cleanup-tentative-slots.ts
+        run: npx tsx jobs/appointments/cleanup-tentative-slots.ts
 
       - name: Notify on failure
         if: failure()

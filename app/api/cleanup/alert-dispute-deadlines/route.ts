@@ -8,7 +8,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { alertDisputeDeadlines } from "@/scripts/alert-dispute-deadlines";
+import { alertDisputeDeadlines } from "@/scripts/disputes/alert-dispute-deadlines";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {

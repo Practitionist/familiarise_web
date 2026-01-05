@@ -8,7 +8,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { handleStuckPayouts } from "@/scripts/handle-stuck-payouts";
+import { handleStuckPayouts } from "@/scripts/payouts/handle-stuck-payouts";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {

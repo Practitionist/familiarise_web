@@ -38,7 +38,7 @@ jobs:
         run: npx prisma generate
 
       - name: Run refund reconciliation
-        run: npx tsx jobs/reconcile-pending-refunds.ts
+        run: npx tsx jobs/refunds/reconcile-pending-refunds.ts
 
       - name: Notify on failure
         if: failure()

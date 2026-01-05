@@ -33,7 +33,7 @@ jobs:
         run: npx prisma generate
 
       - name: Run refund-earning cascade
-        run: npx tsx jobs/cascade-refund-earnings.ts
+        run: npx tsx jobs/refunds/cascade-refund-earnings.ts
 
       - name: Notify on failure
         if: failure()

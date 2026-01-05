@@ -8,7 +8,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { expireStaleRequests } from "@/scripts/expire-stale-requests";
+import { expireStaleRequests } from "@/scripts/appointments/expire-stale-requests";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {

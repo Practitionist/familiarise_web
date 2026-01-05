@@ -8,7 +8,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { cleanupAuthTokens } from "@/scripts/cleanup-auth-tokens";
+import { cleanupAuthTokens } from "@/scripts/cleanup/cleanup-auth-tokens";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {

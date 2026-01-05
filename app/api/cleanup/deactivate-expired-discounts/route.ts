@@ -8,7 +8,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { deactivateExpiredDiscounts } from "@/scripts/deactivate-expired-discounts";
+import { deactivateExpiredDiscounts } from "@/scripts/cleanup/deactivate-expired-discounts";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {

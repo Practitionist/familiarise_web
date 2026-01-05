@@ -8,7 +8,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { alertOrphanedPayments } from "@/scripts/alert-orphaned-payments";
+import { alertOrphanedPayments } from "@/scripts/alerts/alert-orphaned-payments";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {

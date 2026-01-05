@@ -8,7 +8,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { cleanupStalePendingConsultations } from "@/scripts/cleanup-stale-pending-consultations";
+import { cleanupStalePendingConsultations } from "@/scripts/appointments/cleanup-stale-pending-consultations";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {

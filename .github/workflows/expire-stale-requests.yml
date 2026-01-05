@@ -33,7 +33,7 @@ jobs:
         run: npx prisma generate
 
       - name: Expire stale requests
-        run: npx tsx jobs/expire-stale-requests.ts
+        run: npx tsx jobs/appointments/expire-stale-requests.ts
 
       - name: Notify on failure
         if: failure()

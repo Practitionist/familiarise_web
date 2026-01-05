@@ -38,7 +38,7 @@ jobs:
         run: npx prisma generate
 
       - name: Run payment status reconciliation
-        run: npx tsx jobs/reconcile-payment-status.ts
+        run: npx tsx jobs/payments/reconcile-payment-status.ts
 
       - name: Notify on failure
         if: failure()

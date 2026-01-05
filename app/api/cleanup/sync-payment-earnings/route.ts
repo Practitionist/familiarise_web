@@ -9,7 +9,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { syncPaymentEarnings } from "@/scripts/sync-payment-earnings";
+import { syncPaymentEarnings } from "@/scripts/earnings/sync-payment-earnings";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {

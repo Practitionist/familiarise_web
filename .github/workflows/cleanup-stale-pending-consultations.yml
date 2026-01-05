@@ -33,7 +33,7 @@ jobs:
         run: npx prisma generate
 
       - name: Cleanup stale pending consultations
-        run: npx tsx jobs/cleanup-stale-pending-consultations.ts
+        run: npx tsx jobs/appointments/cleanup-stale-pending-consultations.ts
 
       - name: Notify on failure
         if: failure()

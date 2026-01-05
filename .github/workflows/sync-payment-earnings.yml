@@ -33,7 +33,7 @@ jobs:
         run: npx prisma generate
 
       - name: Run payment-earning sync
-        run: npx tsx jobs/sync-payment-earnings.ts
+        run: npx tsx jobs/earnings/sync-payment-earnings.ts
 
       - name: Notify on failure
         if: failure()

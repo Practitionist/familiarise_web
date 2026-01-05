@@ -8,7 +8,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { reconcileDisputes } from "@/scripts/reconcile-disputes";
+import { reconcileDisputes } from "@/scripts/disputes/reconcile-disputes";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {

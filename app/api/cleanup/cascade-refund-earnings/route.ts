@@ -9,7 +9,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { cascadeRefundToEarnings } from "@/scripts/cascade-refund-earnings";
+import { cascadeRefundToEarnings } from "@/scripts/refunds/cascade-refund-earnings";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {

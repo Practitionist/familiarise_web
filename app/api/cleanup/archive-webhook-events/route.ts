@@ -8,7 +8,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { archiveWebhookEvents } from "@/scripts/archive-webhook-events";
+import { archiveWebhookEvents } from "@/scripts/cleanup/archive-webhook-events";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {

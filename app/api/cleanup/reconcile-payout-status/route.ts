@@ -8,7 +8,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { reconcilePayoutStatus } from "@/scripts/reconcile-payout-status";
+import { reconcilePayoutStatus } from "@/scripts/payouts/reconcile-payout-status";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {

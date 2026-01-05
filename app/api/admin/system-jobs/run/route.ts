@@ -14,35 +14,49 @@ import authOptions from "@/app/api/auth/[...nextauth]/options";
 import prisma from "@/lib/prisma";
 import { UserRole } from "@prisma/client";
 
-// Import job functions directly
+// Import job functions directly - organized by category
+// Payments
 import {
   cleanupAbandonedPayments,
   cleanupExpiredApprovalPendingPayments,
-} from "@/scripts/cleanup-abandoned-payments";
-import { reconcilePendingRefunds } from "@/scripts/reconcile-pending-refunds";
-import { reconcileDisputes } from "@/scripts/reconcile-disputes";
-import { handleLostDisputes } from "@/scripts/handle-lost-disputes";
-import { cascadeRefundToEarnings } from "@/scripts/cascade-refund-earnings";
-import { syncPaymentEarnings } from "@/scripts/sync-payment-earnings";
-import { releaseEarningsFromHold } from "@/scripts/release-earnings";
-import { runAllCleanupTasks as cleanupInvalidAppointments } from "@/scripts/cleanup-invalid-appointments";
-import { createPayoutBatch } from "@/scripts/create-payout-batch";
-import { processApprovedPayouts } from "@/scripts/process-payouts";
-// New job imports
-import { alertOrphanedPayments } from "@/scripts/alert-orphaned-payments";
-import { handleStuckPayouts } from "@/scripts/handle-stuck-payouts";
-import { cleanupAuthTokens } from "@/scripts/cleanup-auth-tokens";
-import { reconcilePaymentStatus } from "@/scripts/reconcile-payment-status";
-import { reconcilePayoutStatus } from "@/scripts/reconcile-payout-status";
-import { alertDisputeDeadlines } from "@/scripts/alert-dispute-deadlines";
-import { autoCompleteAppointments } from "@/scripts/auto-complete-appointments";
-import { expireStaleRequests } from "@/scripts/expire-stale-requests";
-import { cleanupTentativeSlots } from "@/scripts/cleanup-tentative-slots";
-import { cleanupStalePendingConsultations } from "@/scripts/cleanup-stale-pending-consultations";
-import { archiveWebhookEvents } from "@/scripts/archive-webhook-events";
-import { reconcileSlotAvailability } from "@/scripts/reconcile-slot-availability";
-import { reconcileDocumentStorage } from "@/scripts/reconcile-document-storage";
-import { deactivateExpiredDiscounts } from "@/scripts/deactivate-expired-discounts";
+} from "@/scripts/payments/cleanup-abandoned-payments";
+import { reconcilePaymentStatus } from "@/scripts/payments/reconcile-payment-status";
+
+// Refunds
+import { reconcilePendingRefunds } from "@/scripts/refunds/reconcile-pending-refunds";
+import { cascadeRefundToEarnings } from "@/scripts/refunds/cascade-refund-earnings";
+
+// Disputes
+import { reconcileDisputes } from "@/scripts/disputes/reconcile-disputes";
+import { handleLostDisputes } from "@/scripts/disputes/handle-lost-disputes";
+import { alertDisputeDeadlines } from "@/scripts/disputes/alert-dispute-deadlines";
+
+// Earnings
+import { syncPaymentEarnings } from "@/scripts/earnings/sync-payment-earnings";
+import { releaseEarningsFromHold } from "@/scripts/earnings/release-earnings";
+
+// Appointments
+import { runAllCleanupTasks as cleanupInvalidAppointments } from "@/scripts/appointments/cleanup-invalid-appointments";
+import { autoCompleteAppointments } from "@/scripts/appointments/auto-complete-appointments";
+import { cleanupStalePendingConsultations } from "@/scripts/appointments/cleanup-stale-pending-consultations";
+import { expireStaleRequests } from "@/scripts/appointments/expire-stale-requests";
+import { cleanupTentativeSlots } from "@/scripts/appointments/cleanup-tentative-slots";
+import { reconcileSlotAvailability } from "@/scripts/appointments/reconcile-slot-availability";
+
+// Payouts
+import { createPayoutBatch } from "@/scripts/payouts/create-payout-batch";
+import { processApprovedPayouts } from "@/scripts/payouts/process-payouts";
+import { handleStuckPayouts } from "@/scripts/payouts/handle-stuck-payouts";
+import { reconcilePayoutStatus } from "@/scripts/payouts/reconcile-payout-status";
+
+// Cleanup
+import { cleanupAuthTokens } from "@/scripts/cleanup/cleanup-auth-tokens";
+import { archiveWebhookEvents } from "@/scripts/cleanup/archive-webhook-events";
+import { deactivateExpiredDiscounts } from "@/scripts/cleanup/deactivate-expired-discounts";
+import { reconcileDocumentStorage } from "@/scripts/cleanup/reconcile-document-storage";
+
+// Alerts
+import { alertOrphanedPayments } from "@/scripts/alerts/alert-orphaned-payments";
 
 // Job ID to function mapping
 type JobResult = {

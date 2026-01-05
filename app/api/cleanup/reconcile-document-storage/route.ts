@@ -8,7 +8,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { reconcileDocumentStorage } from "@/scripts/reconcile-document-storage";
+import { reconcileDocumentStorage } from "@/scripts/cleanup/reconcile-document-storage";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {

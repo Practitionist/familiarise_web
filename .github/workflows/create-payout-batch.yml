@@ -33,7 +33,7 @@ jobs:
         run: npx prisma generate
 
       - name: Run create payout batch job
-        run: npx tsx jobs/create-payout-batch.ts
+        run: npx tsx jobs/payouts/create-payout-batch.ts
 
       - name: Notify on failure
         if: failure()

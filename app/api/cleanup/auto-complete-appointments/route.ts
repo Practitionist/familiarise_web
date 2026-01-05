@@ -8,7 +8,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { autoCompleteAppointments } from "@/scripts/auto-complete-appointments";
+import { autoCompleteAppointments } from "@/scripts/appointments/auto-complete-appointments";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {

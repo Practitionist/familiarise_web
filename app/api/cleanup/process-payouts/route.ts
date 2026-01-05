@@ -8,7 +8,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { processApprovedPayouts } from "@/scripts/process-payouts";
+import { processApprovedPayouts } from "@/scripts/payouts/process-payouts";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {

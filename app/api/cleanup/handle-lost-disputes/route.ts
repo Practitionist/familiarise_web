@@ -9,7 +9,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { handleLostDisputes } from "@/scripts/handle-lost-disputes";
+import { handleLostDisputes } from "@/scripts/disputes/handle-lost-disputes";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {

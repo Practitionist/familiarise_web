@@ -8,7 +8,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { cleanupTentativeSlots } from "@/scripts/cleanup-tentative-slots";
+import { cleanupTentativeSlots } from "@/scripts/appointments/cleanup-tentative-slots";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
