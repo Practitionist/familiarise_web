@@ -55,6 +55,10 @@ const NAV_SECTIONS: NavSection[] = [
       { name: "Users", path: "users" },
     ],
   },
+  {
+    title: "System",
+    items: [{ name: "System Jobs", path: "system-jobs" }],
+  },
 ];
 
 const BOTTOM_NAV_ITEMS = [{ name: "Settings", path: "settings" }];

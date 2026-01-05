@@ -1,0 +1,43 @@
+name: Handle Lost Disputes
+
+on:
+  schedule:
+    # Run every 6 hours
+    - cron: "0 */6 * * *"
+  workflow_dispatch: # Allow manual triggering
+
+jobs:
+  handle-lost-disputes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      # Database connection (required for Prisma)
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DIRECT_URL: ${{ secrets.DIRECT_URL }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Run lost dispute handler
+        run: npx tsx jobs/handle-lost-disputes.ts
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "Lost dispute handler failed or found critical cases"
+          # Add notification logic here (Slack, email, etc.)
+          # Critical: Notify if earnings were already paid when dispute lost

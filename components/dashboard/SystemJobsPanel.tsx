@@ -1,0 +1,312 @@
+"use client";
+
+import { useState } from "react";
+import { motion } from "framer-motion";
+import { cn } from "@/utils/tailwind";
+import { Button } from "@/components/ui/button";
+import { useToast } from "@/hooks/use-toast";
+import {
+  CreditCard,
+  Clock,
+  RefreshCw,
+  AlertTriangle,
+  DollarSign,
+  Calendar,
+  Wallet,
+  Play,
+  Loader2,
+  CheckCircle2,
+  XCircle,
+} from "lucide-react";
+
+// Job configuration
+export interface SystemJob {
+  id: string;
+  name: string;
+  description: string;
+  schedule: string;
+  category: "Payments" | "Refunds" | "Disputes" | "Earnings" | "Appointments" | "Payouts";
+}
+
+const SYSTEM_JOBS: SystemJob[] = [
+  // Payments
+  {
+    id: "cleanup-abandoned-payments",
+    name: "Cleanup Abandoned Payments",
+    description: "Cancel abandoned payment intents and expire pending payments",
+    schedule: "Every 15 minutes",
+    category: "Payments",
+  },
+  {
+    id: "cleanup-approval-payments",
+    name: "Cleanup Approval Payments",
+    description: "Expire 48h+ pending approval payments",
+    schedule: "Hourly",
+    category: "Payments",
+  },
+  // Refunds
+  {
+    id: "reconcile-refunds",
+    name: "Reconcile Pending Refunds",
+    description: "Sync refund status with payment gateways (Stripe, Razorpay)",
+    schedule: "Every 15 minutes",
+    category: "Refunds",
+  },
+  // Disputes
+  {
+    id: "reconcile-disputes",
+    name: "Reconcile Disputes",
+    description: "Sync dispute status with Stripe and track urgent deadlines",
+    schedule: "Every 6 hours",
+    category: "Disputes",
+  },
+  {
+    id: "handle-lost-disputes",
+    name: "Handle Lost Disputes",
+    description: "Reverse earnings on lost disputes (CRITICAL alerts if already paid)",
+    schedule: "Every 6 hours",
+    category: "Disputes",
+  },
+  // Earnings
+  {
+    id: "cascade-refund-earnings",
+    name: "Cascade Refund to Earnings",
+    description: "Mark earnings as REFUNDED when associated refund succeeds",
+    schedule: "Every 15 minutes",
+    category: "Earnings",
+  },
+  {
+    id: "sync-payment-earnings",
+    name: "Sync Payment to Earnings",
+    description: "Create missing earnings records for succeeded payments",
+    schedule: "Hourly",
+    category: "Earnings",
+  },
+  {
+    id: "release-earnings",
+    name: "Release Earnings from Hold",
+    description: "Move PENDING earnings to READY after hold period",
+    schedule: "Hourly",
+    category: "Earnings",
+  },
+  // Appointments
+  {
+    id: "cleanup-invalid-appointments",
+    name: "Cleanup Invalid Appointments",
+    description: "Cancel duplicate and invalid-duration consultations/subscriptions",
+    schedule: "Hourly",
+    category: "Appointments",
+  },
+  // Payouts
+  {
+    id: "create-payout-batch",
+    name: "Create Payout Batch",
+    description: "Create weekly payout batches for eligible consultants",
+    schedule: "Weekly (Mon 8PM UTC)",
+    category: "Payouts",
+  },
+  {
+    id: "process-payouts",
+    name: "Process Payouts",
+    description: "Send approved payouts via RazorpayX and Stripe Connect",
+    schedule: "Weekly (Mon 9PM UTC)",
+    category: "Payouts",
+  },
+];
+
+const CATEGORY_CONFIG: Record<SystemJob["category"], { icon: typeof CreditCard; color: string }> = {
+  Payments: { icon: CreditCard, color: "blue" },
+  Refunds: { icon: RefreshCw, color: "purple" },
+  Disputes: { icon: AlertTriangle, color: "amber" },
+  Earnings: { icon: DollarSign, color: "emerald" },
+  Appointments: { icon: Calendar, color: "indigo" },
+  Payouts: { icon: Wallet, color: "pink" },
+};
+
+interface JobCardProps {
+  job: SystemJob;
+  isRunning: boolean;
+  onRun: () => void;
+}
+
+function JobCard({ job, isRunning, onRun }: JobCardProps) {
+  const config = CATEGORY_CONFIG[job.category];
+  const Icon = config.icon;
+
+  const colorClasses: Record<string, { bg: string; text: string; badge: string }> = {
+    blue: { bg: "bg-blue-50", text: "text-blue-600", badge: "bg-blue-100 text-blue-700" },
+    purple: { bg: "bg-purple-50", text: "text-purple-600", badge: "bg-purple-100 text-purple-700" },
+    amber: { bg: "bg-amber-50", text: "text-amber-600", badge: "bg-amber-100 text-amber-700" },
+    emerald: { bg: "bg-emerald-50", text: "text-emerald-600", badge: "bg-emerald-100 text-emerald-700" },
+    indigo: { bg: "bg-indigo-50", text: "text-indigo-600", badge: "bg-indigo-100 text-indigo-700" },
+    pink: { bg: "bg-pink-50", text: "text-pink-600", badge: "bg-pink-100 text-pink-700" },
+  };
+
+  const colors = colorClasses[config.color];
+
+  return (
+    <motion.div
+      whileHover={{ y: -2 }}
+      transition={{ duration: 0.2 }}
+      className="relative overflow-hidden rounded-xl border border-zinc-200/80 bg-white p-5"
+    >
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-3 mb-2">
+            <div className={cn("flex h-10 w-10 items-center justify-center rounded-lg", colors.bg)}>
+              <Icon className={cn("h-5 w-5", colors.text)} />
+            </div>
+            <div>
+              <h3 className="font-semibold text-zinc-900 text-sm">{job.name}</h3>
+              <span className={cn("inline-block mt-0.5 px-2 py-0.5 rounded text-xs font-medium", colors.badge)}>
+                {job.category}
+              </span>
+            </div>
+          </div>
+          <p className="text-sm text-zinc-500 mb-3">{job.description}</p>
+          <div className="flex items-center gap-1.5 text-xs text-zinc-400">
+            <Clock className="h-3.5 w-3.5" />
+            <span>{job.schedule}</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-4 pt-4 border-t border-zinc-100">
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={onRun}
+          disabled={isRunning}
+          className="w-full"
+        >
+          {isRunning ? (
+            <>
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              Running...
+            </>
+          ) : (
+            <>
+              <Play className="mr-2 h-4 w-4" />
+              Run Now
+            </>
+          )}
+        </Button>
+      </div>
+    </motion.div>
+  );
+}
+
+interface SystemJobsPanelProps {
+  className?: string;
+}
+
+export function SystemJobsPanel({ className }: SystemJobsPanelProps) {
+  const [runningJobs, setRunningJobs] = useState<Set<string>>(new Set());
+  const { toast } = useToast();
+
+  const handleRunJob = async (job: SystemJob) => {
+    setRunningJobs((prev) => new Set(prev).add(job.id));
+
+    try {
+      const response = await fetch("/api/admin/system-jobs/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId: job.id }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to run job");
+      }
+
+      // Format result message
+      const stats = [];
+      if (result.totalProcessed !== undefined) stats.push(`Processed: ${result.totalProcessed}`);
+      if (result.cleanedCount !== undefined) stats.push(`Cleaned: ${result.cleanedCount}`);
+      if (result.updatedCount !== undefined) stats.push(`Updated: ${result.updatedCount}`);
+      if (result.createdCount !== undefined) stats.push(`Created: ${result.createdCount}`);
+      if (result.reconciledCount !== undefined) stats.push(`Reconciled: ${result.reconciledCount}`);
+      if (result.releasedCount !== undefined) stats.push(`Released: ${result.releasedCount}`);
+      if (result.errorCount !== undefined || result.errors?.length) {
+        stats.push(`Errors: ${result.errorCount || result.errors?.length || 0}`);
+      }
+
+      toast({
+        title: (
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+            <span>{job.name} completed</span>
+          </div>
+        ) as unknown as string,
+        description: stats.length > 0 ? stats.join(" | ") : "Job completed successfully",
+        variant: "default",
+      });
+
+      // Check for critical alerts
+      if (result.alreadyPaidCount > 0) {
+        toast({
+          title: "CRITICAL: Manual Recovery Required",
+          description: `${result.alreadyPaidCount} earnings were already PAID when dispute was lost`,
+          variant: "destructive",
+        });
+      }
+    } catch (error) {
+      toast({
+        title: (
+          <div className="flex items-center gap-2">
+            <XCircle className="h-4 w-4 text-red-500" />
+            <span>{job.name} failed</span>
+          </div>
+        ) as unknown as string,
+        description: error instanceof Error ? error.message : "An error occurred",
+        variant: "destructive",
+      });
+    } finally {
+      setRunningJobs((prev) => {
+        const next = new Set(prev);
+        next.delete(job.id);
+        return next;
+      });
+    }
+  };
+
+  // Group jobs by category
+  const jobsByCategory = SYSTEM_JOBS.reduce(
+    (acc, job) => {
+      if (!acc[job.category]) acc[job.category] = [];
+      acc[job.category].push(job);
+      return acc;
+    },
+    {} as Record<string, SystemJob[]>,
+  );
+
+  const categories = Object.keys(jobsByCategory) as SystemJob["category"][];
+
+  return (
+    <div className={cn("space-y-8", className)}>
+      {categories.map((category) => (
+        <div key={category}>
+          <div className="flex items-center gap-2 mb-4">
+            {(() => {
+              const Icon = CATEGORY_CONFIG[category].icon;
+              return <Icon className="h-5 w-5 text-zinc-400" />;
+            })()}
+            <h2 className="text-lg font-semibold text-zinc-900">{category}</h2>
+            <span className="text-sm text-zinc-400">({jobsByCategory[category].length} jobs)</span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {jobsByCategory[category].map((job) => (
+              <JobCard
+                key={job.id}
+                job={job}
+                isRunning={runningJobs.has(job.id)}
+                onRun={() => handleRunJob(job)}
+              />
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
