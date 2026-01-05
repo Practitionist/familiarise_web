@@ -17,7 +17,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     const cronSecret =
       process.env.CRON_SECRET || process.env.VERCEL_CRON_SECRET;
 
-    if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+    if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
       console.warn("Unauthorized stale request expiration attempt");
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }

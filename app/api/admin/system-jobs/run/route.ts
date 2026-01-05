@@ -347,7 +347,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       select: { role: true, name: true, email: true },
     });
 
-    if (user?.role !== UserRole.STAFF && user?.role !== UserRole.ADMIN) {
+    if (!user || (user.role !== UserRole.STAFF && user.role !== UserRole.ADMIN)) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
