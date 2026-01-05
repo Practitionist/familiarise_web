@@ -50,6 +50,7 @@
     "update-slot-types": "ts-node scripts/update-slot-types.ts"
   },
   "dependencies": {
+    "@directus/sdk": "^20.3.0",
     "@faker-js/faker": "^9.3.0",
     "@hookform/resolvers": "^5.2.2",
     "@next-auth/prisma-adapter": "^1.0.7",

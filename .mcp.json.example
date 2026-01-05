@@ -28,13 +28,24 @@
       }
     },
     "serena": {
-      "command": "/home/kaustav/.local/bin/uvx",
+      "command": "uvx",
       "args": [
         "--from",
         "git+https://github.com/oraios/serena",
-        "serena",
-        "start-mcp-server"
+        "serena-mcp-server"
       ]
+    },
+    "sentry": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote@latest", "https://mcp.sentry.dev/mcp"]
+    },
+    "directus": {
+      "command": "npx",
+      "args": ["-y", "@directus/content-mcp@latest"],
+      "env": {
+        "DIRECTUS_URL": "<DIRECTUS_URL>",
+        "DIRECTUS_TOKEN": "<DIRECTUS_ADMIN_TOKEN>"
+      }
     }
   }
 }
