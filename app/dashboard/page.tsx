@@ -86,7 +86,7 @@ export default function Dashboard() {
               );
               break;
             case "ADMIN":
-              router.push("/dashboard/admin");
+              router.push("/dashboard/admin/home");
               break;
             case "STAFF":
               router.push(

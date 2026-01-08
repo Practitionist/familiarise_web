@@ -31,11 +31,12 @@ const ROUTE_PATTERNS = {
 interface Token {
   name: string;
   email: string;
-  role: "CONSULTANT" | "CONSULTEE" | "STAFF";
+  role: "CONSULTANT" | "CONSULTEE" | "STAFF" | "ADMIN";
   onboardingCompleted: boolean;
   consultantProfileId?: string;
   consulteeProfileId?: string;
   staffProfileId?: string;
+  adminProfileId?: string;
   picture: string;
   exp: number;
   iat: number;
@@ -100,6 +101,9 @@ const getDashboardUrl = (token: Token): string => {
   const { role, consultantProfileId, consulteeProfileId, staffProfileId } =
     token;
 
+  if (role === "ADMIN") {
+    return "/dashboard/admin/home";
+  }
   if (role === "CONSULTANT" && consultantProfileId) {
     return `/dashboard/consultant/${consultantProfileId}/home`;
   }
@@ -118,11 +122,6 @@ const getDashboardUrl = (token: Token): string => {
  */
 export async function middleware(req: NextRequest): Promise<NextResponse> {
   const { pathname } = req.nextUrl;
-
-  // Skip middleware in development/test for faster development
-  if (process.env.NODE_ENV !== "production") {
-    return NextResponse.next();
-  }
 
   // Early return for static assets and Next.js internals
   if (
