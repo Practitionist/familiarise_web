@@ -42,19 +42,19 @@ import type {
 // Define a type for the fetched WebinarPlan data
 export type CheckoutWebinarPlanData = WebinarPlan & {
   consultantProfile:
-    | (ConsultantProfile & {
-        user: User;
-        domain: Domain | null;
-        subDomains: SubDomain[];
-        tags: PrismaTag[];
-      })
-    | null;
+  | (ConsultantProfile & {
+    user: User;
+    domain: Domain | null;
+    subDomains: SubDomain[];
+    tags: PrismaTag[];
+  })
+  | null;
   webinars: (PrismaWebinar & {
     appointment:
-      | (Appointment & {
-          slotsOfAppointment: SlotOfAppointment[];
-        })
-      | null;
+    | (Appointment & {
+      slotsOfAppointment: SlotOfAppointment[];
+    })
+    | null;
   })[];
   topics: PrismaTopic[];
   type: "webinar";
@@ -282,13 +282,20 @@ export default function WebinarCheckoutPage({
     let discountPercent = 0;
     let discountAmount = 0;
     if (appliedDiscount) {
-      if (appliedDiscount.discountType === "PERCENTAGE") {
+      // Use the pre-calculated discountAmount from API if available
+      // This already includes the maxDiscount cap
+      if (appliedDiscount.discountAmount !== undefined) {
+        discountAmount = appliedDiscount.discountAmount;
+      } else if (appliedDiscount.discountType === "PERCENTAGE") {
         discountPercent = appliedDiscount.discountValue / 100;
       } else if (appliedDiscount.discountType === "FIXED_AMOUNT") {
         discountAmount = appliedDiscount.discountValue;
       }
     }
-    return calculatePricing(basePrice, { discountPercent, discountAmount });
+    return calculatePricing(basePrice, {
+      discountPercent: discountAmount > 0 ? 0 : discountPercent,
+      discountAmount
+    });
   }, [planData?.data?.price, appliedDiscount]);
 
   if (isLoading) {
@@ -627,7 +634,7 @@ export default function WebinarCheckoutPage({
                         disabled={isCheckoutProcessing}
                       >
                         {isCheckoutProcessing &&
-                        processingGateway === `${gateway.gateway}-mock` ? (
+                          processingGateway === `${gateway.gateway}-mock` ? (
                           <>
                             <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-current mr-2"></div>
                             Processing...

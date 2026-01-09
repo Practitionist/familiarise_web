@@ -65,7 +65,7 @@ type SubscriptionCheckoutResult = {
 function buildPaymentMetadata(
   data: CheckoutInput,
   userId: string,
-): { appointmentId: string; appointmentType: string; [key: string]: string } {
+): { appointmentId: string; appointmentType: string;[key: string]: string } {
   return {
     appointmentId: "pending",
     appointmentType: data.appointmentType,
@@ -298,19 +298,52 @@ export async function calculateAmountAndValidate(
         throw new Error("Invalid appointment type");
     }
 
-    // Apply discount if provided
+    // Apply discount if provided - with full backend re-validation
     let discountCodeId = null;
     if (validatedData.discountCode) {
       const discount = await tx.discountCode.findUnique({
-        where: { code: validatedData.discountCode },
+        where: { code: validatedData.discountCode.toUpperCase().trim() },
       });
 
       if (discount) {
+        // Re-validate all conditions (don't trust frontend validation)
+        if (!discount.isActive) {
+          throw new Error("Discount code is no longer active");
+        }
+
+        if (discount.expiresAt && new Date() > discount.expiresAt) {
+          throw new Error("Discount code has expired");
+        }
+
+        if (
+          discount.maxUses !== null &&
+          discount.currentUses >= discount.maxUses
+        ) {
+          throw new Error("Discount code has reached maximum uses");
+        }
+
         discountCodeId = discount.id;
-        amount =
-          discount.discountType === "PERCENTAGE"
-            ? amount * (1 - discount.discountValue / 100)
-            : Math.max(0, amount - discount.discountValue);
+
+        // Calculate discounted amount with maxDiscount cap
+        if (discount.discountType === "PERCENTAGE") {
+          let discountAmount = amount * (discount.discountValue / 100);
+          // Apply maxDiscount cap if set
+          if (
+            discount.maxDiscount !== null &&
+            discountAmount > discount.maxDiscount
+          ) {
+            discountAmount = discount.maxDiscount;
+          }
+          amount = amount - discountAmount;
+        } else if (discount.discountType === "FIXED_AMOUNT") {
+          amount = Math.max(0, amount - discount.discountValue);
+        }
+
+        // Increment usage count atomically (Fix 2)
+        await tx.discountCode.update({
+          where: { id: discount.id },
+          data: { currentUses: { increment: 1 } },
+        });
       }
     }
 
@@ -384,14 +417,14 @@ export async function validateSlotAvailability(
         // FIX: Filter by consultant - only check slots belonging to this consultant
         ...(consultantUserId
           ? [
-              {
-                user: {
-                  some: {
-                    id: consultantUserId,
-                  },
+            {
+              user: {
+                some: {
+                  id: consultantUserId,
                 },
               },
-            ]
+            },
+          ]
           : []),
       ],
     },
@@ -426,14 +459,14 @@ export async function validateSlotAvailability(
           // FIX: Filter by consultant - only check tentative slots for this consultant
           ...(consultantUserId
             ? [
-                {
-                  user: {
-                    some: {
-                      id: consultantUserId,
-                    },
+              {
+                user: {
+                  some: {
+                    id: consultantUserId,
                   },
                 },
-              ]
+              },
+            ]
             : []),
           {
             appointment: {
@@ -497,14 +530,14 @@ export async function validateSlotAvailability(
         // FIX: Filter by consultant - only count tentative slots for this consultant
         ...(consultantUserId
           ? [
-              {
-                user: {
-                  some: {
-                    id: consultantUserId,
-                  },
+            {
+              user: {
+                some: {
+                  id: consultantUserId,
                 },
               },
-            ]
+            },
+          ]
           : []),
         {
           appointment: {

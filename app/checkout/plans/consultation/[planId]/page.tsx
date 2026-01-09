@@ -428,7 +428,11 @@ export default function ConsultationCheckoutPage({
     let discountAmount = 0;
 
     if (appliedDiscount) {
-      if (appliedDiscount.discountType === "PERCENTAGE") {
+      // Use the pre-calculated discountAmount from API if available
+      // This already includes the maxDiscount cap
+      if (appliedDiscount.discountAmount !== undefined) {
+        discountAmount = appliedDiscount.discountAmount;
+      } else if (appliedDiscount.discountType === "PERCENTAGE") {
         discountPercent = appliedDiscount.discountValue / 100; // Convert to decimal
       } else if (appliedDiscount.discountType === "FIXED_AMOUNT") {
         discountAmount = appliedDiscount.discountValue;
@@ -436,7 +440,7 @@ export default function ConsultationCheckoutPage({
     }
 
     return calculatePricing(basePrice, {
-      discountPercent,
+      discountPercent: discountAmount > 0 ? 0 : discountPercent, // Don't use percent if we have a fixed amount
       discountAmount,
     });
   }, [eventData?.data?.price, appliedDiscount]);
@@ -583,7 +587,7 @@ export default function ConsultationCheckoutPage({
                 <div className="text-sm text-green-600">
                   {appliedDiscount.discountType === "PERCENTAGE"
                     ? `${appliedDiscount.discountValue}% off`
-                    : `₹${appliedDiscount.discountValue} off`}
+                    : `${formatCurrency(appliedDiscount.discountValue, currency)} off`}
                 </div>
               </div>
               <Button
@@ -733,13 +737,13 @@ export default function ConsultationCheckoutPage({
                               resolvedSearchParams.slotOfAvailabilityWeeklyId,
                             )
                               ? resolvedSearchParams
-                                  .slotOfAvailabilityWeeklyId[0]
+                                .slotOfAvailabilityWeeklyId[0]
                               : resolvedSearchParams.slotOfAvailabilityWeeklyId,
                             slotOfAvailabilityCustomId: Array.isArray(
                               resolvedSearchParams.slotOfAvailabilityCustomId,
                             )
                               ? resolvedSearchParams
-                                  .slotOfAvailabilityCustomId[0]
+                                .slotOfAvailabilityCustomId[0]
                               : resolvedSearchParams.slotOfAvailabilityCustomId,
                             discountCode: appliedDiscount?.code,
                             notes: Array.isArray(resolvedSearchParams.notes)
@@ -785,13 +789,13 @@ export default function ConsultationCheckoutPage({
                               resolvedSearchParams.slotOfAvailabilityWeeklyId,
                             )
                               ? resolvedSearchParams
-                                  .slotOfAvailabilityWeeklyId[0]
+                                .slotOfAvailabilityWeeklyId[0]
                               : resolvedSearchParams.slotOfAvailabilityWeeklyId,
                             slotOfAvailabilityCustomId: Array.isArray(
                               resolvedSearchParams.slotOfAvailabilityCustomId,
                             )
                               ? resolvedSearchParams
-                                  .slotOfAvailabilityCustomId[0]
+                                .slotOfAvailabilityCustomId[0]
                               : resolvedSearchParams.slotOfAvailabilityCustomId,
                             discountCode: appliedDiscount?.code,
                             notes: Array.isArray(resolvedSearchParams.notes)
@@ -826,7 +830,7 @@ export default function ConsultationCheckoutPage({
                         disabled={isCheckoutProcessing}
                       >
                         {isCheckoutProcessing &&
-                        processingGateway === `${gateway.gateway}-mock` ? (
+                          processingGateway === `${gateway.gateway}-mock` ? (
                           <>
                             <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-current mr-2"></div>
                             Processing...
