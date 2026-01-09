@@ -396,5 +396,275 @@ describe("User Actions", () => {
 
       expect(hasRelationship).toBe(true);
     });
+
+    it("should return false on database error", async () => {
+      mockPrisma.user.findUnique.mockRejectedValue(new Error("DB error"));
+
+      const { checkUserRelationship } = await import(
+        "../../actions/stream/chat/user.action"
+      );
+
+      const hasRelationship = await checkUserRelationship("user-1", "user-2");
+
+      expect(hasRelationship).toBe(false);
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        "Relationship check failed",
+        expect.any(Error),
+        expect.objectContaining({ userId1: "user-1", userId2: "user-2" })
+      );
+    });
+
+    it("should find reverse consultation relationship", async () => {
+      mockPrisma.user.findUnique
+        .mockResolvedValueOnce({
+          consultantProfileId: null,
+          consulteeProfileId: "consultee-profile-1",
+        })
+        .mockResolvedValueOnce({
+          consultantProfileId: "consultant-profile-2",
+          consulteeProfileId: null,
+        });
+
+      // First check returns null, second check (reverse) returns a consultation
+      mockPrisma.consultation.findFirst.mockResolvedValue({
+        id: "reverse-consultation-1",
+      });
+      mockPrisma.subscription.findFirst.mockResolvedValue(null);
+      mockPrisma.slotOfAppointment.findFirst.mockResolvedValue(null);
+
+      const { checkUserRelationship } = await import(
+        "../../actions/stream/chat/user.action"
+      );
+
+      const hasRelationship = await checkUserRelationship(
+        "consultee-user",
+        "consultant-user"
+      );
+
+      expect(hasRelationship).toBe(true);
+    });
+
+    it("should find reverse subscription relationship", async () => {
+      mockPrisma.user.findUnique
+        .mockResolvedValueOnce({
+          consultantProfileId: null,
+          consulteeProfileId: "consultee-profile-1",
+        })
+        .mockResolvedValueOnce({
+          consultantProfileId: "consultant-profile-2",
+          consulteeProfileId: null,
+        });
+
+      mockPrisma.consultation.findFirst.mockResolvedValue(null);
+      mockPrisma.subscription.findFirst.mockResolvedValue({
+        id: "reverse-subscription-1",
+      });
+      mockPrisma.slotOfAppointment.findFirst.mockResolvedValue(null);
+
+      const { checkUserRelationship } = await import(
+        "../../actions/stream/chat/user.action"
+      );
+
+      const hasRelationship = await checkUserRelationship(
+        "consultee-user",
+        "consultant-user"
+      );
+
+      expect(hasRelationship).toBe(true);
+    });
+  });
+
+  describe("upsertUsersToStream error paths", () => {
+    it("should return empty result when no users found for unsynced IDs", async () => {
+      mockUserCache.isUserSynced.mockReturnValue(false);
+      mockPrisma.user.findMany.mockResolvedValue([]);
+
+      const { upsertUsersToStream } = await import(
+        "../../actions/stream/chat/user.action"
+      );
+
+      const result = await upsertUsersToStream(["nonexistent-1", "nonexistent-2"]);
+
+      expect(result).toEqual({ users: {} });
+      expect(mockStreamClient.upsertUsers).not.toHaveBeenCalled();
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        "No users found for batch upsert",
+        expect.objectContaining({ requestedIds: ["nonexistent-1", "nonexistent-2"] })
+      );
+    });
+
+    it("should throw and log error when Stream API fails", async () => {
+      mockUserCache.isUserSynced.mockReturnValue(false);
+      mockPrisma.user.findMany.mockResolvedValue([
+        { id: "user-1", name: "User 1", email: "u1@test.com", image: null, role: "CONSULTANT" },
+      ]);
+      mockStreamClient.upsertUsers.mockRejectedValue(new Error("Stream API error"));
+
+      const { upsertUsersToStream } = await import(
+        "../../actions/stream/chat/user.action"
+      );
+
+      await expect(upsertUsersToStream(["user-1"])).rejects.toThrow("Stream API error");
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        "Failed to batch upsert users to Stream",
+        expect.any(Error),
+        expect.objectContaining({ userCount: 1 })
+      );
+    });
+  });
+
+  describe("searchUsersWithRelationships", () => {
+    it("should search users and include relationship status", async () => {
+      const mockUsers = [
+        {
+          id: "user-1",
+          name: "Alice",
+          email: "alice@test.com",
+          image: null,
+          role: "CONSULTANT",
+          consultantProfileId: "cp-1",
+          consulteeProfileId: null,
+        },
+        {
+          id: "user-2",
+          name: "Bob",
+          email: "bob@test.com",
+          image: null,
+          role: "CONSULTEE",
+          consultantProfileId: null,
+          consulteeProfileId: "ce-1",
+        },
+      ];
+
+      mockPrisma.user.findMany.mockResolvedValueOnce(mockUsers);
+      // Mock checkUserRelationship calls
+      mockPrisma.user.findUnique.mockResolvedValue({
+        consultantProfileId: "cp-current",
+        consulteeProfileId: null,
+      });
+      mockPrisma.consultation.findFirst.mockResolvedValue(null);
+      mockPrisma.subscription.findFirst.mockResolvedValue(null);
+      mockPrisma.slotOfAppointment.findFirst.mockResolvedValue(null);
+
+      const { searchUsersWithRelationships } = await import(
+        "../../actions/stream/chat/user.action"
+      );
+
+      const results = await searchUsersWithRelationships("test", "current-user");
+
+      expect(results).toHaveLength(2);
+      expect(results[0]).toHaveProperty("hasRelationship");
+    });
+
+    it("should exclude current user from results", async () => {
+      mockPrisma.user.findMany.mockResolvedValueOnce([]);
+
+      const { searchUsersWithRelationships } = await import(
+        "../../actions/stream/chat/user.action"
+      );
+
+      await searchUsersWithRelationships("test", "current-user-id");
+
+      expect(mockPrisma.user.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            AND: expect.arrayContaining([
+              { id: { not: "current-user-id" } },
+            ]),
+          }),
+        })
+      );
+    });
+
+    it("should sort by relationship status (connected first)", async () => {
+      const mockUsers = [
+        {
+          id: "user-no-rel",
+          name: "Zara",
+          email: "zara@test.com",
+          image: null,
+          role: "CONSULTEE",
+          consultantProfileId: null,
+          consulteeProfileId: "ce-1",
+        },
+        {
+          id: "user-with-rel",
+          name: "Adam",
+          email: "adam@test.com",
+          image: null,
+          role: "CONSULTANT",
+          consultantProfileId: "cp-1",
+          consulteeProfileId: null,
+        },
+      ];
+
+      mockPrisma.user.findMany.mockResolvedValueOnce(mockUsers);
+      // user-no-rel has no relationship
+      mockPrisma.user.findUnique.mockResolvedValue({
+        consultantProfileId: "cp-current",
+        consulteeProfileId: "ce-current",
+      });
+      // First call for user-no-rel returns no relationship
+      mockPrisma.consultation.findFirst
+        .mockResolvedValueOnce(null) // For user-no-rel
+        .mockResolvedValueOnce({ id: "c-1" }); // For user-with-rel
+      mockPrisma.subscription.findFirst.mockResolvedValue(null);
+      mockPrisma.slotOfAppointment.findFirst.mockResolvedValue(null);
+
+      const { searchUsersWithRelationships } = await import(
+        "../../actions/stream/chat/user.action"
+      );
+
+      const results = await searchUsersWithRelationships("test", "current-user");
+
+      // Connected user (Adam with relationship) should come first
+      expect(results[0].hasRelationship).toBe(true);
+    });
+
+    it("should throw and log error on failure", async () => {
+      mockPrisma.user.findMany.mockRejectedValue(new Error("DB failure"));
+
+      const { searchUsersWithRelationships } = await import(
+        "../../actions/stream/chat/user.action"
+      );
+
+      await expect(
+        searchUsersWithRelationships("test", "current-user")
+      ).rejects.toThrow("DB failure");
+
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        "User search failed",
+        expect.any(Error),
+        expect.objectContaining({ searchTerm: "test" })
+      );
+    });
+
+    it("should reject empty search term", async () => {
+      const { searchUsersWithRelationships } = await import(
+        "../../actions/stream/chat/user.action"
+      );
+
+      await expect(
+        searchUsersWithRelationships("", "current-user")
+      ).rejects.toThrow();
+    });
+  });
+
+  describe("searchUsers error handling", () => {
+    it("should throw and log error on database failure", async () => {
+      mockPrisma.user.findMany.mockRejectedValue(new Error("DB connection failed"));
+
+      const { searchUsers } = await import(
+        "../../actions/stream/chat/user.action"
+      );
+
+      await expect(searchUsers("test")).rejects.toThrow("DB connection failed");
+
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        "Legacy user search failed",
+        expect.any(Error),
+        expect.objectContaining({ searchTerm: "test" })
+      );
+    });
   });
 });

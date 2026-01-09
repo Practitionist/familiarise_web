@@ -6,6 +6,7 @@ import {
   getActualNextSlotTime,
   getActualSlots,
   getActualUpcomingSlots,
+  isEventJoinable,
 } from "@/app/dashboard/consultee/[consulteeId]/utils/scheduleHelpers";
 import { eventWithoutSlots, mockEvents, pastEvent } from "./__mocks__/scheduleHelpers.mockData";
 
@@ -520,6 +521,345 @@ describe("Schedule Data Consistency Tests", () => {
     it("should return null if no upcoming slots for formatTimeUntil", () => {
       const nextSlotForFormat = getActualNextSlotTime(pastEvent);
       expect(nextSlotForFormat).toBeNull();
+    });
+  });
+
+  describe("formatTimeUntil Additional Edge Cases", () => {
+    it('should return "Now" when minutes is zero', () => {
+      expect(formatTimeUntil(0)).toBe("Now");
+    });
+
+    it('should return "Now" when minutes is negative', () => {
+      expect(formatTimeUntil(-5)).toBe("Now");
+    });
+
+    it('should return singular "min away" for 1 minute', () => {
+      expect(formatTimeUntil(1)).toBe("1 min away");
+    });
+
+    it('should return singular "hr away" for exactly 1 hour', () => {
+      expect(formatTimeUntil(60)).toBe("1 hr away");
+    });
+
+    it('should return "1 hr 1 min away" for 61 minutes', () => {
+      expect(formatTimeUntil(61)).toBe("1 hr 1 min away");
+    });
+  });
+
+  describe("getActualSlots default case", () => {
+    it("should handle unknown event type and return empty array", () => {
+      const unknownEvent = {
+        type: "Unknown",
+      } as unknown as EventWithType;
+
+      const slots = getActualSlots(unknownEvent);
+      expect(slots).toEqual([]);
+    });
+  });
+
+  describe("Webinar event type handling", () => {
+    it("should extract slots from webinar event", () => {
+      const webinarEvent = {
+        type: "Webinar",
+        webinarPlan: {
+          id: "webinar-plan-1",
+          title: "Test Webinar",
+          consultantProfile: {
+            user: {
+              id: "test-user",
+              name: "Test User",
+              email: "test@example.com",
+              image: null,
+            },
+          },
+        },
+        appointment: {
+          id: "webinar-appointment-1",
+          appointmentType: "WEBINAR",
+          slotsOfAppointment: [
+            {
+              id: "webinar-slot-1",
+              startsAt: new Date("2025-01-15T14:00:00Z"),
+              endsAt: new Date("2025-01-15T15:00:00Z"),
+              isTentative: false,
+              appointmentId: "webinar-appointment-1",
+            },
+          ],
+          payment: [],
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      } as unknown as EventWithType;
+
+      const slots = getActualSlots(webinarEvent);
+      expect(slots).toHaveLength(1);
+      expect(slots[0].startsAt).toEqual(new Date("2025-01-15T14:00:00Z"));
+    });
+
+    it("should include webinar in upcoming slots", () => {
+      const webinarEvent = {
+        type: "Webinar",
+        id: "webinar-1",
+        webinarPlan: {
+          id: "webinar-plan-1",
+          title: "Test Webinar",
+          consultantProfile: {
+            user: {
+              id: "test-user",
+              name: "Test User",
+              email: "test@example.com",
+              image: null,
+            },
+          },
+        },
+        appointment: {
+          id: "webinar-appointment-1",
+          appointmentType: "WEBINAR",
+          slotsOfAppointment: [
+            {
+              id: "webinar-slot-1",
+              startsAt: new Date("2025-01-15T14:00:00Z"),
+              endsAt: new Date("2025-01-15T15:00:00Z"),
+              isTentative: false,
+              appointmentId: "webinar-appointment-1",
+              user: [],
+            },
+          ],
+          payment: [],
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      } as unknown as EventWithType;
+
+      const upcomingSlots = getActualUpcomingSlots([webinarEvent]);
+      expect(upcomingSlots).toHaveLength(1);
+      expect(upcomingSlots[0].appointment.appointmentType).toBe("WEBINAR");
+    });
+  });
+
+  describe("Consultation event in getActualUpcomingSlots", () => {
+    it("should include consultation in upcoming slots", () => {
+      const consultationEvent = {
+        type: "Consultation",
+        id: "consultation-1",
+        consultationPlan: {
+          id: "consultation-plan-1",
+          title: "Test Consultation",
+          consultantProfile: {
+            user: {
+              id: "consultant-user",
+              name: "Consultant",
+              email: "consultant@example.com",
+              image: null,
+            },
+          },
+        },
+        requestedBy: {
+          id: "consultee-1",
+          user: {
+            id: "consultee-user",
+            name: "Consultee",
+            email: "consultee@example.com",
+          },
+        },
+        appointment: {
+          id: "consultation-appointment-1",
+          appointmentType: "CONSULTATION",
+          slotsOfAppointment: [
+            {
+              id: "consultation-slot-1",
+              startsAt: new Date("2025-01-20T10:00:00Z"),
+              endsAt: new Date("2025-01-20T11:00:00Z"),
+              isTentative: false,
+              appointmentId: "consultation-appointment-1",
+              user: [],
+            },
+          ],
+          payment: [],
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+        requestStatus: "APPROVED",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      } as unknown as EventWithType;
+
+      const upcomingSlots = getActualUpcomingSlots([consultationEvent]);
+      expect(upcomingSlots).toHaveLength(1);
+      expect(upcomingSlots[0].appointment.appointmentType).toBe("CONSULTATION");
+    });
+  });
+
+  describe("isEventJoinable", () => {
+    it("should return false for event with no upcoming slots", () => {
+      const result = isEventJoinable(pastEvent);
+      expect(result).toBe(false);
+    });
+
+    it("should return false for event with tentative slots", () => {
+      const tentativeEvent = {
+        type: "Subscription",
+        id: "sub-1",
+        subscriptionPlan: {
+          id: "sub-plan-1",
+          title: "Test Subscription",
+          consultantProfile: {
+            user: {
+              id: "test-user",
+              name: "Test User",
+              email: "test@example.com",
+              image: null,
+            },
+          },
+        },
+        appointments: [
+          {
+            id: "sub-appointment-1",
+            appointmentType: "SUBSCRIPTION",
+            slotsOfAppointment: [
+              {
+                id: "sub-slot-1",
+                startsAt: new Date(Date.now() + 5 * 60 * 1000), // 5 minutes from now
+                endsAt: new Date(Date.now() + 65 * 60 * 1000),
+                isTentative: true,
+                appointmentId: "sub-appointment-1",
+              },
+            ],
+            payment: [],
+          },
+        ],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      } as unknown as EventWithType;
+
+      const result = isEventJoinable(tentativeEvent);
+      expect(result).toBe(false);
+    });
+
+    it("should return true for event starting within 10 minutes", () => {
+      const imminentEvent = {
+        type: "Class",
+        id: "class-1",
+        classPlan: {
+          id: "class-plan-1",
+          title: "Test Class",
+          consultantProfile: {
+            user: {
+              id: "test-user",
+              name: "Test User",
+              email: "test@example.com",
+              image: null,
+            },
+          },
+        },
+        appointments: [
+          {
+            id: "class-appointment-1",
+            appointmentType: "CLASS",
+            slotsOfAppointment: [
+              {
+                id: "class-slot-1",
+                startsAt: new Date(Date.now() + 5 * 60 * 1000), // 5 minutes from now
+                endsAt: new Date(Date.now() + 65 * 60 * 1000),
+                isTentative: false,
+                appointmentId: "class-appointment-1",
+              },
+            ],
+            payment: [],
+          },
+        ],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      } as unknown as EventWithType;
+
+      const result = isEventJoinable(imminentEvent);
+      expect(result).toBe(true);
+    });
+
+    it("should return false for event starting more than 10 minutes away", () => {
+      const farEvent = {
+        type: "Class",
+        id: "class-2",
+        classPlan: {
+          id: "class-plan-2",
+          title: "Test Class",
+          consultantProfile: {
+            user: {
+              id: "test-user",
+              name: "Test User",
+              email: "test@example.com",
+              image: null,
+            },
+          },
+        },
+        appointments: [
+          {
+            id: "class-appointment-2",
+            appointmentType: "CLASS",
+            slotsOfAppointment: [
+              {
+                id: "class-slot-2",
+                startsAt: new Date(Date.now() + 60 * 60 * 1000), // 1 hour from now
+                endsAt: new Date(Date.now() + 120 * 60 * 1000),
+                isTentative: false,
+                appointmentId: "class-appointment-2",
+              },
+            ],
+            payment: [],
+          },
+        ],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      } as unknown as EventWithType;
+
+      const result = isEventJoinable(farEvent);
+      expect(result).toBe(false);
+    });
+
+    it("should return false for event that already started (past slots are filtered)", () => {
+      // Note: isEventJoinable returns false for already-started events because
+      // getActualNextSlotTime filters out past slots (startsAt > now)
+      const pastStartEvent = {
+        type: "Class",
+        id: "class-3",
+        classPlan: {
+          id: "class-plan-3",
+          title: "Test Class",
+          consultantProfile: {
+            user: {
+              id: "test-user",
+              name: "Test User",
+              email: "test@example.com",
+              image: null,
+            },
+          },
+        },
+        appointments: [
+          {
+            id: "class-appointment-3",
+            appointmentType: "CLASS",
+            slotsOfAppointment: [
+              {
+                id: "class-slot-3",
+                startsAt: new Date(Date.now() - 15 * 60 * 1000), // 15 minutes ago
+                endsAt: new Date(Date.now() + 45 * 60 * 1000),
+                isTentative: false,
+                appointmentId: "class-appointment-3",
+              },
+            ],
+            payment: [],
+          },
+        ],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      } as unknown as EventWithType;
+
+      const result = isEventJoinable(pastStartEvent);
+      expect(result).toBe(false);
     });
   });
 });
