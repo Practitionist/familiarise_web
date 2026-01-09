@@ -1,4 +1,4 @@
-name: Run Tests
+name: Tests and Build
 
 on:
   pull_request:
@@ -6,11 +6,9 @@ on:
     types: [opened, synchronize, reopened]
 
 jobs:
-  testing-stuff:
+  tests-and-build:
     if: github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
-
-    # Environment variables will be loaded from .env file decoded from secret
 
     services:
       redis:
@@ -40,11 +38,14 @@ jobs:
       - name: Create .env file from secret
         run: echo "${{ secrets.ENV_FILE }}" | base64 -d > .env
 
+      - name: TypeScript Check
+        run: npx tsc --noEmit
+
       - name: Run Jest Unit Tests
         run: npm run test
 
-      # - name: Run TypeScript Tests
-      #   run: npx ts-node tests/typescript/test-storage-setup.ts TODO: Add other TypeScript tests here
+      - name: Build Check
+        run: npm run build
 
       # - name: Run Cypress Tests
       #   uses: cypress-io/github-action@v6
