@@ -7,7 +7,7 @@ import {
   getActualSlots,
   getActualUpcomingSlots,
 } from "@/app/dashboard/consultee/[consulteeId]/utils/scheduleHelpers";
-import { eventWithoutSlots, mockEvents, pastEvent } from "../mockData";
+import { eventWithoutSlots, mockEvents, pastEvent } from "@/app/dashboard/consultee/[consulteeId]/mockData";
 
 describe("Schedule Data Consistency Tests", () => {
   const now = new Date("2024-12-28T00:00:00Z");

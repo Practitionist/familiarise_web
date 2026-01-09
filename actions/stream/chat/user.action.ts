@@ -121,6 +121,7 @@ export const upsertUsersToStream = async (userIds: string[]) => {
     const client = getStreamChatClient();
 
     // Prepare users for batch upsert
+    // Note: Using type assertion for custom user data (stream-chat v9)
     const streamUsers = users.map((user) => {
       const streamRole = mapRoleToStream(user.role);
       return {
@@ -138,7 +139,10 @@ export const upsertUsersToStream = async (userIds: string[]) => {
     });
 
     // Single batch API call
-    const result = await client.upsertUsers(streamUsers);
+    // Cast to satisfy TypeScript (custom user data in stream-chat v9)
+    const result = await client.upsertUsers(
+      streamUsers as Parameters<typeof client.upsertUsers>[0],
+    );
 
     // Mark all as synced
     users.forEach((user) => markUserSynced(user.id));

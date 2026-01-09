@@ -52,31 +52,25 @@ export const CreateDirectMessageDialog = ({
       console.log("Searching for users with term:", searchTerm);
 
       // First try to search using Stream's built-in search
+      // Note: $ne operator removed for performance (stream-chat v9 breaking change)
+      // Filtering current user and unwanted patterns client-side instead
       const streamUserResponse = await client.queryUsers(
         {
-          $and: [
-            { id: { $ne: client.userID || "" } }, // Exclude current user
-            // Add role-based exclusion if you have specific roles for system/bot users
-            // For example: { role: { $ne: "bot" } },
-            // { role: { $ne: "system_agent" } },
-            {
-              $or: [
-                { name: { $autocomplete: searchTerm } },
-                { id: { $autocomplete: searchTerm } }, // Standard autocomplete for ID
-              ],
-            },
+          $or: [
+            { name: { $autocomplete: searchTerm } },
+            { id: { $autocomplete: searchTerm } },
           ],
         },
         { last_active: -1, name: 1 }, // Sort by last active, then by name
-        { limit: 20 }, // Fetch a bit more to allow for potential client-side filtering if needed
+        { limit: 20 }, // Fetch a bit more to allow for client-side filtering
       );
 
-      // Client-side filter for unwanted patterns if Stream query is too broad
+      // Client-side filter for current user and unwanted patterns
       const filteredStreamUsers = streamUserResponse.users.filter(
         (user) =>
+          user.id !== client.userID && // Exclude current user
           !user.id.startsWith("recording-egress-") &&
           !user.id.startsWith("system-"),
-        // Add other ID patterns to exclude if necessary
       );
 
       console.log("Filtered Stream search results:", filteredStreamUsers);

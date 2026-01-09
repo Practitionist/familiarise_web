@@ -20,8 +20,9 @@ export const CustomMessage = () => {
     !!message.attachments && message.attachments.length > 0;
 
   // Avoid rendering empty messages (e.g., deleted messages with no text/attachments)
-  if (!hasText && !hasAttachments && !message.customType) {
-    // Allow rendering custom event messages even if they lack text/attachments
+  // Note: customType was removed in v13; use message.type for system messages
+  if (!hasText && !hasAttachments && message.type !== "system") {
+    // Allow rendering system messages even if they lack text/attachments
     return null;
   }
 

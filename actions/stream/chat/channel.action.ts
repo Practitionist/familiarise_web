@@ -53,12 +53,18 @@ export async function createChannel(input: {
   });
 
   // Create the channel with members atomically
-  const channel = client.channel(validated.channelType, validated.channelId, {
+  // Note: Explicitly typing channel data for stream-chat v9
+  const createChannelData = {
     name: validated.channelName,
     created_by_id: validated.createdById,
     members: allMembers,
     ...validated.additionalData,
-  });
+  };
+  const channel = client.channel(
+    validated.channelType,
+    validated.channelId,
+    createChannelData as Record<string, unknown>,
+  );
 
   await channel.create();
 

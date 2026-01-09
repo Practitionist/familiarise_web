@@ -34,8 +34,9 @@ export const ChannelSearch = () => {
       });
 
       // Search for users
+      // Note: $ne operator removed for performance (stream-chat v9 breaking change)
+      // Filtering current user client-side instead
       const userResponse = await client.queryUsers({
-        id: { $ne: client.userID || "" },
         $or: [
           { name: { $autocomplete: query } },
           { id: { $autocomplete: query } },
@@ -50,13 +51,16 @@ export const ChannelSearch = () => {
         channel,
       }));
 
-      const users = userResponse.users.map((user: Record<string, unknown>) => ({
-        id: user.id as string,
-        type: "user" as const,
-        name: (user.name as string) || (user.id as string),
-        image: user.image as string,
-        user,
-      }));
+      // Filter out current user client-side (replacing removed $ne operator)
+      const users = userResponse.users
+        .filter((user) => user.id !== client.userID)
+        .map((user) => ({
+          id: user.id,
+          type: "user" as const,
+          name: user.name || user.id,
+          image: user.image as string | undefined,
+          user: user as unknown as Record<string, unknown>,
+        }));
 
       setSearchResults([...channels, ...users]);
     } catch (error) {
