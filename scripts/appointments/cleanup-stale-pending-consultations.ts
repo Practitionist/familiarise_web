@@ -99,17 +99,15 @@ export async function cleanupStalePendingConsultations(): Promise<StalePendingCo
       console.log(`   Last updated: ${consultation.updatedAt.toISOString()}`);
 
       const appointment = consultation.appointment;
+      const tentativeSlotsCount = appointment?.slotsOfAppointment.filter(
+        (s) => s.isTentative,
+      ).length || 0;
+
       if (appointment) {
         console.log(`   Appointment ID: ${appointment.id}`);
         console.log(`   Slots: ${appointment.slotsOfAppointment.length}`);
         console.log(`   Payments: ${appointment.payment.length}`);
-
-        // Count slots to release
-        const tentativeSlots = appointment.slotsOfAppointment.filter(
-          (s) => s.isTentative,
-        );
-        console.log(`   Tentative slots to release: ${tentativeSlots.length}`);
-        slotsReleased += tentativeSlots.length;
+        console.log(`   Tentative slots to release: ${tentativeSlotsCount}`);
       }
 
       try {
@@ -136,6 +134,8 @@ export async function cleanupStalePendingConsultations(): Promise<StalePendingCo
           }
         });
 
+        // Only count slots after successful transaction
+        slotsReleased += tentativeSlotsCount;
         console.log(`   ✅ Cancelled consultation`);
         consultationsCancelled++;
       } catch (error) {
