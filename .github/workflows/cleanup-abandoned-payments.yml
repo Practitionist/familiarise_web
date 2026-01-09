@@ -43,7 +43,7 @@ jobs:
         run: npx prisma generate
 
       - name: Run abandoned payment cleanup
-        run: npx tsx jobs/cleanup-abandoned-payments.ts
+        run: npx tsx jobs/payments/cleanup-abandoned-payments.ts
 
       - name: Notify on failure
         if: failure()

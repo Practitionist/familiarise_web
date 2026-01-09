@@ -1,0 +1,42 @@
+name: Reconcile Slot Availability
+
+on:
+  schedule:
+    # Run hourly
+    - cron: "15 * * * *"
+  workflow_dispatch: # Allow manual triggering
+
+jobs:
+  reconcile-slot-availability:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      # Database connection (required for Prisma)
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DIRECT_URL: ${{ secrets.DIRECT_URL }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Reconcile slot availability
+        run: npx tsx jobs/appointments/reconcile-slot-availability.ts
+
+      - name: Notify on double bookings
+        if: failure()
+        run: |
+          echo "CRITICAL: Double bookings detected or slot reconciliation failed!"
+          # Add notification logic here (Slack, email, PagerDuty, etc.)
