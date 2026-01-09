@@ -131,10 +131,25 @@ export async function cleanupDuplicateConsultations(): Promise<{
 
     console.log(`📊 Found ${duplicatesToCancel.size} duplicate consultations`);
 
-    // Batch cancel duplicates
+    // Batch cancel duplicates and release their slots
     if (duplicatesToCancel.size > 0) {
+      const duplicateIds = Array.from(duplicatesToCancel);
+
+      // First, release slots associated with these consultations
+      const slotsDeleted = await prisma.slotOfAppointment.deleteMany({
+        where: {
+          appointment: {
+            consultation: {
+              id: { in: duplicateIds },
+            },
+          },
+        },
+      });
+      console.log(`🔓 Released ${slotsDeleted.count} slots from duplicate consultations`);
+
+      // Then cancel the consultations
       const result = await prisma.consultation.updateMany({
-        where: { id: { in: Array.from(duplicatesToCancel) } },
+        where: { id: { in: duplicateIds } },
         data: { requestStatus: RequestStatus.CANCELLED },
       });
       cancelledCount = result.count;
@@ -230,10 +245,25 @@ export async function cleanupDuplicateSubscriptions(): Promise<{
 
     console.log(`📊 Found ${duplicatesToCancel.size} duplicate subscriptions`);
 
-    // Batch cancel duplicates
+    // Batch cancel duplicates and release their slots
     if (duplicatesToCancel.size > 0) {
+      const duplicateIds = Array.from(duplicatesToCancel);
+
+      // First, release slots associated with these subscriptions
+      const slotsDeleted = await prisma.slotOfAppointment.deleteMany({
+        where: {
+          appointment: {
+            subscription: {
+              id: { in: duplicateIds },
+            },
+          },
+        },
+      });
+      console.log(`🔓 Released ${slotsDeleted.count} slots from duplicate subscriptions`);
+
+      // Then cancel the subscriptions
       const result = await prisma.subscription.updateMany({
-        where: { id: { in: Array.from(duplicatesToCancel) } },
+        where: { id: { in: duplicateIds } },
         data: { requestStatus: RequestStatus.CANCELLED },
       });
       cancelledCount = result.count;
@@ -307,8 +337,21 @@ export async function cleanupInvalidDurationConsultations(): Promise<{
       `📊 Found ${invalidIds.length} consultations with invalid durations`,
     );
 
-    // Batch cancel invalid consultations
+    // Batch cancel invalid consultations and release their slots
     if (invalidIds.length > 0) {
+      // First, release slots associated with these consultations
+      const slotsDeleted = await prisma.slotOfAppointment.deleteMany({
+        where: {
+          appointment: {
+            consultation: {
+              id: { in: invalidIds },
+            },
+          },
+        },
+      });
+      console.log(`🔓 Released ${slotsDeleted.count} slots from invalid duration consultations`);
+
+      // Then cancel the consultations
       const result = await prisma.consultation.updateMany({
         where: { id: { in: invalidIds } },
         data: { requestStatus: RequestStatus.CANCELLED },
@@ -378,8 +421,21 @@ export async function cleanupInvalidDurationSubscriptions(): Promise<{
       `📊 Found ${invalidIds.length} subscriptions with invalid periods`,
     );
 
-    // Batch cancel invalid subscriptions
+    // Batch cancel invalid subscriptions and release their slots
     if (invalidIds.length > 0) {
+      // First, release slots associated with these subscriptions
+      const slotsDeleted = await prisma.slotOfAppointment.deleteMany({
+        where: {
+          appointment: {
+            subscription: {
+              id: { in: invalidIds },
+            },
+          },
+        },
+      });
+      console.log(`🔓 Released ${slotsDeleted.count} slots from invalid duration subscriptions`);
+
+      // Then cancel the subscriptions
       const result = await prisma.subscription.updateMany({
         where: { id: { in: invalidIds } },
         data: { requestStatus: RequestStatus.CANCELLED },
