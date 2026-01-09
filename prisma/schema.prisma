@@ -730,6 +730,7 @@ enum RequestStatus {
   APPROVED
   APPROVED_PENDING_PAYMENT // Approved by consultant but awaiting payment
   SCHEDULED
+  COMPLETED
   REJECTED
   CANCELLED
   EXPIRED

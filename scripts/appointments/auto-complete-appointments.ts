@@ -3,7 +3,7 @@
  *
  * Automatically marks appointments as COMPLETED after their session time ends.
  * For Webinars/Classes: Updates status to COMPLETED.
- * For Consultations/Subscriptions: Status inferred from slot times (SCHEDULED stays).
+ * For Consultations/Subscriptions: Updates status to COMPLETED.
  *
  * This enables:
  * - Feedback collection from participants
@@ -19,7 +19,7 @@
  */
 
 import prisma from "../../lib/prisma";
-import { WebinarStatus, ClassStatus } from "@prisma/client";
+import { WebinarStatus, ClassStatus, RequestStatus } from "@prisma/client";
 
 // Only complete appointments that ended at least 1 hour ago
 // This gives buffer time for any post-session activities
@@ -29,8 +29,8 @@ export interface AutoCompleteResult {
   success: boolean;
   webinarsCompleted: number;
   classesCompleted: number;
-  consultationsIdentified: number;
-  subscriptionsIdentified: number;
+  consultationsCompleted: number;
+  subscriptionsCompleted: number;
   errors: string[];
   timestamp: string;
 }
@@ -178,17 +178,23 @@ async function completeClasses(): Promise<{
 }
 
 /**
- * Identify consultations that have ended (for reporting purposes)
- * These stay as SCHEDULED but we track them for monitoring
+ * Auto-complete consultations that have ended
  */
-async function identifyCompletedConsultations(): Promise<number> {
+async function completeConsultations(): Promise<{
+  completed: number;
+  errors: string[];
+}> {
+  const errors: string[] = [];
+  let completed = 0;
+
   const bufferTime = new Date(
     Date.now() - COMPLETION_BUFFER_HOURS * 60 * 60 * 1000,
   );
 
-  const completedConsultations = await prisma.consultation.count({
+  // Find SCHEDULED consultations where all slots have ended
+  const consultationsToComplete = await prisma.consultation.findMany({
     where: {
-      requestStatus: "SCHEDULED",
+      requestStatus: RequestStatus.SCHEDULED,
       appointment: {
         slotsOfAppointment: {
           every: {
@@ -197,24 +203,64 @@ async function identifyCompletedConsultations(): Promise<number> {
         },
       },
     },
+    include: {
+      consultationPlan: { select: { title: true } },
+      appointment: {
+        include: {
+          slotsOfAppointment: {
+            orderBy: { endsAt: "desc" },
+            take: 1,
+          },
+        },
+      },
+    },
   });
 
-  console.log(`\nIdentified ${completedConsultations} completed consultations (remain SCHEDULED)`);
-  return completedConsultations;
+  console.log(`Found ${consultationsToComplete.length} consultations to auto-complete`);
+
+  for (const consultation of consultationsToComplete) {
+    try {
+      const lastSlot = consultation.appointment?.slotsOfAppointment[0];
+      console.log(`\nCompleting consultation ${consultation.id}`);
+      console.log(`   Title: ${consultation.consultationPlan.title}`);
+      console.log(`   Previous status: ${consultation.requestStatus}`);
+      console.log(`   Last slot ended: ${lastSlot?.endsAt?.toISOString() || "Unknown"}`);
+
+      await prisma.consultation.update({
+        where: { id: consultation.id },
+        data: { requestStatus: RequestStatus.COMPLETED },
+      });
+
+      console.log(`   ✅ Marked as COMPLETED`);
+      completed++;
+    } catch (error) {
+      const msg = `Failed to complete consultation ${consultation.id}: ${error}`;
+      console.error(`   ❌ ${msg}`);
+      errors.push(msg);
+    }
+  }
+
+  return { completed, errors };
 }
 
 /**
- * Identify subscriptions that have ended (for reporting purposes)
- * These stay as SCHEDULED but we track them for monitoring
+ * Auto-complete subscriptions that have ended (all sessions done)
  */
-async function identifyCompletedSubscriptions(): Promise<number> {
+async function completeSubscriptions(): Promise<{
+  completed: number;
+  errors: string[];
+}> {
+  const errors: string[] = [];
+  let completed = 0;
+
   const bufferTime = new Date(
     Date.now() - COMPLETION_BUFFER_HOURS * 60 * 60 * 1000,
   );
 
-  const completedSubscriptions = await prisma.subscription.count({
+  // Find SCHEDULED subscriptions where all slots have ended
+  const subscriptionsToComplete = await prisma.subscription.findMany({
     where: {
-      requestStatus: "SCHEDULED",
+      requestStatus: RequestStatus.SCHEDULED,
       appointments: {
         every: {
           slotsOfAppointment: {
@@ -225,10 +271,52 @@ async function identifyCompletedSubscriptions(): Promise<number> {
         },
       },
     },
+    include: {
+      subscriptionPlan: { select: { title: true } },
+      appointments: {
+        include: {
+          slotsOfAppointment: {
+            orderBy: { endsAt: "desc" },
+            take: 1,
+          },
+        },
+      },
+    },
   });
 
-  console.log(`Identified ${completedSubscriptions} completed subscriptions (remain SCHEDULED)`);
-  return completedSubscriptions;
+  console.log(`Found ${subscriptionsToComplete.length} subscriptions to auto-complete`);
+
+  for (const subscription of subscriptionsToComplete) {
+    try {
+      // Find the latest slot end time across all appointments
+      let latestEnd: Date | null = null;
+      for (const apt of subscription.appointments) {
+        const slot = apt.slotsOfAppointment[0];
+        if (slot && (!latestEnd || slot.endsAt > latestEnd)) {
+          latestEnd = slot.endsAt;
+        }
+      }
+
+      console.log(`\nCompleting subscription ${subscription.id}`);
+      console.log(`   Title: ${subscription.subscriptionPlan.title}`);
+      console.log(`   Previous status: ${subscription.requestStatus}`);
+      console.log(`   Last slot ended: ${latestEnd?.toISOString() || "Unknown"}`);
+
+      await prisma.subscription.update({
+        where: { id: subscription.id },
+        data: { requestStatus: RequestStatus.COMPLETED },
+      });
+
+      console.log(`   ✅ Marked as COMPLETED`);
+      completed++;
+    } catch (error) {
+      const msg = `Failed to complete subscription ${subscription.id}: ${error}`;
+      console.error(`   ❌ ${msg}`);
+      errors.push(msg);
+    }
+  }
+
+  return { completed, errors };
 }
 
 /**
@@ -248,18 +336,20 @@ export async function autoCompleteAppointments(): Promise<AutoCompleteResult> {
   const classResult = await completeClasses();
   allErrors.push(...classResult.errors);
 
-  // Identify completed consultations (for reporting)
-  const consultationsIdentified = await identifyCompletedConsultations();
+  // Complete consultations
+  const consultationResult = await completeConsultations();
+  allErrors.push(...consultationResult.errors);
 
-  // Identify completed subscriptions (for reporting)
-  const subscriptionsIdentified = await identifyCompletedSubscriptions();
+  // Complete subscriptions
+  const subscriptionResult = await completeSubscriptions();
+  allErrors.push(...subscriptionResult.errors);
 
   // Summary
   console.log("\n📊 Auto-Complete Summary:");
   console.log(`   Webinars completed: ${webinarResult.completed}`);
   console.log(`   Classes completed: ${classResult.completed}`);
-  console.log(`   Consultations ended (SCHEDULED): ${consultationsIdentified}`);
-  console.log(`   Subscriptions ended (SCHEDULED): ${subscriptionsIdentified}`);
+  console.log(`   Consultations completed: ${consultationResult.completed}`);
+  console.log(`   Subscriptions completed: ${subscriptionResult.completed}`);
 
   if (allErrors.length > 0) {
     console.log("\n⚠️ Errors encountered:");
@@ -270,8 +360,8 @@ export async function autoCompleteAppointments(): Promise<AutoCompleteResult> {
     success: allErrors.length === 0,
     webinarsCompleted: webinarResult.completed,
     classesCompleted: classResult.completed,
-    consultationsIdentified,
-    subscriptionsIdentified,
+    consultationsCompleted: consultationResult.completed,
+    subscriptionsCompleted: subscriptionResult.completed,
     errors: allErrors,
     timestamp: new Date().toISOString(),
   };

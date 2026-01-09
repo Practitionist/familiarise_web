@@ -29,8 +29,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     console.log("✅ Auto-complete appointments finished:", {
       webinarsCompleted: result.webinarsCompleted,
       classesCompleted: result.classesCompleted,
-      consultationsIdentified: result.consultationsIdentified,
-      subscriptionsIdentified: result.subscriptionsIdentified,
+      consultationsCompleted: result.consultationsCompleted,
+      subscriptionsCompleted: result.subscriptionsCompleted,
     });
 
     return NextResponse.json(result, { status: result.success ? 200 : 500 });

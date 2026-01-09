@@ -217,7 +217,7 @@ const SYSTEM_JOBS: SystemJob[] = [
   {
     id: "auto-complete-appointments",
     name: "Auto-Complete Appointments",
-    description: "Move webinars/classes to COMPLETED after session ends",
+    description: "Move appointments to COMPLETED after session ends",
     schedule: "Hourly",
     category: "Appointments",
   },
