@@ -86,7 +86,62 @@ export default function WebinarCheckoutPage({
   const [processingGateway, setProcessingGateway] = useState<string | null>(
     null,
   );
+  const [discountCodeInput, setDiscountCodeInput] = useState("");
+  const [appliedDiscount, setAppliedDiscount] = useState<{
+    code: string;
+    discountType: "PERCENTAGE" | "FIXED_AMOUNT";
+    discountValue: number;
+    discountAmount?: number;
+  } | null>(null);
+  const [isApplyingDiscount, setIsApplyingDiscount] = useState(false);
+  const [discountError, setDiscountError] = useState<string | null>(null);
+
   const { toast } = useToast();
+
+  // Apply discount code
+  const handleApplyDiscount = async (code?: string) => {
+    const codeToApply = code || discountCodeInput;
+    if (!codeToApply.trim()) {
+      setDiscountError("Please enter a discount code");
+      return;
+    }
+
+    setIsApplyingDiscount(true);
+    setDiscountError(null);
+
+    try {
+      const response = await fetch("/api/payments/discounts/validate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          code: codeToApply,
+          amount: planData?.data?.price || 0,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (data.valid) {
+        setAppliedDiscount({
+          code: data.code,
+          discountType: data.discountType,
+          discountValue: data.discountValue,
+          discountAmount: data.discountAmount,
+        });
+        setDiscountCodeInput("");
+        toast({
+          title: "Discount Applied",
+          description: data.message,
+        });
+      } else {
+        setDiscountError(data.message || "Invalid discount code");
+      }
+    } catch (error) {
+      setDiscountError("Failed to validate discount code");
+    } finally {
+      setIsApplyingDiscount(false);
+    }
+  };
 
   // Create utility functions using the toast instance
   const handleApiError = createHandleApiError(toast);
@@ -122,7 +177,7 @@ export default function WebinarCheckoutPage({
           appointmentType: "WEBINAR",
           planId: planData.data.id,
           eventId: searchParamsValidation.data.eventId,
-          discountCode: searchParamsValidation.data.discountCode,
+          discountCode: appliedDiscount?.code,
           paymentGateway: gateway,
         });
 
@@ -224,11 +279,17 @@ export default function WebinarCheckoutPage({
   // NOTE: This must be before early returns to maintain consistent hook order
   const pricing = useMemo(() => {
     const basePrice = planData?.data?.price || 0;
-    // TODO: Look up actual discount from discountCode via API
-    return calculatePricing(basePrice, {
-      discountPercent: 0, // Will be updated when discount code is applied
-    });
-  }, [planData?.data?.price]);
+    let discountPercent = 0;
+    let discountAmount = 0;
+    if (appliedDiscount) {
+      if (appliedDiscount.discountType === "PERCENTAGE") {
+        discountPercent = appliedDiscount.discountValue / 100;
+      } else if (appliedDiscount.discountType === "FIXED_AMOUNT") {
+        discountAmount = appliedDiscount.discountValue;
+      }
+    }
+    return calculatePricing(basePrice, { discountPercent, discountAmount });
+  }, [planData?.data?.price, appliedDiscount]);
 
   if (isLoading) {
     return (
@@ -365,9 +426,45 @@ export default function WebinarCheckoutPage({
               type="text"
               placeholder="Enter discount code"
               className="flex-1"
+              value={discountCodeInput}
+              onChange={(e) => setDiscountCodeInput(e.target.value)}
+              disabled={isApplyingDiscount || !!appliedDiscount}
             />
-            <Button variant="outline">Apply</Button>
+            <Button
+              variant="outline"
+              onClick={() => handleApplyDiscount()}
+              disabled={isApplyingDiscount || !!appliedDiscount}
+            >
+              {isApplyingDiscount ? "Applying..." : "Apply"}
+            </Button>
           </div>
+          {discountError && (
+            <div className="text-sm text-red-500">{discountError}</div>
+          )}
+          {appliedDiscount && (
+            <div className="flex items-center justify-between bg-green-50 p-3 rounded-md">
+              <div>
+                <div className="font-medium text-green-700">
+                  {appliedDiscount.code}
+                </div>
+                <div className="text-sm text-green-600">
+                  {appliedDiscount.discountType === "PERCENTAGE"
+                    ? `${appliedDiscount.discountValue}% off`
+                    : `${formatCurrency(appliedDiscount.discountValue, currency)} off`}
+                </div>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setAppliedDiscount(null);
+                  setDiscountError(null);
+                }}
+              >
+                Remove
+              </Button>
+            </div>
+          )}
           <div className="grid gap-2">
             <div className="flex items-center justify-between">
               <div>
@@ -378,7 +475,12 @@ export default function WebinarCheckoutPage({
               </div>
               <div className="flex items-center gap-2">
                 <div className="text-muted-foreground">10% off</div>
-                <Button variant="outline" size="sm">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleApplyDiscount("WEBINAR10")}
+                  disabled={isApplyingDiscount || !!appliedDiscount}
+                >
                   Apply
                 </Button>
               </div>
@@ -500,11 +602,7 @@ export default function WebinarCheckoutPage({
                             planId: planDetails.id,
                             eventId: planDetails.webinars[0]?.id,
                             paymentGateway: "RAZORPAY",
-                            discountCode: Array.isArray(
-                              resolvedSearchParams.discountCode,
-                            )
-                              ? resolvedSearchParams.discountCode[0]
-                              : resolvedSearchParams.discountCode,
+                            discountCode: appliedDiscount?.code,
                           })}
                           onPaymentSuccess={razorpayHandlers.onPaymentSuccess}
                           onPaymentError={razorpayHandlers.onPaymentError}
@@ -516,11 +614,7 @@ export default function WebinarCheckoutPage({
                             planId: planDetails.id,
                             eventId: planDetails.webinars[0]?.id,
                             paymentGateway: "STRIPE",
-                            discountCode: Array.isArray(
-                              resolvedSearchParams.discountCode,
-                            )
-                              ? resolvedSearchParams.discountCode[0]
-                              : resolvedSearchParams.discountCode,
+                            discountCode: appliedDiscount?.code,
                           })}
                           onPaymentSuccess={stripeHandlers.onPaymentSuccess}
                           onPaymentError={stripeHandlers.onPaymentError}
