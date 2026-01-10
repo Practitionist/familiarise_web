@@ -21,7 +21,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { motion } from "framer-motion";
-import { Clock, X, Video, Calendar, Loader2, CalendarClock, CalendarRange, AlertCircle, CheckSquare, Check } from "lucide-react";
+import { Clock, X, Video, Calendar, Loader2, CalendarClock, CalendarRange, AlertCircle, CheckSquare, Check, CreditCard } from "lucide-react";
 import React from "react";
 import { DocumentUpload } from "./DocumentUpload";
 import { cn } from "@/utils/tailwind";
@@ -51,6 +51,7 @@ interface EventCardProps {
   className?: string;
   appointment?: TAppointment;
   rawSlots?: SlotOfAppointment[];
+  pendingPaymentUrl?: string | null;
 }
 
 function formatSlotDate(date: Date | string): string {
@@ -67,7 +68,7 @@ function formatSlotTime(date: Date | string): string {
 const DEFAULT_MEETING_DURATION_MS = 60 * 60 * 1000;
 
 // Status configuration - refined professional colors
-const statusConfig: Record<string, { bg: string; text: string; dot: string }> =
+const statusConfig: Record<string, { bg: string; text: string; dot: string; label?: string }> =
   {
     APPROVED: { bg: "bg-teal-50", text: "text-teal-600", dot: "bg-teal-500" }, // Teal - sophisticated success
     PENDING: {
@@ -75,6 +76,12 @@ const statusConfig: Record<string, { bg: string; text: string; dot: string }> =
       text: "text-orange-600",
       dot: "bg-orange-500",
     }, // Orange - warm urgency
+    APPROVED_PENDING_PAYMENT: {
+      bg: "bg-amber-50",
+      text: "text-amber-700",
+      dot: "bg-amber-500",
+      label: "PAYMENT REQUIRED",
+    }, // Amber - payment action needed
     SCHEDULED: {
       bg: "bg-indigo-50",
       text: "text-indigo-600",
@@ -111,6 +118,7 @@ export function EventCard({
   className = "",
   appointment,
   rawSlots = [],
+  pendingPaymentUrl,
 }: Readonly<EventCardProps>) {
   const { toast } = useToast();
   const router = useRouter();
@@ -511,7 +519,7 @@ export function EventCard({
             <span
               className={cn("h-1.5 w-1.5 rounded-full", displayStatusStyle.dot)}
             />
-            {displayStatus?.replace(/_/g, " ")}
+            {displayStatusStyle.label || displayStatus?.replace(/_/g, " ")}
           </Badge>
         </div>
 
@@ -604,6 +612,23 @@ export function EventCard({
           </div>
         )}
 
+        {/* Pay Now Button - for APPROVED_PENDING_PAYMENT status */}
+        {status?.toUpperCase() === "APPROVED_PENDING_PAYMENT" && pendingPaymentUrl && (
+          <div className="mt-4 pt-4 border-t border-zinc-100">
+            <Button
+              size="sm"
+              onClick={() => window.open(pendingPaymentUrl, "_blank")}
+              className="w-full h-9 text-sm font-medium bg-amber-500 hover:bg-amber-600 text-white"
+            >
+              <CreditCard className="h-4 w-4 mr-2" />
+              Pay Now to Confirm
+            </Button>
+            <p className="text-xs text-amber-600 text-center mt-2">
+              Complete payment to confirm your appointment
+            </p>
+          </div>
+        )}
+
         {/* Action Buttons - Always render for consistency */}
         <div className="flex items-center gap-2 mt-4 pt-4 border-t border-zinc-100">
           {!isTentative && status?.toUpperCase() === "APPROVED" && (
@@ -623,7 +648,7 @@ export function EventCard({
               Reschedule
             </Button>
           )}
-          {!isInactiveStatus && (
+          {!isInactiveStatus && status?.toUpperCase() !== "APPROVED_PENDING_PAYMENT" && (
             <Button
               variant="outline"
               size="sm"
