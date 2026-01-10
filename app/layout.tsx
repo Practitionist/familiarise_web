@@ -1,5 +1,6 @@
 import AnnouncementBar from "@/components/AnnouncementBar";
 import Footer from "@/components/Footer";
+import HeaderSpacer from "@/components/HeaderSpacer";
 import Navbar from "@/components/Navbar";
 import { Toaster } from "@/components/ui/toaster";
 import NextAuthProvider from "@/providers/NextAuthSessionProvider";
@@ -49,6 +50,7 @@ export default async function RootLayout({
             <Toaster />
             <AnnouncementBar />
             <Navbar />
+            <HeaderSpacer />
             <div className="flex-1 w-full">
               {children}
             </div>

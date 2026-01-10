@@ -3,7 +3,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 
 export const ConsultantSkeletonLoader: React.FC = () => {
   return (
-    <div className="bg-zinc-50 min-h-screen pt-16 lg:pt-20">
+    <div className="bg-zinc-50 min-h-screen">
       {/* Back Navigation Skeleton */}
       <div className="bg-white border-b border-zinc-200">
         <div className="w-full px-4 md:px-8 lg:px-12 py-4">
