@@ -23,8 +23,10 @@ const Navbar = () => {
   const [isScrolled, setIsScrolled] = useState(false);
   const [isAnnouncementVisible, setIsAnnouncementVisible] = useState(true);
 
-  // Check if we're on the home page (for transparent navbar)
+  // Check if we're on a page with dark hero (for transparent navbar)
   const isHomePage = pathname === "/";
+  const darkHeroPages = ["/", "/explore/experts", "/explore/programs", "/explore/community"];
+  const hasDarkHero = darkHeroPages.includes(pathname);
 
   useEffect(() => {
     const checkAnnouncementState = () => {
@@ -68,6 +70,7 @@ const Navbar = () => {
     pathname.startsWith("/auth/") ||
     pathname.startsWith("/form/") ||
     pathname.startsWith("/checkout/") ||
+    pathname === "/dashboard" ||
     pathname.startsWith("/dashboard/") ||
     pathname.startsWith("/meetings/");
 
@@ -93,19 +96,17 @@ const Navbar = () => {
   };
 
   // Determine navbar style based on scroll and page
-  const showDarkStyle = isHomePage && !isScrolled;
+  const showDarkStyle = hasDarkHero && !isScrolled;
 
   return (
     <>
       {/* Main Navbar */}
       <nav
-        className={`fixed w-full z-[1000] transition-all duration-300 ${
-          isAnnouncementVisible ? "top-[42px]" : "top-0"
-        } ${
-          showDarkStyle
+        className={`fixed w-full z-[1000] transition-all duration-300 ${isAnnouncementVisible ? "top-[42px]" : "top-0"
+          } ${showDarkStyle
             ? "bg-transparent"
             : "bg-white/90 backdrop-blur-xl border-b border-zinc-200 shadow-sm"
-        }`}
+          }`}
       >
         <div className="container mx-auto px-4 md:px-6">
           <div className="flex justify-between items-center h-16 md:h-20">
@@ -198,11 +199,10 @@ const Navbar = () => {
             <button
               onClick={toggleMenu}
               aria-label="Toggle Navigation"
-              className={`lg:hidden p-2 rounded-lg transition-colors ${
-                showDarkStyle
-                  ? "text-white hover:bg-white/10"
-                  : "text-zinc-700 hover:bg-zinc-100"
-              }`}
+              className={`lg:hidden p-2 rounded-lg transition-colors ${showDarkStyle
+                ? "text-white hover:bg-white/10"
+                : "text-zinc-700 hover:bg-zinc-100"
+                }`}
             >
               {isOpen ? (
                 <X className="w-6 h-6" />

@@ -68,16 +68,11 @@ type JobFunction = () => Promise<JobResult>;
 
 const JOB_FUNCTIONS: Record<string, JobFunction> = {
   "cleanup-abandoned-payments": async () => {
-    const paymentResult = await cleanupAbandonedPayments();
-    const approvalResult = await cleanupExpiredApprovalPendingPayments();
+    const result = await cleanupAbandonedPayments();
     return {
-      success: paymentResult.success && approvalResult.success,
-      cleanedCount:
-        (paymentResult.cleanedCount || 0) + (approvalResult.cleanedCount || 0),
-      errorCount:
-        (paymentResult.errorCount || 0) + (approvalResult.errorCount || 0),
-      paymentCleanup: paymentResult,
-      approvalCleanup: approvalResult,
+      success: result.success,
+      cleanedCount: result.cleanedCount,
+      errorCount: result.errorCount,
     };
   },
   "cleanup-approval-payments": async () => {
