@@ -305,7 +305,7 @@ export default function ExpertProfile(
   }
 
   return (
-    <main className="min-h-screen bg-zinc-50">
+    <main className="bg-zinc-50 pt-16 lg:pt-20">
       {/* Back Navigation */}
       <div className="bg-white border-b border-zinc-200">
         <div className="w-full px-4 md:px-8 lg:px-12 py-4">
