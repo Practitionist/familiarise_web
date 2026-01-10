@@ -259,7 +259,7 @@ export default function ConsultationCheckoutPage({
             searchParamsValidation.data.slotOfAvailabilityWeeklyId,
           slotOfAvailabilityCustomId:
             searchParamsValidation.data.slotOfAvailabilityCustomId,
-          discountCode: searchParamsValidation.data.discountCode,
+          discountCode: appliedDiscount?.code, // Use state instead of URL params
           notes: searchParamsValidation.data.notes,
         });
 
@@ -354,7 +354,7 @@ export default function ConsultationCheckoutPage({
         setProcessingGateway(null);
       }
     },
-    [resolvedParams, resolvedSearchParams, toast, isCheckoutProcessing],
+    [resolvedParams, resolvedSearchParams, toast, isCheckoutProcessing, appliedDiscount],
   );
 
   useEffect(() => {

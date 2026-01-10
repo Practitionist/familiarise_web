@@ -233,6 +233,7 @@ export default function WebinarCheckoutPage({
       handleApiError,
       handleCheckoutSuccess,
       toast,
+      appliedDiscount,
     ],
   );
 

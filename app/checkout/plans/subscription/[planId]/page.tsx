@@ -276,7 +276,7 @@ export default function SubscriptionCheckoutPage({
         setProcessingGateway(null);
       }
     },
-    [isCheckoutProcessing, resolvedSearchParams, planData?.data?.id, toast],
+    [isCheckoutProcessing, resolvedSearchParams, planData?.data?.id, toast, appliedDiscount],
   );
 
   useEffect(() => {

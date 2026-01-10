@@ -339,11 +339,8 @@ export async function calculateAmountAndValidate(
           amount = Math.max(0, amount - discount.discountValue);
         }
 
-        // Increment usage count atomically (Fix 2)
-        await tx.discountCode.update({
-          where: { id: discount.id },
-          data: { currentUses: { increment: 1 } },
-        });
+        // NOTE: currentUses increment is done in the payment transaction
+        // to ensure count only increases when payment is successfully created
       }
     }
 
@@ -1423,6 +1420,15 @@ export async function handleCheckout(
           await tx.payment.update({
             where: { id: payment.id },
             data: { paymentStatus: PaymentStatus.SUCCEEDED },
+          });
+        }
+
+        // Increment discount code usage count atomically (only after payment is created)
+        // This ensures count only increases when payment is successfully created
+        if (discountCodeId) {
+          await tx.discountCode.update({
+            where: { id: discountCodeId },
+            data: { currentUses: { increment: 1 } },
           });
         }
 

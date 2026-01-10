@@ -236,6 +236,7 @@ export default function ClassCheckoutPage({
       handleApiError,
       handleCheckoutSuccess,
       toast,
+      appliedDiscount,
     ],
   );
 
