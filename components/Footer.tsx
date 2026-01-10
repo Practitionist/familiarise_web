@@ -87,6 +87,7 @@ const Footer: React.FC = () => {
     pathname.startsWith("/auth/") ||
     pathname.startsWith("/form/") ||
     pathname.startsWith("/checkout/") ||
+    pathname === "/dashboard" ||
     pathname.startsWith("/dashboard/") ||
     pathname.startsWith("/meetings/");
 

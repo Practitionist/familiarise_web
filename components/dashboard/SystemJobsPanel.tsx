@@ -15,14 +15,8 @@ import {
   Wallet,
   Play,
   Loader2,
-  CheckCircle2,
-  XCircle,
   Trash2,
-  Key,
-  FileCheck,
   Database,
-  Archive,
-  Tag,
   Bell,
 } from "lucide-react";
 
@@ -348,12 +342,7 @@ export function SystemJobsPanel({ className }: SystemJobsPanelProps) {
       }
 
       toast({
-        title: (
-          <div className="flex items-center gap-2">
-            <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-            <span>{job.name} completed</span>
-          </div>
-        ) as unknown as string,
+        title: `✅ ${job.name} completed`,
         description: stats.length > 0 ? stats.join(" | ") : "Job completed successfully",
         variant: "default",
       });
@@ -368,12 +357,7 @@ export function SystemJobsPanel({ className }: SystemJobsPanelProps) {
       }
     } catch (error) {
       toast({
-        title: (
-          <div className="flex items-center gap-2">
-            <XCircle className="h-4 w-4 text-red-500" />
-            <span>{job.name} failed</span>
-          </div>
-        ) as unknown as string,
+        title: `❌ ${job.name} failed`,
         description: error instanceof Error ? error.message : "An error occurred",
         variant: "destructive",
       });

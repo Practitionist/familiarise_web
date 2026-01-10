@@ -25,7 +25,7 @@ import {
 
 export default function ContactUsPage() {
   return (
-    <section className="w-full xl:pt-32 lg:pt-24 md:pt-20 pt-16">
+    <section className="w-full">
       <div className="container mx-auto px-4 md:px-6 py-8">
         {/* Hero Section */}
         <div className="text-center mb-12">
