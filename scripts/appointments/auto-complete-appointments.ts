@@ -191,10 +191,10 @@ async function completeConsultations(): Promise<{
     Date.now() - COMPLETION_BUFFER_HOURS * 60 * 60 * 1000,
   );
 
-  // Find SCHEDULED consultations where all slots have ended
+  // Find APPROVED or SCHEDULED consultations where all slots have ended
   const consultationsToComplete = await prisma.consultation.findMany({
     where: {
-      requestStatus: RequestStatus.SCHEDULED,
+      requestStatus: { in: [RequestStatus.APPROVED, RequestStatus.SCHEDULED] },
       appointment: {
         slotsOfAppointment: {
           every: {
@@ -257,10 +257,10 @@ async function completeSubscriptions(): Promise<{
     Date.now() - COMPLETION_BUFFER_HOURS * 60 * 60 * 1000,
   );
 
-  // Find SCHEDULED subscriptions where all slots have ended
+  // Find APPROVED or SCHEDULED subscriptions where all slots have ended
   const subscriptionsToComplete = await prisma.subscription.findMany({
     where: {
-      requestStatus: RequestStatus.SCHEDULED,
+      requestStatus: { in: [RequestStatus.APPROVED, RequestStatus.SCHEDULED] },
       appointments: {
         every: {
           slotsOfAppointment: {
