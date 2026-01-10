@@ -76,8 +76,12 @@ export const CreateDirectMessageDialog = ({
       console.log("Filtered Stream search results:", filteredStreamUsers);
 
       if (filteredStreamUsers.length > 0) {
+        // Deduplicate by user ID to prevent duplicate entries
+        const uniqueStreamUsers = Array.from(
+          new Map(filteredStreamUsers.map((u) => [u.id, u])).values(),
+        );
         setUsers(
-          filteredStreamUsers.map((user) => ({
+          uniqueStreamUsers.map((user) => ({
             id: user.id,
             name: user.name || user.id,
             image: user.image as string | undefined, // Cast image type
@@ -100,8 +104,12 @@ export const CreateDirectMessageDialog = ({
         const data = await apiResponse.json();
         console.log("API search results:", data.users);
         if (data.users && data.users.length > 0) {
+          // Deduplicate by user ID to prevent duplicate entries
+          const uniqueApiUsers = Array.from(
+            new Map(data.users.map((u: any) => [u.id, u])).values(),
+          ) as any[];
           setUsers(
-            data.users.map((user: any) => ({
+            uniqueApiUsers.map((user: any) => ({
               id: user.id,
               name: user.name || user.id,
               image: user.image,
