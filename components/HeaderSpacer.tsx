@@ -54,14 +54,14 @@ const HeaderSpacer = () => {
         "/auth/",
         "/form/",
         "/checkout/",
-        "/dashboard",  // Exact match for redirect page
+        "/dashboard",
         "/meetings/",
     ];
 
     // Check if current route should exclude spacer
     const shouldExclude =
         excludedRoutes.includes(pathname) ||
-        noNavbarRoutes.some(route => pathname === route || pathname.startsWith(route + "/"));
+        noNavbarRoutes.some(route => pathname.startsWith(route));
 
     if (shouldExclude) {
         return null;
