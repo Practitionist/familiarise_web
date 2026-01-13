@@ -65,6 +65,62 @@ export default function ConsultationCheckoutPage({
   const [processingGateway, setProcessingGateway] = useState<string | null>(
     null,
   );
+  const [discountCodeInput, setDiscountCodeInput] = useState("");
+  const [appliedDiscount, setAppliedDiscount] = useState<{
+    code: string;
+    discountType: "PERCENTAGE" | "FIXED_AMOUNT";
+    discountValue: number;
+    discountAmount?: number;
+  } | null>(null);
+  const [isApplyingDiscount, setIsApplyingDiscount] = useState(false);
+  const [discountError, setDiscountError] = useState<string | null>(null);
+
+  const { toast } = useToast();
+
+  // Apply discount code
+  const handleApplyDiscount = async (code?: string) => {
+    const codeToApply = code || discountCodeInput;
+    if (!codeToApply.trim()) {
+      setDiscountError("Please enter a discount code");
+      return;
+    }
+
+    setIsApplyingDiscount(true);
+    setDiscountError(null);
+
+    try {
+      const response = await fetch("/api/payments/discounts/validate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          code: codeToApply,
+          amount: eventData?.data?.price || 0,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (data.valid) {
+        setAppliedDiscount({
+          code: data.code,
+          discountType: data.discountType,
+          discountValue: data.discountValue,
+          discountAmount: data.discountAmount,
+        });
+        setDiscountCodeInput("");
+        toast({
+          title: "Discount Applied",
+          description: data.message,
+        });
+      } else {
+        setDiscountError(data.message || "Invalid discount code");
+      }
+    } catch (error) {
+      setDiscountError("Failed to validate discount code");
+    } finally {
+      setIsApplyingDiscount(false);
+    }
+  };
 
   // Fetch slot details
   useEffect(() => {
@@ -102,8 +158,6 @@ export default function ConsultationCheckoutPage({
       fetchSlotData();
     }
   }, [resolvedSearchParams]);
-
-  const { toast } = useToast();
 
   // Common error handling logic
   const handleApiError = (errorData: any) => {
@@ -205,7 +259,7 @@ export default function ConsultationCheckoutPage({
             searchParamsValidation.data.slotOfAvailabilityWeeklyId,
           slotOfAvailabilityCustomId:
             searchParamsValidation.data.slotOfAvailabilityCustomId,
-          discountCode: searchParamsValidation.data.discountCode,
+          discountCode: appliedDiscount?.code, // Use state instead of URL params
           notes: searchParamsValidation.data.notes,
         });
 
@@ -300,7 +354,7 @@ export default function ConsultationCheckoutPage({
         setProcessingGateway(null);
       }
     },
-    [resolvedParams, resolvedSearchParams, toast, isCheckoutProcessing],
+    [resolvedParams, resolvedSearchParams, toast, isCheckoutProcessing, appliedDiscount],
   );
 
   useEffect(() => {
@@ -368,12 +422,28 @@ export default function ConsultationCheckoutPage({
   // NOTE: This must be before early returns to maintain consistent hook order
   const pricing = useMemo(() => {
     const basePrice = eventData?.data?.price || 0;
-    // TODO: Look up actual discount from discountCode via API
-    // For now, no automatic discount - user must apply a code
+
+    // Calculate discount based on applied discount code
+    let discountPercent = 0;
+    let discountAmount = 0;
+
+    if (appliedDiscount) {
+      // Use the pre-calculated discountAmount from API if available
+      // This already includes the maxDiscount cap
+      if (appliedDiscount.discountAmount !== undefined) {
+        discountAmount = appliedDiscount.discountAmount;
+      } else if (appliedDiscount.discountType === "PERCENTAGE") {
+        discountPercent = appliedDiscount.discountValue / 100; // Convert to decimal
+      } else if (appliedDiscount.discountType === "FIXED_AMOUNT") {
+        discountAmount = appliedDiscount.discountValue;
+      }
+    }
+
     return calculatePricing(basePrice, {
-      discountPercent: 0, // Will be updated when discount code is applied
+      discountPercent: discountAmount > 0 ? 0 : discountPercent, // Don't use percent if we have a fixed amount
+      discountAmount,
     });
-  }, [eventData?.data?.price]);
+  }, [eventData?.data?.price, appliedDiscount]);
 
   if (isLoading) {
     return (
@@ -495,25 +565,44 @@ export default function ConsultationCheckoutPage({
               type="text"
               placeholder="Enter discount code"
               className="flex-1"
+              value={discountCodeInput}
+              onChange={(e) => setDiscountCodeInput(e.target.value.toUpperCase())}
+              disabled={isApplyingDiscount || !!appliedDiscount}
             />
-            <Button variant="outline">Apply</Button>
+            <Button
+              variant="outline"
+              onClick={() => handleApplyDiscount()}
+              disabled={isApplyingDiscount || !!appliedDiscount || !discountCodeInput.trim()}
+            >
+              {isApplyingDiscount ? "Applying..." : "Apply"}
+            </Button>
           </div>
-          <div className="grid gap-2">
-            <div className="flex items-center justify-between">
+          {discountError && (
+            <div className="text-sm text-red-500">{discountError}</div>
+          )}
+          {appliedDiscount && (
+            <div className="flex items-center justify-between bg-green-50 p-3 rounded-lg border border-green-200">
               <div>
-                <div className="font-medium">CONSULT10</div>
-                <div className="text-sm text-muted-foreground">
-                  Get 10% off your consultation
+                <div className="font-medium text-green-700">{appliedDiscount.code}</div>
+                <div className="text-sm text-green-600">
+                  {appliedDiscount.discountType === "PERCENTAGE"
+                    ? `${appliedDiscount.discountValue}% off`
+                    : `${formatCurrency(appliedDiscount.discountValue, currency)} off`}
                 </div>
               </div>
-              <div className="flex items-center gap-2">
-                <div className="text-muted-foreground">10% off</div>
-                <Button variant="outline" size="sm">
-                  Apply
-                </Button>
-              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setAppliedDiscount(null);
+                  setDiscountError(null);
+                }}
+                className="text-green-700 hover:text-green-800"
+              >
+                Remove
+              </Button>
             </div>
-          </div>
+          )}
         </div>
       </div>
       <div className="flex flex-col gap-8 p-8 bg-white">
@@ -648,19 +737,15 @@ export default function ConsultationCheckoutPage({
                               resolvedSearchParams.slotOfAvailabilityWeeklyId,
                             )
                               ? resolvedSearchParams
-                                  .slotOfAvailabilityWeeklyId[0]
+                                .slotOfAvailabilityWeeklyId[0]
                               : resolvedSearchParams.slotOfAvailabilityWeeklyId,
                             slotOfAvailabilityCustomId: Array.isArray(
                               resolvedSearchParams.slotOfAvailabilityCustomId,
                             )
                               ? resolvedSearchParams
-                                  .slotOfAvailabilityCustomId[0]
+                                .slotOfAvailabilityCustomId[0]
                               : resolvedSearchParams.slotOfAvailabilityCustomId,
-                            discountCode: Array.isArray(
-                              resolvedSearchParams.discountCode,
-                            )
-                              ? resolvedSearchParams.discountCode[0]
-                              : resolvedSearchParams.discountCode,
+                            discountCode: appliedDiscount?.code,
                             notes: Array.isArray(resolvedSearchParams.notes)
                               ? resolvedSearchParams.notes[0]
                               : resolvedSearchParams.notes,
@@ -704,19 +789,15 @@ export default function ConsultationCheckoutPage({
                               resolvedSearchParams.slotOfAvailabilityWeeklyId,
                             )
                               ? resolvedSearchParams
-                                  .slotOfAvailabilityWeeklyId[0]
+                                .slotOfAvailabilityWeeklyId[0]
                               : resolvedSearchParams.slotOfAvailabilityWeeklyId,
                             slotOfAvailabilityCustomId: Array.isArray(
                               resolvedSearchParams.slotOfAvailabilityCustomId,
                             )
                               ? resolvedSearchParams
-                                  .slotOfAvailabilityCustomId[0]
+                                .slotOfAvailabilityCustomId[0]
                               : resolvedSearchParams.slotOfAvailabilityCustomId,
-                            discountCode: Array.isArray(
-                              resolvedSearchParams.discountCode,
-                            )
-                              ? resolvedSearchParams.discountCode[0]
-                              : resolvedSearchParams.discountCode,
+                            discountCode: appliedDiscount?.code,
                             notes: Array.isArray(resolvedSearchParams.notes)
                               ? resolvedSearchParams.notes[0]
                               : resolvedSearchParams.notes,
@@ -749,7 +830,7 @@ export default function ConsultationCheckoutPage({
                         disabled={isCheckoutProcessing}
                       >
                         {isCheckoutProcessing &&
-                        processingGateway === `${gateway.gateway}-mock` ? (
+                          processingGateway === `${gateway.gateway}-mock` ? (
                           <>
                             <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-current mr-2"></div>
                             Processing...

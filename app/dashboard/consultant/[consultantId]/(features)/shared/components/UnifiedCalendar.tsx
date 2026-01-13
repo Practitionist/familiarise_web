@@ -183,32 +183,6 @@ function countCompletedSelectedCallsForWeek(
   return completed;
 }
 
-/** Counts in-progress (started but not complete) selected calls for a week. */
-function countInProgressSelectedCallsForWeek(
-  selectedSlots: TimeSlot[],
-  slotsPerCall: number,
-  weekStart: Date,
-  weekEnd: Date,
-): number {
-  if (!selectedSlots?.length) return 0;
-  const byDay = new Map<string, TimeSlot[]>();
-  for (const s of selectedSlots) {
-    const start = s.startTime;
-    if (start < weekStart || start > weekEnd) continue;
-    const key = start.toDateString();
-    if (!byDay.has(key)) byDay.set(key, []);
-    byDay.get(key)!.push(s);
-  }
-
-  // (moved down) countCompletedSelectedClasses / computeClassFooter helpers
-  let started = 0;
-  byDay.forEach((daySlots) => {
-    if (daySlots.length === 0) return;
-    if (daySlots.length < slotsPerCall) started += 1;
-  });
-  return started;
-}
-
 /**
  * Subscription footer: Clear, action-oriented progress text
  * Removes confusing "past completed" concept and technical jargon
@@ -240,13 +214,13 @@ function computeSubscriptionFooter(
   const duration = sessionDurationInHours || 1;
   const durationText = duration === 1 ? "1 hour" : `${duration} hours`;
 
-  // Clear, action-oriented text based on progress
+  // Clear, user-friendly text based on progress
   if (scheduled === 0) {
-    return `📅 Select slots for ${maxTotalCalls} calls (${durationText} each) | Limit: ${callsPerWeek}/week`;
+    return `📅 Choose times for ${maxTotalCalls} sessions (${durationText} each)`;
   } else if (remaining > 0) {
-    return `✅ ${scheduled}/${maxTotalCalls} calls scheduled | ⏳ ${remaining} remaining (${durationText} each) | Limit: ${callsPerWeek}/week`;
+    return `✅ ${scheduled} of ${maxTotalCalls} sessions scheduled • ${remaining} more to go`;
   } else {
-    return `✅ All ${maxTotalCalls} calls scheduled`;
+    return `✅ All ${maxTotalCalls} sessions scheduled!`;
   }
 }
 
@@ -530,8 +504,8 @@ export function UnifiedCalendar({
                 : "event";
           toast({
             variant: "destructive",
-            title: "Slot outside allowed period",
-            description: `This ${label} allows scheduling only between ${formatAllowedRange(allowedStart, allowedEnd)}.`,
+            title: "Outside scheduling window",
+            description: `You can only schedule between ${formatAllowedRange(allowedStart, allowedEnd)}.`,
           });
           return;
         }
@@ -572,8 +546,8 @@ export function UnifiedCalendar({
           if (totalCompletedThisWeek >= (callsPerWeek || 1)) {
             toast({
               variant: "destructive",
-              title: "Weekly Call Limit Reached",
-              description: `Week of ${weekStart.toLocaleDateString()} already has ${totalCompletedThisWeek}/${callsPerWeek} completed call(s). Start a call in another week.`,
+              title: "Weekly limit reached",
+              description: `You've scheduled ${totalCompletedThisWeek} sessions this week (max ${callsPerWeek}). Choose a different week.`,
             });
             return;
           }
@@ -584,8 +558,8 @@ export function UnifiedCalendar({
       if (status.isInPast) {
         toast({
           variant: "destructive",
-          title: "Cannot select past slot",
-          description: "This time slot is in the past and cannot be selected.",
+          title: "Slot has passed",
+          description: "This slot is no longer available.",
         });
         return;
       }
@@ -599,8 +573,8 @@ export function UnifiedCalendar({
           variant: "destructive",
           title: "Slot unavailable",
           description: status.isBookedForDisplay
-            ? "This time slot is already booked."
-            : "This time slot is not available for booking.",
+            ? "This slot is already booked."
+            : "This slot is not available.",
         });
         return;
       }
@@ -691,7 +665,7 @@ export function UnifiedCalendar({
       }
 
       let cellClassName =
-        "h-8 w-full relative transition-colors duration-150 ease-in-out border border-transparent rounded-sm text-[10px] leading-tight px-1 py-0.5";
+        "h-8 w-full relative transition-colors duration-150 ease-in-out border border-transparent rounded-sm text-[10px] leading-tight px-1 py-0.5 disabled:pointer-events-none disabled:opacity-50";
       let buttonText = "";
       const showTooltip =
         ((status.isBookedForDisplay || status.isPartiallyBooked) &&
@@ -724,15 +698,15 @@ export function UnifiedCalendar({
         if (status.isInPast) {
           // Past available slot - faded, clickable (shows toast)
           cellClassName +=
-            " bg-green-300 text-green-950 opacity-50 cursor-pointer border-green-400";
+            " bg-green-300 text-green-950 opacity-50 cursor-pointer hover:bg-green-400 border-green-400";
           buttonText = isOutsideAllowedRange ? "Outside Period" : "Available";
         } else {
           // Future available slot - unfaded, clickable
-          const hoverClass =
-            eventType === "consultation"
-              ? " hover:bg-green-400 hover:shadow-md"
-              : " hover:bg-green-400";
-          cellClassName += ` bg-green-300 text-green-950${hoverClass} border-green-400`;
+          cellClassName +=
+            " bg-green-300 text-green-950 cursor-pointer hover:bg-green-400 border-green-400";
+          if (eventType === "consultation") {
+            cellClassName += " hover:shadow-md";
+          }
           buttonText = isOutsideAllowedRange ? "Outside Period" : "Available";
         }
       } else {
@@ -749,14 +723,14 @@ export function UnifiedCalendar({
         mode === "view" || (!status.isAvailable && !status.isBooked);
 
       const buttonElement = (
-        <Button
-          variant="ghost"
+        <button
+          type="button"
           className={cellClassName}
           onClick={() => handleSlotClick(interval, date)}
           disabled={isButtonDisabled}
         >
           {buttonText}
-        </Button>
+        </button>
       );
 
       if (showTooltip) {
@@ -878,14 +852,12 @@ export function UnifiedCalendar({
             return (
               <div
                 key={date.toISOString()}
-                className={`min-h-[100px] border p-1 flex flex-col ${
-                  isCurrentDay ? "ring-2 ring-primary" : ""
-                } ${isPastDay ? "bg-gray-100 text-gray-400" : "bg-white"}`}
+                className={`min-h-[100px] border p-1 flex flex-col ${isCurrentDay ? "ring-2 ring-primary" : ""
+                  } ${isPastDay ? "bg-gray-100 text-gray-400" : "bg-white"}`}
               >
                 <div
-                  className={`font-bold mb-1 text-xs ${
-                    isCurrentDay ? "text-primary" : ""
-                  } ${isPastDay ? "" : "text-gray-700"}`}
+                  className={`font-bold mb-1 text-xs ${isCurrentDay ? "text-primary" : ""
+                    } ${isPastDay ? "" : "text-gray-700"}`}
                 >
                   {i + 1}
                 </div>
@@ -1046,7 +1018,7 @@ export function UnifiedCalendar({
 
       {/* Calendar View */}
       {view === "week" ? (
-        <div className="flex flex-col h-[calc(100vh-20rem)] md:h-[65vh] max-h-[700px]">
+        <div className="flex flex-col h-[calc(100vh-24rem)] xl:h-[65vh] max-h-[500px]">
           {/* Week header */}
           <div className="grid grid-cols-8 gap-0.5 md:gap-1 sticky top-0 bg-background z-20 pb-1">
             <div className="w-14 md:w-20"></div>
@@ -1060,14 +1032,12 @@ export function UnifiedCalendar({
               return (
                 <div
                   key={DAYS[index]}
-                  className={`text-center p-1 md:p-2 ${
-                    isInPeriod ? "bg-blue-50 border-x-2 border-blue-200" : ""
-                  }`}
+                  className={`text-center p-1 md:p-2 ${isInPeriod ? "bg-blue-50 border-x-2 border-blue-200" : ""
+                    }`}
                 >
                   <div
-                    className={`font-bold text-xs md:text-base ${
-                      isToday ? "text-primary" : ""
-                    }`}
+                    className={`font-bold text-xs md:text-base ${isToday ? "text-primary" : ""
+                      }`}
                   >
                     {DAYS[index].slice(0, 3)}
                   </div>
@@ -1165,15 +1135,12 @@ export function UnifiedCalendar({
               }
             })()}
           </div>
-          <div className="text-xs text-muted-foreground">
-            {eventType === "consultation"
-              ? `Required: ${durationInHours || 1}h consultation (${Math.ceil((durationInHours || 1) / 0.5)} consecutive slots)`
-              : eventType === "subscription"
-                ? `Required: ${sessionDurationInHours || 1}h per call (${Math.ceil((sessionDurationInHours || 1) / 0.5)} consecutive slots per call)`
-                : eventType === "webinar"
-                  ? `Required: ${durationInHours || 1}h webinar (${Math.ceil((durationInHours || 1) / 0.5)} consecutive slots)`
-                  : `Required: ${sessionDurationInHours || 1}h per class (${Math.ceil((sessionDurationInHours || 1) / 0.5)} consecutive slots)`}
-          </div>
+          {/* Only show weekly limit for subscriptions - other event types don't need secondary info */}
+          {eventType === "subscription" && (
+            <div className="text-xs text-muted-foreground">
+              Max {callsPerWeek || 1} session{(callsPerWeek || 1) > 1 ? "s" : ""} per week
+            </div>
+          )}
           {allocationError && (
             <div className="text-sm text-red-600">{allocationError}</div>
           )}

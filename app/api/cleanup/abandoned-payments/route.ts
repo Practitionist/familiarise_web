@@ -3,7 +3,7 @@ import {
   cleanupAbandonedPayments,
   cleanupExpiredApprovalPendingPayments,
   disconnectDatabase,
-} from "@/scripts/cleanup-abandoned-payments";
+} from "@/scripts/payments/cleanup-abandoned-payments";
 
 export async function POST(req: NextRequest) {
   try {

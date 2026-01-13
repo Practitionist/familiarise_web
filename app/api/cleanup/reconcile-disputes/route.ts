@@ -8,7 +8,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { reconcileDisputes } from "@/scripts/reconcile-disputes";
+import { reconcileDisputes } from "@/scripts/disputes/reconcile-disputes";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
@@ -17,7 +17,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     const cronSecret =
       process.env.CRON_SECRET || process.env.VERCEL_CRON_SECRET;
 
-    if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+    if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
       console.warn("Unauthorized dispute reconciliation attempt");
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }

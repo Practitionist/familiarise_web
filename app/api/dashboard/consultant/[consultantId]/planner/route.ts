@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import prisma from "@/lib/prisma";
 import { TWebinar, TClass } from "@/types/appointment";
 
 // Type for webinar events in planner with type discriminator
@@ -17,10 +18,82 @@ interface PlannerData {
   participantCounts: Record<string, number>;
 }
 
+/**
+ * Helper function to fetch participant counts directly via Prisma
+ * FIX #142: Uses batched queries instead of N+1 individual API calls
+ */
+async function getParticipantCounts(
+  webinarIds: string[],
+  classIds: string[],
+): Promise<Record<string, number>> {
+  const counts: Record<string, number> = {};
+
+  // Fetch webinar participant counts in a single query
+  if (webinarIds.length > 0) {
+    const webinarCounts = await prisma.webinar.findMany({
+      where: { id: { in: webinarIds } },
+      select: {
+        id: true,
+        appointment: {
+          select: {
+            slotsOfAppointment: {
+              select: { _count: { select: { user: true } } },
+              where: { isTentative: false },
+            },
+          },
+        },
+      },
+    });
+
+    for (const webinar of webinarCounts) {
+      counts[webinar.id] =
+        webinar.appointment?.slotsOfAppointment.reduce(
+          (total, slot) => total + slot._count.user,
+          0,
+        ) || 0;
+    }
+  }
+
+  // Fetch class participant counts in a single query
+  if (classIds.length > 0) {
+    const classCounts = await prisma.class.findMany({
+      where: { id: { in: classIds } },
+      select: {
+        id: true,
+        appointments: {
+          select: {
+            slotsOfAppointment: {
+              select: { _count: { select: { user: true } } },
+              where: { isTentative: false },
+            },
+          },
+        },
+      },
+    });
+
+    for (const classEvent of classCounts) {
+      counts[classEvent.id] = classEvent.appointments.reduce(
+        (total, appointment) =>
+          total +
+          appointment.slotsOfAppointment.reduce(
+            (slotTotal, slot) => slotTotal + slot._count.user,
+            0,
+          ),
+        0,
+      );
+    }
+  }
+
+  return counts;
+}
+
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ consultantId: string }> },
 ) {
+  // Note: request parameter kept for Next.js API route signature compatibility
+  void request;
+
   try {
     const { consultantId } = await params;
 
@@ -36,6 +109,7 @@ export async function GET(
       : process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
 
     // Fetch webinars and classes in parallel
+    // TODO: Consider refactoring to direct Prisma calls in future
     const [webinarsRes, classesRes] = await Promise.all([
       fetch(
         `${baseUrl}/api/events/webinars?consultantProfileId=${consultantId}`,
@@ -68,7 +142,7 @@ export async function GET(
       classesRes.json(),
     ]);
 
-    // Transform webinars to include type discriminator (same as PlannerService.fetchWebinars)
+    // Transform webinars to include type discriminator
     const webinars: WebinarEvent[] = (webinarsData.data || []).map(
       (webinar: TWebinar) => ({
         ...webinar,
@@ -76,7 +150,7 @@ export async function GET(
       }),
     );
 
-    // Transform classes to include type discriminator (same as PlannerService.fetchClasses)
+    // Transform classes to include type discriminator
     const classes: ClassEvent[] = (classesData.data || []).map(
       (classEvent: TClass) => ({
         ...classEvent,
@@ -84,55 +158,11 @@ export async function GET(
       }),
     );
 
-    // Fetch participant counts for all events in parallel
-    const participantCountPromises = [
-      ...webinars.map(async (webinar: WebinarEvent) => {
-        try {
-          const response = await fetch(
-            `${baseUrl}/api/participants/webinar/${webinar.id}`,
-          );
-          if (response.ok) {
-            const data = await response.json();
-            return {
-              eventId: webinar.id,
-              count: data.participants?.length || 0,
-            };
-          }
-        } catch (error) {
-          console.error(
-            `Failed to fetch participants for webinar ${webinar.id}:`,
-            error,
-          );
-        }
-        return { eventId: webinar.id, count: 0 };
-      }),
-      ...classes.map(async (classEvent: ClassEvent) => {
-        try {
-          const response = await fetch(
-            `${baseUrl}/api/participants/class/${classEvent.id}`,
-          );
-          if (response.ok) {
-            const data = await response.json();
-            return {
-              eventId: classEvent.id,
-              count: data.participants?.length || 0,
-            };
-          }
-        } catch (error) {
-          console.error(
-            `Failed to fetch participants for class ${classEvent.id}:`,
-            error,
-          );
-        }
-        return { eventId: classEvent.id, count: 0 };
-      }),
-    ];
+    // FIX #142: Fetch participant counts using direct Prisma query (not internal API)
+    const webinarIds = webinars.map((w) => w.id).filter(Boolean) as string[];
+    const classIds = classes.map((c) => c.id).filter(Boolean) as string[];
 
-    const participantCountResults = await Promise.all(participantCountPromises);
-    const participantCounts: Record<string, number> = {};
-    participantCountResults.forEach(({ eventId, count }) => {
-      participantCounts[eventId] = count;
-    });
+    const participantCounts = await getParticipantCounts(webinarIds, classIds);
 
     const plannerData: PlannerData = {
       webinars,

@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/table";
 import { toast } from "@/components/ui/use-toast";
 import { AppointmentsType, RequestStatus } from "@prisma/client";
+import { AlertTriangle, CheckCircle2, RefreshCw } from "lucide-react";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { RequestedSlotsDialog } from "./components/RequestedSlotsDialog";
@@ -49,13 +50,20 @@ import { countSundayWeeksInclusive } from "../shared/utils/calendarUtils";
 // interface ConsultantApiResponse { ... } // Removed
 // --- End API Response Type Definitions ---
 
+// Slot with tentative status for reschedule visibility
+interface RequestedSlot {
+  startsAt: string;
+  isTentative: boolean;
+}
+
 interface Request {
   id: string;
   type: AppointmentsType;
   title: string;
   requestedBy: RequestedBy;
   requestedAt: string;
-  requestedTimes?: string[];
+  requestedTimes?: string[]; // Kept for backward compatibility
+  requestedSlots?: RequestedSlot[]; // New: includes isTentative flag
   status: RequestStatus;
   requiredSlots: number;
   allocatedSlots?: string[];
@@ -66,6 +74,9 @@ interface Request {
   startDate?: Date;
   endDate?: Date;
   bookingSource?: "DIRECT_CHECKOUT" | "REQUEST_SUBMITTED"; // Booking source - direct checkout or request submitted
+  // Reschedule info
+  tentativeSlotCount?: number;
+  totalSlotCount?: number;
 }
 
 // interface SlotInterval { ... } // Removed - Now imported
@@ -176,25 +187,33 @@ export function RequestSlotAllocationTab({
         (type === "all" || type === "consultation")
       ) {
         processedRequests.push(
-          ...consultationsResult.data.map((consultation) => ({
-            id: consultation.id,
-            type: AppointmentsType.CONSULTATION,
-            title: consultation.consultationPlan?.title || "Untitled Plan",
-            requestedBy: consultation.requestedBy,
-            requestedAt: consultation.requestedAt,
-            requestedTimes:
-              consultation.appointment?.slotsOfAppointment?.map(
-                (slot) => slot.startsAt,
-              ) || [],
-            status: consultation.requestStatus,
-            requiredSlots: Math.ceil(
-              (consultation.consultationPlan?.durationInHours || 1) / 0.5,
-            ), // Convert hours to 30-min slots
-            durationInHours:
-              consultation.consultationPlan?.durationInHours || 1,
-            bookingSource: consultation.bookingSource, // Map bookingSource enum
-            // No scheduling period for consultations (one-time event)
-          })),
+          ...consultationsResult.data.map((consultation) => {
+            const slots = consultation.appointment?.slotsOfAppointment || [];
+            const tentativeCount = slots.filter((s) => s.isTentative).length;
+            const totalCount = slots.length;
+
+            return {
+              id: consultation.id,
+              type: AppointmentsType.CONSULTATION,
+              title: consultation.consultationPlan?.title || "Untitled Plan",
+              requestedBy: consultation.requestedBy,
+              requestedAt: consultation.requestedAt,
+              requestedTimes: slots.map((slot) => slot.startsAt),
+              requestedSlots: slots.map((slot) => ({
+                startsAt: slot.startsAt,
+                isTentative: slot.isTentative ?? false,
+              })),
+              status: consultation.requestStatus,
+              requiredSlots: Math.ceil(
+                (consultation.consultationPlan?.durationInHours || 1) / 0.5,
+              ), // Convert hours to 30-min slots
+              durationInHours:
+                consultation.consultationPlan?.durationInHours || 1,
+              bookingSource: consultation.bookingSource,
+              tentativeSlotCount: tentativeCount,
+              totalSlotCount: totalCount,
+            };
+          }),
         );
       }
 
@@ -210,17 +229,25 @@ export function RequestSlotAllocationTab({
               subscription.subscriptionPlan?.sessionDurationInHours || 1;
             const slotsPerSession = Math.ceil(sessionDuration / 0.5);
 
+            // Flatten all slots from all appointments
+            const allSlots =
+              subscription.appointments?.flatMap(
+                (appt) => appt.slotsOfAppointment || [],
+              ) || [];
+            const tentativeCount = allSlots.filter((s) => s.isTentative).length;
+            const totalCount = allSlots.length;
+
             return {
               id: subscription.id,
               type: AppointmentsType.SUBSCRIPTION,
               title: subscription.subscriptionPlan?.title || "Untitled Plan",
               requestedBy: subscription.requestedBy,
               requestedAt: subscription.requestedAt,
-              requestedTimes:
-                subscription.appointments?.flatMap(
-                  (appt) =>
-                    appt.slotsOfAppointment?.map((slot) => slot.startsAt) || [],
-                ) || [],
+              requestedTimes: allSlots.map((slot) => slot.startsAt),
+              requestedSlots: allSlots.map((slot) => ({
+                startsAt: slot.startsAt,
+                isTentative: slot.isTentative ?? false,
+              })),
               status: subscription.requestStatus,
               // FIXED: Use accurate week counting instead of hardcoded * 4
               requiredSlots: (() => {
@@ -256,6 +283,8 @@ export function RequestSlotAllocationTab({
                 ? new Date(subscription.schedulingPeriodEndsAt)
                 : undefined,
               bookingSource: subscription.bookingSource,
+              tentativeSlotCount: tentativeCount,
+              totalSlotCount: totalCount,
             };
           }),
         );
@@ -320,8 +349,8 @@ export function RequestSlotAllocationTab({
 
       // Success handling
       toast({
-        title: "Success",
-        description: `Slots have been allocated as requested${override ? " (with override)" : ""}`,
+        title: "Times confirmed",
+        description: "Your requested times have been scheduled.",
         variant: "default",
       });
 
@@ -349,8 +378,8 @@ export function RequestSlotAllocationTab({
   // Handle allocation complete from UnifiedCalendar
   const handleAllocationComplete = async () => {
     toast({
-      title: "Success",
-      description: "Slots have been allocated successfully",
+      title: "Schedule confirmed",
+      description: "All session times have been scheduled.",
       variant: "default",
     });
 
@@ -429,11 +458,74 @@ export function RequestSlotAllocationTab({
                   {new Date(request.requestedAt).toLocaleString()}
                 </TableCell>
                 <TableCell>
-                  {request.requestedTimes &&
-                  request.requestedTimes.length > 0 ? (
+                  {/* Reschedule indicator */}
+                  {request.tentativeSlotCount !== undefined &&
+                    request.tentativeSlotCount > 0 &&
+                    request.totalSlotCount !== undefined && (
+                      <div className="mb-2">
+                        {request.tentativeSlotCount === request.totalSlotCount ? (
+                          <div className="flex items-center gap-1.5 text-xs font-medium text-blue-600 bg-blue-50 px-2 py-1 rounded-md">
+                            <RefreshCw className="h-3 w-3" />
+                            Full Reschedule (all {request.totalSlotCount} session
+                            {request.totalSlotCount !== 1 ? "s" : ""})
+                          </div>
+                        ) : request.tentativeSlotCount === 1 ? (
+                          <div className="flex items-center gap-1.5 text-xs font-medium text-amber-600 bg-amber-50 px-2 py-1 rounded-md">
+                            <AlertTriangle className="h-3 w-3" />
+                            Individual Session (1 of {request.totalSlotCount} needs new time)
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-1.5 text-xs font-medium text-amber-600 bg-amber-50 px-2 py-1 rounded-md">
+                            <AlertTriangle className="h-3 w-3" />
+                            Multiple Sessions ({request.tentativeSlotCount} of{" "}
+                            {request.totalSlotCount} need new times)
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                  {request.requestedSlots && request.requestedSlots.length > 0 ? (
+                    <div className="space-y-1">
+                      {request.requestedSlots.slice(0, 5).map((slot, index) => {
+                        const date = new Date(slot.startsAt);
+                        const isValidDate = !isNaN(date.getTime());
+
+                        return (
+                          <div
+                            key={`${request.id}-slot-${index}`}
+                            className={`flex items-center gap-1.5 text-sm ${
+                              slot.isTentative
+                                ? "text-amber-600"
+                                : "text-muted-foreground"
+                            }`}
+                          >
+                            {slot.isTentative ? (
+                              <AlertTriangle className="h-3 w-3 flex-shrink-0" />
+                            ) : (
+                              <CheckCircle2 className="h-3 w-3 flex-shrink-0 text-green-500" />
+                            )}
+                            <span>
+                              {isValidDate ? date.toLocaleString() : "Invalid date"}
+                            </span>
+                            {slot.isTentative && (
+                              <span className="text-xs text-amber-500">
+                                (needs rescheduling)
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })}
+                      {request.requestedSlots.length > 5 && (
+                        <div className="text-xs text-muted-foreground pl-5">
+                          ... and {request.requestedSlots.length - 5} more slot
+                          {request.requestedSlots.length - 5 !== 1 ? "s" : ""}
+                        </div>
+                      )}
+                    </div>
+                  ) : request.requestedTimes && request.requestedTimes.length > 0 ? (
+                    // Fallback to old format if requestedSlots not available
                     <div className="space-y-1">
                       {request.requestedTimes.slice(0, 5).map((time, index) => {
-                        // Validate and parse date string (Bug #5 fix)
                         const date = new Date(time);
                         const isValidDate = !isNaN(date.getTime());
 
@@ -442,9 +534,7 @@ export function RequestSlotAllocationTab({
                             key={`${request.id}-time-${index}`}
                             className="text-sm"
                           >
-                            {isValidDate
-                              ? date.toLocaleString()
-                              : "Invalid date"}
+                            {isValidDate ? date.toLocaleString() : "Invalid date"}
                           </div>
                         );
                       })}
@@ -620,6 +710,7 @@ export function RequestSlotAllocationTab({
             selectedRequestForDialog?.type || AppointmentsType.CONSULTATION
           }
           requestedSlots={selectedRequestForDialog?.requestedTimes || []}
+          requestedSlotsWithStatus={selectedRequestForDialog?.requestedSlots}
           schedulingPeriod={
             selectedRequestForDialog?.startDate &&
             selectedRequestForDialog?.endDate

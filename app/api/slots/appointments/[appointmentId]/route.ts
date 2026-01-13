@@ -10,9 +10,12 @@ interface UpdateSlotsRequest {
         slotStartTimeInUTC: string;
         slotEndTimeInUTC: string;
         type?: "WEEKLY" | "CUSTOM";
+        isTentative?: boolean;
       }>;
     };
   };
+  // Global isTentative flag - applies to all slots if individual slot doesn't specify
+  isTentative?: boolean;
 }
 
 interface UpdateAppointmentRequest {
@@ -320,6 +323,9 @@ export async function PATCH(
       );
     }
 
+    // Determine default isTentative value - global flag takes precedence
+    const defaultIsTentative = body.isTentative ?? false;
+
     const data: Prisma.AppointmentUpdateInput = {
       slotsOfAppointment: {
         deleteMany: {},
@@ -327,6 +333,7 @@ export async function PATCH(
           startsAt: new Date(slot.slotStartTimeInUTC),
           endsAt: new Date(slot.slotEndTimeInUTC),
           type: slot.type || "WEEKLY", // Default to WEEKLY if not specified
+          isTentative: slot.isTentative ?? defaultIsTentative, // Explicit tentative flag
         })),
       },
     };

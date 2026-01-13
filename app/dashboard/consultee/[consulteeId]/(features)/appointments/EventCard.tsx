@@ -9,9 +9,19 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { motion } from "framer-motion";
-import { Clock, X, Video, Calendar, Loader2 } from "lucide-react";
+import { Clock, X, Video, Calendar, Loader2, CalendarClock, CalendarRange, AlertCircle, CheckSquare, Check } from "lucide-react";
 import React from "react";
 import { DocumentUpload } from "./DocumentUpload";
 import { cn } from "@/utils/tailwind";
@@ -19,6 +29,9 @@ import { format } from "date-fns";
 import { useRouter } from "next/navigation";
 import { useStreamVideoClient } from "@stream-io/video-react-sdk";
 import { getOrCreateAppointmentMeeting } from "@/lib/meeting";
+import { ReportIssueDialog } from "./ReportIssueDialog";
+import { CancelConfirmationDialog } from "./CancelConfirmationDialog";
+import type { AppointmentStatus } from "@/utils/supportTicketUrl";
 import type { TAppointment, TSlotOfAppointment } from "@/types/appointment";
 import type { SlotOfAppointment } from "@prisma/client";
 
@@ -105,12 +118,117 @@ export function EventCard({
   const [isLoading, setIsLoading] = React.useState(false);
   const [isJoining, setIsJoining] = React.useState(false);
 
+  // Reschedule dialog state
+  const [showRescheduleDialog, setShowRescheduleDialog] = React.useState(false);
+  const [rescheduleType, setRescheduleType] = React.useState<"individual" | "multiple" | "entire">("entire");
+  const [selectedSlotIds, setSelectedSlotIds] = React.useState<string[]>([]);
+
+  // Report Issue dialog state
+  const [showReportDialog, setShowReportDialog] = React.useState(false);
+
+  // Cancel confirmation dialog state
+  const [showCancelDialog, setShowCancelDialog] = React.useState(false);
+
+  // Get appointment status and type for issue filtering
+  const appointmentStatus: AppointmentStatus =
+    status?.toLowerCase() === "completed" ? "COMPLETED" : "UPCOMING";
+  
+  const appointmentType: "CONSULTATION" | "SUBSCRIPTION" =
+    type === "Subscription" ? "SUBSCRIPTION" : "CONSULTATION";
+
+  // Get the first slot's scheduled time for context
+  const scheduledAt =
+    rawSlots && rawSlots.length > 0
+      ? new Date(rawSlots[0].startsAt).toISOString()
+      : undefined;
+
+  // Memoize expensive session grouping - only re-runs when rawSlots changes
+  const groupedSessions = React.useMemo(() => {
+    const sortedSlots = rawSlots
+      .filter((slot) => !slot.isTentative)
+      .sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime());
+
+    // Helper to create session object (eliminates duplication)
+    const createSession = (slots: typeof sortedSlots) => {
+      if (slots.length === 0) return null;
+      return {
+        slots: [...slots],
+        startTime: new Date(slots[0].startsAt),
+        endTime: new Date(slots[slots.length - 1].endsAt),
+      };
+    };
+
+    const sessions: Array<{
+      slots: typeof sortedSlots;
+      startTime: Date;
+      endTime: Date;
+    }> = [];
+
+    let currentSessionSlots: typeof sortedSlots = [];
+
+    for (let i = 0; i < sortedSlots.length; i++) {
+      const slot = sortedSlots[i];
+      const prevSlot = sortedSlots[i - 1];
+
+      if (i === 0) {
+        currentSessionSlots.push(slot);
+      } else {
+        const prevEnd = new Date(prevSlot.endsAt).getTime();
+        const currStart = new Date(slot.startsAt).getTime();
+
+        if (currStart === prevEnd) {
+          currentSessionSlots.push(slot);
+        } else {
+          const session = createSession(currentSessionSlots);
+          if (session) sessions.push(session);
+          currentSessionSlots = [slot];
+        }
+      }
+    }
+
+    // Last session (using helper - no duplication)
+    const lastSession = createSession(currentSessionSlots);
+    if (lastSession) sessions.push(lastSession);
+
+    return sessions;
+  }, [rawSlots]);
+
+  // Derive dynamic isWithin24Hours on each render (cheap operation, stays fresh)
+  const sessionsWithDynamicProps = groupedSessions.map(session => ({
+    ...session,
+    isWithin24Hours: (session.startTime.getTime() - Date.now()) / (1000 * 60 * 60) < 24,
+  }));
+
+  // Memoize selected session count calculation
+  const selectedSessionCount = React.useMemo(() => {
+    return groupedSessions.filter(session =>
+      session.slots.every(slot => selectedSlotIds.includes(slot.id))
+    ).length;
+  }, [groupedSessions, selectedSlotIds]);
+
   const showSessionDetails =
     (type === "Subscription" || type === "Class") &&
     actualSlots &&
     actualSlots.length > 1;
 
-  const handleReschedule = async () => {
+  // Check if this is a subscription with multiple sessions (for reschedule options)
+  const isMultiSessionSubscription = type === "Subscription" && rawSlots.length > 1;
+
+  // Handle reschedule button click - show dialog for subscriptions with multiple sessions
+  const handleRescheduleClick = () => {
+    if (isMultiSessionSubscription) {
+      // Reset dialog state
+      setRescheduleType("entire");
+      setSelectedSlotIds([]);
+      setShowRescheduleDialog(true);
+    } else {
+      // For consultations or single-session subscriptions, reschedule directly
+      handleReschedule();
+    }
+  };
+
+  // Execute the reschedule API call
+  const handleReschedule = async (slotIds?: string[]) => {
     if (!appointmentId) {
       toast({
         title: "Error",
@@ -121,14 +239,20 @@ export function EventCard({
     }
 
     setIsLoading(true);
+    setShowRescheduleDialog(false);
+
     try {
-      const response = await fetch(
-        `/api/appointments/${appointmentId}/reschedule`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-        },
-      );
+      // Build the URL with type parameter for subscriptions
+      const url = type === "Subscription"
+        ? `/api/appointments/${appointmentId}/reschedule?type=SUBSCRIPTION`
+        : `/api/appointments/${appointmentId}/reschedule`;
+
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        // Include slotIds in body for individual/multiple session reschedule
+        body: slotIds && slotIds.length > 0 ? JSON.stringify({ slotIds }) : undefined,
+      });
 
       const data = await response.json();
 
@@ -136,9 +260,13 @@ export function EventCard({
         throw new Error(data.error || "Failed to request reschedule");
       }
 
+      const slotsAffected = data.slotsAffected ?? slotIds?.length ?? rawSlots.length;
+
       toast({
-        title: "Reschedule request sent",
-        description: `Your reschedule request for ${title} has been sent to ${consultant}.`,
+        title: "Ready to reschedule",
+        description: slotsAffected === 1
+          ? `Select a new time for your session.`
+          : `Select new times for your ${slotsAffected} sessions.`,
       });
 
       window.location.reload();
@@ -157,7 +285,17 @@ export function EventCard({
     }
   };
 
-  const handleCancel = async () => {
+  // Handle dialog confirmation
+  const handleRescheduleConfirm = () => {
+    if ((rescheduleType === "individual" || rescheduleType === "multiple") && selectedSlotIds.length > 0) {
+      handleReschedule(selectedSlotIds);
+    } else {
+      handleReschedule();
+    }
+  };
+
+  // Open cancel confirmation dialog
+  const handleCancelClick = () => {
     if (!appointmentId) {
       toast({
         title: "Error",
@@ -166,15 +304,11 @@ export function EventCard({
       });
       return;
     }
+    setShowCancelDialog(true);
+  };
 
-    if (
-      !window.confirm(
-        `Are you sure you want to cancel "${title}" with ${consultant}? This action cannot be undone.`,
-      )
-    ) {
-      return;
-    }
-
+  // Execute the cancel API call
+  const handleCancelConfirm = async () => {
     setIsLoading(true);
     try {
       const response = await fetch(
@@ -196,6 +330,7 @@ export function EventCard({
         description: `Your ${type.toLowerCase()} "${title}" has been cancelled successfully.`,
       });
 
+      setShowCancelDialog(false);
       window.location.reload();
     } catch (error) {
       console.error("Error cancelling appointment:", error);
@@ -309,16 +444,12 @@ export function EventCard({
     }
   };
 
-  const isConfirmed =
-    status?.toLowerCase() === "approved" ||
-    status?.toLowerCase() === "scheduled" ||
-    (!isTentative && actualSlots.length > 0);
-
   // Determine if actions should be disabled (negative/terminal statuses)
   const isInactiveStatus =
     status?.toLowerCase() === "cancelled" ||
     status?.toLowerCase() === "rejected" ||
-    status?.toLowerCase() === "completed";
+    status?.toLowerCase() === "completed" ||
+    status?.toLowerCase() === "expired";;
 
   const showDocumentUpload =
     (type === "Consultation" || type === "Subscription") && appointmentId;
@@ -432,7 +563,21 @@ export function EventCard({
                 </AccordionContent>
               </AccordionItem>
             </Accordion>
-          ) : type !== "Consultation" && type !== "Webinar" ? (
+          ) : type === "Consultation" && rawSlots.length > 0 ? (
+            <div className="bg-zinc-50 rounded-lg p-3 border border-zinc-100">
+              <div className="flex items-center gap-2 text-xs text-zinc-500 mb-1.5">
+                <Calendar className="h-3.5 w-3.5" />
+                <span>Scheduled Time</span>
+              </div>
+              <div className="text-sm text-zinc-700 font-medium">
+                {formatSlotDate(rawSlots[0].startsAt)}
+              </div>
+              <div className="text-sm text-zinc-500">
+                {formatSlotTime(rawSlots[0].startsAt)} -{" "}
+                {formatSlotTime(rawSlots[0].endsAt)}
+              </div>
+            </div>
+          ) : type !== "Webinar" ? (
             <div className="bg-zinc-50 rounded-lg p-3 border border-zinc-100">
               <div className="flex items-center gap-2 text-xs text-zinc-500 mb-1">
                 <Clock className="h-3.5 w-3.5" />
@@ -461,11 +606,11 @@ export function EventCard({
 
         {/* Action Buttons - Always render for consistency */}
         <div className="flex items-center gap-2 mt-4 pt-4 border-t border-zinc-100">
-          {!isTentative && (
+          {!isTentative && status?.toUpperCase() === "APPROVED" && (
             <Button
               variant="outline"
               size="sm"
-              onClick={handleReschedule}
+              onClick={handleRescheduleClick}
               disabled={isLoading || isInactiveStatus}
               className={cn(
                 "flex-1 h-8 text-xs font-medium border-zinc-200",
@@ -478,22 +623,31 @@ export function EventCard({
               Reschedule
             </Button>
           )}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleCancel}
-            disabled={isLoading || isInactiveStatus}
-            className={cn(
-              "flex-1 h-8 text-xs font-medium",
-              isInactiveStatus
-                ? "text-zinc-400 bg-zinc-50 border-zinc-200 cursor-not-allowed"
-                : "text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200 hover:border-red-300",
-            )}
-          >
-            <X className="h-3.5 w-3.5 mr-1.5" />
-            Cancel
-          </Button>
+          {!isInactiveStatus && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleCancelClick}
+              disabled={isLoading}
+              className="flex-1 h-8 text-xs font-medium text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200 hover:border-red-300"
+            >
+              <X className="h-3.5 w-3.5 mr-1.5" />
+              Cancel
+            </Button>
+          )}
         </div>
+
+        {/* Report Issue Button - Always visible for getting help with appointments */}
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setShowReportDialog(true)}
+          disabled={!appointmentId}
+          className="w-full mt-2 h-8 text-xs font-medium text-amber-600 hover:text-amber-700 hover:bg-amber-50 border-amber-200 hover:border-amber-300"
+        >
+          <AlertCircle className="h-3.5 w-3.5 mr-1.5" />
+          Report Issue
+        </Button>
 
         {/* Join Button - Always render for consistency */}
         <Button
@@ -540,6 +694,257 @@ export function EventCard({
           </Button>
         )}
       </div>
+
+      {/* Reschedule Dialog for Subscriptions with Multiple Sessions */}
+      <Dialog open={showRescheduleDialog} onOpenChange={setShowRescheduleDialog}>
+        <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto scrollbar-hide">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Clock className="h-5 w-5 text-zinc-600" />
+              Reschedule Options
+            </DialogTitle>
+            <DialogDescription>
+              Choose how you&apos;d like to reschedule your subscription sessions.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="py-4 space-y-4">
+            <RadioGroup
+              value={rescheduleType}
+              onValueChange={(value) => {
+                setRescheduleType(value as "individual" | "multiple" | "entire");
+                if (value === "entire") {
+                  setSelectedSlotIds([]);
+                } else if (value === "individual") {
+                  // Reset to single selection mode
+                  setSelectedSlotIds(selectedSlotIds.slice(0, 1));
+                }
+              }}
+              className="space-y-3"
+            >
+              {/* Reschedule One Session Option */}
+              <div className={cn(
+                "flex items-start space-x-3 p-3 rounded-lg border transition-colors",
+                rescheduleType === "individual"
+                  ? "border-zinc-900 bg-zinc-50"
+                  : "border-zinc-200 hover:border-zinc-300"
+              )}>
+                <RadioGroupItem value="individual" id="individual" className="mt-1" />
+                <Label htmlFor="individual" className="flex-1 cursor-pointer">
+                  <div className="flex items-center gap-2 font-medium text-zinc-900">
+                    <CalendarClock className="h-4 w-4" />
+                    Reschedule One Session
+                  </div>
+                  <p className="text-xs text-zinc-500 mt-1">
+                    Only the selected session will be rescheduled. Other sessions remain unchanged.
+                  </p>
+                </Label>
+              </div>
+
+              {/* Reschedule Multiple Sessions Option */}
+              <div className={cn(
+                "flex items-start space-x-3 p-3 rounded-lg border transition-colors",
+                rescheduleType === "multiple"
+                  ? "border-zinc-900 bg-zinc-50"
+                  : "border-zinc-200 hover:border-zinc-300"
+              )}>
+                <RadioGroupItem value="multiple" id="multiple" className="mt-1" />
+                <Label htmlFor="multiple" className="flex-1 cursor-pointer">
+                  <div className="flex items-center gap-2 font-medium text-zinc-900">
+                    <CheckSquare className="h-4 w-4" />
+                    Reschedule Multiple Sessions
+                  </div>
+                  <p className="text-xs text-zinc-500 mt-1">
+                    Select specific sessions to reschedule. Other sessions remain unchanged.
+                  </p>
+                </Label>
+              </div>
+
+              {/* Reschedule Entire Subscription Option */}
+              <div className={cn(
+                "flex items-start space-x-3 p-3 rounded-lg border transition-colors",
+                rescheduleType === "entire"
+                  ? "border-zinc-900 bg-zinc-50"
+                  : "border-zinc-200 hover:border-zinc-300"
+              )}>
+                <RadioGroupItem value="entire" id="entire" className="mt-1" />
+                <Label htmlFor="entire" className="flex-1 cursor-pointer">
+                  <div className="flex items-center gap-2 font-medium text-zinc-900">
+                    <CalendarRange className="h-4 w-4" />
+                    Reschedule Entire Subscription
+                  </div>
+                  <p className="text-xs text-zinc-500 mt-1">
+                    All {rawSlots.length} sessions will be released. You&apos;ll need to select new times for all sessions.
+                  </p>
+                </Label>
+              </div>
+            </RadioGroup>
+
+            {/* Session Selector - shown when "individual" or "multiple" is selected */}
+            {(rescheduleType === "individual" || rescheduleType === "multiple") && (
+              <div className="mt-4 space-y-2">
+                <Label className="text-sm font-medium text-zinc-700">
+                  {rescheduleType === "individual"
+                    ? "Select the session to reschedule:"
+                    : "Select sessions to reschedule:"}
+                </Label>
+                <div className="max-h-48 overflow-y-auto space-y-2 rounded-lg border border-zinc-200 p-2">
+                  {sessionsWithDynamicProps.map((session, sessionIndex) => {
+                    // Get all slot IDs for this session
+                    const sessionSlotIds = session.slots.map(s => s.id);
+                    // Session is selected if ALL its slots are in selectedSlotIds
+                    const isSelected = sessionSlotIds.every(id => selectedSlotIds.includes(id));
+
+                    const handleSessionClick = () => {
+                      if (session.isWithin24Hours) return;
+
+                      if (rescheduleType === "individual") {
+                        // Single select mode - select ALL slots in this session
+                        setSelectedSlotIds(sessionSlotIds);
+                      } else {
+                        // Multi-select mode - toggle ALL slots in this session
+                        if (isSelected) {
+                          // Deselect all slots in this session
+                          setSelectedSlotIds(prev =>
+                            prev.filter(id => !sessionSlotIds.includes(id))
+                          );
+                        } else {
+                          // Select all slots in this session
+                          setSelectedSlotIds(prev => {
+                            const combined = [...prev, ...sessionSlotIds];
+                            return Array.from(new Set(combined));
+                          });
+                        }
+                      }
+                    };
+
+                    return (
+                      <button
+                        key={`session-${sessionIndex}`}
+                        type="button"
+                        onClick={handleSessionClick}
+                        disabled={session.isWithin24Hours}
+                        className={cn(
+                          "w-full flex items-center justify-between p-2.5 rounded-md text-left transition-colors",
+                          isSelected
+                            ? "bg-zinc-900 text-white"
+                            : session.isWithin24Hours
+                              ? "bg-zinc-100 text-zinc-400 cursor-not-allowed"
+                              : "bg-zinc-50 hover:bg-zinc-100 text-zinc-700"
+                        )}
+                      >
+                        <div className="flex items-center gap-2">
+                          {/* Checkbox indicator for multi-select mode */}
+                          {rescheduleType === "multiple" && (
+                            <div className={cn(
+                              "w-4 h-4 rounded border flex items-center justify-center",
+                              isSelected
+                                ? "bg-white border-white"
+                                : session.isWithin24Hours
+                                  ? "border-zinc-300"
+                                  : "border-zinc-400"
+                            )}>
+                              {isSelected && <Check className="h-3 w-3 text-zinc-900" />}
+                            </div>
+                          )}
+                          <div>
+                            <div className="text-sm font-medium">
+                              {formatSlotDate(session.startTime)}
+                            </div>
+                            <div className={cn(
+                              "text-xs",
+                              isSelected ? "text-zinc-300" : "text-zinc-500"
+                            )}>
+                              {formatSlotTime(session.startTime)} - {formatSlotTime(session.endTime)}
+                            </div>
+                          </div>
+                        </div>
+                        {session.isWithin24Hours && (
+                          <span className="text-xs bg-orange-100 text-orange-600 px-2 py-0.5 rounded">
+                            Within 24h
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+                {sessionsWithDynamicProps.length === 0 && (
+                  <p className="text-sm text-zinc-500 text-center py-4">
+                    No confirmed sessions available to reschedule.
+                  </p>
+                )}
+                {rescheduleType === "multiple" && selectedSlotIds.length > 0 && (
+                  <p className="text-sm text-zinc-600 font-medium">
+                    {selectedSessionCount} session{selectedSessionCount > 1 ? "s" : ""} selected
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* Warning notice */}
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+              <p className="text-xs text-amber-800">
+                <strong>Note:</strong> Sessions cannot be rescheduled within 24 hours of the start time.
+                No refunds are provided for rescheduling.
+              </p>
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              variant="outline"
+              onClick={() => setShowRescheduleDialog(false)}
+              disabled={isLoading}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleRescheduleConfirm}
+              disabled={
+                isLoading ||
+                ((rescheduleType === "individual" || rescheduleType === "multiple") && selectedSlotIds.length === 0)
+              }
+              className="bg-zinc-900 hover:bg-zinc-800"
+            >
+              {isLoading ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Processing...
+                </>
+              ) : (
+                "Confirm Reschedule"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Report Issue Dialog for appointment-linked issues */}
+      {appointmentId && (
+        <ReportIssueDialog
+          open={showReportDialog}
+          onOpenChange={setShowReportDialog}
+          appointmentId={appointmentId}
+          appointmentType={appointmentType}
+          appointmentStatus={appointmentStatus}
+          consultantName={consultant}
+          scheduledAt={scheduledAt}
+          onSuccess={() => {
+            setShowReportDialog(false);
+          }}
+        />
+      )}
+
+      {/* Cancel Confirmation Dialog */}
+      <CancelConfirmationDialog
+        isOpen={showCancelDialog}
+        onConfirm={handleCancelConfirm}
+        onCancel={() => setShowCancelDialog(false)}
+        title={title}
+        consultant={consultant}
+        appointmentType={type}
+        isLoading={isLoading}
+      />
     </motion.div>
   );
 }

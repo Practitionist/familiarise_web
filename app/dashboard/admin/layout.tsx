@@ -7,10 +7,9 @@ import {
   DashboardSidebar,
   type NavSection,
 } from "@/components/dashboard";
-import { signOut, useSession } from "next-auth/react";
+import { useSession } from "next-auth/react";
 import { usePathname, useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { UserRole } from "@prisma/client";
 import { motion } from "framer-motion";
 import { schedulePrefetch } from "@/lib/dashboard-queries";
 import { useEffect } from "react";
@@ -20,6 +19,13 @@ const NAV_SECTIONS: NavSection[] = [
   {
     title: null,
     items: [{ name: "Overview", path: "home" }],
+  },
+  {
+    title: "Support",
+    items: [
+      { name: "Support Tickets", path: "tickets" },
+      { name: "User Feedback", path: "feedback" },
+    ],
   },
   {
     title: "Payments",
@@ -47,6 +53,10 @@ const NAV_SECTIONS: NavSection[] = [
       { name: "Analytics", path: "analytics" },
       { name: "Users", path: "users" },
     ],
+  },
+  {
+    title: "System",
+    items: [{ name: "System Jobs", path: "system-jobs" }],
   },
 ];
 
@@ -236,15 +246,8 @@ export default function AdminLayout({ children }: Readonly<PageProps>) {
     return <DashboardSkeleton />;
   }
 
-  // Role check
-  if (userData && userData.role !== UserRole.ADMIN) {
-    return (
-      <AccessDenied
-        title="Access Denied"
-        message="You do not have permission to access the admin dashboard."
-      />
-    );
-  }
+  // Note: Role-based access control is handled by middleware
+  // This layout trusts that middleware has already validated the user's role
 
   // Error state
   if (error) {

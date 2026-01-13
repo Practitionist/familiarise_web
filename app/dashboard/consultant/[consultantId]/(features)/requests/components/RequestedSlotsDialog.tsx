@@ -8,9 +8,16 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { AppointmentsType } from "@prisma/client";
+import { AlertTriangle, CheckCircle2, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
 import { AllocationService } from "../../shared/utils/allocationService";
 import { TimeSlot } from "../../shared/utils/calendarUtils";
+
+// Slot with tentative status
+interface SlotWithStatus {
+  startsAt: string;
+  isTentative: boolean;
+}
 
 interface ValidationResult {
   conflicts: Array<{
@@ -36,6 +43,7 @@ interface RequestedSlotsDialogProps {
   requestId: string;
   requestType: AppointmentsType;
   requestedSlots: string[];
+  requestedSlotsWithStatus?: SlotWithStatus[]; // New: includes tentative info
   schedulingPeriod?: { startDate?: Date; endDate?: Date };
   onConfirm: (override: boolean) => Promise<void>;
   onCancel: () => void;
@@ -47,10 +55,16 @@ export function RequestedSlotsDialog({
   requestId,
   requestType,
   requestedSlots,
+  requestedSlotsWithStatus,
   schedulingPeriod,
   onConfirm,
   onCancel,
 }: RequestedSlotsDialogProps) {
+  // Calculate reschedule info from slots with status
+  const tentativeCount = requestedSlotsWithStatus?.filter((s) => s.isTentative).length ?? 0;
+  const totalCount = requestedSlotsWithStatus?.length ?? requestedSlots.length;
+  const hasReschedule = tentativeCount > 0;
+  const isFullReschedule = tentativeCount === totalCount && tentativeCount > 0;
   const [loading, setLoading] = useState(false);
   const [validationResult, setValidationResult] =
     useState<ValidationResult | null>(null);
@@ -426,6 +440,27 @@ export function RequestedSlotsDialog({
             Review requested slots before allocation
           </DialogDescription>
         </DialogHeader>
+
+        {/* Reschedule indicator */}
+        {hasReschedule && (
+          <div className="mb-4">
+            {isFullReschedule ? (
+              <div className="flex items-center gap-2 text-sm font-medium text-blue-600 bg-blue-50 px-3 py-2 rounded-md border border-blue-200">
+                <RefreshCw className="h-4 w-4" />
+                <span>
+                  Full Reschedule - All {totalCount} session{totalCount !== 1 ? "s" : ""} need new times
+                </span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 text-sm font-medium text-amber-600 bg-amber-50 px-3 py-2 rounded-md border border-amber-200">
+                <AlertTriangle className="h-4 w-4" />
+                <span>
+                  Partial Reschedule - {tentativeCount} of {totalCount} session{tentativeCount !== 1 ? "s" : ""} need new times
+                </span>
+              </div>
+            )}
+          </div>
+        )}
 
         {renderDialogContent()}
 
