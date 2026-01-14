@@ -492,7 +492,7 @@ export const ChatSidebar = () => {
   );
 
   return (
-    <div className="w-64 bg-blue-600 text-white flex flex-col h-full">
+    <div className="w-80 bg-blue-600 text-white flex flex-col h-full">
       {/* Header with Title and Refresh */}
       <div className="p-4 border-b border-blue-700 flex justify-between items-center">
         <h1 className="text-xl font-bold">Familiarise</h1>

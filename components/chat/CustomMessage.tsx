@@ -7,7 +7,7 @@ import {
   Attachment,
   useChatContext,
   useMessageContext,
-  useChannelActionContext,
+  useMessageComposer,
 } from "stream-chat-react";
 import {
   SmileIcon,
@@ -24,7 +24,7 @@ import { Button } from "@/components/ui/button";
 export const CustomMessage = () => {
   const { message } = useMessageContext();
   const { client, channel } = useChatContext();
-  const { setQuotedMessage } = useChannelActionContext();
+  const messageComposer = useMessageComposer();
   const isMyMessage = message.user?.id === client.userID;
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [showMoreOptions, setShowMoreOptions] = useState(false);
@@ -135,7 +135,7 @@ export const CustomMessage = () => {
 
   // WhatsApp/Telegram style reply - sets the message as quoted for the input
   const handleReplyClick = () => {
-    setQuotedMessage(message);
+    messageComposer.setQuotedMessage(message);
   };
 
   return (
