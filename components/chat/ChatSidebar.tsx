@@ -1,26 +1,16 @@
 "use client";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { MessageSquareIcon, RefreshCwIcon } from "lucide-react";
+import { RefreshCwIcon } from "lucide-react";
 import { useEffect, useState, useCallback, memo, startTransition } from "react";
 import type { Channel, Event } from "stream-chat";
 import { useChatContext } from "stream-chat-react";
 import { ChannelSearch } from "./ChannelSearch";
 import { CreateChannelDialog } from "./CreateChannelDialog";
-import { CreateDirectMessageDialog } from "./CreateDirectMessageDialog";
 import { InitializeUserChannelsButton } from "./InitializeUserChannelsButton";
 import { DebugDialog } from "./DebugDialog";
 import { Button } from "../ui/button";
 import { getChannelDisplayInfo } from "./utils/channelUtils";
-
-// Empty state component for when there are no channels
-const EmptyChannelState = () => (
-  <div className="flex flex-col items-center justify-center p-8 text-center text-blue-200">
-    <MessageSquareIcon className="w-16 h-16 mb-4 opacity-50" />
-    <p className="text-sm">You have no channels currently</p>
-    <p className="text-xs mt-2">Try creating a new channel or DM.</p>
-  </div>
-);
 
 // Custom channel item component for the sidebar - memoized for performance
 const ChannelItem = memo(
@@ -233,8 +223,6 @@ export const ChatSidebar = () => {
         const filter = { members: { $in: [client.userID] }, type };
         const sort: { last_message_at: -1 } = { last_message_at: -1 };
 
-        // Get the last channel's last_message_at for pagination
-        const lastChannel = currentChannels[currentChannels.length - 1];
         const offset = currentChannels.length;
 
         const options = {
@@ -584,10 +572,9 @@ export const ChatSidebar = () => {
           </div>
         )}
 
-        {/* Direct Messages Section */}
-        <div className="mt-4 px-4 py-2 flex justify-between items-center sticky top-0 bg-blue-600 z-10">
-          <h2 className="font-semibold">Direct Messages</h2>
-          <CreateDirectMessageDialog onChannelCreated={handleChannelCreated} />
+        {/* Conversations Section (Consultations, Subscriptions) */}
+        <div className="mt-4 px-4 py-2 sticky top-0 bg-blue-600 z-10">
+          <h2 className="font-semibold">Conversations</h2>
         </div>
         {isLoading ? (
           <div className="p-4">
@@ -628,7 +615,7 @@ export const ChatSidebar = () => {
           </div>
         ) : (
           <div className="p-4 text-center text-blue-200 text-sm">
-            No direct messages found.
+            No conversations yet. Book a consultation to start chatting.
           </div>
         )}
       </div>
