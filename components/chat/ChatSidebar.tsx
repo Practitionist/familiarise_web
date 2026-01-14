@@ -483,10 +483,12 @@ export const ChatSidebar = () => {
       // Set active channel immediately for instant feedback
       setActiveChannel(channel);
 
-      // Mark channel as read asynchronously
-      channel.markRead().catch((error) => {
-        console.warn("Failed to mark channel as read:", error);
-      });
+      // Mark channel as read asynchronously (only if channel is properly initialized)
+      if (channel.initialized && channel.cid) {
+        channel.markRead().catch(() => {
+          // Silently ignore markRead errors - they can occur during rapid channel switching
+        });
+      }
     },
     [setActiveChannel],
   );

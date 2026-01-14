@@ -20,6 +20,16 @@ import {
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 export const CustomMessage = () => {
   const { message } = useMessageContext();
@@ -30,6 +40,7 @@ export const CustomMessage = () => {
   const [showMoreOptions, setShowMoreOptions] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [editText, setEditText] = useState(message.text || "");
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
 
   // Map Stream reaction types to actual emoji characters
   const reactionTypeToEmoji: Record<string, string> = {
@@ -112,16 +123,19 @@ export const CustomMessage = () => {
     setEditText(message.text || "");
   };
 
-  const handleDeleteClick = async () => {
-    if (!client) return;
-    if (window.confirm("Are you sure you want to delete this message?")) {
-      try {
-        await client.deleteMessage(message.id);
-      } catch (error) {
-        console.error("Error deleting message:", error);
-      }
-    }
+  const handleDeleteClick = () => {
+    setShowDeleteDialog(true);
     setShowMoreOptions(false);
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!client) return;
+    try {
+      await client.deleteMessage(message.id);
+    } catch (error) {
+      console.error("Error deleting message:", error);
+    }
+    setShowDeleteDialog(false);
   };
 
   const handleReactionClick = async (reactionType: string) => {
@@ -135,6 +149,7 @@ export const CustomMessage = () => {
 
   // WhatsApp/Telegram style reply - sets the message as quoted for the input
   const handleReplyClick = () => {
+    // Use Stream Chat v13's MessageComposer API to set quoted message
     messageComposer.setQuotedMessage(message);
   };
 
@@ -353,6 +368,27 @@ export const CustomMessage = () => {
           </div>
         </div>
       </div>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Message</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete this message? This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteConfirm}
+              className="bg-red-600 hover:bg-red-700 text-white"
+            >
+              Yes, Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };
