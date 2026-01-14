@@ -28,6 +28,7 @@ import { useState } from "react";
 import { Channel } from "stream-chat";
 import { useChatContext } from "stream-chat-react";
 import { getChannelDisplayInfo } from "./utils/channelUtils";
+import { AddMembersDialog } from "./AddMembersDialog";
 
 interface ChannelInfoAndManageDialogProps {
   channel: Channel;
@@ -40,6 +41,7 @@ export const ChannelInfoAndManageDialog = ({
   const [isLoading, setIsLoading] = useState(false);
   const [isLeavingChannel, setIsLeavingChannel] = useState(false);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [showAddMembers, setShowAddMembers] = useState(false);
   const { client, setActiveChannel } = useChatContext();
   const { toast } = useToast();
   const [members, setMembers] = useState<any[]>([]);
@@ -107,12 +109,26 @@ export const ChannelInfoAndManageDialog = ({
     }
   };
 
-  const handleAddMember = async () => {
-    // This would typically open another dialog to search and select users
-    toast({
-      title: "Info",
-      description: "Add member functionality would be implemented here",
-    });
+  const handleAddMember = () => {
+    setShowAddMembers(true);
+  };
+
+  const handleMembersAdded = async (userIds: string[]) => {
+    if (!channel.id) return;
+
+    try {
+      // Add members to channel
+      await channel.addMembers(userIds);
+      toast({
+        title: "Success",
+        description: `${userIds.length} member${userIds.length !== 1 ? "s" : ""} added successfully`,
+      });
+      // Refresh the member list
+      loadMembers();
+    } catch (error) {
+      console.error("Error adding members:", error);
+      throw error; // Re-throw so the dialog can show error state
+    }
   };
 
   const handleRemoveMember = async (memberId: string) => {
@@ -317,13 +333,7 @@ export const ChannelInfoAndManageDialog = ({
                           variant="outline"
                           size="sm"
                           className="w-full flex items-center justify-center gap-2"
-                          onClick={() =>
-                            toast({
-                              title: "Info",
-                              description:
-                                "Add members functionality would be implemented here",
-                            })
-                          }
+                          onClick={handleAddMember}
                           disabled={isLoading}
                         >
                           <UserPlusIcon className="h-4 w-4" />
@@ -334,13 +344,7 @@ export const ChannelInfoAndManageDialog = ({
                           variant="outline"
                           size="sm"
                           className="w-full flex items-center justify-center gap-2"
-                          onClick={() =>
-                            toast({
-                              title: "Info",
-                              description:
-                                "Clear chat functionality would be implemented here",
-                            })
-                          }
+                          onClick={() => setShowClearConfirm(true)}
                           disabled={isLoading}
                         >
                           <Trash2Icon className="h-4 w-4" />
@@ -541,6 +545,14 @@ export const ChannelInfoAndManageDialog = ({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Add Members Dialog */}
+      <AddMembersDialog
+        open={showAddMembers}
+        onOpenChange={setShowAddMembers}
+        existingMemberIds={Object.keys(channel.state.members || {})}
+        onMembersAdded={handleMembersAdded}
+      />
     </>
   );
 };
