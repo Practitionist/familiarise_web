@@ -51,9 +51,17 @@ export const ChannelSearch = () => {
         channel,
       }));
 
-      // Filter out current user client-side (replacing removed $ne operator)
+      // Filter out current user and system users client-side (replacing removed $ne operator)
+      // System users like 'recording-egress-*' and 'system-*' should not appear in search
       const users = userResponse.users
-        .filter((user) => user.id !== client.userID)
+        .filter((user) => {
+          // Exclude current user
+          if (user.id === client.userID) return false;
+          // Exclude system users
+          if (user.id.startsWith("recording-egress-")) return false;
+          if (user.id.startsWith("system-")) return false;
+          return true;
+        })
         .map((user) => ({
           id: user.id,
           type: "user" as const,
