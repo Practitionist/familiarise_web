@@ -448,7 +448,7 @@ export const ClassContentSchema = z.object({
 
 export const ClassPlanSchema = BaseEventPlanSchema.extend({
   planType: z.literal("class"),
-  durationInMonths: z.number().min(0.25, "Duration must be at least 1 week"),
+  durationInMonths: z.number().min(1, "Duration must be at least 1 month"),
   certificateProvided: z.boolean().default(false),
   meetingsPerWeek: z.number().min(0, "Meetings per week must be non-negative"),
   emailSupport: z.enum(["GENERAL", "PRIORITY", "DEDICATED"]).default("GENERAL"),
