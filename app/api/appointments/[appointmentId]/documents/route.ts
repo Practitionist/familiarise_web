@@ -168,6 +168,22 @@ export async function GET(
         where: {
           appointmentId,
         },
+        include: {
+          // Include response documents (consultant responses to this document)
+          responseDocuments: {
+            orderBy: {
+              uploadedAt: "desc",
+            },
+          },
+          // Include the document this is a response to (if any)
+          responseToDocument: {
+            select: {
+              id: true,
+              originalName: true,
+              uploadedByRole: true,
+            },
+          },
+        },
         orderBy: {
           uploadedAt: "desc",
         },

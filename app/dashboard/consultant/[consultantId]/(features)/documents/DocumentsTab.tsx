@@ -28,7 +28,8 @@ import {
 } from "@/components/ui/dialog";
 import { DocumentsTabProps, IDocument } from "../../types";
 import { useToast } from "@/hooks/use-toast";
-import { Eye, Download, FileText, MessageSquare } from "lucide-react";
+import { Eye, Download, FileText, MessageSquare, Reply, Upload } from "lucide-react";
+import { ConsultantResponseUpload } from "./ConsultantResponseUpload";
 import {
   formatFileSize,
   getStatusColor,
@@ -46,10 +47,17 @@ export function DocumentsTab({
     null,
   );
   const [reviewDialogOpen, setReviewDialogOpen] = useState(false);
+  const [responseDialogOpen, setResponseDialogOpen] = useState(false);
+  const [documentForResponse, setDocumentForResponse] = useState<IDocument | null>(null);
   const [reviewStatus, setReviewStatus] = useState<string>("");
   const [reviewNotes, setReviewNotes] = useState<string>("");
   const [isUpdating, setIsUpdating] = useState(false);
   const { toast } = useToast();
+
+  const handleUploadResponse = (document: IDocument) => {
+    setDocumentForResponse(document);
+    setResponseDialogOpen(true);
+  };
 
 
   const handleReviewClick = (document: IDocument) => {
@@ -225,6 +233,7 @@ export function DocumentsTab({
                       size="sm"
                       className="bg-blue-50 hover:bg-blue-100 text-blue-700 border-blue-200"
                       onClick={() => handleView(document)}
+                      title="View"
                     >
                       <Eye className="h-4 w-4" />
                     </Button>
@@ -233,8 +242,18 @@ export function DocumentsTab({
                       size="sm"
                       className="bg-gray-50 hover:bg-gray-100"
                       onClick={() => handleDownload(document)}
+                      title="Download"
                     >
                       <Download className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="bg-purple-50 hover:bg-purple-100 text-purple-700 border-purple-200"
+                      onClick={() => handleUploadResponse(document)}
+                      title="Upload Response"
+                    >
+                      <Reply className="h-4 w-4" />
                     </Button>
                     <Button
                       variant="default"
@@ -339,6 +358,20 @@ export function DocumentsTab({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Response Upload Dialog */}
+      {documentForResponse && (
+        <ConsultantResponseUpload
+          appointmentId={documentForResponse.appointmentId}
+          responseToDocument={documentForResponse}
+          isOpen={responseDialogOpen}
+          onClose={() => {
+            setResponseDialogOpen(false);
+            setDocumentForResponse(null);
+          }}
+          onSuccess={onRefresh}
+        />
+      )}
     </div>
   );
 }

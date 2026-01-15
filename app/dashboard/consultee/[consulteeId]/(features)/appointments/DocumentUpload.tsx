@@ -34,6 +34,8 @@ import {
   Database,
   HelpCircle,
   AlertCircle,
+  Reply,
+  UserCircle,
 } from "lucide-react";
 import {
   formatFileSize,
@@ -46,6 +48,8 @@ interface DocumentUploadProps {
   appointmentTitle: string;
   appointmentType: string;
 }
+
+type DocumentUploadRole = "CONSULTEE" | "CONSULTANT";
 
 interface UploadedDocument {
   id: string;
@@ -64,6 +68,15 @@ interface UploadedDocument {
   reviewNotes: string | null;
   reviewedAt: Date | null;
   uploadedAt: Date;
+  // New fields for consultant responses
+  uploadedByRole?: DocumentUploadRole;
+  responseToDocumentId?: string | null;
+  responseToDocument?: {
+    id: string;
+    originalName: string;
+    uploadedByRole: DocumentUploadRole;
+  } | null;
+  responseDocuments?: UploadedDocument[];
 }
 
 interface ApiError {
@@ -578,106 +591,200 @@ export function DocumentUpload({
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {documents.map((doc) => (
-                    <div
-                      key={doc.id}
-                      className="border rounded-lg p-3 sm:p-4 hover:bg-gray-50 transition-colors"
-                    >
-                      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between space-y-3 sm:space-y-0">
-                        <div className="flex items-start space-x-3 flex-1 min-w-0">
-                          <FileText className="h-6 w-6 sm:h-8 sm:w-8 text-gray-400 flex-shrink-0 mt-1" />
-                          <div className="flex-1 min-w-0">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <p className="text-xs sm:text-sm font-medium text-gray-900 truncate max-w-[180px] sm:max-w-[250px]">
-                                {doc.originalName.length > 25
-                                  ? `${doc.originalName.substring(0, 25)}...`
-                                  : doc.originalName}
-                              </p>
-                              <div className="flex items-center gap-1">
-                                {getStatusIcon(doc.reviewStatus)}
-                                <Badge
-                                  variant="secondary"
-                                  className={`${getStatusColor(doc.reviewStatus)} text-xs`}
-                                >
-                                  {doc.reviewStatus.replace("_", " ")}
-                                </Badge>
+                  {/* Filter to only show consultee documents (responses are shown nested) */}
+                  {documents
+                    .filter(
+                      (doc) =>
+                        !doc.uploadedByRole || doc.uploadedByRole === "CONSULTEE"
+                    )
+                    .map((doc) => (
+                      <div
+                        key={doc.id}
+                        className="border rounded-lg p-3 sm:p-4 hover:bg-gray-50 transition-colors"
+                      >
+                        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between space-y-3 sm:space-y-0">
+                          <div className="flex items-start space-x-3 flex-1 min-w-0">
+                            <FileText className="h-6 w-6 sm:h-8 sm:w-8 text-gray-400 flex-shrink-0 mt-1" />
+                            <div className="flex-1 min-w-0">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <p className="text-xs sm:text-sm font-medium text-gray-900 truncate max-w-[180px] sm:max-w-[250px]">
+                                  {doc.originalName.length > 25
+                                    ? `${doc.originalName.substring(0, 25)}...`
+                                    : doc.originalName}
+                                </p>
+                                <div className="flex items-center gap-1">
+                                  {getStatusIcon(doc.reviewStatus)}
+                                  <Badge
+                                    variant="secondary"
+                                    className={`${getStatusColor(doc.reviewStatus)} text-xs`}
+                                  >
+                                    {doc.reviewStatus.replace("_", " ")}
+                                  </Badge>
+                                </div>
                               </div>
-                            </div>
-                            {doc.description && (
-                              <p className="text-sm text-gray-500 mt-1">
-                                {doc.description}
-                              </p>
-                            )}
-                            <div className="flex items-center space-x-4 mt-2 text-xs text-gray-400">
-                              <span>{formatFileSize(doc.fileSize)}</span>
-                              <span>
-                                Uploaded{" "}
-                                {new Date(doc.uploadedAt).toLocaleDateString()}
-                              </span>
-                              {doc.reviewedAt && (
+                              {doc.description && (
+                                <p className="text-sm text-gray-500 mt-1">
+                                  {doc.description}
+                                </p>
+                              )}
+                              <div className="flex items-center space-x-4 mt-2 text-xs text-gray-400">
+                                <span>{formatFileSize(doc.fileSize)}</span>
                                 <span>
-                                  Reviewed{" "}
-                                  {new Date(
-                                    doc.reviewedAt,
-                                  ).toLocaleDateString()}
+                                  Uploaded{" "}
+                                  {new Date(doc.uploadedAt).toLocaleDateString()}
                                 </span>
+                                {doc.reviewedAt && (
+                                  <span>
+                                    Reviewed{" "}
+                                    {new Date(
+                                      doc.reviewedAt
+                                    ).toLocaleDateString()}
+                                  </span>
+                                )}
+                              </div>
+                              {doc.reviewNotes && (
+                                <div className="mt-2 p-2 bg-blue-50 rounded text-sm border border-blue-200">
+                                  <p className="font-medium text-blue-800">
+                                    Review Notes:
+                                  </p>
+                                  <p className="text-blue-700">
+                                    {doc.reviewNotes}
+                                  </p>
+                                </div>
                               )}
                             </div>
-                            {doc.reviewNotes && (
-                              <div className="mt-2 p-2 bg-blue-50 rounded text-sm border border-blue-200">
-                                <p className="font-medium text-blue-800">
-                                  Review Notes:
-                                </p>
-                                <p className="text-blue-700">
-                                  {doc.reviewNotes}
-                                </p>
-                              </div>
-                            )}
                           </div>
-                        </div>
-                        <div className="flex space-x-1 ml-0 sm:ml-4 justify-end sm:justify-start">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => window.open(doc.fileUrl, "_blank")}
-                            title="View document"
-                            className="h-7 w-7 sm:h-9 sm:w-9 p-0"
-                          >
-                            <Eye className="h-3 w-3 sm:h-4 sm:w-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => {
-                              // Use our download API endpoint instead of direct Supabase URL
-                              const downloadUrl = `/api/appointments/${appointmentId}/documents/${doc.id}/download`;
-                              const link = window.document.createElement("a");
-                              link.href = downloadUrl;
-                              link.download = doc.originalName;
-                              window.document.body.appendChild(link);
-                              link.click();
-                              window.document.body.removeChild(link);
-                            }}
-                            title="Download document"
-                            className="h-7 w-7 sm:h-9 sm:w-9 p-0"
-                          >
-                            <Download className="h-3 w-3 sm:h-4 sm:w-4" />
-                          </Button>
-                          {doc.reviewStatus === "PENDING" && (
+                          <div className="flex space-x-1 ml-0 sm:ml-4 justify-end sm:justify-start">
                             <Button
                               variant="ghost"
                               size="sm"
-                              onClick={() => handleDeleteDocument(doc.id)}
-                              className="text-red-600 hover:text-red-800 h-7 w-7 sm:h-9 sm:w-9 p-0"
-                              title="Delete document (only available for pending documents)"
+                              onClick={() => window.open(doc.fileUrl, "_blank")}
+                              title="View document"
+                              className="h-7 w-7 sm:h-9 sm:w-9 p-0"
                             >
-                              <X className="h-3 w-3 sm:h-4 sm:w-4" />
+                              <Eye className="h-3 w-3 sm:h-4 sm:w-4" />
                             </Button>
-                          )}
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                // Use our download API endpoint instead of direct Supabase URL
+                                const downloadUrl = `/api/appointments/${appointmentId}/documents/${doc.id}/download`;
+                                const link = window.document.createElement("a");
+                                link.href = downloadUrl;
+                                link.download = doc.originalName;
+                                window.document.body.appendChild(link);
+                                link.click();
+                                window.document.body.removeChild(link);
+                              }}
+                              title="Download document"
+                              className="h-7 w-7 sm:h-9 sm:w-9 p-0"
+                            >
+                              <Download className="h-3 w-3 sm:h-4 sm:w-4" />
+                            </Button>
+                            {doc.reviewStatus === "PENDING" && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleDeleteDocument(doc.id)}
+                                className="text-red-600 hover:text-red-800 h-7 w-7 sm:h-9 sm:w-9 p-0"
+                                title="Delete document (only available for pending documents)"
+                              >
+                                <X className="h-3 w-3 sm:h-4 sm:w-4" />
+                              </Button>
+                            )}
+                          </div>
                         </div>
+
+                        {/* Consultant Response Documents */}
+                        {doc.responseDocuments &&
+                          doc.responseDocuments.length > 0 && (
+                            <div className="mt-3 pl-4 sm:pl-8 border-l-2 border-purple-200">
+                              <div className="flex items-center gap-2 mb-2 text-xs text-purple-600">
+                                <Reply className="h-3 w-3" />
+                                <span className="font-medium">
+                                  Consultant Response
+                                  {doc.responseDocuments.length > 1 ? "s" : ""}
+                                </span>
+                              </div>
+                              <div className="space-y-2">
+                                {doc.responseDocuments.map((response) => (
+                                  <div
+                                    key={response.id}
+                                    className="bg-purple-50 rounded-lg p-2 sm:p-3"
+                                  >
+                                    <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
+                                      <div className="flex items-start space-x-2 flex-1 min-w-0">
+                                        <UserCircle className="h-5 w-5 text-purple-500 flex-shrink-0 mt-0.5" />
+                                        <div className="flex-1 min-w-0">
+                                          <p className="text-xs sm:text-sm font-medium text-purple-900 truncate">
+                                            {response.originalName.length > 30
+                                              ? `${response.originalName.substring(0, 30)}...`
+                                              : response.originalName}
+                                          </p>
+                                          {response.description && (
+                                            <p className="text-xs text-purple-700 mt-0.5">
+                                              {response.description}
+                                            </p>
+                                          )}
+                                          <div className="flex items-center space-x-3 mt-1 text-xs text-purple-500">
+                                            <span>
+                                              {formatFileSize(response.fileSize)}
+                                            </span>
+                                            <span>
+                                              {new Date(
+                                                response.uploadedAt
+                                              ).toLocaleDateString()}
+                                            </span>
+                                          </div>
+                                        </div>
+                                      </div>
+                                      <div className="flex space-x-1 justify-end">
+                                        <Button
+                                          variant="ghost"
+                                          size="sm"
+                                          onClick={() =>
+                                            window.open(
+                                              response.fileUrl,
+                                              "_blank"
+                                            )
+                                          }
+                                          title="View response"
+                                          className="h-7 w-7 p-0 text-purple-600 hover:text-purple-800"
+                                        >
+                                          <Eye className="h-3 w-3" />
+                                        </Button>
+                                        <Button
+                                          variant="ghost"
+                                          size="sm"
+                                          onClick={() => {
+                                            const downloadUrl = `/api/appointments/${appointmentId}/documents/${response.id}/download`;
+                                            const link =
+                                              window.document.createElement("a");
+                                            link.href = downloadUrl;
+                                            link.download = response.originalName;
+                                            window.document.body.appendChild(
+                                              link
+                                            );
+                                            link.click();
+                                            window.document.body.removeChild(
+                                              link
+                                            );
+                                          }}
+                                          title="Download response"
+                                          className="h-7 w-7 p-0 text-purple-600 hover:text-purple-800"
+                                        >
+                                          <Download className="h-3 w-3" />
+                                        </Button>
+                                      </div>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
                       </div>
-                    </div>
-                  ))}
+                    ))}
                 </div>
               )}
             </CardContent>
