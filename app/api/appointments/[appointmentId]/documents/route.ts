@@ -38,8 +38,11 @@ export async function GET(
       );
     }
 
-    // In development mode, allow access to any appointment's documents for testing
-    const isDevelopment = process.env.NODE_ENV === "development";
+    // In development mode with explicit bypass flag, allow access to any appointment's documents for testing
+    // Requires both NODE_ENV=development AND DEV_BYPASS_AUTH=true for safety
+    const isDevelopment =
+      process.env.NODE_ENV === "development" &&
+      process.env.DEV_BYPASS_AUTH === "true";
 
     // Build access control conditions - bypass in development
     const whereClause: any = {
@@ -164,6 +167,22 @@ export async function GET(
       documents = await prisma.appointmentDocument.findMany({
         where: {
           appointmentId,
+        },
+        include: {
+          // Include response documents (consultant responses to this document)
+          responseDocuments: {
+            orderBy: {
+              uploadedAt: "desc",
+            },
+          },
+          // Include the document this is a response to (if any)
+          responseToDocument: {
+            select: {
+              id: true,
+              originalName: true,
+              uploadedByRole: true,
+            },
+          },
         },
         orderBy: {
           uploadedAt: "desc",
@@ -343,8 +362,11 @@ export async function POST(
       );
     }
 
-    // In development mode, allow uploads to any appointment for testing
-    const isDevelopment = process.env.NODE_ENV === "development";
+    // In development mode with explicit bypass flag, allow uploads to any appointment for testing
+    // Requires both NODE_ENV=development AND DEV_BYPASS_AUTH=true for safety
+    const isDevelopment =
+      process.env.NODE_ENV === "development" &&
+      process.env.DEV_BYPASS_AUTH === "true";
 
     // Build access control conditions - bypass in development
     const uploadWhereClause: any = {

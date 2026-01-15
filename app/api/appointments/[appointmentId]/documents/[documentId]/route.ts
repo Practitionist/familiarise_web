@@ -27,8 +27,11 @@ export async function GET(
 
     const { appointmentId, documentId } = await params;
 
-    // In development mode, allow access to any document for testing
-    const isDevelopment = process.env.NODE_ENV === "development";
+    // In development mode with explicit bypass flag, allow access to any document for testing
+    // Requires both NODE_ENV=development AND DEV_BYPASS_AUTH=true for safety
+    const isDevelopment =
+      process.env.NODE_ENV === "development" &&
+      process.env.DEV_BYPASS_AUTH === "true";
 
     // Build access control conditions - bypass in development
     const whereClause: Prisma.AppointmentDocumentWhereInput = {
@@ -146,8 +149,11 @@ export async function PATCH(
     const body = await request.json();
     const { reviewStatus, reviewNotes } = body;
 
-    // In development mode, allow any user to review documents for testing
-    const isDevelopment = process.env.NODE_ENV === "development";
+    // In development mode with explicit bypass flag, allow any user to review documents for testing
+    // Requires both NODE_ENV=development AND DEV_BYPASS_AUTH=true for safety
+    const isDevelopment =
+      process.env.NODE_ENV === "development" &&
+      process.env.DEV_BYPASS_AUTH === "true";
 
     // Build access control conditions - bypass in development
     const whereClause: Prisma.AppointmentDocumentWhereInput = {
@@ -271,8 +277,11 @@ export async function DELETE(
 
     const { appointmentId, documentId } = await params;
 
-    // In development mode, allow any user to delete documents for testing
-    const isDevelopment = process.env.NODE_ENV === "development";
+    // In development mode with explicit bypass flag, allow any user to delete documents for testing
+    // Requires both NODE_ENV=development AND DEV_BYPASS_AUTH=true for safety
+    const isDevelopment =
+      process.env.NODE_ENV === "development" &&
+      process.env.DEV_BYPASS_AUTH === "true";
 
     // Build access control conditions - bypass in development
     const whereClause: Prisma.AppointmentDocumentWhereInput = {

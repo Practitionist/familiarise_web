@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { FileText, DollarSign, Settings, GraduationCap } from "lucide-react";
+import { FileText, DollarSign, Settings, GraduationCap, Upload } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -42,6 +42,7 @@ import {
   ConsultationPlannerProps,
 } from "../types/event";
 import { PlannerService } from "../services/planner";
+import { PlanMaterialsUpload } from "./PlanMaterialsUpload";
 
 export function EventPlannerForConsultation({
   isOpen,
@@ -53,6 +54,7 @@ export function EventPlannerForConsultation({
 }: Readonly<ConsultationPlannerProps>) {
   const [internalIsSaving, setInternalIsSaving] = useState(false);
   const [showConfirmation, setShowConfirmation] = useState(false);
+  const [showMaterialsDialog, setShowMaterialsDialog] = useState(false);
   const [availableTopics, setAvailableTopics] = useState<
     { id: string; name: string; createdAt?: Date; updatedAt?: Date }[]
   >([]);
@@ -441,6 +443,25 @@ export function EventPlannerForConsultation({
                 />
               </FormSection>
 
+              {/* Materials Section - Only show when editing an existing plan */}
+              {initialData?.id && (
+                <FormSection
+                  title="Plan Materials"
+                  description="Upload materials for participants"
+                  icon={Upload}
+                >
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setShowMaterialsDialog(true)}
+                    className="w-full"
+                  >
+                    <Upload className="mr-2 h-4 w-4" />
+                    Manage Materials
+                  </Button>
+                </FormSection>
+              )}
+
               <DialogFooter className="pt-6 border-t">
                 <Button
                   type="button"
@@ -458,6 +479,17 @@ export function EventPlannerForConsultation({
           </Form>
         </DialogContent>
       </Dialog>
+
+      {/* Materials Upload Dialog */}
+      {initialData?.id && (
+        <PlanMaterialsUpload
+          planType="consultation"
+          planId={initialData.id}
+          planTitle={form.getValues("title") || initialData.consultationPlan?.title || "Consultation Plan"}
+          isOpen={showMaterialsDialog}
+          onClose={() => setShowMaterialsDialog(false)}
+        />
+      )}
 
       <FormConfirmationDialog
         isOpen={showConfirmation}

@@ -9,6 +9,7 @@ import {
   Settings,
   GraduationCap,
   Headphones,
+  Upload,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -55,6 +56,7 @@ import {
   SubscriptionPlannerProps,
 } from "../types/event";
 import { PlannerService } from "../services/planner";
+import { PlanMaterialsUpload } from "./PlanMaterialsUpload";
 
 export function EventPlannerForSubscription({
   isOpen,
@@ -66,6 +68,7 @@ export function EventPlannerForSubscription({
 }: Readonly<SubscriptionPlannerProps>) {
   const [internalIsSaving, setInternalIsSaving] = useState(false);
   const [showConfirmation, setShowConfirmation] = useState(false);
+  const [showMaterialsDialog, setShowMaterialsDialog] = useState(false);
   const [availableTopics, setAvailableTopics] = useState<
     { id: string; name: string; createdAt?: Date; updatedAt?: Date }[]
   >([]);
@@ -572,6 +575,25 @@ export function EventPlannerForSubscription({
                 />
               </FormSection>
 
+              {/* Materials Section - Only show when editing an existing plan */}
+              {initialData?.id && (
+                <FormSection
+                  title="Plan Materials"
+                  description="Upload materials for subscribers"
+                  icon={Upload}
+                >
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setShowMaterialsDialog(true)}
+                    className="w-full"
+                  >
+                    <Upload className="mr-2 h-4 w-4" />
+                    Manage Materials
+                  </Button>
+                </FormSection>
+              )}
+
               <DialogFooter className="pt-6 border-t">
                 <Button
                   type="button"
@@ -589,6 +611,17 @@ export function EventPlannerForSubscription({
           </Form>
         </DialogContent>
       </Dialog>
+
+      {/* Materials Upload Dialog */}
+      {initialData?.id && (
+        <PlanMaterialsUpload
+          planType="subscription"
+          planId={initialData.id}
+          planTitle={form.getValues("title") || initialData.subscriptionPlan?.title || "Subscription Plan"}
+          isOpen={showMaterialsDialog}
+          onClose={() => setShowMaterialsDialog(false)}
+        />
+      )}
 
       <FormConfirmationDialog
         isOpen={showConfirmation}
