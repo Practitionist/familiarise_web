@@ -4,7 +4,12 @@
 
 import { toast } from "@/hooks/use-toast";
 import { ClassEvent } from "../../types/event";
-import { CreateClassPayload, ClassContentInput } from "../types";
+import {
+  CreateClassPayload,
+  UpdateClassPayload,
+  ClassRequestBody,
+  ClassContentInput,
+} from "../types";
 
 export class ClassService {
   /**
@@ -176,67 +181,52 @@ export class ClassService {
     isUpdate: boolean,
     planId: string,
     classId: string,
-  ): CreateClassPayload & { id?: string; classId?: string; topics?: string[] } {
+  ): ClassRequestBody {
     const plan = classData.classPlan;
 
     if (!plan && isUpdate) {
       throw new Error("Internal error: Class plan data is missing during update.");
     }
 
-    if (isUpdate && plan) {
-      const body: Record<string, unknown> = {
-        id: planId,
-        classId: classId || undefined,
-        title: plan.title,
-        description: plan.description,
-        price: plan.price,
-        priceCurrency: plan.priceCurrency,
-        certificateProvided: plan.certificateProvided,
-        durationInMonths:
-          typeof plan.durationInMonths === "number"
-            ? plan.durationInMonths
-            : undefined,
-        maxParticipants: plan.maxParticipants,
-        language: plan.language,
-        level: plan.level,
-        prerequisites: plan.prerequisites,
-        materialProvided: plan.materialProvided,
-        learningOutcomes: plan.learningOutcomes,
-        emailSupport: plan.emailSupport,
-        meetingsPerWeek: plan.meetingsPerWeek,
-        classContents: plan.classContents,
-        consultantProfileId: consultantId,
-        // Send topic names - API handles finding/creating IDs
-        topics: topicNames,
-      };
-
-      Object.keys(body).forEach(
-        (key) => body[key] === undefined && delete body[key],
-      );
-      return body as unknown as CreateClassPayload & { id?: string; classId?: string; topics?: string[] };
-    }
-
-    // POST request - use destructuring to exclude unwanted fields
-    const {
-      topics: _topics,
-      consultantProfile: _consultantProfile,
-      id: _id,
-      createdAt: _createdAt,
-      updatedAt: _updatedAt,
-      ...postPlanData
-    } = plan || {};
-
-    const body: Record<string, unknown> = {
-      ...postPlanData,
-      consultantProfileId: consultantId,
-      // Send topic names - API handles finding/creating IDs
+    // Build base payload with required fields
+    const basePayload: CreateClassPayload = {
+      title: plan?.title ?? "",
+      description: plan?.description ?? "",
+      price: plan?.price ?? 0,
+      priceCurrency: plan?.priceCurrency,
+      durationInMonths: plan?.durationInMonths ?? 1,
+      meetingsPerWeek: plan?.meetingsPerWeek ?? 1,
+      maxParticipants: plan?.maxParticipants ?? 1,
+      certificateProvided: plan?.certificateProvided,
+      emailSupport: plan?.emailSupport,
+      language: plan?.language ?? undefined,
+      level: plan?.level ?? undefined,
+      prerequisites: plan?.prerequisites ?? undefined,
+      materialProvided: plan?.materialProvided ?? undefined,
+      learningOutcomes: plan?.learningOutcomes,
       topics: topicNames,
+      classContents: plan?.classContents?.map((content) => ({
+        id: content.id,
+        title: content.title,
+        description: content.description,
+        contentType: content.contentType,
+        contentUrl: content.contentUrl,
+        order: content.order,
+        hoursAllotted: content.hoursAllotted,
+      })),
+      consultantProfileId: consultantId,
     };
 
-    Object.keys(body).forEach(
-      (key) => body[key] === undefined && delete body[key],
-    );
-    return body as unknown as CreateClassPayload & { topics?: string[] };
+    if (isUpdate) {
+      const updatePayload: UpdateClassPayload = {
+        ...basePayload,
+        id: planId,
+        classId: classId || undefined,
+      };
+      return updatePayload;
+    }
+
+    return basePayload;
   }
 
   /**

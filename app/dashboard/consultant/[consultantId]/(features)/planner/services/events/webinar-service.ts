@@ -4,7 +4,11 @@
 
 import { toast } from "@/hooks/use-toast";
 import { WebinarEvent } from "../../types/event";
-import { CreateWebinarPayload } from "../types";
+import {
+  CreateWebinarPayload,
+  UpdateWebinarPayload,
+  WebinarRequestBody,
+} from "../types";
 
 export class WebinarService {
   /**
@@ -200,56 +204,38 @@ export class WebinarService {
     isUpdate: boolean,
     planId: string,
     webinarId: string,
-  ): CreateWebinarPayload & { id?: string; webinarId?: string; topics?: string[] } {
+  ): WebinarRequestBody {
     const plan = webinarData.webinarPlan;
 
-    if (isUpdate) {
-      const body: Record<string, unknown> = {
-        id: planId,
-        webinarId: webinarId || undefined,
-        title: plan?.title,
-        description: plan?.description,
-        price: plan?.price,
-        priceCurrency: plan?.priceCurrency,
-        certificateProvided: plan?.certificateProvided,
-        durationInHours:
-          typeof plan?.durationInHours === "number"
-            ? plan.durationInHours
-            : undefined,
-        maxParticipants: plan?.maxParticipants,
-        language: plan?.language,
-        level: plan?.level,
-        prerequisites: plan?.prerequisites,
-        materialProvided: plan?.materialProvided,
-        learningOutcomes: plan?.learningOutcomes,
-        consultantProfileId: consultantId,
-        scheduledAt: scheduledAtDate,
-        // Send topic names - API handles finding/creating IDs
-        topics: topicNames,
-      };
-
-      // Remove undefined fields
-      Object.keys(body).forEach(
-        (key) => body[key] === undefined && delete body[key],
-      );
-      return body as unknown as CreateWebinarPayload & { id?: string; webinarId?: string; topics?: string[] };
-    }
-
-    // POST request - use destructuring to exclude topics
-    const { topics: _topics, ...postPlanData } = plan || {};
-
-    const body: Record<string, unknown> = {
-      ...postPlanData,
+    // Build base payload with required fields
+    const basePayload: CreateWebinarPayload = {
+      title: plan?.title ?? "",
+      description: plan?.description ?? undefined,
+      price: plan?.price ?? 0,
+      priceCurrency: plan?.priceCurrency,
+      durationInHours: plan?.durationInHours ?? 1,
+      maxParticipants: plan?.maxParticipants ?? 1,
+      certificateProvided: plan?.certificateProvided,
+      language: plan?.language ?? undefined,
+      level: plan?.level ?? undefined,
+      prerequisites: plan?.prerequisites ?? undefined,
+      materialProvided: plan?.materialProvided ?? undefined,
+      learningOutcomes: plan?.learningOutcomes,
+      topics: topicNames,
       consultantProfileId: consultantId,
       scheduledAt: scheduledAtDate,
-      // Send topic names - API handles finding/creating IDs
-      topics: topicNames,
     };
 
-    Object.keys(body).forEach(
-      (key) => body[key] === undefined && delete body[key],
-    );
-    return body as unknown as CreateWebinarPayload & { topics?: string[] };
+    if (isUpdate) {
+      const updatePayload: UpdateWebinarPayload = {
+        ...basePayload,
+        id: planId,
+        webinarId: webinarId || undefined,
+      };
+      return updatePayload;
+    }
+
+    return basePayload;
   }
 
   /**

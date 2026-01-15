@@ -454,8 +454,8 @@ export function EventPlannerForClass({
                         <FormControl>
                           <Input
                             type="number"
-                            step="0.5"
-                            min="0.25"
+                            step="1"
+                            min="1"
                             placeholder="1"
                             {...field}
                             onChange={(e) => {

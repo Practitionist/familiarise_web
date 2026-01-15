@@ -167,3 +167,51 @@ export type ClassContentInput = {
   order: number;
   hoursAllotted: number;
 };
+
+// Form-to-Event input types - used when building event data from form submissions
+// These are partial/input versions that don't require all Prisma fields
+
+export type WebinarFormInput = {
+  id?: string;
+  webinarPlan: {
+    id?: string;
+    title: string;
+    description?: string | null;
+    price: number;
+    priceCurrency: string;
+    durationInHours: number;
+    maxParticipants: number;
+    certificateProvided: boolean;
+    language?: string | null;
+    level?: string | null;
+    prerequisites?: string | null;
+    materialProvided?: string | null;
+    learningOutcomes: string[];
+    topics: string[];
+    consultantProfileId: string;
+  };
+};
+
+export type ClassFormInput = {
+  id?: string;
+  classPlan: {
+    id?: string;
+    title: string;
+    description?: string | null;
+    price: number;
+    priceCurrency: string;
+    durationInMonths: number;
+    meetingsPerWeek: number;
+    maxParticipants: number;
+    certificateProvided: boolean;
+    emailSupport: string;
+    language?: string | null;
+    level?: string | null;
+    prerequisites?: string | null;
+    materialProvided?: string | null;
+    learningOutcomes: string[];
+    topics: string[];
+    classContents: ClassContentInput[];
+    consultantProfileId: string;
+  };
+};

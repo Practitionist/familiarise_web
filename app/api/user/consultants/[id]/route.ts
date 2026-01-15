@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import authOptions from "../../../auth/[...nextauth]/options";
 import { experienceValidation } from "@/schemas/shared";
+import { checkActiveAppointments } from "../utils/consultant-appointments";
 
 // Zod schema for UUID validation
 const uuidSchema = z.string().uuid();
@@ -202,74 +203,14 @@ export async function PUT(
       existingConsultant.scheduleType !== scheduleType
     ) {
       // Validate that there are no active appointments before allowing switch
-      const [
-        pendingConsultations,
-        activeSubscriptions,
-        upcomingWebinars,
-        upcomingClasses,
-      ] = await Promise.all([
-        prisma.consultation.count({
-          where: {
-            consultationPlan: { consultantProfileId: id },
-            requestStatus: {
-              in: [
-                "PENDING",
-                "APPROVED",
-                "APPROVED_PENDING_PAYMENT",
-                "SCHEDULED",
-              ],
-            },
-          },
-        }),
-        prisma.subscription.count({
-          where: {
-            subscriptionPlan: { consultantProfileId: id },
-            requestStatus: {
-              in: [
-                "PENDING",
-                "APPROVED",
-                "APPROVED_PENDING_PAYMENT",
-                "SCHEDULED",
-              ],
-            },
-          },
-        }),
-        prisma.webinar.count({
-          where: {
-            webinarPlan: { consultantProfileId: id },
-            status: { in: ["SCHEDULED", "IN_PROGRESS"] },
-            appointment: {
-              slotsOfAppointment: {
-                some: { startsAt: { gte: new Date() } },
-              },
-            },
-          },
-        }),
-        prisma.class.count({
-          where: {
-            classPlan: { consultantProfileId: id },
-            status: { in: ["SCHEDULED", "IN_PROGRESS"] },
-          },
-        }),
-      ]);
+      const activeAppointments = await checkActiveAppointments(id);
 
-      const totalPending =
-        pendingConsultations +
-        activeSubscriptions +
-        upcomingWebinars +
-        upcomingClasses;
-
-      if (totalPending > 0) {
+      if (activeAppointments.hasActive) {
         return NextResponse.json(
           {
-            error: `Cannot switch schedule type while you have ${totalPending} active appointment(s). Please complete or cancel them first.`,
+            error: `Cannot switch schedule type while you have ${activeAppointments.total} active appointment(s). Please complete or cancel them first.`,
             code: "SCHEDULE_SWITCH_BLOCKED",
-            breakdown: {
-              pendingConsultations,
-              activeSubscriptions,
-              upcomingWebinars,
-              upcomingClasses,
-            },
+            breakdown: activeAppointments.breakdown,
           },
           { status: 400 },
         );

@@ -90,3 +90,18 @@ export interface CreateSubscriptionPlanPayload {
   learningOutcomes?: string[];
   consultantProfileId: string;
 }
+
+// Update payload types extend create types with optional id fields
+export interface UpdateClassPayload extends CreateClassPayload {
+  id: string;
+  classId?: string;
+}
+
+export interface UpdateWebinarPayload extends CreateWebinarPayload {
+  id: string;
+  webinarId?: string;
+}
+
+// Union types for request bodies
+export type ClassRequestBody = CreateClassPayload | UpdateClassPayload;
+export type WebinarRequestBody = CreateWebinarPayload | UpdateWebinarPayload;

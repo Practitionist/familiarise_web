@@ -21,6 +21,8 @@ import {
   ConsultationPlanEvent,
   SubscriptionPlanEvent,
   ClassContentInput,
+  WebinarFormInput,
+  ClassFormInput,
 } from "../types/event";
 import { WebinarService } from "./events/webinar-service";
 import { ClassService } from "./events/class-service";
@@ -176,11 +178,13 @@ export class PlannerService {
     switch (eventType) {
       case "webinar": {
         const webinarData = this.buildWebinarDataFromForm(formData, existingData as WebinarEvent | undefined);
-        return this.saveWebinar(webinarData, formData.scheduledAt, consultantId);
+        // Form input is a valid subset of Partial<WebinarEvent> - saveWebinar only uses the fields we provide
+        return this.saveWebinar(webinarData as Partial<WebinarEvent>, formData.scheduledAt, consultantId);
       }
       case "class": {
         const classData = this.buildClassDataFromForm(formData, existingData as ClassEvent | undefined);
-        return this.saveClass(classData, consultantId);
+        // Form input is a valid subset of Partial<ClassEvent> - saveClass only uses the fields we provide
+        return this.saveClass(classData as Partial<ClassEvent>, consultantId);
       }
       case "consultation": {
         const consultationData = this.buildConsultationDataFromForm(formData, existingData as ConsultationPlanEvent | undefined);
@@ -285,13 +289,13 @@ export class PlannerService {
   private static buildWebinarDataFromForm(
     formData: FormData,
     existingData?: WebinarEvent,
-  ): Partial<WebinarEvent> {
+  ): WebinarFormInput {
     return {
       id: existingData?.id,
       webinarPlan: {
         id: existingData?.webinarPlan?.id,
         title: formData.title,
-        description: formData.description,
+        description: formData.description || null,
         price: formData.price,
         priceCurrency: formData.priceCurrency || "INR",
         durationInHours: formData.durationInHours ?? 1,
@@ -305,19 +309,19 @@ export class PlannerService {
         topics: formData.topics || [],
         consultantProfileId: formData.consultantProfileId || existingData?.webinarPlan?.consultantProfileId || "",
       },
-    } as unknown as Partial<WebinarEvent>;
+    };
   }
 
   private static buildClassDataFromForm(
     formData: FormData,
     existingData?: ClassEvent,
-  ): Partial<ClassEvent> {
+  ): ClassFormInput {
     return {
       id: existingData?.id,
       classPlan: {
         id: existingData?.classPlan?.id,
         title: formData.title,
-        description: formData.description,
+        description: formData.description || null,
         price: formData.price,
         priceCurrency: formData.priceCurrency || "INR",
         durationInMonths: formData.durationInMonths ?? 1,
@@ -334,7 +338,7 @@ export class PlannerService {
         classContents: formData.classContents || [],
         consultantProfileId: formData.consultantProfileId || existingData?.classPlan?.consultantProfileId || "",
       },
-    } as unknown as Partial<ClassEvent>;
+    };
   }
 
   private static buildConsultationDataFromForm(
