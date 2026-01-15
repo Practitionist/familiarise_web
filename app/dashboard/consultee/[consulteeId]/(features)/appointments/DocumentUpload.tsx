@@ -27,16 +27,19 @@ import {
   Upload,
   FileText,
   X,
-  AlertCircle,
-  CheckCircle,
-  Clock,
   Eye,
   Download,
   RefreshCw,
   WifiOff,
   Database,
   HelpCircle,
+  AlertCircle,
 } from "lucide-react";
+import {
+  formatFileSize,
+  getStatusColor,
+  getStatusIcon,
+} from "@/app/dashboard/shared/utils/document-utils";
 
 interface DocumentUploadProps {
   appointmentId: string;
@@ -360,47 +363,6 @@ export function DocumentUpload({
     }
   };
 
-  const formatFileSize = (bytes: number) => {
-    if (bytes === 0) return "0 Bytes";
-    const k = 1024;
-    const sizes = ["Bytes", "KB", "MB", "GB"];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
-  };
-
-  const getStatusIcon = (status: string) => {
-    switch (status) {
-      case "PENDING":
-        return <Clock className="h-4 w-4 text-yellow-500" />;
-      case "IN_REVIEW":
-        return <AlertCircle className="h-4 w-4 text-blue-500" />;
-      case "APPROVED":
-        return <CheckCircle className="h-4 w-4 text-green-500" />;
-      case "REJECTED":
-        return <X className="h-4 w-4 text-red-500" />;
-      case "NEEDS_REVISION":
-        return <AlertCircle className="h-4 w-4 text-orange-500" />;
-      default:
-        return <Clock className="h-4 w-4 text-gray-500" />;
-    }
-  };
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case "PENDING":
-        return "bg-yellow-100 text-yellow-800";
-      case "IN_REVIEW":
-        return "bg-blue-100 text-blue-800";
-      case "APPROVED":
-        return "bg-green-100 text-green-800";
-      case "REJECTED":
-        return "bg-red-100 text-red-800";
-      case "NEEDS_REVISION":
-        return "bg-orange-100 text-orange-800";
-      default:
-        return "bg-gray-100 text-gray-800";
-    }
-  };
 
   const getErrorIcon = (errorCode?: string) => {
     switch (errorCode) {

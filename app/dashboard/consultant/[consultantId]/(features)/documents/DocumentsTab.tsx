@@ -26,44 +26,33 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { DocumentsTabProps } from "../../types";
+import { DocumentsTabProps, IDocument } from "../../types";
 import { useToast } from "@/hooks/use-toast";
 import { Eye, Download, FileText, MessageSquare } from "lucide-react";
+import {
+  formatFileSize,
+  getStatusColor,
+} from "@/app/dashboard/shared/utils/document-utils";
 
-export function DocumentsTab({ documents }: Readonly<DocumentsTabProps>) {
-  const [selectedDocument, setSelectedDocument] = useState<any>(null);
+interface ExtendedDocumentsTabProps extends DocumentsTabProps {
+  onRefresh?: () => void;
+}
+
+export function DocumentsTab({
+  documents,
+  onRefresh,
+}: Readonly<ExtendedDocumentsTabProps>) {
+  const [selectedDocument, setSelectedDocument] = useState<IDocument | null>(
+    null,
+  );
   const [reviewDialogOpen, setReviewDialogOpen] = useState(false);
   const [reviewStatus, setReviewStatus] = useState<string>("");
   const [reviewNotes, setReviewNotes] = useState<string>("");
   const [isUpdating, setIsUpdating] = useState(false);
   const { toast } = useToast();
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case "PENDING":
-        return "bg-yellow-100 text-yellow-800";
-      case "IN_REVIEW":
-        return "bg-blue-100 text-blue-800";
-      case "APPROVED":
-        return "bg-green-100 text-green-800";
-      case "REJECTED":
-        return "bg-red-100 text-red-800";
-      case "NEEDS_REVISION":
-        return "bg-orange-100 text-orange-800";
-      default:
-        return "bg-gray-100 text-gray-800";
-    }
-  };
 
-  const formatFileSize = (bytes: number) => {
-    if (bytes === 0) return "0 Bytes";
-    const k = 1024;
-    const sizes = ["Bytes", "KB", "MB", "GB"];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
-  };
-
-  const handleReviewClick = (document: any) => {
+  const handleReviewClick = (document: IDocument) => {
     setSelectedDocument(document);
     setReviewStatus(document.reviewStatus);
     setReviewNotes(document.reviewNotes || "");
@@ -100,8 +89,8 @@ export function DocumentsTab({ documents }: Readonly<DocumentsTabProps>) {
       });
 
       setReviewDialogOpen(false);
-      // Refresh the page to show updated data
-      window.location.reload();
+      // Refresh the data using React Query instead of full page reload
+      onRefresh?.();
     } catch (error) {
       console.error("Error updating review:", error);
       toast({
@@ -115,7 +104,7 @@ export function DocumentsTab({ documents }: Readonly<DocumentsTabProps>) {
     }
   };
 
-  const handleDownload = async (document: any) => {
+  const handleDownload = async (document: IDocument) => {
     try {
       // Use our download API endpoint instead of direct Supabase URL
       const downloadUrl = `/api/appointments/${document.appointmentId}/documents/${document.id}/download`;
@@ -135,7 +124,7 @@ export function DocumentsTab({ documents }: Readonly<DocumentsTabProps>) {
     }
   };
 
-  const handleView = (document: any) => {
+  const handleView = (document: IDocument) => {
     // Open file in new tab for viewing
     window.open(document.fileUrl, "_blank");
   };
