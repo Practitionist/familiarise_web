@@ -13,6 +13,7 @@ import {
   Event,
 } from "../types/event";
 import { PlannerService } from "../services/planner";
+import type { ConsultationPlan, SubscriptionPlan } from "@/schemas/plans";
 import { useToast } from "@/hooks/use-toast";
 import {
   useWebinarMutations,
@@ -35,8 +36,8 @@ import {
 import { cn } from "@/utils/tailwind";
 
 interface PlannerData {
-  webinars: any[];
-  classes: any[];
+  webinars: WebinarEvent[];
+  classes: ClassEvent[];
   participantCounts: Record<string, number>;
 }
 import { addMonths, startOfMonth, endOfMonth } from "date-fns";
@@ -107,9 +108,9 @@ export function EventManagementDashboard({
         const startDate = startOfMonth(currentDate);
         const endDate = endOfMonth(currentDate);
 
-        // Use the service to fetch data
+        // Use the service to fetch data with consistent date filtering
         const [fetchedWebinars, fetchedClasses] = await Promise.all([
-          PlannerService.fetchWebinars(consultantId),
+          PlannerService.fetchWebinars(consultantId, startDate, endDate),
           PlannerService.fetchClasses(consultantId, startDate, endDate),
         ]);
 
@@ -440,7 +441,7 @@ export function EventManagementDashboard({
             ) : (
               <EventCarousel
                 events={
-                  consultationPlans?.map((plan: any) => ({
+                  consultationPlans?.map((plan: ConsultationPlan & { id: string }) => ({
                     type: "consultation" as const,
                     id: plan.id,
                     consultationPlan: plan,
@@ -483,7 +484,7 @@ export function EventManagementDashboard({
             ) : (
               <EventCarousel
                 events={
-                  subscriptionPlans?.map((plan: any) => ({
+                  subscriptionPlans?.map((plan: SubscriptionPlan & { id: string }) => ({
                     type: "subscription" as const,
                     id: plan.id,
                     subscriptionPlan: plan,

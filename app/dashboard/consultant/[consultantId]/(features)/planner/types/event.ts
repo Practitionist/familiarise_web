@@ -8,8 +8,22 @@ import { PlanEmailSupport } from "@prisma/client";
 import { ConsultationPlan, SubscriptionPlan } from "@/schemas/plans";
 
 // Define the final event types, intersecting with the literal type
-export type WebinarEvent = TWebinar & { type: "webinar" };
+// scheduledAt is a computed property derived from appointment.slotsOfAppointment[0].startsAt
+export type WebinarEvent = TWebinar & { type: "webinar"; scheduledAt?: Date };
 export type ClassEvent = TClass & { type: "class" };
+
+// Consultant profile summary type for plan events
+type ConsultantProfileSummary = {
+  id: string;
+  userId: string;
+  user: {
+    id: string;
+    firstName: string | null;
+    lastName: string | null;
+    email: string;
+    imageUrl: string | null;
+  };
+};
 
 // Plan-level event types for consultation and subscription
 export type ConsultationPlanEvent = {
@@ -18,7 +32,7 @@ export type ConsultationPlanEvent = {
   consultationPlan: ConsultationPlan & {
     id?: string;
     consultantProfileId: string;
-    consultantProfile?: any;
+    consultantProfile?: ConsultantProfileSummary | null;
     consultations?: TConsultation[];
     createdAt?: Date;
     updatedAt?: Date;
@@ -31,7 +45,7 @@ export type SubscriptionPlanEvent = {
   subscriptionPlan: SubscriptionPlan & {
     id?: string;
     consultantProfileId: string;
-    consultantProfile?: any;
+    consultantProfile?: ConsultantProfileSummary | null;
     subscriptions?: TSubscription[];
     sessionDurationInHours?: number;
     createdAt?: Date;
