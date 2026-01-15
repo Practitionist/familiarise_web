@@ -7,9 +7,36 @@ import {
 import { PlanEmailSupport } from "@prisma/client";
 import { ConsultationPlan, SubscriptionPlan } from "@/schemas/plans";
 
-// Define the final event types, intersecting with the literal type
-export type WebinarEvent = TWebinar & { type: "webinar" };
-export type ClassEvent = TClass & { type: "class" };
+// UI-focused event types with topics as string[] (transformed at service boundary)
+// Services convert Topic[] from Prisma to string[] before passing to components
+
+export type WebinarEvent = Omit<TWebinar, "webinarPlan"> & {
+  type: "webinar";
+  scheduledAt?: Date;
+  webinarPlan: Omit<TWebinar["webinarPlan"], "topics"> & {
+    topics: string[];
+  };
+};
+
+export type ClassEvent = Omit<TClass, "classPlan"> & {
+  type: "class";
+  classPlan: Omit<TClass["classPlan"], "topics"> & {
+    topics: string[];
+  };
+};
+
+// Consultant profile summary type for plan events
+type ConsultantProfileSummary = {
+  id: string;
+  userId: string;
+  user: {
+    id: string;
+    firstName: string | null;
+    lastName: string | null;
+    email: string;
+    imageUrl: string | null;
+  };
+};
 
 // Plan-level event types for consultation and subscription
 export type ConsultationPlanEvent = {
@@ -18,7 +45,7 @@ export type ConsultationPlanEvent = {
   consultationPlan: ConsultationPlan & {
     id?: string;
     consultantProfileId: string;
-    consultantProfile?: any;
+    consultantProfile?: ConsultantProfileSummary | null;
     consultations?: TConsultation[];
     createdAt?: Date;
     updatedAt?: Date;
@@ -31,7 +58,7 @@ export type SubscriptionPlanEvent = {
   subscriptionPlan: SubscriptionPlan & {
     id?: string;
     consultantProfileId: string;
-    consultantProfile?: any;
+    consultantProfile?: ConsultantProfileSummary | null;
     subscriptions?: TSubscription[];
     sessionDurationInHours?: number;
     createdAt?: Date;
@@ -139,4 +166,52 @@ export type ClassContentInput = {
   contentUrl?: string | null;
   order: number;
   hoursAllotted: number;
+};
+
+// Form-to-Event input types - used when building event data from form submissions
+// These are partial/input versions that don't require all Prisma fields
+
+export type WebinarFormInput = {
+  id?: string;
+  webinarPlan: {
+    id?: string;
+    title: string;
+    description?: string | null;
+    price: number;
+    priceCurrency: string;
+    durationInHours: number;
+    maxParticipants: number;
+    certificateProvided: boolean;
+    language?: string | null;
+    level?: string | null;
+    prerequisites?: string | null;
+    materialProvided?: string | null;
+    learningOutcomes: string[];
+    topics: string[];
+    consultantProfileId: string;
+  };
+};
+
+export type ClassFormInput = {
+  id?: string;
+  classPlan: {
+    id?: string;
+    title: string;
+    description?: string | null;
+    price: number;
+    priceCurrency: string;
+    durationInMonths: number;
+    meetingsPerWeek: number;
+    maxParticipants: number;
+    certificateProvided: boolean;
+    emailSupport: string;
+    language?: string | null;
+    level?: string | null;
+    prerequisites?: string | null;
+    materialProvided?: string | null;
+    learningOutcomes: string[];
+    topics: string[];
+    classContents: ClassContentInput[];
+    consultantProfileId: string;
+  };
 };

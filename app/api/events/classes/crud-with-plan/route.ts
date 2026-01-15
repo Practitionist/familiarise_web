@@ -1,27 +1,38 @@
 import prisma from "@/lib/prisma";
-import { ClassPlanSchema } from "@/schemas/plans";
+import { ClassPlanSchema, ClassContentSchema } from "@/schemas/plans";
 import { ClassStatus } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { addMonthsSafely } from "@/utils/dateUtils";
 import { getServerSession } from "next-auth";
 import authOptions from "@/app/api/auth/[...nextauth]/options";
+import {
+  findOrCreateTopics,
+  transformNestedPlanTopics,
+} from "@/lib/topics";
+
+// Schema for class content input (without Prisma-managed fields like createdAt, updatedAt, classPlanId)
+const ClassContentInputSchema = ClassContentSchema.omit({
+  createdAt: true,
+  updatedAt: true,
+  classPlanId: true,
+});
 
 // Schema for POST request body based on ClassPlanSchema
-// Topics field name matches PlanSchema ('topics' instead of 'topicIds')
+// Topics are now accepted as names (strings) - API handles finding/creating
 const PostClassWithPlanBodySchema = ClassPlanSchema.omit({
   planType: true,
   consultantProfile: true,
   startDate: true,
   endDate: true,
-  topics: true, // Omit the inherited topics definition
+  topics: true,
+  classContents: true, // Omit to override with input schema
 }).extend({
   consultantProfileId: z.string().min(1, "Consultant profile ID is required"),
-  // Redefine topics to expect an array of IDs without content validation
+  // Topics as names - API will find or create them
   topics: z
-    .array(z.string().min(1, "Topic ID cannot be empty"))
-    .min(1, "At least one topic ID is required"),
-  // Fields for the class instance
+    .array(z.string().min(1, "Topic name cannot be empty"))
+    .min(1, "At least one topic is required"),
   status: z.nativeEnum(ClassStatus).optional().default(ClassStatus.SCHEDULED),
   startDate: z
     .string()
@@ -29,7 +40,16 @@ const PostClassWithPlanBodySchema = ClassPlanSchema.omit({
     .nullable()
     .refine((val) => !val || !isNaN(Date.parse(val)), {
       message: "Invalid date format for startDate",
-    }), // Validate string can be parsed as Date
+    }),
+  // Override classContents with input schema (without Prisma-managed date fields)
+  classContents: z
+    .array(ClassContentInputSchema)
+    .min(1, "At least one class content item is required")
+    .default([])
+    .refine((contents) => {
+      const titles = contents.map((c) => c.title.trim().toLowerCase());
+      return new Set(titles).size === titles.length;
+    }, "Class contents must have unique titles"),
 });
 
 // Schema for PATCH request body
@@ -87,7 +107,7 @@ export async function POST(request: NextRequest) {
       materialProvided,
       learningOutcomes,
       consultantProfileId,
-      topics: topicIds, // Use validated 'topics' as 'topicIds' for connect logic
+      topics: topicNames,
       certificateProvided,
       meetingsPerWeek,
       emailSupport,
@@ -95,7 +115,6 @@ export async function POST(request: NextRequest) {
       status,
       startDate,
     } = validatedData;
-    // --- End Zod Validation ---
 
     // Verify ownership - user must own this consultant profile
     const consultantProfile = await prisma.consultantProfile.findFirst({
@@ -107,10 +126,16 @@ export async function POST(request: NextRequest) {
 
     if (!consultantProfile) {
       return NextResponse.json(
-        { error: "You do not have permission to create classes for this consultant profile" },
+        {
+          error:
+            "You do not have permission to create classes for this consultant profile",
+        },
         { status: 403 },
       );
     }
+
+    // Find or create topics by name
+    const topicIds = await findOrCreateTopics(topicNames);
 
     // Compute derived metrics
     const sessionDurationInHours = 1.0; // Default session duration for classes
@@ -242,7 +267,12 @@ export async function POST(request: NextRequest) {
       return { classPlan, classEvent };
     });
 
-    return NextResponse.json({ data: result.classEvent }, { status: 201 });
+    // Transform topics to strings in response
+    const transformedEvent = transformNestedPlanTopics(
+      result.classEvent,
+      "classPlan",
+    );
+    return NextResponse.json({ data: transformedEvent }, { status: 201 });
   } catch (error) {
     // --- Zod Error Handling ---
     if (error instanceof z.ZodError) {
@@ -306,9 +336,8 @@ export async function PATCH(request: NextRequest) {
 
     const validatedData = validationResult.data;
     const {
-      id, // Plan ID (required)
-      classId, // Instance ID (optional)
-      // Optional fields from validated data
+      id,
+      classId,
       title,
       description,
       durationInMonths,
@@ -324,22 +353,25 @@ export async function PATCH(request: NextRequest) {
       materialProvided,
       learningOutcomes,
       consultantProfileId,
-      topics: topicIds, // Use validated 'topics' as 'topicIds' for connect/set logic
+      topics: topicNames,
       classContents,
       status,
-      startDate: startDateString, // Rename to avoid conflict with Date object
-      endDate: endDateString, // Rename to avoid conflict with Date object
+      startDate: startDateString,
+      endDate: endDateString,
     } = validatedData;
-    // --- End Zod Validation ---
 
-    // Log validated fields (optional, adjust as needed)
+    // Find or create topics by name if provided
+    let topicIds: string[] | undefined;
+    if (topicNames !== undefined) {
+      topicIds = await findOrCreateTopics(topicNames);
+    }
+
     console.log("Validated fields for update:", {
       id,
       classId,
-      title, // May be undefined
-      // ... other fields if needed for logging
-      status, // May be undefined
-      topicIds, // May be undefined
+      title,
+      status,
+      topicIds,
     });
 
     // First, check if the class plan exists
@@ -482,36 +514,8 @@ export async function PATCH(request: NextRequest) {
           Object.assign(updateData, classContentsUpdateData);
         }
 
-        // Determine how to handle topics: Use validated 'topicIds' if provided in the request,
-        // otherwise, do *not* modify topics (leave existing relation untouched).
+        // Handle topics: topicIds are already validated/created by findOrCreateTopics
         if (topicIds !== undefined) {
-          // If topicIds are explicitly provided (even if empty array), use set to synchronize
-          if (!Array.isArray(topicIds)) {
-            // This case should be caught by Zod validation, but double-check defensively
-            console.error(
-              "topicIds was provided but is not an array:",
-              topicIds,
-            );
-            throw new Error("Invalid format for topicIds");
-          }
-          // Verify provided topicIds actually exist (optional but recommended for robustness)
-          const topics = await tx.topic.findMany({
-            where: { id: { in: topicIds } },
-            select: { id: true },
-          });
-          if (topics.length !== topicIds.length) {
-            const missingIds = topicIds.filter(
-              (reqId) => !topics.some((dbTopic) => dbTopic.id === reqId),
-            );
-            console.error(
-              "Attempted to set non-existent topic IDs:",
-              missingIds,
-            );
-            throw new Error(
-              `The following topic IDs do not exist: ${missingIds.join(", ")}`,
-            );
-          }
-
           updateData.topics = {
             set: topicIds.map((topicId: string) => ({ id: topicId })),
           };
@@ -519,12 +523,9 @@ export async function PATCH(request: NextRequest) {
             `Syncing class topics with provided IDs: [${topicIds.join(", ")}]`,
           );
         } else {
-          // If topicIds (validatedData.topics) is undefined, do *not* include the topics key in the updateData.
-          // This leaves the existing topic relations untouched.
           console.log(
             "Class topics is undefined in the request. Existing topics will not be modified.",
           );
-          // No `updateData.topics = ...` line here
         }
 
         // Execute the plan update only if there's data to update
@@ -675,10 +676,16 @@ export async function PATCH(request: NextRequest) {
     );
 
     // Return the appropriate response based on whether we had a class instance
-    // Ensure topics are included in the response if only the plan was updated
-    const responseData = result.class
-      ? result.class // Contains nested plan with topics
-      : { ...result.classPlan, topics: result.classPlan.topics }; // Add topics explicitly if only plan returned
+    // Transform topics to strings in response
+    let responseData;
+    if (result.class) {
+      responseData = transformNestedPlanTopics(result.class, "classPlan");
+    } else {
+      responseData = {
+        ...result.classPlan,
+        topics: result.classPlan.topics.map((t) => t.name),
+      };
+    }
 
     return NextResponse.json({ data: responseData }, { status: 200 });
   } catch (error) {

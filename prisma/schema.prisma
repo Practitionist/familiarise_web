@@ -628,6 +628,7 @@ model ConsultationPlan {
   prerequisites    String?  @default("None")
   materialProvided String?  @default("None")
   learningOutcomes String[] @default([])
+  topics           Topic[]  @relation("TopicToConsultationPlan")
 
   consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultantProfileId String
@@ -664,6 +665,13 @@ model Consultation {
 
   createdAt DateTime @default(now()) @db.Timestamptz()
   updatedAt DateTime @updatedAt @db.Timestamptz()
+
+  @@index([requestedById])
+  @@index([consultationPlanId])
+  @@index([requestStatus])
+  @@index([requestedById, requestStatus])
+  @@index([requestedAt])
+  @@index([cancelledAt])
 }
 
 model SubscriptionPlan {
@@ -683,6 +691,7 @@ model SubscriptionPlan {
   prerequisites          String?          @default("None")
   materialProvided       String?          @default("None")
   learningOutcomes       String[]         @default([])
+  topics                 Topic[]          @relation("TopicToSubscriptionPlan")
 
   consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultantProfileId String
@@ -723,6 +732,13 @@ model Subscription {
 
   createdAt DateTime @default(now()) @db.Timestamptz()
   updatedAt DateTime @updatedAt @db.Timestamptz()
+
+  @@index([requestedById])
+  @@index([subscriptionPlanId])
+  @@index([requestStatus])
+  @@index([requestedById, requestStatus])
+  @@index([requestedAt])
+  @@index([cancelledAt])
 }
 
 enum RequestStatus {
@@ -795,7 +811,7 @@ model ClassPlan {
   id                     String           @id @default(cuid())
   title                  String
   description            String           @db.Text
-  topics                 Topic[]          @relation("ClassPlanToTopic")
+  topics                 Topic[]          @relation("TopicToClassPlan")
   classContents          ClassContent[]
   price                  Int
   priceCurrency          String           @default("INR")
@@ -840,6 +856,7 @@ model Class {
   updatedAt DateTime @updatedAt @db.Timestamptz()
 
   @@index([classPlanId])
+  @@index([status])
 }
 
 model ClassContent {
@@ -856,6 +873,9 @@ model ClassContent {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([classPlanId])
+  @@index([classPlanId, order])
 }
 
 enum ClassStatus {
@@ -869,8 +889,10 @@ model Topic {
   id   String @id @default(cuid())
   name String @unique
 
-  webinarPlans WebinarPlan[] @relation("TopicToWebinarPlan")
-  classPlans   ClassPlan[]   @relation("ClassPlanToTopic")
+  webinarPlans      WebinarPlan[]      @relation("TopicToWebinarPlan")
+  classPlans        ClassPlan[]        @relation("TopicToClassPlan")
+  consultationPlans ConsultationPlan[] @relation("TopicToConsultationPlan")
+  subscriptionPlans SubscriptionPlan[] @relation("TopicToSubscriptionPlan")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -899,6 +921,9 @@ model Waitlist {
 
   @@unique([userId, webinarId])
   @@unique([userId, classId])
+  @@index([userId])
+  @@index([webinarId])
+  @@index([classId])
 }
 
 ////////////////////////////////////////////// APPOINTMENT ////////////////////////////////////////////////////
@@ -926,6 +951,9 @@ model Appointment {
 
   createdAt DateTime @default(now()) @db.Timestamptz()
   updatedAt DateTime @updatedAt @db.Timestamptz()
+
+  @@index([subscriptionId])
+  @@index([classId])
 }
 
 enum AppointmentsType {
@@ -994,6 +1022,7 @@ model SlotOfAppointment {
   // OPT-3: Additional indexes for time range queries in validateSlotAvailability
   @@index([startsAt, endsAt])
   @@index([isTentative, startsAt, endsAt])
+  @@index([createdAt])
 }
 
 ////////////////////////////////////////////// MEETINGS FOR STREAM ////////////////////////////////////////////////////
@@ -1074,6 +1103,8 @@ model Payment {
   @@unique([userId, appointmentId]) // Allow multiple users to pay for same appointment (webinars/classes)
   @@index([expiresAt, paymentStatus])
   @@index([isMockPayment])
+  @@index([paymentStatus])
+  @@index([createdAt])
 }
 
 enum PaymentGateway {
@@ -1109,6 +1140,7 @@ model Refund {
   @@index([paymentId])
   @@index([status])
   @@index([refundId])
+  @@index([paymentId, status])
 }
 
 enum RefundStatus {
@@ -1140,6 +1172,7 @@ model Dispute {
   @@index([status])
   @@index([disputeId])
   @@index([dueBy])
+  @@index([paymentId, status])
 }
 
 enum DisputeStatus {
@@ -1242,6 +1275,7 @@ model Payout {
   @@index([consultantProfileId, status])
   @@index([batchId])
   @@index([status])
+  @@index([createdAt])
 }
 
 model PayoutAccount {
@@ -1320,6 +1354,7 @@ model WebhookEvent {
   @@index([provider])
   @@index([processed])
   @@index([eventType])
+  @@index([receivedAt])
 }
 
 model DiscountCode {
@@ -1338,6 +1373,10 @@ model DiscountCode {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([isActive])
+  @@index([expiresAt])
+  @@index([isActive, expiresAt])
 }
 
 enum DiscountType {

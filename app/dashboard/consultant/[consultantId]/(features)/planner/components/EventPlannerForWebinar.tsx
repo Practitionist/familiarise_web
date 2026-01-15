@@ -165,8 +165,7 @@ export function EventPlannerForWebinar({
       learningOutcomes: initialData?.webinarPlan?.learningOutcomes ?? [],
       certificateProvided:
         initialData?.webinarPlan?.certificateProvided ?? false,
-      topics:
-        initialData?.webinarPlan?.topics?.map((topic) => topic.name) ?? [],
+      topics: initialData?.webinarPlan?.topics ?? [],
       scheduledAt: getInitialScheduledAt(),
       consultantProfileId: consultantId,
     },
@@ -189,8 +188,7 @@ export function EventPlannerForWebinar({
         learningOutcomes: initialData.webinarPlan.learningOutcomes ?? [],
         certificateProvided:
           initialData.webinarPlan.certificateProvided ?? false,
-        topics:
-          initialData.webinarPlan.topics?.map((topic) => topic.name) ?? [],
+        topics: initialData.webinarPlan.topics ?? [],
         scheduledAt: getInitialScheduledAt(),
         consultantProfileId: consultantId,
       });
@@ -285,7 +283,8 @@ export function EventPlannerForWebinar({
         },
       };
 
-      onSave(webinarData, formData.scheduledAt);
+      // Await onSave to ensure API call completes before showing success
+      await onSave(webinarData, formData.scheduledAt);
 
       toast({
         title: "Success",

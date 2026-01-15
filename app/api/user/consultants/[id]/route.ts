@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import authOptions from "../../../auth/[...nextauth]/options";
 import { experienceValidation } from "@/schemas/shared";
+import { checkActiveAppointments } from "../utils/consultant-appointments";
 
 // Zod schema for UUID validation
 const uuidSchema = z.string().uuid();
@@ -190,6 +191,31 @@ export async function PUT(
       mentoringStyle,
       sessionTypes,
     } = data;
+
+    // Check if schedule type is being changed
+    const existingConsultant = await prisma.consultantProfile.findUnique({
+      where: { id },
+      select: { scheduleType: true },
+    });
+
+    if (
+      existingConsultant &&
+      existingConsultant.scheduleType !== scheduleType
+    ) {
+      // Validate that there are no active appointments before allowing switch
+      const activeAppointments = await checkActiveAppointments(id);
+
+      if (activeAppointments.hasActive) {
+        return NextResponse.json(
+          {
+            error: `Cannot switch schedule type while you have ${activeAppointments.total} active appointment(s). Please complete or cancel them first.`,
+            code: "SCHEDULE_SWITCH_BLOCKED",
+            breakdown: activeAppointments.breakdown,
+          },
+          { status: 400 },
+        );
+      }
+    }
 
     // Update consultant profile
     await prisma.consultantProfile.update({

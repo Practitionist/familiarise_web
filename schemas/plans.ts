@@ -136,6 +136,18 @@ export const ConsultationPlanSchema = z.object({
       profanityFreeArrayRefinement,
       "Learning outcomes contain inappropriate language",
     ),
+  topics: z
+    .array(z.string().min(1, "Topic cannot be empty"))
+    .default([])
+    .refine(noDuplicatesRefinement, "Duplicate topics are not allowed")
+    .refine(
+      meaningfulArrayContentRefinement,
+      "Topics contain nonsensical text or gibberish",
+    )
+    .refine(
+      profanityFreeArrayRefinement,
+      "Topics contain inappropriate language",
+    ),
 });
 
 export const SubscriptionPlanSchema = z.object({
@@ -216,6 +228,18 @@ export const SubscriptionPlanSchema = z.object({
     .refine(
       profanityFreeArrayRefinement,
       "Learning outcomes contain inappropriate language",
+    ),
+  topics: z
+    .array(z.string().min(1, "Topic cannot be empty"))
+    .default([])
+    .refine(noDuplicatesRefinement, "Duplicate topics are not allowed")
+    .refine(
+      meaningfulArrayContentRefinement,
+      "Topics contain nonsensical text or gibberish",
+    )
+    .refine(
+      profanityFreeArrayRefinement,
+      "Topics contain inappropriate language",
     ),
 });
 
@@ -424,7 +448,7 @@ export const ClassContentSchema = z.object({
 
 export const ClassPlanSchema = BaseEventPlanSchema.extend({
   planType: z.literal("class"),
-  durationInMonths: z.number().min(0.25, "Duration must be at least 1 week"),
+  durationInMonths: z.number().min(1, "Duration must be at least 1 month"),
   certificateProvided: z.boolean().default(false),
   meetingsPerWeek: z.number().min(0, "Meetings per week must be non-negative"),
   emailSupport: z.enum(["GENERAL", "PRIORITY", "DEDICATED"]).default("GENERAL"),
