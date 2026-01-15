@@ -60,7 +60,10 @@ function generateRefundId(gateway: PaymentGateway): string {
   }
 }
 
-const NUM_REFUNDS = 30;
+import { config } from "./config";
+
+// Refund volume - configurable via SEED_MODE environment variable
+const NUM_REFUNDS = config.volumes.refunds;
 
 export async function createRefunds(): Promise<void> {
   console.log(`Creating ${NUM_REFUNDS} refunds...`);

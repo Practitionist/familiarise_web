@@ -132,7 +132,10 @@ function getWeightedStatus(): DocumentReviewStatus {
   return "PENDING";
 }
 
-const NUM_DOCUMENTS = 125;
+import { config } from "./config";
+
+// Document volume - configurable via SEED_MODE environment variable
+const NUM_DOCUMENTS = config.volumes.appointmentDocuments;
 
 export async function createAppointmentDocuments(): Promise<void> {
   console.log(`Creating ${NUM_DOCUMENTS} appointment documents...`);

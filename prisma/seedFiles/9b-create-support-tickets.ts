@@ -192,7 +192,10 @@ function getWeightedStatus(): SupportTicketStatus {
   return "OPEN";
 }
 
-const NUM_TICKETS = 40;
+import { config } from "./config";
+
+// Support ticket volume - configurable via SEED_MODE environment variable
+const NUM_TICKETS = config.volumes.supportTickets;
 
 export async function createSupportTickets(
   users: UserWithProfiles[],

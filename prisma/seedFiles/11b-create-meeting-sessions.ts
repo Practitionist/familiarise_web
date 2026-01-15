@@ -67,8 +67,13 @@ function generateHostKeys(): string[] {
   );
 }
 
-const NUM_MEETING_SESSIONS = 150;
-const NUM_RECORDINGS = 75;
+import { config } from "./config";
+
+// Meeting session volume - configurable via SEED_MODE environment variable
+const NUM_MEETING_SESSIONS = config.volumes.meetingSessions;
+const NUM_RECORDINGS = Math.floor(
+  config.volumes.meetingSessions * config.volumes.recordingsPerSession,
+);
 
 export async function createMeetingSessions(): Promise<void> {
   console.log(

@@ -179,7 +179,10 @@ function generateFeedbackData(category: string) {
   return { title, description, rating };
 }
 
-const NUM_FEEDBACKS = 75;
+import { config } from "./config";
+
+// Feedback volume - configurable via SEED_MODE environment variable
+const NUM_FEEDBACKS = config.volumes.feedbacks;
 
 export async function createFeedbacks(
   users: UserWithProfiles[],

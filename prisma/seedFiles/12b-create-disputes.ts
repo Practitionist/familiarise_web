@@ -113,7 +113,10 @@ function generateEvidence(
   return baseEvidence;
 }
 
-const NUM_DISPUTES = 15;
+import { config } from "./config";
+
+// Dispute volume - configurable via SEED_MODE environment variable
+const NUM_DISPUTES = config.volumes.disputes;
 
 export async function createDisputes(): Promise<void> {
   console.log(`Creating ${NUM_DISPUTES} disputes...`);

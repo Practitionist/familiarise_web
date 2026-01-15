@@ -12,17 +12,24 @@ import {
 } from "@prisma/client";
 import prisma from "../../lib/prisma";
 import { UserWithProfiles } from "./1a-create-users";
+import { config, getTotalAppointments } from "./config";
 
-const NUM_APPOINTMENTS = 750; // Medium data volume
-const BATCH_SIZE = 10; // Process appointments in smaller batches
+// Appointment volumes - configurable via SEED_MODE environment variable
+const NUM_CONSULTATION = config.volumes.appointments.consultation;
+const NUM_SUBSCRIPTION = config.volumes.appointments.subscription;
+const NUM_WEBINAR = config.volumes.appointments.webinar;
+const NUM_CLASS = config.volumes.appointments.class;
+const NUM_APPOINTMENTS = getTotalAppointments();
+const BATCH_SIZE = config.batchSize;
 
-// Distribution helpers (adjusted for 750 appointments)
+// Distribution helpers - uses configurable volumes
 const getAppointmentType = (index: number): AppointmentsType => {
-  // More realistic distribution with more subscriptions for testing validation
-  // 150 consultations, 300 subscriptions, 150 webinars, 150 classes
-  if (index < 150) return AppointmentsType.CONSULTATION;
-  if (index < 450) return AppointmentsType.SUBSCRIPTION; // More subscriptions for testing
-  if (index < 600) return AppointmentsType.WEBINAR;
+  // Distribution based on configured volumes
+  if (index < NUM_CONSULTATION) return AppointmentsType.CONSULTATION;
+  if (index < NUM_CONSULTATION + NUM_SUBSCRIPTION)
+    return AppointmentsType.SUBSCRIPTION;
+  if (index < NUM_CONSULTATION + NUM_SUBSCRIPTION + NUM_WEBINAR)
+    return AppointmentsType.WEBINAR;
   return AppointmentsType.CLASS;
 };
 
