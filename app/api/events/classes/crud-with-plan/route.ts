@@ -1,5 +1,5 @@
 import prisma from "@/lib/prisma";
-import { ClassPlanSchema } from "@/schemas/plans";
+import { ClassPlanSchema, ClassContentSchema } from "@/schemas/plans";
 import { ClassStatus } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
@@ -11,6 +11,13 @@ import {
   transformNestedPlanTopics,
 } from "@/lib/topics";
 
+// Schema for class content input (without Prisma-managed fields like createdAt, updatedAt, classPlanId)
+const ClassContentInputSchema = ClassContentSchema.omit({
+  createdAt: true,
+  updatedAt: true,
+  classPlanId: true,
+});
+
 // Schema for POST request body based on ClassPlanSchema
 // Topics are now accepted as names (strings) - API handles finding/creating
 const PostClassWithPlanBodySchema = ClassPlanSchema.omit({
@@ -19,6 +26,7 @@ const PostClassWithPlanBodySchema = ClassPlanSchema.omit({
   startDate: true,
   endDate: true,
   topics: true,
+  classContents: true, // Omit to override with input schema
 }).extend({
   consultantProfileId: z.string().min(1, "Consultant profile ID is required"),
   // Topics as names - API will find or create them
@@ -33,6 +41,15 @@ const PostClassWithPlanBodySchema = ClassPlanSchema.omit({
     .refine((val) => !val || !isNaN(Date.parse(val)), {
       message: "Invalid date format for startDate",
     }),
+  // Override classContents with input schema (without Prisma-managed date fields)
+  classContents: z
+    .array(ClassContentInputSchema)
+    .min(1, "At least one class content item is required")
+    .default([])
+    .refine((contents) => {
+      const titles = contents.map((c) => c.title.trim().toLowerCase());
+      return new Set(titles).size === titles.length;
+    }, "Class contents must have unique titles"),
 });
 
 // Schema for PATCH request body

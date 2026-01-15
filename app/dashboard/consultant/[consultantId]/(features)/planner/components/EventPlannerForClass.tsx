@@ -280,7 +280,8 @@ export function EventPlannerForClass({
         },
       };
 
-      onSave(classData);
+      // Await onSave to ensure API call completes before showing success
+      await onSave(classData);
 
       toast({
         title: "Success",

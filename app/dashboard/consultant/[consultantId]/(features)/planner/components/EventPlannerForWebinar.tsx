@@ -283,7 +283,8 @@ export function EventPlannerForWebinar({
         },
       };
 
-      onSave(webinarData, formData.scheduledAt);
+      // Await onSave to ensure API call completes before showing success
+      await onSave(webinarData, formData.scheduledAt);
 
       toast({
         title: "Success",
