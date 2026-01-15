@@ -8,12 +8,12 @@ import { findOrCreateTopics, transformTopicsToStrings } from "@/lib/topics";
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ consultationId: string }> },
+  { params }: { params: Promise<{ consultationPlanId: string }> },
 ) {
   try {
-    const { consultationId } = await params;
+    const { consultationPlanId } = await params;
     const consultationPlan = await prisma.consultationPlan.findUniqueOrThrow({
-      where: { id: consultationId },
+      where: { id: consultationPlanId },
       include: {
         consultantProfile: {
           include: {
@@ -59,7 +59,7 @@ export async function GET(
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: Promise<{ consultationId: string }> },
+  { params }: { params: Promise<{ consultationPlanId: string }> },
 ) {
   try {
     // Authentication check
@@ -71,11 +71,11 @@ export async function PUT(
       );
     }
 
-    const { consultationId } = await params;
+    const { consultationPlanId } = await params;
 
     // Verify ownership - user must own this consultation plan
     const existingPlan = await prisma.consultationPlan.findUnique({
-      where: { id: consultationId },
+      where: { id: consultationPlanId },
       include: { consultantProfile: true },
     });
 
@@ -116,7 +116,7 @@ export async function PUT(
     }
 
     const consultationPlan = await prisma.consultationPlan.update({
-      where: { id: consultationId },
+      where: { id: consultationPlanId },
       data: {
         title: validatedData.title,
         description: validatedData.description,
@@ -178,7 +178,7 @@ export async function PUT(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: Promise<{ consultationId: string }> },
+  { params }: { params: Promise<{ consultationPlanId: string }> },
 ) {
   try {
     // Authentication check
@@ -190,11 +190,11 @@ export async function DELETE(
       );
     }
 
-    const { consultationId } = await params;
+    const { consultationPlanId } = await params;
 
     // Verify ownership - user must own this consultation plan
     const existingPlan = await prisma.consultationPlan.findUnique({
-      where: { id: consultationId },
+      where: { id: consultationPlanId },
       include: { consultantProfile: true },
     });
 
@@ -214,7 +214,7 @@ export async function DELETE(
 
     // Check if there are any associated consultations
     const associatedConsultations = await prisma.consultation.findMany({
-      where: { consultationPlanId: consultationId },
+      where: { consultationPlanId },
     });
 
     if (associatedConsultations.length > 0) {
@@ -228,7 +228,7 @@ export async function DELETE(
     }
 
     const consultationPlan = await prisma.consultationPlan.delete({
-      where: { id: consultationId },
+      where: { id: consultationPlanId },
       include: {
         consultantProfile: {
           include: {

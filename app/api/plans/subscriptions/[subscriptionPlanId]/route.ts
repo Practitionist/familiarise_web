@@ -8,12 +8,12 @@ import { findOrCreateTopics, transformTopicsToStrings } from "@/lib/topics";
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ subscriptionId: string }> },
+  { params }: { params: Promise<{ subscriptionPlanId: string }> },
 ) {
   try {
-    const { subscriptionId } = await params;
+    const { subscriptionPlanId } = await params;
     const subscriptionPlan = await prisma.subscriptionPlan.findUniqueOrThrow({
-      where: { id: subscriptionId },
+      where: { id: subscriptionPlanId },
       include: {
         consultantProfile: {
           include: {
@@ -71,7 +71,7 @@ export async function GET(
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: Promise<{ subscriptionId: string }> },
+  { params }: { params: Promise<{ subscriptionPlanId: string }> },
 ) {
   try {
     // Authentication check
@@ -83,11 +83,11 @@ export async function PUT(
       );
     }
 
-    const { subscriptionId } = await params;
+    const { subscriptionPlanId } = await params;
 
     // Verify ownership - user must own this subscription plan
     const existingPlan = await prisma.subscriptionPlan.findUnique({
-      where: { id: subscriptionId },
+      where: { id: subscriptionPlanId },
       include: { consultantProfile: true },
     });
 
@@ -145,7 +145,7 @@ export async function PUT(
     }
 
     const subscriptionPlan = await prisma.subscriptionPlan.update({
-      where: { id: subscriptionId },
+      where: { id: subscriptionPlanId },
       data: {
         title: validatedData.title,
         description: validatedData.description,
@@ -224,7 +224,7 @@ export async function PUT(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: Promise<{ subscriptionId: string }> },
+  { params }: { params: Promise<{ subscriptionPlanId: string }> },
 ) {
   try {
     // Authentication check
@@ -236,11 +236,11 @@ export async function DELETE(
       );
     }
 
-    const { subscriptionId } = await params;
+    const { subscriptionPlanId } = await params;
 
     // Verify ownership - user must own this subscription plan
     const existingPlan = await prisma.subscriptionPlan.findUnique({
-      where: { id: subscriptionId },
+      where: { id: subscriptionPlanId },
       include: { consultantProfile: true },
     });
 
@@ -260,7 +260,7 @@ export async function DELETE(
 
     // Check if there are any associated subscriptions
     const associatedSubscriptions = await prisma.subscription.findMany({
-      where: { subscriptionPlanId: subscriptionId },
+      where: { subscriptionPlanId },
     });
 
     if (associatedSubscriptions.length > 0) {
@@ -274,7 +274,7 @@ export async function DELETE(
     }
 
     const subscriptionPlan = await prisma.subscriptionPlan.delete({
-      where: { id: subscriptionId },
+      where: { id: subscriptionPlanId },
       include: {
         consultantProfile: {
           include: {

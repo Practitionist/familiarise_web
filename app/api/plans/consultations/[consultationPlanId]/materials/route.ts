@@ -13,16 +13,16 @@ const CONFIG: PlanMaterialsConfig = {
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ consultationId: string }> }
+  { params }: { params: Promise<{ consultationPlanId: string }> }
 ) {
-  const { consultationId } = await params;
-  return handleGetMaterials(request, consultationId, CONFIG);
+  const { consultationPlanId } = await params;
+  return handleGetMaterials(request, consultationPlanId, CONFIG);
 }
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ consultationId: string }> }
+  { params }: { params: Promise<{ consultationPlanId: string }> }
 ) {
-  const { consultationId } = await params;
-  return handleUploadMaterial(request, consultationId, CONFIG);
+  const { consultationPlanId } = await params;
+  return handleUploadMaterial(request, consultationPlanId, CONFIG);
 }
