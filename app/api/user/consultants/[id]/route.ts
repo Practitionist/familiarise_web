@@ -191,6 +191,91 @@ export async function PUT(
       sessionTypes,
     } = data;
 
+    // Check if schedule type is being changed
+    const existingConsultant = await prisma.consultantProfile.findUnique({
+      where: { id },
+      select: { scheduleType: true },
+    });
+
+    if (
+      existingConsultant &&
+      existingConsultant.scheduleType !== scheduleType
+    ) {
+      // Validate that there are no active appointments before allowing switch
+      const [
+        pendingConsultations,
+        activeSubscriptions,
+        upcomingWebinars,
+        upcomingClasses,
+      ] = await Promise.all([
+        prisma.consultation.count({
+          where: {
+            consultationPlan: { consultantProfileId: id },
+            requestStatus: {
+              in: [
+                "PENDING",
+                "APPROVED",
+                "APPROVED_PENDING_PAYMENT",
+                "SCHEDULED",
+              ],
+            },
+          },
+        }),
+        prisma.subscription.count({
+          where: {
+            subscriptionPlan: { consultantProfileId: id },
+            requestStatus: {
+              in: [
+                "PENDING",
+                "APPROVED",
+                "APPROVED_PENDING_PAYMENT",
+                "SCHEDULED",
+              ],
+            },
+          },
+        }),
+        prisma.webinar.count({
+          where: {
+            webinarPlan: { consultantProfileId: id },
+            status: { in: ["SCHEDULED", "IN_PROGRESS"] },
+            appointment: {
+              slotsOfAppointment: {
+                some: { startsAt: { gte: new Date() } },
+              },
+            },
+          },
+        }),
+        prisma.class.count({
+          where: {
+            classPlan: { consultantProfileId: id },
+            status: { in: ["SCHEDULED", "IN_PROGRESS"] },
+          },
+        }),
+      ]);
+
+      const totalPending =
+        pendingConsultations +
+        activeSubscriptions +
+        upcomingWebinars +
+        upcomingClasses;
+
+      if (totalPending > 0) {
+        return NextResponse.json(
+          {
+            error: `Cannot switch schedule type while you have ${totalPending} active appointment(s). Please complete or cancel them first.`,
+            code: "SCHEDULE_SWITCH_BLOCKED",
+            breakdown: {
+              pendingConsultations,
+              activeSubscriptions,
+              upcomingWebinars,
+              upcomingClasses,
+            },
+          },
+          { status: 400 },
+        );
+      }
+    }
+
     // Update consultant profile
     await prisma.consultantProfile.update({
       where: { id },
