@@ -96,33 +96,26 @@ export class SubscriptionService {
         : "/api/plans/subscriptions";
       const method = isUpdate ? "PUT" : "POST";
 
-      // Build request body, handling null to undefined conversions for API compatibility
+      // Build request body - keep null values to allow clearing fields
       const plan = planData.subscriptionPlan;
       const requestBody: Record<string, unknown> = {
         title: plan.title,
-        description: plan.description ?? undefined,
+        description: plan.description,
         durationInMonths: plan.durationInMonths,
         sessionDurationInHours: plan.sessionDurationInHours,
         callsPerWeek: plan.callsPerWeek,
         price: plan.price,
         priceCurrency: plan.priceCurrency,
         emailSupport: plan.emailSupport,
-        language: plan.language ?? undefined,
-        level: plan.level ?? undefined,
-        prerequisites: plan.prerequisites ?? undefined,
-        materialProvided: plan.materialProvided ?? undefined,
+        language: plan.language,
+        level: plan.level,
+        prerequisites: plan.prerequisites,
+        materialProvided: plan.materialProvided,
         learningOutcomes: plan.learningOutcomes,
         topics: plan.topics ?? [],
         consultantProfileId: consultantId,
         ...(isUpdate && plan.id ? { id: plan.id } : {}),
       };
-
-      // Remove undefined fields
-      Object.keys(requestBody).forEach((key) => {
-        if (requestBody[key] === undefined) {
-          delete requestBody[key];
-        }
-      });
 
       const response = await fetch(endpoint, {
         method,

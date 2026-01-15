@@ -235,9 +235,8 @@ export class WebinarService {
       return body as unknown as CreateWebinarPayload & { id?: string; webinarId?: string; topics?: string[] };
     }
 
-    // POST request
-    const postPlanData = { ...plan };
-    delete (postPlanData as Record<string, unknown>).topics;
+    // POST request - use destructuring to exclude topics
+    const { topics: _topics, ...postPlanData } = plan || {};
 
     const body: Record<string, unknown> = {
       ...postPlanData,

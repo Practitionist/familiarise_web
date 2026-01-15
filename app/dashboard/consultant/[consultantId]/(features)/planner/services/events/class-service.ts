@@ -216,13 +216,15 @@ export class ClassService {
       return body as unknown as CreateClassPayload & { id?: string; classId?: string; topics?: string[] };
     }
 
-    // POST request
-    const postPlanData = { ...plan };
-    delete (postPlanData as Record<string, unknown>).topics;
-    delete (postPlanData as Record<string, unknown>).consultantProfile;
-    delete (postPlanData as Record<string, unknown>).id;
-    delete (postPlanData as Record<string, unknown>).createdAt;
-    delete (postPlanData as Record<string, unknown>).updatedAt;
+    // POST request - use destructuring to exclude unwanted fields
+    const {
+      topics: _topics,
+      consultantProfile: _consultantProfile,
+      id: _id,
+      createdAt: _createdAt,
+      updatedAt: _updatedAt,
+      ...postPlanData
+    } = plan || {};
 
     const body: Record<string, unknown> = {
       ...postPlanData,
