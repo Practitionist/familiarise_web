@@ -378,6 +378,268 @@ const listAppointmentDocuments = async (
   }
 };
 
+// Plan material upload types
+export type PlanType = "consultation" | "subscription" | "webinar" | "class";
+
+export interface PlanMaterialUploadOptions {
+  planType: PlanType;
+  planId: string;
+  file: File;
+  description?: string;
+}
+
+// Consultant document upload types (for response documents)
+export interface ConsultantDocumentUploadOptions {
+  appointmentId: string;
+  consultantId: string;
+  file: File;
+  responseToDocumentId?: string;
+  description?: string;
+}
+
+// Allowed MIME types for documents (shared across all document uploads)
+const ALLOWED_DOCUMENT_TYPES = [
+  "application/pdf",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.ms-powerpoint",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "image/jpeg",
+  "image/jpg",
+  "image/png",
+  "image/gif",
+  "image/webp",
+  "text/plain",
+  "text/csv",
+  "text/markdown",
+  "application/zip",
+  "application/x-rar-compressed",
+];
+
+/**
+ * Upload plan material to Supabase storage
+ * Structure: plans/{planType}-plans/{planId}/{filename}
+ */
+const uploadPlanMaterial = async (
+  options: PlanMaterialUploadOptions
+): Promise<DocumentUploadResult> => {
+  try {
+    const { planType, planId, file } = options;
+
+    // Validate file
+    if (!file) {
+      return { success: false, error: "No file provided" };
+    }
+
+    // Check file size (max 10MB)
+    const maxSize = 10 * 1024 * 1024; // 10MB
+    if (file.size > maxSize) {
+      return { success: false, error: "File size exceeds 10MB limit" };
+    }
+
+    // Validate file type
+    if (!ALLOWED_DOCUMENT_TYPES.includes(file.type)) {
+      return {
+        success: false,
+        error: `File type '${file.type}' not supported. Allowed types: PDF, Word, Excel, PowerPoint, images, text files, and archives.`,
+      };
+    }
+
+    // Ensure the documents bucket exists
+    const bucketReady = await ensureBucketExists("documents");
+    if (!bucketReady) {
+      return {
+        success: false,
+        error:
+          "Document storage bucket not found. Please create a 'documents' bucket in your Supabase dashboard.",
+      };
+    }
+
+    // Generate unique filename
+    const timestamp = Date.now();
+    const safeFileName = file.name.replace(/[^a-zA-Z0-9.-]/g, "_");
+    const fileName = `${timestamp}_${safeFileName}`;
+
+    // Create folder structure: plans/{planType}-plans/{planId}/
+    const folderPath = `plans/${planType}-plans/${planId}`;
+    const storagePath = `${folderPath}/${fileName}`;
+
+    // Ensure folder structure exists
+    await ensureFolderExists("documents", folderPath);
+
+    // Upload file to Supabase storage
+    const { error: uploadError } = await supabase.storage
+      .from("documents")
+      .upload(storagePath, file, {
+        cacheControl: "3600",
+        upsert: false,
+      });
+
+    if (uploadError) {
+      console.error("Supabase upload error:", uploadError);
+      return { success: false, error: uploadError.message };
+    }
+
+    // Get public URL
+    const { data: urlData } = supabase.storage
+      .from("documents")
+      .getPublicUrl(storagePath);
+
+    return {
+      success: true,
+      fileUrl: urlData.publicUrl,
+      storagePath,
+      fileName,
+      fileSize: file.size,
+      mimeType: file.type,
+    };
+  } catch (error) {
+    console.error("Error uploading plan material:", error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Upload failed",
+    };
+  }
+};
+
+/**
+ * Delete plan material from Supabase storage
+ */
+const deletePlanMaterial = async (storagePath: string): Promise<boolean> => {
+  try {
+    const { error } = await supabase.storage
+      .from("documents")
+      .remove([storagePath]);
+
+    if (error) {
+      console.error("Error deleting plan material:", error);
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    console.error("Error deleting plan material:", error);
+    return false;
+  }
+};
+
+/**
+ * List plan materials in a folder
+ */
+const listPlanMaterials = async (
+  planType: PlanType,
+  planId: string
+): Promise<FileObject[]> => {
+  try {
+    const folderPath = `plans/${planType}-plans/${planId}`;
+    const { data: files, error } = await supabase.storage
+      .from("documents")
+      .list(folderPath, {
+        limit: 100,
+        offset: 0,
+        sortBy: { column: "created_at", order: "desc" },
+      });
+
+    if (error) {
+      console.error("Error listing plan materials:", error);
+      return [];
+    }
+
+    return files || [];
+  } catch (error) {
+    console.error("Error listing plan materials:", error);
+    return [];
+  }
+};
+
+/**
+ * Upload consultant document (response document) to Supabase storage
+ * Structure: appointments/{appointmentId}/consultant-{consultantId}/{filename}
+ */
+const uploadConsultantDocument = async (
+  options: ConsultantDocumentUploadOptions
+): Promise<DocumentUploadResult> => {
+  try {
+    const { appointmentId, consultantId, file } = options;
+
+    // Validate file
+    if (!file) {
+      return { success: false, error: "No file provided" };
+    }
+
+    // Check file size (max 10MB)
+    const maxSize = 10 * 1024 * 1024; // 10MB
+    if (file.size > maxSize) {
+      return { success: false, error: "File size exceeds 10MB limit" };
+    }
+
+    // Validate file type
+    if (!ALLOWED_DOCUMENT_TYPES.includes(file.type)) {
+      return {
+        success: false,
+        error: `File type '${file.type}' not supported. Allowed types: PDF, Word, Excel, PowerPoint, images, text files, and archives.`,
+      };
+    }
+
+    // Ensure the documents bucket exists
+    const bucketReady = await ensureBucketExists("documents");
+    if (!bucketReady) {
+      return {
+        success: false,
+        error:
+          "Document storage bucket not found. Please create a 'documents' bucket in your Supabase dashboard.",
+      };
+    }
+
+    // Generate unique filename
+    const timestamp = Date.now();
+    const safeFileName = file.name.replace(/[^a-zA-Z0-9.-]/g, "_");
+    const fileName = `${timestamp}_${safeFileName}`;
+
+    // Create folder structure: appointments/{appointmentId}/consultant-{consultantId}/
+    const folderPath = `appointments/${appointmentId}/consultant-${consultantId}`;
+    const storagePath = `${folderPath}/${fileName}`;
+
+    // Ensure folder structure exists
+    await ensureFolderExists("documents", folderPath);
+
+    // Upload file to Supabase storage
+    const { error: uploadError } = await supabase.storage
+      .from("documents")
+      .upload(storagePath, file, {
+        cacheControl: "3600",
+        upsert: false,
+      });
+
+    if (uploadError) {
+      console.error("Supabase upload error:", uploadError);
+      return { success: false, error: uploadError.message };
+    }
+
+    // Get public URL
+    const { data: urlData } = supabase.storage
+      .from("documents")
+      .getPublicUrl(storagePath);
+
+    return {
+      success: true,
+      fileUrl: urlData.publicUrl,
+      storagePath,
+      fileName,
+      fileSize: file.size,
+      mimeType: file.type,
+    };
+  } catch (error) {
+    console.error("Error uploading consultant document:", error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Upload failed",
+    };
+  }
+};
+
 // Support ticket attachment types
 export interface SupportAttachmentUploadOptions {
   ticketId: string;
@@ -528,9 +790,19 @@ export {
   uploadAppointmentDocument,
   deleteAppointmentDocument,
   listAppointmentDocuments,
+  // Plan materials
+  uploadPlanMaterial,
+  deletePlanMaterial,
+  listPlanMaterials,
+  // Consultant documents (response documents)
+  uploadConsultantDocument,
+  // Support ticket attachments
   uploadSupportTicketAttachment,
   deleteSupportTicketAttachment,
+  // Utility functions
   ensureBucketExists,
   ensureFolderExists,
   getManualBucketInstructions,
+  // Constants
+  ALLOWED_DOCUMENT_TYPES,
 };

@@ -41,8 +41,11 @@ export async function GET(
     // Verify user is the consultant with enhanced error handling
     let consultant;
     try {
-      // In development mode, allow access to any consultant's documents for testing
-      const isDevelopment = process.env.NODE_ENV === "development";
+      // In development mode with explicit bypass flag, allow access to any consultant's documents for testing
+      // Requires both NODE_ENV=development AND DEV_BYPASS_AUTH=true for safety
+      const isDevelopment =
+        process.env.NODE_ENV === "development" &&
+        process.env.DEV_BYPASS_AUTH === "true";
 
       const consultantWhereClause: any = {
         id: consultantId,
