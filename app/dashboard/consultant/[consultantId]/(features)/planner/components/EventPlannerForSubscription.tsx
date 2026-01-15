@@ -49,6 +49,7 @@ import {
   SubmitButton,
   FormConfirmationDialog,
 } from "./form-fields";
+import { TopicsMultiSelect } from "./TopicsMultiSelect";
 import {
   SubscriptionPlanEvent,
   SubscriptionPlannerProps,
@@ -65,9 +66,34 @@ export function EventPlannerForSubscription({
 }: Readonly<SubscriptionPlannerProps>) {
   const [internalIsSaving, setInternalIsSaving] = useState(false);
   const [showConfirmation, setShowConfirmation] = useState(false);
+  const [availableTopics, setAvailableTopics] = useState<
+    { id: string; name: string; createdAt?: Date; updatedAt?: Date }[]
+  >([]);
+  const [isLoadingTopics, setIsLoadingTopics] = useState(false);
   const { toast } = useToast();
 
   const isSaving = externalIsSaving ?? internalIsSaving;
+
+  // Fetch available topics
+  useEffect(() => {
+    const fetchTopics = async () => {
+      try {
+        setIsLoadingTopics(true);
+        const fetchedTopics = await PlannerService.getTopics("");
+        setAvailableTopics(fetchedTopics);
+      } catch (error) {
+        console.error("Failed to fetch topics:", error);
+        toast({
+          title: "Error",
+          description: "Failed to load topics. Please try again.",
+          variant: "destructive",
+        });
+      } finally {
+        setIsLoadingTopics(false);
+      }
+    };
+    fetchTopics();
+  }, [toast]);
 
   const form = useForm({
     resolver: zodResolver(SubscriptionPlanSchema),
@@ -89,6 +115,7 @@ export function EventPlannerForSubscription({
             initialData.subscriptionPlan.materialProvided ?? "",
           learningOutcomes:
             initialData.subscriptionPlan.learningOutcomes ?? [],
+          topics: initialData.subscriptionPlan.topics ?? [],
         }
       : {
           title: "",
@@ -104,6 +131,7 @@ export function EventPlannerForSubscription({
           prerequisites: "",
           materialProvided: "",
           learningOutcomes: [],
+          topics: [],
         },
     mode: "onBlur",
   });
@@ -125,6 +153,7 @@ export function EventPlannerForSubscription({
         prerequisites: initialData.subscriptionPlan.prerequisites ?? "",
         materialProvided: initialData.subscriptionPlan.materialProvided ?? "",
         learningOutcomes: initialData.subscriptionPlan.learningOutcomes ?? [],
+        topics: initialData.subscriptionPlan.topics ?? [],
       });
     }
   }, [initialData, form]);
@@ -188,6 +217,7 @@ export function EventPlannerForSubscription({
           prerequisites: formData.prerequisites ?? undefined,
           materialProvided: formData.materialProvided ?? undefined,
           learningOutcomes: formData.learningOutcomes,
+          topics: formData.topics ?? [],
           consultantProfileId: consultantId,
           consultantProfile: null,
           subscriptions: initialData?.subscriptionPlan?.subscriptions ?? [],
@@ -519,6 +549,26 @@ export function EventPlannerForSubscription({
                   name="learningOutcomes"
                   placeholder="e.g., Master advanced techniques in your field"
                   description="What subscribers will achieve during the subscription"
+                />
+
+                <FormField
+                  control={form.control}
+                  name="topics"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormControl>
+                        <TopicsMultiSelect
+                          initialTopics={field.value}
+                          onTopicsChange={(topics) => field.onChange(topics)}
+                          availableTopics={availableTopics}
+                          isLoading={isLoadingTopics}
+                          label="Topics"
+                          error={form.formState.errors.topics?.message}
+                          helpText="Select from existing topics or create new ones (optional)"
+                        />
+                      </FormControl>
+                    </FormItem>
+                  )}
                 />
               </FormSection>
 

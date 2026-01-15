@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import authOptions from "@/app/api/auth/[...nextauth]/options";
 import { ConsultationPlanSchema } from "@/schemas/plans";
+import { findOrCreateTopics, transformTopicsToStrings } from "@/lib/topics";
 
 export async function GET(
   request: NextRequest,
@@ -30,10 +31,14 @@ export async function GET(
           },
         },
         consultations: true,
+        topics: true,
       },
     });
 
-    return NextResponse.json({ data: consultationPlan }, { status: 200 });
+    return NextResponse.json(
+      { data: transformTopicsToStrings(consultationPlan) },
+      { status: 200 },
+    );
   } catch (error) {
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
@@ -101,19 +106,32 @@ export async function PUT(
 
     const validatedData = validationResult.data;
 
+    // Handle topics if provided
+    let topicsUpdate = {};
+    if (validatedData.topics !== undefined) {
+      const topicIds = await findOrCreateTopics(validatedData.topics);
+      topicsUpdate = {
+        topics: { set: topicIds.map((id) => ({ id })) },
+      };
+    }
+
     const consultationPlan = await prisma.consultationPlan.update({
       where: { id: consultationId },
       data: {
         title: validatedData.title,
         description: validatedData.description,
         durationInHours: validatedData.durationInHours,
-        price: validatedData.price !== undefined ? Math.round(validatedData.price) : undefined,
+        price:
+          validatedData.price !== undefined
+            ? Math.round(validatedData.price)
+            : undefined,
         priceCurrency: validatedData.priceCurrency,
         language: validatedData.language,
         level: validatedData.level,
         prerequisites: validatedData.prerequisites,
         materialProvided: validatedData.materialProvided,
         learningOutcomes: validatedData.learningOutcomes,
+        ...topicsUpdate,
       },
       include: {
         consultantProfile: {
@@ -132,10 +150,14 @@ export async function PUT(
           },
         },
         consultations: true,
+        topics: true,
       },
     });
 
-    return NextResponse.json({ data: consultationPlan }, { status: 200 });
+    return NextResponse.json(
+      { data: transformTopicsToStrings(consultationPlan) },
+      { status: 200 },
+    );
   } catch (error) {
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
@@ -223,10 +245,14 @@ export async function DELETE(
             tags: true,
           },
         },
+        topics: true,
       },
     });
 
-    return NextResponse.json({ data: consultationPlan }, { status: 200 });
+    return NextResponse.json(
+      { data: transformTopicsToStrings(consultationPlan) },
+      { status: 200 },
+    );
   } catch (error) {
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&

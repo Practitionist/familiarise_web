@@ -165,8 +165,7 @@ export function EventPlannerForWebinar({
       learningOutcomes: initialData?.webinarPlan?.learningOutcomes ?? [],
       certificateProvided:
         initialData?.webinarPlan?.certificateProvided ?? false,
-      topics:
-        initialData?.webinarPlan?.topics?.map((topic) => topic.name) ?? [],
+      topics: initialData?.webinarPlan?.topics ?? [],
       scheduledAt: getInitialScheduledAt(),
       consultantProfileId: consultantId,
     },
@@ -189,8 +188,7 @@ export function EventPlannerForWebinar({
         learningOutcomes: initialData.webinarPlan.learningOutcomes ?? [],
         certificateProvided:
           initialData.webinarPlan.certificateProvided ?? false,
-        topics:
-          initialData.webinarPlan.topics?.map((topic) => topic.name) ?? [],
+        topics: initialData.webinarPlan.topics ?? [],
         scheduledAt: getInitialScheduledAt(),
         consultantProfileId: consultantId,
       });

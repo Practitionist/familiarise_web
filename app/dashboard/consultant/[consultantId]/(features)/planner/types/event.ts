@@ -7,10 +7,23 @@ import {
 import { PlanEmailSupport } from "@prisma/client";
 import { ConsultationPlan, SubscriptionPlan } from "@/schemas/plans";
 
-// Define the final event types, intersecting with the literal type
-// scheduledAt is a computed property derived from appointment.slotsOfAppointment[0].startsAt
-export type WebinarEvent = TWebinar & { type: "webinar"; scheduledAt?: Date };
-export type ClassEvent = TClass & { type: "class" };
+// UI-focused event types with topics as string[] (transformed at service boundary)
+// Services convert Topic[] from Prisma to string[] before passing to components
+
+export type WebinarEvent = Omit<TWebinar, "webinarPlan"> & {
+  type: "webinar";
+  scheduledAt?: Date;
+  webinarPlan: Omit<TWebinar["webinarPlan"], "topics"> & {
+    topics: string[];
+  };
+};
+
+export type ClassEvent = Omit<TClass, "classPlan"> & {
+  type: "class";
+  classPlan: Omit<TClass["classPlan"], "topics"> & {
+    topics: string[];
+  };
+};
 
 // Consultant profile summary type for plan events
 type ConsultantProfileSummary = {

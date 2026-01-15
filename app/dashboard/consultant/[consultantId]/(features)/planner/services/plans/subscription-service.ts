@@ -47,6 +47,7 @@ export class SubscriptionService {
 
   /**
    * Fetch subscription plans for a consultant
+   * API returns topics as string[] - no transformation needed
    */
   static async fetchSubscriptionPlans(
     consultantId: string,
@@ -61,6 +62,8 @@ export class SubscriptionService {
       }
 
       const { data } = await response.json();
+
+      // API returns topics as strings, just wrap with event type
       return data.map((plan: SubscriptionPlan & { id: string }) => ({
         id: plan.id,
         type: "subscription" as const,
@@ -109,6 +112,7 @@ export class SubscriptionService {
         prerequisites: plan.prerequisites ?? undefined,
         materialProvided: plan.materialProvided ?? undefined,
         learningOutcomes: plan.learningOutcomes,
+        topics: plan.topics ?? [],
         consultantProfileId: consultantId,
         ...(isUpdate && plan.id ? { id: plan.id } : {}),
       };
@@ -136,6 +140,7 @@ export class SubscriptionService {
 
       const { data: subscriptionPlan } = await response.json();
 
+      // API returns topics as strings, no transformation needed
       return {
         id: subscriptionPlan.id,
         type: "subscription" as const,

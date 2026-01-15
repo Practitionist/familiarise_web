@@ -47,6 +47,7 @@ export class ConsultationService {
 
   /**
    * Fetch consultation plans for a consultant
+   * API returns topics as string[] - no transformation needed
    */
   static async fetchConsultationPlans(
     consultantId: string,
@@ -61,6 +62,8 @@ export class ConsultationService {
       }
 
       const { data } = await response.json();
+
+      // API returns topics as strings, just wrap with event type
       return data.map((plan: ConsultationPlan & { id: string }) => ({
         id: plan.id,
         type: "consultation" as const,
@@ -106,6 +109,7 @@ export class ConsultationService {
         prerequisites: plan.prerequisites ?? undefined,
         materialProvided: plan.materialProvided ?? undefined,
         learningOutcomes: plan.learningOutcomes,
+        topics: plan.topics ?? [],
         consultantProfileId: consultantId,
         ...(isUpdate && plan.id ? { id: plan.id } : {}),
       };
@@ -133,6 +137,7 @@ export class ConsultationService {
 
       const { data: consultationPlan } = await response.json();
 
+      // API returns topics as strings, no transformation needed
       return {
         id: consultationPlan.id,
         type: "consultation" as const,

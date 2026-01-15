@@ -3,10 +3,7 @@
  */
 
 import { toast } from "@/hooks/use-toast";
-import { TClass } from "@/types/appointment";
 import { ClassEvent } from "../../types/event";
-import { TransactionContext } from "../transaction-context";
-import { TopicService } from "../topic-service";
 import { CreateClassPayload, ClassContentInput } from "../types";
 
 export class ClassService {
@@ -47,6 +44,7 @@ export class ClassService {
 
   /**
    * Fetch classes for a consultant
+   * API returns topics as string[] - no transformation needed
    */
   static async fetchClasses(
     consultantId: string,
@@ -69,9 +67,11 @@ export class ClassService {
       }
 
       const { data } = await response.json();
-      return data.map((classEvent: TClass) =>
-        this.transformClassResponse(classEvent),
-      );
+      // API returns topics as strings, just add type discriminant
+      return data.map((classEvent: ClassEvent) => ({
+        ...classEvent,
+        type: "class" as const,
+      }));
     } catch (error) {
       console.error("[ClassService.fetchClasses] Error:", error);
       throw error;
@@ -79,14 +79,13 @@ export class ClassService {
   }
 
   /**
-   * Save class data with transaction handling
+   * Save class data
+   * API handles topic creation/lookup - just send topic names
    */
   static async saveClass(
     classData: Partial<ClassEvent>,
     consultantId: string,
   ): Promise<ClassEvent> {
-    const txContext = new TransactionContext();
-
     try {
       const title = classData.classPlan?.title;
       const planId = classData.classPlan?.id ?? "";
@@ -107,63 +106,35 @@ export class ClassService {
         }
       }
 
-      // Extract and create topics
-      let allTopicIds: string[] = [];
-      const topicNames = this.extractTopicNames(classData);
+      const endpoint = "/api/events/classes/crud-with-plan";
+      const method = isUpdate ? "PATCH" : "POST";
 
-      if (topicNames.length > 0) {
-        try {
-          const newTopicIds = await TopicService.createTopics(topicNames);
-          txContext.trackTopics(newTopicIds);
-          allTopicIds = [...newTopicIds];
-        } catch (error) {
-          throw new Error(
-            "Failed to create topics: " +
-              (error instanceof Error ? error.message : String(error)),
-          );
-        }
-      }
+      const topicNames = classData.classPlan?.topics ?? [];
+      const requestBody = this.buildRequestBody(
+        classData,
+        consultantId,
+        topicNames,
+        isUpdate,
+        planId,
+        classId,
+      );
 
-      try {
-        const endpoint = "/api/events/classes/crud-with-plan";
-        const method = isUpdate ? "PATCH" : "POST";
+      const response = await fetch(endpoint, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(requestBody),
+      });
 
-        const requestBody = this.buildRequestBody(
-          classData,
-          consultantId,
-          allTopicIds,
-          topicNames,
-          isUpdate,
-          planId,
-          classId,
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(
+          errorData.error ||
+            `Failed to ${isUpdate ? "update" : "create"} class`,
         );
-
-        const response = await fetch(endpoint, {
-          method,
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(requestBody),
-        });
-
-        if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(
-            errorData.error ||
-              `Failed to ${isUpdate ? "update" : "create"} class`,
-          );
-        }
-
-        const { data: classEvent } = await response.json();
-
-        if (!isUpdate) {
-          txContext.trackEvent(classEvent.id, "class");
-        }
-
-        txContext.clear();
-        return { ...classEvent, type: "class" as const };
-      } catch (error) {
-        await txContext.rollbackTopics();
-        throw error;
       }
+
+      const { data: classEvent } = await response.json();
+      return { ...classEvent, type: "class" as const };
     } catch (error) {
       console.error("[ClassService.saveClass] Error:", error);
       throw error;
@@ -195,30 +166,12 @@ export class ClassService {
   // Private helper methods
 
   /**
-   * Transform API response to ClassEvent with type discriminant
+   * Build request body for API
+   * API accepts topic names directly - no ID conversion needed
    */
-  private static transformClassResponse(classEvent: TClass): ClassEvent {
-    // Spread Prisma response and add discriminant
-    return {
-      ...classEvent,
-      type: "class" as const,
-    };
-  }
-
-  private static extractTopicNames(classData: Partial<ClassEvent>): string[] {
-    if (!classData.classPlan?.topics) {
-      return [];
-    }
-
-    return classData.classPlan.topics
-      .map((topic) => (typeof topic === "string" ? topic : topic?.name))
-      .filter(Boolean) as string[];
-  }
-
   private static buildRequestBody(
     classData: Partial<ClassEvent>,
     consultantId: string,
-    allTopicIds: string[],
     topicNames: string[],
     isUpdate: boolean,
     planId: string,
@@ -253,12 +206,8 @@ export class ClassService {
         meetingsPerWeek: plan.meetingsPerWeek,
         classContents: plan.classContents,
         consultantProfileId: consultantId,
-        topics:
-          allTopicIds.length > 0
-            ? allTopicIds
-            : topicNames.length === 0
-              ? []
-              : undefined,
+        // Send topic names - API handles finding/creating IDs
+        topics: topicNames,
       };
 
       Object.keys(body).forEach(
@@ -278,7 +227,8 @@ export class ClassService {
     const body: Record<string, unknown> = {
       ...postPlanData,
       consultantProfileId: consultantId,
-      topics: allTopicIds ?? [],
+      // Send topic names - API handles finding/creating IDs
+      topics: topicNames,
     };
 
     Object.keys(body).forEach(

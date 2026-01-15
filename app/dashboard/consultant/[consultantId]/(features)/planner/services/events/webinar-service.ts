@@ -3,10 +3,7 @@
  */
 
 import { toast } from "@/hooks/use-toast";
-import { TWebinar } from "@/types/appointment";
 import { WebinarEvent } from "../../types/event";
-import { TransactionContext } from "../transaction-context";
-import { TopicService } from "../topic-service";
 import { CreateWebinarPayload } from "../types";
 
 export class WebinarService {
@@ -50,6 +47,7 @@ export class WebinarService {
 
   /**
    * Fetch webinars for a consultant
+   * API returns topics as string[] - no transformation needed
    */
   static async fetchWebinars(
     consultantId: string,
@@ -72,9 +70,15 @@ export class WebinarService {
       }
 
       const { data } = await response.json();
-      return data.map((webinar: TWebinar) =>
-        this.transformWebinarResponse(webinar),
-      );
+      // API returns topics as strings and scheduledAt computed, just add type discriminant
+      return data.map((webinar: WebinarEvent) => ({
+        ...webinar,
+        type: "webinar" as const,
+        // Compute scheduledAt from appointment slots
+        scheduledAt: webinar.appointment?.slotsOfAppointment?.[0]?.startsAt
+          ? new Date(webinar.appointment.slotsOfAppointment[0].startsAt)
+          : undefined,
+      }));
     } catch (error) {
       console.error("[WebinarService.fetchWebinars] Error:", error);
       throw error;
@@ -82,15 +86,14 @@ export class WebinarService {
   }
 
   /**
-   * Save webinar data with transaction handling
+   * Save webinar data
+   * API handles topic creation/lookup - just send topic names
    */
   static async saveWebinar(
     webinarData: Partial<WebinarEvent>,
     scheduledAt: string | Date | null | undefined,
     consultantId: string,
   ): Promise<WebinarEvent> {
-    const txContext = new TransactionContext();
-
     try {
       const title = webinarData.webinarPlan?.title;
       const planId = webinarData.webinarPlan?.id ?? "";
@@ -111,65 +114,37 @@ export class WebinarService {
         }
       }
 
-      // Extract and create topics
-      let allTopicIds: string[] = [];
-      const topicNames = this.extractTopicNames(webinarData);
+      const endpoint = "/api/events/webinars/crud-with-plan";
+      const method = isUpdate ? "PATCH" : "POST";
 
-      if (topicNames.length > 0) {
-        try {
-          const newTopicIds = await TopicService.createTopics(topicNames);
-          txContext.trackTopics(newTopicIds);
-          allTopicIds = [...newTopicIds];
-        } catch (error) {
-          throw new Error(
-            "Failed to create topics: " +
-              (error instanceof Error ? error.message : String(error)),
-          );
-        }
-      }
+      const scheduledAtDate = this.parseScheduledDate(scheduledAt);
+      const topicNames = webinarData.webinarPlan?.topics ?? [];
+      const requestBody = this.buildRequestBody(
+        webinarData,
+        consultantId,
+        topicNames,
+        scheduledAtDate,
+        isUpdate,
+        planId,
+        webinarId,
+      );
 
-      try {
-        const endpoint = "/api/events/webinars/crud-with-plan";
-        const method = isUpdate ? "PATCH" : "POST";
+      const response = await fetch(endpoint, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(requestBody),
+      });
 
-        const scheduledAtDate = this.parseScheduledDate(scheduledAt);
-        const requestBody = this.buildRequestBody(
-          webinarData,
-          consultantId,
-          allTopicIds,
-          topicNames,
-          scheduledAtDate,
-          isUpdate,
-          planId,
-          webinarId,
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(
+          errorData.error ||
+            `Failed to ${isUpdate ? "update" : "create"} webinar`,
         );
-
-        const response = await fetch(endpoint, {
-          method,
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(requestBody),
-        });
-
-        if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(
-            errorData.error ||
-              `Failed to ${isUpdate ? "update" : "create"} webinar`,
-          );
-        }
-
-        const { data: webinar } = await response.json();
-
-        if (!isUpdate) {
-          txContext.trackEvent(webinar.id, "webinar");
-        }
-
-        txContext.clear();
-        return { ...webinar, type: "webinar" as const };
-      } catch (error) {
-        await txContext.rollbackTopics();
-        throw error;
       }
+
+      const { data: webinar } = await response.json();
+      return { ...webinar, type: "webinar" as const };
     } catch (error) {
       console.error("[WebinarService.saveWebinar] Error:", error);
       throw error;
@@ -200,34 +175,6 @@ export class WebinarService {
 
   // Private helper methods
 
-  /**
-   * Transform API response to WebinarEvent with computed scheduledAt
-   */
-  private static transformWebinarResponse(webinar: TWebinar): WebinarEvent {
-    // Compute scheduledAt from appointment slots
-    const startsAt = webinar.appointment?.slotsOfAppointment?.[0]?.startsAt;
-    const scheduledAt = startsAt ? new Date(startsAt) : undefined;
-
-    // Spread Prisma response and add discriminant + computed property
-    return {
-      ...webinar,
-      type: "webinar" as const,
-      scheduledAt,
-    };
-  }
-
-  private static extractTopicNames(
-    webinarData: Partial<WebinarEvent>,
-  ): string[] {
-    if (!webinarData.webinarPlan?.topics) {
-      return [];
-    }
-
-    return webinarData.webinarPlan.topics
-      .map((topic) => (typeof topic === "string" ? topic : topic?.name))
-      .filter(Boolean) as string[];
-  }
-
   private static parseScheduledDate(
     scheduledAt: string | Date | null | undefined,
   ): Date | null {
@@ -241,10 +188,13 @@ export class WebinarService {
     return null;
   }
 
+  /**
+   * Build request body for API
+   * API accepts topic names directly - no ID conversion needed
+   */
   private static buildRequestBody(
     webinarData: Partial<WebinarEvent>,
     consultantId: string,
-    allTopicIds: string[],
     topicNames: string[],
     scheduledAtDate: Date | null,
     isUpdate: boolean,
@@ -274,12 +224,8 @@ export class WebinarService {
         learningOutcomes: plan?.learningOutcomes,
         consultantProfileId: consultantId,
         scheduledAt: scheduledAtDate,
-        topics:
-          allTopicIds.length > 0
-            ? allTopicIds
-            : topicNames.length === 0
-              ? []
-              : undefined,
+        // Send topic names - API handles finding/creating IDs
+        topics: topicNames,
       };
 
       // Remove undefined fields
@@ -297,7 +243,8 @@ export class WebinarService {
       ...postPlanData,
       consultantProfileId: consultantId,
       scheduledAt: scheduledAtDate,
-      topics: allTopicIds,
+      // Send topic names - API handles finding/creating IDs
+      topics: topicNames,
     };
 
     Object.keys(body).forEach(

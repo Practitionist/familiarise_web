@@ -211,15 +211,21 @@ export function EventManagementDashboard({
       setIsSaving(true);
       console.log("EventManagementDashboard - Saving consultation plan:", data);
 
+      // Transform topics to string[] for API compatibility
+      const planData = {
+        ...data.consultationPlan,
+        topics: data.consultationPlan?.topics ?? [],
+      };
+
       if (data.consultationPlan?.id) {
         // Update existing plan - use mutateAsync to return a Promise
         await updateConsultationPlan.mutateAsync({
           id: data.consultationPlan.id,
-          ...data.consultationPlan,
+          ...planData,
         });
       } else {
         // Create new plan - use mutateAsync to return a Promise
-        await createConsultationPlan.mutateAsync(data.consultationPlan);
+        await createConsultationPlan.mutateAsync(planData);
       }
 
       // Dialog closing is handled by the form component after awaiting this Promise
@@ -240,15 +246,21 @@ export function EventManagementDashboard({
       setIsSaving(true);
       console.log("EventManagementDashboard - Saving subscription plan:", data);
 
+      // Transform topics to string[] for API compatibility
+      const planData = {
+        ...data.subscriptionPlan,
+        topics: data.subscriptionPlan?.topics ?? [],
+      };
+
       if (data.subscriptionPlan?.id) {
         // Update existing plan - use mutateAsync to return a Promise
         await updateSubscriptionPlan.mutateAsync({
           id: data.subscriptionPlan.id,
-          ...data.subscriptionPlan,
+          ...planData,
         });
       } else {
         // Create new plan - use mutateAsync to return a Promise
-        await createSubscriptionPlan.mutateAsync(data.subscriptionPlan);
+        await createSubscriptionPlan.mutateAsync(planData);
       }
 
       // Dialog closing is handled by the form component after awaiting this Promise

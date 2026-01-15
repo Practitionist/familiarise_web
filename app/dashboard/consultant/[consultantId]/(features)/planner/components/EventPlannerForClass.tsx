@@ -114,10 +114,7 @@ export function EventPlannerForClass({
           prerequisites: initialData.classPlan.prerequisites ?? "",
           materialProvided: initialData.classPlan.materialProvided ?? "",
           learningOutcomes: initialData.classPlan.learningOutcomes,
-          topics:
-            initialData.classPlan.topics?.map((topic) =>
-              typeof topic === "string" ? topic : topic.name,
-            ) || [],
+          topics: initialData.classPlan.topics ?? [],
           certificateProvided: initialData.classPlan.certificateProvided,
           meetingsPerWeek: initialData.classPlan.meetingsPerWeek,
           emailSupport: initialData.classPlan.emailSupport,
@@ -161,10 +158,7 @@ export function EventPlannerForClass({
         prerequisites: initialData.classPlan.prerequisites ?? "",
         materialProvided: initialData.classPlan.materialProvided ?? "",
         learningOutcomes: initialData.classPlan.learningOutcomes,
-        topics:
-          initialData.classPlan.topics?.map((topic) =>
-            typeof topic === "string" ? topic : topic.name,
-          ) || [],
+        topics: initialData.classPlan.topics ?? [],
         certificateProvided: initialData.classPlan.certificateProvided,
         meetingsPerWeek: initialData.classPlan.meetingsPerWeek,
         emailSupport: initialData.classPlan.emailSupport,

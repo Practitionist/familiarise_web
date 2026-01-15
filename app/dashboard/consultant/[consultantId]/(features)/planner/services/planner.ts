@@ -22,8 +22,10 @@ import {
   SubscriptionPlanEvent,
   ClassContentInput,
 } from "../types/event";
-import { WebinarService, ClassService } from "./events";
-import { ConsultationService, SubscriptionService } from "./plans";
+import { WebinarService } from "./events/webinar-service";
+import { ClassService } from "./events/class-service";
+import { ConsultationService } from "./plans/consultation-service";
+import { SubscriptionService } from "./plans/subscription-service";
 import { TopicService } from "./topic-service";
 
 export class PlannerService {
