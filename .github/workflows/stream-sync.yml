@@ -1,0 +1,52 @@
+name: Stream User Sync
+
+on:
+  schedule:
+    # Run weekly on Sunday at 3 AM UTC (8:30 AM IST)
+    - cron: "0 3 * * 0"
+  workflow_dispatch: # Allow manual triggering
+
+jobs:
+  sync-stream-users:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      # Database connection (required for Prisma)
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DIRECT_URL: ${{ secrets.DIRECT_URL }}
+
+      # Stream Chat API credentials
+      STREAM_API_KEY: ${{ secrets.STREAM_API_KEY }}
+      STREAM_API_SECRET: ${{ secrets.STREAM_API_SECRET }}
+
+      # Redis for distributed locking
+      REDIS_URL: ${{ secrets.REDIS_URL }}
+
+      # Optional: Comma-separated user IDs to exclude from deletion
+      # STREAM_SYNC_EXCLUDED_USERS: ${{ secrets.STREAM_SYNC_EXCLUDED_USERS }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Sync Stream users
+        run: npx tsx jobs/stream/stream-sync.ts
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "Stream user sync job failed"
+          # Add notification logic here (Slack, email, etc.)

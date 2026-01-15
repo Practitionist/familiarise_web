@@ -1,21 +1,26 @@
 /**
- * Stream User Synchronization Job
+ * Stream User Sync - Core Logic
  *
- * This module handles Stream user synchronization - removing stale users
- * from Stream that no longer exist in the database.
- *
- * Can be used:
- * 1. As an import: import { performStreamUserSync } from './stream-sync'
- * 2. As a CLI script: npx ts-node jobs/stream-sync.ts
+ * Identifies and removes stale Stream Chat users that no longer exist in the database.
+ * Uses distributed locking via Redis to prevent concurrent runs.
  *
  * Features:
- * - Distributed lock via Upstash Redis prevents concurrent runs
- * - Graceful handling if lock cannot be acquired
+ * - Pagination for large user sets
+ * - Dry-run mode for testing
+ * - Comprehensive error handling
+ * - Rate limiting between batch deletions
+ *
+ * This module exports the core function.
+ * It is imported by:
+ * - jobs/stream/stream-sync.ts (GitHub Actions)
+ * - app/api/cleanup/stream-sync/route.ts (API endpoint)
+ *
+ * Schedule: Weekly (Sunday 3 AM UTC)
  */
 
 import { StreamChat, UserResponse } from "stream-chat";
-import prisma from "../lib/prisma";
-import { acquireLock, releaseLock, withCircuitBreaker } from "../lib/redis";
+import prisma from "../../lib/prisma";
+import { acquireLock, releaseLock, withCircuitBreaker } from "../../lib/redis";
 
 // Types
 interface FailedDeletionFromSDK {
@@ -29,11 +34,13 @@ export interface FailedDeletionEntry {
 }
 
 export interface SyncSummary {
+  success: boolean;
   totalStreamUsersProcessed: number;
   totalStaleUsersIdentified: number;
   totalStaleUsersDeleted: number;
   totalFailedDeletions: number;
   failedDeletionDetails: FailedDeletionEntry[];
+  timestamp: string;
 }
 
 export interface SyncOptions {
@@ -43,10 +50,26 @@ export interface SyncOptions {
   dryRun?: boolean;
   /** Additional user IDs to exclude from deletion */
   excludeUserIds?: string[];
+  /** Delay between batch deletions in ms (default: 500) */
+  batchDelayMs?: number;
+  /** Fail if lock cannot be acquired (default: false) */
+  requireLock?: boolean;
 }
 
-// User IDs that should never be deleted
-const DEFAULT_EXCLUDED_USER_IDS = new Set(["system", "teetangh"]);
+// User IDs that should never be deleted (from env or defaults)
+function getExcludedUserIds(): Set<string> {
+  const envExcluded = process.env.STREAM_SYNC_EXCLUDED_USERS || "";
+  const excluded = new Set(["system"]);
+
+  if (envExcluded) {
+    envExcluded.split(",").forEach((id) => {
+      const trimmed = id.trim();
+      if (trimmed) excluded.add(trimmed);
+    });
+  }
+
+  return excluded;
+}
 
 // System user prefixes that should be excluded
 const SYSTEM_USER_PREFIXES = ["system-", "recording-egress-"];
@@ -60,10 +83,11 @@ const SYNC_LOCK_TTL = 10 * 60 * 1000; // 10 minutes max runtime
  */
 function shouldExcludeUser(
   userId: string,
+  excludedSet: Set<string>,
   additionalExclusions?: string[],
 ): boolean {
   // Check default exclusions
-  if (DEFAULT_EXCLUDED_USER_IDS.has(userId)) {
+  if (excludedSet.has(userId)) {
     return true;
   }
 
@@ -85,18 +109,25 @@ function shouldExcludeUser(
  * @throws Error if API keys are not configured
  */
 function getStreamClient(): StreamChat {
-  const streamApiKey = process.env.NEXT_PUBLIC_STREAM_API_KEY;
+  const streamApiKey = process.env.STREAM_API_KEY;
   const streamApiSecret = process.env.STREAM_API_SECRET;
 
   if (!streamApiKey || !streamApiSecret) {
     throw new Error(
-      "Stream API Key or Secret not configured. Set NEXT_PUBLIC_STREAM_API_KEY and STREAM_API_SECRET environment variables.",
+      "Stream API Key or Secret not configured. Set STREAM_API_KEY and STREAM_API_SECRET environment variables.",
     );
   }
 
   return StreamChat.getInstance(streamApiKey, streamApiSecret, {
     timeout: 30000, // 30 seconds timeout
   });
+}
+
+/**
+ * Sleep for a given number of milliseconds
+ */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**
@@ -111,40 +142,48 @@ function getStreamClient(): StreamChat {
  *
  * @param options Sync configuration options
  * @returns Summary of the synchronization operation
- * @throws Error if lock cannot be acquired (sync already in progress)
  */
 export async function performStreamUserSync(
   options: SyncOptions = {},
 ): Promise<SyncSummary> {
-  const { pageLimit = 100, dryRun = false, excludeUserIds = [] } = options;
+  const {
+    pageLimit = 100,
+    dryRun = false,
+    excludeUserIds = [],
+    batchDelayMs = 500,
+    requireLock = false,
+  } = options;
+
+  const excludedSet = getExcludedUserIds();
 
   // Acquire distributed lock to prevent concurrent runs
   let lockToken: string | null = null;
   try {
     lockToken = await withCircuitBreaker(
       () => acquireLock(SYNC_LOCK_KEY, SYNC_LOCK_TTL),
-      () => null, // Fallback if Redis is down - proceed without lock
+      () => null, // Fallback if Redis is down
     );
   } catch (error) {
     console.warn(
-      "[Stream Sync] Failed to acquire lock, proceeding without distributed lock:",
+      "⚠️ Failed to acquire lock, proceeding without distributed lock:",
       error,
     );
   }
 
   if (lockToken === null) {
-    // Check if this is because sync is already running or Redis failed
-    console.warn(
-      "[Stream Sync] Could not acquire lock - sync may already be in progress or Redis unavailable",
-    );
-    // We'll proceed anyway but log a warning - this is a best-effort lock
+    const message =
+      "Could not acquire lock - sync may already be in progress or Redis unavailable";
+    if (requireLock) {
+      throw new Error(message);
+    }
+    console.warn(`⚠️ ${message}`);
   } else {
-    console.log("[Stream Sync] Acquired distributed lock");
+    console.log("🔒 Acquired distributed lock");
   }
 
-  console.log("[Stream Sync] Starting synchronization...");
+  console.log("🔄 Starting Stream user synchronization...");
   if (dryRun) {
-    console.log("[Stream Sync] DRY RUN MODE - No deletions will be performed");
+    console.log("🧪 DRY RUN MODE - No deletions will be performed");
   }
 
   const serverStreamClient = getStreamClient();
@@ -157,10 +196,9 @@ export async function performStreamUserSync(
 
   try {
     // Paginate through all Stream users
-    // eslint-disable-next-line no-constant-condition
     while (true) {
       console.log(
-        `[Stream Sync] Fetching users (after: ${lastStreamUserId || "start"})...`,
+        `   Fetching users (after: ${lastStreamUserId || "start"})...`,
       );
 
       const streamUsersResponse = await serverStreamClient.queryUsers(
@@ -172,7 +210,7 @@ export async function performStreamUserSync(
       const currentPageUsers: UserResponse[] = streamUsersResponse.users;
 
       if (currentPageUsers.length === 0) {
-        console.log("[Stream Sync] No more users to process.");
+        console.log("   No more users to process.");
         break;
       }
 
@@ -180,7 +218,7 @@ export async function performStreamUserSync(
       lastStreamUserId = currentPageUsers[currentPageUsers.length - 1].id;
 
       console.log(
-        `[Stream Sync] Processing ${currentPageUsers.length} users. Total: ${totalStreamUsersProcessed}`,
+        `   Processing ${currentPageUsers.length} users. Total: ${totalStreamUsersProcessed}`,
       );
 
       // Get IDs from current page
@@ -195,28 +233,28 @@ export async function performStreamUserSync(
       const activeUserIdSet = new Set(activePrismaUsers.map((u) => u.id));
 
       console.log(
-        `[Stream Sync] ${activeUserIdSet.size}/${streamUserIds.length} users exist in database`,
+        `   ${activeUserIdSet.size}/${streamUserIds.length} users exist in database`,
       );
 
       // Identify stale users (in Stream but not in database)
       const staleUsers = streamUserIds.filter((userId) => {
         if (activeUserIdSet.has(userId)) return false;
-        if (shouldExcludeUser(userId, excludeUserIds)) return false;
+        if (shouldExcludeUser(userId, excludedSet, excludeUserIds)) return false;
         return true;
       });
 
       if (staleUsers.length === 0) {
-        console.log("[Stream Sync] No stale users in this page.");
+        console.log("   No stale users in this page.");
         continue;
       }
 
       totalStaleUsersIdentified += staleUsers.length;
       console.log(
-        `[Stream Sync] Found ${staleUsers.length} stale users: ${staleUsers.slice(0, 5).join(", ")}${staleUsers.length > 5 ? "..." : ""}`,
+        `   Found ${staleUsers.length} stale users: ${staleUsers.slice(0, 5).join(", ")}${staleUsers.length > 5 ? "..." : ""}`,
       );
 
       if (dryRun) {
-        console.log("[Stream Sync] Skipping deletion (dry run mode)");
+        console.log("   Skipping deletion (dry run mode)");
         continue;
       }
 
@@ -242,7 +280,7 @@ export async function performStreamUserSync(
           }));
           allFailedDeletions.push(...failures);
           console.warn(
-            `[Stream Sync] ${failures.length} deletions failed:`,
+            `   ⚠️ ${failures.length} deletions failed:`,
             failures.map((f) => f.id).join(", "),
           );
         }
@@ -252,12 +290,17 @@ export async function performStreamUserSync(
         totalStaleUsersDeleted += successfullyDeleted;
 
         console.log(
-          `[Stream Sync] Deleted ${successfullyDeleted}/${staleUsers.length} users`,
+          `   ✅ Deleted ${successfullyDeleted}/${staleUsers.length} users`,
         );
+
+        // Rate limiting between batches
+        if (batchDelayMs > 0) {
+          await sleep(batchDelayMs);
+        }
       } catch (error) {
         const errorMessage =
           error instanceof Error ? error.message : "Batch deletion failed";
-        console.error(`[Stream Sync] Batch deletion error: ${errorMessage}`);
+        console.error(`   ❌ Batch deletion error: ${errorMessage}`);
 
         const failures = staleUsers.map((id) => ({
           id,
@@ -267,26 +310,28 @@ export async function performStreamUserSync(
       }
     }
 
-    console.log("[Stream Sync] Synchronization completed successfully.");
+    console.log("\n✅ Synchronization completed successfully.");
 
     return {
+      success: allFailedDeletions.length === 0,
       totalStreamUsersProcessed,
       totalStaleUsersIdentified,
       totalStaleUsersDeleted,
       totalFailedDeletions: allFailedDeletions.length,
       failedDeletionDetails: allFailedDeletions,
+      timestamp: new Date().toISOString(),
     };
   } catch (error) {
-    console.error("[Stream Sync] Synchronization failed:", error);
+    console.error("❌ Synchronization failed:", error);
     throw error;
   } finally {
     // Always release the lock when done (success or failure)
     if (lockToken) {
       try {
         await releaseLock(SYNC_LOCK_KEY, lockToken);
-        console.log("[Stream Sync] Released distributed lock");
+        console.log("🔓 Released distributed lock");
       } catch (releaseError) {
-        console.warn("[Stream Sync] Failed to release lock:", releaseError);
+        console.warn("⚠️ Failed to release lock:", releaseError);
         // Lock will auto-expire after TTL anyway
       }
     }
@@ -297,55 +342,24 @@ export async function performStreamUserSync(
  * Print sync summary to console
  */
 export function printSyncSummary(summary: SyncSummary): void {
-  console.log("\n=== Stream Sync Summary ===");
-  console.log(`Total Users Processed: ${summary.totalStreamUsersProcessed}`);
-  console.log(`Stale Users Identified: ${summary.totalStaleUsersIdentified}`);
-  console.log(`Users Deleted: ${summary.totalStaleUsersDeleted}`);
-  console.log(`Failed Deletions: ${summary.totalFailedDeletions}`);
+  console.log("\n📊 Stream Sync Summary:");
+  console.log(`   Total Users Processed: ${summary.totalStreamUsersProcessed}`);
+  console.log(`   Stale Users Identified: ${summary.totalStaleUsersIdentified}`);
+  console.log(`   Users Deleted: ${summary.totalStaleUsersDeleted}`);
+  console.log(`   Failed Deletions: ${summary.totalFailedDeletions}`);
+  console.log(`   Success: ${summary.success}`);
 
   if (summary.failedDeletionDetails.length > 0) {
-    console.log("\n--- Failed Deletions ---");
+    console.log("\n⚠️ Failed Deletions:");
     summary.failedDeletionDetails.forEach((failure) => {
-      console.log(`  ${failure.id}: ${failure.error}`);
+      console.log(`   - ${failure.id}: ${failure.error}`);
     });
   }
 }
 
 /**
- * CLI entry point
- * Only runs when this file is executed directly
+ * Disconnect from database - call this when done
  */
-async function main(): Promise<void> {
-  console.log("[Stream Sync CLI] Starting...\n");
-
-  // Validate environment
-  if (!process.env.DATABASE_URL) {
-    console.error("ERROR: DATABASE_URL environment variable is not set.");
-    process.exit(1);
-  }
-
-  // Check for dry run flag
-  const dryRun = process.argv.includes("--dry-run");
-
-  try {
-    const summary = await performStreamUserSync({ dryRun });
-    printSyncSummary(summary);
-
-    if (summary.totalFailedDeletions > 0) {
-      console.log("\n[Stream Sync CLI] Completed with some failures.");
-      process.exit(2); // Partial success
-    }
-
-    console.log("\n[Stream Sync CLI] Completed successfully.");
-    process.exit(0);
-  } catch (error) {
-    console.error("\n[Stream Sync CLI] Fatal error:", error);
-    process.exit(1);
-  }
-}
-
-// Only run main() when executed directly (not when imported)
-// Check if this module is the main module being run
-if (require.main === module) {
-  main();
+export async function disconnectDatabase(): Promise<void> {
+  await prisma.$disconnect();
 }

@@ -35,6 +35,14 @@
         "serena",
         "start-mcp-server"
       ]
+    },
+    "directus": {
+      "command": "npx",
+      "args": ["-y", "@directus/content-mcp@latest"],
+      "env": {
+        "DIRECTUS_URL": "https://your-project.directus.app",
+        "DIRECTUS_TOKEN": "your-directus-admin-token"
+      }
     }
   }
 }
