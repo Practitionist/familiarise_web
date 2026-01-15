@@ -115,7 +115,7 @@
     "stream-chat-react": "^13.13.1",
     "stripe": "^18.2.1",
     "swr": "^2.3.8",
-    "tailwind-merge": "^2.6.0",
+    "tailwind-merge": "^3.4.0",
     "tailwindcss-animate": "^1.0.7",
     "tweetnacl": "^1.0.3",
     "tweetnacl-util": "^0.15.1",
