@@ -13,16 +13,16 @@ const CONFIG: PlanMaterialsConfig = {
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ subscriptionPlanId: string }> }
+  { params }: { params: Promise<{ subscriptionId: string }> }
 ) {
-  const { subscriptionPlanId } = await params;
-  return handleGetMaterials(request, subscriptionPlanId, CONFIG);
+  const { subscriptionId } = await params;
+  return handleGetMaterials(request, subscriptionId, CONFIG);
 }
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ subscriptionPlanId: string }> }
+  { params }: { params: Promise<{ subscriptionId: string }> }
 ) {
-  const { subscriptionPlanId } = await params;
-  return handleUploadMaterial(request, subscriptionPlanId, CONFIG);
+  const { subscriptionId } = await params;
+  return handleUploadMaterial(request, subscriptionId, CONFIG);
 }
