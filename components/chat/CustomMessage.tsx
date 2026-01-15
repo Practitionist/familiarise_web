@@ -2,7 +2,7 @@
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { format } from "date-fns";
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import {
   Attachment,
   useChatContext,
@@ -41,6 +41,27 @@ export const CustomMessage = () => {
   const [isEditing, setIsEditing] = useState(false);
   const [editText, setEditText] = useState(message.text || "");
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+
+  // Refs for click-outside detection
+  const emojiPickerRef = useRef<HTMLDivElement>(null);
+  const moreOptionsRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdowns when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (emojiPickerRef.current && !emojiPickerRef.current.contains(event.target as Node)) {
+        setShowEmojiPicker(false);
+      }
+      if (moreOptionsRef.current && !moreOptionsRef.current.contains(event.target as Node)) {
+        setShowMoreOptions(false);
+      }
+    };
+
+    if (showEmojiPicker || showMoreOptions) {
+      document.addEventListener("mousedown", handleClickOutside);
+      return () => document.removeEventListener("mousedown", handleClickOutside);
+    }
+  }, [showEmojiPicker, showMoreOptions]);
 
   // Map Stream reaction types to actual emoji characters
   const reactionTypeToEmoji: Record<string, string> = {
@@ -177,7 +198,7 @@ export const CustomMessage = () => {
         >
           <div className="flex items-center gap-0.5 bg-white rounded-lg shadow-lg border">
             {/* React with Emoji */}
-            <div className="relative">
+            <div className="relative" ref={emojiPickerRef}>
               <button
                 onClick={() => setShowEmojiPicker(!showEmojiPicker)}
                 className="p-1.5 hover:bg-gray-100 rounded-l-lg transition-colors"
@@ -189,7 +210,6 @@ export const CustomMessage = () => {
               {showEmojiPicker && (
                 <div
                   className={`absolute top-full mt-1 z-30 bg-white rounded-lg shadow-lg border p-2 ${isMyMessage ? "right-0" : "left-0"}`}
-                  onMouseLeave={() => setShowEmojiPicker(false)}
                 >
                   <div className="flex gap-1">
                     {quickReactions.map((reactionType) => (
@@ -221,7 +241,7 @@ export const CustomMessage = () => {
 
             {/* More Options (Edit, Delete) - Only for own messages */}
             {isMyMessage && (
-              <div className="relative">
+              <div className="relative" ref={moreOptionsRef}>
                 <button
                   onClick={() => setShowMoreOptions(!showMoreOptions)}
                   className="p-1.5 hover:bg-gray-100 rounded-r-lg transition-colors"
@@ -233,7 +253,6 @@ export const CustomMessage = () => {
                 {showMoreOptions && (
                   <div
                     className="absolute top-full right-0 mt-1 bg-white rounded-lg shadow-lg border py-1 min-w-[120px] z-30"
-                    onMouseLeave={() => setShowMoreOptions(false)}
                   >
                     <button
                       onClick={handleEditClick}
