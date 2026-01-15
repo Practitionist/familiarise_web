@@ -23,11 +23,7 @@ export class MaterialsService {
       class: "classes",
     };
     const pluralType = planTypeMap[planType];
-    const idParam = `${planType}PlanId`;
-    return `/api/plans/${pluralType}/${planId}/materials`.replace(
-      `${planId}`,
-      planId
-    );
+    return `/api/plans/${pluralType}/${planId}/materials`;
   }
 
   /**
