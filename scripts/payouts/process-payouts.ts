@@ -15,13 +15,11 @@
  */
 
 import {
-  PrismaClient,
   PayoutStatus,
   PaymentGateway,
   EarningStatus,
 } from "@prisma/client";
-
-const prisma = new PrismaClient();
+import prisma from "@/lib/prisma";
 
 /**
  * Result structure for individual payout processing

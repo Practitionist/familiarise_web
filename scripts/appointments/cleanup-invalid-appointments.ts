@@ -20,9 +20,8 @@
  * Action: Marks invalid records as CANCELLED (preserves audit trail)
  */
 
-import { PrismaClient, RequestStatus } from "@prisma/client";
-
-const prisma = new PrismaClient();
+import { RequestStatus } from "@prisma/client";
+import prisma from "@/lib/prisma";
 
 /**
  * Result structure for cleanup operations

@@ -17,15 +17,13 @@
  */
 
 import {
-  PrismaClient,
   PaymentStatus,
   PaymentGateway,
   RequestStatus,
 } from "@prisma/client";
 import Stripe from "stripe";
 import { cancelRazorpayOrder } from "../../lib/payments/core/razorpay";
-
-const prisma = new PrismaClient();
+import prisma from "@/lib/prisma";
 
 /**
  * Result structure for cleanup operations

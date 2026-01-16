@@ -14,9 +14,8 @@
  * Schedule: Runs hourly via GitHub Actions
  */
 
-import { PrismaClient, EarningStatus } from "@prisma/client";
-
-const prisma = new PrismaClient();
+import { EarningStatus } from "@prisma/client";
+import prisma from "@/lib/prisma";
 
 /**
  * Result structure for release operations
