@@ -22,6 +22,10 @@ import {
   ApprovalLock,
 } from "@/utils/appointmentlock";
 import {
+  MINIMUM_BOOKING_LEAD_TIME_MS,
+  MINIMUM_BOOKING_LEAD_TIME_MINUTES,
+} from "@/lib/payments/constants";
+import {
   countUniqueParticipants,
   isUserEnrolled,
 } from "@/lib/payments/utils/participants";
@@ -388,6 +392,21 @@ export async function validateSlotAvailability(
 
   const slotStart = new Date(data.slotStartTimeInUTC);
   const slotEnd = new Date(data.slotEndTimeInUTC);
+
+  // 0. Validate slot is not in the past or too soon (minimum lead time check)
+  const now = new Date();
+  const minimumBookingTime = new Date(now.getTime() + MINIMUM_BOOKING_LEAD_TIME_MS);
+
+  if (slotStart < now) {
+    throw new Error("This time slot has already passed");
+  }
+
+  if (slotStart < minimumBookingTime) {
+    const minutesUntilSlot = Math.ceil((slotStart.getTime() - now.getTime()) / (60 * 1000));
+    throw new Error(
+      `This time slot starts too soon (in ${minutesUntilSlot} minute${minutesUntilSlot === 1 ? "" : "s"}). Bookings must be made at least ${MINIMUM_BOOKING_LEAD_TIME_MINUTES} minutes in advance.`
+    );
+  }
 
   // 1. Check for confirmed overlapping appointments FOR THIS CONSULTANT ONLY
   // FIX: Previously checked ALL consultants globally, now filters by specific consultant

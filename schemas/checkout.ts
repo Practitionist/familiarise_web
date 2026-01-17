@@ -1,5 +1,9 @@
 import { z } from "zod";
 import { AppointmentsType, PaymentGateway } from "@prisma/client";
+import {
+  MINIMUM_BOOKING_LEAD_TIME_MS,
+  MINIMUM_BOOKING_LEAD_TIME_MINUTES,
+} from "@/lib/payments/constants";
 
 // Base schemas for individual components
 export const appointmentTypeSchema = z.enum([
@@ -171,6 +175,28 @@ export const checkoutSchema = z
           code: z.ZodIssueCode.custom,
           message: "Start time must be before end time",
           path: ["slotEndTimeInUTC"],
+        });
+      }
+    }
+
+    // Validate slot is not in the past or within minimum booking lead time
+    if (data.slotStartTimeInUTC) {
+      const slotStart = new Date(data.slotStartTimeInUTC);
+      const now = new Date();
+      const minimumBookingTime = new Date(now.getTime() + MINIMUM_BOOKING_LEAD_TIME_MS);
+
+      if (slotStart < now) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "This time slot has already passed",
+          path: ["slotStartTimeInUTC"],
+        });
+      } else if (slotStart < minimumBookingTime) {
+        const minutesUntilSlot = Math.ceil((slotStart.getTime() - now.getTime()) / (60 * 1000));
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `This time slot starts too soon (in ${minutesUntilSlot} minute${minutesUntilSlot === 1 ? "" : "s"}). Bookings must be made at least ${MINIMUM_BOOKING_LEAD_TIME_MINUTES} minutes in advance.`,
+          path: ["slotStartTimeInUTC"],
         });
       }
     }
