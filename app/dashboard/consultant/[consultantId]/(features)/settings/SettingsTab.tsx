@@ -790,8 +790,8 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
                           sessionTypes: checked
                             ? [...(prev.sessionTypes || []), type]
                             : (prev.sessionTypes || []).filter(
-                                (t) => t !== type,
-                              ),
+                              (t) => t !== type,
+                            ),
                         }));
                       }}
                     />
