@@ -67,6 +67,7 @@ const WebinarFormSchema = z.object({
   topics: z.array(z.string()).min(1, "At least one topic is required"),
   consultantProfileId: z.string().optional(),
   certificateProvided: z.boolean(),
+  recordingEnabled: z.boolean(),
   durationInHours: z.number().min(0.5, "Duration must be at least 30 minutes"),
   scheduledAt: z.string().min(1, "Start time is required"),
 });
@@ -168,6 +169,8 @@ export function EventPlannerForWebinar({
       learningOutcomes: initialData?.webinarPlan?.learningOutcomes ?? [],
       certificateProvided:
         initialData?.webinarPlan?.certificateProvided ?? false,
+      recordingEnabled:
+        initialData?.webinarPlan?.recordingEnabled ?? false,
       topics: initialData?.webinarPlan?.topics ?? [],
       scheduledAt: getInitialScheduledAt(),
       consultantProfileId: consultantId,
@@ -191,6 +194,8 @@ export function EventPlannerForWebinar({
         learningOutcomes: initialData.webinarPlan.learningOutcomes ?? [],
         certificateProvided:
           initialData.webinarPlan.certificateProvided ?? false,
+        recordingEnabled:
+          initialData.webinarPlan.recordingEnabled ?? false,
         topics: initialData.webinarPlan.topics ?? [],
         scheduledAt: getInitialScheduledAt(),
         consultantProfileId: consultantId,
@@ -270,6 +275,7 @@ export function EventPlannerForWebinar({
           price: formData.price,
           priceCurrency: formData.priceCurrency ?? "INR",
           certificateProvided: formData.certificateProvided ?? false,
+          recordingEnabled: formData.recordingEnabled ?? false,
           durationInHours: formData.durationInHours,
           maxParticipants: formData.maxParticipants,
           language: formData.language ?? "English",
@@ -515,6 +521,29 @@ export function EventPlannerForWebinar({
                         </FormLabel>
                         <FormDescription>
                           Provide attendees with a certificate after the webinar
+                        </FormDescription>
+                      </div>
+                      <FormControl>
+                        <Switch
+                          checked={field.value}
+                          onCheckedChange={field.onChange}
+                        />
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name="recordingEnabled"
+                  render={({ field }) => (
+                    <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4 mt-4">
+                      <div className="space-y-0.5">
+                        <FormLabel className="text-base">
+                          Enable Recording
+                        </FormLabel>
+                        <FormDescription>
+                          Allow recording of this webinar for attendees to watch later
                         </FormDescription>
                       </div>
                       <FormControl>
