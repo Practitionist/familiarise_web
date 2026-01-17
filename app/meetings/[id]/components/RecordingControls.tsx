@@ -2,7 +2,6 @@
 
 import { useState, useEffect } from "react";
 import { useCall, useCallStateHooks } from "@stream-io/video-react-sdk";
-import { useSession } from "next-auth/react";
 import { Circle, Square, Loader2 } from "lucide-react";
 import { cn } from "@/utils/tailwind";
 import { useToast } from "@/hooks/use-toast";
@@ -17,7 +16,6 @@ const RecordingControls = ({
   recordingEnabled,
 }: RecordingControlsProps) => {
   const call = useCall();
-  const { data: session } = useSession();
   const { toast } = useToast();
   const [isRecording, setIsRecording] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -84,7 +82,7 @@ const RecordingControls = ({
 
   // Recording duration timer
   useEffect(() => {
-    let interval: NodeJS.Timeout;
+    let interval: ReturnType<typeof setInterval> | undefined;
 
     if (isRecording) {
       interval = setInterval(() => {
