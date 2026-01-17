@@ -449,11 +449,15 @@ async function createAppointmentFromWebhook(
     notes,
   } = metadata;
 
-  if (!payment.user.consulteeProfile) {
-    throw new Error("User profile not found for payment");
+  // Auto-create ConsulteeProfile if missing (handles edge cases like admin-created users,
+  // legacy data, or OAuth sign-up failures where profile wasn't created)
+  let consulteeProfileId = payment.user.consulteeProfile?.id;
+  if (!consulteeProfileId) {
+    const newProfile = await tx.consulteeProfile.create({
+      data: { userId: payment.user.id },
+    });
+    consulteeProfileId = newProfile.id;
   }
-
-  const consulteeProfileId = payment.user.consulteeProfile.id;
   const userId = payment.user.id;
 
   let appointment;

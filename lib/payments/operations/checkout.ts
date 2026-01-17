@@ -175,8 +175,17 @@ export async function calculateAmountAndValidate(
       },
     });
 
-    if (!user?.consulteeProfile) {
-      throw new Error("User profile not found");
+    // Auto-create ConsulteeProfile if missing (handles edge cases like admin-created users,
+    // legacy data, or OAuth sign-up failures where profile wasn't created)
+    let consulteeProfileId = user?.consulteeProfile?.id;
+    if (!consulteeProfileId) {
+      if (!user) {
+        throw new Error("User not found");
+      }
+      const newProfile = await tx.consulteeProfile.create({
+        data: { userId: userId },
+      });
+      consulteeProfileId = newProfile.id;
     }
 
     // Get plan and validate availability without creating records
@@ -198,7 +207,7 @@ export async function calculateAmountAndValidate(
         await validateSlotAvailability(
           tx,
           validatedData,
-          user.consulteeProfile.id,
+          consulteeProfileId,
           plan.consultantProfile.user.id, // FIX: Pass consultant user ID to filter by consultant
         );
         amount = plan.price;
@@ -221,7 +230,7 @@ export async function calculateAmountAndValidate(
         await validateSlotAvailability(
           tx,
           validatedData,
-          user.consulteeProfile.id,
+          consulteeProfileId,
           plan.consultantProfile.user.id, // FIX: Pass consultant user ID to filter by consultant
         );
         amount = plan.price;
@@ -362,7 +371,7 @@ export async function calculateAmountAndValidate(
       amount,
       currency,
       discountCodeId,
-      consulteeProfileId: user.consulteeProfile.id,
+      consulteeProfileId,
     };
   });
 }
@@ -789,8 +798,17 @@ async function revalidateInsideLock(
       include: { consulteeProfile: true },
     });
 
-    if (!user?.consulteeProfile) {
-      throw new Error("User profile not found");
+    // Auto-create ConsulteeProfile if missing (handles edge cases like admin-created users,
+    // legacy data, or OAuth sign-up failures where profile wasn't created)
+    let consulteeProfileId = user?.consulteeProfile?.id;
+    if (!consulteeProfileId) {
+      if (!user) {
+        throw new Error("User not found");
+      }
+      const newProfile = await tx.consulteeProfile.create({
+        data: { userId: userId },
+      });
+      consulteeProfileId = newProfile.id;
     }
 
     // BUG-E: Re-validate plan still exists (could be deleted between initial validation and lock)
@@ -811,7 +829,7 @@ async function revalidateInsideLock(
           await validateSlotAvailability(
             tx,
             data,
-            user.consulteeProfile.id,
+            consulteeProfileId,
             consultationPlan.consultantProfile.user.id,
           );
         }
@@ -830,7 +848,7 @@ async function revalidateInsideLock(
           await validateSlotAvailability(
             tx,
             data,
-            user.consulteeProfile.id,
+            consulteeProfileId,
             subscriptionPlan.consultantProfile.user.id,
           );
         }
