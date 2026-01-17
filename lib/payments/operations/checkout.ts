@@ -980,7 +980,7 @@ export async function handleSubscriptionCheckout(
   tx: Prisma.TransactionClient,
   data: CheckoutInput,
   consulteeProfileId: string,
-  skipPayment: boolean,
+  _skipPayment: boolean,
 ): Promise<SubscriptionCheckoutResult> {
   const plan = await tx.subscriptionPlan.findUnique({
     where: { id: data.planId },
