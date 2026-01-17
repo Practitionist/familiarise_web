@@ -567,7 +567,7 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
   return (
     <form
       onSubmit={handleSubmit}
-      className="bg-white p-6 rounded-lg space-y-8"
+      className="bg-white p-6 rounded-lg shadow space-y-8"
       role="form"
       aria-label="Settings form"
     >

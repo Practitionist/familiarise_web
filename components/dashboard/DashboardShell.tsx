@@ -44,7 +44,7 @@ export function DashboardShell({
 
   return (
     <MobileSidebarContext.Provider value={contextValue}>
-      <div className={cn("flex h-screen bg-zinc-100", className)}>
+      <div className={cn("flex min-h-screen bg-zinc-100", className)}>
         {/* Desktop Sidebar */}
         <aside className="fixed left-0 top-0 z-40 hidden h-screen w-64 lg:block">
           {sidebar}
@@ -88,7 +88,7 @@ export function DashboardShell({
         </AnimatePresence>
 
         {/* Main Content */}
-        <main className="flex-1 lg:ml-64 flex flex-col h-screen overflow-y-auto bg-white">
+        <main className="flex-1 lg:ml-64 min-h-screen bg-zinc-100">
           {/* Mobile Header Bar */}
           <div className="sticky top-0 z-30 flex items-center gap-3 px-4 py-3 bg-white border-b border-zinc-200 lg:hidden">
             <Button
@@ -109,7 +109,7 @@ export function DashboardShell({
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -8 }}
               transition={{ duration: 0.2, ease: "easeOut" }}
-              className="p-6 lg:p-8"
+              className="min-h-0 p-6 lg:p-8 bg-zinc-100"
             >
               {children}
             </motion.div>
