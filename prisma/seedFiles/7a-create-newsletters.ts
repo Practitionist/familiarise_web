@@ -1,7 +1,9 @@
 import { faker } from "@faker-js/faker";
 import prisma from "../../lib/prisma";
+import { config } from "./config";
 
-const NUM_NEWSLETTERS = 100;
+// Newsletter volume - configurable via SEED_MODE environment variable
+const NUM_NEWSLETTERS = config.volumes.newsletters;
 
 export async function createNewsletters() {
   console.log(`Creating ${NUM_NEWSLETTERS} newsletter subscriptions...`);

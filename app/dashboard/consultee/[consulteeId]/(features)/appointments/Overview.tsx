@@ -53,6 +53,7 @@ interface DashboardCardProps {
     appointmentId?: string;
     appointment?: TAppointment;
     rawSlots?: SlotOfAppointment[];
+    pendingPaymentUrl?: string | null;
   }>;
 }
 
@@ -158,6 +159,7 @@ export function Overview({
                   | TAppointment
                   | undefined,
                 rawSlots,
+                pendingPaymentUrl: consultation.pendingPaymentUrl,
               };
             }),
           )}
@@ -202,6 +204,7 @@ export function Overview({
                   | TAppointment
                   | undefined,
                 rawSlots,
+                pendingPaymentUrl: subscription.pendingPaymentUrl,
               };
             }),
           )}
@@ -487,6 +490,7 @@ function DashboardCard({
                   appointmentId={item.appointmentId}
                   appointment={item.appointment}
                   rawSlots={item.rawSlots}
+                  pendingPaymentUrl={item.pendingPaymentUrl}
                 />
               </div>
             ))}
@@ -511,6 +515,7 @@ function DashboardCard({
                   appointmentId={item.appointmentId}
                   appointment={item.appointment}
                   rawSlots={item.rawSlots}
+                  pendingPaymentUrl={item.pendingPaymentUrl}
                 />
               </div>
             ))}

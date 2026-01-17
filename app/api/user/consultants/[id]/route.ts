@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import authOptions from "../../../auth/[...nextauth]/options";
 import { experienceValidation } from "@/schemas/shared";
+import { checkActiveAppointments } from "../utils/consultant-appointments";
 
 // Zod schema for UUID validation
 const uuidSchema = z.string().uuid();
@@ -55,16 +56,16 @@ const updateConsultantSchema = z
     tagIds: z.array(uuidSchema),
     slotsOfAvailabilityWeekly: z.array(weeklySlotSchema).optional(),
     slotsOfAvailabilityCustom: z.array(customSlotSchema).optional(),
-    // New fields
-    headline: z.string().max(120).optional(),
-    websiteUrl: z.string().url().optional().or(z.literal("")),
-    twitterUrl: z.string().url().optional().or(z.literal("")),
-    githubUrl: z.string().url().optional().or(z.literal("")),
-    videoIntroUrl: z.string().url().optional().or(z.literal("")),
-    languages: z.array(z.string()).optional(),
-    toolsAndTechnologies: z.array(z.string()).optional(),
-    mentoringStyle: z.string().optional(),
-    sessionTypes: z.array(z.nativeEnum(SessionType)).optional(),
+    // New fields - accept null values from frontend for optional fields
+    headline: z.string().max(120).nullable().optional(),
+    websiteUrl: z.string().url().nullable().optional().or(z.literal("")),
+    twitterUrl: z.string().url().nullable().optional().or(z.literal("")),
+    githubUrl: z.string().url().nullable().optional().or(z.literal("")),
+    videoIntroUrl: z.string().url().nullable().optional().or(z.literal("")),
+    languages: z.array(z.string()).nullable().optional(),
+    toolsAndTechnologies: z.array(z.string()).nullable().optional(),
+    mentoringStyle: z.string().nullable().optional(),
+    sessionTypes: z.array(z.nativeEnum(SessionType)).nullable().optional(),
   })
   .refine(
     (data) => {
@@ -190,6 +191,31 @@ export async function PUT(
       mentoringStyle,
       sessionTypes,
     } = data;
+
+    // Check if schedule type is being changed
+    const existingConsultant = await prisma.consultantProfile.findUnique({
+      where: { id },
+      select: { scheduleType: true },
+    });
+
+    if (
+      existingConsultant &&
+      existingConsultant.scheduleType !== scheduleType
+    ) {
+      // Validate that there are no active appointments before allowing switch
+      const activeAppointments = await checkActiveAppointments(id);
+
+      if (activeAppointments.hasActive) {
+        return NextResponse.json(
+          {
+            error: `Cannot switch schedule type while you have ${activeAppointments.total} active appointment(s). Please complete or cancel them first.`,
+            code: "SCHEDULE_SWITCH_BLOCKED",
+            breakdown: activeAppointments.breakdown,
+          },
+          { status: 400 },
+        );
+      }
+    }
 
     // Update consultant profile
     await prisma.consultantProfile.update({

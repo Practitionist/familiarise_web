@@ -7,8 +7,10 @@ import {
 } from "@prisma/client";
 import prisma from "../../lib/prisma";
 import { UserWithProfiles } from "./1a-create-users";
+import { config } from "./config";
 
-const NUM_PAYMENTS = 200; // Medium data volume
+// Payment volume - configurable via SEED_MODE environment variable
+const NUM_PAYMENTS = config.volumes.payments;
 
 type AppointmentWithPlans = Prisma.AppointmentGetPayload<{
   include: {

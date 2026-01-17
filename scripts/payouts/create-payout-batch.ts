@@ -15,14 +15,12 @@
  */
 
 import {
-  PrismaClient,
   EarningStatus,
   PayoutStatus,
   PayoutMethod,
 } from "@prisma/client";
 import { randomUUID } from "crypto";
-
-const prisma = new PrismaClient();
+import prisma from "@/lib/prisma";
 
 // Configuration
 const MINIMUM_PAYOUT_AMOUNT = 50000; // ₹500 in paise

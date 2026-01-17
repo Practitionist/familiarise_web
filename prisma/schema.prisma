@@ -1,12 +1,10 @@
 generator client {
   provider = "prisma-client-js"
-  output   = "../node_modules/.prisma/client"
 }
 
 datasource db {
-  provider  = "postgresql"
-  url       = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL")
+  provider = "postgresql"
+  // Database URLs are now configured in prisma.config.ts (Prisma 7)
 }
 
 ////////////////////////////////////////// USER MODEL //////////////////////////////////////////
@@ -628,11 +626,13 @@ model ConsultationPlan {
   prerequisites    String?  @default("None")
   materialProvided String?  @default("None")
   learningOutcomes String[] @default([])
+  topics           Topic[]  @relation("TopicToConsultationPlan")
 
   consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultantProfileId String
 
   consultations Consultation[]
+  materials     PlanMaterial[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -664,6 +664,13 @@ model Consultation {
 
   createdAt DateTime @default(now()) @db.Timestamptz()
   updatedAt DateTime @updatedAt @db.Timestamptz()
+
+  @@index([requestedById])
+  @@index([consultationPlanId])
+  @@index([requestStatus])
+  @@index([requestedById, requestStatus])
+  @@index([requestedAt])
+  @@index([cancelledAt])
 }
 
 model SubscriptionPlan {
@@ -683,11 +690,13 @@ model SubscriptionPlan {
   prerequisites          String?          @default("None")
   materialProvided       String?          @default("None")
   learningOutcomes       String[]         @default([])
+  topics                 Topic[]          @relation("TopicToSubscriptionPlan")
 
   consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultantProfileId String
 
   subscriptions Subscription[]
+  materials     PlanMaterial[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -723,6 +732,13 @@ model Subscription {
 
   createdAt DateTime @default(now()) @db.Timestamptz()
   updatedAt DateTime @updatedAt @db.Timestamptz()
+
+  @@index([requestedById])
+  @@index([subscriptionPlanId])
+  @@index([requestStatus])
+  @@index([requestedById, requestStatus])
+  @@index([requestedAt])
+  @@index([cancelledAt])
 }
 
 enum RequestStatus {
@@ -761,6 +777,7 @@ model WebinarPlan {
   consultantProfile   ConsultantProfile? @relation(fields: [consultantProfileId], references: [id])
   consultantProfileId String?
   webinars            Webinar[]
+  materials           PlanMaterial[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -795,7 +812,7 @@ model ClassPlan {
   id                     String           @id @default(cuid())
   title                  String
   description            String           @db.Text
-  topics                 Topic[]          @relation("ClassPlanToTopic")
+  topics                 Topic[]          @relation("TopicToClassPlan")
   classContents          ClassContent[]
   price                  Int
   priceCurrency          String           @default("INR")
@@ -816,6 +833,7 @@ model ClassPlan {
   consultantProfile   ConsultantProfile? @relation(fields: [consultantProfileId], references: [id])
   consultantProfileId String?
   classes             Class[]
+  materials           PlanMaterial[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -840,6 +858,7 @@ model Class {
   updatedAt DateTime @updatedAt @db.Timestamptz()
 
   @@index([classPlanId])
+  @@index([status])
 }
 
 model ClassContent {
@@ -856,6 +875,9 @@ model ClassContent {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([classPlanId])
+  @@index([classPlanId, order])
 }
 
 enum ClassStatus {
@@ -869,8 +891,10 @@ model Topic {
   id   String @id @default(cuid())
   name String @unique
 
-  webinarPlans WebinarPlan[] @relation("TopicToWebinarPlan")
-  classPlans   ClassPlan[]   @relation("ClassPlanToTopic")
+  webinarPlans      WebinarPlan[]      @relation("TopicToWebinarPlan")
+  classPlans        ClassPlan[]        @relation("TopicToClassPlan")
+  consultationPlans ConsultationPlan[] @relation("TopicToConsultationPlan")
+  subscriptionPlans SubscriptionPlan[] @relation("TopicToSubscriptionPlan")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -899,6 +923,9 @@ model Waitlist {
 
   @@unique([userId, webinarId])
   @@unique([userId, classId])
+  @@index([userId])
+  @@index([webinarId])
+  @@index([classId])
 }
 
 ////////////////////////////////////////////// APPOINTMENT ////////////////////////////////////////////////////
@@ -926,6 +953,9 @@ model Appointment {
 
   createdAt DateTime @default(now()) @db.Timestamptz()
   updatedAt DateTime @updatedAt @db.Timestamptz()
+
+  @@index([subscriptionId])
+  @@index([classId])
 }
 
 enum AppointmentsType {
@@ -952,6 +982,14 @@ model AppointmentDocument {
   reviewedAt   DateTime?
   reviewedBy   String? // Consultant user ID
 
+  // Upload role - who uploaded this document
+  uploadedByRole DocumentUploadRole @default(CONSULTEE)
+
+  // Response document linking - for consultant responses to consultee submissions
+  responseToDocumentId String?
+  responseToDocument   AppointmentDocument?  @relation("DocumentResponse", fields: [responseToDocumentId], references: [id], onUpdate: Cascade, onDelete: SetNull)
+  responseDocuments    AppointmentDocument[] @relation("DocumentResponse")
+
   // Relations
   appointment   Appointment @relation(fields: [appointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   appointmentId String
@@ -962,6 +1000,8 @@ model AppointmentDocument {
 
   @@index([appointmentId])
   @@index([reviewStatus])
+  @@index([uploadedByRole])
+  @@index([responseToDocumentId])
 }
 
 enum DocumentReviewStatus {
@@ -970,6 +1010,45 @@ enum DocumentReviewStatus {
   APPROVED
   REJECTED
   NEEDS_REVISION
+}
+
+enum DocumentUploadRole {
+  CONSULTEE
+  CONSULTANT
+}
+
+// Plan Materials - Consultant-uploaded materials at plan level (shared across all instances)
+model PlanMaterial {
+  id           String  @id @default(uuid())
+  fileName     String
+  originalName String
+  fileSize     Int
+  mimeType     String
+  fileUrl      String
+  storagePath  String
+  description  String? @db.Text
+  order        Int     @default(0) // For ordering materials in display
+
+  // Optional foreign keys - exactly one should be set
+  consultationPlanId String?
+  subscriptionPlanId String?
+  webinarPlanId      String?
+  classPlanId        String?
+
+  // Relations
+  consultationPlan ConsultationPlan? @relation(fields: [consultationPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  subscriptionPlan SubscriptionPlan? @relation(fields: [subscriptionPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  webinarPlan      WebinarPlan?      @relation(fields: [webinarPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  classPlan        ClassPlan?        @relation(fields: [classPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+
+  uploadedAt DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([consultationPlanId])
+  @@index([subscriptionPlanId])
+  @@index([webinarPlanId])
+  @@index([classPlanId])
+  @@index([order])
 }
 
 model SlotOfAppointment {
@@ -994,6 +1073,7 @@ model SlotOfAppointment {
   // OPT-3: Additional indexes for time range queries in validateSlotAvailability
   @@index([startsAt, endsAt])
   @@index([isTentative, startsAt, endsAt])
+  @@index([createdAt])
 }
 
 ////////////////////////////////////////////// MEETINGS FOR STREAM ////////////////////////////////////////////////////
@@ -1074,6 +1154,8 @@ model Payment {
   @@unique([userId, appointmentId]) // Allow multiple users to pay for same appointment (webinars/classes)
   @@index([expiresAt, paymentStatus])
   @@index([isMockPayment])
+  @@index([paymentStatus])
+  @@index([createdAt])
 }
 
 enum PaymentGateway {
@@ -1109,6 +1191,7 @@ model Refund {
   @@index([paymentId])
   @@index([status])
   @@index([refundId])
+  @@index([paymentId, status])
 }
 
 enum RefundStatus {
@@ -1140,6 +1223,7 @@ model Dispute {
   @@index([status])
   @@index([disputeId])
   @@index([dueBy])
+  @@index([paymentId, status])
 }
 
 enum DisputeStatus {
@@ -1242,6 +1326,7 @@ model Payout {
   @@index([consultantProfileId, status])
   @@index([batchId])
   @@index([status])
+  @@index([createdAt])
 }
 
 model PayoutAccount {
@@ -1320,6 +1405,7 @@ model WebhookEvent {
   @@index([provider])
   @@index([processed])
   @@index([eventType])
+  @@index([receivedAt])
 }
 
 model DiscountCode {
@@ -1338,6 +1424,10 @@ model DiscountCode {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([isActive])
+  @@index([expiresAt])
+  @@index([isActive, expiresAt])
 }
 
 enum DiscountType {

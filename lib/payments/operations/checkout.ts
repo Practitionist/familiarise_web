@@ -21,6 +21,7 @@ import {
   unlockEventCheckout,
   ApprovalLock,
 } from "@/utils/appointmentlock";
+import { validateSlotTiming } from "@/lib/payments/utils/slot-validation";
 import {
   countUniqueParticipants,
   isUserEnrolled,
@@ -388,6 +389,12 @@ export async function validateSlotAvailability(
 
   const slotStart = new Date(data.slotStartTimeInUTC);
   const slotEnd = new Date(data.slotEndTimeInUTC);
+
+  // 0. Validate slot is not in the past or too soon (minimum lead time check)
+  const timingError = validateSlotTiming(slotStart);
+  if (timingError) {
+    throw new Error(timingError);
+  }
 
   // 1. Check for confirmed overlapping appointments FOR THIS CONSULTANT ONLY
   // FIX: Previously checked ALL consultants globally, now filters by specific consultant
@@ -961,7 +968,7 @@ export async function handleSubscriptionCheckout(
   tx: Prisma.TransactionClient,
   data: CheckoutInput,
   consulteeProfileId: string,
-  skipPayment: boolean,
+  _skipPayment: boolean,
 ): Promise<SubscriptionCheckoutResult> {
   const plan = await tx.subscriptionPlan.findUnique({
     where: { id: data.planId },

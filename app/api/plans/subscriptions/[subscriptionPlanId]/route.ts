@@ -4,15 +4,16 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import authOptions from "@/app/api/auth/[...nextauth]/options";
 import { SubscriptionPlanSchema } from "@/schemas/plans";
+import { findOrCreateTopics, transformTopicsToStrings } from "@/lib/topics";
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ subscriptionId: string }> },
+  { params }: { params: Promise<{ subscriptionPlanId: string }> },
 ) {
   try {
-    const { subscriptionId } = await params;
+    const { subscriptionPlanId } = await params;
     const subscriptionPlan = await prisma.subscriptionPlan.findUniqueOrThrow({
-      where: { id: subscriptionId },
+      where: { id: subscriptionPlanId },
       include: {
         consultantProfile: {
           include: {
@@ -42,10 +43,14 @@ export async function GET(
             },
           },
         },
+        topics: true,
       },
     });
 
-    return NextResponse.json({ data: subscriptionPlan }, { status: 200 });
+    return NextResponse.json(
+      { data: transformTopicsToStrings(subscriptionPlan) },
+      { status: 200 },
+    );
   } catch (error) {
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
@@ -66,7 +71,7 @@ export async function GET(
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: Promise<{ subscriptionId: string }> },
+  { params }: { params: Promise<{ subscriptionPlanId: string }> },
 ) {
   try {
     // Authentication check
@@ -78,11 +83,11 @@ export async function PUT(
       );
     }
 
-    const { subscriptionId } = await params;
+    const { subscriptionPlanId } = await params;
 
     // Verify ownership - user must own this subscription plan
     const existingPlan = await prisma.subscriptionPlan.findUnique({
-      where: { id: subscriptionId },
+      where: { id: subscriptionPlanId },
       include: { consultantProfile: true },
     });
 
@@ -130,13 +135,25 @@ export async function PUT(
       totalHours = totalSessions * sessionDurationInHours;
     }
 
+    // Handle topics if provided
+    let topicsUpdate = {};
+    if (validatedData.topics !== undefined) {
+      const topicIds = await findOrCreateTopics(validatedData.topics);
+      topicsUpdate = {
+        topics: { set: topicIds.map((id) => ({ id })) },
+      };
+    }
+
     const subscriptionPlan = await prisma.subscriptionPlan.update({
-      where: { id: subscriptionId },
+      where: { id: subscriptionPlanId },
       data: {
         title: validatedData.title,
         description: validatedData.description,
         durationInMonths: validatedData.durationInMonths,
-        price: validatedData.price !== undefined ? Math.round(validatedData.price) : undefined,
+        price:
+          validatedData.price !== undefined
+            ? Math.round(validatedData.price)
+            : undefined,
         priceCurrency: validatedData.priceCurrency,
         callsPerWeek: validatedData.callsPerWeek,
         sessionDurationInHours: body.sessionDurationInHours,
@@ -148,6 +165,7 @@ export async function PUT(
         prerequisites: validatedData.prerequisites,
         materialProvided: validatedData.materialProvided,
         learningOutcomes: validatedData.learningOutcomes,
+        ...topicsUpdate,
       },
       include: {
         consultantProfile: {
@@ -178,10 +196,14 @@ export async function PUT(
             },
           },
         },
+        topics: true,
       },
     });
 
-    return NextResponse.json({ data: subscriptionPlan }, { status: 200 });
+    return NextResponse.json(
+      { data: transformTopicsToStrings(subscriptionPlan) },
+      { status: 200 },
+    );
   } catch (error) {
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
@@ -202,7 +224,7 @@ export async function PUT(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: Promise<{ subscriptionId: string }> },
+  { params }: { params: Promise<{ subscriptionPlanId: string }> },
 ) {
   try {
     // Authentication check
@@ -214,11 +236,11 @@ export async function DELETE(
       );
     }
 
-    const { subscriptionId } = await params;
+    const { subscriptionPlanId } = await params;
 
     // Verify ownership - user must own this subscription plan
     const existingPlan = await prisma.subscriptionPlan.findUnique({
-      where: { id: subscriptionId },
+      where: { id: subscriptionPlanId },
       include: { consultantProfile: true },
     });
 
@@ -238,7 +260,7 @@ export async function DELETE(
 
     // Check if there are any associated subscriptions
     const associatedSubscriptions = await prisma.subscription.findMany({
-      where: { subscriptionPlanId: subscriptionId },
+      where: { subscriptionPlanId },
     });
 
     if (associatedSubscriptions.length > 0) {
@@ -252,7 +274,7 @@ export async function DELETE(
     }
 
     const subscriptionPlan = await prisma.subscriptionPlan.delete({
-      where: { id: subscriptionId },
+      where: { id: subscriptionPlanId },
       include: {
         consultantProfile: {
           include: {
@@ -266,10 +288,14 @@ export async function DELETE(
             },
           },
         },
+        topics: true,
       },
     });
 
-    return NextResponse.json({ data: subscriptionPlan }, { status: 200 });
+    return NextResponse.json(
+      { data: transformTopicsToStrings(subscriptionPlan) },
+      { status: 200 },
+    );
   } catch (error) {
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&

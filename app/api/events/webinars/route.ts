@@ -1,6 +1,7 @@
 import prisma from "@/lib/prisma";
 import { NextResponse } from "next/server";
 import { WebinarStatus } from "@prisma/client";
+import { transformNestedPlanTopics } from "@/lib/topics";
 
 export async function GET(request: Request) {
   try {
@@ -189,7 +190,12 @@ export async function GET(request: Request) {
       });
     }
 
-    return NextResponse.json({ data: webinars }, { status: 200 });
+    // Transform topics from objects to strings in nested webinarPlan
+    const transformedWebinars = webinars.map((w) =>
+      transformNestedPlanTopics(w, "webinarPlan"),
+    );
+
+    return NextResponse.json({ data: transformedWebinars }, { status: 200 });
   } catch (error) {
     console.error("Error fetching webinars:", error);
     return NextResponse.json(

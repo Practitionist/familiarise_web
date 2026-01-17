@@ -6,6 +6,7 @@ import { formatInTimeZone, fromZonedTime, toZonedTime } from "date-fns-tz";
 
 // Assuming TSlotTiming is defined in a types file
 import { TSlotTiming } from "@/types/slots";
+import { MINIMUM_BOOKING_LEAD_TIME_MS } from "@/lib/payments/constants";
 
 export async function GET(
   req: NextRequest,
@@ -59,6 +60,7 @@ export async function GET(
 
     slots = filterSlots(slots, userDayStart, userDayEnd);
     slots = await removeBookedSlots(slots);
+    slots = filterExpiredSlots(slots);
 
     const totalSlots = slots.length;
     const paginatedSlots = slots.slice((page - 1) * limit, page * limit);
@@ -182,6 +184,19 @@ async function removeBookedSlots(slots: TSlotTiming[]): Promise<TSlotTiming[]> {
   return slots.filter(
     (slot) => !bookedSlotTimes.includes(slot.slotStartTimeInUTC),
   );
+}
+
+/**
+ * Filters out slots that have already passed or are within the minimum booking lead time.
+ * Users cannot book slots that start within MINIMUM_BOOKING_LEAD_TIME_MINUTES of now.
+ */
+function filterExpiredSlots(slots: TSlotTiming[]): TSlotTiming[] {
+  const minimumBookingTime = new Date(Date.now() + MINIMUM_BOOKING_LEAD_TIME_MS);
+
+  return slots.filter((slot) => {
+    const slotStart = parseISO(slot.slotStartTimeInUTC);
+    return slotStart >= minimumBookingTime;
+  });
 }
 
 function getDayOfWeek(date: Date): DayOfWeek {

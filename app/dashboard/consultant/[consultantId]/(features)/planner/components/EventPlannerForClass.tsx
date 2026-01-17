@@ -12,6 +12,7 @@ import {
   BookOpen,
   Trash2,
   Plus,
+  Upload,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -56,6 +57,7 @@ import {
 import { TopicsMultiSelect } from "./TopicsMultiSelect";
 import { PlannerService } from "../services/planner";
 import { ClassEvent, ClassPlannerProps } from "../types/event";
+import { PlanMaterialsUpload } from "./PlanMaterialsUpload";
 
 export function EventPlannerForClass({
   isOpen,
@@ -67,6 +69,7 @@ export function EventPlannerForClass({
 }: Readonly<ClassPlannerProps>) {
   const [internalIsSaving, setInternalIsSaving] = useState(false);
   const [showConfirmation, setShowConfirmation] = useState(false);
+  const [showMaterialsDialog, setShowMaterialsDialog] = useState(false);
   const [availableTopics, setAvailableTopics] = useState<
     { id: string; name: string; createdAt: Date; updatedAt: Date }[]
   >([]);
@@ -114,10 +117,7 @@ export function EventPlannerForClass({
           prerequisites: initialData.classPlan.prerequisites ?? "",
           materialProvided: initialData.classPlan.materialProvided ?? "",
           learningOutcomes: initialData.classPlan.learningOutcomes,
-          topics:
-            initialData.classPlan.topics?.map((topic) =>
-              typeof topic === "string" ? topic : topic.name,
-            ) || [],
+          topics: initialData.classPlan.topics ?? [],
           certificateProvided: initialData.classPlan.certificateProvided,
           meetingsPerWeek: initialData.classPlan.meetingsPerWeek,
           emailSupport: initialData.classPlan.emailSupport,
@@ -161,10 +161,7 @@ export function EventPlannerForClass({
         prerequisites: initialData.classPlan.prerequisites ?? "",
         materialProvided: initialData.classPlan.materialProvided ?? "",
         learningOutcomes: initialData.classPlan.learningOutcomes,
-        topics:
-          initialData.classPlan.topics?.map((topic) =>
-            typeof topic === "string" ? topic : topic.name,
-          ) || [],
+        topics: initialData.classPlan.topics ?? [],
         certificateProvided: initialData.classPlan.certificateProvided,
         meetingsPerWeek: initialData.classPlan.meetingsPerWeek,
         emailSupport: initialData.classPlan.emailSupport,
@@ -286,7 +283,8 @@ export function EventPlannerForClass({
         },
       };
 
-      onSave(classData);
+      // Await onSave to ensure API call completes before showing success
+      await onSave(classData);
 
       toast({
         title: "Success",
@@ -459,8 +457,8 @@ export function EventPlannerForClass({
                         <FormControl>
                           <Input
                             type="number"
-                            step="0.5"
-                            min="0.25"
+                            step="1"
+                            min="1"
                             placeholder="1"
                             {...field}
                             onChange={(e) => {
@@ -836,6 +834,25 @@ export function EventPlannerForClass({
                 />
               </FormSection>
 
+              {/* Materials Section - Only show when editing an existing plan */}
+              {initialData?.id && (
+                <FormSection
+                  title="Plan Materials"
+                  description="Upload materials for students"
+                  icon={Upload}
+                >
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setShowMaterialsDialog(true)}
+                    className="w-full"
+                  >
+                    <Upload className="mr-2 h-4 w-4" />
+                    Manage Materials
+                  </Button>
+                </FormSection>
+              )}
+
               <DialogFooter className="pt-6 border-t">
                 <Button
                   type="button"
@@ -853,6 +870,17 @@ export function EventPlannerForClass({
           </Form>
         </DialogContent>
       </Dialog>
+
+      {/* Materials Upload Dialog */}
+      {initialData?.id && (
+        <PlanMaterialsUpload
+          planType="class"
+          planId={initialData.id}
+          planTitle={form.getValues("title") || initialData.classPlan?.title || "Class"}
+          isOpen={showMaterialsDialog}
+          onClose={() => setShowMaterialsDialog(false)}
+        />
+      )}
 
       <FormConfirmationDialog
         isOpen={showConfirmation}

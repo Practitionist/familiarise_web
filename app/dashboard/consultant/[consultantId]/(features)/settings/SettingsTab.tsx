@@ -17,6 +17,7 @@ import { Separator } from "components/ui/separator";
 import { Textarea } from "components/ui/textarea";
 import { useToast } from "components/ui/use-toast";
 import { Checkbox } from "components/ui/checkbox";
+import { Alert, AlertDescription, AlertTitle } from "components/ui/alert";
 import React, { useCallback, useEffect, useState } from "react";
 import { TConsultantProfile } from "types/consultant";
 import { MultiSelect } from "../../components/MultiSelect";
@@ -74,6 +75,11 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
   const [subDomains, setSubDomains] = useState<SubDomain[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
 
+  // Schedule type switching restriction state
+  const [canSwitchSchedule, setCanSwitchSchedule] = useState(true);
+  const [scheduleSwitchBlockedReason, setScheduleSwitchBlockedReason] =
+    useState<string | null>(null);
+
   // Initialize slots data when timezone is available
   useEffect(() => {
     if (!timezoneLoading && timezone) {
@@ -81,6 +87,29 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
       setCustomSlots(getInitialCustomSlots(consultant, timezone));
     }
   }, [consultant, timezone, timezoneLoading]);
+
+  // Check if schedule type switching is allowed
+  useEffect(() => {
+    async function checkScheduleSwitchEligibility() {
+      try {
+        const res = await fetch(
+          `/api/user/consultants/${consultant.id}/can-switch-schedule`,
+        );
+        const data = await res.json();
+        setCanSwitchSchedule(data.canSwitch);
+        if (!data.canSwitch) {
+          setScheduleSwitchBlockedReason(data.details || data.reason);
+        } else {
+          setScheduleSwitchBlockedReason(null);
+        }
+      } catch (error) {
+        console.error("Error checking schedule switch eligibility:", error);
+        // On error, allow switching (backend will validate anyway)
+        setCanSwitchSchedule(true);
+      }
+    }
+    checkScheduleSwitchEligibility();
+  }, [consultant.id]);
 
   // Convert subdomains and tags to options format with safety checks
   const subDomainOptions = React.useMemo<Option[]>(() => {
@@ -217,23 +246,39 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
   }, []);
 
   // Update schedule type and clear irrelevant slots
-  const handleScheduleTypeChange = useCallback((value: string) => {
-    const scheduleTypeValue = value as ScheduleType;
-    React.startTransition(() => {
-      setScheduleType(scheduleTypeValue);
-      setFormData((prev) => ({
-        ...prev,
-        scheduleType: scheduleTypeValue,
-      }));
+  const handleScheduleTypeChange = useCallback(
+    (value: string) => {
+      const scheduleTypeValue = value as ScheduleType;
 
-      // Clear slots for the inactive schedule type to prevent corruption
-      if (scheduleTypeValue === ScheduleType.WEEKLY) {
-        setCustomSlots({});
-      } else {
-        setWeeklySlots({});
+      // Check if trying to switch schedule type when blocked
+      if (!canSwitchSchedule && scheduleTypeValue !== scheduleType) {
+        toast({
+          title: "Cannot Switch Schedule Type",
+          description:
+            scheduleSwitchBlockedReason ||
+            "You have active appointments. Please complete or cancel them first.",
+          variant: "destructive",
+        });
+        return;
       }
-    });
-  }, []);
+
+      React.startTransition(() => {
+        setScheduleType(scheduleTypeValue);
+        setFormData((prev) => ({
+          ...prev,
+          scheduleType: scheduleTypeValue,
+        }));
+
+        // Clear slots for the inactive schedule type to prevent corruption
+        if (scheduleTypeValue === ScheduleType.WEEKLY) {
+          setCustomSlots({});
+        } else {
+          setWeeklySlots({});
+        }
+      });
+    },
+    [canSwitchSchedule, scheduleType, scheduleSwitchBlockedReason, toast],
+  );
 
   const handleAddSlot = useCallback(
     (day: string) => {
@@ -745,8 +790,8 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
                           sessionTypes: checked
                             ? [...(prev.sessionTypes || []), type]
                             : (prev.sessionTypes || []).filter(
-                                (t) => t !== type,
-                              ),
+                              (t) => t !== type,
+                            ),
                         }));
                       }}
                     />
@@ -878,6 +923,18 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
             appointments or "Custom Schedule" for specific dates only.
           </p>
         </div>
+
+        {!canSwitchSchedule && (
+          <Alert variant="destructive" className="mb-4">
+            <AlertTitle>Schedule Type Locked</AlertTitle>
+            <AlertDescription>
+              {scheduleSwitchBlockedReason ||
+                "You have active appointments that prevent schedule type changes."}
+              {" "}Please complete or cancel all pending appointments before
+              switching schedule types.
+            </AlertDescription>
+          </Alert>
+        )}
 
         <RadioGroup
           value={scheduleType}

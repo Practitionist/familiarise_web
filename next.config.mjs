@@ -13,6 +13,10 @@ const nextConfig = {
   // This tells Next.js to explicitly process these packages during the build, which should resolve the module format conflict.
   transpilePackages: ["react-day-picker", "date-fns"],
 
+  // Prevent pg (node-postgres) and related packages from being bundled into client-side code
+  // These are server-only dependencies used by @prisma/adapter-pg
+  serverExternalPackages: ["pg", "@prisma/adapter-pg", "pg-pool", "pg-connection-string"],
+
   images: {
     remotePatterns: [
       {

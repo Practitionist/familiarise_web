@@ -8,6 +8,10 @@ const URLS = {
   ONBOARDING: "/form/onboarding",
 };
 
+// Dev mode bypass - allows accessing any dashboard in development
+const DEV_BYPASS_COOKIE = "dev_bypass";
+const isDevelopment = process.env.NODE_ENV === "development";
+
 // Simplified route patterns for better performance
 const ROUTE_PATTERNS = {
   // Use simple string checks instead of micromatch for better performance
@@ -56,6 +60,15 @@ const CACHE_TTL = 60 * 1000; // 1 minute cache
  */
 const matchesAnyPrefix = (pathname: string, prefixes: string[]): boolean => {
   return prefixes.some((prefix) => pathname.startsWith(prefix));
+};
+
+/**
+ * Check if dev bypass is enabled (development only)
+ * Set cookie "dev_bypass=true" to access any dashboard
+ */
+const isDevBypassEnabled = (req: NextRequest): boolean => {
+  if (!isDevelopment) return false;
+  return req.cookies.get(DEV_BYPASS_COOKIE)?.value === "true";
 };
 
 /**
@@ -194,7 +207,8 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
     }
 
     // Handle dashboard URL validation
-    if (pathname.startsWith("/dashboard/") && token) {
+    // Skip validation if dev bypass is enabled (development only)
+    if (pathname.startsWith("/dashboard/") && token && !isDevBypassEnabled(req)) {
       const correctDashboardUrl = getDashboardUrl(token);
       const baseDashboardUrl = correctDashboardUrl.replace("/home", "");
 

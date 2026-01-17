@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { AppointmentsType, PaymentGateway } from "@prisma/client";
+import { validateSlotTiming } from "@/lib/payments/utils/slot-validation";
 
 // Base schemas for individual components
 export const appointmentTypeSchema = z.enum([
@@ -171,6 +172,19 @@ export const checkoutSchema = z
           code: z.ZodIssueCode.custom,
           message: "Start time must be before end time",
           path: ["slotEndTimeInUTC"],
+        });
+      }
+    }
+
+    // Validate slot is not in the past or within minimum booking lead time
+    if (data.slotStartTimeInUTC) {
+      const slotStart = new Date(data.slotStartTimeInUTC);
+      const timingError = validateSlotTiming(slotStart);
+      if (timingError) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: timingError,
+          path: ["slotStartTimeInUTC"],
         });
       }
     }

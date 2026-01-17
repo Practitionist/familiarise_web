@@ -1,17 +1,20 @@
 "use client";
 
-import { ChannelListMessengerProps } from "stream-chat-react";
+import type { ReactNode } from "react";
 
-type TeamChannelListProps = ChannelListMessengerProps & {
+// Define our own props type since ChannelListMessengerProps changed in v13
+interface TeamChannelListProps {
+  children?: ReactNode;
+  error?: Error | boolean | null;
+  loading?: boolean;
   type: "team" | "messaging";
-};
+}
 
 export const TeamChannelList = ({
   children,
   error = false,
   loading,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  type,
+  type: _type,
 }: TeamChannelListProps) => {
   if (error) {
     return (

@@ -1,5 +1,6 @@
 import * as dotenv from "dotenv";
 import prisma from "../lib/prisma";
+import { printConfigSummary, getSeedMode } from "./seedFiles/config";
 
 // Phase 1: Core entities
 import { createUsers } from "./seedFiles/1a-create-users";
@@ -58,7 +59,10 @@ dotenv.config({ path: ".env" });
 
 async function seed() {
   console.log("Starting seed process...");
-  console.log("=".repeat(60));
+
+  // Print configuration summary based on SEED_MODE
+  printConfigSummary();
+
   const startTime = Date.now();
 
   try {

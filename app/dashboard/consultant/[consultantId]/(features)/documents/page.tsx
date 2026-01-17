@@ -206,7 +206,7 @@ export default function DocumentsPage({
 
   return (
     <DashboardErrorBoundary>
-      <DocumentsTab documents={documents || []} />
+      <DocumentsTab documents={documents || []} onRefresh={refetch} />
     </DashboardErrorBoundary>
   );
 }

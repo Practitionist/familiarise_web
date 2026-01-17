@@ -10,6 +10,7 @@ import {
   Settings,
   GraduationCap,
   Calendar,
+  Upload,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -47,6 +48,7 @@ import {
 import { TopicsMultiSelect } from "./TopicsMultiSelect";
 import { PlannerService } from "../services/planner";
 import { WebinarEvent, WebinarPlannerProps } from "../types/event";
+import { PlanMaterialsUpload } from "./PlanMaterialsUpload";
 
 // Form-specific schema - all required fields explicitly defined
 const WebinarFormSchema = z.object({
@@ -81,6 +83,7 @@ export function EventPlannerForWebinar({
 }: Readonly<WebinarPlannerProps>) {
   const [internalIsSaving, setInternalIsSaving] = useState(false);
   const [showConfirmation, setShowConfirmation] = useState(false);
+  const [showMaterialsDialog, setShowMaterialsDialog] = useState(false);
   const [availableTopics, setAvailableTopics] = useState<
     { id: string; name: string; createdAt: Date; updatedAt: Date }[]
   >([]);
@@ -165,8 +168,7 @@ export function EventPlannerForWebinar({
       learningOutcomes: initialData?.webinarPlan?.learningOutcomes ?? [],
       certificateProvided:
         initialData?.webinarPlan?.certificateProvided ?? false,
-      topics:
-        initialData?.webinarPlan?.topics?.map((topic) => topic.name) ?? [],
+      topics: initialData?.webinarPlan?.topics ?? [],
       scheduledAt: getInitialScheduledAt(),
       consultantProfileId: consultantId,
     },
@@ -189,8 +191,7 @@ export function EventPlannerForWebinar({
         learningOutcomes: initialData.webinarPlan.learningOutcomes ?? [],
         certificateProvided:
           initialData.webinarPlan.certificateProvided ?? false,
-        topics:
-          initialData.webinarPlan.topics?.map((topic) => topic.name) ?? [],
+        topics: initialData.webinarPlan.topics ?? [],
         scheduledAt: getInitialScheduledAt(),
         consultantProfileId: consultantId,
       });
@@ -285,7 +286,8 @@ export function EventPlannerForWebinar({
         },
       };
 
-      onSave(webinarData, formData.scheduledAt);
+      // Await onSave to ensure API call completes before showing success
+      await onSave(webinarData, formData.scheduledAt);
 
       toast({
         title: "Success",
@@ -586,6 +588,25 @@ export function EventPlannerForWebinar({
                 />
               </FormSection>
 
+              {/* Materials Section - Only show when editing an existing plan */}
+              {initialData?.id && (
+                <FormSection
+                  title="Plan Materials"
+                  description="Upload materials for attendees"
+                  icon={Upload}
+                >
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setShowMaterialsDialog(true)}
+                    className="w-full"
+                  >
+                    <Upload className="mr-2 h-4 w-4" />
+                    Manage Materials
+                  </Button>
+                </FormSection>
+              )}
+
               <DialogFooter className="pt-6 border-t">
                 <Button
                   type="button"
@@ -603,6 +624,17 @@ export function EventPlannerForWebinar({
           </Form>
         </DialogContent>
       </Dialog>
+
+      {/* Materials Upload Dialog */}
+      {initialData?.id && (
+        <PlanMaterialsUpload
+          planType="webinar"
+          planId={initialData.id}
+          planTitle={form.getValues("title") || initialData.webinarPlan?.title || "Webinar"}
+          isOpen={showMaterialsDialog}
+          onClose={() => setShowMaterialsDialog(false)}
+        />
+      )}
 
       <FormConfirmationDialog
         isOpen={showConfirmation}

@@ -35,6 +35,7 @@ import {
   generateAccessScope,
   generateAssignedRegions,
 } from "./utils";
+import { config } from "./config";
 
 export type UserWithProfiles = User & {
   consultantProfile?: ConsultantProfile | null;
@@ -43,11 +44,11 @@ export type UserWithProfiles = User & {
   adminProfile?: AdminProfile | null;
 };
 
-// User distribution (Medium data volume - 155 total)
-const NUM_CONSULTANTS = 60;
-const NUM_CONSULTEES = 80;
-const NUM_STAFF = 8;
-const NUM_ADMINS = 7;
+// User distribution - configurable via SEED_MODE environment variable
+const NUM_CONSULTANTS = config.volumes.users.consultants;
+const NUM_CONSULTEES = config.volumes.users.consultees;
+const NUM_STAFF = config.volumes.users.staff;
+const NUM_ADMINS = config.volumes.users.admins;
 const NUM_USERS = NUM_CONSULTANTS + NUM_CONSULTEES + NUM_STAFF + NUM_ADMINS;
 
 // Gender enum values
