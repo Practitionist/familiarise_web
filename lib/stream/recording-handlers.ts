@@ -151,7 +151,7 @@ export async function handleRecordingStopped(
 export async function handleRecordingReady(
   event: StreamRecordingReadyEvent
 ): Promise<void> {
-  const { call_cid, call_recording, created_at } = event;
+  const { call_cid, call_recording, created_at: _created_at } = event;
 
   const streamCallId = call_cid.split(":")[1] || call_cid;
   const { filename, url, start_time, end_time } = call_recording;
