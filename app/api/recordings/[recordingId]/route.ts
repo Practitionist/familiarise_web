@@ -38,30 +38,9 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       );
     }
 
-    // Type assertion for the recording with includes
-    const recordingWithSession = recording as typeof recording & {
-      meetingSession: {
-        slotOfAppointment: {
-          appointmentId: string;
-          appointment: {
-            webinar?: {
-              webinarPlan: {
-                consultantProfileId: string | null;
-              };
-            } | null;
-            class?: {
-              classPlan: {
-                consultantProfileId: string | null;
-              };
-            } | null;
-          } | null;
-        };
-      };
-    };
-
     // Check access permissions
     const appointment =
-      recordingWithSession.meetingSession?.slotOfAppointment?.appointment;
+      recording.meetingSession.slotOfAppointment.appointment;
 
     let hasAccess = false;
 
@@ -83,7 +62,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       // Check if user is enrolled in the webinar/class
       // Get the appointment ID from the recording chain to check payments
       const appointmentId =
-        recordingWithSession.meetingSession?.slotOfAppointment?.appointmentId;
+        recording.meetingSession.slotOfAppointment.appointmentId;
 
       if (appointmentId && (appointment?.webinar || appointment?.class)) {
         // Check if user has paid for this appointment (webinar or class)

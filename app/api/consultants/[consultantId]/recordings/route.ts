@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import authOptions from "@/app/api/auth/[...nextauth]/options";
 import { RecordingService } from "@/lib/stream/recording-service";
+import { ConsultantRecordingWithDetails } from "@/lib/stream/recording-types";
 import { RecordingTransferService } from "@/lib/stream/recording-transfer-service";
 
 type RouteParams = {
@@ -48,33 +49,15 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     const recordings = await RecordingService.getConsultantRecordings(consultantId);
 
     // Filter by type if specified
-    let filteredRecordings = recordings;
+    let filteredRecordings: ConsultantRecordingWithDetails[] = recordings;
     if (type === "webinar") {
-      filteredRecordings = recordings.filter((r) => {
-        const rec = r as typeof r & {
-          meetingSession?: {
-            slotOfAppointment?: {
-              appointment?: {
-                webinar?: unknown;
-              };
-            };
-          };
-        };
-        return rec.meetingSession?.slotOfAppointment?.appointment?.webinar;
-      });
+      filteredRecordings = recordings.filter(
+        (r) => r.meetingSession.slotOfAppointment.appointment?.webinar
+      );
     } else if (type === "class") {
-      filteredRecordings = recordings.filter((r) => {
-        const rec = r as typeof r & {
-          meetingSession?: {
-            slotOfAppointment?: {
-              appointment?: {
-                class?: unknown;
-              };
-            };
-          };
-        };
-        return rec.meetingSession?.slotOfAppointment?.appointment?.class;
-      });
+      filteredRecordings = recordings.filter(
+        (r) => r.meetingSession.slotOfAppointment.appointment?.class
+      );
     }
 
     // Filter by status if specified
@@ -86,29 +69,8 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
 
     // Map recordings to response format with best URLs
     const formattedRecordings = filteredRecordings.map((recording) => {
-      const rec = recording as typeof recording & {
-        meetingSession?: {
-          slotOfAppointment?: {
-            appointment?: {
-              webinar?: {
-                webinarPlan?: {
-                  id?: string;
-                  title?: string;
-                };
-              };
-              class?: {
-                classPlan?: {
-                  id?: string;
-                  title?: string;
-                };
-              };
-            };
-          };
-        };
-      };
-
       const appointment =
-        rec.meetingSession?.slotOfAppointment?.appointment;
+        recording.meetingSession.slotOfAppointment.appointment;
 
       let planType: "webinar" | "class" | null = null;
       let planId: string | null = null;
@@ -116,12 +78,12 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
 
       if (appointment?.webinar?.webinarPlan) {
         planType = "webinar";
-        planId = appointment.webinar.webinarPlan.id ?? null;
-        planTitle = appointment.webinar.webinarPlan.title ?? null;
+        planId = appointment.webinar.webinarPlan.id;
+        planTitle = appointment.webinar.webinarPlan.title;
       } else if (appointment?.class?.classPlan) {
         planType = "class";
-        planId = appointment.class.classPlan.id ?? null;
-        planTitle = appointment.class.classPlan.title ?? null;
+        planId = appointment.class.classPlan.id;
+        planTitle = appointment.class.classPlan.title;
       }
 
       return {

@@ -5,8 +5,20 @@
 
 import { getStreamVideoClient } from "@/lib/stream-client";
 import prisma from "@/lib/prisma";
-import { Recording, RecordingStatus, MeetingSession } from "@prisma/client";
+import { Recording, RecordingStatus } from "@prisma/client";
 import { streamLogger } from "@/lib/stream-logger";
+import type {
+  ConsultantRecordingWithDetails,
+  RecordingWithAccessControl,
+  WebinarPlanRecordingWithDetails,
+  ClassPlanRecordingWithDetails,
+} from "./recording-types";
+import {
+  consultantRecordingInclude,
+  recordingWithAccessControlInclude,
+  webinarPlanRecordingInclude,
+  classPlanRecordingInclude,
+} from "./recording-types";
 
 // Types for Stream Recording API responses
 export interface StreamRecording {
@@ -14,28 +26,6 @@ export interface StreamRecording {
   url: string;
   start_time: Date;
   end_time: Date;
-}
-
-export interface RecordingWithSession extends Recording {
-  meetingSession: MeetingSession & {
-    slotOfAppointment: {
-      appointment: {
-        appointmentType: string;
-        webinar?: {
-          webinarPlan: {
-            title: string;
-            consultantProfileId: string | null;
-          };
-        } | null;
-        class?: {
-          classPlan: {
-            title: string;
-            consultantProfileId: string | null;
-          };
-        } | null;
-      } | null;
-    };
-  };
 }
 
 /**
@@ -181,7 +171,7 @@ export class RecordingService {
    */
   static async getWebinarPlanRecordings(
     webinarPlanId: string
-  ): Promise<Recording[]> {
+  ): Promise<WebinarPlanRecordingWithDetails[]> {
     try {
       const recordings = await prisma.recording.findMany({
         where: {
@@ -198,25 +188,7 @@ export class RecordingService {
             notIn: ["FAILED", "EXPIRED"],
           },
         },
-        include: {
-          meetingSession: {
-            include: {
-              slotOfAppointment: {
-                include: {
-                  appointment: {
-                    include: {
-                      webinar: {
-                        include: {
-                          webinarPlan: true,
-                        },
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
+        include: webinarPlanRecordingInclude,
         orderBy: {
           recordedAt: "desc",
         },
@@ -237,7 +209,7 @@ export class RecordingService {
    */
   static async getClassPlanRecordings(
     classPlanId: string
-  ): Promise<Recording[]> {
+  ): Promise<ClassPlanRecordingWithDetails[]> {
     try {
       const recordings = await prisma.recording.findMany({
         where: {
@@ -254,25 +226,7 @@ export class RecordingService {
             notIn: ["FAILED", "EXPIRED"],
           },
         },
-        include: {
-          meetingSession: {
-            include: {
-              slotOfAppointment: {
-                include: {
-                  appointment: {
-                    include: {
-                      class: {
-                        include: {
-                          classPlan: true,
-                        },
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
+        include: classPlanRecordingInclude,
         orderBy: {
           recordedAt: "desc",
         },
@@ -293,7 +247,7 @@ export class RecordingService {
    */
   static async getConsultantRecordings(
     consultantProfileId: string
-  ): Promise<Recording[]> {
+  ): Promise<ConsultantRecordingWithDetails[]> {
     try {
       const recordings = await prisma.recording.findMany({
         where: {
@@ -329,40 +283,7 @@ export class RecordingService {
             notIn: ["FAILED", "EXPIRED"],
           },
         },
-        include: {
-          meetingSession: {
-            include: {
-              slotOfAppointment: {
-                include: {
-                  appointment: {
-                    include: {
-                      webinar: {
-                        include: {
-                          webinarPlan: {
-                            select: {
-                              id: true,
-                              title: true,
-                            },
-                          },
-                        },
-                      },
-                      class: {
-                        include: {
-                          classPlan: {
-                            select: {
-                              id: true,
-                              title: true,
-                            },
-                          },
-                        },
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
+        include: consultantRecordingInclude,
         orderBy: {
           recordedAt: "desc",
         },
@@ -383,34 +304,11 @@ export class RecordingService {
    */
   static async getRecordingById(
     recordingId: string
-  ): Promise<Recording | null> {
+  ): Promise<RecordingWithAccessControl | null> {
     try {
       const recording = await prisma.recording.findUnique({
         where: { id: recordingId },
-        include: {
-          meetingSession: {
-            include: {
-              slotOfAppointment: {
-                include: {
-                  appointment: {
-                    include: {
-                      webinar: {
-                        include: {
-                          webinarPlan: true,
-                        },
-                      },
-                      class: {
-                        include: {
-                          classPlan: true,
-                        },
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
+        include: recordingWithAccessControlInclude,
       });
 
       return recording;
