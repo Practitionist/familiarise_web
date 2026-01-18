@@ -35,7 +35,6 @@ import {
   Loader,
   ClipboardCheck,
   RotateCcw,
-  Video,
 } from "lucide-react";
 import { ReactNode } from "react";
 
@@ -60,7 +59,6 @@ const iconMap: Record<string, typeof Home> = {
   messages: MessageSquare,
   feedback: Ticket,
   policy: Shield,
-  recordings: Video,
   // Payout related icons
   wallet: Wallet,
   "payouts/pending": ClipboardCheck,

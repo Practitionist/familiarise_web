@@ -119,7 +119,6 @@ export function EventPlannerForClass({
           learningOutcomes: initialData.classPlan.learningOutcomes,
           topics: initialData.classPlan.topics ?? [],
           certificateProvided: initialData.classPlan.certificateProvided,
-          recordingEnabled: initialData.classPlan.recordingEnabled ?? false,
           meetingsPerWeek: initialData.classPlan.meetingsPerWeek,
           emailSupport: initialData.classPlan.emailSupport,
           consultantProfileId: initialData.classPlan.consultantProfileId,
@@ -140,7 +139,6 @@ export function EventPlannerForClass({
           learningOutcomes: [],
           topics: [],
           certificateProvided: false,
-          recordingEnabled: false,
           meetingsPerWeek: 2,
           emailSupport: "GENERAL" as const,
           classContents: [],
@@ -165,7 +163,6 @@ export function EventPlannerForClass({
         learningOutcomes: initialData.classPlan.learningOutcomes,
         topics: initialData.classPlan.topics ?? [],
         certificateProvided: initialData.classPlan.certificateProvided,
-        recordingEnabled: initialData.classPlan.recordingEnabled ?? false,
         meetingsPerWeek: initialData.classPlan.meetingsPerWeek,
         emailSupport: initialData.classPlan.emailSupport,
         consultantProfileId: initialData.classPlan.consultantProfileId,
@@ -262,7 +259,6 @@ export function EventPlannerForClass({
           consultantProfileId: consultantId,
           consultantProfile: null,
           certificateProvided: formData.certificateProvided ?? false,
-          recordingEnabled: formData.recordingEnabled ?? false,
           sessionDurationInHours:
             initialData?.classPlan?.sessionDurationInHours ?? 1,
           meetingsPerWeek: formData.meetingsPerWeek,
@@ -593,29 +589,6 @@ export function EventPlannerForClass({
                         </FormLabel>
                         <FormDescription>
                           Provide students with a certificate upon completion
-                        </FormDescription>
-                      </div>
-                      <FormControl>
-                        <Switch
-                          checked={field.value}
-                          onCheckedChange={field.onChange}
-                        />
-                      </FormControl>
-                    </FormItem>
-                  )}
-                />
-
-                <FormField
-                  control={form.control}
-                  name="recordingEnabled"
-                  render={({ field }) => (
-                    <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4 mt-4">
-                      <div className="space-y-0.5">
-                        <FormLabel className="text-base">
-                          Enable Recording
-                        </FormLabel>
-                        <FormDescription>
-                          Allow recording of class sessions for students to watch later
                         </FormDescription>
                       </div>
                       <FormControl>

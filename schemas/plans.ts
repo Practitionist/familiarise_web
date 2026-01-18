@@ -368,7 +368,6 @@ export const createUniqueTitleValidator = (
 // Webinar specific schema
 export const WebinarPlanSchema = BaseEventPlanSchema.extend({
   certificateProvided: z.boolean().default(false),
-  recordingEnabled: z.boolean().default(false),
   durationInHours: z
     .number()
     .min(0.5, "Duration must be at least 30 minutes")
@@ -451,7 +450,6 @@ export const ClassPlanSchema = BaseEventPlanSchema.extend({
   planType: z.literal("class"),
   durationInMonths: z.number().min(1, "Duration must be at least 1 month"),
   certificateProvided: z.boolean().default(false),
-  recordingEnabled: z.boolean().default(false),
   meetingsPerWeek: z.number().min(0, "Meetings per week must be non-negative"),
   emailSupport: z.enum(["GENERAL", "PRIORITY", "DEDICATED"]).default("GENERAL"),
   classContents: z
