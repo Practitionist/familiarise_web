@@ -11,6 +11,10 @@ import supabase, { ensureBucketExists } from "@/lib/supabase";
 // Recordings bucket name
 const RECORDINGS_BUCKET = "recordings";
 
+// Maximum file size for direct transfer (500MB)
+// Files larger than this should use resumable uploads (future enhancement)
+const MAX_TRANSFER_SIZE = 500 * 1024 * 1024; // 500MB
+
 // Allowed video MIME types
 const ALLOWED_VIDEO_TYPES = [
   "video/mp4",
@@ -113,6 +117,24 @@ export class RecordingTransferService {
       const contentType = response.headers.get("content-type") || "video/mp4";
       const contentLength = response.headers.get("content-length");
       const fileSize = contentLength ? BigInt(contentLength) : null;
+      const fileSizeNumber = contentLength ? parseInt(contentLength, 10) : null;
+
+      // Check file size before attempting transfer to prevent OOM
+      if (fileSizeNumber && fileSizeNumber > MAX_TRANSFER_SIZE) {
+        await prisma.recording.update({
+          where: { id: recordingId },
+          data: { status: "READY" as RecordingStatus }, // Revert to READY
+        });
+        streamLogger.warn("Recording too large for direct transfer", {
+          recordingId,
+          fileSize: fileSizeNumber,
+          maxSize: MAX_TRANSFER_SIZE,
+        });
+        return {
+          success: false,
+          error: `Recording is too large for direct transfer (${Math.round(fileSizeNumber / 1024 / 1024)}MB). Maximum size is 500MB. Large recordings will need to be transferred manually or via a background job.`,
+        };
+      }
 
       // Validate content type
       if (!ALLOWED_VIDEO_TYPES.includes(contentType)) {
@@ -136,11 +158,13 @@ export class RecordingTransferService {
         storagePath,
       });
 
-      const fileBuffer = await response.arrayBuffer();
+      // Use blob() instead of arrayBuffer() for more efficient memory handling
+      // Blob is more memory-efficient in most JS runtimes for large files
+      const fileBlob = await response.blob();
 
       const { error: uploadError } = await supabase.storage
         .from(RECORDINGS_BUCKET)
-        .upload(storagePath, fileBuffer, {
+        .upload(storagePath, fileBlob, {
           contentType,
           cacheControl: "31536000", // 1 year cache
           upsert: true,
