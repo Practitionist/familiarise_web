@@ -12,8 +12,8 @@ const streamCallIdSchema = z.string().min(1, "Stream Call ID is required");
 
 const slotSchema = z.object({
   id: z.string().min(1),
-  startsAt: z.date(),
-  endsAt: z.date().nullable().optional(),
+  startsAt: z.coerce.date(),
+  endsAt: z.coerce.date().nullable().optional(),
   isTentative: z.boolean().optional(),
   appointmentId: z.string().nullable().optional(),
 });
