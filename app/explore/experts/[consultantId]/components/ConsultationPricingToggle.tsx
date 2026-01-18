@@ -198,19 +198,20 @@ export default function ConsultationPricingToggle({
 
   if (
     session?.user?.role &&
-    ["consultant", "staff"].includes(session.user.role.toLowerCase())
+    ["staff"].includes(session.user.role.toLowerCase())
   ) {
     return (
       <div className="w-full p-8 text-center space-y-3">
         <h3 className="text-2xl font-medium tracking-tight text-zinc-300">
-          Consultee Access Required
+          Staff Access Restricted
         </h3>
         <p className="text-zinc-500">
-          To book consultations, please sign in with a consultee account.
+          Staff accounts cannot book consultations. Please use a consultee account.
         </p>
       </div>
     );
   }
+
 
   return (
     <Tabs
