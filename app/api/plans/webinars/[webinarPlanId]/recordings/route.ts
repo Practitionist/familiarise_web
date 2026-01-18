@@ -1,8 +1,8 @@
 /**
- * Class Plan Recordings API Route
- * GET /api/plans/classes/[id]/recordings
+ * Webinar Plan Recordings API Route
+ * GET /api/plans/webinars/[webinarPlanId]/recordings
  *
- * Gets all recordings for a specific class plan.
+ * Gets all recordings for a specific webinar plan.
  * Access: Consultant owner or enrolled consultees.
  */
 
@@ -15,7 +15,7 @@ import prisma from "@/lib/prisma";
 
 type RouteParams = {
   params: Promise<{
-    id: string;
+    webinarPlanId: string;
   }>;
 };
 
@@ -27,11 +27,11 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const { id: classPlanId } = await params;
+    const { webinarPlanId } = await params;
 
-    // Get the class plan to check ownership and recording settings
-    const classPlan = await prisma.classPlan.findUnique({
-      where: { id: classPlanId },
+    // Get the webinar plan to check ownership and recording settings
+    const webinarPlan = await prisma.webinarPlan.findUnique({
+      where: { id: webinarPlanId },
       select: {
         id: true,
         title: true,
@@ -40,9 +40,9 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       },
     });
 
-    if (!classPlan) {
+    if (!webinarPlan) {
       return NextResponse.json(
-        { error: "Class plan not found" },
+        { error: "Webinar plan not found" },
         { status: 404 }
       );
     }
@@ -53,16 +53,16 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     if (session.user.role === "CONSULTANT") {
       // Consultant must own the plan
       hasAccess =
-        classPlan.consultantProfileId === session.user.consultantProfileId;
+        webinarPlan.consultantProfileId === session.user.consultantProfileId;
     } else if (session.user.role === "CONSULTEE") {
-      // Consultee must have purchased a class from this plan
+      // Consultee must have purchased a webinar from this plan
       const enrollment = await prisma.payment.findFirst({
         where: {
           userId: session.user.id,
           paymentStatus: "SUCCEEDED",
           appointment: {
-            class: {
-              classPlanId,
+            webinar: {
+              webinarPlanId,
             },
           },
         },
@@ -79,9 +79,9 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       );
     }
 
-    // Get recordings for this class plan
-    const recordings = await RecordingService.getClassPlanRecordings(
-      classPlanId
+    // Get recordings for this webinar plan
+    const recordings = await RecordingService.getWebinarPlanRecordings(
+      webinarPlanId
     );
 
     // Map recordings to response format
@@ -102,14 +102,14 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     }));
 
     return NextResponse.json({
-      planId: classPlanId,
-      planTitle: classPlan.title,
-      recordingEnabled: classPlan.recordingEnabled,
+      planId: webinarPlanId,
+      planTitle: webinarPlan.title,
+      recordingEnabled: webinarPlan.recordingEnabled,
       recordings: formattedRecordings,
       total: formattedRecordings.length,
     });
   } catch (error) {
-    console.error("Error getting class plan recordings:", error);
+    console.error("Error getting webinar plan recordings:", error);
     return NextResponse.json(
       { error: "Failed to get recordings" },
       { status: 500 }
