@@ -28,6 +28,7 @@ import {
   LogOut,
   Menu,
   X,
+  Video,
 } from "lucide-react";
 import { useState } from "react";
 
@@ -40,6 +41,7 @@ const NAV_ITEMS: NavItem[] = [
   { name: "Support", path: "feedback" },
   { name: "Settings", path: "settings" },
   { name: "Policy", path: "policy" },
+  { name: "Recordings", path: "recordings" },
 ];
 
 // Icon mapping
@@ -51,6 +53,7 @@ const iconMap: Record<string, typeof Home> = {
   feedback: Ticket,
   settings: Settings,
   policy: Shield,
+  recordings: Video,
 };
 
 interface PageProps {
