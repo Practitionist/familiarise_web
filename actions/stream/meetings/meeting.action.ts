@@ -2,7 +2,17 @@
 
 import { z } from "zod";
 import prisma from "@/lib/prisma";
-import { TSlotOfAppointment } from "@/types/appointment";
+/**
+ * Minimal slot interface for database meeting session operations.
+ * Matches the MeetingSlot interface from lib/meeting.ts.
+ */
+interface MeetingSlot {
+  id: string;
+  startsAt: Date | string;
+  endsAt: Date | string | null;
+  isTentative?: boolean;
+  appointmentId?: string | null;
+}
 import { MeetingSession } from "@prisma/client";
 import { streamLogger } from "@/lib/stream-logger";
 
@@ -61,7 +71,7 @@ export async function findDbMeetingSessionBySlot(
  * @returns The newly created MeetingSession object.
  */
 export async function createDbMeetingSession(
-  slot: TSlotOfAppointment,
+  slot: MeetingSlot,
   streamCallId: string,
 ): Promise<MeetingSession> {
   // Validate inputs
@@ -120,7 +130,7 @@ export async function createDbMeetingSession(
  * @returns The existing or newly created meeting session
  */
 export async function getOrCreateMeetingSession(
-  slot: TSlotOfAppointment,
+  slot: MeetingSlot,
   streamCallId: string,
 ): Promise<MeetingSession> {
   // First try to find existing

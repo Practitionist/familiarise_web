@@ -2,6 +2,7 @@
 
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef } from "react";
+import type { TConsultantDashboardResponse } from "@/types/consultant-events";
 
 interface PrefetchDashboardOptions {
   consultantId?: string;
@@ -10,7 +11,9 @@ interface PrefetchDashboardOptions {
 }
 
 // Individual fetcher functions - can be imported separately
-export const fetchConsultantDashboard = async (consultantId: string) => {
+export const fetchConsultantDashboard = async (
+  consultantId: string,
+): Promise<TConsultantDashboardResponse> => {
   const response = await fetch(`/api/dashboard/consultant/${consultantId}`);
   if (!response.ok)
     throw new Error(`Dashboard fetch failed: ${response.statusText}`);

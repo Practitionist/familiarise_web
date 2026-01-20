@@ -2,9 +2,47 @@ import {
   createDbMeetingSession,
   findDbMeetingSessionBySlot,
 } from "@/actions/stream/meetings/meeting.action";
-import { TAppointment, TSlotOfAppointment } from "@/types/appointment";
 import type { Call } from "@stream-io/video-react-sdk";
 import { StreamVideoClient } from "@stream-io/video-react-sdk";
+import type { AppointmentsType } from "@prisma/client";
+
+/**
+ * Minimal slot interface for meeting operations.
+ * This defines only what getOrCreateAppointmentMeeting actually uses.
+ * Both TSlotOfAppointment and SlotOfAppointment satisfy this interface.
+ */
+export interface MeetingSlot {
+  id: string;
+  startsAt: Date | string;
+  endsAt: Date | string | null;
+  isTentative?: boolean;
+  appointmentId?: string | null;
+}
+
+/**
+ * Minimal appointment interface for meeting operations.
+ * This defines only what getOrCreateAppointmentMeeting actually uses.
+ * TAppointment satisfies this interface, as do custom-built objects.
+ */
+export interface MeetingAppointment {
+  id: string;
+  appointmentType: AppointmentsType;
+  slotsOfAppointment: MeetingSlot[];
+  consultation?: {
+    requestedBy?: { user?: { name?: string | null } | null } | null;
+    consultationPlan?: { title?: string | null } | null;
+  } | null;
+  subscription?: {
+    requestedBy?: { user?: { name?: string | null } | null } | null;
+    subscriptionPlan?: { title?: string | null } | null;
+  } | null;
+  webinar?: {
+    webinarPlan?: { title?: string | null } | null;
+  } | null;
+  class?: {
+    classPlan?: { title?: string | null } | null;
+  } | null;
+}
 
 /**
  * Creates a new meeting (This function might need less usage now)
@@ -61,14 +99,14 @@ export const createMeeting = async (
  * and corresponding DB session if one doesn't exist for the appointment slot.
  * Uses server actions for DB operations.
  * @param client The Stream Video client
- * @param appointment The appointment details
- * @param slot The specific slot of the appointment
+ * @param appointment The appointment details (any object satisfying MeetingAppointment)
+ * @param slot The specific slot of the appointment (any object satisfying MeetingSlot)
  * @returns The Stream Call ID for the meeting
  */
 export const getOrCreateAppointmentMeeting = async (
   client: StreamVideoClient,
-  appointment: TAppointment,
-  slot: TSlotOfAppointment,
+  appointment: MeetingAppointment,
+  slot: MeetingSlot,
 ): Promise<string> => {
   if (!client) {
     throw new Error("Stream client not initialized");
@@ -89,9 +127,6 @@ export const getOrCreateAppointmentMeeting = async (
       console.log(
         `Using existing meeting session for slot ${slot.id}: ${streamCallId}`,
       );
-      // Optional: Could potentially verify the call still exists on Stream side here if needed
-      // const call = client.call('default', streamCallId);
-      // await call.get(); // This would throw if the call doesn't exist
     } else {
       // 2b. No existing session found, create a new one
       streamCallId = crypto.randomUUID();
@@ -137,7 +172,6 @@ export const getOrCreateAppointmentMeeting = async (
 
       // 4. Create the corresponding record in the database via server action
       await createDbMeetingSession(slot, streamCallId);
-      // Log message is now inside createDbMeetingSession action
     }
 
     // 5. Return the Stream Call ID (either existing or newly created)

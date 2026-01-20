@@ -32,7 +32,7 @@ import { getOrCreateAppointmentMeeting } from "@/lib/meeting";
 import { ReportIssueDialog } from "./ReportIssueDialog";
 import { CancelConfirmationDialog } from "./CancelConfirmationDialog";
 import type { AppointmentStatus } from "@/utils/supportTicketUrl";
-import type { TAppointment, TSlotOfAppointment } from "@/types/appointment";
+import type { TAppointment } from "@/types/appointment";
 import type { SlotOfAppointment } from "@prisma/client";
 
 interface EventCardProps {
@@ -411,27 +411,10 @@ export function EventCard({
 
     setIsJoining(true);
     try {
-      // Convert SlotOfAppointment to TSlotOfAppointment format
-      // The meeting function only needs id, startsAt, endsAt, isTentative, appointmentId
-      // Using actual slot values where available, with type assertion for user[] mismatch
-      const slotStartTime = new Date(slotToUse.startsAt);
-      const tSlot = {
-        id: slotToUse.id,
-        startsAt: slotStartTime,
-        endsAt: slotToUse.endsAt
-          ? new Date(slotToUse.endsAt)
-          : new Date(slotStartTime.getTime() + DEFAULT_MEETING_DURATION_MS),
-        isTentative: slotToUse.isTentative,
-        appointmentId: slotToUse.appointmentId,
-        createdAt: slotToUse.createdAt,
-        updatedAt: slotToUse.updatedAt,
-        user: [], // Type mismatch: rawSlots doesn't include user relation, but getOrCreateAppointmentMeeting doesn't use it
-      } as TSlotOfAppointment;
-
       const meetingId = await getOrCreateAppointmentMeeting(
         client,
         appointment,
-        tSlot,
+        slotToUse,
       );
 
       toast({
