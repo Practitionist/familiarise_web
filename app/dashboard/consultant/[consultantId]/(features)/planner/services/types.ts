@@ -39,6 +39,7 @@ export interface CreateClassPayload {
   meetingsPerWeek: number;
   maxParticipants: number;
   certificateProvided?: boolean;
+  recordingEnabled?: boolean;
   emailSupport?: PlanEmailSupport;
   language?: string;
   level?: string;
@@ -48,6 +49,7 @@ export interface CreateClassPayload {
   topics?: string[];
   classContents?: ClassContentInput[];
   consultantProfileId: string;
+  startDate?: string;
 }
 
 export interface ClassContentInput {

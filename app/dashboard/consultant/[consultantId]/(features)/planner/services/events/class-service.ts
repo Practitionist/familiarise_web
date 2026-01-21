@@ -90,6 +90,7 @@ export class ClassService {
   static async saveClass(
     classData: Partial<ClassEvent>,
     consultantId: string,
+    startDate?: string,
   ): Promise<ClassEvent> {
     try {
       const title = classData.classPlan?.title;
@@ -122,6 +123,7 @@ export class ClassService {
         isUpdate,
         planId,
         classId,
+        startDate,
       );
 
       const response = await fetch(endpoint, {
@@ -181,6 +183,7 @@ export class ClassService {
     isUpdate: boolean,
     planId: string,
     classId: string,
+    startDate?: string,
   ): ClassRequestBody {
     const plan = classData.classPlan;
 
@@ -198,6 +201,7 @@ export class ClassService {
       meetingsPerWeek: plan?.meetingsPerWeek ?? 1,
       maxParticipants: plan?.maxParticipants ?? 1,
       certificateProvided: plan?.certificateProvided,
+      recordingEnabled: plan?.recordingEnabled,
       emailSupport: plan?.emailSupport,
       language: plan?.language ?? undefined,
       level: plan?.level ?? undefined,
@@ -215,6 +219,7 @@ export class ClassService {
         hoursAllotted: content.hoursAllotted,
       })),
       consultantProfileId: consultantId,
+      startDate: startDate,
     };
 
     if (isUpdate) {

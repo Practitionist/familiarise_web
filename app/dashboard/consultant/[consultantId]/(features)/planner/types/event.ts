@@ -144,7 +144,7 @@ export interface WebinarPlannerProps extends BasePlannerProps {
 
 export interface ClassPlannerProps extends BasePlannerProps {
   initialData?: ClassEvent;
-  onSave: (data: Partial<ClassEvent>) => void;
+  onSave: (data: Partial<ClassEvent>, startDate?: string) => void;
 }
 
 export interface ConsultationPlannerProps extends BasePlannerProps {

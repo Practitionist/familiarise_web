@@ -160,13 +160,14 @@ export function EventManagementDashboard({
   };
 
   // Handle class saved event
-  const handleClassSaved = async (data: Partial<ClassEvent>) => {
+  const handleClassSaved = async (data: Partial<ClassEvent>, startDate?: string) => {
     try {
       setIsSaving(true);
       console.log("EventManagementDashboard - Saving class:", data);
+      console.log("EventManagementDashboard - Class startDate:", startDate);
 
-      // First save the class
-      const savedClass = await PlannerService.saveClass(data, consultantId);
+      // First save the class with startDate
+      const savedClass = await PlannerService.saveClass(data, consultantId, startDate);
       console.log("Class saved successfully:", savedClass);
 
       // Refresh planner data with React Query
