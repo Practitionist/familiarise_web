@@ -9,8 +9,8 @@ Comprehensive guide to error detection, handling, and recovery in Stream Chat an
 - [Setup & Configuration](./02-setup-configuration.md)
 - [Provider & Authentication](./03-provider-authentication.md)
 - [Hooks & Utilities](./11-hooks-utilities.md)
-- [Known Issues](./13-known-issues.md)
-- [Troubleshooting](./14-troubleshooting.md)
+- [Troubleshooting](./troubleshooting.md)
+- [Recording & Webhooks](./13-recording-webhooks.md)
 
 ---
 
@@ -883,10 +883,9 @@ function categorizeError(error: Error): ErrorCategory {
 
 ## Next Steps
 
-- Review [Troubleshooting Guide](./14-troubleshooting.md)
-- Check [Known Issues](./13-known-issues.md)
+- Review [Troubleshooting Guide](./troubleshooting.md)
 - Learn about [Hooks & Utilities](./11-hooks-utilities.md)
-- Return to [README](./README.md)
+- Check [Recording & Webhooks](./13-recording-webhooks.md)
 
 ---
 
