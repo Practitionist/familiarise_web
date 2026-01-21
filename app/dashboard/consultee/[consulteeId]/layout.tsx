@@ -37,11 +37,11 @@ const NAV_ITEMS: NavItem[] = [
   { name: "Home", path: "home" },
   { name: "Appointments", path: "appointments" },
   { name: "History", path: "history" },
+  { name: "Recordings", path: "recordings" },
   { name: "Messages", path: "messages" },
   { name: "Support", path: "feedback" },
   { name: "Settings", path: "settings" },
   { name: "Policy", path: "policy" },
-  { name: "Recordings", path: "recordings" },
 ];
 
 // Icon mapping
