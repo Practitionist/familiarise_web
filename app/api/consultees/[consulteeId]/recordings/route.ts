@@ -92,23 +92,19 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       },
     });
 
-    // Get unique plan IDs where recording is enabled
+    // Get unique plan IDs from paid enrollments
+    // Note: recordingEnabled check removed for now - consultees can see all recordings they paid for
+    // TODO: Re-add recordingEnabled filtering when implementing recording access tiers (see #366)
     const webinarPlanIds: string[] = [];
     const classPlanIds: string[] = [];
 
     for (const enrollment of enrolledAppointments) {
-      if (
-        enrollment.appointment?.webinar?.webinarPlan?.recordingEnabled &&
-        enrollment.appointment.webinar.webinarPlanId
-      ) {
+      if (enrollment.appointment?.webinar?.webinarPlanId) {
         if (!webinarPlanIds.includes(enrollment.appointment.webinar.webinarPlanId)) {
           webinarPlanIds.push(enrollment.appointment.webinar.webinarPlanId);
         }
       }
-      if (
-        enrollment.appointment?.class?.classPlan?.recordingEnabled &&
-        enrollment.appointment.class.classPlanId
-      ) {
+      if (enrollment.appointment?.class?.classPlanId) {
         if (!classPlanIds.includes(enrollment.appointment.class.classPlanId)) {
           classPlanIds.push(enrollment.appointment.class.classPlanId);
         }
