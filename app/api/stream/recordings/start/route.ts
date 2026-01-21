@@ -10,6 +10,7 @@ import { getServerSession } from "next-auth";
 import { z } from "zod";
 import authOptions from "@/app/api/auth/[...nextauth]/options";
 import { RecordingService } from "@/lib/stream/recording-service";
+import { getMeetingSessionOwnershipInfo } from "@/lib/stream/recording-utils";
 import prisma from "@/lib/prisma";
 
 const startRecordingSchema = z.object({
@@ -79,22 +80,11 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Verify the consultant owns this appointment
-    const appointment = meetingSession.slotOfAppointment.appointment;
-    let isOwner = false;
-    let recordingEnabled = false;
-
-    if (appointment?.webinar?.webinarPlan) {
-      isOwner =
-        appointment.webinar.webinarPlan.consultantProfileId ===
-        session.user.consultantProfileId;
-      recordingEnabled = appointment.webinar.webinarPlan.recordingEnabled;
-    } else if (appointment?.class?.classPlan) {
-      isOwner =
-        appointment.class.classPlan.consultantProfileId ===
-        session.user.consultantProfileId;
-      recordingEnabled = appointment.class.classPlan.recordingEnabled;
-    }
+    // Verify the consultant owns this appointment using helper function
+    const { isOwner, recordingEnabled } = getMeetingSessionOwnershipInfo(
+      meetingSession,
+      session.user.consultantProfileId
+    );
 
     if (!isOwner) {
       return NextResponse.json(

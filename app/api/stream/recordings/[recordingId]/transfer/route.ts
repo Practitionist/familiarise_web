@@ -10,6 +10,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import authOptions from "@/app/api/auth/[...nextauth]/options";
 import { RecordingTransferService } from "@/lib/stream/recording-transfer-service";
+import { getRecordingOwnershipInfo } from "@/lib/stream/recording-utils";
 import prisma from "@/lib/prisma";
 
 type RouteParams = {
@@ -80,20 +81,11 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       );
     }
 
-    // Verify ownership
-    const appointment =
-      recording.meetingSession?.slotOfAppointment?.appointment;
-    let isOwner = false;
-
-    if (appointment?.webinar?.webinarPlan) {
-      isOwner =
-        appointment.webinar.webinarPlan.consultantProfileId ===
-        session.user.consultantProfileId;
-    } else if (appointment?.class?.classPlan) {
-      isOwner =
-        appointment.class.classPlan.consultantProfileId ===
-        session.user.consultantProfileId;
-    }
+    // Verify ownership using helper function
+    const { isOwner } = getRecordingOwnershipInfo(
+      recording,
+      session.user.consultantProfileId
+    );
 
     if (!isOwner) {
       return NextResponse.json(

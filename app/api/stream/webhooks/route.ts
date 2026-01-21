@@ -77,14 +77,20 @@ const streamRecordingFailedSchema = streamBaseEventSchema.extend({
     .optional(),
 });
 
-// Recording started/stopped schema
-const streamRecordingStateSchema = streamBaseEventSchema.extend({
+// Recording started schema
+const streamRecordingStartedSchema = streamBaseEventSchema.extend({
+  type: z.literal("call.recording_started"),
   user: z
     .object({
       id: z.string(),
       name: z.string().optional(),
     })
     .optional(),
+});
+
+// Recording stopped schema
+const streamRecordingStoppedSchema = streamBaseEventSchema.extend({
+  type: z.literal("call.recording_stopped"),
 });
 
 // Session ended schema
@@ -209,14 +215,14 @@ export async function POST(req: NextRequest) {
       switch (eventType) {
         // Recording events
         case "call.recording_started": {
-          const startedEvent = streamRecordingStateSchema.parse(event);
-          await handleRecordingStarted(startedEvent as StreamRecordingStartedEvent);
+          const startedEvent = streamRecordingStartedSchema.parse(event);
+          await handleRecordingStarted(startedEvent);
           break;
         }
 
         case "call.recording_stopped": {
-          const stoppedEvent = streamRecordingStateSchema.parse(event);
-          await handleRecordingStopped(stoppedEvent as StreamRecordingStoppedEvent);
+          const stoppedEvent = streamRecordingStoppedSchema.parse(event);
+          await handleRecordingStopped(stoppedEvent);
           break;
         }
 
