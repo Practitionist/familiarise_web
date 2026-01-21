@@ -39,6 +39,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
                     webinarPlan: {
                       select: {
                         recordingEnabled: true,
+                        consultantProfileId: true,
                       },
                     },
                   },
@@ -48,6 +49,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
                     classPlan: {
                       select: {
                         recordingEnabled: true,
+                        consultantProfileId: true,
                       },
                     },
                   },
@@ -66,10 +68,56 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       );
     }
 
+    const appointment = meetingSession.slotOfAppointment?.appointment;
+
+    // Authorization check - verify user has access to this meeting
+    const consultantProfileId =
+      appointment?.webinar?.webinarPlan?.consultantProfileId ||
+      appointment?.class?.classPlan?.consultantProfileId;
+
+    // Admin/Staff can access any meeting
+    if (session.user.role !== "ADMIN" && session.user.role !== "STAFF") {
+      // Consultant can access their own meetings
+      if (session.user.role === "CONSULTANT") {
+        if (session.user.consultantProfileId !== consultantProfileId) {
+          return NextResponse.json({ error: "Access denied" }, { status: 403 });
+        }
+      } else {
+        // Consultee needs enrollment verification
+        // Check if user has paid enrollment for this webinar/class
+        const webinarId = appointment?.webinar?.id;
+        const classId = appointment?.class?.id;
+
+        if (!webinarId && !classId) {
+          return NextResponse.json({ error: "Access denied" }, { status: 403 });
+        }
+
+        const enrollmentConditions = [];
+        if (webinarId) {
+          enrollmentConditions.push({ webinarId });
+        }
+        if (classId) {
+          enrollmentConditions.push({ classId });
+        }
+
+        const hasEnrollment = await prisma.payment.findFirst({
+          where: {
+            userId: session.user.id,
+            paymentStatus: "SUCCEEDED",
+            appointment: {
+              OR: enrollmentConditions,
+            },
+          },
+        });
+
+        if (!hasEnrollment) {
+          return NextResponse.json({ error: "Access denied" }, { status: 403 });
+        }
+      }
+    }
+
     // Determine if recording is enabled based on appointment type
     let recordingEnabled = false;
-
-    const appointment = meetingSession.slotOfAppointment?.appointment;
 
     if (appointment?.webinar?.webinarPlan) {
       recordingEnabled = appointment.webinar.webinarPlan.recordingEnabled;

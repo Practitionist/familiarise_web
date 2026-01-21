@@ -244,44 +244,60 @@ export class RecordingService {
   /**
    * Get all recordings for a consultant
    * @param consultantProfileId The consultant profile ID
+   * @param filters Optional filters for type and status
    */
   static async getConsultantRecordings(
-    consultantProfileId: string
+    consultantProfileId: string,
+    filters?: {
+      type?: "webinar" | "class";
+      status?: RecordingStatus;
+    }
   ): Promise<ConsultantRecordingWithDetails[]> {
     try {
+      // Build type-specific conditions based on filter
+      const typeConditions = [];
+
+      if (!filters?.type || filters.type === "webinar") {
+        typeConditions.push({
+          meetingSession: {
+            slotOfAppointment: {
+              appointment: {
+                webinar: {
+                  webinarPlan: {
+                    consultantProfileId,
+                  },
+                },
+              },
+            },
+          },
+        });
+      }
+
+      if (!filters?.type || filters.type === "class") {
+        typeConditions.push({
+          meetingSession: {
+            slotOfAppointment: {
+              appointment: {
+                class: {
+                  classPlan: {
+                    consultantProfileId,
+                  },
+                },
+              },
+            },
+          },
+        });
+      }
+
+      // Build status filter - use provided status or default exclusions
+      const statusFilter = filters?.status
+        ? { status: filters.status }
+        : { status: { notIn: ["FAILED", "EXPIRED"] as RecordingStatus[] } };
+
       const recordings = await prisma.recording.findMany({
         where: {
-          OR: [
-            {
-              meetingSession: {
-                slotOfAppointment: {
-                  appointment: {
-                    webinar: {
-                      webinarPlan: {
-                        consultantProfileId,
-                      },
-                    },
-                  },
-                },
-              },
-            },
-            {
-              meetingSession: {
-                slotOfAppointment: {
-                  appointment: {
-                    class: {
-                      classPlan: {
-                        consultantProfileId,
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          ],
-          status: {
-            notIn: ["FAILED", "EXPIRED"],
-          },
+          OR: typeConditions,
+          ...statusFilter,
         },
         include: consultantRecordingInclude,
         orderBy: {

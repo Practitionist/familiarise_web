@@ -9,8 +9,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import authOptions from "@/app/api/auth/[...nextauth]/options";
 import { RecordingService } from "@/lib/stream/recording-service";
-import { ConsultantRecordingWithDetails } from "@/lib/stream/recording-types";
 import { RecordingTransferService } from "@/lib/stream/recording-transfer-service";
+import { RecordingStatus } from "@prisma/client";
 
 type RouteParams = {
   params: Promise<{
@@ -42,33 +42,20 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
 
     // Parse query params for filtering
     const { searchParams } = new URL(req.url);
-    const type = searchParams.get("type"); // "webinar" or "class"
-    const status = searchParams.get("status"); // Recording status filter
+    const type = searchParams.get("type") as "webinar" | "class" | null;
+    const status = searchParams.get("status") as RecordingStatus | null;
 
-    // Get all recordings for consultant
-    const recordings = await RecordingService.getConsultantRecordings(consultantId);
-
-    // Filter by type if specified
-    let filteredRecordings: ConsultantRecordingWithDetails[] = recordings;
-    if (type === "webinar") {
-      filteredRecordings = recordings.filter(
-        (r) => r.meetingSession.slotOfAppointment.appointment?.webinar
-      );
-    } else if (type === "class") {
-      filteredRecordings = recordings.filter(
-        (r) => r.meetingSession.slotOfAppointment.appointment?.class
-      );
-    }
-
-    // Filter by status if specified
-    if (status) {
-      filteredRecordings = filteredRecordings.filter(
-        (r) => r.status === status
-      );
-    }
+    // Get recordings with database-level filtering
+    const recordings = await RecordingService.getConsultantRecordings(
+      consultantId,
+      {
+        type: type || undefined,
+        status: status || undefined,
+      }
+    );
 
     // Map recordings to response format with best URLs
-    const formattedRecordings = filteredRecordings.map((recording) => {
+    const formattedRecordings = recordings.map((recording) => {
       const appointment =
         recording.meetingSession.slotOfAppointment.appointment;
 
