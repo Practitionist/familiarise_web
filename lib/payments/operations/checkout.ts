@@ -1236,6 +1236,7 @@ export async function handleClassCheckout(
     // Get timing from the first existing slot or use appointment times
     const existingSlot = appointment.slotsOfAppointment[0];
 
+    // Step 1: Create the slot without user connection
     const slot = await tx.slotOfAppointment.create({
       data: {
         appointmentId: appointment.id,
@@ -1248,11 +1249,19 @@ export async function handleClassCheckout(
           appointment.slotsOfAppointment[0]?.endsAt ||
           new Date(),
         isTentative: !skipPayment,
+      },
+    });
+
+    // Step 2: Connect user to slot in a separate update (fixes FK constraint issue)
+    await tx.slotOfAppointment.update({
+      where: { id: slot.id },
+      data: {
         user: {
           connect: { id: userId },
         },
       },
     });
+
     createdSlots.push(slot);
   }
 
@@ -1440,7 +1449,7 @@ export async function handleCheckout(
         }
 
         return { appointmentId: createdAppointment?.id };
-      });
+      }, { timeout: 25000 });
 
       const logMessage = isMockPayment
         ? `🎭 Mock payment + tentative appointment created: ${paymentResponse.id}`
