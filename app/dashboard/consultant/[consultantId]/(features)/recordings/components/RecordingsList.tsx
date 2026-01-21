@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Loader2, Video, AlertCircle } from "lucide-react";
+import { Loader2, Video, AlertCircle, RefreshCw } from "lucide-react";
 import { RecordingCard, RecordingData } from "./RecordingCard";
 import { useToast } from "@/hooks/use-toast";
+import { Button } from "@/components/ui/button";
 
 interface RecordingsListProps {
   consultantId: string;
@@ -15,6 +16,7 @@ export function RecordingsList({ consultantId, type }: RecordingsListProps) {
   const [recordings, setRecordings] = useState<RecordingData[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
 
   const fetchRecordings = async () => {
     try {
@@ -47,6 +49,40 @@ export function RecordingsList({ consultantId, type }: RecordingsListProps) {
   useEffect(() => {
     fetchRecordings();
   }, [consultantId, type]);
+
+  const handleSync = async () => {
+    setIsSyncing(true);
+    try {
+      const response = await fetch("/api/recordings/sync", { method: "POST" });
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to sync recordings");
+      }
+
+      if (data.synced > 0) {
+        toast({
+          title: "Synced",
+          description: `${data.synced} recording(s) synced from Stream.`,
+        });
+        await fetchRecordings();
+      } else {
+        toast({
+          title: "Up to date",
+          description: "No new recordings found.",
+        });
+      }
+    } catch (err) {
+      console.error("Error syncing recordings:", err);
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to sync recordings",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   const handleTransfer = async (recordingId: string) => {
     const response = await fetch(`/api/recordings/${recordingId}/transfer`, {
@@ -103,19 +139,50 @@ export function RecordingsList({ consultantId, type }: RecordingsListProps) {
               ? "Class recordings will appear here after you record a session."
               : "Your recorded sessions will appear here."}
         </p>
+        <Button
+          onClick={handleSync}
+          disabled={isSyncing}
+          variant="outline"
+          size="sm"
+          className="mt-4"
+        >
+          {isSyncing ? (
+            <Loader2 className="w-4 h-4 animate-spin mr-2" />
+          ) : (
+            <RefreshCw className="w-4 h-4 mr-2" />
+          )}
+          Sync from Stream
+        </Button>
       </div>
     );
   }
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-      {recordings.map((recording) => (
-        <RecordingCard
-          key={recording.id}
-          recording={recording}
-          onTransfer={handleTransfer}
-        />
-      ))}
+    <div className="space-y-4">
+      <div className="flex justify-end">
+        <Button
+          onClick={handleSync}
+          disabled={isSyncing}
+          variant="outline"
+          size="sm"
+        >
+          {isSyncing ? (
+            <Loader2 className="w-4 h-4 animate-spin mr-2" />
+          ) : (
+            <RefreshCw className="w-4 h-4 mr-2" />
+          )}
+          Sync from Stream
+        </Button>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {recordings.map((recording) => (
+          <RecordingCard
+            key={recording.id}
+            recording={recording}
+            onTransfer={handleTransfer}
+          />
+        ))}
+      </div>
     </div>
   );
 }

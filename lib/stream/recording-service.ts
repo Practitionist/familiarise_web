@@ -477,6 +477,413 @@ export class RecordingService {
       return { isRecording: false, startedAt: null, startedBy: null };
     }
   }
+
+  /**
+   * Sync recordings from Stream API for a consultant's sessions
+   * Creates Recording records for any recordings not already in DB
+   * @param consultantProfileId The consultant profile ID
+   */
+  static async syncRecordingsForConsultant(
+    consultantProfileId: string
+  ): Promise<{ synced: number; recordings: Recording[] }> {
+    const syncedRecordings: Recording[] = [];
+
+    try {
+      // Define the include for meeting sessions with full appointment details
+      const meetingSessionInclude = {
+        slotOfAppointment: {
+          include: {
+            appointment: {
+              include: {
+                consultation: {
+                  include: {
+                    consultationPlan: true,
+                  },
+                },
+                subscription: {
+                  include: {
+                    subscriptionPlan: true,
+                  },
+                },
+                webinar: {
+                  include: {
+                    webinarPlan: true,
+                  },
+                },
+                class: {
+                  include: {
+                    classPlan: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      } as const;
+
+      // Get all MeetingSessions for consultant's webinars and classes with streamCallId
+      const meetingSessions = await prisma.meetingSession.findMany({
+        where: {
+          streamCallId: { not: "" },
+          slotOfAppointment: {
+            appointment: {
+              OR: [
+                {
+                  webinar: {
+                    webinarPlan: {
+                      consultantProfileId,
+                    },
+                  },
+                },
+                {
+                  class: {
+                    classPlan: {
+                      consultantProfileId,
+                    },
+                  },
+                },
+              ],
+            },
+          },
+        },
+        include: meetingSessionInclude,
+      });
+
+      streamLogger.info("Syncing recordings for consultant", {
+        consultantProfileId,
+        sessionCount: meetingSessions.length,
+      });
+
+      // For each session, fetch recordings from Stream and sync
+      for (const session of meetingSessions) {
+        if (!session.streamCallId) continue;
+
+        try {
+          const streamRecordings = await this.getCallRecordingsFromStream(
+            session.streamCallId
+          );
+
+          for (const streamRec of streamRecordings) {
+            // Check if recording already exists (by filename/streamRecordingId)
+            const existingRecording = await prisma.recording.findFirst({
+              where: {
+                meetingSessionId: session.id,
+                streamRecordingId: streamRec.filename,
+              },
+            });
+
+            if (existingRecording) {
+              streamLogger.info("Recording already exists, skipping", {
+                recordingId: existingRecording.id,
+                filename: streamRec.filename,
+              });
+              continue;
+            }
+
+            // Calculate duration in minutes
+            const startDate = new Date(streamRec.start_time);
+            const endDate = new Date(streamRec.end_time);
+            const durationInMinutes = Math.round(
+              (endDate.getTime() - startDate.getTime()) / (1000 * 60)
+            );
+
+            // Generate title from appointment info (same logic as handleRecordingReady)
+            const appointment = session.slotOfAppointment.appointment;
+            let title = "Recording";
+
+            if (appointment?.webinar?.webinarPlan?.title) {
+              title = `Webinar: ${appointment.webinar.webinarPlan.title}`;
+            } else if (appointment?.class?.classPlan?.title) {
+              title = `Class: ${appointment.class.classPlan.title}`;
+            } else if (appointment?.consultation?.consultationPlan?.title) {
+              title = `Consultation: ${appointment.consultation.consultationPlan.title}`;
+            } else if (appointment?.subscription?.subscriptionPlan?.title) {
+              title = `Subscription: ${appointment.subscription.subscriptionPlan.title}`;
+            }
+
+            // Add date to title
+            const dateStr = startDate.toLocaleDateString("en-US", {
+              month: "short",
+              day: "numeric",
+              year: "numeric",
+            });
+            title = `${title} - ${dateStr}`;
+
+            // Calculate Stream URL expiration (2 weeks from now)
+            const streamUrlExpiresAt = new Date();
+            streamUrlExpiresAt.setDate(streamUrlExpiresAt.getDate() + 14);
+
+            // Create recording record
+            const recording = await prisma.recording.create({
+              data: {
+                title,
+                recordingUrl: streamRec.url,
+                durationInMinutes,
+                recordedAt: startDate,
+                streamRecordingId: streamRec.filename,
+                streamCallId: session.streamCallId,
+                storageType: "STREAM_S3",
+                status: "READY",
+                streamUrlExpiresAt,
+                meetingSessionId: session.id,
+              },
+            });
+
+            syncedRecordings.push(recording);
+
+            streamLogger.info("Recording synced successfully", {
+              recordingId: recording.id,
+              sessionId: session.id,
+              title,
+              durationInMinutes,
+            });
+          }
+        } catch (sessionError) {
+          streamLogger.error("Failed to sync recordings for session", sessionError, {
+            sessionId: session.id,
+            streamCallId: session.streamCallId,
+          });
+          // Continue with next session even if one fails
+        }
+      }
+
+      streamLogger.info("Recording sync completed", {
+        consultantProfileId,
+        syncedCount: syncedRecordings.length,
+      });
+
+      return {
+        synced: syncedRecordings.length,
+        recordings: syncedRecordings,
+      };
+    } catch (error) {
+      streamLogger.error("Failed to sync recordings for consultant", error, {
+        consultantProfileId,
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Sync recordings from Stream API for a consultee's enrolled sessions
+   * Creates Recording records for any recordings not already in DB
+   * @param consulteeProfileId The consultee profile ID
+   * @param userId The user ID (for payment lookup)
+   */
+  static async syncRecordingsForConsultee(
+    consulteeProfileId: string,
+    userId?: string
+  ): Promise<{ synced: number; recordings: Recording[] }> {
+    const syncedRecordings: Recording[] = [];
+
+    try {
+      // Get the user ID from consultee profile if not provided
+      let effectiveUserId = userId;
+      if (!effectiveUserId) {
+        const consulteeProfile = await prisma.consulteeProfile.findUnique({
+          where: { id: consulteeProfileId },
+          select: { user: { select: { id: true } } },
+        });
+        effectiveUserId = consulteeProfile?.user?.id;
+      }
+
+      if (!effectiveUserId) {
+        streamLogger.warn("Could not find user for consultee profile", {
+          consulteeProfileId,
+        });
+        return { synced: 0, recordings: [] };
+      }
+
+      // Find all paid enrollments for webinars/classes through Payment records
+      const paidEnrollments = await prisma.payment.findMany({
+        where: {
+          userId: effectiveUserId,
+          paymentStatus: "SUCCEEDED",
+          appointment: {
+            OR: [
+              { webinar: { isNot: null } },
+              { class: { isNot: null } },
+            ],
+          },
+        },
+        include: {
+          appointment: {
+            include: {
+              slotsOfAppointment: {
+                include: {
+                  meetingSession: {
+                    include: {
+                      slotOfAppointment: {
+                        include: {
+                          appointment: {
+                            include: {
+                              consultation: {
+                                include: {
+                                  consultationPlan: true,
+                                },
+                              },
+                              subscription: {
+                                include: {
+                                  subscriptionPlan: true,
+                                },
+                              },
+                              webinar: {
+                                include: {
+                                  webinarPlan: true,
+                                },
+                              },
+                              class: {
+                                include: {
+                                  classPlan: true,
+                                },
+                              },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      });
+
+      // Collect all meeting sessions from paid enrollments
+      type MeetingSessionWithDetails = NonNullable<
+        (typeof paidEnrollments)[0]["appointment"]
+      >["slotsOfAppointment"][0]["meetingSession"];
+      const meetingSessions: NonNullable<MeetingSessionWithDetails>[] = [];
+
+      for (const payment of paidEnrollments) {
+        if (!payment.appointment) continue;
+        for (const slot of payment.appointment.slotsOfAppointment) {
+          if (slot.meetingSession && slot.meetingSession.streamCallId) {
+            meetingSessions.push(slot.meetingSession);
+          }
+        }
+      }
+
+      // Deduplicate sessions by ID
+      const uniqueSessions = Array.from(
+        new Map(meetingSessions.map((s) => [s.id, s])).values()
+      );
+
+      streamLogger.info("Syncing recordings for consultee", {
+        consulteeProfileId,
+        sessionCount: uniqueSessions.length,
+      });
+
+      // For each session, fetch recordings from Stream and sync
+      for (const session of uniqueSessions) {
+        if (!session.streamCallId) continue;
+
+        try {
+          const streamRecordings = await this.getCallRecordingsFromStream(
+            session.streamCallId
+          );
+
+          for (const streamRec of streamRecordings) {
+            // Check if recording already exists (by filename/streamRecordingId)
+            const existingRecording = await prisma.recording.findFirst({
+              where: {
+                meetingSessionId: session.id,
+                streamRecordingId: streamRec.filename,
+              },
+            });
+
+            if (existingRecording) {
+              streamLogger.info("Recording already exists, skipping", {
+                recordingId: existingRecording.id,
+                filename: streamRec.filename,
+              });
+              continue;
+            }
+
+            // Calculate duration in minutes
+            const startDate = new Date(streamRec.start_time);
+            const endDate = new Date(streamRec.end_time);
+            const durationInMinutes = Math.round(
+              (endDate.getTime() - startDate.getTime()) / (1000 * 60)
+            );
+
+            // Generate title from appointment info (same logic as handleRecordingReady)
+            const appointment = session.slotOfAppointment.appointment;
+            let title = "Recording";
+
+            if (appointment?.webinar?.webinarPlan?.title) {
+              title = `Webinar: ${appointment.webinar.webinarPlan.title}`;
+            } else if (appointment?.class?.classPlan?.title) {
+              title = `Class: ${appointment.class.classPlan.title}`;
+            } else if (appointment?.consultation?.consultationPlan?.title) {
+              title = `Consultation: ${appointment.consultation.consultationPlan.title}`;
+            } else if (appointment?.subscription?.subscriptionPlan?.title) {
+              title = `Subscription: ${appointment.subscription.subscriptionPlan.title}`;
+            }
+
+            // Add date to title
+            const dateStr = startDate.toLocaleDateString("en-US", {
+              month: "short",
+              day: "numeric",
+              year: "numeric",
+            });
+            title = `${title} - ${dateStr}`;
+
+            // Calculate Stream URL expiration (2 weeks from now)
+            const streamUrlExpiresAt = new Date();
+            streamUrlExpiresAt.setDate(streamUrlExpiresAt.getDate() + 14);
+
+            // Create recording record
+            const recording = await prisma.recording.create({
+              data: {
+                title,
+                recordingUrl: streamRec.url,
+                durationInMinutes,
+                recordedAt: startDate,
+                streamRecordingId: streamRec.filename,
+                streamCallId: session.streamCallId,
+                storageType: "STREAM_S3",
+                status: "READY",
+                streamUrlExpiresAt,
+                meetingSessionId: session.id,
+              },
+            });
+
+            syncedRecordings.push(recording);
+
+            streamLogger.info("Recording synced successfully", {
+              recordingId: recording.id,
+              sessionId: session.id,
+              title,
+              durationInMinutes,
+            });
+          }
+        } catch (sessionError) {
+          streamLogger.error("Failed to sync recordings for session", sessionError, {
+            sessionId: session.id,
+            streamCallId: session.streamCallId,
+          });
+          // Continue with next session even if one fails
+        }
+      }
+
+      streamLogger.info("Recording sync completed for consultee", {
+        consulteeProfileId,
+        syncedCount: syncedRecordings.length,
+      });
+
+      return {
+        synced: syncedRecordings.length,
+        recordings: syncedRecordings,
+      };
+    } catch (error) {
+      streamLogger.error("Failed to sync recordings for consultee", error, {
+        consulteeProfileId,
+      });
+      throw error;
+    }
+  }
 }
 
 export default RecordingService;

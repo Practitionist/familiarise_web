@@ -1,11 +1,13 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Loader2, Video, AlertCircle } from "lucide-react";
+import { Loader2, Video, AlertCircle, RefreshCw } from "lucide-react";
 import {
   ConsulteeRecordingCard,
   ConsulteeRecordingData,
 } from "./ConsulteeRecordingCard";
+import { useToast } from "@/hooks/use-toast";
+import { Button } from "@/components/ui/button";
 
 interface ConsulteeRecordingsListProps {
   consulteeId: string;
@@ -16,9 +18,11 @@ export function ConsulteeRecordingsList({
   consulteeId,
   type,
 }: ConsulteeRecordingsListProps) {
+  const { toast } = useToast();
   const [recordings, setRecordings] = useState<ConsulteeRecordingData[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
 
   const fetchRecordings = async () => {
     try {
@@ -51,6 +55,40 @@ export function ConsulteeRecordingsList({
   useEffect(() => {
     fetchRecordings();
   }, [consulteeId, type]);
+
+  const handleSync = async () => {
+    setIsSyncing(true);
+    try {
+      const response = await fetch("/api/recordings/sync", { method: "POST" });
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to sync recordings");
+      }
+
+      if (data.synced > 0) {
+        toast({
+          title: "Synced",
+          description: `${data.synced} recording(s) synced from Stream.`,
+        });
+        await fetchRecordings();
+      } else {
+        toast({
+          title: "Up to date",
+          description: "No new recordings found.",
+        });
+      }
+    } catch (err) {
+      console.error("Error syncing recordings:", err);
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to sync recordings",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   if (isLoading) {
     return (
@@ -88,15 +126,46 @@ export function ConsulteeRecordingsList({
               ? "Recordings from your enrolled classes will appear here."
               : "Recordings from your enrolled webinars and classes will appear here after the consultant records a session."}
         </p>
+        <Button
+          onClick={handleSync}
+          disabled={isSyncing}
+          variant="outline"
+          size="sm"
+          className="mt-4"
+        >
+          {isSyncing ? (
+            <Loader2 className="w-4 h-4 animate-spin mr-2" />
+          ) : (
+            <RefreshCw className="w-4 h-4 mr-2" />
+          )}
+          Sync from Stream
+        </Button>
       </div>
     );
   }
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-      {recordings.map((recording) => (
-        <ConsulteeRecordingCard key={recording.id} recording={recording} />
-      ))}
+    <div className="space-y-4">
+      <div className="flex justify-end">
+        <Button
+          onClick={handleSync}
+          disabled={isSyncing}
+          variant="outline"
+          size="sm"
+        >
+          {isSyncing ? (
+            <Loader2 className="w-4 h-4 animate-spin mr-2" />
+          ) : (
+            <RefreshCw className="w-4 h-4 mr-2" />
+          )}
+          Sync from Stream
+        </Button>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {recordings.map((recording) => (
+          <ConsulteeRecordingCard key={recording.id} recording={recording} />
+        ))}
+      </div>
     </div>
   );
 }
