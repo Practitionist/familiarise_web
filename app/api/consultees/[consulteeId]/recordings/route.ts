@@ -8,8 +8,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import authOptions from "@/app/api/auth/[...nextauth]/options";
+import { RecordingService } from "@/lib/stream/recording-service";
 import { RecordingTransferService } from "@/lib/stream/recording-transfer-service";
-import prisma from "@/lib/prisma";
 
 type RouteParams = {
   params: Promise<{
@@ -41,168 +41,13 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
 
     // Parse query params for filtering
     const { searchParams } = new URL(req.url);
-    const type = searchParams.get("type"); // "webinar" or "class"
+    const type = searchParams.get("type") as "webinar" | "class" | null;
 
-    // Find all enrollments (paid appointments) for this consultee
-    const enrolledAppointments = await prisma.payment.findMany({
-      where: {
-        userId: session.user.id,
-        paymentStatus: "SUCCEEDED",
-        appointment: {
-          OR: [
-            { webinar: { isNot: null } },
-            { class: { isNot: null } },
-          ],
-        },
-      },
-      select: {
-        appointment: {
-          select: {
-            id: true,
-            webinarId: true,
-            classId: true,
-            webinar: {
-              select: {
-                id: true,
-                webinarPlanId: true,
-                webinarPlan: {
-                  select: {
-                    id: true,
-                    title: true,
-                    recordingEnabled: true,
-                  },
-                },
-              },
-            },
-            class: {
-              select: {
-                id: true,
-                classPlanId: true,
-                classPlan: {
-                  select: {
-                    id: true,
-                    title: true,
-                    recordingEnabled: true,
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-    });
-
-    // Get unique plan IDs from paid enrollments using Set for O(n) performance
-    // Note: recordingEnabled check removed for now - consultees can see all recordings they paid for
-    // TODO: Re-add recordingEnabled filtering when implementing recording access tiers (see #366)
-    const webinarPlanIds = Array.from(
-      new Set(
-        enrolledAppointments
-          .map((e) => e.appointment?.webinar?.webinarPlanId)
-          .filter((id): id is string => !!id)
-      )
+    // Get recordings from service
+    const recordings = await RecordingService.getConsulteeRecordings(
+      session.user.id,
+      { type: type || undefined }
     );
-    const classPlanIds = Array.from(
-      new Set(
-        enrolledAppointments
-          .map((e) => e.appointment?.class?.classPlanId)
-          .filter((id): id is string => !!id)
-      )
-    );
-
-    // Build query based on type filter
-    const whereConditions = [];
-
-    if (!type || type === "webinar") {
-      if (webinarPlanIds.length > 0) {
-        whereConditions.push({
-          meetingSession: {
-            slotOfAppointment: {
-              appointment: {
-                webinar: {
-                  webinarPlanId: {
-                    in: webinarPlanIds,
-                  },
-                },
-              },
-            },
-          },
-        });
-      }
-    }
-
-    if (!type || type === "class") {
-      if (classPlanIds.length > 0) {
-        whereConditions.push({
-          meetingSession: {
-            slotOfAppointment: {
-              appointment: {
-                class: {
-                  classPlanId: {
-                    in: classPlanIds,
-                  },
-                },
-              },
-            },
-          },
-        });
-      }
-    }
-
-    // If no valid enrollments found, return empty array
-    if (whereConditions.length === 0) {
-      return NextResponse.json({
-        recordings: [],
-        total: 0,
-      });
-    }
-
-    // Fetch recordings for enrolled plans
-    const recordings = await prisma.recording.findMany({
-      where: {
-        OR: whereConditions,
-        status: {
-          notIn: ["FAILED", "EXPIRED"],
-        },
-      },
-      include: {
-        meetingSession: {
-          include: {
-            slotOfAppointment: {
-              include: {
-                appointment: {
-                  include: {
-                    webinar: {
-                      include: {
-                        webinarPlan: {
-                          select: {
-                            id: true,
-                            title: true,
-                          },
-                        },
-                      },
-                    },
-                    class: {
-                      include: {
-                        classPlan: {
-                          select: {
-                            id: true,
-                            title: true,
-                          },
-                        },
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-      orderBy: {
-        recordedAt: "desc",
-      },
-    });
 
     // Format recordings for response
     const formattedRecordings = recordings.map((recording) => {

@@ -9,12 +9,14 @@ import { Recording, RecordingStatus } from "@prisma/client";
 import { streamLogger } from "@/lib/stream-logger";
 import type {
   ConsultantRecordingWithDetails,
+  ConsulteeRecordingWithDetails,
   RecordingWithAccessControl,
   WebinarPlanRecordingWithDetails,
   ClassPlanRecordingWithDetails,
 } from "./recording-types";
 import {
   consultantRecordingInclude,
+  consulteeRecordingInclude,
   recordingWithAccessControlInclude,
   webinarPlanRecordingInclude,
   classPlanRecordingInclude,
@@ -309,6 +311,131 @@ export class RecordingService {
     } catch (error) {
       streamLogger.error("Failed to get consultant recordings", error, {
         consultantProfileId,
+      });
+      return [];
+    }
+  }
+
+  /**
+   * Get all recordings for a consultee (paid enrollments only)
+   * @param userId The user ID (for payment lookup)
+   * @param filters Optional filters for type
+   */
+  static async getConsulteeRecordings(
+    userId: string,
+    filters?: {
+      type?: "webinar" | "class";
+    }
+  ): Promise<ConsulteeRecordingWithDetails[]> {
+    try {
+      // Find all enrollments (paid appointments) for this user
+      const enrolledAppointments = await prisma.payment.findMany({
+        where: {
+          userId,
+          paymentStatus: "SUCCEEDED",
+          appointment: {
+            OR: [
+              { webinar: { isNot: null } },
+              { class: { isNot: null } },
+            ],
+          },
+        },
+        select: {
+          appointment: {
+            select: {
+              webinar: {
+                select: {
+                  webinarPlanId: true,
+                },
+              },
+              class: {
+                select: {
+                  classPlanId: true,
+                },
+              },
+            },
+          },
+        },
+      });
+
+      // Get unique plan IDs from paid enrollments using Set for O(n) performance
+      const webinarPlanIds = Array.from(
+        new Set(
+          enrolledAppointments
+            .map((e) => e.appointment?.webinar?.webinarPlanId)
+            .filter((id): id is string => !!id)
+        )
+      );
+      const classPlanIds = Array.from(
+        new Set(
+          enrolledAppointments
+            .map((e) => e.appointment?.class?.classPlanId)
+            .filter((id): id is string => !!id)
+        )
+      );
+
+      // Build query based on type filter
+      const whereConditions = [];
+
+      if (!filters?.type || filters.type === "webinar") {
+        if (webinarPlanIds.length > 0) {
+          whereConditions.push({
+            meetingSession: {
+              slotOfAppointment: {
+                appointment: {
+                  webinar: {
+                    webinarPlanId: {
+                      in: webinarPlanIds,
+                    },
+                  },
+                },
+              },
+            },
+          });
+        }
+      }
+
+      if (!filters?.type || filters.type === "class") {
+        if (classPlanIds.length > 0) {
+          whereConditions.push({
+            meetingSession: {
+              slotOfAppointment: {
+                appointment: {
+                  class: {
+                    classPlanId: {
+                      in: classPlanIds,
+                    },
+                  },
+                },
+              },
+            },
+          });
+        }
+      }
+
+      // If no valid enrollments found, return empty array
+      if (whereConditions.length === 0) {
+        return [];
+      }
+
+      // Fetch recordings for enrolled plans
+      const recordings = await prisma.recording.findMany({
+        where: {
+          OR: whereConditions,
+          status: {
+            notIn: ["FAILED", "EXPIRED"],
+          },
+        },
+        include: consulteeRecordingInclude,
+        orderBy: {
+          recordedAt: "desc",
+        },
+      });
+
+      return recordings;
+    } catch (error) {
+      streamLogger.error("Failed to get consultee recordings", error, {
+        userId,
       });
       return [];
     }

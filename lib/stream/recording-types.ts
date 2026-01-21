@@ -144,3 +144,48 @@ export const classPlanRecordingInclude =
 export type ClassPlanRecordingWithDetails = Prisma.RecordingGetPayload<{
   include: typeof classPlanRecordingInclude;
 }>;
+
+// ============================================================================
+// Consultee Recordings Include Structure
+// Used by: RecordingService.getConsulteeRecordings()
+// ============================================================================
+
+export const consulteeRecordingInclude =
+  Prisma.validator<Prisma.RecordingInclude>()({
+    meetingSession: {
+      include: {
+        slotOfAppointment: {
+          include: {
+            appointment: {
+              include: {
+                webinar: {
+                  include: {
+                    webinarPlan: {
+                      select: {
+                        id: true,
+                        title: true,
+                      },
+                    },
+                  },
+                },
+                class: {
+                  include: {
+                    classPlan: {
+                      select: {
+                        id: true,
+                        title: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+
+export type ConsulteeRecordingWithDetails = Prisma.RecordingGetPayload<{
+  include: typeof consulteeRecordingInclude;
+}>;
