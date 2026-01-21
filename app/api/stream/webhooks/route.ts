@@ -1,12 +1,16 @@
 /**
  * Stream Video Webhook Handler
- * Handles recording lifecycle events from Stream
+ * Handles recording lifecycle and call session events from Stream
  *
- * Events handled:
+ * Recording Events:
  * - call.recording_started
  * - call.recording_stopped
  * - call.recording_ready
  * - call.recording_failed
+ *
+ * Session Events:
+ * - call.session_ended
+ * - call.ended
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -22,14 +26,24 @@ import {
   StreamRecordingReadyEvent,
   StreamRecordingFailedEvent,
 } from "@/lib/stream/recording-handlers";
-import { logWebhookEvent, markWebhookEventProcessed } from "../utils";
+import {
+  handleSessionEnded,
+  handleCallEnded,
+  StreamSessionEndedEvent,
+  StreamCallEndedEvent,
+} from "@/lib/stream/session-handlers";
+import { logWebhookEvent, markWebhookEventProcessed } from "../../webhooks/utils";
 
 // Stream webhook event types we handle
 const HANDLED_EVENT_TYPES = [
+  // Recording events
   "call.recording_started",
   "call.recording_stopped",
   "call.recording_ready",
   "call.recording_failed",
+  // Session events
+  "call.session_ended",
+  "call.ended",
 ] as const;
 
 type HandledEventType = (typeof HANDLED_EVENT_TYPES)[number];
@@ -71,6 +85,31 @@ const streamRecordingStateSchema = streamBaseEventSchema.extend({
       name: z.string().optional(),
     })
     .optional(),
+});
+
+// Session ended schema
+const streamSessionEndedSchema = streamBaseEventSchema.extend({
+  type: z.literal("call.session_ended"),
+  call: z
+    .object({
+      id: z.string(),
+      type: z.string(),
+      created_by_user_id: z.string().optional(),
+    })
+    .optional(),
+});
+
+// Call ended schema
+const streamCallEndedSchema = streamBaseEventSchema.extend({
+  type: z.literal("call.ended"),
+  call: z
+    .object({
+      id: z.string(),
+      type: z.string(),
+      created_by_user_id: z.string().optional(),
+    })
+    .optional(),
+  ended_by_user_id: z.string().optional(),
 });
 
 /**
@@ -168,6 +207,7 @@ export async function POST(req: NextRequest) {
 
     try {
       switch (eventType) {
+        // Recording events
         case "call.recording_started": {
           const startedEvent = streamRecordingStateSchema.parse(event);
           await handleRecordingStarted(startedEvent as StreamRecordingStartedEvent);
@@ -189,6 +229,19 @@ export async function POST(req: NextRequest) {
         case "call.recording_failed": {
           const failedEvent = streamRecordingFailedSchema.parse(event);
           await handleRecordingFailed(failedEvent as StreamRecordingFailedEvent);
+          break;
+        }
+
+        // Session events
+        case "call.session_ended": {
+          const sessionEndedEvent = streamSessionEndedSchema.parse(event);
+          await handleSessionEnded(sessionEndedEvent as StreamSessionEndedEvent);
+          break;
+        }
+
+        case "call.ended": {
+          const callEndedEvent = streamCallEndedSchema.parse(event);
+          await handleCallEnded(callEndedEvent as StreamCallEndedEvent);
           break;
         }
 

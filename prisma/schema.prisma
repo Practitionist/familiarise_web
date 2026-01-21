@@ -1092,6 +1092,10 @@ model MeetingSession {
   recordingStartedAt DateTime?
   recordingStartedBy String? // userId who started recording
 
+  // Session lifecycle
+  endedAt     DateTime? // When session actually ended
+  endedReason String? // "call_ended", "session_timeout", "error"
+
   recordings Recording[]
 
   slotOfAppointment   SlotOfAppointment @relation(fields: [slotOfAppointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
