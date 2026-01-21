@@ -6,7 +6,9 @@ const globalForPrisma = globalThis as unknown as {
 };
 
 const adapter = new PrismaPg({
-  connectionString: process.env.DIRECT_URL || process.env.DATABASE_URL,
+  // Use pooled connection (DATABASE_URL) for runtime queries to avoid connection exhaustion
+  // DIRECT_URL is only for migrations (handled by prisma.config.ts)
+  connectionString: process.env.DATABASE_URL || process.env.DIRECT_URL,
 });
 
 const prisma =
