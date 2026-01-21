@@ -1,6 +1,6 @@
 /**
  * Stop Recording API Route
- * POST /api/recordings/stop
+ * POST /api/stream/recordings/stop
  *
  * Stops recording for a video call. Only consultants can stop recordings.
  */

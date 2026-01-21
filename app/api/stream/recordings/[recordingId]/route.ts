@@ -1,6 +1,6 @@
 /**
  * Recording Details API Route
- * GET /api/recordings/[recordingId]
+ * GET /api/stream/recordings/[recordingId]
  *
  * Gets details for a specific recording. Access control based on user role.
  */

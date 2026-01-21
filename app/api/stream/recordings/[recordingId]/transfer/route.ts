@@ -1,6 +1,6 @@
 /**
  * Recording Transfer API Route
- * POST /api/recordings/[recordingId]/transfer
+ * POST /api/stream/recordings/[recordingId]/transfer
  *
  * Manually triggers transfer of a recording from Stream S3 to Supabase.
  * Only consultants who own the recording can trigger transfer.

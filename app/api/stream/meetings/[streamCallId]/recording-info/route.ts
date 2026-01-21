@@ -1,6 +1,6 @@
 /**
  * Meeting Recording Info API Route
- * GET /api/meetings/[streamCallId]/recording-info
+ * GET /api/stream/meetings/[streamCallId]/recording-info
  *
  * Gets recording information for a meeting session.
  */

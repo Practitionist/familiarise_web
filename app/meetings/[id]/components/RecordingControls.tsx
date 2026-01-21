@@ -113,7 +113,7 @@ const RecordingControls = ({
     setIsLoading(true);
 
     try {
-      const response = await fetch("/api/recordings/start", {
+      const response = await fetch("/api/stream/recordings/start", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -149,7 +149,7 @@ const RecordingControls = ({
     setIsLoading(true);
 
     try {
-      const response = await fetch("/api/recordings/stop", {
+      const response = await fetch("/api/stream/recordings/stop", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

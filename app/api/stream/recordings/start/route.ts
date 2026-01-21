@@ -1,6 +1,6 @@
 /**
  * Start Recording API Route
- * POST /api/recordings/start
+ * POST /api/stream/recordings/start
  *
  * Starts recording for a video call. Only consultants can start recordings.
  */

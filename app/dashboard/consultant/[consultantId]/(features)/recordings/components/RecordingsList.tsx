@@ -53,7 +53,7 @@ export function RecordingsList({ consultantId, type }: RecordingsListProps) {
   const handleSync = async () => {
     setIsSyncing(true);
     try {
-      const response = await fetch("/api/recordings/sync", { method: "POST" });
+      const response = await fetch("/api/stream/recordings/sync", { method: "POST" });
       const data = await response.json();
 
       if (!response.ok) {
@@ -85,7 +85,7 @@ export function RecordingsList({ consultantId, type }: RecordingsListProps) {
   };
 
   const handleTransfer = async (recordingId: string) => {
-    const response = await fetch(`/api/recordings/${recordingId}/transfer`, {
+    const response = await fetch(`/api/stream/recordings/${recordingId}/transfer`, {
       method: "POST",
     });
 

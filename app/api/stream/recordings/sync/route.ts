@@ -1,6 +1,6 @@
 /**
  * Sync Recordings API Route
- * POST /api/recordings/sync
+ * POST /api/stream/recordings/sync
  *
  * Syncs recordings from Stream API for a user's sessions.
  * Creates Recording records for any recordings not already in DB.

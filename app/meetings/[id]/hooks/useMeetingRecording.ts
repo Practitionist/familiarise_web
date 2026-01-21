@@ -32,7 +32,7 @@ export function useMeetingRecording(
     const fetchMeetingSession = async () => {
       try {
         const response = await fetch(
-          `/api/meetings/${encodeURIComponent(streamCallId)}/recording-info`
+          `/api/stream/meetings/${encodeURIComponent(streamCallId)}/recording-info`
         );
 
         if (!response.ok) {

@@ -59,7 +59,7 @@ export function ConsulteeRecordingsList({
   const handleSync = async () => {
     setIsSyncing(true);
     try {
-      const response = await fetch("/api/recordings/sync", { method: "POST" });
+      const response = await fetch("/api/stream/recordings/sync", { method: "POST" });
       const data = await response.json();
 
       if (!response.ok) {
