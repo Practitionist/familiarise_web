@@ -42,7 +42,9 @@ const classInclude = {
 } satisfies Prisma.ClassInclude;
 
 // Derive types from the include objects
-type PlannerWebinar = Prisma.WebinarGetPayload<{ include: typeof webinarInclude }>;
+type PlannerWebinar = Prisma.WebinarGetPayload<{
+  include: typeof webinarInclude;
+}>;
 type PlannerClass = Prisma.ClassGetPayload<{ include: typeof classInclude }>;
 
 // Response types with discriminators

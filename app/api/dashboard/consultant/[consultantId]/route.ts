@@ -148,9 +148,15 @@ const subscriptionInclude = {
 } satisfies Prisma.SubscriptionInclude;
 
 // Derive types from the include objects
-type DashboardAppointment = Prisma.AppointmentGetPayload<{ include: typeof appointmentInclude }>;
-type DashboardConsultation = Prisma.ConsultationGetPayload<{ include: typeof consultationInclude }>;
-type DashboardSubscription = Prisma.SubscriptionGetPayload<{ include: typeof subscriptionInclude }>;
+type DashboardAppointment = Prisma.AppointmentGetPayload<{
+  include: typeof appointmentInclude;
+}>;
+type DashboardConsultation = Prisma.ConsultationGetPayload<{
+  include: typeof consultationInclude;
+}>;
+type DashboardSubscription = Prisma.SubscriptionGetPayload<{
+  include: typeof subscriptionInclude;
+}>;
 
 // =============================================================================
 // Helper Functions
