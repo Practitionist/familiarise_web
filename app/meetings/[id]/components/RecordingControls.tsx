@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useCall, useCallStateHooks } from "@stream-io/video-react-sdk";
+import { useCall } from "@stream-io/video-react-sdk";
+import { useSession } from "next-auth/react";
 import { Circle, Square, Loader2 } from "lucide-react";
 import { cn } from "@/utils/tailwind";
 import { useToast } from "@/hooks/use-toast";
@@ -17,18 +18,14 @@ const RecordingControls = ({
 }: RecordingControlsProps) => {
   const call = useCall();
   const { toast } = useToast();
+  const { data: session } = useSession();
   const [isRecording, setIsRecording] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
 
-  const { useLocalParticipant } = useCallStateHooks();
-  const localParticipant = useLocalParticipant();
-
-  // Check if user is the call owner (consultant)
-  const isCallOwner =
-    localParticipant &&
-    call?.state.createdBy &&
-    localParticipant.userId === call.state.createdBy.id;
+  // Only consultants (hosts) should be able to control recordings
+  // Use session role instead of Stream's createdBy, as consultee might join first
+  const isConsultant = session?.user?.role === "CONSULTANT";
 
   // Subscribe to call recording state changes
   useEffect(() => {
@@ -179,25 +176,27 @@ const RecordingControls = ({
     }
   };
 
-  // Don't render if recording is not enabled for this session
-  if (!recordingEnabled) {
-    return null;
-  }
-
-  // Only show controls to call owner (consultant)
-  // But show recording indicator to everyone
-  if (!isCallOwner) {
-    // Recording indicator for non-owners when recording is active
+  // For non-consultants (consultees), show recording indicator when recording is active
+  if (!isConsultant) {
+    // Show recording indicator when recording is active (so consultee knows they're being recorded)
     if (isRecording) {
       return (
-        <div className="flex items-center gap-2 px-3 py-2 bg-red-500/20 rounded-lg border border-red-500/30">
+        <div
+          className="flex items-center gap-2 px-3 py-2 bg-red-500/20 rounded-lg border border-red-500/30 cursor-not-allowed"
+          title="Recording in progress"
+        >
           <Circle className="w-3 h-3 fill-red-500 text-red-500 animate-pulse" />
           <span className="text-sm font-medium text-red-400">
-            Recording {formatDuration(recordingDuration)}
+            REC {formatDuration(recordingDuration)}
           </span>
         </div>
       );
     }
+    return null;
+  }
+
+  // For consultants, check if recording is enabled
+  if (!recordingEnabled) {
     return null;
   }
 
@@ -222,7 +221,7 @@ const RecordingControls = ({
           isRecording
             ? "bg-red-500 hover:bg-red-600 text-white"
             : "bg-zinc-800 hover:bg-zinc-700 text-white",
-          isLoading && "opacity-50 cursor-not-allowed",
+          isLoading && "opacity-50 cursor-not-allowed"
         )}
         title={isRecording ? "Stop Recording" : "Start Recording"}
       >

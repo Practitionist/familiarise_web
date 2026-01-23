@@ -44,16 +44,11 @@ const EndCallButton = () => {
       "useStreamCall must be used within a StreamCall component.",
     );
 
-  // https://getstream.io/video/docs/react/guides/call-and-participant-state/#participant-state-3
-  const { useLocalParticipant } = useCallStateHooks();
-  const localParticipant = useLocalParticipant();
+  // Only consultants (hosts) should be able to end the call for everyone
+  // Use session role instead of Stream's createdBy, as consultee might join first
+  const isConsultant = session?.user?.role === "CONSULTANT";
 
-  const isMeetingOwner =
-    localParticipant &&
-    call.state.createdBy &&
-    localParticipant.userId === call.state.createdBy.id;
-
-  if (!isMeetingOwner) return null;
+  if (!isConsultant) return null;
 
   // Get proper dashboard URL based on user role and profile
   const getDashboardUrl = () => {
