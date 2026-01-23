@@ -254,6 +254,18 @@ const MeetingRoom = () => {
               {/* Screen Share */}
               <ScreenShareButton />
 
+              {/* Recording BUTTON for Consultant - Left of Leave Call (only if recording enabled) */}
+              {session?.user?.role === "CONSULTANT" && recordingEnabled && (
+                meetingSessionId ? (
+                  <RecordingControls
+                    meetingSessionId={meetingSessionId}
+                    recordingEnabled={recordingEnabled}
+                    showOnlyButton={true}
+                  />
+                ) : (
+                  <RecordCallButton />
+                )
+              )}
 
               {/* Leave Call Button */}
               <button
@@ -326,32 +338,30 @@ const MeetingRoom = () => {
                 )}
               </button>
 
-              {/* Recording Controls */}
-              {meetingSessionId ? (
-                <>
-                  {session?.user?.role === "CONSULTANT" && (
-                    <div className="w-px h-8 bg-zinc-700 mx-1" />
-                  )}
-                  <RecordingControls
-                    meetingSessionId={meetingSessionId}
-                    recordingEnabled={recordingEnabled}
-                  />
-                </>
-              ) : (
-                /* Fallback to Stream's RecordCallButton when no meeting session */
-                session?.user?.role === "CONSULTANT" && (
-                  <>
-                    <div className="w-px h-8 bg-zinc-700 mx-1" />
-                    <RecordCallButton />
-                  </>
-                )
-              )}
 
               {/* Divider */}
               {!isPersonalRoom && <div className="w-px h-8 bg-zinc-700 mx-1" />}
 
-              {/* End Call Button */}
+              {/* REC TIME Indicator for Consultant - Before End Call (only if recording enabled) */}
+              {session?.user?.role === "CONSULTANT" && meetingSessionId && recordingEnabled && (
+                <RecordingControls
+                  meetingSessionId={meetingSessionId}
+                  recordingEnabled={recordingEnabled}
+                  showOnlyIndicator={true}
+                />
+              )}
+
+              {/* End Call Button - Only for Consultant */}
               {!isPersonalRoom && <EndCallButton />}
+
+              {/* Recording Indicator for Consultee - At the very end (only if recording enabled) */}
+              {session?.user?.role === "CONSULTEE" && meetingSessionId && recordingEnabled && (
+                <RecordingControls
+                  meetingSessionId={meetingSessionId}
+                  recordingEnabled={recordingEnabled}
+                  showOnlyIndicator={true}
+                />
+              )}
             </div>
           </div>
         </div>

@@ -184,6 +184,8 @@ export async function POST(request: NextRequest) {
             prerequisites,
             materialProvided,
             learningOutcomes,
+            certificateProvided: validatedData.certificateProvided,
+            recordingEnabled: validatedData.recordingEnabled,
             consultantProfile: { connect: { id: consultantProfileId } },
             topics:
               topicIds.length > 0
@@ -214,18 +216,18 @@ export async function POST(request: NextRequest) {
             appointment:
               startTime && endTime
                 ? {
-                    // Check if dates were successfully calculated
-                    create: {
-                      appointmentType: "WEBINAR",
-                      slotsOfAppointment: {
-                        create: {
-                          startsAt: startTime, // Use calculated startTime
-                          endsAt: endTime, // Use calculated endTime
-                          isTentative: false,
-                        },
+                  // Check if dates were successfully calculated
+                  create: {
+                    appointmentType: "WEBINAR",
+                    slotsOfAppointment: {
+                      create: {
+                        startsAt: startTime, // Use calculated startTime
+                        endsAt: endTime, // Use calculated endTime
+                        isTentative: false,
                       },
                     },
-                  }
+                  },
+                }
                 : undefined, // Don't create appointment if no valid scheduledAt
           },
           include: {
@@ -349,6 +351,8 @@ export async function PATCH(request: NextRequest) {
       status,
       scheduledAt,
       priceCurrency,
+      certificateProvided,
+      recordingEnabled,
     } = validatedData;
 
     // Find or create topics by name if provided
@@ -410,15 +414,15 @@ export async function PATCH(request: NextRequest) {
     // Get the webinar instance - use the provided webinarId or the first one associated with the plan
     const webinarToUpdate = webinarId
       ? await prisma.webinar.findUnique({
-          where: { id: webinarId },
-          include: {
-            appointment: {
-              include: {
-                slotsOfAppointment: true,
-              },
+        where: { id: webinarId },
+        include: {
+          appointment: {
+            include: {
+              slotsOfAppointment: true,
             },
           },
-        })
+        },
+      })
       : existingPlan.webinars.length > 0
         ? existingPlan.webinars[0]
         : null;
@@ -516,6 +520,10 @@ export async function PATCH(request: NextRequest) {
           updateData.prerequisites = prerequisites;
         if (materialProvided !== undefined)
           updateData.materialProvided = materialProvided;
+        if (certificateProvided !== undefined)
+          updateData.certificateProvided = certificateProvided;
+        if (recordingEnabled !== undefined)
+          updateData.recordingEnabled = recordingEnabled;
         if (learningOutcomes !== undefined)
           updateData.learningOutcomes = learningOutcomes;
         if (consultantProfileId !== undefined)

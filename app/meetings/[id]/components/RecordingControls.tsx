@@ -10,11 +10,15 @@ import { useToast } from "@/hooks/use-toast";
 interface RecordingControlsProps {
   meetingSessionId: string;
   recordingEnabled: boolean;
+  showOnlyButton?: boolean;
+  showOnlyIndicator?: boolean;
 }
 
 const RecordingControls = ({
   meetingSessionId,
   recordingEnabled,
+  showOnlyButton = false,
+  showOnlyIndicator = false,
 }: RecordingControlsProps) => {
   const call = useCall();
   const { toast } = useToast();
@@ -70,12 +74,26 @@ const RecordingControls = ({
       });
     });
 
+    // Also subscribe to general call state updates to catch recording changes
+    const unsubscribeUpdated = call.on("call.updated", () => {
+      const recording = call.state.recording;
+      if (recording && !isRecording) {
+        setIsRecording(true);
+        setIsLoading(false);
+      } else if (!recording && isRecording) {
+        setIsRecording(false);
+        setIsLoading(false);
+        setRecordingDuration(0);
+      }
+    });
+
     return () => {
       unsubscribe();
       unsubscribeStopped();
       unsubscribeFailed();
+      unsubscribeUpdated();
     };
-  }, [call, toast]);
+  }, [call, toast, isRecording]);
 
   // Recording duration timer
   useEffect(() => {
@@ -195,11 +213,48 @@ const RecordingControls = ({
     return null;
   }
 
-  // For consultants, check if recording is enabled
-  if (!recordingEnabled) {
-    return null;
+  // For consultants - render based on props
+
+  // If showOnlyIndicator is true, only render the REC time indicator (when recording)
+  if (showOnlyIndicator) {
+    if (!isRecording) return null;
+    return (
+      <div className="flex items-center gap-2 px-3 py-2 bg-red-500/20 rounded-lg border border-red-500/30">
+        <Circle className="w-3 h-3 fill-red-500 text-red-500 animate-pulse" />
+        <span className="text-sm font-medium text-red-400">
+          REC {formatDuration(recordingDuration)}
+        </span>
+      </div>
+    );
   }
 
+  // If showOnlyButton is true, only render the recording button
+  if (showOnlyButton) {
+    return (
+      <button
+        onClick={isRecording ? handleStopRecording : handleStartRecording}
+        disabled={isLoading}
+        className={cn(
+          "w-[46px] h-[46px] rounded-full transition-all duration-200 flex items-center justify-center",
+          isRecording
+            ? "bg-red-500/20 border-2 border-red-500 hover:bg-red-500/30"
+            : "bg-zinc-800 hover:bg-zinc-700",
+          isLoading && "opacity-50 cursor-not-allowed"
+        )}
+        title={isRecording ? "Stop Recording" : "Start Recording"}
+      >
+        {isLoading ? (
+          <Loader2 className="w-5 h-5 animate-spin text-white" />
+        ) : isRecording ? (
+          <Square className="w-4 h-4 fill-red-500 text-red-500" />
+        ) : (
+          <div className="w-4 h-4 rounded-full bg-red-500" />
+        )}
+      </button>
+    );
+  }
+
+  // Default: render both button and indicator together
   return (
     <div className="flex items-center gap-2">
       {/* Recording indicator when active */}
@@ -217,7 +272,7 @@ const RecordingControls = ({
         onClick={isRecording ? handleStopRecording : handleStartRecording}
         disabled={isLoading}
         className={cn(
-          "p-3 rounded-xl transition-all duration-200 flex items-center gap-2",
+          "p-3 rounded-full transition-all duration-200 flex items-center justify-center",
           isRecording
             ? "bg-red-500 hover:bg-red-600 text-white"
             : "bg-zinc-800 hover:bg-zinc-700 text-white",
