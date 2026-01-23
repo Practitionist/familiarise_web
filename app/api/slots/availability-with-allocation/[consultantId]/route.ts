@@ -117,21 +117,35 @@ export async function GET(
     }
 
     // 2. Fetch all appointments to find allocated slots
+    // FIX: Only include APPROVED consultations/subscriptions and SCHEDULED webinars/classes
+    // COMPLETED/CANCELLED events should not block future availability
     const appointments = await prisma.appointment.findMany({
       where: {
         OR: [
           {
             consultation: {
               consultationPlan: { consultantProfileId: consultantId },
+              requestStatus: "APPROVED", // Only approved consultations
             },
           },
           {
             subscription: {
               subscriptionPlan: { consultantProfileId: consultantId },
+              requestStatus: "APPROVED", // Only approved subscriptions
             },
           },
-          { webinar: { webinarPlan: { consultantProfileId: consultantId } } },
-          { class: { classPlan: { consultantProfileId: consultantId } } },
+          {
+            webinar: {
+              webinarPlan: { consultantProfileId: consultantId },
+              status: "SCHEDULED", // Only scheduled webinars (not COMPLETED, CANCELLED)
+            },
+          },
+          {
+            class: {
+              classPlan: { consultantProfileId: consultantId },
+              status: "SCHEDULED", // Only scheduled classes (not COMPLETED, CANCELLED)
+            },
+          },
         ],
         slotsOfAppointment: {
           some: {
