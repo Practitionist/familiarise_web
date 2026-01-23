@@ -1,10 +1,18 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { cn } from "@/utils/tailwind";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import {
   CreditCard,
   Clock,
@@ -18,6 +26,9 @@ import {
   Trash2,
   Database,
   Bell,
+  History,
+  CheckCircle2,
+  XCircle,
 } from "lucide-react";
 
 // Job configuration
@@ -373,13 +384,48 @@ function JobCard({ job, isRunning, onRun }: JobCardProps) {
   );
 }
 
+interface JobExecution {
+  id: string;
+  jobId: string;
+  jobName: string;
+  status: "RUNNING" | "COMPLETED" | "FAILED";
+  startedAt: string;
+  completedAt: string | null;
+  result: Record<string, unknown> | null;
+  errorMessage: string | null;
+  triggeredBy: {
+    name: string | null;
+  };
+}
+
 interface SystemJobsPanelProps {
   className?: string;
 }
 
 export function SystemJobsPanel({ className }: SystemJobsPanelProps) {
   const [runningJobs, setRunningJobs] = useState<Set<string>>(new Set());
+  const [executions, setExecutions] = useState<JobExecution[]>([]);
+  const [loadingExecutions, setLoadingExecutions] = useState(true);
   const { toast } = useToast();
+
+  // Fetch recent executions
+  const fetchExecutions = async () => {
+    try {
+      setLoadingExecutions(true);
+      const response = await fetch("/api/staff/system-jobs/executions?limit=10");
+      if (!response.ok) throw new Error("Failed to fetch executions");
+      const data = await response.json();
+      setExecutions(data.executions || []);
+    } catch (error) {
+      console.error("Error fetching executions:", error);
+    } finally {
+      setLoadingExecutions(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchExecutions();
+  }, []);
 
   const handleRunJob = async (job: SystemJob) => {
     setRunningJobs((prev) => new Set(prev).add(job.id));
@@ -439,6 +485,8 @@ export function SystemJobsPanel({ className }: SystemJobsPanelProps) {
           error instanceof Error ? error.message : "An error occurred",
         variant: "destructive",
       });
+    // Refresh executions after job runs
+      fetchExecutions();
     } finally {
       setRunningJobs((prev) => {
         const next = new Set(prev);
@@ -460,8 +508,115 @@ export function SystemJobsPanel({ className }: SystemJobsPanelProps) {
 
   const categories = Object.keys(jobsByCategory) as SystemJob["category"][];
 
+  const formatExecutionTime = (dateString: string) => {
+    const date = new Date(dateString);
+    return date.toLocaleString("en-IN", {
+      day: "numeric",
+      month: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  };
+
+  const getExecutionStatusBadge = (status: JobExecution["status"]) => {
+    switch (status) {
+      case "COMPLETED":
+        return (
+          <Badge className="bg-green-100 text-green-700 gap-1">
+            <CheckCircle2 className="h-3 w-3" />
+            Completed
+          </Badge>
+        );
+      case "FAILED":
+        return (
+          <Badge className="bg-red-100 text-red-700 gap-1">
+            <XCircle className="h-3 w-3" />
+            Failed
+          </Badge>
+        );
+      case "RUNNING":
+        return (
+          <Badge className="bg-blue-100 text-blue-700 gap-1">
+            <Loader2 className="h-3 w-3 animate-spin" />
+            Running
+          </Badge>
+        );
+    }
+  };
+
   return (
     <div className={cn("space-y-8", className)}>
+      {/* Recent Executions */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <History className="h-5 w-5" />
+                Recent Executions
+              </CardTitle>
+              <CardDescription>
+                Last 10 job executions
+              </CardDescription>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={fetchExecutions}
+              disabled={loadingExecutions}
+            >
+              <RefreshCw
+                className={`h-4 w-4 ${loadingExecutions ? "animate-spin" : ""}`}
+              />
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {loadingExecutions ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-6 w-6 animate-spin text-zinc-400" />
+            </div>
+          ) : executions.length === 0 ? (
+            <p className="text-center text-zinc-500 py-8">
+              No recent executions
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {executions.map((execution) => (
+                <div
+                  key={execution.id}
+                  className="flex items-center justify-between p-3 rounded-lg border border-zinc-200 dark:border-zinc-800"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="min-w-0">
+                      <p className="font-medium text-sm truncate">
+                        {execution.jobName}
+                      </p>
+                      <p className="text-xs text-zinc-500">
+                        by {execution.triggeredBy.name || "System"} •{" "}
+                        {formatExecutionTime(execution.startedAt)}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {execution.result && (
+                      <span className="text-xs text-zinc-400">
+                        {Object.entries(execution.result)
+                          .slice(0, 2)
+                          .map(([k, v]) => `${k}: ${v}`)
+                          .join(", ")}
+                      </span>
+                    )}
+                    {getExecutionStatusBadge(execution.status)}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Job Categories */}
       {categories.map((category) => (
         <div key={category}>
           <div className="flex items-center gap-2 mb-4">

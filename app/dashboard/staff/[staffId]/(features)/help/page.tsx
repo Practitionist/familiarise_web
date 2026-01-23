@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Card,
   CardContent,
@@ -40,9 +40,13 @@ import {
   BookOpen,
   Video,
   Users,
+  Loader2,
+  RefreshCw,
+  AlertTriangle,
 } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 
-// Mock data
+// Quick help items (static)
 const quickHelp = [
   {
     title: "Getting Started Guide",
@@ -70,67 +74,194 @@ const quickHelp = [
   },
 ];
 
-const faqs = [
-  {
-    question: "How do I reset my password?",
-    answer:
-      "Go to Settings > Security > Change Password. If you're locked out, contact IT support through the help desk or email it-support@familiarise.com.",
-  },
-  {
-    question: "Where can I find my shift schedule?",
-    answer:
-      "Your shift schedule is available in Settings > Work Schedule. You can also check the team calendar in the Chat section for team-wide schedules.",
-  },
-  {
-    question: "How do I request time off?",
-    answer:
-      "Submit time-off requests through HR Portal (linked in Settings). For urgent requests, email your supervisor directly and CC hr@familiarise.com.",
-  },
-  {
-    question: "Who do I contact for technical issues?",
-    answer:
-      "For platform technical issues, create a ticket in the IT Help Desk. For urgent issues affecting users, escalate through the #tech-support channel in Team Chat.",
-  },
-  {
-    question: "How do I access previous training materials?",
-    answer:
-      "All training materials are available in the Knowledge Base under 'Getting Started' and 'Video Tutorials' categories. Contact HR for access to advanced training modules.",
-  },
-];
+interface FAQ {
+  id: string;
+  question: string;
+  answer: string;
+  category: string;
+  order: number;
+}
 
-const supportContacts = [
-  {
-    name: "IT Support",
-    availability: "24/7",
-    email: "it-support@familiarise.com",
-    phone: "+91 1800-XXX-XXXX",
-  },
-  {
-    name: "HR Department",
-    availability: "Mon-Fri 9AM-6PM",
-    email: "hr@familiarise.com",
-    phone: "+91 1800-XXX-XXXY",
-  },
-  {
-    name: "Admin Escalation",
-    availability: "24/7 for urgent issues",
-    email: "admin-escalation@familiarise.com",
-    phone: "+91 1800-XXX-XXXZ",
-  },
-];
+interface SupportContact {
+  id: string;
+  name: string;
+  department: string;
+  email: string;
+  phone: string | null;
+  availability: string;
+}
+
+interface SystemStatus {
+  id: string;
+  serviceName: string;
+  status: "OPERATIONAL" | "DEGRADED" | "OUTAGE" | "MAINTENANCE";
+  description: string | null;
+  lastCheckedAt: string;
+}
 
 export default function HelpPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [ticketSubject, setTicketSubject] = useState("");
   const [ticketDescription, setTicketDescription] = useState("");
   const [ticketCategory, setTicketCategory] = useState("");
+  const [submittingTicket, setSubmittingTicket] = useState(false);
 
-  const handleSubmitTicket = () => {
-    // Handle ticket submission
-    alert("Support ticket submitted successfully!");
-    setTicketSubject("");
-    setTicketDescription("");
-    setTicketCategory("");
+  // Data states
+  const [faqs, setFaqs] = useState<FAQ[]>([]);
+  const [contacts, setContacts] = useState<SupportContact[]>([]);
+  const [systemStatus, setSystemStatus] = useState<SystemStatus[]>([]);
+
+  // Loading states
+  const [loadingFaqs, setLoadingFaqs] = useState(true);
+  const [loadingContacts, setLoadingContacts] = useState(true);
+  const [loadingStatus, setLoadingStatus] = useState(true);
+
+  const { toast } = useToast();
+
+  // Fetch FAQs
+  const fetchFaqs = async () => {
+    try {
+      setLoadingFaqs(true);
+      const response = await fetch("/api/staff/help/faqs");
+      if (!response.ok) throw new Error("Failed to fetch FAQs");
+      const data = await response.json();
+      setFaqs(data.faqs || []);
+    } catch (error) {
+      console.error("Error fetching FAQs:", error);
+      toast({
+        title: "Error",
+        description: "Failed to load FAQs",
+        variant: "destructive",
+      });
+    } finally {
+      setLoadingFaqs(false);
+    }
+  };
+
+  // Fetch support contacts
+  const fetchContacts = async () => {
+    try {
+      setLoadingContacts(true);
+      const response = await fetch("/api/staff/help/contacts");
+      if (!response.ok) throw new Error("Failed to fetch contacts");
+      const data = await response.json();
+      setContacts(data.contacts || []);
+    } catch (error) {
+      console.error("Error fetching contacts:", error);
+      toast({
+        title: "Error",
+        description: "Failed to load support contacts",
+        variant: "destructive",
+      });
+    } finally {
+      setLoadingContacts(false);
+    }
+  };
+
+  // Fetch system status
+  const fetchSystemStatus = async () => {
+    try {
+      setLoadingStatus(true);
+      const response = await fetch("/api/staff/help/status");
+      if (!response.ok) throw new Error("Failed to fetch system status");
+      const data = await response.json();
+      setSystemStatus(data.services || []);
+    } catch (error) {
+      console.error("Error fetching system status:", error);
+      toast({
+        title: "Error",
+        description: "Failed to load system status",
+        variant: "destructive",
+      });
+    } finally {
+      setLoadingStatus(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchFaqs();
+    fetchContacts();
+    fetchSystemStatus();
+  }, []);
+
+  const handleSubmitTicket = async () => {
+    if (!ticketCategory || !ticketSubject || !ticketDescription) return;
+
+    setSubmittingTicket(true);
+    try {
+      // Submit ticket to the support tickets API
+      const response = await fetch("/api/staff/support-tickets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          subject: ticketSubject,
+          description: ticketDescription,
+          category: ticketCategory.toUpperCase(),
+          priority: "MEDIUM",
+        }),
+      });
+
+      if (!response.ok) throw new Error("Failed to submit ticket");
+
+      toast({
+        title: "Ticket Submitted",
+        description: "Your support ticket has been submitted successfully.",
+      });
+
+      setTicketSubject("");
+      setTicketDescription("");
+      setTicketCategory("");
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to submit support ticket",
+        variant: "destructive",
+      });
+    } finally {
+      setSubmittingTicket(false);
+    }
+  };
+
+  // Filter FAQs by search query
+  const filteredFaqs = searchQuery
+    ? faqs.filter(
+        (faq) =>
+          faq.question.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          faq.answer.toLowerCase().includes(searchQuery.toLowerCase())
+      )
+    : faqs;
+
+  const getStatusBadge = (status: SystemStatus["status"]) => {
+    switch (status) {
+      case "OPERATIONAL":
+        return (
+          <Badge className="bg-green-100 text-green-700 gap-1">
+            <CheckCircle2 className="h-3 w-3" />
+            Operational
+          </Badge>
+        );
+      case "DEGRADED":
+        return (
+          <Badge className="bg-amber-100 text-amber-700 gap-1">
+            <AlertCircle className="h-3 w-3" />
+            Degraded
+          </Badge>
+        );
+      case "OUTAGE":
+        return (
+          <Badge className="bg-red-100 text-red-700 gap-1">
+            <AlertTriangle className="h-3 w-3" />
+            Outage
+          </Badge>
+        );
+      case "MAINTENANCE":
+        return (
+          <Badge className="bg-blue-100 text-blue-700 gap-1">
+            <Clock className="h-3 w-3" />
+            Maintenance
+          </Badge>
+        );
+    }
   };
 
   return (
@@ -176,69 +307,120 @@ export default function HelpPage() {
         {/* FAQs */}
         <Card className="lg:col-span-2">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <HelpCircle className="h-5 w-5" />
-              Frequently Asked Questions
-            </CardTitle>
-            <CardDescription>
-              Common questions about the staff portal
-            </CardDescription>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle className="flex items-center gap-2">
+                  <HelpCircle className="h-5 w-5" />
+                  Frequently Asked Questions
+                </CardTitle>
+                <CardDescription>
+                  Common questions about the staff portal
+                </CardDescription>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={fetchFaqs}
+                disabled={loadingFaqs}
+              >
+                <RefreshCw
+                  className={`h-4 w-4 ${loadingFaqs ? "animate-spin" : ""}`}
+                />
+              </Button>
+            </div>
           </CardHeader>
           <CardContent>
-            <Accordion type="single" collapsible className="w-full">
-              {faqs.map((faq, index) => (
-                <AccordionItem key={index} value={`item-${index}`}>
-                  <AccordionTrigger className="text-left">
-                    {faq.question}
-                  </AccordionTrigger>
-                  <AccordionContent className="text-zinc-600 dark:text-zinc-400">
-                    {faq.answer}
-                  </AccordionContent>
-                </AccordionItem>
-              ))}
-            </Accordion>
+            {loadingFaqs ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="h-6 w-6 animate-spin text-zinc-400" />
+              </div>
+            ) : filteredFaqs.length === 0 ? (
+              <p className="text-center text-zinc-500 py-8">
+                {searchQuery ? "No FAQs match your search" : "No FAQs available"}
+              </p>
+            ) : (
+              <Accordion type="single" collapsible className="w-full">
+                {filteredFaqs.map((faq) => (
+                  <AccordionItem key={faq.id} value={faq.id}>
+                    <AccordionTrigger className="text-left">
+                      {faq.question}
+                    </AccordionTrigger>
+                    <AccordionContent className="text-zinc-600 dark:text-zinc-400">
+                      {faq.answer}
+                    </AccordionContent>
+                  </AccordionItem>
+                ))}
+              </Accordion>
+            )}
           </CardContent>
         </Card>
 
         {/* Contact Information */}
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Phone className="h-5 w-5" />
-              Contact Support
-            </CardTitle>
-            <CardDescription>Reach out for assistance</CardDescription>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle className="flex items-center gap-2">
+                  <Phone className="h-5 w-5" />
+                  Contact Support
+                </CardTitle>
+                <CardDescription>Reach out for assistance</CardDescription>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={fetchContacts}
+                disabled={loadingContacts}
+              >
+                <RefreshCw
+                  className={`h-4 w-4 ${loadingContacts ? "animate-spin" : ""}`}
+                />
+              </Button>
+            </div>
           </CardHeader>
           <CardContent>
-            <div className="space-y-4">
-              {supportContacts.map((contact) => (
-                <div
-                  key={contact.name}
-                  className="p-3 rounded-lg border border-zinc-200 dark:border-zinc-800"
-                >
-                  <h4 className="font-medium">{contact.name}</h4>
-                  <div className="mt-2 space-y-1 text-sm">
-                    <div className="flex items-center gap-2 text-zinc-500">
-                      <Clock className="h-3 w-3" />
-                      {contact.availability}
-                    </div>
-                    <div className="flex items-center gap-2 text-zinc-500">
-                      <Mail className="h-3 w-3" />
-                      <a
-                        href={`mailto:${contact.email}`}
-                        className="hover:text-blue-600"
-                      >
-                        {contact.email}
-                      </a>
-                    </div>
-                    <div className="flex items-center gap-2 text-zinc-500">
-                      <Phone className="h-3 w-3" />
-                      {contact.phone}
+            {loadingContacts ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="h-6 w-6 animate-spin text-zinc-400" />
+              </div>
+            ) : contacts.length === 0 ? (
+              <p className="text-center text-zinc-500 py-8">
+                No contacts available
+              </p>
+            ) : (
+              <div className="space-y-4">
+                {contacts.map((contact) => (
+                  <div
+                    key={contact.id}
+                    className="p-3 rounded-lg border border-zinc-200 dark:border-zinc-800"
+                  >
+                    <h4 className="font-medium">{contact.name}</h4>
+                    <p className="text-xs text-zinc-400">{contact.department}</p>
+                    <div className="mt-2 space-y-1 text-sm">
+                      <div className="flex items-center gap-2 text-zinc-500">
+                        <Clock className="h-3 w-3" />
+                        {contact.availability}
+                      </div>
+                      <div className="flex items-center gap-2 text-zinc-500">
+                        <Mail className="h-3 w-3" />
+                        <a
+                          href={`mailto:${contact.email}`}
+                          className="hover:text-blue-600"
+                        >
+                          {contact.email}
+                        </a>
+                      </div>
+                      {contact.phone && (
+                        <div className="flex items-center gap-2 text-zinc-500">
+                          <Phone className="h-3 w-3" />
+                          {contact.phone}
+                        </div>
+                      )}
                     </div>
                   </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -297,10 +479,19 @@ export default function HelpPage() {
           <div className="flex justify-end mt-4">
             <Button
               onClick={handleSubmitTicket}
-              disabled={!ticketCategory || !ticketSubject || !ticketDescription}
+              disabled={
+                !ticketCategory ||
+                !ticketSubject ||
+                !ticketDescription ||
+                submittingTicket
+              }
               className="gap-2"
             >
-              <Send className="h-4 w-4" />
+              {submittingTicket ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Send className="h-4 w-4" />
+              )}
               Submit Ticket
             </Button>
           </div>
@@ -310,36 +501,47 @@ export default function HelpPage() {
       {/* System Status */}
       <Card>
         <CardHeader>
-          <CardTitle>System Status</CardTitle>
-          <CardDescription>Current platform status</CardDescription>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle>System Status</CardTitle>
+              <CardDescription>Current platform status</CardDescription>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={fetchSystemStatus}
+              disabled={loadingStatus}
+            >
+              <RefreshCw
+                className={`h-4 w-4 ${loadingStatus ? "animate-spin" : ""}`}
+              />
+            </Button>
+          </div>
         </CardHeader>
         <CardContent>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            {[
-              { name: "Staff Portal", status: "operational" },
-              { name: "Video Calling", status: "operational" },
-              { name: "Payment Gateway", status: "operational" },
-              { name: "Email Services", status: "degraded" },
-            ].map((service) => (
-              <div
-                key={service.name}
-                className="flex items-center justify-between p-3 rounded-lg border border-zinc-200 dark:border-zinc-800"
-              >
-                <span className="text-sm font-medium">{service.name}</span>
-                {service.status === "operational" ? (
-                  <Badge className="bg-green-100 text-green-700 gap-1">
-                    <CheckCircle2 className="h-3 w-3" />
-                    Operational
-                  </Badge>
-                ) : (
-                  <Badge className="bg-amber-100 text-amber-700 gap-1">
-                    <AlertCircle className="h-3 w-3" />
-                    Degraded
-                  </Badge>
-                )}
-              </div>
-            ))}
-          </div>
+          {loadingStatus ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-6 w-6 animate-spin text-zinc-400" />
+            </div>
+          ) : systemStatus.length === 0 ? (
+            <p className="text-center text-zinc-500 py-8">
+              No system status information available
+            </p>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              {systemStatus.map((service) => (
+                <div
+                  key={service.id}
+                  className="flex items-center justify-between p-3 rounded-lg border border-zinc-200 dark:border-zinc-800"
+                >
+                  <span className="text-sm font-medium">
+                    {service.serviceName}
+                  </span>
+                  {getStatusBadge(service.status)}
+                </div>
+              ))}
+            </div>
+          )}
           <div className="mt-4 text-center">
             <Button variant="link" className="gap-1">
               View full status page

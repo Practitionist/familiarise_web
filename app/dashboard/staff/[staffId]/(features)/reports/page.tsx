@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import {
   Card,
   CardContent,
@@ -16,74 +17,217 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
-  BarChart3,
-  TrendingUp,
-  TrendingDown,
-  Users,
   Ticket,
   Clock,
   CheckCircle2,
   Star,
-  Calendar,
   Download,
   ArrowUpRight,
   ArrowDownRight,
+  Loader2,
+  RefreshCw,
 } from "lucide-react";
-import { useState } from "react";
+import { useToast } from "@/hooks/use-toast";
 
-// Mock data for reports
-const performanceStats = {
-  ticketsResolved: { value: 156, change: 12, trend: "up" },
-  avgResolutionTime: { value: "2.5h", change: -15, trend: "down" },
-  customerSatisfaction: { value: "94%", change: 3, trend: "up" },
-  activeTickets: { value: 24, change: -5, trend: "down" },
-};
+interface OverviewStats {
+  ticketsResolved: number;
+  ticketsResolvedChange: number;
+  avgResolutionTime: string;
+  avgResolutionTimeChange: number;
+  customerSatisfaction: number;
+  customerSatisfactionChange: number;
+  activeTickets: number;
+  activeTicketsChange: number;
+}
 
-const weeklyData = [
-  { day: "Mon", tickets: 28, resolved: 25 },
-  { day: "Tue", tickets: 32, resolved: 30 },
-  { day: "Wed", tickets: 24, resolved: 24 },
-  { day: "Thu", tickets: 35, resolved: 32 },
-  { day: "Fri", tickets: 30, resolved: 28 },
-  { day: "Sat", tickets: 15, resolved: 15 },
-  { day: "Sun", tickets: 12, resolved: 12 },
-];
+interface TicketVolumeData {
+  date: string;
+  received: number;
+  resolved: number;
+}
 
-const categoryBreakdown = [
-  { category: "Payment Issues", count: 45, percentage: 29 },
-  { category: "Technical Problems", count: 38, percentage: 24 },
-  { category: "Account Issues", count: 32, percentage: 20 },
-  { category: "Refund Requests", count: 25, percentage: 16 },
-  { category: "Other", count: 16, percentage: 10 },
-];
+interface CategoryBreakdown {
+  category: string;
+  count: number;
+  percentage: number;
+}
 
-const recentActivity = [
-  {
-    action: "Resolved ticket #TKT-156",
-    time: "10 minutes ago",
-    type: "success",
-  },
-  {
-    action: "Escalated ticket #TKT-155 to admin",
-    time: "25 minutes ago",
-    type: "warning",
-  },
-  { action: "Approved refund #REF-042", time: "1 hour ago", type: "success" },
-  { action: "Verified profile #PRF-089", time: "2 hours ago", type: "success" },
-  { action: "Resolved ticket #TKT-154", time: "3 hours ago", type: "success" },
-];
-
-const teamLeaderboard = [
-  { name: "Staff Member 1", ticketsResolved: 45, satisfaction: 96 },
-  { name: "Staff Member 2", ticketsResolved: 42, satisfaction: 94 },
-  { name: "Staff Member 3", ticketsResolved: 38, satisfaction: 92 },
-  { name: "Staff Member 4", ticketsResolved: 31, satisfaction: 89 },
-];
+interface TeamMember {
+  id: string;
+  name: string;
+  ticketsResolved: number;
+  avgResolutionTime: string;
+  satisfaction: number;
+}
 
 export default function ReportsAnalyticsPage() {
   const [timeRange, setTimeRange] = useState("7d");
+
+  // Data states
+  const [overview, setOverview] = useState<OverviewStats | null>(null);
+  const [ticketVolume, setTicketVolume] = useState<TicketVolumeData[]>([]);
+  const [categories, setCategories] = useState<CategoryBreakdown[]>([]);
+  const [teamLeaderboard, setTeamLeaderboard] = useState<TeamMember[]>([]);
+
+  // Loading states
+  const [loadingOverview, setLoadingOverview] = useState(true);
+  const [loadingTickets, setLoadingTickets] = useState(true);
+  const [loadingCategories, setLoadingCategories] = useState(true);
+  const [loadingTeam, setLoadingTeam] = useState(true);
+  const [exporting, setExporting] = useState(false);
+
+  const { toast } = useToast();
+
+  // Fetch overview stats
+  const fetchOverview = async () => {
+    try {
+      setLoadingOverview(true);
+      const response = await fetch(
+        `/api/staff/reports/overview?period=${timeRange}`
+      );
+      if (!response.ok) throw new Error("Failed to fetch overview");
+      const data = await response.json();
+      setOverview(data);
+    } catch (error) {
+      console.error("Error fetching overview:", error);
+      toast({
+        title: "Error",
+        description: "Failed to load overview stats",
+        variant: "destructive",
+      });
+    } finally {
+      setLoadingOverview(false);
+    }
+  };
+
+  // Fetch ticket volume data
+  const fetchTicketVolume = async () => {
+    try {
+      setLoadingTickets(true);
+      const response = await fetch(
+        `/api/staff/reports/tickets?period=${timeRange}`
+      );
+      if (!response.ok) throw new Error("Failed to fetch ticket volume");
+      const data = await response.json();
+      setTicketVolume(data.data || []);
+    } catch (error) {
+      console.error("Error fetching ticket volume:", error);
+      toast({
+        title: "Error",
+        description: "Failed to load ticket volume data",
+        variant: "destructive",
+      });
+    } finally {
+      setLoadingTickets(false);
+    }
+  };
+
+  // Fetch category breakdown
+  const fetchCategories = async () => {
+    try {
+      setLoadingCategories(true);
+      const response = await fetch(
+        `/api/staff/reports/categories?period=${timeRange}`
+      );
+      if (!response.ok) throw new Error("Failed to fetch categories");
+      const data = await response.json();
+      setCategories(data.categories || []);
+    } catch (error) {
+      console.error("Error fetching categories:", error);
+      toast({
+        title: "Error",
+        description: "Failed to load category breakdown",
+        variant: "destructive",
+      });
+    } finally {
+      setLoadingCategories(false);
+    }
+  };
+
+  // Fetch team leaderboard
+  const fetchTeamLeaderboard = async () => {
+    try {
+      setLoadingTeam(true);
+      const response = await fetch(
+        `/api/staff/reports/team?period=${timeRange}&limit=4`
+      );
+      if (!response.ok) throw new Error("Failed to fetch team leaderboard");
+      const data = await response.json();
+      setTeamLeaderboard(data.team || []);
+    } catch (error) {
+      console.error("Error fetching team leaderboard:", error);
+      toast({
+        title: "Error",
+        description: "Failed to load team leaderboard",
+        variant: "destructive",
+      });
+    } finally {
+      setLoadingTeam(false);
+    }
+  };
+
+  // Export report
+  const handleExport = async () => {
+    try {
+      setExporting(true);
+      const response = await fetch(
+        `/api/staff/reports/export?period=${timeRange}&format=csv`
+      );
+      if (!response.ok) throw new Error("Failed to export report");
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `staff-report-${timeRange}-${new Date().toISOString().split("T")[0]}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+
+      toast({
+        title: "Export Complete",
+        description: "Report has been downloaded successfully",
+      });
+    } catch (error) {
+      console.error("Error exporting report:", error);
+      toast({
+        title: "Error",
+        description: "Failed to export report",
+        variant: "destructive",
+      });
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  // Fetch all data when time range changes
+  useEffect(() => {
+    fetchOverview();
+    fetchTicketVolume();
+    fetchCategories();
+    fetchTeamLeaderboard();
+  }, [timeRange]);
+
+  const refreshAll = () => {
+    fetchOverview();
+    fetchTicketVolume();
+    fetchCategories();
+    fetchTeamLeaderboard();
+  };
+
+  // Format day label for ticket volume
+  const formatDayLabel = (dateStr: string) => {
+    const date = new Date(dateStr);
+    return date.toLocaleDateString("en-US", { weekday: "short" });
+  };
+
+  // Get max value for bar chart scaling
+  const maxTickets = Math.max(
+    ...ticketVolume.map((d) => Math.max(d.received, d.resolved)),
+    1
+  );
 
   return (
     <div className="space-y-6">
@@ -98,6 +242,16 @@ export default function ReportsAnalyticsPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={refreshAll}
+            disabled={loadingOverview}
+          >
+            <RefreshCw
+              className={`h-4 w-4 ${loadingOverview ? "animate-spin" : ""}`}
+            />
+          </Button>
           <Select value={timeRange} onValueChange={setTimeRange}>
             <SelectTrigger className="w-32">
               <SelectValue />
@@ -109,8 +263,17 @@ export default function ReportsAnalyticsPage() {
               <SelectItem value="90d">Last 90 days</SelectItem>
             </SelectContent>
           </Select>
-          <Button variant="outline" className="gap-2">
-            <Download className="h-4 w-4" />
+          <Button
+            variant="outline"
+            className="gap-2"
+            onClick={handleExport}
+            disabled={exporting}
+          >
+            {exporting ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Download className="h-4 w-4" />
+            )}
             Export
           </Button>
         </div>
@@ -120,105 +283,149 @@ export default function ReportsAnalyticsPage() {
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardContent className="p-6">
-            <div className="flex items-center justify-between">
-              <div className="p-2 rounded-lg bg-blue-50 dark:bg-blue-950">
-                <Ticket className="h-5 w-5 text-blue-600" />
+            {loadingOverview ? (
+              <div className="flex items-center justify-center py-4">
+                <Loader2 className="h-6 w-6 animate-spin text-zinc-400" />
               </div>
-              <Badge
-                variant="secondary"
-                className={
-                  performanceStats.ticketsResolved.trend === "up"
-                    ? "bg-green-100 text-green-700"
-                    : "bg-red-100 text-red-700"
-                }
-              >
-                {performanceStats.ticketsResolved.trend === "up" ? (
-                  <ArrowUpRight className="h-3 w-3 mr-1" />
-                ) : (
-                  <ArrowDownRight className="h-3 w-3 mr-1" />
-                )}
-                {performanceStats.ticketsResolved.change}%
-              </Badge>
-            </div>
-            <div className="mt-4">
-              <p className="text-3xl font-bold">
-                {performanceStats.ticketsResolved.value}
-              </p>
-              <p className="text-sm text-zinc-500">Tickets Resolved</p>
-            </div>
+            ) : (
+              <>
+                <div className="flex items-center justify-between">
+                  <div className="p-2 rounded-lg bg-blue-50 dark:bg-blue-950">
+                    <Ticket className="h-5 w-5 text-blue-600" />
+                  </div>
+                  {overview && (
+                    <Badge
+                      variant="secondary"
+                      className={
+                        overview.ticketsResolvedChange >= 0
+                          ? "bg-green-100 text-green-700"
+                          : "bg-red-100 text-red-700"
+                      }
+                    >
+                      {overview.ticketsResolvedChange >= 0 ? (
+                        <ArrowUpRight className="h-3 w-3 mr-1" />
+                      ) : (
+                        <ArrowDownRight className="h-3 w-3 mr-1" />
+                      )}
+                      {Math.abs(overview.ticketsResolvedChange)}%
+                    </Badge>
+                  )}
+                </div>
+                <div className="mt-4">
+                  <p className="text-3xl font-bold">
+                    {overview?.ticketsResolved ?? 0}
+                  </p>
+                  <p className="text-sm text-zinc-500">Tickets Resolved</p>
+                </div>
+              </>
+            )}
           </CardContent>
         </Card>
 
         <Card>
           <CardContent className="p-6">
-            <div className="flex items-center justify-between">
-              <div className="p-2 rounded-lg bg-emerald-50 dark:bg-emerald-950">
-                <Clock className="h-5 w-5 text-emerald-600" />
+            {loadingOverview ? (
+              <div className="flex items-center justify-center py-4">
+                <Loader2 className="h-6 w-6 animate-spin text-zinc-400" />
               </div>
-              <Badge
-                variant="secondary"
-                className={
-                  performanceStats.avgResolutionTime.trend === "down"
-                    ? "bg-green-100 text-green-700"
-                    : "bg-red-100 text-red-700"
-                }
-              >
-                <ArrowDownRight className="h-3 w-3 mr-1" />
-                {Math.abs(performanceStats.avgResolutionTime.change)}%
-              </Badge>
-            </div>
-            <div className="mt-4">
-              <p className="text-3xl font-bold">
-                {performanceStats.avgResolutionTime.value}
-              </p>
-              <p className="text-sm text-zinc-500">Avg Resolution Time</p>
-            </div>
+            ) : (
+              <>
+                <div className="flex items-center justify-between">
+                  <div className="p-2 rounded-lg bg-emerald-50 dark:bg-emerald-950">
+                    <Clock className="h-5 w-5 text-emerald-600" />
+                  </div>
+                  {overview && (
+                    <Badge
+                      variant="secondary"
+                      className={
+                        overview.avgResolutionTimeChange <= 0
+                          ? "bg-green-100 text-green-700"
+                          : "bg-red-100 text-red-700"
+                      }
+                    >
+                      <ArrowDownRight className="h-3 w-3 mr-1" />
+                      {Math.abs(overview.avgResolutionTimeChange)}%
+                    </Badge>
+                  )}
+                </div>
+                <div className="mt-4">
+                  <p className="text-3xl font-bold">
+                    {overview?.avgResolutionTime ?? "0h"}
+                  </p>
+                  <p className="text-sm text-zinc-500">Avg Resolution Time</p>
+                </div>
+              </>
+            )}
           </CardContent>
         </Card>
 
         <Card>
           <CardContent className="p-6">
-            <div className="flex items-center justify-between">
-              <div className="p-2 rounded-lg bg-amber-50 dark:bg-amber-950">
-                <Star className="h-5 w-5 text-amber-600" />
+            {loadingOverview ? (
+              <div className="flex items-center justify-center py-4">
+                <Loader2 className="h-6 w-6 animate-spin text-zinc-400" />
               </div>
-              <Badge
-                variant="secondary"
-                className="bg-green-100 text-green-700"
-              >
-                <ArrowUpRight className="h-3 w-3 mr-1" />
-                {performanceStats.customerSatisfaction.change}%
-              </Badge>
-            </div>
-            <div className="mt-4">
-              <p className="text-3xl font-bold">
-                {performanceStats.customerSatisfaction.value}
-              </p>
-              <p className="text-sm text-zinc-500">Customer Satisfaction</p>
-            </div>
+            ) : (
+              <>
+                <div className="flex items-center justify-between">
+                  <div className="p-2 rounded-lg bg-amber-50 dark:bg-amber-950">
+                    <Star className="h-5 w-5 text-amber-600" />
+                  </div>
+                  {overview && (
+                    <Badge
+                      variant="secondary"
+                      className="bg-green-100 text-green-700"
+                    >
+                      <ArrowUpRight className="h-3 w-3 mr-1" />
+                      {overview.customerSatisfactionChange}%
+                    </Badge>
+                  )}
+                </div>
+                <div className="mt-4">
+                  <p className="text-3xl font-bold">
+                    {overview?.customerSatisfaction ?? 0}%
+                  </p>
+                  <p className="text-sm text-zinc-500">Customer Satisfaction</p>
+                </div>
+              </>
+            )}
           </CardContent>
         </Card>
 
         <Card>
           <CardContent className="p-6">
-            <div className="flex items-center justify-between">
-              <div className="p-2 rounded-lg bg-purple-50 dark:bg-purple-950">
-                <CheckCircle2 className="h-5 w-5 text-purple-600" />
+            {loadingOverview ? (
+              <div className="flex items-center justify-center py-4">
+                <Loader2 className="h-6 w-6 animate-spin text-zinc-400" />
               </div>
-              <Badge
-                variant="secondary"
-                className="bg-green-100 text-green-700"
-              >
-                <ArrowDownRight className="h-3 w-3 mr-1" />
-                {Math.abs(performanceStats.activeTickets.change)}
-              </Badge>
-            </div>
-            <div className="mt-4">
-              <p className="text-3xl font-bold">
-                {performanceStats.activeTickets.value}
-              </p>
-              <p className="text-sm text-zinc-500">Active Tickets</p>
-            </div>
+            ) : (
+              <>
+                <div className="flex items-center justify-between">
+                  <div className="p-2 rounded-lg bg-purple-50 dark:bg-purple-950">
+                    <CheckCircle2 className="h-5 w-5 text-purple-600" />
+                  </div>
+                  {overview && (
+                    <Badge
+                      variant="secondary"
+                      className={
+                        overview.activeTicketsChange <= 0
+                          ? "bg-green-100 text-green-700"
+                          : "bg-red-100 text-red-700"
+                      }
+                    >
+                      <ArrowDownRight className="h-3 w-3 mr-1" />
+                      {Math.abs(overview.activeTicketsChange)}
+                    </Badge>
+                  )}
+                </div>
+                <div className="mt-4">
+                  <p className="text-3xl font-bold">
+                    {overview?.activeTickets ?? 0}
+                  </p>
+                  <p className="text-sm text-zinc-500">Active Tickets</p>
+                </div>
+              </>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -227,53 +434,65 @@ export default function ReportsAnalyticsPage() {
         {/* Weekly Chart */}
         <Card className="lg:col-span-2">
           <CardHeader>
-            <CardTitle>Weekly Ticket Volume</CardTitle>
+            <CardTitle>Ticket Volume</CardTitle>
             <CardDescription>
-              Tickets received vs resolved this week
+              Tickets received vs resolved in selected period
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="space-y-4">
-              {weeklyData.map((day) => (
-                <div key={day.day} className="flex items-center gap-4">
-                  <span className="w-10 text-sm font-medium text-zinc-500">
-                    {day.day}
-                  </span>
-                  <div className="flex-1 flex items-center gap-2">
-                    <div className="flex-1 bg-zinc-100 dark:bg-zinc-800 rounded-full h-4 overflow-hidden">
-                      <div
-                        className="bg-blue-500 h-full rounded-full"
-                        style={{ width: `${(day.tickets / 40) * 100}%` }}
-                      />
-                    </div>
-                    <span className="w-8 text-sm text-zinc-500">
-                      {day.tickets}
+            {loadingTickets ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="h-6 w-6 animate-spin text-zinc-400" />
+              </div>
+            ) : ticketVolume.length === 0 ? (
+              <p className="text-center text-zinc-500 py-8">No data available</p>
+            ) : (
+              <div className="space-y-4">
+                {ticketVolume.map((day) => (
+                  <div key={day.date} className="flex items-center gap-4">
+                    <span className="w-10 text-sm font-medium text-zinc-500">
+                      {formatDayLabel(day.date)}
                     </span>
-                  </div>
-                  <div className="flex-1 flex items-center gap-2">
-                    <div className="flex-1 bg-zinc-100 dark:bg-zinc-800 rounded-full h-4 overflow-hidden">
-                      <div
-                        className="bg-green-500 h-full rounded-full"
-                        style={{ width: `${(day.resolved / 40) * 100}%` }}
-                      />
+                    <div className="flex-1 flex items-center gap-2">
+                      <div className="flex-1 bg-zinc-100 dark:bg-zinc-800 rounded-full h-4 overflow-hidden">
+                        <div
+                          className="bg-blue-500 h-full rounded-full"
+                          style={{
+                            width: `${(day.received / maxTickets) * 100}%`,
+                          }}
+                        />
+                      </div>
+                      <span className="w-8 text-sm text-zinc-500">
+                        {day.received}
+                      </span>
                     </div>
-                    <span className="w-8 text-sm text-zinc-500">
-                      {day.resolved}
-                    </span>
+                    <div className="flex-1 flex items-center gap-2">
+                      <div className="flex-1 bg-zinc-100 dark:bg-zinc-800 rounded-full h-4 overflow-hidden">
+                        <div
+                          className="bg-green-500 h-full rounded-full"
+                          style={{
+                            width: `${(day.resolved / maxTickets) * 100}%`,
+                          }}
+                        />
+                      </div>
+                      <span className="w-8 text-sm text-zinc-500">
+                        {day.resolved}
+                      </span>
+                    </div>
                   </div>
-                </div>
-              ))}
-              <div className="flex items-center justify-center gap-6 pt-4 border-t">
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full bg-blue-500" />
-                  <span className="text-sm text-zinc-500">Received</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full bg-green-500" />
-                  <span className="text-sm text-zinc-500">Resolved</span>
+                ))}
+                <div className="flex items-center justify-center gap-6 pt-4 border-t">
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 rounded-full bg-blue-500" />
+                    <span className="text-sm text-zinc-500">Received</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 rounded-full bg-green-500" />
+                    <span className="text-sm text-zinc-500">Resolved</span>
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
           </CardContent>
         </Card>
 
@@ -284,69 +503,54 @@ export default function ReportsAnalyticsPage() {
             <CardDescription>Ticket distribution by type</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="space-y-4">
-              {categoryBreakdown.map((item) => (
-                <div key={item.category} className="space-y-2">
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-zinc-600 dark:text-zinc-400">
-                      {item.category}
-                    </span>
-                    <span className="font-medium">{item.count}</span>
+            {loadingCategories ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="h-6 w-6 animate-spin text-zinc-400" />
+              </div>
+            ) : categories.length === 0 ? (
+              <p className="text-center text-zinc-500 py-8">No data available</p>
+            ) : (
+              <div className="space-y-4">
+                {categories.map((item) => (
+                  <div key={item.category} className="space-y-2">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-zinc-600 dark:text-zinc-400">
+                        {item.category}
+                      </span>
+                      <span className="font-medium">{item.count}</span>
+                    </div>
+                    <div className="h-2 bg-zinc-100 dark:bg-zinc-800 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-blue-500 rounded-full"
+                        style={{ width: `${item.percentage}%` }}
+                      />
+                    </div>
                   </div>
-                  <div className="h-2 bg-zinc-100 dark:bg-zinc-800 rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-blue-500 rounded-full"
-                      style={{ width: `${item.percentage}%` }}
-                    />
-                  </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-2">
-        {/* Recent Activity */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Recent Activity</CardTitle>
-            <CardDescription>Your latest actions</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              {recentActivity.map((activity, index) => (
-                <div key={index} className="flex items-start gap-3">
-                  <div
-                    className={`p-1 rounded-full mt-0.5 ${
-                      activity.type === "success"
-                        ? "bg-green-100 text-green-600"
-                        : "bg-amber-100 text-amber-600"
-                    }`}
-                  >
-                    <CheckCircle2 className="h-3 w-3" />
-                  </div>
-                  <div className="flex-1">
-                    <p className="text-sm">{activity.action}</p>
-                    <p className="text-xs text-zinc-400">{activity.time}</p>
-                  </div>
-                </div>
-              ))}
+      {/* Team Leaderboard */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Team Leaderboard</CardTitle>
+          <CardDescription>Top performers in selected period</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {loadingTeam ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-6 w-6 animate-spin text-zinc-400" />
             </div>
-          </CardContent>
-        </Card>
-
-        {/* Team Leaderboard */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Team Leaderboard</CardTitle>
-            <CardDescription>Top performers this week</CardDescription>
-          </CardHeader>
-          <CardContent>
+          ) : teamLeaderboard.length === 0 ? (
+            <p className="text-center text-zinc-500 py-8">No data available</p>
+          ) : (
             <div className="space-y-4">
               {teamLeaderboard.map((member, index) => (
                 <div
-                  key={member.name}
+                  key={member.id}
                   className="flex items-center justify-between p-3 rounded-lg bg-zinc-50 dark:bg-zinc-900"
                 >
                   <div className="flex items-center gap-3">
@@ -374,17 +578,21 @@ export default function ReportsAnalyticsPage() {
                     </div>
                     <div className="text-right">
                       <p className="text-sm font-medium">
-                        {member.satisfaction}%
+                        {member.avgResolutionTime}
                       </p>
+                      <p className="text-xs text-zinc-400">avg time</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-sm font-medium">{member.satisfaction}%</p>
                       <p className="text-xs text-zinc-400">satisfaction</p>
                     </div>
                   </div>
                 </div>
               ))}
             </div>
-          </CardContent>
-        </Card>
-      </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
