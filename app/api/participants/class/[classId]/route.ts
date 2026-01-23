@@ -44,9 +44,26 @@ export async function GET(
       ).values(),
     );
 
+    // Get waitlist entries with user details
+    const waitlist = await prisma.waitlist.findMany({
+      where: {
+        classId: classId,
+        status: {
+          in: ["WAITING", "NOTIFIED", "EXPIRED"],
+        },
+      },
+      include: {
+        user: true,
+      },
+      orderBy: {
+        joinedAt: "asc",
+      },
+    });
+
     return NextResponse.json({
       classEvent,
       participants,
+      waitlist,
     });
   } catch (error) {
     console.error("[CLASS_PARTICIPANTS_GET]", error);

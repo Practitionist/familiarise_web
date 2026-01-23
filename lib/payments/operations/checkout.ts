@@ -66,7 +66,7 @@ type SubscriptionCheckoutResult = {
 function buildPaymentMetadata(
   data: CheckoutInput,
   userId: string,
-): { appointmentId: string; appointmentType: string; [key: string]: string } {
+): { appointmentId: string; appointmentType: string;[key: string]: string } {
   return {
     appointmentId: "pending",
     appointmentType: data.appointmentType,
@@ -270,7 +270,11 @@ export async function calculateAmountAndValidate(
             classPlan: true,
             appointments: {
               include: {
-                slotsOfAppointment: true,
+                slotsOfAppointment: {
+                  include: {
+                    user: true,
+                  },
+                },
               },
             },
           },
@@ -281,10 +285,10 @@ export async function calculateAmountAndValidate(
         }
 
         plan = classInstance.classPlan;
-        const currentClassParticipants = classInstance.appointments.reduce(
-          (total: number, apt: { slotsOfAppointment: unknown[] }) =>
-            total + apt.slotsOfAppointment.length,
-          0,
+        // FIX: Count unique participants, not total slots
+        // A user enrolled in a class with 8 sessions should count as 1 participant, not 8
+        const currentClassParticipants = countUniqueParticipants(
+          classInstance.appointments,
         );
 
         if (currentClassParticipants >= plan.maxParticipants) {
@@ -421,14 +425,14 @@ export async function validateSlotAvailability(
         // FIX: Filter by consultant - only check slots belonging to this consultant
         ...(consultantUserId
           ? [
-              {
-                user: {
-                  some: {
-                    id: consultantUserId,
-                  },
+            {
+              user: {
+                some: {
+                  id: consultantUserId,
                 },
               },
-            ]
+            },
+          ]
           : []),
       ],
     },
@@ -463,14 +467,14 @@ export async function validateSlotAvailability(
           // FIX: Filter by consultant - only check tentative slots for this consultant
           ...(consultantUserId
             ? [
-                {
-                  user: {
-                    some: {
-                      id: consultantUserId,
-                    },
+              {
+                user: {
+                  some: {
+                    id: consultantUserId,
                   },
                 },
-              ]
+              },
+            ]
             : []),
           {
             appointment: {
@@ -534,14 +538,14 @@ export async function validateSlotAvailability(
         // FIX: Filter by consultant - only count tentative slots for this consultant
         ...(consultantUserId
           ? [
-              {
-                user: {
-                  some: {
-                    id: consultantUserId,
-                  },
+            {
+              user: {
+                some: {
+                  id: consultantUserId,
                 },
               },
-            ]
+            },
+          ]
           : []),
         {
           appointment: {
@@ -876,17 +880,22 @@ async function revalidateInsideLock(
           include: {
             classPlan: true,
             appointments: {
-              include: { slotsOfAppointment: true },
+              include: {
+                slotsOfAppointment: {
+                  include: {
+                    user: true,
+                  },
+                },
+              },
             },
           },
         });
 
         if (!classInstance) throw new Error("Class not found");
 
-        const currentParticipants = classInstance.appointments.reduce(
-          (total: number, apt: { slotsOfAppointment: unknown[] }) =>
-            total + apt.slotsOfAppointment.length,
-          0,
+        // FIX: Count unique participants, not total slots
+        const currentParticipants = countUniqueParticipants(
+          classInstance.appointments,
         );
 
         if (currentParticipants >= classInstance.classPlan.maxParticipants) {
