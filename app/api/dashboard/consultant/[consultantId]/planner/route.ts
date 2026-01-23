@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { TWebinar, TClass } from "@/types/appointment";
+import { transformNestedPlanTopics } from "@/lib/topics";
 
 // Type for webinar events in planner with type discriminator
 type WebinarEvent = TWebinar & {
@@ -112,59 +113,78 @@ export async function GET(
       );
     }
 
-    const baseUrl = process.env.VERCEL_URL
-      ? `https://${process.env.VERCEL_URL}`
-      : process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
-
-    // Fetch webinars and classes in parallel
-    // TODO: Consider refactoring to direct Prisma calls in future
-    const [webinarsRes, classesRes] = await Promise.all([
-      fetch(
-        `${baseUrl}/api/events/webinars?consultantProfileId=${consultantId}`,
-      ),
-      fetch(
-        `${baseUrl}/api/events/classes?consultantProfileId=${consultantId}`,
-      ),
+    // PERFORMANCE FIX #364: Use direct Prisma queries instead of internal HTTP fetches
+    // This eliminates network overhead and reduces response time significantly
+    const [webinarsRaw, classesRaw] = await Promise.all([
+      prisma.webinar.findMany({
+        where: {
+          webinarPlan: {
+            consultantProfileId: consultantId,
+          },
+        },
+        include: {
+          webinarPlan: {
+            include: {
+              consultantProfile: true,
+              topics: true,
+            },
+          },
+          appointment: {
+            include: {
+              slotsOfAppointment: {
+                include: {
+                  user: true,
+                },
+              },
+            },
+          },
+          waitlist: true,
+        },
+      }),
+      prisma.class.findMany({
+        where: {
+          classPlan: {
+            consultantProfileId: consultantId,
+          },
+        },
+        include: {
+          classPlan: {
+            include: {
+              consultantProfile: true,
+              topics: true,
+              classContents: {
+                orderBy: {
+                  order: "asc",
+                },
+              },
+            },
+          },
+          appointments: true,
+        },
+      }),
     ]);
 
-    // Check for errors in responses
-    if (!webinarsRes.ok) {
-      console.error("Failed to fetch webinars:", webinarsRes.statusText);
-      return NextResponse.json(
-        { error: "Failed to fetch webinars" },
-        { status: webinarsRes.status },
-      );
-    }
-
-    if (!classesRes.ok) {
-      console.error("Failed to fetch classes:", classesRes.statusText);
-      return NextResponse.json(
-        { error: "Failed to fetch classes" },
-        { status: classesRes.status },
-      );
-    }
-
-    // Parse responses
-    const [webinarsData, classesData] = await Promise.all([
-      webinarsRes.json(),
-      classesRes.json(),
-    ]);
+    // Transform topics from objects to strings in nested plans (matching original API behavior)
+    const transformedWebinars = webinarsRaw.map((w) =>
+      transformNestedPlanTopics(w, "webinarPlan"),
+    );
+    const transformedClasses = classesRaw.map((c) =>
+      transformNestedPlanTopics(c, "classPlan"),
+    );
 
     // Transform webinars to include type discriminator
-    const webinars: WebinarEvent[] = (webinarsData.data || []).map(
-      (webinar: TWebinar) => ({
-        ...webinar,
-        type: "webinar" as const,
-      }),
-    );
+    // Cast to unknown first to avoid type mismatch with TWebinar (which expects more fields)
+    const webinars: WebinarEvent[] = transformedWebinars.map((webinar) => ({
+      ...(webinar as unknown as TWebinar),
+      type: "webinar" as const,
+    }));
 
     // Transform classes to include type discriminator
-    const classes: ClassEvent[] = (classesData.data || []).map(
-      (classEvent: TClass) => ({
-        ...classEvent,
-        type: "class" as const,
-      }),
-    );
+    // Cast to unknown first to avoid type mismatch with TClass (which expects more fields)
+    const classes: ClassEvent[] = transformedClasses.map((classEvent) => ({
+      ...(classEvent as unknown as TClass),
+      type: "class" as const,
+    }));
 
     // FIX #142: Fetch participant counts using direct Prisma query (not internal API)
     const webinarIds = webinars.map((w) => w.id).filter(Boolean) as string[];

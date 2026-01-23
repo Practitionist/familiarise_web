@@ -1,172 +1,347 @@
 import { NextRequest, NextResponse } from "next/server";
+import prisma from "@/lib/prisma";
 import {
   TAppointment,
   TConsultation,
   TSubscription,
 } from "@/types/appointment";
-import { ApiResponse } from "@/app/dashboard/consultant/[consultantId]/types";
-
-// Helper to get the base URL, preferring VERCEL_URL if available
-const getBaseUrl = () => {
-  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
-  return process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
-};
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ consultantId: string }> },
 ) {
+  // Note: request parameter kept for Next.js API route signature compatibility
+  void request;
+
   try {
     const resolvedParams = await params;
-    const { consultantId } = resolvedParams;
-    const baseUrl = getBaseUrl();
+    const { consultantId: consultantProfileId } = resolvedParams;
 
-    // Fetch all dashboard data in parallel
-    const [appointmentsRes, consultationsRes, subscriptionsRes] =
+    if (!consultantProfileId) {
+      return NextResponse.json(
+        { error: "Consultant ID is required" },
+        { status: 400 },
+      );
+    }
+
+    // PERFORMANCE FIX #364: Use direct Prisma queries instead of internal HTTP fetches
+    // This eliminates network overhead and reduces response time significantly
+    const [appointmentsRaw, pendingConsultations, pendingSubscriptions] =
       await Promise.all([
-        fetch(
-          `${baseUrl}/api/slots/appointments?consultantProfileId=${consultantId}&consultationStatus=APPROVED&subscriptionStatus=APPROVED&webinarStatus=APPROVED&classStatus=APPROVED`,
-          { headers: { Cookie: request.headers.get("cookie") || "" } },
-        ),
-        fetch(
-          `${baseUrl}/api/events/consultations?consultantProfileId=${consultantId}&status=PENDING`,
-          { headers: { Cookie: request.headers.get("cookie") || "" } },
-        ),
-        fetch(
-          `${baseUrl}/api/events/subscriptions?consultantProfileId=${consultantId}&status=PENDING`,
-          { headers: { Cookie: request.headers.get("cookie") || "" } },
-        ),
+        // Fetch approved appointments for consultations, subscriptions, webinars, and classes
+        prisma.appointment.findMany({
+          where: {
+            OR: [
+              {
+                consultation: {
+                  consultationPlan: { consultantProfileId },
+                  requestStatus: "APPROVED",
+                },
+              },
+              {
+                subscription: {
+                  subscriptionPlan: { consultantProfileId },
+                  requestStatus: "APPROVED",
+                },
+              },
+              {
+                webinar: {
+                  webinarPlan: { consultantProfileId },
+                  status: "SCHEDULED",
+                },
+              },
+              {
+                class: {
+                  classPlan: { consultantProfileId },
+                  status: "SCHEDULED",
+                },
+              },
+            ],
+          },
+          include: {
+            slotsOfAppointment: {
+              include: {
+                user: true,
+              },
+            },
+            consultation: {
+              include: {
+                consultationPlan: {
+                  include: {
+                    consultantProfile: {
+                      include: {
+                        user: true,
+                      },
+                    },
+                  },
+                },
+                requestedBy: {
+                  include: {
+                    user: true,
+                  },
+                },
+              },
+            },
+            subscription: {
+              select: {
+                id: true,
+                subscriptionPlan: {
+                  include: {
+                    consultantProfile: {
+                      include: {
+                        user: true,
+                      },
+                    },
+                  },
+                },
+                requestedBy: {
+                  include: {
+                    user: true,
+                  },
+                },
+                schedulingPeriodStartsAt: true,
+                schedulingPeriodEndsAt: true,
+                requestStatus: true,
+              },
+            },
+            webinar: {
+              include: {
+                webinarPlan: {
+                  include: {
+                    consultantProfile: {
+                      include: {
+                        user: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            class: {
+              include: {
+                classPlan: {
+                  include: {
+                    consultantProfile: {
+                      include: {
+                        user: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        }),
+        // Fetch pending consultations
+        prisma.consultation.findMany({
+          where: {
+            consultationPlan: {
+              consultantProfile: {
+                id: consultantProfileId,
+              },
+            },
+            requestStatus: "PENDING",
+          },
+          include: {
+            consultationPlan: {
+              include: {
+                consultantProfile: {
+                  include: {
+                    user: true,
+                  },
+                },
+              },
+            },
+            requestedBy: {
+              include: {
+                user: true,
+              },
+            },
+            appointment: {
+              include: {
+                slotsOfAppointment: {
+                  include: {
+                    user: true,
+                  },
+                  orderBy: {
+                    startsAt: "asc",
+                  },
+                },
+                payment: true,
+              },
+            },
+          },
+          orderBy: {
+            requestedAt: "desc",
+          },
+        }),
+        // Fetch pending subscriptions
+        prisma.subscription.findMany({
+          where: {
+            subscriptionPlan: {
+              consultantProfileId,
+            },
+            requestStatus: "PENDING",
+          },
+          include: {
+            subscriptionPlan: {
+              include: {
+                consultantProfile: {
+                  include: {
+                    user: true,
+                    domain: true,
+                    subDomains: true,
+                    tags: true,
+                  },
+                },
+              },
+            },
+            requestedBy: {
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    image: true,
+                  },
+                },
+              },
+            },
+            appointments: {
+              include: {
+                slotsOfAppointment: {
+                  include: {
+                    user: true,
+                  },
+                },
+                payment: true,
+              },
+            },
+          },
+          orderBy: {
+            requestedAt: "desc",
+          },
+        }),
       ]);
 
-    // Check for errors
-    if (!appointmentsRes.ok) {
-      throw new Error(
-        `Failed to fetch appointments: ${appointmentsRes.statusText}`,
-      );
-    }
-    if (!consultationsRes.ok) {
-      throw new Error(
-        `Failed to fetch consultations: ${consultationsRes.statusText}`,
-      );
-    }
-    if (!subscriptionsRes.ok) {
-      throw new Error(
-        `Failed to fetch subscriptions: ${subscriptionsRes.statusText}`,
-      );
-    }
+    // Sort appointments by slot start time (matching original API behavior)
+    const sortedAppointments = appointmentsRaw.sort((a, b) => {
+      const aTime = a.slotsOfAppointment?.[0]?.startsAt;
+      const bTime = b.slotsOfAppointment?.[0]?.startsAt;
 
-    // Parse responses
-    const appointmentsData: ApiResponse<TAppointment[]> =
-      await appointmentsRes.json();
-    const consultationsData: ApiResponse<TConsultation[]> =
-      await consultationsRes.json();
-    const subscriptionsData: ApiResponse<TSubscription[]> =
-      await subscriptionsRes.json();
+      if (!aTime && !bTime) return 0;
+      if (!aTime) return 1;
+      if (!bTime) return -1;
+
+      return new Date(aTime).getTime() - new Date(bTime).getTime();
+    });
+
+    // Cast to match expected types
+    const appointmentsData = sortedAppointments as unknown as TAppointment[];
+    const consultationsData = pendingConsultations as unknown as TConsultation[];
+    const subscriptionsData = pendingSubscriptions as unknown as TSubscription[];
 
     // Transform appointments (same logic as fetchHelpers.ts)
-    const transformedAppointments = appointmentsData.data.map(
-      (appointment) => ({
-        id: appointment.id,
-        appointmentType: appointment.appointmentType,
-        slotsOfAppointment: appointment.slotsOfAppointment.map((slot) => ({
-          id: slot.id,
-          slotStartTimeInUTC: new Date(slot.startsAt),
-          slotEndTimeInUTC: slot.endsAt ? new Date(slot.endsAt) : null,
-          isTentative: slot.isTentative,
-          user: Array.isArray(slot.user)
-            ? slot.user.map((u) => ({
-                id: u.id,
-                name: u.name,
-                email: u.email,
-                image: u.image,
-                phone: u.phone || null,
-                address: u.address || null,
-                password: u.password || null,
-                passwordResetToken: u.passwordResetToken || null,
-                passwordResetExpires: u.passwordResetExpires || null,
-                onlineStatus: u.onlineStatus,
-                currentTimezone: u.timezone || null,
-                onboardingCompleted: u.onboardingCompleted,
-                role: u.role,
-                consultantProfileId: u.consultantProfileId,
-                consulteeProfileId: u.consulteeProfileId,
-                staffProfileId: u.staffProfileId,
-              }))
-            : [],
-        })),
-        consultation: appointment.consultation
-          ? {
-              id: appointment.consultation.id,
-              consultationPlan: {
-                ...appointment.consultation.consultationPlan,
-                consultantProfile: appointment.consultation.consultationPlan
-                  .consultantProfile as any,
+    const transformedAppointments = appointmentsData.map((appointment) => ({
+      id: appointment.id,
+      appointmentType: appointment.appointmentType,
+      slotsOfAppointment: appointment.slotsOfAppointment.map((slot) => ({
+        id: slot.id,
+        slotStartTimeInUTC: new Date(slot.startsAt),
+        slotEndTimeInUTC: slot.endsAt ? new Date(slot.endsAt) : null,
+        isTentative: slot.isTentative,
+        user: Array.isArray(slot.user)
+          ? slot.user.map((u) => ({
+              id: u.id,
+              name: u.name,
+              email: u.email,
+              image: u.image,
+              phone: u.phone || null,
+              address: u.address || null,
+              password: u.password || null,
+              passwordResetToken: u.passwordResetToken || null,
+              passwordResetExpires: u.passwordResetExpires || null,
+              onlineStatus: u.onlineStatus,
+              currentTimezone: u.timezone || null,
+              onboardingCompleted: u.onboardingCompleted,
+              role: u.role,
+              consultantProfileId: u.consultantProfileId,
+              consulteeProfileId: u.consulteeProfileId,
+              staffProfileId: u.staffProfileId,
+            }))
+          : [],
+      })),
+      consultation: appointment.consultation
+        ? {
+            id: appointment.consultation.id,
+            consultationPlan: {
+              ...appointment.consultation.consultationPlan,
+              consultantProfile: appointment.consultation.consultationPlan
+                .consultantProfile as any,
+            },
+            requestStatus: appointment.consultation.requestStatus,
+            requestedBy: {
+              id: appointment.consultation.requestedBy?.id ?? "",
+              user: {
+                name: appointment.consultation.requestedBy?.user?.name ?? null,
+                image:
+                  appointment.consultation.requestedBy?.user?.image ?? null,
               },
-              requestStatus: appointment.consultation.requestStatus,
-              requestedBy: {
-                id: appointment.consultation.requestedBy?.id ?? "",
-                user: {
-                  name:
-                    appointment.consultation.requestedBy?.user?.name ?? null,
-                  image:
-                    appointment.consultation.requestedBy?.user?.image ?? null,
-                },
+            },
+          }
+        : undefined,
+      subscription: appointment.subscription
+        ? {
+            id: appointment.subscription.id,
+            subscriptionPlan: {
+              ...appointment.subscription.subscriptionPlan,
+              consultantProfile: appointment.subscription.subscriptionPlan
+                .consultantProfile as any,
+            },
+            requestStatus: appointment.subscription.requestStatus,
+            requestedBy: {
+              id: appointment.subscription.requestedBy?.id ?? "",
+              user: {
+                name: appointment.subscription.requestedBy?.user?.name ?? null,
+                image:
+                  appointment.subscription.requestedBy?.user?.image ?? null,
               },
-            }
-          : undefined,
-        subscription: appointment.subscription
-          ? {
-              id: appointment.subscription.id,
-              subscriptionPlan: {
-                ...appointment.subscription.subscriptionPlan,
-                consultantProfile: appointment.subscription.subscriptionPlan
-                  .consultantProfile as any,
-              },
-              requestStatus: appointment.subscription.requestStatus,
-              requestedBy: {
-                id: appointment.subscription.requestedBy?.id ?? "",
-                user: {
-                  name:
-                    appointment.subscription.requestedBy?.user?.name ?? null,
-                  image:
-                    appointment.subscription.requestedBy?.user?.image ?? null,
-                },
-              },
-              startDate: new Date(
-                appointment.subscription.schedulingPeriodStartsAt,
-              ).toISOString(),
-              endDate: new Date(
-                appointment.subscription.schedulingPeriodEndsAt,
-              ).toISOString(),
-            }
-          : undefined,
-        webinar: appointment.webinar
-          ? {
-              id: appointment.webinar.id,
-              webinarPlan: {
-                ...appointment.webinar.webinarPlan,
-                consultantProfile: appointment.webinar.webinarPlan
-                  .consultantProfile as any,
-              },
-              status: appointment.webinar.status,
-            }
-          : undefined,
-        class: appointment.class
-          ? {
-              id: appointment.class.id,
-              classPlan: {
-                ...appointment.class.classPlan,
-                consultantProfile: appointment.class.classPlan
-                  .consultantProfile as any,
-              },
-              status: appointment.class.status,
-            }
-          : undefined,
-      }),
-    );
+            },
+            startDate: new Date(
+              appointment.subscription.schedulingPeriodStartsAt,
+            ).toISOString(),
+            endDate: new Date(
+              appointment.subscription.schedulingPeriodEndsAt,
+            ).toISOString(),
+          }
+        : undefined,
+      webinar: appointment.webinar
+        ? {
+            id: appointment.webinar.id,
+            webinarPlan: {
+              ...appointment.webinar.webinarPlan,
+              consultantProfile: appointment.webinar.webinarPlan
+                .consultantProfile as any,
+            },
+            status: appointment.webinar.status,
+          }
+        : undefined,
+      class: appointment.class
+        ? {
+            id: appointment.class.id,
+            classPlan: {
+              ...appointment.class.classPlan,
+              consultantProfile: appointment.class.classPlan
+                .consultantProfile as any,
+            },
+            status: appointment.class.status,
+          }
+        : undefined,
+    }));
 
     // Transform approvals (same logic as fetchHelpers.ts)
-    const consultationApprovals = consultationsData.data.map(
+    const consultationApprovals = consultationsData.map(
       (consultation: TConsultation) => ({
         id: consultation.id,
         type: "Consultation",
@@ -175,7 +350,7 @@ export async function GET(
       }),
     );
 
-    const subscriptionApprovals = subscriptionsData.data.map(
+    const subscriptionApprovals = subscriptionsData.map(
       (subscription: TSubscription) => ({
         id: subscription.id,
         type: "Subscription",
