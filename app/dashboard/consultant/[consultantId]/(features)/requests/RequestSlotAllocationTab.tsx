@@ -628,7 +628,7 @@ export function RequestSlotAllocationTab({
 
         {/* Single Allocation Dialog - moved outside map loop to prevent multiple dialogs */}
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-          <DialogContent className="max-w-7xl">
+          <DialogContent className="max-w-[95vw] w-[1400px]">
             <DialogHeader>
               <DialogTitle>Allocate Slots</DialogTitle>
               <DialogDescription asChild>
@@ -708,7 +708,6 @@ export function RequestSlotAllocationTab({
                 }
                 allowedStart={selectedRequest.startDate}
                 allowedEnd={selectedRequest.endDate}
-                className="min-h-[500px]"
               />
             )}
           </DialogContent>
