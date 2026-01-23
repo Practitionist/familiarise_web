@@ -50,9 +50,8 @@ describe("Event Channel Actions", () => {
     it("should return cached value when channel is cached as true", async () => {
       mockCache.isChannelCached.mockReturnValue(true);
 
-      const { checkEventChannelExists } = await import(
-        "../../actions/stream/chat/event-channel.action"
-      );
+      const { checkEventChannelExists } =
+        await import("../../actions/stream/chat/event-channel.action");
 
       const result = await checkEventChannelExists("webinar", "webinar-123");
 
@@ -60,16 +59,15 @@ describe("Event Channel Actions", () => {
       expect(mockStreamClient.channel).not.toHaveBeenCalled();
       expect(mockLogger.debug).toHaveBeenCalledWith(
         "Channel existence from cache",
-        expect.objectContaining({ exists: true })
+        expect.objectContaining({ exists: true }),
       );
     });
 
     it("should return cached value when channel is cached as false", async () => {
       mockCache.isChannelCached.mockReturnValue(false);
 
-      const { checkEventChannelExists } = await import(
-        "../../actions/stream/chat/event-channel.action"
-      );
+      const { checkEventChannelExists } =
+        await import("../../actions/stream/chat/event-channel.action");
 
       const result = await checkEventChannelExists("class", "class-456");
 
@@ -81,14 +79,16 @@ describe("Event Channel Actions", () => {
       mockCache.isChannelCached.mockReturnValue(undefined);
       mockChannel.query.mockResolvedValue({ state: {} });
 
-      const { checkEventChannelExists } = await import(
-        "../../actions/stream/chat/event-channel.action"
-      );
+      const { checkEventChannelExists } =
+        await import("../../actions/stream/chat/event-channel.action");
 
       const result = await checkEventChannelExists("consultation", "cons-789");
 
       expect(result).toBe(true);
-      expect(mockStreamClient.channel).toHaveBeenCalledWith("messaging", "consultation-cons-789");
+      expect(mockStreamClient.channel).toHaveBeenCalledWith(
+        "messaging",
+        "consultation-cons-789",
+      );
       expect(mockChannel.query).toHaveBeenCalled();
       expect(mockCache.markChannelExists).toHaveBeenCalled();
     });
@@ -97,16 +97,15 @@ describe("Event Channel Actions", () => {
       mockCache.isChannelCached.mockReturnValue(undefined);
       mockChannel.query.mockRejectedValue(new Error("Channel not found"));
 
-      const { checkEventChannelExists } = await import(
-        "../../actions/stream/chat/event-channel.action"
-      );
+      const { checkEventChannelExists } =
+        await import("../../actions/stream/chat/event-channel.action");
 
       const result = await checkEventChannelExists("subscription", "sub-abc");
 
       expect(result).toBe(false);
       expect(mockLogger.debug).toHaveBeenCalledWith(
         "Channel does not exist",
-        expect.any(Object)
+        expect.any(Object),
       );
     });
 
@@ -114,42 +113,44 @@ describe("Event Channel Actions", () => {
       mockCache.isChannelCached.mockReturnValue(undefined);
       mockChannel.query.mockResolvedValue({});
 
-      const { checkEventChannelExists } = await import(
-        "../../actions/stream/chat/event-channel.action"
-      );
+      const { checkEventChannelExists } =
+        await import("../../actions/stream/chat/event-channel.action");
 
       await checkEventChannelExists("webinar", "web-123");
 
-      expect(mockStreamClient.channel).toHaveBeenCalledWith("team", "webinar-web-123");
+      expect(mockStreamClient.channel).toHaveBeenCalledWith(
+        "team",
+        "webinar-web-123",
+      );
     });
 
     it("should return team type for class", async () => {
       mockCache.isChannelCached.mockReturnValue(undefined);
       mockChannel.query.mockResolvedValue({});
 
-      const { checkEventChannelExists } = await import(
-        "../../actions/stream/chat/event-channel.action"
-      );
+      const { checkEventChannelExists } =
+        await import("../../actions/stream/chat/event-channel.action");
 
       await checkEventChannelExists("class", "cls-123");
 
-      expect(mockStreamClient.channel).toHaveBeenCalledWith("team", "class-cls-123");
+      expect(mockStreamClient.channel).toHaveBeenCalledWith(
+        "team",
+        "class-cls-123",
+      );
     });
 
     it("should throw on invalid event type", async () => {
-      const { checkEventChannelExists } = await import(
-        "../../actions/stream/chat/event-channel.action"
-      );
+      const { checkEventChannelExists } =
+        await import("../../actions/stream/chat/event-channel.action");
 
       await expect(
-        checkEventChannelExists("invalid" as any, "id-123")
+        checkEventChannelExists("invalid" as any, "id-123"),
       ).rejects.toThrow();
     });
 
     it("should throw on empty event ID", async () => {
-      const { checkEventChannelExists } = await import(
-        "../../actions/stream/chat/event-channel.action"
-      );
+      const { checkEventChannelExists } =
+        await import("../../actions/stream/chat/event-channel.action");
 
       await expect(checkEventChannelExists("webinar", "")).rejects.toThrow();
     });
@@ -159,18 +160,21 @@ describe("Event Channel Actions", () => {
     it("should return early when user membership is cached", async () => {
       mockCache.getMembershipCached.mockReturnValue(true);
 
-      const { addUserToEventChannel } = await import(
-        "../../actions/stream/chat/event-channel.action"
-      );
+      const { addUserToEventChannel } =
+        await import("../../actions/stream/chat/event-channel.action");
 
-      const result = await addUserToEventChannel("webinar", "web-123", "user-456");
+      const result = await addUserToEventChannel(
+        "webinar",
+        "web-123",
+        "user-456",
+      );
 
       expect(result.success).toBe(true);
       expect(result.channelId).toBe("webinar-web-123");
       expect(mockStreamClient.channel).not.toHaveBeenCalled();
       expect(mockLogger.debug).toHaveBeenCalledWith(
         "User already member (cached)",
-        expect.any(Object)
+        expect.any(Object),
       );
     });
 
@@ -178,11 +182,14 @@ describe("Event Channel Actions", () => {
       mockCache.getMembershipCached.mockReturnValue(false);
       mockChannel.addMembers.mockResolvedValue({});
 
-      const { addUserToEventChannel } = await import(
-        "../../actions/stream/chat/event-channel.action"
-      );
+      const { addUserToEventChannel } =
+        await import("../../actions/stream/chat/event-channel.action");
 
-      const result = await addUserToEventChannel("consultation", "cons-123", "user-789");
+      const result = await addUserToEventChannel(
+        "consultation",
+        "cons-123",
+        "user-789",
+      );
 
       expect(result.success).toBe(true);
       expect(result.channelId).toBe("consultation-cons-123");
@@ -206,17 +213,18 @@ describe("Event Channel Actions", () => {
         },
         waitlist: [{ userId: "user-1" }, { userId: "user-2" }],
         appointment: {
-          slotsOfAppointment: [
-            { user: [{ id: "user-3" }] },
-          ],
+          slotsOfAppointment: [{ user: [{ id: "user-3" }] }],
         },
       });
 
-      const { addUserToEventChannel } = await import(
-        "../../actions/stream/chat/event-channel.action"
-      );
+      const { addUserToEventChannel } =
+        await import("../../actions/stream/chat/event-channel.action");
 
-      const result = await addUserToEventChannel("webinar", "web-123", "new-user");
+      const result = await addUserToEventChannel(
+        "webinar",
+        "web-123",
+        "new-user",
+      );
 
       expect(result.success).toBe(true);
       expect(result.created).toBe(true);
@@ -229,22 +237,20 @@ describe("Event Channel Actions", () => {
       mockChannel.addMembers.mockRejectedValue(new Error("Channel not found"));
       mockPrisma.webinar.findUnique.mockResolvedValue(null);
 
-      const { addUserToEventChannel } = await import(
-        "../../actions/stream/chat/event-channel.action"
-      );
+      const { addUserToEventChannel } =
+        await import("../../actions/stream/chat/event-channel.action");
 
       await expect(
-        addUserToEventChannel("webinar", "nonexistent", "user-123")
+        addUserToEventChannel("webinar", "nonexistent", "user-123"),
       ).rejects.toThrow("webinar not found: nonexistent");
     });
 
     it("should throw on empty user ID", async () => {
-      const { addUserToEventChannel } = await import(
-        "../../actions/stream/chat/event-channel.action"
-      );
+      const { addUserToEventChannel } =
+        await import("../../actions/stream/chat/event-channel.action");
 
       await expect(
-        addUserToEventChannel("webinar", "web-123", "")
+        addUserToEventChannel("webinar", "web-123", ""),
       ).rejects.toThrow();
     });
 
@@ -252,15 +258,14 @@ describe("Event Channel Actions", () => {
       mockCache.getMembershipCached.mockReturnValue(false);
       mockChannel.addMembers.mockResolvedValue({});
 
-      const { addUserToEventChannel } = await import(
-        "../../actions/stream/chat/event-channel.action"
-      );
+      const { addUserToEventChannel } =
+        await import("../../actions/stream/chat/event-channel.action");
 
       await addUserToEventChannel("consultation", "cons-123", "user-123");
 
       expect(mockStreamClient.channel).toHaveBeenCalledWith(
         "messaging",
-        "consultation-cons-123"
+        "consultation-cons-123",
       );
     });
 
@@ -268,15 +273,14 @@ describe("Event Channel Actions", () => {
       mockCache.getMembershipCached.mockReturnValue(false);
       mockChannel.addMembers.mockResolvedValue({});
 
-      const { addUserToEventChannel } = await import(
-        "../../actions/stream/chat/event-channel.action"
-      );
+      const { addUserToEventChannel } =
+        await import("../../actions/stream/chat/event-channel.action");
 
       await addUserToEventChannel("subscription", "sub-123", "user-123");
 
       expect(mockStreamClient.channel).toHaveBeenCalledWith(
         "messaging",
-        "subscription-sub-123"
+        "subscription-sub-123",
       );
     });
   });
@@ -307,17 +311,20 @@ describe("Event Channel Actions", () => {
         ],
       });
 
-      const { addUserToEventChannel } = await import(
-        "../../actions/stream/chat/event-channel.action"
-      );
+      const { addUserToEventChannel } =
+        await import("../../actions/stream/chat/event-channel.action");
 
-      const result = await addUserToEventChannel("class", "class-123", "new-user");
+      const result = await addUserToEventChannel(
+        "class",
+        "class-123",
+        "new-user",
+      );
 
       expect(result.success).toBe(true);
       expect(mockPrisma.class.findUnique).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: "class-123" },
-        })
+        }),
       );
     });
 
@@ -332,12 +339,11 @@ describe("Event Channel Actions", () => {
         appointments: [],
       });
 
-      const { addUserToEventChannel } = await import(
-        "../../actions/stream/chat/event-channel.action"
-      );
+      const { addUserToEventChannel } =
+        await import("../../actions/stream/chat/event-channel.action");
 
       await expect(
-        addUserToEventChannel("class", "class-123", "user-123")
+        addUserToEventChannel("class", "class-123", "user-123"),
       ).rejects.toThrow("class not found");
     });
 
@@ -355,11 +361,14 @@ describe("Event Channel Actions", () => {
         },
       });
 
-      const { addUserToEventChannel } = await import(
-        "../../actions/stream/chat/event-channel.action"
-      );
+      const { addUserToEventChannel } =
+        await import("../../actions/stream/chat/event-channel.action");
 
-      const result = await addUserToEventChannel("consultation", "cons-123", "new-user");
+      const result = await addUserToEventChannel(
+        "consultation",
+        "cons-123",
+        "new-user",
+      );
 
       expect(result.success).toBe(true);
       expect(mockPrisma.consultation.findUnique).toHaveBeenCalled();
@@ -377,12 +386,11 @@ describe("Event Channel Actions", () => {
         requestedBy: null,
       });
 
-      const { addUserToEventChannel } = await import(
-        "../../actions/stream/chat/event-channel.action"
-      );
+      const { addUserToEventChannel } =
+        await import("../../actions/stream/chat/event-channel.action");
 
       await expect(
-        addUserToEventChannel("consultation", "cons-123", "user-123")
+        addUserToEventChannel("consultation", "cons-123", "user-123"),
       ).rejects.toThrow("consultation not found");
     });
 
@@ -400,11 +408,14 @@ describe("Event Channel Actions", () => {
         },
       });
 
-      const { addUserToEventChannel } = await import(
-        "../../actions/stream/chat/event-channel.action"
-      );
+      const { addUserToEventChannel } =
+        await import("../../actions/stream/chat/event-channel.action");
 
-      const result = await addUserToEventChannel("subscription", "sub-123", "new-user");
+      const result = await addUserToEventChannel(
+        "subscription",
+        "sub-123",
+        "new-user",
+      );
 
       expect(result.success).toBe(true);
       expect(mockPrisma.subscription.findUnique).toHaveBeenCalled();
@@ -428,16 +439,15 @@ describe("Event Channel Actions", () => {
         },
       ]);
 
-      const { getUserEventChannels } = await import(
-        "../../actions/stream/chat/event-channel.action"
-      );
+      const { getUserEventChannels } =
+        await import("../../actions/stream/chat/event-channel.action");
 
       const channels = await getUserEventChannels("user1");
 
       expect(mockStreamClient.queryChannels).toHaveBeenCalledWith(
         { members: { $in: ["user1"] } },
         { last_message_at: -1 },
-        { limit: 100 }
+        { limit: 100 },
       );
       expect(channels).toHaveLength(2);
       expect(channels[0].id).toBe("webinar-123");
@@ -448,9 +458,8 @@ describe("Event Channel Actions", () => {
     it("should return empty array when user has no channels", async () => {
       mockStreamClient.queryChannels.mockResolvedValue([]);
 
-      const { getUserEventChannels } = await import(
-        "../../actions/stream/chat/event-channel.action"
-      );
+      const { getUserEventChannels } =
+        await import("../../actions/stream/chat/event-channel.action");
 
       const channels = await getUserEventChannels("user-no-channels");
 
@@ -467,9 +476,8 @@ describe("Event Channel Actions", () => {
         },
       ]);
 
-      const { getUserEventChannels } = await import(
-        "../../actions/stream/chat/event-channel.action"
-      );
+      const { getUserEventChannels } =
+        await import("../../actions/stream/chat/event-channel.action");
 
       const channels = await getUserEventChannels("user1");
 
@@ -477,9 +485,8 @@ describe("Event Channel Actions", () => {
     });
 
     it("should throw on empty user ID", async () => {
-      const { getUserEventChannels } = await import(
-        "../../actions/stream/chat/event-channel.action"
-      );
+      const { getUserEventChannels } =
+        await import("../../actions/stream/chat/event-channel.action");
 
       await expect(getUserEventChannels("")).rejects.toThrow();
     });
@@ -487,15 +494,14 @@ describe("Event Channel Actions", () => {
     it("should throw and log error when query fails", async () => {
       mockStreamClient.queryChannels.mockRejectedValue(new Error("API error"));
 
-      const { getUserEventChannels } = await import(
-        "../../actions/stream/chat/event-channel.action"
-      );
+      const { getUserEventChannels } =
+        await import("../../actions/stream/chat/event-channel.action");
 
       await expect(getUserEventChannels("user1")).rejects.toThrow("API error");
       expect(mockLogger.error).toHaveBeenCalledWith(
         "Failed to get user event channels",
         expect.any(Error),
-        expect.any(Object)
+        expect.any(Object),
       );
     });
   });
@@ -504,9 +510,8 @@ describe("Event Channel Actions", () => {
     it("should skip when user already synced", async () => {
       mockCache.initialSyncCompletedUsers.add("user-already-synced");
 
-      const { syncUserEventChannels } = await import(
-        "../../actions/stream/chat/event-channel.action"
-      );
+      const { syncUserEventChannels } =
+        await import("../../actions/stream/chat/event-channel.action");
 
       const result = await syncUserEventChannels("user-already-synced");
 
@@ -518,9 +523,8 @@ describe("Event Channel Actions", () => {
     it("should return error when user not found", async () => {
       mockPrisma.user.findUnique.mockResolvedValue(null);
 
-      const { syncUserEventChannels } = await import(
-        "../../actions/stream/chat/event-channel.action"
-      );
+      const { syncUserEventChannels } =
+        await import("../../actions/stream/chat/event-channel.action");
 
       const result = await syncUserEventChannels("nonexistent-user");
 
@@ -528,7 +532,7 @@ describe("Event Channel Actions", () => {
       expect(result.error).toBe("User not found");
       expect(mockLogger.warn).toHaveBeenCalledWith(
         "User not found for sync",
-        expect.any(Object)
+        expect.any(Object),
       );
     });
 
@@ -542,15 +546,16 @@ describe("Event Channel Actions", () => {
       mockPrisma.consultation.findMany.mockResolvedValue([]);
       mockPrisma.subscription.findMany.mockResolvedValue([]);
 
-      const { syncUserEventChannels } = await import(
-        "../../actions/stream/chat/event-channel.action"
-      );
+      const { syncUserEventChannels } =
+        await import("../../actions/stream/chat/event-channel.action");
 
       const result = await syncUserEventChannels("user-no-events");
 
       expect(result.success).toBe(true);
       expect(result.channelsSynced).toBe(0);
-      expect(mockCache.initialSyncCompletedUsers.has("user-no-events")).toBe(true);
+      expect(mockCache.initialSyncCompletedUsers.has("user-no-events")).toBe(
+        true,
+      );
     });
 
     it("should sync user to all their event channels", async () => {
@@ -569,9 +574,7 @@ describe("Event Channel Actions", () => {
       mockPrisma.class.findMany.mockResolvedValue([{ id: "class-1" }]);
 
       // Mock consultations
-      mockPrisma.consultation.findMany.mockResolvedValue([
-        { id: "cons-1" },
-      ]);
+      mockPrisma.consultation.findMany.mockResolvedValue([{ id: "cons-1" }]);
 
       // Mock subscriptions
       mockPrisma.subscription.findMany.mockResolvedValue([]);
@@ -580,16 +583,17 @@ describe("Event Channel Actions", () => {
       mockCache.getMembershipCached.mockReturnValue(false);
       mockChannel.addMembers.mockResolvedValue({});
 
-      const { syncUserEventChannels } = await import(
-        "../../actions/stream/chat/event-channel.action"
-      );
+      const { syncUserEventChannels } =
+        await import("../../actions/stream/chat/event-channel.action");
 
       const result = await syncUserEventChannels("consultant-user");
 
       expect(result.success).toBe(true);
       expect(result.channelsSynced).toBe(4); // 2 webinars + 1 class + 1 consultation
       expect(result.durationMs).toBeDefined();
-      expect(mockCache.initialSyncCompletedUsers.has("consultant-user")).toBe(true);
+      expect(mockCache.initialSyncCompletedUsers.has("consultant-user")).toBe(
+        true,
+      );
     });
 
     it("should handle partial failures gracefully", async () => {
@@ -615,9 +619,8 @@ describe("Event Channel Actions", () => {
       // Second call needs event data for channel creation
       mockPrisma.consultation.findUnique.mockResolvedValue(null);
 
-      const { syncUserEventChannels } = await import(
-        "../../actions/stream/chat/event-channel.action"
-      );
+      const { syncUserEventChannels } =
+        await import("../../actions/stream/chat/event-channel.action");
 
       const result = await syncUserEventChannels("user-with-failures");
 
@@ -627,9 +630,8 @@ describe("Event Channel Actions", () => {
     });
 
     it("should throw on invalid user ID", async () => {
-      const { syncUserEventChannels } = await import(
-        "../../actions/stream/chat/event-channel.action"
-      );
+      const { syncUserEventChannels } =
+        await import("../../actions/stream/chat/event-channel.action");
 
       await expect(syncUserEventChannels("")).rejects.toThrow();
     });
@@ -651,9 +653,8 @@ describe("Event Channel Actions", () => {
 
       mockCache.getMembershipCached.mockReturnValue(true); // Skip actual sync
 
-      const { syncUserEventChannels } = await import(
-        "../../actions/stream/chat/event-channel.action"
-      );
+      const { syncUserEventChannels } =
+        await import("../../actions/stream/chat/event-channel.action");
 
       await syncUserEventChannels("consultant-user");
 
@@ -662,7 +663,7 @@ describe("Event Channel Actions", () => {
           where: {
             webinarPlan: { consultantProfileId: "consultant-123" },
           },
-        })
+        }),
       );
     });
 
@@ -680,9 +681,8 @@ describe("Event Channel Actions", () => {
 
       mockCache.getMembershipCached.mockReturnValue(true);
 
-      const { syncUserEventChannels } = await import(
-        "../../actions/stream/chat/event-channel.action"
-      );
+      const { syncUserEventChannels } =
+        await import("../../actions/stream/chat/event-channel.action");
 
       await syncUserEventChannels("consultee-user");
 
@@ -707,9 +707,8 @@ describe("Event Channel Actions", () => {
 
       mockCache.getMembershipCached.mockReturnValue(true);
 
-      const { syncUserEventChannels } = await import(
-        "../../actions/stream/chat/event-channel.action"
-      );
+      const { syncUserEventChannels } =
+        await import("../../actions/stream/chat/event-channel.action");
 
       await syncUserEventChannels("consultant-user");
 
@@ -718,7 +717,7 @@ describe("Event Channel Actions", () => {
           where: {
             classPlan: { consultantProfileId: "consultant-123" },
           },
-        })
+        }),
       );
     });
   });
@@ -739,9 +738,8 @@ describe("Event Channel Actions", () => {
 
       mockCache.getMembershipCached.mockReturnValue(true);
 
-      const { syncUserEventChannels } = await import(
-        "../../actions/stream/chat/event-channel.action"
-      );
+      const { syncUserEventChannels } =
+        await import("../../actions/stream/chat/event-channel.action");
 
       await syncUserEventChannels("dual-profile-user");
 
@@ -750,7 +748,7 @@ describe("Event Channel Actions", () => {
           where: expect.objectContaining({
             requestStatus: { in: ["APPROVED", "SCHEDULED"] },
           }),
-        })
+        }),
       );
     });
 
@@ -766,9 +764,8 @@ describe("Event Channel Actions", () => {
 
       mockCache.getMembershipCached.mockReturnValue(true);
 
-      const { syncUserEventChannels } = await import(
-        "../../actions/stream/chat/event-channel.action"
-      );
+      const { syncUserEventChannels } =
+        await import("../../actions/stream/chat/event-channel.action");
 
       const result = await syncUserEventChannels("no-profile-user");
 
@@ -792,9 +789,8 @@ describe("Event Channel Actions", () => {
 
       mockCache.getMembershipCached.mockReturnValue(true);
 
-      const { syncUserEventChannels } = await import(
-        "../../actions/stream/chat/event-channel.action"
-      );
+      const { syncUserEventChannels } =
+        await import("../../actions/stream/chat/event-channel.action");
 
       await syncUserEventChannels("subscribed-user");
 
@@ -803,7 +799,7 @@ describe("Event Channel Actions", () => {
           where: expect.objectContaining({
             requestStatus: { in: ["APPROVED", "SCHEDULED"] },
           }),
-        })
+        }),
       );
     });
   });

@@ -160,7 +160,9 @@ export function CancellationReasonModal({
                     >
                       {reason.label}
                     </Label>
-                    <p className="text-xs text-zinc-500">{reason.description}</p>
+                    <p className="text-xs text-zinc-500">
+                      {reason.description}
+                    </p>
                   </div>
                 </div>
               ))}
@@ -200,7 +202,11 @@ export function CancellationReasonModal({
         </div>
 
         <DialogFooter className="gap-2 sm:gap-0">
-          <Button variant="outline" onClick={handleClose} disabled={isSubmitting}>
+          <Button
+            variant="outline"
+            onClick={handleClose}
+            disabled={isSubmitting}
+          >
             Keep Booking
           </Button>
           <Button

@@ -75,7 +75,7 @@ export const ChannelInfoAndManageDialog = ({
   const otherUserId =
     isDirectMessage && !displayInfo.isGroupDM
       ? Object.keys(channel.state.members || {}).find(
-          (id) => id !== client?.userID
+          (id) => id !== client?.userID,
         )
       : null;
 

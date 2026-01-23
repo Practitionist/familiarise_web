@@ -14,7 +14,8 @@ import { defineConfig } from "prisma/config";
 // The placeholder allows `prisma generate` to work in CI environments
 // where no actual database connection is needed
 const databaseUrl =
-  process.env.DIRECT_URL || "postgresql://placeholder:placeholder@localhost:5432/placeholder";
+  process.env.DIRECT_URL ||
+  "postgresql://placeholder:placeholder@localhost:5432/placeholder";
 
 export default defineConfig({
   schema: "prisma/schema.prisma",

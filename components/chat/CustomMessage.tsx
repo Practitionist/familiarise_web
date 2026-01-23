@@ -49,17 +49,24 @@ export const CustomMessage = () => {
   // Close dropdowns when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (emojiPickerRef.current && !emojiPickerRef.current.contains(event.target as Node)) {
+      if (
+        emojiPickerRef.current &&
+        !emojiPickerRef.current.contains(event.target as Node)
+      ) {
         setShowEmojiPicker(false);
       }
-      if (moreOptionsRef.current && !moreOptionsRef.current.contains(event.target as Node)) {
+      if (
+        moreOptionsRef.current &&
+        !moreOptionsRef.current.contains(event.target as Node)
+      ) {
         setShowMoreOptions(false);
       }
     };
 
     if (showEmojiPicker || showMoreOptions) {
       document.addEventListener("mousedown", handleClickOutside);
-      return () => document.removeEventListener("mousedown", handleClickOutside);
+      return () =>
+        document.removeEventListener("mousedown", handleClickOutside);
     }
   }, [showEmojiPicker, showMoreOptions]);
 
@@ -86,7 +93,16 @@ export const CustomMessage = () => {
   };
 
   // Quick reactions for the picker
-  const quickReactions = ["like", "love", "haha", "wow", "sad", "angry", "fire", "clap"];
+  const quickReactions = [
+    "like",
+    "love",
+    "haha",
+    "wow",
+    "sad",
+    "angry",
+    "fire",
+    "clap",
+  ];
 
   // Check if the message has text content
   const hasText = !!message.text?.trim();
@@ -117,8 +133,6 @@ export const CustomMessage = () => {
       </div>
     );
   }
-
-
 
   const handleEditClick = () => {
     setIsEditing(true);
@@ -251,9 +265,7 @@ export const CustomMessage = () => {
                 </button>
                 {/* More Options Dropdown */}
                 {showMoreOptions && (
-                  <div
-                    className="absolute top-full right-0 mt-1 bg-white rounded-lg shadow-lg border py-1 min-w-[120px] z-30"
-                  >
+                  <div className="absolute top-full right-0 mt-1 bg-white rounded-lg shadow-lg border py-1 min-w-[120px] z-30">
                     <button
                       onClick={handleEditClick}
                       className="w-full px-3 py-1.5 text-left text-sm hover:bg-gray-100 flex items-center gap-2"
@@ -282,15 +294,22 @@ export const CustomMessage = () => {
           {/* Quoted/Replied Message (WhatsApp/Telegram style) */}
           {hasQuotedMessage && message.quoted_message && (
             <div
-              className={`mb-2 p-2 rounded-md border-l-4 ${isMyMessage
-                ? "bg-blue-600/40 border-blue-300"
-                : "bg-gray-300/60 border-gray-500"
-                }`}
+              className={`mb-2 p-2 rounded-md border-l-4 ${
+                isMyMessage
+                  ? "bg-blue-600/40 border-blue-300"
+                  : "bg-gray-300/60 border-gray-500"
+              }`}
             >
-              <div className={`text-xs font-semibold mb-0.5 ${isMyMessage ? "text-blue-100" : "text-gray-700"}`}>
-                {message.quoted_message.user?.name || message.quoted_message.user?.id || "Unknown"}
+              <div
+                className={`text-xs font-semibold mb-0.5 ${isMyMessage ? "text-blue-100" : "text-gray-700"}`}
+              >
+                {message.quoted_message.user?.name ||
+                  message.quoted_message.user?.id ||
+                  "Unknown"}
               </div>
-              <div className={`text-xs truncate max-w-[250px] ${isMyMessage ? "text-blue-100/80" : "text-gray-600"}`}>
+              <div
+                className={`text-xs truncate max-w-[250px] ${isMyMessage ? "text-blue-100/80" : "text-gray-600"}`}
+              >
                 {message.quoted_message.text || "[Attachment]"}
               </div>
             </div>
@@ -355,29 +374,36 @@ export const CustomMessage = () => {
                 </Button>
               </div>
             </div>
-          ) : hasText && (
-            <div className="message-text break-words">{message.text}</div>
+          ) : (
+            hasText && (
+              <div className="message-text break-words">{message.text}</div>
+            )
           )}
 
           {/* Reactions display */}
-          {message.reaction_counts && Object.keys(message.reaction_counts).length > 0 && (
-            <div className="flex flex-wrap gap-1 mt-2">
-              {Object.entries(message.reaction_counts).map(([reactionType, count]) => {
-                const emoji = reactionTypeToEmoji[reactionType] || reactionType;
-                return (
-                  <span
-                    key={reactionType}
-                    className={`text-sm px-2 py-0.5 rounded-full cursor-pointer hover:opacity-80 ${isMyMessage ? "bg-blue-400/50" : "bg-gray-200"
-                      }`}
-                    onClick={() => handleReactionClick(reactionType)}
-                    title={`${reactionType} (click to react)`}
-                  >
-                    {emoji} {count}
-                  </span>
-                );
-              })}
-            </div>
-          )}
+          {message.reaction_counts &&
+            Object.keys(message.reaction_counts).length > 0 && (
+              <div className="flex flex-wrap gap-1 mt-2">
+                {Object.entries(message.reaction_counts).map(
+                  ([reactionType, count]) => {
+                    const emoji =
+                      reactionTypeToEmoji[reactionType] || reactionType;
+                    return (
+                      <span
+                        key={reactionType}
+                        className={`text-sm px-2 py-0.5 rounded-full cursor-pointer hover:opacity-80 ${
+                          isMyMessage ? "bg-blue-400/50" : "bg-gray-200"
+                        }`}
+                        onClick={() => handleReactionClick(reactionType)}
+                        title={`${reactionType} (click to react)`}
+                      >
+                        {emoji} {count}
+                      </span>
+                    );
+                  },
+                )}
+              </div>
+            )}
 
           {/* Timestamp */}
           <div
@@ -394,7 +420,8 @@ export const CustomMessage = () => {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Message</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete this message? This action cannot be undone.
+              Are you sure you want to delete this message? This action cannot
+              be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

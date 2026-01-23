@@ -119,7 +119,7 @@ describe("Stream Chat Types", () => {
     it("should generate event channel IDs", () => {
       const generateEventChannelId = (
         eventType: EventChannelType,
-        eventId: string
+        eventId: string,
       ): string => {
         return `${eventType}-${eventId}`;
       };
@@ -127,10 +127,10 @@ describe("Stream Chat Types", () => {
       expect(generateEventChannelId("webinar", "123")).toBe("webinar-123");
       expect(generateEventChannelId("class", "abc")).toBe("class-abc");
       expect(generateEventChannelId("consultation", "xyz")).toBe(
-        "consultation-xyz"
+        "consultation-xyz",
       );
       expect(generateEventChannelId("subscription", "456")).toBe(
-        "subscription-456"
+        "subscription-456",
       );
     });
   });
@@ -158,7 +158,7 @@ describe("Stream Chat Types", () => {
     it("should map application roles to Stream roles", () => {
       // This tests the role mapping pattern used in the app
       const mapRoleToStream = (
-        role: "ADMIN" | "CONSULTANT" | "CONSULTEE" | "STAFF"
+        role: "ADMIN" | "CONSULTANT" | "CONSULTEE" | "STAFF",
       ): string => {
         const mapping: Record<string, string> = {
           ADMIN: "admin",

@@ -199,7 +199,9 @@ async function deleteOrphanedFiles(
   );
   let deleted = 0;
 
-  console.log(`\n🗑️ Deleting orphaned files older than ${ORPHAN_GRACE_PERIOD_DAYS} days...`);
+  console.log(
+    `\n🗑️ Deleting orphaned files older than ${ORPHAN_GRACE_PERIOD_DAYS} days...`,
+  );
 
   // Group by bucket
   const byBucket = orphanedFiles.reduce(
@@ -259,7 +261,9 @@ export async function reconcileDocumentStorage(): Promise<DocumentReconciliation
 
   const supabase = getSupabaseAdmin();
   if (!supabase) {
-    errors.push("Supabase admin client not available - cannot reconcile storage");
+    errors.push(
+      "Supabase admin client not available - cannot reconcile storage",
+    );
     return {
       success: false,
       orphanedFilesFound,
@@ -279,14 +283,19 @@ export async function reconcileDocumentStorage(): Promise<DocumentReconciliation
     if (orphanedDocuments.length > 0) {
       console.log("\n📋 Orphaned files:");
       orphanedDocuments.slice(0, 10).forEach((f) => {
-        console.log(`   - ${f.bucket}/${f.path} (created: ${f.createdAt?.toISOString() || "unknown"})`);
+        console.log(
+          `   - ${f.bucket}/${f.path} (created: ${f.createdAt?.toISOString() || "unknown"})`,
+        );
       });
       if (orphanedDocuments.length > 10) {
         console.log(`   ... and ${orphanedDocuments.length - 10} more`);
       }
 
       // Delete orphaned files older than grace period
-      orphanedFilesDeleted = await deleteOrphanedFiles(supabase, orphanedDocuments);
+      orphanedFilesDeleted = await deleteOrphanedFiles(
+        supabase,
+        orphanedDocuments,
+      );
     }
 
     // Find missing files

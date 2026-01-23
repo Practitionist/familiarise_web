@@ -31,13 +31,13 @@ A comprehensive guide documenting all issues encountered during the Prisma 6 to 
 
 Prisma 7 introduces a fundamental architectural shift from Rust-based query engines to a TypeScript-based query compiler. This is a **breaking change** that affects how PrismaClient is instantiated.
 
-| Feature | Prisma 6 | Prisma 7 |
-|---------|----------|----------|
-| Default Engine | Rust binary (`library`) | TypeScript compiler (`client`) |
-| Driver Adapters | Optional | **Required** (for default engine) |
-| Config Location | `schema.prisma` only | `schema.prisma` + `prisma.config.ts` |
-| Database URL | In `schema.prisma` datasource | In `prisma.config.ts` |
-| Bundle Size | Larger (includes Rust binaries) | Smaller (no Rust binaries) |
+| Feature         | Prisma 6                        | Prisma 7                             |
+| --------------- | ------------------------------- | ------------------------------------ |
+| Default Engine  | Rust binary (`library`)         | TypeScript compiler (`client`)       |
+| Driver Adapters | Optional                        | **Required** (for default engine)    |
+| Config Location | `schema.prisma` only            | `schema.prisma` + `prisma.config.ts` |
+| Database URL    | In `schema.prisma` datasource   | In `prisma.config.ts`                |
+| Bundle Size     | Larger (includes Rust binaries) | Smaller (no Rust binaries)           |
 
 ### Why This Migration is Complex
 
@@ -135,21 +135,25 @@ gantt
 ### Issue 1: CI/CD Environment Variable Error
 
 #### Error Message
+
 ```
 PrismaConfigEnvError: Cannot resolve environment variable: DIRECT_URL.
 ```
 
 #### When It Occurs
+
 - During `npm ci` or `npm install` when `postinstall` runs `prisma generate`
 - In CI/CD pipelines (GitHub Actions, Vercel, etc.)
 - Any environment without database credentials
 
 #### Impact
+
 - **Severity:** High
 - **Affected:** All CI/CD pipelines, fresh installs
 - **Symptom:** Build fails immediately during dependency installation
 
 #### Root Cause
+
 Prisma 7's `prisma.config.ts` requires the `DIRECT_URL` environment variable to be present at build time, even when not actually connecting to the database.
 
 ```typescript
@@ -168,7 +172,8 @@ import { defineConfig } from "prisma/config";
 
 // Use fallback for CI environments where no DB connection is needed
 const databaseUrl =
-  process.env.DIRECT_URL || "postgresql://placeholder:placeholder@localhost:5432/placeholder";
+  process.env.DIRECT_URL ||
+  "postgresql://placeholder:placeholder@localhost:5432/placeholder";
 
 export default defineConfig({
   schema: "prisma/schema.prisma",
@@ -176,12 +181,13 @@ export default defineConfig({
     path: "prisma/migrations",
   },
   datasource: {
-    url: databaseUrl,  // ✅ Works with fallback
+    url: databaseUrl, // ✅ Works with fallback
   },
 });
 ```
 
 #### Verification
+
 ```bash
 # Test without DIRECT_URL
 unset DIRECT_URL
@@ -193,6 +199,7 @@ npx prisma generate  # Should succeed with fallback
 ### Issue 2: Module Not Found (fs, dns, net, tls)
 
 #### Error Message
+
 ```
 Module not found: Can't resolve 'fs'
 Module not found: Can't resolve 'dns'
@@ -211,10 +218,12 @@ Import trace for requested module:
 ```
 
 #### When It Occurs
+
 - During `npm run build`
 - When client-side code imports a file that transitively imports Prisma
 
 #### Impact
+
 - **Severity:** Critical
 - **Affected:** Production builds, any client component importing Prisma-dependent code
 - **Symptom:** Build fails during webpack compilation
@@ -255,6 +264,7 @@ flowchart TD
 ```
 
 #### Why This Happens
+
 1. Client component (`"use client"`) imports `utils/onboarding.ts`
 2. `utils/onboarding.ts` has dynamic imports to `lib/prisma.ts`
 3. Webpack analyzes ALL code paths, including dynamic imports
@@ -265,6 +275,7 @@ flowchart TD
 #### Attempted Solutions (That Didn't Work)
 
 **Attempt 1: Webpack Fallbacks**
+
 ```javascript
 // next.config.mjs
 webpack: (config, { isServer }) => {
@@ -279,15 +290,19 @@ webpack: (config, { isServer }) => {
   return config;
 },
 ```
+
 **Result:** Partial fix, but caused other errors
 
 **Attempt 2: Server External Packages**
+
 ```javascript
 serverExternalPackages: ["pg", "@prisma/adapter-pg", "pg-connection-string"],
 ```
+
 **Result:** Didn't prevent client-side bundling
 
 #### Working Solution
+
 Split client-safe code from server-only code (see [Issue 8](#issue-8-clientserver-code-mixing))
 
 ---
@@ -295,31 +310,37 @@ Split client-safe code from server-only code (see [Issue 8](#issue-8-clientserve
 ### Issue 3: node:process Scheme Not Handled
 
 #### Error Message
+
 ```
 UnhandledSchemeError: Reading from "node:process" is not handled by plugins (Unhandled scheme).
 Webpack supports "data:" and "file:" URIs by default.
 ```
 
 #### When It Occurs
+
 - After applying webpack fallbacks for Issue 2
 - When `pg` package uses Node.js protocol imports
 
 #### Impact
+
 - **Severity:** High
 - **Affected:** Production builds
 - **Symptom:** Build fails with webpack scheme error
 
 #### Root Cause
+
 The `pg` package uses Node.js `node:` prefixed imports:
+
 ```javascript
 // Inside pg package
-import process from 'node:process';
-import fs from 'node:fs';
+import process from "node:process";
+import fs from "node:fs";
 ```
 
 Webpack doesn't handle `node:` URIs for client-side bundles.
 
 #### Solution
+
 This is a symptom of the same underlying issue as Issue 2. The real solution is to prevent `pg` from being included in the client bundle at all (see [Issue 8](#issue-8-clientserver-code-mixing)).
 
 ---
@@ -327,22 +348,27 @@ This is a symptom of the same underlying issue as Issue 2. The real solution is 
 ### Issue 4: PrismaClient Requires Adapter
 
 #### Error Message
+
 ```
 PrismaClientConstructorValidationError: Using engine type "client" requires either "adapter" or "accelerateUrl" to be provided to PrismaClient constructor.
 Read more at https://pris.ly/d/client-constructor
 ```
 
 #### When It Occurs
+
 - At runtime when PrismaClient is instantiated
 - During `npm run build` at page data collection phase
 
 #### Impact
+
 - **Severity:** Critical
 - **Affected:** All Prisma operations
 - **Symptom:** Application crashes immediately
 
 #### Root Cause
+
 Prisma 7's default engine type is `client`, which requires:
+
 1. A driver adapter (e.g., `@prisma/adapter-pg`), OR
 2. A Prisma Accelerate URL
 
@@ -369,10 +395,11 @@ const adapter = new PrismaPg({
 });
 
 const prisma = new PrismaClient({
-  adapter,  // ✅ Provide the adapter
-  log: process.env.NODE_ENV === "development"
-    ? ["query", "error", "warn"]
-    : ["error"],
+  adapter, // ✅ Provide the adapter
+  log:
+    process.env.NODE_ENV === "development"
+      ? ["query", "error", "warn"]
+      : ["error"],
 });
 
 export default prisma;
@@ -383,6 +410,7 @@ export default prisma;
 ### Issue 5: engineType = "library" Doesn't Work
 
 #### What We Tried
+
 ```prisma
 // schema.prisma
 generator client {
@@ -392,10 +420,13 @@ generator client {
 ```
 
 #### Expected Behavior
+
 Using the Rust-based query engine (like Prisma 6), which doesn't require a driver adapter.
 
 #### Actual Behavior
+
 Still received the error:
+
 ```
 PrismaClientConstructorValidationError: Using engine type "client" requires either "adapter" or "accelerateUrl"
 ```
@@ -417,6 +448,7 @@ flowchart TD
 In Prisma 7, the generated client code uses the same runtime regardless of `engineType` setting. The validation for adapter requirement happens in the runtime, not based on schema settings.
 
 #### Investigation Evidence
+
 ```bash
 # Generated client still uses client runtime
 grep "runtime/client" node_modules/.prisma/client/index.js
@@ -428,15 +460,17 @@ grep "runtime/client" node_modules/.prisma/client/index.js
 ### Issue 6: engine: "classic" Property Doesn't Exist
 
 #### What We Tried
+
 ```typescript
 // prisma.config.ts
 export default defineConfig({
-  engine: "classic",  // Attempt to use classic Rust engine
+  engine: "classic", // Attempt to use classic Rust engine
   // ...
 });
 ```
 
 #### Error Message
+
 ```
 Type error: Object literal may only specify known properties, and 'engine' does not exist in type 'PrismaConfig'.
 ```
@@ -444,6 +478,7 @@ Type error: Object literal may only specify known properties, and 'engine' does 
 #### Why It Doesn't Exist
 
 According to the official Prisma documentation:
+
 > The `engine` property was **removed in Prisma ORM v7**.
 
 This property previously accepted `"classic"` or `"js"` values but is no longer available.
@@ -468,15 +503,18 @@ flowchart LR
 ### Issue 7: Multiple PrismaClient Instances
 
 #### Error Message
+
 ```
 PrismaClientInitializationError: `PrismaClient` needs to be constructed with a non-empty, valid `PrismaClientOptions`
 ```
 
 #### When It Occurs
+
 - During build when importing script files
 - At runtime when scripts are executed
 
 #### Impact
+
 - **Severity:** High
 - **Affected:** Scripts, background jobs, any file creating its own PrismaClient
 - **Symptom:** Build fails or runtime errors
@@ -489,21 +527,21 @@ Many script files were creating their own PrismaClient instances:
 // scripts/payments/cleanup-abandoned-payments.ts (BEFORE)
 import { PrismaClient } from "@prisma/client";
 
-const prisma = new PrismaClient();  // ❌ No adapter!
+const prisma = new PrismaClient(); // ❌ No adapter!
 ```
 
 These instances don't have the adapter configured, causing the error.
 
 #### Files That Needed Updating
 
-| File | Purpose |
-|------|---------|
-| `scripts/payments/cleanup-abandoned-payments.ts` | Cleanup abandoned payments |
-| `scripts/appointments/cleanup-invalid-appointments.ts` | Cleanup invalid appointments |
-| `scripts/earnings/release-earnings.ts` | Release consultant earnings |
-| `scripts/payouts/create-payout-batch.ts` | Create payout batches |
-| `scripts/payouts/process-payouts.ts` | Process approved payouts |
-| `utils/appointmentUtils.ts` | Appointment utility functions |
+| File                                                   | Purpose                       |
+| ------------------------------------------------------ | ----------------------------- |
+| `scripts/payments/cleanup-abandoned-payments.ts`       | Cleanup abandoned payments    |
+| `scripts/appointments/cleanup-invalid-appointments.ts` | Cleanup invalid appointments  |
+| `scripts/earnings/release-earnings.ts`                 | Release consultant earnings   |
+| `scripts/payouts/create-payout-batch.ts`               | Create payout batches         |
+| `scripts/payouts/process-payouts.ts`                   | Process approved payouts      |
+| `utils/appointmentUtils.ts`                            | Appointment utility functions |
 
 #### Solution
 
@@ -562,6 +600,7 @@ flowchart TD
 ```
 
 #### Impact
+
 - **Severity:** Critical
 - **Affected:** Any client component importing utility files with database operations
 - **Symptom:** Build fails with module not found errors
@@ -625,9 +664,10 @@ flowchart TD
 #### Implementation
 
 **Step 1: Create server-only file**
+
 ```typescript
 // utils/onboarding-server.ts
-import "server-only";  // Enforces server-only usage at build time
+import "server-only"; // Enforces server-only usage at build time
 import prisma from "@/lib/prisma";
 import type { OnboardingData } from "./onboarding";
 
@@ -638,17 +678,20 @@ export async function processOnboardingData(
   // All database operations here
   const updatedUser = await prisma.user.update({
     where: { id: userId },
-    data: { /* ... */ },
+    data: {
+      /* ... */
+    },
   });
   return { success: true, user: updatedUser };
 }
 ```
 
 **Step 2: Keep client-safe code in original file**
+
 ```typescript
 // utils/onboarding.ts
 import { z } from "zod";
-import { UserRole, Gender } from "@prisma/client";  // Only types/enums
+import { UserRole, Gender } from "@prisma/client"; // Only types/enums
 
 // Schemas, types, and validation - NO database operations
 export const OnboardingFormDataSchema = z.object({
@@ -662,6 +705,7 @@ export type OnboardingData = z.infer<typeof OnboardingFormDataSchema>;
 ```
 
 **Step 3: Update imports in server-side code**
+
 ```typescript
 // actions/forms/onboarding.action.ts
 "use server";
@@ -669,12 +713,16 @@ export type OnboardingData = z.infer<typeof OnboardingFormDataSchema>;
 // Import from server-only file
 import { processOnboardingData } from "@/utils/onboarding-server";
 
-export async function updateOnboardingInformationAction(userId: string, body: any) {
+export async function updateOnboardingInformationAction(
+  userId: string,
+  body: any,
+) {
   return processOnboardingData(userId, body);
 }
 ```
 
 **Step 4: Install server-only package**
+
 ```bash
 npm install server-only
 ```
@@ -706,12 +754,14 @@ project/
 ### Configuration Files
 
 #### prisma.config.ts
+
 ```typescript
 import "dotenv/config";
 import { defineConfig } from "prisma/config";
 
 const databaseUrl =
-  process.env.DIRECT_URL || "postgresql://placeholder:placeholder@localhost:5432/placeholder";
+  process.env.DIRECT_URL ||
+  "postgresql://placeholder:placeholder@localhost:5432/placeholder";
 
 export default defineConfig({
   schema: "prisma/schema.prisma",
@@ -725,6 +775,7 @@ export default defineConfig({
 ```
 
 #### schema.prisma
+
 ```prisma
 generator client {
   provider = "prisma-client-js"
@@ -739,6 +790,7 @@ datasource db {
 ```
 
 #### lib/prisma.ts
+
 ```typescript
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
@@ -767,12 +819,18 @@ if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
 ```
 
 #### next.config.mjs
+
 ```javascript
 const nextConfig = {
   // ... other config
 
   // Prevent pg modules from being bundled into client-side code
-  serverExternalPackages: ["pg", "@prisma/adapter-pg", "pg-pool", "pg-connection-string"],
+  serverExternalPackages: [
+    "pg",
+    "@prisma/adapter-pg",
+    "pg-pool",
+    "pg-connection-string",
+  ],
 };
 
 export default nextConfig;
@@ -853,6 +911,7 @@ Use this checklist when migrating from Prisma 6 to Prisma 7:
 **Cause:** `prisma.config.ts` uses `env("DIRECT_URL")` without fallback
 
 **Solution:** Add fallback in `prisma.config.ts`:
+
 ```typescript
 const databaseUrl = process.env.DIRECT_URL || "postgresql://placeholder:...";
 ```
@@ -862,6 +921,7 @@ const databaseUrl = process.env.DIRECT_URL || "postgresql://placeholder:...";
 **Cause:** Client component imports file that transitively imports Prisma
 
 **Solution:**
+
 1. Check import trace in error message
 2. Identify which client component is importing server code
 3. Split the utility file into client-safe and server-only versions
@@ -872,6 +932,7 @@ const databaseUrl = process.env.DIRECT_URL || "postgresql://placeholder:...";
 **Cause:** PrismaClient instantiated without adapter
 
 **Solution:**
+
 1. Ensure `lib/prisma.ts` has adapter configured
 2. Find all `new PrismaClient()` calls and replace with shared instance
 3. Search: `grep -r "new PrismaClient" --include="*.ts"`
@@ -887,6 +948,7 @@ const databaseUrl = process.env.DIRECT_URL || "postgresql://placeholder:...";
 **Cause:** Scripts or server code creating PrismaClient without adapter
 
 **Solution:**
+
 1. Search all files: `grep -rn "new PrismaClient" --include="*.ts"`
 2. Replace all instances with `import prisma from "@/lib/prisma"`
 
@@ -901,17 +963,20 @@ const databaseUrl = process.env.DIRECT_URL || "postgresql://placeholder:...";
 ## Resources
 
 ### Official Documentation
+
 - [Upgrade to Prisma 7](https://www.prisma.io/docs/orm/more/upgrade-guides/upgrading-versions/upgrading-to-prisma-7)
 - [Prisma Config Reference](https://www.prisma.io/docs/orm/reference/prisma-config-reference)
 - [Database Drivers](https://www.prisma.io/docs/orm/overview/databases/database-drivers)
 - [Use Prisma ORM without Rust engines](https://www.prisma.io/docs/orm/prisma-client/setup-and-configuration/no-rust-engine)
 
 ### GitHub Issues
+
 - [Breaking changes to Prisma config #28573](https://github.com/prisma/prisma/issues/28573)
 - [MySQL adapter breaking changes #28665](https://github.com/prisma/prisma/issues/28665)
 - [ESM environment issues #28670](https://github.com/prisma/prisma/issues/28670)
 
 ### Next.js Documentation
+
 - [Server External Packages](https://nextjs.org/docs/app/api-reference/next-config-js/serverExternalPackages)
 - [Module Not Found](https://nextjs.org/docs/messages/module-not-found)
 
@@ -930,15 +995,15 @@ const databaseUrl = process.env.DIRECT_URL || "postgresql://placeholder:...";
 
 ### Migration Effort
 
-| Aspect | Effort Level | Notes |
-|--------|--------------|-------|
-| Dependencies | Low | Just update/add packages |
-| Configuration | Medium | New config file + changes |
-| Code Changes | High | May require significant refactoring |
-| Testing | Medium | Test all database operations |
+| Aspect        | Effort Level | Notes                               |
+| ------------- | ------------ | ----------------------------------- |
+| Dependencies  | Low          | Just update/add packages            |
+| Configuration | Medium       | New config file + changes           |
+| Code Changes  | High         | May require significant refactoring |
+| Testing       | Medium       | Test all database operations        |
 
 ---
 
-*Document Version: 1.0*
-*Last Updated: January 2026*
-*Migration Completed: Successfully*
+_Document Version: 1.0_
+_Last Updated: January 2026_
+_Migration Completed: Successfully_

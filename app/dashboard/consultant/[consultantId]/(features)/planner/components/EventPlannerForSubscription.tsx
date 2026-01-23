@@ -114,10 +114,8 @@ export function EventPlannerForSubscription({
           language: initialData.subscriptionPlan.language ?? "English",
           level: initialData.subscriptionPlan.level ?? "Beginner",
           prerequisites: initialData.subscriptionPlan.prerequisites ?? "",
-          materialProvided:
-            initialData.subscriptionPlan.materialProvided ?? "",
-          learningOutcomes:
-            initialData.subscriptionPlan.learningOutcomes ?? [],
+          materialProvided: initialData.subscriptionPlan.materialProvided ?? "",
+          learningOutcomes: initialData.subscriptionPlan.learningOutcomes ?? [],
           topics: initialData.subscriptionPlan.topics ?? [],
         }
       : {
@@ -617,7 +615,11 @@ export function EventPlannerForSubscription({
         <PlanMaterialsUpload
           planType="subscription"
           planId={initialData.id}
-          planTitle={form.getValues("title") || initialData.subscriptionPlan?.title || "Subscription Plan"}
+          planTitle={
+            form.getValues("title") ||
+            initialData.subscriptionPlan?.title ||
+            "Subscription Plan"
+          }
           isOpen={showMaterialsDialog}
           onClose={() => setShowMaterialsDialog(false)}
         />

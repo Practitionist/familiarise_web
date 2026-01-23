@@ -58,7 +58,9 @@ function buildInvoiceLineItems(
 ): InvoiceLineItem[] {
   const appointment = payment.appointment;
   if (!appointment) {
-    return [createGenericLineItem(payment.amount, payment.description || "Service")];
+    return [
+      createGenericLineItem(payment.amount, payment.description || "Service"),
+    ];
   }
 
   let description = "Consulting Service";
@@ -89,7 +91,10 @@ function buildInvoiceLineItems(
 /**
  * Create a generic line item with tax breakdown
  */
-function createGenericLineItem(totalAmount: number, description: string): InvoiceLineItem {
+function createGenericLineItem(
+  totalAmount: number,
+  description: string,
+): InvoiceLineItem {
   const { baseAmount, taxAmount } = calculateTaxBreakdown(totalAmount);
 
   return {
@@ -155,7 +160,9 @@ export async function createInvoices(): Promise<void> {
     },
   });
 
-  console.log(`Found ${succeededPayments.length} SUCCEEDED payments to invoice`);
+  console.log(
+    `Found ${succeededPayments.length} SUCCEEDED payments to invoice`,
+  );
 
   if (succeededPayments.length === 0) {
     console.log("No eligible payments found for invoice creation");
@@ -204,7 +211,10 @@ export async function createInvoices(): Promise<void> {
         console.log(`Created ${created} invoices...`);
       }
     } catch (error) {
-      console.error(`Failed to create invoice for payment ${payment.id}:`, error);
+      console.error(
+        `Failed to create invoice for payment ${payment.id}:`,
+        error,
+      );
       failed++;
     }
   }

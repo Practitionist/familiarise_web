@@ -10,7 +10,7 @@ export async function GET() {
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "You must be logged in to access your support tickets" },
-        { status: 401 }
+        { status: 401 },
       );
     }
 
@@ -55,7 +55,7 @@ export async function GET() {
           "An unexpected error occurred while fetching your support tickets",
         details: error instanceof Error ? error.message : "Unknown error",
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -79,7 +79,7 @@ export async function POST(req: NextRequest) {
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "You must be logged in to create a support ticket" },
-        { status: 401 }
+        { status: 401 },
       );
     }
 
@@ -89,7 +89,7 @@ export async function POST(req: NextRequest) {
     if (!body.title || !body.description) {
       return NextResponse.json(
         { error: "Title and description are required" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -100,7 +100,7 @@ export async function POST(req: NextRequest) {
     ) {
       return NextResponse.json(
         { error: "Invalid issue type" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -126,7 +126,7 @@ export async function POST(req: NextRequest) {
       if (!appointment) {
         return NextResponse.json(
           { error: "Invalid appointment ID or unauthorized" },
-          { status: 400 }
+          { status: 400 },
         );
       }
 
@@ -177,7 +177,7 @@ export async function POST(req: NextRequest) {
     if (invalidEntity) {
       return NextResponse.json(
         { error: `Invalid ${invalidEntity.type} ID` },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -208,7 +208,7 @@ export async function POST(req: NextRequest) {
           "An unexpected error occurred while creating your support ticket",
         details: error instanceof Error ? error.message : "Unknown error",
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

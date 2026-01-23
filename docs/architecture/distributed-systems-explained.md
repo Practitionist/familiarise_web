@@ -5,6 +5,7 @@ This document explains how distributed locking and caching are implemented in Fa
 ---
 
 ## Table of Contents
+
 1. [Distributed Locking (IMPLEMENTED)](#1-distributed-locking-implemented)
 2. [Caching (PARTIALLY IMPLEMENTED)](#2-caching-partially-implemented)
 3. [Mobile App Architecture](#3-mobile-app-architecture)
@@ -806,6 +807,7 @@ stateDiagram-v2
 6. **Your architecture is NOT overengineered** - these patterns are required for payment systems
 
 **Action Items**:
+
 1. Add rate limiting (3-4 hours)
 2. Add Sentry monitoring (4-6 hours)
 3. Move Stream cache to Redis (3-4 hours)

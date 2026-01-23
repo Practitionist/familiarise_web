@@ -208,7 +208,11 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
 
     // Handle dashboard URL validation
     // Skip validation if dev bypass is enabled (development only)
-    if (pathname.startsWith("/dashboard/") && token && !isDevBypassEnabled(req)) {
+    if (
+      pathname.startsWith("/dashboard/") &&
+      token &&
+      !isDevBypassEnabled(req)
+    ) {
       const correctDashboardUrl = getDashboardUrl(token);
       const baseDashboardUrl = correctDashboardUrl.replace("/home", "");
 

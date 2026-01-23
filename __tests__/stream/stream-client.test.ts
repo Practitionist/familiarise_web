@@ -48,7 +48,7 @@ describe("Stream Client Module", () => {
       jest.resetModules();
       const { validateStreamConfig } = await import("@/lib/stream-client");
       expect(() => validateStreamConfig()).toThrow(
-        "NEXT_PUBLIC_STREAM_API_KEY is not configured"
+        "NEXT_PUBLIC_STREAM_API_KEY is not configured",
       );
     });
 
@@ -57,7 +57,7 @@ describe("Stream Client Module", () => {
       jest.resetModules();
       const { validateStreamConfig } = await import("@/lib/stream-client");
       expect(() => validateStreamConfig()).toThrow(
-        "STREAM_API_SECRET is not configured"
+        "STREAM_API_SECRET is not configured",
       );
     });
   });
@@ -90,9 +90,8 @@ describe("Stream Client Module", () => {
       };
       mockStreamChatGetInstance.mockReturnValue(mockInstance);
 
-      const { getStreamChatClient, resetClients } = await import(
-        "@/lib/stream-client"
-      );
+      const { getStreamChatClient, resetClients } =
+        await import("@/lib/stream-client");
 
       resetClients();
       const client1 = getStreamChatClient();
@@ -106,7 +105,7 @@ describe("Stream Client Module", () => {
       expect(mockStreamChatGetInstance).toHaveBeenCalledWith(
         mockApiKey,
         mockApiSecret,
-        { timeout: 30000 }
+        { timeout: 30000 },
       );
     });
   });
@@ -118,9 +117,8 @@ describe("Stream Client Module", () => {
       };
       mockStreamClientConstructor.mockImplementation(() => mockVideoClient);
 
-      const { getStreamVideoClient, resetClients } = await import(
-        "@/lib/stream-client"
-      );
+      const { getStreamVideoClient, resetClients } =
+        await import("@/lib/stream-client");
 
       resetClients();
       const client1 = getStreamVideoClient();
@@ -131,7 +129,10 @@ describe("Stream Client Module", () => {
 
       // Constructor should only be called once for singleton
       expect(mockStreamClientConstructor).toHaveBeenCalledTimes(1);
-      expect(mockStreamClientConstructor).toHaveBeenCalledWith(mockApiKey, mockApiSecret);
+      expect(mockStreamClientConstructor).toHaveBeenCalledWith(
+        mockApiKey,
+        mockApiSecret,
+      );
     });
   });
 
@@ -143,9 +144,8 @@ describe("Stream Client Module", () => {
       };
       mockStreamChatGetInstance.mockReturnValue(mockInstance);
 
-      const { generateChatToken, resetClients } = await import(
-        "@/lib/stream-client"
-      );
+      const { generateChatToken, resetClients } =
+        await import("@/lib/stream-client");
 
       resetClients();
       const token = generateChatToken(mockUserId);
@@ -162,9 +162,8 @@ describe("Stream Client Module", () => {
       };
       mockStreamChatGetInstance.mockReturnValue(mockInstance);
 
-      const { generateChatToken, resetClients } = await import(
-        "@/lib/stream-client"
-      );
+      const { generateChatToken, resetClients } =
+        await import("@/lib/stream-client");
 
       resetClients();
       const token = generateChatToken(mockUserId, expirationSeconds);
@@ -172,7 +171,7 @@ describe("Stream Client Module", () => {
       expect(token).toBe(mockToken);
       expect(mockInstance.createToken).toHaveBeenCalledWith(
         mockUserId,
-        expect.any(Number)
+        expect.any(Number),
       );
     });
   });
@@ -185,9 +184,8 @@ describe("Stream Client Module", () => {
       };
       mockStreamClientConstructor.mockImplementation(() => mockVideoClient);
 
-      const { generateVideoToken, resetClients } = await import(
-        "@/lib/stream-client"
-      );
+      const { generateVideoToken, resetClients } =
+        await import("@/lib/stream-client");
 
       resetClients();
       const token = generateVideoToken(mockUserId);
@@ -208,9 +206,8 @@ describe("Stream Client Module", () => {
       };
       mockStreamClientConstructor.mockImplementation(() => mockVideoClient);
 
-      const { generateVideoToken, resetClients } = await import(
-        "@/lib/stream-client"
-      );
+      const { generateVideoToken, resetClients } =
+        await import("@/lib/stream-client");
 
       resetClients();
       const token = generateVideoToken(mockUserId, customExpiration);
@@ -219,7 +216,7 @@ describe("Stream Client Module", () => {
       expect(mockVideoClient.generateUserToken).toHaveBeenCalledWith(
         expect.objectContaining({
           user_id: mockUserId,
-        })
+        }),
       );
     });
   });
@@ -235,7 +232,7 @@ describe("Stream Client Module", () => {
       jest.resetModules();
       const { getStreamApiKey } = await import("@/lib/stream-client");
       expect(() => getStreamApiKey()).toThrow(
-        "NEXT_PUBLIC_STREAM_API_KEY is not configured"
+        "NEXT_PUBLIC_STREAM_API_KEY is not configured",
       );
     });
   });

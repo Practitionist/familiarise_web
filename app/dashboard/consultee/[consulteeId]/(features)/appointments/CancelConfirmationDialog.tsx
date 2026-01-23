@@ -42,7 +42,8 @@ export function CancelConfirmationDialog({
           <AlertDialogDescription asChild>
             <div className="space-y-2">
               <p>
-                Are you sure you want to cancel <strong>&quot;{title}&quot;</strong> with{" "}
+                Are you sure you want to cancel{" "}
+                <strong>&quot;{title}&quot;</strong> with{" "}
                 <strong>{consultant}</strong>?
               </p>
               <p className="text-red-600 font-medium">

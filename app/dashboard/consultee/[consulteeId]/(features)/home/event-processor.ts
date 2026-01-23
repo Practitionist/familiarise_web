@@ -51,7 +51,7 @@ function findNextSlot(slots: SlotWithContext[]): SlotWithContext | null {
 
   const now = new Date();
   const sortedSlots = [...slots].sort(
-    (a, b) => a.startsAt.getTime() - b.startsAt.getTime()
+    (a, b) => a.startsAt.getTime() - b.startsAt.getTime(),
   );
 
   // Find first upcoming slot, or fall back to most recent
@@ -62,7 +62,7 @@ function findNextSlot(slots: SlotWithContext[]): SlotWithContext | null {
  * Process a consultation into a ProcessedEvent
  */
 export function processConsultation(
-  consultation: TConsulteeConsultation
+  consultation: TConsulteeConsultation,
 ): ProcessedEvent | null {
   const slots = consultation.appointment?.slotsOfAppointment;
   if (!slots || slots.length === 0) return null;
@@ -127,7 +127,7 @@ export function processConsultation(
  * Process a subscription into a ProcessedEvent
  */
 export function processSubscription(
-  subscription: TConsulteeSubscription
+  subscription: TConsulteeSubscription,
 ): ProcessedEvent | null {
   const allSlots: SlotWithContext[] = [];
 
@@ -155,7 +155,7 @@ export function processSubscription(
 
   // Find the appointment that contains the next slot
   const nextAppointment = subscription.appointments?.find(
-    (a) => a.id === nextSlot.appointmentId
+    (a) => a.id === nextSlot.appointmentId,
   );
 
   // Build meeting appointment
@@ -203,7 +203,9 @@ export function processSubscription(
 /**
  * Process a webinar into a ProcessedEvent
  */
-export function processWebinar(webinar: TConsulteeWebinar): ProcessedEvent | null {
+export function processWebinar(
+  webinar: TConsulteeWebinar,
+): ProcessedEvent | null {
   const allSlots: SlotWithContext[] = [];
   const appointmentId = webinar.appointment?.id ?? "";
 
@@ -267,7 +269,9 @@ export function processWebinar(webinar: TConsulteeWebinar): ProcessedEvent | nul
 /**
  * Process a class into a ProcessedEvent
  */
-export function processClass(classEvent: TConsulteeClass): ProcessedEvent | null {
+export function processClass(
+  classEvent: TConsulteeClass,
+): ProcessedEvent | null {
   const allSlots: SlotWithContext[] = [];
 
   classEvent.appointments?.forEach((appointment) => {
@@ -294,7 +298,7 @@ export function processClass(classEvent: TConsulteeClass): ProcessedEvent | null
 
   // Find the appointment that contains the next slot
   const nextAppointment = classEvent.appointments?.find(
-    (a) => a.id === nextSlot.appointmentId
+    (a) => a.id === nextSlot.appointmentId,
   );
 
   // Build meeting appointment
@@ -337,7 +341,7 @@ export function processClass(classEvent: TConsulteeClass): ProcessedEvent | null
  * Process all events from the API response into unified ProcessedEvent array
  */
 export function processAllEvents(
-  eventsData: TConsulteeEventsResponse
+  eventsData: TConsulteeEventsResponse,
 ): ProcessedEvent[] {
   const events: ProcessedEvent[] = [];
 
@@ -383,13 +387,13 @@ export function getUpcomingEvents(events: ProcessedEvent[]): ProcessedEvent[] {
  */
 export function getMonthlyEvents(
   events: ProcessedEvent[],
-  month: Date
+  month: Date,
 ): ProcessedEvent[] {
   return events.filter((e) =>
     e.slots.some(
       (s) =>
         s.startsAt.getMonth() === month.getMonth() &&
-        s.startsAt.getFullYear() === month.getFullYear()
-    )
+        s.startsAt.getFullYear() === month.getFullYear(),
+    ),
   );
 }

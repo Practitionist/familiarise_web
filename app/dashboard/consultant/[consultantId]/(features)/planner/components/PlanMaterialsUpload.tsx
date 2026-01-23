@@ -25,10 +25,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { formatFileSize } from "@/app/dashboard/shared/utils/document-utils";
-import {
-  MaterialsService,
-  type PlanType,
-} from "../services/materials-service";
+import { MaterialsService, type PlanType } from "../services/materials-service";
 import { IPlanMaterial } from "../../../types";
 
 interface PlanMaterialsUploadProps {
@@ -122,7 +119,7 @@ export function PlanMaterialsUpload({
         planType,
         planId,
         selectedFile,
-        description || undefined
+        description || undefined,
       );
 
       toast({

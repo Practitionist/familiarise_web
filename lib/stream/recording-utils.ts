@@ -31,7 +31,7 @@ export interface AppointmentWithOwnership {
  */
 export function isAppointmentOwner(
   appointment: AppointmentWithOwnership | null | undefined,
-  consultantProfileId: string | null | undefined
+  consultantProfileId: string | null | undefined,
 ): boolean {
   if (!appointment || !consultantProfileId) {
     return false;
@@ -40,7 +40,8 @@ export function isAppointmentOwner(
   // Check webinar ownership
   if (appointment.webinar?.webinarPlan) {
     return (
-      appointment.webinar.webinarPlan.consultantProfileId === consultantProfileId
+      appointment.webinar.webinarPlan.consultantProfileId ===
+      consultantProfileId
     );
   }
 
@@ -61,7 +62,7 @@ export function isAppointmentOwner(
  * @returns true if recording is enabled for this appointment's plan
  */
 export function isRecordingEnabledForAppointment(
-  appointment: AppointmentWithOwnership | null | undefined
+  appointment: AppointmentWithOwnership | null | undefined,
 ): boolean {
   if (!appointment) {
     return false;
@@ -95,7 +96,7 @@ export function getRecordingOwnershipInfo(
       } | null;
     } | null;
   } | null,
-  consultantProfileId: string | null | undefined
+  consultantProfileId: string | null | undefined,
 ): { isOwner: boolean; recordingEnabled: boolean } {
   const appointment = recording?.meetingSession?.slotOfAppointment?.appointment;
 
@@ -118,7 +119,7 @@ export function getMeetingSessionOwnershipInfo(
       appointment?: AppointmentWithOwnership | null;
     } | null;
   } | null,
-  consultantProfileId: string | null | undefined
+  consultantProfileId: string | null | undefined,
 ): { isOwner: boolean; recordingEnabled: boolean } {
   const appointment = meetingSession?.slotOfAppointment?.appointment;
 

@@ -11,6 +11,7 @@ Think of it as the "Airbnb for expertise": a platform where professionals can mo
 ### Who is it for?
 
 **For Experts (Consultants):**
+
 - Industry professionals looking to monetize their expertise
 - Career coaches and mentors
 - Subject matter experts and educators
@@ -18,6 +19,7 @@ Think of it as the "Airbnb for expertise": a platform where professionals can mo
 - Specialists in tech, business, design, marketing, and more
 
 **For Learners (Consultees):**
+
 - Career changers breaking into new fields
 - Professionals seeking advancement
 - Students wanting industry guidance
@@ -26,18 +28,18 @@ Think of it as the "Airbnb for expertise": a platform where professionals can mo
 
 ### Key Features
 
-| Feature | Description |
-|---------|-------------|
+| Feature                  | Description                                                                       |
+| ------------------------ | --------------------------------------------------------------------------------- |
 | **1-on-1 Consultations** | Single sessions for career advice, mock interviews, code reviews, design feedback |
-| **Subscriptions** | Ongoing 4-12 week mentorship programs with recurring sessions |
-| **Classes** | Structured multi-week courses with materials, recordings, and certifications |
-| **Webinars** | Live group learning events with Q&A and waitlist management |
-| **Video Calls** | HD video via Stream.io with screen sharing and recording |
-| **In-App Messaging** | Direct communication and document sharing between sessions |
-| **Document Review** | Upload resumes, portfolios, or code for expert feedback |
-| **Smart Scheduling** | Timezone-aware booking with weekly and custom availability |
-| **Secure Payments** | Stripe (global) and Razorpay (India) with escrow protection |
-| **Earnings Dashboard** | 80/20 revenue split with transparent payout tracking |
+| **Subscriptions**        | Ongoing 4-12 week mentorship programs with recurring sessions                     |
+| **Classes**              | Structured multi-week courses with materials, recordings, and certifications      |
+| **Webinars**             | Live group learning events with Q&A and waitlist management                       |
+| **Video Calls**          | HD video via Stream.io with screen sharing and recording                          |
+| **In-App Messaging**     | Direct communication and document sharing between sessions                        |
+| **Document Review**      | Upload resumes, portfolios, or code for expert feedback                           |
+| **Smart Scheduling**     | Timezone-aware booking with weekly and custom availability                        |
+| **Secure Payments**      | Stripe (global) and Razorpay (India) with escrow protection                       |
+| **Earnings Dashboard**   | 80/20 revenue split with transparent payout tracking                              |
 
 ### Platform Stats
 
@@ -93,32 +95,36 @@ npm run dev
 
 Create a `.env` file based on `.env.sample`. Required variables:
 
-| Variable | Description |
-|----------|-------------|
-| `DATABASE_URL` | Supabase connection string (pooled) |
-| `DIRECT_URL` | Supabase direct connection |
-| `NEXTAUTH_URL` | App URL (http://localhost:3000) |
-| `NEXTAUTH_SECRET` | Random secret for NextAuth |
-| `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anon key |
+| Variable                        | Description                         |
+| ------------------------------- | ----------------------------------- |
+| `DATABASE_URL`                  | Supabase connection string (pooled) |
+| `DIRECT_URL`                    | Supabase direct connection          |
+| `NEXTAUTH_URL`                  | App URL (http://localhost:3000)     |
+| `NEXTAUTH_SECRET`               | Random secret for NextAuth          |
+| `NEXT_PUBLIC_SUPABASE_URL`      | Supabase project URL                |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anon key                   |
 
 <details>
 <summary>All Environment Variables</summary>
 
 ### Authentication
+
 - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` - Google OAuth
 - `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` - GitHub OAuth
 - `FACEBOOK_CLIENT_ID`, `FACEBOOK_CLIENT_SECRET` - Facebook OAuth
 - `JWT_SECRET` - JWT signing key
 
 ### Payments
+
 - `STRIPE_API_KEY`, `STRIPE_WEBHOOK_SECRET` - Stripe
 - `RAZORPAY_KEY_ID`, `RAZORPAY_SECRET` - Razorpay
 
 ### Real-time Features
+
 - `NEXT_PUBLIC_STREAM_API_KEY`, `STREAM_API_SECRET` - Stream.io
 
 ### Other Services
+
 - `RESEND_API_KEY` - Email service
 - `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` - Redis/caching
 - `NEXT_PUBLIC_SENTRY_DSN` - Error monitoring
@@ -203,6 +209,7 @@ npx prisma studio
 ### Docker Issues
 
 **Container won't start:**
+
 ```bash
 # Check logs
 docker compose logs web
@@ -212,6 +219,7 @@ cat .env | grep -E "^(DATABASE_URL|NEXTAUTH)"
 ```
 
 **Hot reload not working:**
+
 ```bash
 # Restart with fresh volumes
 docker compose down -v
@@ -219,6 +227,7 @@ docker compose up --build
 ```
 
 **Prisma errors:**
+
 ```bash
 # Regenerate client inside container
 docker compose exec web npx prisma generate
@@ -228,6 +237,7 @@ docker compose exec web npx prisma generate
 
 **bcrypt/sharp errors:**
 These require native compilation. In Docker, this is handled automatically. For local development:
+
 ```bash
 npm rebuild bcrypt
 npm rebuild sharp

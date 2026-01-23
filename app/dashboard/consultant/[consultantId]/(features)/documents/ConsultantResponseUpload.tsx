@@ -66,7 +66,7 @@ export function ConsultantResponseUpload({
         {
           description: description || undefined,
           responseToDocumentId: responseToDocument?.id,
-        }
+        },
       );
 
       toast({
@@ -111,7 +111,9 @@ export function ConsultantResponseUpload({
       <DialogContent className="sm:max-w-[500px]">
         <DialogHeader>
           <DialogTitle>
-            {responseToDocument ? "Upload Response Document" : "Upload Document"}
+            {responseToDocument
+              ? "Upload Response Document"
+              : "Upload Document"}
           </DialogTitle>
           <DialogDescription>
             {responseToDocument
@@ -196,7 +198,11 @@ export function ConsultantResponseUpload({
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={handleClose} disabled={isUploading}>
+          <Button
+            variant="outline"
+            onClick={handleClose}
+            disabled={isUploading}
+          >
             Cancel
           </Button>
           <Button

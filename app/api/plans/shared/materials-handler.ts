@@ -12,7 +12,11 @@ import {
 export interface PlanMaterialsConfig {
   planType: PlanType;
   planIdField: string;
-  planModel: "consultationPlan" | "subscriptionPlan" | "webinarPlan" | "classPlan";
+  planModel:
+    | "consultationPlan"
+    | "subscriptionPlan"
+    | "webinarPlan"
+    | "classPlan";
 }
 
 // Development mode check
@@ -26,7 +30,7 @@ const isDevelopment = () =>
 async function verifyPlanOwnership(
   userId: string,
   planId: string,
-  config: PlanMaterialsConfig
+  config: PlanMaterialsConfig,
 ): Promise<{ isOwner: boolean; error?: string }> {
   if (isDevelopment()) {
     return { isOwner: true };
@@ -47,16 +51,24 @@ async function verifyPlanOwnership(
     let plan;
     switch (config.planModel) {
       case "consultationPlan":
-        plan = await prisma.consultationPlan.findFirst(planQuery as Parameters<typeof prisma.consultationPlan.findFirst>[0]);
+        plan = await prisma.consultationPlan.findFirst(
+          planQuery as Parameters<typeof prisma.consultationPlan.findFirst>[0],
+        );
         break;
       case "subscriptionPlan":
-        plan = await prisma.subscriptionPlan.findFirst(planQuery as Parameters<typeof prisma.subscriptionPlan.findFirst>[0]);
+        plan = await prisma.subscriptionPlan.findFirst(
+          planQuery as Parameters<typeof prisma.subscriptionPlan.findFirst>[0],
+        );
         break;
       case "webinarPlan":
-        plan = await prisma.webinarPlan.findFirst(planQuery as Parameters<typeof prisma.webinarPlan.findFirst>[0]);
+        plan = await prisma.webinarPlan.findFirst(
+          planQuery as Parameters<typeof prisma.webinarPlan.findFirst>[0],
+        );
         break;
       case "classPlan":
-        plan = await prisma.classPlan.findFirst(planQuery as Parameters<typeof prisma.classPlan.findFirst>[0]);
+        plan = await prisma.classPlan.findFirst(
+          planQuery as Parameters<typeof prisma.classPlan.findFirst>[0],
+        );
         break;
     }
 
@@ -80,7 +92,7 @@ async function verifyPlanOwnership(
 export async function handleGetMaterials(
   request: NextRequest,
   planId: string,
-  config: PlanMaterialsConfig
+  config: PlanMaterialsConfig,
 ): Promise<NextResponse> {
   try {
     const session = await getServerSession(authOptions);
@@ -91,7 +103,7 @@ export async function handleGetMaterials(
           message: "Please sign in to view materials",
           code: "UNAUTHORIZED",
         },
-        { status: 401 }
+        { status: 401 },
       );
     }
 
@@ -99,7 +111,7 @@ export async function handleGetMaterials(
     const { isOwner, error } = await verifyPlanOwnership(
       session.user.id,
       planId,
-      config
+      config,
     );
     if (!isOwner) {
       return NextResponse.json(
@@ -108,7 +120,7 @@ export async function handleGetMaterials(
           message: error || "You don't have permission to view these materials",
           code: "FORBIDDEN",
         },
-        { status: 403 }
+        { status: 403 },
       );
     }
 
@@ -130,7 +142,7 @@ export async function handleGetMaterials(
         message: "Failed to fetch materials",
         code: "SERVER_ERROR",
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -141,7 +153,7 @@ export async function handleGetMaterials(
 export async function handleUploadMaterial(
   request: NextRequest,
   planId: string,
-  config: PlanMaterialsConfig
+  config: PlanMaterialsConfig,
 ): Promise<NextResponse> {
   try {
     const session = await getServerSession(authOptions);
@@ -152,7 +164,7 @@ export async function handleUploadMaterial(
           message: "Please sign in to upload materials",
           code: "UNAUTHORIZED",
         },
-        { status: 401 }
+        { status: 401 },
       );
     }
 
@@ -160,16 +172,18 @@ export async function handleUploadMaterial(
     const { isOwner, error } = await verifyPlanOwnership(
       session.user.id,
       planId,
-      config
+      config,
     );
     if (!isOwner) {
       return NextResponse.json(
         {
           error: "Access denied",
-          message: error || "You don't have permission to upload materials to this plan",
+          message:
+            error ||
+            "You don't have permission to upload materials to this plan",
           code: "FORBIDDEN",
         },
-        { status: 403 }
+        { status: 403 },
       );
     }
 
@@ -185,7 +199,7 @@ export async function handleUploadMaterial(
           message: "Please select a file to upload",
           code: "INVALID_INPUT",
         },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -204,7 +218,7 @@ export async function handleUploadMaterial(
           message: uploadResult.error || "Failed to upload file",
           code: "UPLOAD_ERROR",
         },
-        { status: 500 }
+        { status: 500 },
       );
     }
 
@@ -232,7 +246,9 @@ export async function handleUploadMaterial(
     createData[config.planIdField] = planId;
 
     const material = await prisma.planMaterial.create({
-      data: createData as Parameters<typeof prisma.planMaterial.create>[0]["data"],
+      data: createData as Parameters<
+        typeof prisma.planMaterial.create
+      >[0]["data"],
     });
 
     return NextResponse.json({ data: material }, { status: 201 });
@@ -244,7 +260,7 @@ export async function handleUploadMaterial(
         message: "Failed to upload material",
         code: "SERVER_ERROR",
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -254,7 +270,7 @@ export async function handleUploadMaterial(
  */
 export async function handleDeleteMaterial(
   request: NextRequest,
-  materialId: string
+  materialId: string,
 ): Promise<NextResponse> {
   try {
     const session = await getServerSession(authOptions);
@@ -265,7 +281,7 @@ export async function handleDeleteMaterial(
           message: "Please sign in to delete materials",
           code: "UNAUTHORIZED",
         },
-        { status: 401 }
+        { status: 401 },
       );
     }
 
@@ -311,7 +327,7 @@ export async function handleDeleteMaterial(
           message: "The requested material does not exist",
           code: "NOT_FOUND",
         },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
@@ -329,7 +345,7 @@ export async function handleDeleteMaterial(
           message: "You don't have permission to delete this material",
           code: "FORBIDDEN",
         },
-        { status: 403 }
+        { status: 403 },
       );
     }
 
@@ -350,7 +366,7 @@ export async function handleDeleteMaterial(
         message: "Failed to delete material",
         code: "SERVER_ERROR",
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -360,7 +376,7 @@ export async function handleDeleteMaterial(
  */
 export async function handleUpdateMaterial(
   request: NextRequest,
-  materialId: string
+  materialId: string,
 ): Promise<NextResponse> {
   try {
     const session = await getServerSession(authOptions);
@@ -371,7 +387,7 @@ export async function handleUpdateMaterial(
           message: "Please sign in to update materials",
           code: "UNAUTHORIZED",
         },
-        { status: 401 }
+        { status: 401 },
       );
     }
 
@@ -417,7 +433,7 @@ export async function handleUpdateMaterial(
           message: "The requested material does not exist",
           code: "NOT_FOUND",
         },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
@@ -435,7 +451,7 @@ export async function handleUpdateMaterial(
           message: "You don't have permission to update this material",
           code: "FORBIDDEN",
         },
-        { status: 403 }
+        { status: 403 },
       );
     }
 
@@ -464,7 +480,7 @@ export async function handleUpdateMaterial(
         message: "Failed to update material",
         code: "SERVER_ERROR",
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

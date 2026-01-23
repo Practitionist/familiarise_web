@@ -423,7 +423,7 @@ const ALLOWED_DOCUMENT_TYPES = [
  * Structure: plans/{planType}-plans/{planId}/{filename}
  */
 const uploadPlanMaterial = async (
-  options: PlanMaterialUploadOptions
+  options: PlanMaterialUploadOptions,
 ): Promise<DocumentUploadResult> => {
   try {
     const { planType, planId, file } = options;
@@ -530,7 +530,7 @@ const deletePlanMaterial = async (storagePath: string): Promise<boolean> => {
  */
 const listPlanMaterials = async (
   planType: PlanType,
-  planId: string
+  planId: string,
 ): Promise<FileObject[]> => {
   try {
     const folderPath = `plans/${planType}-plans/${planId}`;
@@ -559,7 +559,7 @@ const listPlanMaterials = async (
  * Structure: appointments/{appointmentId}/consultant-{consultantId}/{filename}
  */
 const uploadConsultantDocument = async (
-  options: ConsultantDocumentUploadOptions
+  options: ConsultantDocumentUploadOptions,
 ): Promise<DocumentUploadResult> => {
   try {
     const { appointmentId, consultantId, file } = options;
@@ -650,7 +650,7 @@ export interface SupportAttachmentUploadOptions {
  * Upload support ticket attachment to Supabase storage
  */
 const uploadSupportTicketAttachment = async (
-  options: SupportAttachmentUploadOptions
+  options: SupportAttachmentUploadOptions,
 ): Promise<DocumentUploadResult> => {
   try {
     const { ticketId, file } = options;
@@ -743,7 +743,7 @@ const uploadSupportTicketAttachment = async (
  * Delete support ticket attachment from Supabase storage
  */
 const deleteSupportTicketAttachment = async (
-  storagePath: string
+  storagePath: string,
 ): Promise<boolean> => {
   try {
     const { error } = await supabase.storage

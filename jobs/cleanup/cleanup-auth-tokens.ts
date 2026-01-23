@@ -53,7 +53,9 @@ async function main(): Promise<void> {
     console.log("\n📊 Cleanup Results:");
     console.log(`   Verification Tokens: ${result.verificationTokensDeleted}`);
     console.log(`   Sessions: ${result.sessionsDeleted}`);
-    console.log(`   Password Reset Tokens: ${result.passwordResetTokensCleared}`);
+    console.log(
+      `   Password Reset Tokens: ${result.passwordResetTokensCleared}`,
+    );
     console.log(`   Total Cleaned: ${result.totalCleaned}`);
     console.log(`   Success: ${result.success}`);
 

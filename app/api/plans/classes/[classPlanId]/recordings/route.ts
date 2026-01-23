@@ -43,7 +43,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     if (!classPlan) {
       return NextResponse.json(
         { error: "Class plan not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
@@ -75,14 +75,13 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     if (!hasAccess) {
       return NextResponse.json(
         { error: "Access denied to these recordings" },
-        { status: 403 }
+        { status: 403 },
       );
     }
 
     // Get recordings for this class plan
-    const recordings = await RecordingService.getClassPlanRecordings(
-      classPlanId
-    );
+    const recordings =
+      await RecordingService.getClassPlanRecordings(classPlanId);
 
     // Map recordings to response format
     const formattedRecordings = recordings.map((recording) => ({
@@ -112,7 +111,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     console.error("Error getting class plan recordings:", error);
     return NextResponse.json(
       { error: "Failed to get recordings" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

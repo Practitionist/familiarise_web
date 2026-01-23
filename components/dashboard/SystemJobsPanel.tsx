@@ -26,7 +26,16 @@ export interface SystemJob {
   name: string;
   description: string;
   schedule: string;
-  category: "Payments" | "Refunds" | "Disputes" | "Earnings" | "Appointments" | "Payouts" | "Cleanup" | "Reconciliation" | "Alerts";
+  category:
+    | "Payments"
+    | "Refunds"
+    | "Disputes"
+    | "Earnings"
+    | "Appointments"
+    | "Payouts"
+    | "Cleanup"
+    | "Reconciliation"
+    | "Alerts";
 }
 
 const SYSTEM_JOBS: SystemJob[] = [
@@ -64,7 +73,8 @@ const SYSTEM_JOBS: SystemJob[] = [
   {
     id: "handle-lost-disputes",
     name: "Handle Lost Disputes",
-    description: "Reverse earnings on lost disputes (CRITICAL alerts if already paid)",
+    description:
+      "Reverse earnings on lost disputes (CRITICAL alerts if already paid)",
     schedule: "Every 6 hours",
     category: "Disputes",
   },
@@ -94,7 +104,8 @@ const SYSTEM_JOBS: SystemJob[] = [
   {
     id: "cleanup-invalid-appointments",
     name: "Cleanup Invalid Appointments",
-    description: "Cancel duplicate and invalid-duration consultations/subscriptions",
+    description:
+      "Cancel duplicate and invalid-duration consultations/subscriptions",
     schedule: "Hourly",
     category: "Appointments",
   },
@@ -146,7 +157,8 @@ const SYSTEM_JOBS: SystemJob[] = [
   {
     id: "auth-tokens",
     name: "Auth Token Cleanup",
-    description: "Delete expired sessions, verification tokens, password reset tokens",
+    description:
+      "Delete expired sessions, verification tokens, password reset tokens",
     schedule: "Daily",
     category: "Cleanup",
   },
@@ -167,7 +179,8 @@ const SYSTEM_JOBS: SystemJob[] = [
   {
     id: "expire-stale-requests",
     name: "Expire Stale Requests",
-    description: "Auto-expire PENDING requests >30 days, APPROVED_PENDING_PAYMENT >7 days",
+    description:
+      "Auto-expire PENDING requests >30 days, APPROVED_PENDING_PAYMENT >7 days",
     schedule: "Daily",
     category: "Cleanup",
   },
@@ -189,7 +202,8 @@ const SYSTEM_JOBS: SystemJob[] = [
   {
     id: "reconcile-payment-status",
     name: "Reconcile Payment Status",
-    description: "Query Stripe/Razorpay for actual status on stale PENDING payments",
+    description:
+      "Query Stripe/Razorpay for actual status on stale PENDING payments",
     schedule: "Every 30 minutes",
     category: "Reconciliation",
   },
@@ -217,7 +231,10 @@ const SYSTEM_JOBS: SystemJob[] = [
   },
 ];
 
-const CATEGORY_CONFIG: Record<SystemJob["category"], { icon: typeof CreditCard; color: string }> = {
+const CATEGORY_CONFIG: Record<
+  SystemJob["category"],
+  { icon: typeof CreditCard; color: string }
+> = {
   Payments: { icon: CreditCard, color: "blue" },
   Refunds: { icon: RefreshCw, color: "purple" },
   Disputes: { icon: AlertTriangle, color: "amber" },
@@ -239,16 +256,55 @@ function JobCard({ job, isRunning, onRun }: JobCardProps) {
   const config = CATEGORY_CONFIG[job.category];
   const Icon = config.icon;
 
-  const colorClasses: Record<string, { bg: string; text: string; badge: string }> = {
-    blue: { bg: "bg-blue-50", text: "text-blue-600", badge: "bg-blue-100 text-blue-700" },
-    purple: { bg: "bg-purple-50", text: "text-purple-600", badge: "bg-purple-100 text-purple-700" },
-    amber: { bg: "bg-amber-50", text: "text-amber-600", badge: "bg-amber-100 text-amber-700" },
-    emerald: { bg: "bg-emerald-50", text: "text-emerald-600", badge: "bg-emerald-100 text-emerald-700" },
-    indigo: { bg: "bg-indigo-50", text: "text-indigo-600", badge: "bg-indigo-100 text-indigo-700" },
-    pink: { bg: "bg-pink-50", text: "text-pink-600", badge: "bg-pink-100 text-pink-700" },
-    gray: { bg: "bg-zinc-50", text: "text-zinc-600", badge: "bg-zinc-100 text-zinc-700" },
-    cyan: { bg: "bg-cyan-50", text: "text-cyan-600", badge: "bg-cyan-100 text-cyan-700" },
-    red: { bg: "bg-red-50", text: "text-red-600", badge: "bg-red-100 text-red-700" },
+  const colorClasses: Record<
+    string,
+    { bg: string; text: string; badge: string }
+  > = {
+    blue: {
+      bg: "bg-blue-50",
+      text: "text-blue-600",
+      badge: "bg-blue-100 text-blue-700",
+    },
+    purple: {
+      bg: "bg-purple-50",
+      text: "text-purple-600",
+      badge: "bg-purple-100 text-purple-700",
+    },
+    amber: {
+      bg: "bg-amber-50",
+      text: "text-amber-600",
+      badge: "bg-amber-100 text-amber-700",
+    },
+    emerald: {
+      bg: "bg-emerald-50",
+      text: "text-emerald-600",
+      badge: "bg-emerald-100 text-emerald-700",
+    },
+    indigo: {
+      bg: "bg-indigo-50",
+      text: "text-indigo-600",
+      badge: "bg-indigo-100 text-indigo-700",
+    },
+    pink: {
+      bg: "bg-pink-50",
+      text: "text-pink-600",
+      badge: "bg-pink-100 text-pink-700",
+    },
+    gray: {
+      bg: "bg-zinc-50",
+      text: "text-zinc-600",
+      badge: "bg-zinc-100 text-zinc-700",
+    },
+    cyan: {
+      bg: "bg-cyan-50",
+      text: "text-cyan-600",
+      badge: "bg-cyan-100 text-cyan-700",
+    },
+    red: {
+      bg: "bg-red-50",
+      text: "text-red-600",
+      badge: "bg-red-100 text-red-700",
+    },
   };
 
   const colors = colorClasses[config.color];
@@ -262,12 +318,24 @@ function JobCard({ job, isRunning, onRun }: JobCardProps) {
       <div className="flex items-start justify-between gap-4">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-3 mb-2">
-            <div className={cn("flex h-10 w-10 items-center justify-center rounded-lg", colors.bg)}>
+            <div
+              className={cn(
+                "flex h-10 w-10 items-center justify-center rounded-lg",
+                colors.bg,
+              )}
+            >
               <Icon className={cn("h-5 w-5", colors.text)} />
             </div>
             <div>
-              <h3 className="font-semibold text-zinc-900 text-sm">{job.name}</h3>
-              <span className={cn("inline-block mt-0.5 px-2 py-0.5 rounded text-xs font-medium", colors.badge)}>
+              <h3 className="font-semibold text-zinc-900 text-sm">
+                {job.name}
+              </h3>
+              <span
+                className={cn(
+                  "inline-block mt-0.5 px-2 py-0.5 rounded text-xs font-medium",
+                  colors.badge,
+                )}
+              >
                 {job.category}
               </span>
             </div>
@@ -331,19 +399,28 @@ export function SystemJobsPanel({ className }: SystemJobsPanelProps) {
 
       // Format result message
       const stats = [];
-      if (result.totalProcessed !== undefined) stats.push(`Processed: ${result.totalProcessed}`);
-      if (result.cleanedCount !== undefined) stats.push(`Cleaned: ${result.cleanedCount}`);
-      if (result.updatedCount !== undefined) stats.push(`Updated: ${result.updatedCount}`);
-      if (result.createdCount !== undefined) stats.push(`Created: ${result.createdCount}`);
-      if (result.reconciledCount !== undefined) stats.push(`Reconciled: ${result.reconciledCount}`);
-      if (result.releasedCount !== undefined) stats.push(`Released: ${result.releasedCount}`);
+      if (result.totalProcessed !== undefined)
+        stats.push(`Processed: ${result.totalProcessed}`);
+      if (result.cleanedCount !== undefined)
+        stats.push(`Cleaned: ${result.cleanedCount}`);
+      if (result.updatedCount !== undefined)
+        stats.push(`Updated: ${result.updatedCount}`);
+      if (result.createdCount !== undefined)
+        stats.push(`Created: ${result.createdCount}`);
+      if (result.reconciledCount !== undefined)
+        stats.push(`Reconciled: ${result.reconciledCount}`);
+      if (result.releasedCount !== undefined)
+        stats.push(`Released: ${result.releasedCount}`);
       if (result.errorCount !== undefined || result.errors?.length) {
-        stats.push(`Errors: ${result.errorCount || result.errors?.length || 0}`);
+        stats.push(
+          `Errors: ${result.errorCount || result.errors?.length || 0}`,
+        );
       }
 
       toast({
         title: `✅ ${job.name} completed`,
-        description: stats.length > 0 ? stats.join(" | ") : "Job completed successfully",
+        description:
+          stats.length > 0 ? stats.join(" | ") : "Job completed successfully",
         variant: "default",
       });
 
@@ -358,7 +435,8 @@ export function SystemJobsPanel({ className }: SystemJobsPanelProps) {
     } catch (error) {
       toast({
         title: `❌ ${job.name} failed`,
-        description: error instanceof Error ? error.message : "An error occurred",
+        description:
+          error instanceof Error ? error.message : "An error occurred",
         variant: "destructive",
       });
     } finally {
@@ -392,7 +470,9 @@ export function SystemJobsPanel({ className }: SystemJobsPanelProps) {
               return <Icon className="h-5 w-5 text-zinc-400" />;
             })()}
             <h2 className="text-lg font-semibold text-zinc-900">{category}</h2>
-            <span className="text-sm text-zinc-400">({jobsByCategory[category].length} jobs)</span>
+            <span className="text-sm text-zinc-400">
+              ({jobsByCategory[category].length} jobs)
+            </span>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {jobsByCategory[category].map((job) => (

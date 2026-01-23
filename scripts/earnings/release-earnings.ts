@@ -67,7 +67,9 @@ export async function releaseEarningsFromHold(): Promise<ReleaseResult> {
       },
     });
 
-    console.log(`📊 Found ${earningsToRelease.length} earnings ready for release`);
+    console.log(
+      `📊 Found ${earningsToRelease.length} earnings ready for release`,
+    );
 
     if (earningsToRelease.length === 0) {
       console.log("✅ No earnings to release at this time");
@@ -104,7 +106,8 @@ export async function releaseEarningsFromHold(): Promise<ReleaseResult> {
       `   💰 Total amount: ₹${(earningsToRelease.reduce((sum, e) => sum + e.consultantShare, 0) / 100).toFixed(2)}`,
     );
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown error";
     console.error("❌ Release job failed:", errorMessage);
     result.errors.push(`Job failed: ${errorMessage}`);
     result.success = false;
@@ -149,14 +152,20 @@ export async function getPendingEarningsStats(): Promise<{
  */
 export async function runReleaseTask(): Promise<ReleaseResult> {
   const startTime = Date.now();
-  console.log(`🚀 Starting earnings release job at ${new Date().toISOString()}`);
+  console.log(
+    `🚀 Starting earnings release job at ${new Date().toISOString()}`,
+  );
 
   try {
     // Get pre-release stats
     const preStats = await getPendingEarningsStats();
     console.log(`\n📊 Pre-release Stats:`);
-    console.log(`   ⏳ Pending: ${preStats.pendingCount} earnings (₹${(preStats.pendingAmount / 100).toFixed(2)})`);
-    console.log(`   ✅ Ready: ${preStats.readyCount} earnings (₹${(preStats.readyAmount / 100).toFixed(2)})`);
+    console.log(
+      `   ⏳ Pending: ${preStats.pendingCount} earnings (₹${(preStats.pendingAmount / 100).toFixed(2)})`,
+    );
+    console.log(
+      `   ✅ Ready: ${preStats.readyCount} earnings (₹${(preStats.readyAmount / 100).toFixed(2)})`,
+    );
 
     // Run release
     const result = await releaseEarningsFromHold();
@@ -164,8 +173,12 @@ export async function runReleaseTask(): Promise<ReleaseResult> {
     // Get post-release stats
     const postStats = await getPendingEarningsStats();
     console.log(`\n📊 Post-release Stats:`);
-    console.log(`   ⏳ Pending: ${postStats.pendingCount} earnings (₹${(postStats.pendingAmount / 100).toFixed(2)})`);
-    console.log(`   ✅ Ready: ${postStats.readyCount} earnings (₹${(postStats.readyAmount / 100).toFixed(2)})`);
+    console.log(
+      `   ⏳ Pending: ${postStats.pendingCount} earnings (₹${(postStats.pendingAmount / 100).toFixed(2)})`,
+    );
+    console.log(
+      `   ✅ Ready: ${postStats.readyCount} earnings (₹${(postStats.readyAmount / 100).toFixed(2)})`,
+    );
 
     const duration = (Date.now() - startTime) / 1000;
     console.log(`\n⏱️ Job completed in ${duration.toFixed(2)} seconds`);

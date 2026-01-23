@@ -8,11 +8,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from "@/components/ui/form";
+import { FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import iso6391 from "iso-639-1";
 import { cn } from "@/lib/utils";
 
@@ -72,7 +68,10 @@ export function LanguageLevelFields({
       {/* Language Select */}
       <FormItem>
         <FormLabel>Language</FormLabel>
-        <Select value={languageField.value} onValueChange={languageField.onChange}>
+        <Select
+          value={languageField.value}
+          onValueChange={languageField.onChange}
+        >
           <SelectTrigger className={cn(languageError && "border-destructive")}>
             <SelectValue placeholder="Select language" />
           </SelectTrigger>

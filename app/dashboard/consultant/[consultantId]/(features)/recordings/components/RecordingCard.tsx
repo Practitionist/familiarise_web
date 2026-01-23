@@ -117,7 +117,9 @@ export function RecordingCard({ recording, onTransfer }: RecordingCardProps) {
       toast({
         title: "Transfer Failed",
         description:
-          error instanceof Error ? error.message : "Failed to transfer recording",
+          error instanceof Error
+            ? error.message
+            : "Failed to transfer recording",
         variant: "destructive",
       });
     } finally {
@@ -138,7 +140,9 @@ export function RecordingCard({ recording, onTransfer }: RecordingCardProps) {
       <CardHeader className="pb-3">
         <div className="flex items-start justify-between gap-2">
           <div className="flex-1 min-w-0">
-            <CardTitle className="text-lg truncate">{recording.title}</CardTitle>
+            <CardTitle className="text-lg truncate">
+              {recording.title}
+            </CardTitle>
             {recording.planTitle && (
               <p className="text-sm text-muted-foreground mt-1">
                 {recording.planType === "webinar" ? "Webinar" : "Class"}:{" "}
@@ -208,7 +212,9 @@ export function RecordingCard({ recording, onTransfer }: RecordingCardProps) {
                   <Button
                     variant="default"
                     className="flex-1"
-                    onClick={() => window.open(recording.playbackUrl!, "_blank")}
+                    onClick={() =>
+                      window.open(recording.playbackUrl!, "_blank")
+                    }
                   >
                     <Play className="w-4 h-4 mr-2" />
                     Watch

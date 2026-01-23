@@ -18,7 +18,7 @@ export async function GET(request: NextRequest) {
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "You must be logged in to search appointments" },
-        { status: 401 }
+        { status: 401 },
       );
     }
 
@@ -64,7 +64,12 @@ export async function GET(request: NextRequest) {
           },
           {
             requestStatus: {
-              in: ["APPROVED", "APPROVED_PENDING_PAYMENT", "SCHEDULED", "COMPLETED"],
+              in: [
+                "APPROVED",
+                "APPROVED_PENDING_PAYMENT",
+                "SCHEDULED",
+                "COMPLETED",
+              ],
             },
           },
           {
@@ -111,8 +116,12 @@ export async function GET(request: NextRequest) {
         id: consultation.id,
         type: "consultation",
         name: consultation.consultationPlan.title,
-        consultantName: consultation.consultationPlan.consultantProfile.user.name || "Unknown",
-        consultantImage: consultation.consultationPlan.consultantProfile.user.image || undefined,
+        consultantName:
+          consultation.consultationPlan.consultantProfile.user.name ||
+          "Unknown",
+        consultantImage:
+          consultation.consultationPlan.consultantProfile.user.image ||
+          undefined,
         channelId: `consultation-${consultation.id}`,
       });
     }
@@ -149,7 +158,12 @@ export async function GET(request: NextRequest) {
           },
           {
             requestStatus: {
-              in: ["APPROVED", "APPROVED_PENDING_PAYMENT", "SCHEDULED", "COMPLETED"],
+              in: [
+                "APPROVED",
+                "APPROVED_PENDING_PAYMENT",
+                "SCHEDULED",
+                "COMPLETED",
+              ],
             },
           },
           {
@@ -196,8 +210,12 @@ export async function GET(request: NextRequest) {
         id: subscription.id,
         type: "subscription",
         name: subscription.subscriptionPlan.title,
-        consultantName: subscription.subscriptionPlan.consultantProfile.user.name || "Unknown",
-        consultantImage: subscription.subscriptionPlan.consultantProfile.user.image || undefined,
+        consultantName:
+          subscription.subscriptionPlan.consultantProfile.user.name ||
+          "Unknown",
+        consultantImage:
+          subscription.subscriptionPlan.consultantProfile.user.image ||
+          undefined,
         channelId: `subscription-${subscription.id}`,
       });
     }
@@ -266,8 +284,10 @@ export async function GET(request: NextRequest) {
           id: webinar.id,
           type: "webinar",
           name: webinar.webinarPlan.title,
-          consultantName: webinar.webinarPlan.consultantProfile.user.name || "Unknown",
-          consultantImage: webinar.webinarPlan.consultantProfile.user.image || undefined,
+          consultantName:
+            webinar.webinarPlan.consultantProfile.user.name || "Unknown",
+          consultantImage:
+            webinar.webinarPlan.consultantProfile.user.image || undefined,
           channelId: `webinar-${webinar.id}`,
         });
       }
@@ -337,8 +357,10 @@ export async function GET(request: NextRequest) {
           id: classItem.id,
           type: "class",
           name: classItem.classPlan.title,
-          consultantName: classItem.classPlan.consultantProfile.user.name || "Unknown",
-          consultantImage: classItem.classPlan.consultantProfile.user.image || undefined,
+          consultantName:
+            classItem.classPlan.consultantProfile.user.name || "Unknown",
+          consultantImage:
+            classItem.classPlan.consultantProfile.user.image || undefined,
           channelId: `class-${classItem.id}`,
         });
       }
@@ -353,7 +375,7 @@ export async function GET(request: NextRequest) {
     console.error("Error searching appointments:", error);
     return NextResponse.json(
       { error: "Failed to search appointments" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

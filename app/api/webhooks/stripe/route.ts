@@ -174,9 +174,10 @@ export async function POST(req: NextRequest) {
           console.log(`📄 Unhandled Stripe event type: ${eventType}`);
       }
     } catch (handlerError) {
-      processingError = handlerError instanceof Error
-        ? handlerError.message
-        : String(handlerError);
+      processingError =
+        handlerError instanceof Error
+          ? handlerError.message
+          : String(handlerError);
       throw handlerError;
     } finally {
       // Mark event as processed

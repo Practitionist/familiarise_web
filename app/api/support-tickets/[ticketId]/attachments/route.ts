@@ -66,7 +66,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     console.error("Error fetching attachments:", error);
     return NextResponse.json(
       { error: "Failed to fetch attachments" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -116,7 +116,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     if (existingCount >= 5) {
       return NextResponse.json(
         { error: "Maximum 5 attachments allowed per ticket" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -127,17 +127,14 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     } catch {
       return NextResponse.json(
         { error: "Invalid file upload" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     const file = formData.get("file") as File;
 
     if (!file || file.size === 0) {
-      return NextResponse.json(
-        { error: "No file provided" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "No file provided" }, { status: 400 });
     }
 
     // Upload to Supabase
@@ -159,7 +156,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
             instructions: getManualBucketInstructions("support-attachments"),
           }),
         },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -178,13 +175,13 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json(
       { attachment, message: "Attachment uploaded successfully" },
-      { status: 201 }
+      { status: 201 },
     );
   } catch (error) {
     console.error("Error uploading attachment:", error);
     return NextResponse.json(
       { error: "Failed to upload attachment" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -207,7 +204,7 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
     if (!attachmentId) {
       return NextResponse.json(
         { error: "Attachment ID required" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -231,7 +228,7 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
     if (!attachment || attachment.ticketId !== ticketId) {
       return NextResponse.json(
         { error: "Attachment not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
@@ -253,7 +250,7 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
     console.error("Error deleting attachment:", error);
     return NextResponse.json(
       { error: "Failed to delete attachment" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

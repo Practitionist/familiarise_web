@@ -14,7 +14,7 @@ interface MeetingRecordingData {
  * @param streamCallId The Stream call ID
  */
 export function useMeetingRecording(
-  streamCallId: string | undefined
+  streamCallId: string | undefined,
 ): MeetingRecordingData {
   const [data, setData] = useState<MeetingRecordingData>({
     meetingSessionId: null,
@@ -32,7 +32,7 @@ export function useMeetingRecording(
     const fetchMeetingSession = async () => {
       try {
         const response = await fetch(
-          `/api/stream/meetings/${encodeURIComponent(streamCallId)}/recording-info`
+          `/api/stream/meetings/${encodeURIComponent(streamCallId)}/recording-info`,
         );
 
         if (!response.ok) {

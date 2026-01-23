@@ -129,11 +129,15 @@ export async function GET(req: NextRequest) {
     ]);
 
     // Helper to extract consultant name from different appointment types
-    const getConsultantName = (appointment: typeof payments[0]["appointment"]) => {
+    const getConsultantName = (
+      appointment: (typeof payments)[0]["appointment"],
+    ) => {
       if (!appointment) return undefined;
       return (
-        appointment.consultation?.consultationPlan?.consultantProfile?.user?.name ||
-        appointment.subscription?.subscriptionPlan?.consultantProfile?.user?.name ||
+        appointment.consultation?.consultationPlan?.consultantProfile?.user
+          ?.name ||
+        appointment.subscription?.subscriptionPlan?.consultantProfile?.user
+          ?.name ||
         appointment.webinar?.webinarPlan?.consultantProfile?.user?.name ||
         appointment.class?.classPlan?.consultantProfile?.user?.name
       );
@@ -168,7 +172,7 @@ export async function GET(req: NextRequest) {
     console.error("Error fetching invoices:", error);
     return NextResponse.json(
       { error: "Failed to fetch invoices" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

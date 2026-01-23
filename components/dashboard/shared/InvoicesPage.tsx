@@ -36,7 +36,7 @@ async function fetchInvoices(
   apiEndpoint: string,
   page: number,
   limit: number,
-  search?: string
+  search?: string,
 ) {
   const offset = (page - 1) * limit;
   const params = new URLSearchParams({

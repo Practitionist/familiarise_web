@@ -44,7 +44,7 @@ export interface StreamCallEndedEvent {
  * - Log session duration
  */
 export async function handleSessionEnded(
-  event: StreamSessionEndedEvent
+  event: StreamSessionEndedEvent,
 ): Promise<void> {
   const { call_cid, created_at } = event;
 
@@ -99,7 +99,7 @@ export async function handleSessionEnded(
     const slotStartTime = meetingSession.slotOfAppointment.startsAt;
     if (slotStartTime) {
       const durationMinutes = Math.round(
-        (endedAt.getTime() - new Date(slotStartTime).getTime()) / (1000 * 60)
+        (endedAt.getTime() - new Date(slotStartTime).getTime()) / (1000 * 60),
       );
       streamLogger.info("Session duration calculated", {
         sessionId: meetingSession.id,
@@ -131,7 +131,7 @@ export async function handleSessionEnded(
  * - Log who ended the call if available
  */
 export async function handleCallEnded(
-  event: StreamCallEndedEvent
+  event: StreamCallEndedEvent,
 ): Promise<void> {
   const { call_cid, created_at, ended_by_user_id } = event;
 
@@ -187,7 +187,7 @@ export async function handleCallEnded(
     const slotStartTime = meetingSession.slotOfAppointment.startsAt;
     if (slotStartTime) {
       const durationMinutes = Math.round(
-        (endedAt.getTime() - new Date(slotStartTime).getTime()) / (1000 * 60)
+        (endedAt.getTime() - new Date(slotStartTime).getTime()) / (1000 * 60),
       );
       streamLogger.info("Session duration calculated", {
         sessionId: meetingSession.id,

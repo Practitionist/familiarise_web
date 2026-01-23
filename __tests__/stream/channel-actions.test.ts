@@ -48,9 +48,8 @@ describe("Channel Actions", () => {
 
   describe("createChannel", () => {
     it("should create a channel with valid input", async () => {
-      const { createChannel } = await import(
-        "../../actions/stream/chat/channel.action"
-      );
+      const { createChannel } =
+        await import("../../actions/stream/chat/channel.action");
 
       mockChannel.query.mockResolvedValueOnce({
         members: { user1: {}, user2: {} },
@@ -72,15 +71,14 @@ describe("Channel Actions", () => {
           name: "Test Channel",
           created_by_id: "user1",
           members: expect.arrayContaining(["user1", "user2"]),
-        })
+        }),
       );
       expect(mockChannel.create).toHaveBeenCalled();
     });
 
     it("should deduplicate members list", async () => {
-      const { createChannel } = await import(
-        "../../actions/stream/chat/channel.action"
-      );
+      const { createChannel } =
+        await import("../../actions/stream/chat/channel.action");
 
       mockChannel.query.mockResolvedValueOnce({ members: { user1: {} } });
 
@@ -96,14 +94,13 @@ describe("Channel Actions", () => {
         "dedup-test",
         expect.objectContaining({
           members: ["user1"],
-        })
+        }),
       );
     });
 
     it("should ensure creator is always in members list", async () => {
-      const { createChannel } = await import(
-        "../../actions/stream/chat/channel.action"
-      );
+      const { createChannel } =
+        await import("../../actions/stream/chat/channel.action");
 
       mockChannel.query.mockResolvedValueOnce({
         members: { creator: {}, other: {} },
@@ -121,14 +118,13 @@ describe("Channel Actions", () => {
         "creator-test",
         expect.objectContaining({
           members: expect.arrayContaining(["creator", "other"]),
-        })
+        }),
       );
     });
 
     it("should reject invalid channel type", async () => {
-      const { createChannel } = await import(
-        "../../actions/stream/chat/channel.action"
-      );
+      const { createChannel } =
+        await import("../../actions/stream/chat/channel.action");
 
       await expect(
         createChannel({
@@ -136,14 +132,13 @@ describe("Channel Actions", () => {
           channelId: "test",
           members: ["user1"],
           createdById: "user1",
-        })
+        }),
       ).rejects.toThrow();
     });
 
     it("should reject empty channel ID", async () => {
-      const { createChannel } = await import(
-        "../../actions/stream/chat/channel.action"
-      );
+      const { createChannel } =
+        await import("../../actions/stream/chat/channel.action");
 
       await expect(
         createChannel({
@@ -151,14 +146,13 @@ describe("Channel Actions", () => {
           channelId: "",
           members: ["user1"],
           createdById: "user1",
-        })
+        }),
       ).rejects.toThrow();
     });
 
     it("should reject empty members array", async () => {
-      const { createChannel } = await import(
-        "../../actions/stream/chat/channel.action"
-      );
+      const { createChannel } =
+        await import("../../actions/stream/chat/channel.action");
 
       await expect(
         createChannel({
@@ -166,16 +160,15 @@ describe("Channel Actions", () => {
           channelId: "test",
           members: [],
           createdById: "user1",
-        })
+        }),
       ).rejects.toThrow();
     });
   });
 
   describe("createDirectMessageChannel", () => {
     it("should create DM channel with sorted user IDs", async () => {
-      const { createDirectMessageChannel } = await import(
-        "../../actions/stream/chat/channel.action"
-      );
+      const { createDirectMessageChannel } =
+        await import("../../actions/stream/chat/channel.action");
 
       mockChannel.query.mockResolvedValueOnce({
         members: { alice: {}, bob: {} },
@@ -187,14 +180,13 @@ describe("Channel Actions", () => {
       expect(mockStreamClient.channel).toHaveBeenCalledWith(
         "messaging",
         "alice-bob",
-        expect.anything()
+        expect.anything(),
       );
     });
 
     it("should create consistent channel ID regardless of user order", async () => {
-      const { createDirectMessageChannel } = await import(
-        "../../actions/stream/chat/channel.action"
-      );
+      const { createDirectMessageChannel } =
+        await import("../../actions/stream/chat/channel.action");
 
       mockChannel.query.mockResolvedValue({ members: {} });
 
@@ -207,9 +199,8 @@ describe("Channel Actions", () => {
     });
 
     it("should reject empty user IDs", async () => {
-      const { createDirectMessageChannel } = await import(
-        "../../actions/stream/chat/channel.action"
-      );
+      const { createDirectMessageChannel } =
+        await import("../../actions/stream/chat/channel.action");
 
       await expect(createDirectMessageChannel("", "user2")).rejects.toThrow();
       await expect(createDirectMessageChannel("user1", "")).rejects.toThrow();
@@ -218,13 +209,12 @@ describe("Channel Actions", () => {
 
   describe("addMemberToChannel", () => {
     it("should add member to existing channel", async () => {
-      const { addMemberToChannel } = await import(
-        "../../actions/stream/chat/channel.action"
-      );
+      const { addMemberToChannel } =
+        await import("../../actions/stream/chat/channel.action");
 
       const result = await addMemberToChannel(
         "consultation-123",
-        "new-user-id"
+        "new-user-id",
       );
 
       expect(result.success).toBe(true);
@@ -232,45 +222,44 @@ describe("Channel Actions", () => {
     });
 
     it("should infer messaging type for consultation channels", async () => {
-      const { addMemberToChannel } = await import(
-        "../../actions/stream/chat/channel.action"
-      );
+      const { addMemberToChannel } =
+        await import("../../actions/stream/chat/channel.action");
 
       await addMemberToChannel("consultation-abc", "user123");
 
       expect(mockStreamClient.channel).toHaveBeenCalledWith(
         "messaging",
-        "consultation-abc"
+        "consultation-abc",
       );
     });
 
     it("should infer messaging type for subscription channels", async () => {
-      const { addMemberToChannel } = await import(
-        "../../actions/stream/chat/channel.action"
-      );
+      const { addMemberToChannel } =
+        await import("../../actions/stream/chat/channel.action");
 
       await addMemberToChannel("subscription-xyz", "user456");
 
       expect(mockStreamClient.channel).toHaveBeenCalledWith(
         "messaging",
-        "subscription-xyz"
+        "subscription-xyz",
       );
     });
 
     it("should infer team type for other channels", async () => {
-      const { addMemberToChannel } = await import(
-        "../../actions/stream/chat/channel.action"
-      );
+      const { addMemberToChannel } =
+        await import("../../actions/stream/chat/channel.action");
 
       await addMemberToChannel("webinar-123", "user789");
 
-      expect(mockStreamClient.channel).toHaveBeenCalledWith("team", "webinar-123");
+      expect(mockStreamClient.channel).toHaveBeenCalledWith(
+        "team",
+        "webinar-123",
+      );
     });
 
     it("should reject invalid inputs", async () => {
-      const { addMemberToChannel } = await import(
-        "../../actions/stream/chat/channel.action"
-      );
+      const { addMemberToChannel } =
+        await import("../../actions/stream/chat/channel.action");
 
       await expect(addMemberToChannel("", "user")).rejects.toThrow();
       await expect(addMemberToChannel("channel", "")).rejects.toThrow();
@@ -299,9 +288,8 @@ describe("Entity Channel Creation", () => {
         },
       });
 
-      const { createWebinarChannel } = await import(
-        "../../actions/stream/chat/channel.action"
-      );
+      const { createWebinarChannel } =
+        await import("../../actions/stream/chat/channel.action");
 
       const result = await createWebinarChannel("webinar-123");
 
@@ -313,19 +301,18 @@ describe("Entity Channel Creation", () => {
           name: "Test Webinar",
           created_by_id: "consultant-1",
           webinar_id: "webinar-123",
-        })
+        }),
       );
     });
 
     it("should throw error when webinar not found", async () => {
       mockPrisma.webinar.findUnique.mockResolvedValueOnce(null);
 
-      const { createWebinarChannel } = await import(
-        "../../actions/stream/chat/channel.action"
-      );
+      const { createWebinarChannel } =
+        await import("../../actions/stream/chat/channel.action");
 
       await expect(createWebinarChannel("nonexistent")).rejects.toThrow(
-        "Webinar not found: nonexistent"
+        "Webinar not found: nonexistent",
       );
     });
 
@@ -337,19 +324,17 @@ describe("Entity Channel Creation", () => {
         appointment: null,
       });
 
-      const { createWebinarChannel } = await import(
-        "../../actions/stream/chat/channel.action"
-      );
+      const { createWebinarChannel } =
+        await import("../../actions/stream/chat/channel.action");
 
       await expect(createWebinarChannel("webinar-123")).rejects.toThrow(
-        "Consultant not found for webinar"
+        "Consultant not found for webinar",
       );
     });
 
     it("should reject empty webinar ID", async () => {
-      const { createWebinarChannel } = await import(
-        "../../actions/stream/chat/channel.action"
-      );
+      const { createWebinarChannel } =
+        await import("../../actions/stream/chat/channel.action");
 
       await expect(createWebinarChannel("")).rejects.toThrow();
     });
@@ -370,9 +355,8 @@ describe("Entity Channel Creation", () => {
         ],
       });
 
-      const { createClassChannel } = await import(
-        "../../actions/stream/chat/channel.action"
-      );
+      const { createClassChannel } =
+        await import("../../actions/stream/chat/channel.action");
 
       const result = await createClassChannel("class-456");
 
@@ -384,19 +368,18 @@ describe("Entity Channel Creation", () => {
           name: "Test Class",
           created_by_id: "consultant-2",
           class_id: "class-456",
-        })
+        }),
       );
     });
 
     it("should throw error when class not found", async () => {
       mockPrisma.class.findUnique.mockResolvedValueOnce(null);
 
-      const { createClassChannel } = await import(
-        "../../actions/stream/chat/channel.action"
-      );
+      const { createClassChannel } =
+        await import("../../actions/stream/chat/channel.action");
 
       await expect(createClassChannel("nonexistent")).rejects.toThrow(
-        "Class not found: nonexistent"
+        "Class not found: nonexistent",
       );
     });
 
@@ -408,12 +391,11 @@ describe("Entity Channel Creation", () => {
         appointments: [],
       });
 
-      const { createClassChannel } = await import(
-        "../../actions/stream/chat/channel.action"
-      );
+      const { createClassChannel } =
+        await import("../../actions/stream/chat/channel.action");
 
       await expect(createClassChannel("class-456")).rejects.toThrow(
-        "Consultant not found for class"
+        "Consultant not found for class",
       );
     });
   });
@@ -428,9 +410,8 @@ describe("Entity Channel Creation", () => {
         requestedBy: { user: { id: "consultee-1" } },
       });
 
-      const { createConsultationChannel } = await import(
-        "../../actions/stream/chat/channel.action"
-      );
+      const { createConsultationChannel } =
+        await import("../../actions/stream/chat/channel.action");
 
       const result = await createConsultationChannel("consultation-789");
 
@@ -441,19 +422,18 @@ describe("Entity Channel Creation", () => {
         expect.objectContaining({
           created_by_id: "consultant-3",
           consultation_id: "consultation-789",
-        })
+        }),
       );
     });
 
     it("should throw error when consultation not found", async () => {
       mockPrisma.consultation.findUnique.mockResolvedValueOnce(null);
 
-      const { createConsultationChannel } = await import(
-        "../../actions/stream/chat/channel.action"
-      );
+      const { createConsultationChannel } =
+        await import("../../actions/stream/chat/channel.action");
 
       await expect(createConsultationChannel("nonexistent")).rejects.toThrow(
-        "Consultation not found: nonexistent"
+        "Consultation not found: nonexistent",
       );
     });
 
@@ -464,13 +444,12 @@ describe("Entity Channel Creation", () => {
         requestedBy: { user: { id: "consultee-1" } },
       });
 
-      const { createConsultationChannel } = await import(
-        "../../actions/stream/chat/channel.action"
-      );
+      const { createConsultationChannel } =
+        await import("../../actions/stream/chat/channel.action");
 
-      await expect(createConsultationChannel("consultation-789")).rejects.toThrow(
-        "Participants not found for consultation"
-      );
+      await expect(
+        createConsultationChannel("consultation-789"),
+      ).rejects.toThrow("Participants not found for consultation");
     });
   });
 
@@ -484,9 +463,8 @@ describe("Entity Channel Creation", () => {
         requestedBy: { user: { id: "subscriber-1" } },
       });
 
-      const { createSubscriptionChannel } = await import(
-        "../../actions/stream/chat/channel.action"
-      );
+      const { createSubscriptionChannel } =
+        await import("../../actions/stream/chat/channel.action");
 
       const result = await createSubscriptionChannel("subscription-101");
 
@@ -497,19 +475,18 @@ describe("Entity Channel Creation", () => {
         expect.objectContaining({
           created_by_id: "consultant-4",
           subscription_id: "subscription-101",
-        })
+        }),
       );
     });
 
     it("should throw error when subscription not found", async () => {
       mockPrisma.subscription.findUnique.mockResolvedValueOnce(null);
 
-      const { createSubscriptionChannel } = await import(
-        "../../actions/stream/chat/channel.action"
-      );
+      const { createSubscriptionChannel } =
+        await import("../../actions/stream/chat/channel.action");
 
       await expect(createSubscriptionChannel("nonexistent")).rejects.toThrow(
-        "Subscription not found: nonexistent"
+        "Subscription not found: nonexistent",
       );
     });
 
@@ -522,13 +499,12 @@ describe("Entity Channel Creation", () => {
         requestedBy: { user: { id: null } },
       });
 
-      const { createSubscriptionChannel } = await import(
-        "../../actions/stream/chat/channel.action"
-      );
+      const { createSubscriptionChannel } =
+        await import("../../actions/stream/chat/channel.action");
 
-      await expect(createSubscriptionChannel("subscription-101")).rejects.toThrow(
-        "Participants not found for subscription"
-      );
+      await expect(
+        createSubscriptionChannel("subscription-101"),
+      ).rejects.toThrow("Participants not found for subscription");
     });
   });
 });
@@ -546,9 +522,8 @@ describe("initializeAllChannels", () => {
     mockPrisma.consultation.findMany.mockResolvedValueOnce([]);
     mockPrisma.subscription.findMany.mockResolvedValueOnce([]);
 
-    const { initializeAllChannels } = await import(
-      "../../actions/stream/chat/channel.action"
-    );
+    const { initializeAllChannels } =
+      await import("../../actions/stream/chat/channel.action");
 
     const result = await initializeAllChannels();
 
@@ -615,9 +590,8 @@ describe("initializeAllChannels", () => {
       requestedBy: { user: { id: "u3" } },
     });
 
-    const { initializeAllChannels } = await import(
-      "../../actions/stream/chat/channel.action"
-    );
+    const { initializeAllChannels } =
+      await import("../../actions/stream/chat/channel.action");
 
     const result = await initializeAllChannels();
 
@@ -640,9 +614,8 @@ describe("initializeAllChannels", () => {
     // Make the webinar channel creation fail
     mockPrisma.webinar.findUnique.mockResolvedValue(null);
 
-    const { initializeAllChannels } = await import(
-      "../../actions/stream/chat/channel.action"
-    );
+    const { initializeAllChannels } =
+      await import("../../actions/stream/chat/channel.action");
 
     const result = await initializeAllChannels();
 
@@ -661,18 +634,20 @@ describe("addMemberToChannel error handling", () => {
   it("should throw error when addMembers fails", async () => {
     mockChannel.addMembers.mockRejectedValueOnce(new Error("API error"));
 
-    const { addMemberToChannel } = await import(
-      "../../actions/stream/chat/channel.action"
-    );
+    const { addMemberToChannel } =
+      await import("../../actions/stream/chat/channel.action");
 
-    await expect(addMemberToChannel("test-channel", "user-123")).rejects.toThrow(
-      "API error"
-    );
+    await expect(
+      addMemberToChannel("test-channel", "user-123"),
+    ).rejects.toThrow("API error");
 
     expect(mockLogger.error).toHaveBeenCalledWith(
       "Failed to add member to channel",
       expect.any(Error),
-      expect.objectContaining({ channelId: "test-channel", userId: "user-123" })
+      expect.objectContaining({
+        channelId: "test-channel",
+        userId: "user-123",
+      }),
     );
   });
 });

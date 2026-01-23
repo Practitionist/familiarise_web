@@ -25,7 +25,12 @@ const Navbar = () => {
 
   // Check if we're on a page with dark hero (for transparent navbar)
   const isHomePage = pathname === "/";
-  const darkHeroPages = ["/", "/explore/experts", "/explore/programs", "/explore/community"];
+  const darkHeroPages = [
+    "/",
+    "/explore/experts",
+    "/explore/programs",
+    "/explore/community",
+  ];
   const hasDarkHero = darkHeroPages.includes(pathname);
 
   useEffect(() => {
@@ -102,11 +107,13 @@ const Navbar = () => {
     <>
       {/* Main Navbar */}
       <nav
-        className={`fixed w-full z-[1000] transition-all duration-300 ${isAnnouncementVisible ? "top-[42px]" : "top-0"
-          } ${showDarkStyle
+        className={`fixed w-full z-[1000] transition-all duration-300 ${
+          isAnnouncementVisible ? "top-[42px]" : "top-0"
+        } ${
+          showDarkStyle
             ? "bg-transparent"
             : "bg-white/90 backdrop-blur-xl border-b border-zinc-200 shadow-sm"
-          }`}
+        }`}
       >
         <div className="container mx-auto px-4 md:px-6">
           <div className="flex justify-between items-center h-16 md:h-20">
@@ -199,10 +206,11 @@ const Navbar = () => {
             <button
               onClick={toggleMenu}
               aria-label="Toggle Navigation"
-              className={`lg:hidden p-2 rounded-lg transition-colors ${showDarkStyle
-                ? "text-white hover:bg-white/10"
-                : "text-zinc-700 hover:bg-zinc-100"
-                }`}
+              className={`lg:hidden p-2 rounded-lg transition-colors ${
+                showDarkStyle
+                  ? "text-white hover:bg-white/10"
+                  : "text-zinc-700 hover:bg-zinc-100"
+              }`}
             >
               {isOpen ? (
                 <X className="w-6 h-6" />

@@ -22,7 +22,7 @@ export async function GET(req: NextRequest) {
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "Authentication required" },
-        { status: 401 }
+        { status: 401 },
       );
     }
 
@@ -35,7 +35,7 @@ export async function GET(req: NextRequest) {
     if (user?.role !== "CONSULTANT" || !user.consultantProfileId) {
       return NextResponse.json(
         { error: "Only consultants can search consultees" },
-        { status: 403 }
+        { status: 403 },
       );
     }
 
@@ -55,7 +55,12 @@ export async function GET(req: NextRequest) {
           consultantProfileId: consultantProfileId,
         },
         requestStatus: {
-          in: ["APPROVED", "APPROVED_PENDING_PAYMENT", "SCHEDULED", "COMPLETED"],
+          in: [
+            "APPROVED",
+            "APPROVED_PENDING_PAYMENT",
+            "SCHEDULED",
+            "COMPLETED",
+          ],
         },
       },
       include: {
@@ -101,7 +106,12 @@ export async function GET(req: NextRequest) {
           consultantProfileId: consultantProfileId,
         },
         requestStatus: {
-          in: ["APPROVED", "APPROVED_PENDING_PAYMENT", "SCHEDULED", "COMPLETED"],
+          in: [
+            "APPROVED",
+            "APPROVED_PENDING_PAYMENT",
+            "SCHEDULED",
+            "COMPLETED",
+          ],
         },
       },
       include: {
@@ -248,7 +258,7 @@ export async function GET(req: NextRequest) {
     console.error("Error searching consultees:", error);
     return NextResponse.json(
       { error: "Failed to search consultees" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

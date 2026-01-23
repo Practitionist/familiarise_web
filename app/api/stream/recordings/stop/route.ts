@@ -30,7 +30,7 @@ export async function POST(req: NextRequest) {
     if (session.user.role !== "CONSULTANT") {
       return NextResponse.json(
         { error: "Only consultants can stop recordings" },
-        { status: 403 }
+        { status: 403 },
       );
     }
 
@@ -74,20 +74,20 @@ export async function POST(req: NextRequest) {
     if (!meetingSession) {
       return NextResponse.json(
         { error: "Meeting session not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
     // Verify the consultant owns this appointment using helper function
     const { isOwner } = getMeetingSessionOwnershipInfo(
       meetingSession,
-      session.user.consultantProfileId
+      session.user.consultantProfileId,
     );
 
     if (!isOwner) {
       return NextResponse.json(
         { error: "Not authorized to stop this recording" },
-        { status: 403 }
+        { status: 403 },
       );
     }
 
@@ -95,7 +95,7 @@ export async function POST(req: NextRequest) {
     if (!meetingSession.isRecording) {
       return NextResponse.json(
         { error: "No recording in progress" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -105,7 +105,7 @@ export async function POST(req: NextRequest) {
     if (!result.success) {
       return NextResponse.json(
         { error: result.error || "Failed to stop recording" },
-        { status: 500 }
+        { status: 500 },
       );
     }
 
@@ -127,13 +127,13 @@ export async function POST(req: NextRequest) {
     if (error instanceof z.ZodError) {
       return NextResponse.json(
         { error: "Invalid request", details: error.errors },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     return NextResponse.json(
       { error: "Failed to stop recording" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

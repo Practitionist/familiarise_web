@@ -28,7 +28,14 @@ import {
 } from "@/components/ui/dialog";
 import { DocumentsTabProps, IDocument } from "../../types";
 import { useToast } from "@/hooks/use-toast";
-import { Eye, Download, FileText, MessageSquare, Reply, Upload } from "lucide-react";
+import {
+  Eye,
+  Download,
+  FileText,
+  MessageSquare,
+  Reply,
+  Upload,
+} from "lucide-react";
 import { ConsultantResponseUpload } from "./ConsultantResponseUpload";
 import {
   formatFileSize,
@@ -48,7 +55,8 @@ export function DocumentsTab({
   );
   const [reviewDialogOpen, setReviewDialogOpen] = useState(false);
   const [responseDialogOpen, setResponseDialogOpen] = useState(false);
-  const [documentForResponse, setDocumentForResponse] = useState<IDocument | null>(null);
+  const [documentForResponse, setDocumentForResponse] =
+    useState<IDocument | null>(null);
   const [reviewStatus, setReviewStatus] = useState<string>("");
   const [reviewNotes, setReviewNotes] = useState<string>("");
   const [isUpdating, setIsUpdating] = useState(false);
@@ -58,7 +66,6 @@ export function DocumentsTab({
     setDocumentForResponse(document);
     setResponseDialogOpen(true);
   };
-
 
   const handleReviewClick = (document: IDocument) => {
     setSelectedDocument(document);

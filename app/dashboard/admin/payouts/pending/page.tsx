@@ -70,7 +70,7 @@ export default function PendingPayoutsPage() {
   const [selectedPayout, setSelectedPayout] = useState<Payout | null>(null);
   const [rejectReason, setRejectReason] = useState("");
   const [dialogType, setDialogType] = useState<"approve" | "reject" | null>(
-    null
+    null,
   );
 
   const { data, isLoading, error } = useQuery({

@@ -69,8 +69,12 @@ export async function archiveWebhookEvents(): Promise<WebhookArchiveResult> {
       },
     });
 
-    console.log(`\nFound ${processedCount} processed events older than ${PROCESSED_RETENTION_DAYS} days`);
-    console.log(`Found ${failedCount} failed/errored events older than ${FAILED_RETENTION_DAYS} days`);
+    console.log(
+      `\nFound ${processedCount} processed events older than ${PROCESSED_RETENTION_DAYS} days`,
+    );
+    console.log(
+      `Found ${failedCount} failed/errored events older than ${FAILED_RETENTION_DAYS} days`,
+    );
 
     // Log some statistics before deletion
     const byProvider = await prisma.webhookEvent.groupBy({

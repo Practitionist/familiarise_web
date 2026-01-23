@@ -54,8 +54,11 @@ export async function DELETE(
         }
 
         // Verify ownership - user must own this webinar
-        if (!webinarInstance.webinarPlan.consultantProfile ||
-            webinarInstance.webinarPlan.consultantProfile.userId !== session.user.id) {
+        if (
+          !webinarInstance.webinarPlan.consultantProfile ||
+          webinarInstance.webinarPlan.consultantProfile.userId !==
+            session.user.id
+        ) {
           throw new Error("You do not have permission to delete this webinar");
         }
 

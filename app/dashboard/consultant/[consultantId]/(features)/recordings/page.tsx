@@ -13,7 +13,9 @@ interface RecordingsPageProps {
 
 export default function RecordingsPage({ params }: RecordingsPageProps) {
   const { consultantId } = use(params);
-  const [activeTab, setActiveTab] = useState<"all" | "webinar" | "class">("all");
+  const [activeTab, setActiveTab] = useState<"all" | "webinar" | "class">(
+    "all",
+  );
 
   return (
     <div className="container py-8 space-y-6">

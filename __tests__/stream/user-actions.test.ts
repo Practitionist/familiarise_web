@@ -56,11 +56,12 @@ describe("User Actions", () => {
 
       mockUserCache.isUserSynced.mockReturnValue(false);
       mockPrisma.user.findUnique.mockResolvedValue(mockUser);
-      mockStreamClient.upsertUser.mockResolvedValue({ users: { [mockUser.id]: mockUser } });
+      mockStreamClient.upsertUser.mockResolvedValue({
+        users: { [mockUser.id]: mockUser },
+      });
 
-      const { upsertUserToStream } = await import(
-        "../../actions/stream/chat/user.action"
-      );
+      const { upsertUserToStream } =
+        await import("../../actions/stream/chat/user.action");
 
       await upsertUserToStream("user-123");
 
@@ -89,9 +90,8 @@ describe("User Actions", () => {
     it("should skip upsert if user is recently synced", async () => {
       mockUserCache.isUserSynced.mockReturnValue(true);
 
-      const { upsertUserToStream } = await import(
-        "../../actions/stream/chat/user.action"
-      );
+      const { upsertUserToStream } =
+        await import("../../actions/stream/chat/user.action");
 
       const result = await upsertUserToStream("user-123");
 
@@ -103,12 +103,11 @@ describe("User Actions", () => {
       mockUserCache.isUserSynced.mockReturnValue(false);
       mockPrisma.user.findUnique.mockResolvedValue(null);
 
-      const { upsertUserToStream } = await import(
-        "../../actions/stream/chat/user.action"
-      );
+      const { upsertUserToStream } =
+        await import("../../actions/stream/chat/user.action");
 
       await expect(upsertUserToStream("nonexistent")).rejects.toThrow(
-        "User not found: nonexistent"
+        "User not found: nonexistent",
       );
     });
 
@@ -125,9 +124,8 @@ describe("User Actions", () => {
       mockPrisma.user.findUnique.mockResolvedValue(mockUser);
       mockStreamClient.upsertUser.mockResolvedValue({ users: {} });
 
-      const { upsertUserToStream } = await import(
-        "../../actions/stream/chat/user.action"
-      );
+      const { upsertUserToStream } =
+        await import("../../actions/stream/chat/user.action");
 
       await upsertUserToStream("user-456");
 
@@ -136,14 +134,13 @@ describe("User Actions", () => {
           id: "user-456",
           name: "user-456",
           image: undefined,
-        })
+        }),
       );
     });
 
     it("should reject empty user ID", async () => {
-      const { upsertUserToStream } = await import(
-        "../../actions/stream/chat/user.action"
-      );
+      const { upsertUserToStream } =
+        await import("../../actions/stream/chat/user.action");
 
       await expect(upsertUserToStream("")).rejects.toThrow();
     });
@@ -152,17 +149,28 @@ describe("User Actions", () => {
   describe("upsertUsersToStream", () => {
     it("should batch upsert multiple users", async () => {
       const mockUsers = [
-        { id: "user-1", name: "User 1", email: "u1@test.com", image: null, role: "CONSULTANT" },
-        { id: "user-2", name: "User 2", email: "u2@test.com", image: null, role: "CONSULTEE" },
+        {
+          id: "user-1",
+          name: "User 1",
+          email: "u1@test.com",
+          image: null,
+          role: "CONSULTANT",
+        },
+        {
+          id: "user-2",
+          name: "User 2",
+          email: "u2@test.com",
+          image: null,
+          role: "CONSULTEE",
+        },
       ];
 
       mockUserCache.isUserSynced.mockReturnValue(false);
       mockPrisma.user.findMany.mockResolvedValue(mockUsers);
       mockStreamClient.upsertUsers.mockResolvedValue({ users: {} });
 
-      const { upsertUsersToStream } = await import(
-        "../../actions/stream/chat/user.action"
-      );
+      const { upsertUsersToStream } =
+        await import("../../actions/stream/chat/user.action");
 
       await upsertUsersToStream(["user-1", "user-2"]);
 
@@ -181,7 +189,7 @@ describe("User Actions", () => {
         expect.arrayContaining([
           expect.objectContaining({ id: "user-1" }),
           expect.objectContaining({ id: "user-2" }),
-        ])
+        ]),
       );
 
       expect(mockUserCache.markUserSynced).toHaveBeenCalledTimes(2);
@@ -190,9 +198,8 @@ describe("User Actions", () => {
     it("should skip already synced users", async () => {
       mockUserCache.isUserSynced.mockReturnValue(true);
 
-      const { upsertUsersToStream } = await import(
-        "../../actions/stream/chat/user.action"
-      );
+      const { upsertUsersToStream } =
+        await import("../../actions/stream/chat/user.action");
 
       const result = await upsertUsersToStream(["user-1", "user-2"]);
 
@@ -201,9 +208,8 @@ describe("User Actions", () => {
     });
 
     it("should reject empty users array", async () => {
-      const { upsertUsersToStream } = await import(
-        "../../actions/stream/chat/user.action"
-      );
+      const { upsertUsersToStream } =
+        await import("../../actions/stream/chat/user.action");
 
       await expect(upsertUsersToStream([])).rejects.toThrow();
     });
@@ -212,15 +218,26 @@ describe("User Actions", () => {
   describe("searchUsers", () => {
     it("should search users by name or email", async () => {
       const mockResults = [
-        { id: "user-1", name: "John Doe", email: "john@test.com", image: null, role: "CONSULTANT" },
-        { id: "user-2", name: "Jane Doe", email: "jane@test.com", image: null, role: "CONSULTEE" },
+        {
+          id: "user-1",
+          name: "John Doe",
+          email: "john@test.com",
+          image: null,
+          role: "CONSULTANT",
+        },
+        {
+          id: "user-2",
+          name: "Jane Doe",
+          email: "jane@test.com",
+          image: null,
+          role: "CONSULTEE",
+        },
       ];
 
       mockPrisma.user.findMany.mockResolvedValue(mockResults);
 
-      const { searchUsers } = await import(
-        "../../actions/stream/chat/user.action"
-      );
+      const { searchUsers } =
+        await import("../../actions/stream/chat/user.action");
 
       const results = await searchUsers("Doe");
 
@@ -258,9 +275,8 @@ describe("User Actions", () => {
     it("should exclude system users from search", async () => {
       mockPrisma.user.findMany.mockResolvedValue([]);
 
-      const { searchUsers } = await import(
-        "../../actions/stream/chat/user.action"
-      );
+      const { searchUsers } =
+        await import("../../actions/stream/chat/user.action");
 
       await searchUsers("test");
 
@@ -276,22 +292,20 @@ describe("User Actions", () => {
               },
             ]),
           }),
-        })
+        }),
       );
     });
 
     it("should reject empty search term", async () => {
-      const { searchUsers } = await import(
-        "../../actions/stream/chat/user.action"
-      );
+      const { searchUsers } =
+        await import("../../actions/stream/chat/user.action");
 
       await expect(searchUsers("")).rejects.toThrow();
     });
 
     it("should reject too long search term", async () => {
-      const { searchUsers } = await import(
-        "../../actions/stream/chat/user.action"
-      );
+      const { searchUsers } =
+        await import("../../actions/stream/chat/user.action");
 
       const longTerm = "a".repeat(101);
       await expect(searchUsers(longTerm)).rejects.toThrow();
@@ -317,13 +331,12 @@ describe("User Actions", () => {
       mockPrisma.subscription.findFirst.mockResolvedValue(null);
       mockPrisma.slotOfAppointment.findFirst.mockResolvedValue(null);
 
-      const { checkUserRelationship } = await import(
-        "../../actions/stream/chat/user.action"
-      );
+      const { checkUserRelationship } =
+        await import("../../actions/stream/chat/user.action");
 
       const hasRelationship = await checkUserRelationship(
         "consultant-user",
-        "consultee-user"
+        "consultee-user",
       );
 
       expect(hasRelationship).toBe(true);
@@ -344,13 +357,12 @@ describe("User Actions", () => {
       mockPrisma.subscription.findFirst.mockResolvedValue(null);
       mockPrisma.slotOfAppointment.findFirst.mockResolvedValue(null);
 
-      const { checkUserRelationship } = await import(
-        "../../actions/stream/chat/user.action"
-      );
+      const { checkUserRelationship } =
+        await import("../../actions/stream/chat/user.action");
 
       const hasRelationship = await checkUserRelationship(
         "consultant-1",
-        "consultant-2"
+        "consultant-2",
       );
 
       expect(hasRelationship).toBe(false);
@@ -359,13 +371,12 @@ describe("User Actions", () => {
     it("should return false if user not found", async () => {
       mockPrisma.user.findUnique.mockResolvedValue(null);
 
-      const { checkUserRelationship } = await import(
-        "../../actions/stream/chat/user.action"
-      );
+      const { checkUserRelationship } =
+        await import("../../actions/stream/chat/user.action");
 
       const hasRelationship = await checkUserRelationship(
         "nonexistent-1",
-        "nonexistent-2"
+        "nonexistent-2",
       );
 
       expect(hasRelationship).toBe(false);
@@ -388,9 +399,8 @@ describe("User Actions", () => {
         id: "shared-slot-1",
       });
 
-      const { checkUserRelationship } = await import(
-        "../../actions/stream/chat/user.action"
-      );
+      const { checkUserRelationship } =
+        await import("../../actions/stream/chat/user.action");
 
       const hasRelationship = await checkUserRelationship("user-a", "user-b");
 
@@ -400,9 +410,8 @@ describe("User Actions", () => {
     it("should return false on database error", async () => {
       mockPrisma.user.findUnique.mockRejectedValue(new Error("DB error"));
 
-      const { checkUserRelationship } = await import(
-        "../../actions/stream/chat/user.action"
-      );
+      const { checkUserRelationship } =
+        await import("../../actions/stream/chat/user.action");
 
       const hasRelationship = await checkUserRelationship("user-1", "user-2");
 
@@ -410,7 +419,7 @@ describe("User Actions", () => {
       expect(mockLogger.error).toHaveBeenCalledWith(
         "Relationship check failed",
         expect.any(Error),
-        expect.objectContaining({ userId1: "user-1", userId2: "user-2" })
+        expect.objectContaining({ userId1: "user-1", userId2: "user-2" }),
       );
     });
 
@@ -432,13 +441,12 @@ describe("User Actions", () => {
       mockPrisma.subscription.findFirst.mockResolvedValue(null);
       mockPrisma.slotOfAppointment.findFirst.mockResolvedValue(null);
 
-      const { checkUserRelationship } = await import(
-        "../../actions/stream/chat/user.action"
-      );
+      const { checkUserRelationship } =
+        await import("../../actions/stream/chat/user.action");
 
       const hasRelationship = await checkUserRelationship(
         "consultee-user",
-        "consultant-user"
+        "consultant-user",
       );
 
       expect(hasRelationship).toBe(true);
@@ -461,13 +469,12 @@ describe("User Actions", () => {
       });
       mockPrisma.slotOfAppointment.findFirst.mockResolvedValue(null);
 
-      const { checkUserRelationship } = await import(
-        "../../actions/stream/chat/user.action"
-      );
+      const { checkUserRelationship } =
+        await import("../../actions/stream/chat/user.action");
 
       const hasRelationship = await checkUserRelationship(
         "consultee-user",
-        "consultant-user"
+        "consultant-user",
       );
 
       expect(hasRelationship).toBe(true);
@@ -479,36 +486,49 @@ describe("User Actions", () => {
       mockUserCache.isUserSynced.mockReturnValue(false);
       mockPrisma.user.findMany.mockResolvedValue([]);
 
-      const { upsertUsersToStream } = await import(
-        "../../actions/stream/chat/user.action"
-      );
+      const { upsertUsersToStream } =
+        await import("../../actions/stream/chat/user.action");
 
-      const result = await upsertUsersToStream(["nonexistent-1", "nonexistent-2"]);
+      const result = await upsertUsersToStream([
+        "nonexistent-1",
+        "nonexistent-2",
+      ]);
 
       expect(result).toEqual({ users: {} });
       expect(mockStreamClient.upsertUsers).not.toHaveBeenCalled();
       expect(mockLogger.warn).toHaveBeenCalledWith(
         "No users found for batch upsert",
-        expect.objectContaining({ requestedIds: ["nonexistent-1", "nonexistent-2"] })
+        expect.objectContaining({
+          requestedIds: ["nonexistent-1", "nonexistent-2"],
+        }),
       );
     });
 
     it("should throw and log error when Stream API fails", async () => {
       mockUserCache.isUserSynced.mockReturnValue(false);
       mockPrisma.user.findMany.mockResolvedValue([
-        { id: "user-1", name: "User 1", email: "u1@test.com", image: null, role: "CONSULTANT" },
+        {
+          id: "user-1",
+          name: "User 1",
+          email: "u1@test.com",
+          image: null,
+          role: "CONSULTANT",
+        },
       ]);
-      mockStreamClient.upsertUsers.mockRejectedValue(new Error("Stream API error"));
-
-      const { upsertUsersToStream } = await import(
-        "../../actions/stream/chat/user.action"
+      mockStreamClient.upsertUsers.mockRejectedValue(
+        new Error("Stream API error"),
       );
 
-      await expect(upsertUsersToStream(["user-1"])).rejects.toThrow("Stream API error");
+      const { upsertUsersToStream } =
+        await import("../../actions/stream/chat/user.action");
+
+      await expect(upsertUsersToStream(["user-1"])).rejects.toThrow(
+        "Stream API error",
+      );
       expect(mockLogger.error).toHaveBeenCalledWith(
         "Failed to batch upsert users to Stream",
         expect.any(Error),
-        expect.objectContaining({ userCount: 1 })
+        expect.objectContaining({ userCount: 1 }),
       );
     });
   });
@@ -546,11 +566,13 @@ describe("User Actions", () => {
       mockPrisma.subscription.findFirst.mockResolvedValue(null);
       mockPrisma.slotOfAppointment.findFirst.mockResolvedValue(null);
 
-      const { searchUsersWithRelationships } = await import(
-        "../../actions/stream/chat/user.action"
-      );
+      const { searchUsersWithRelationships } =
+        await import("../../actions/stream/chat/user.action");
 
-      const results = await searchUsersWithRelationships("test", "current-user");
+      const results = await searchUsersWithRelationships(
+        "test",
+        "current-user",
+      );
 
       expect(results).toHaveLength(2);
       expect(results[0]).toHaveProperty("hasRelationship");
@@ -559,20 +581,17 @@ describe("User Actions", () => {
     it("should exclude current user from results", async () => {
       mockPrisma.user.findMany.mockResolvedValueOnce([]);
 
-      const { searchUsersWithRelationships } = await import(
-        "../../actions/stream/chat/user.action"
-      );
+      const { searchUsersWithRelationships } =
+        await import("../../actions/stream/chat/user.action");
 
       await searchUsersWithRelationships("test", "current-user-id");
 
       expect(mockPrisma.user.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
-            AND: expect.arrayContaining([
-              { id: { not: "current-user-id" } },
-            ]),
+            AND: expect.arrayContaining([{ id: { not: "current-user-id" } }]),
           }),
-        })
+        }),
       );
     });
 
@@ -611,11 +630,13 @@ describe("User Actions", () => {
       mockPrisma.subscription.findFirst.mockResolvedValue(null);
       mockPrisma.slotOfAppointment.findFirst.mockResolvedValue(null);
 
-      const { searchUsersWithRelationships } = await import(
-        "../../actions/stream/chat/user.action"
-      );
+      const { searchUsersWithRelationships } =
+        await import("../../actions/stream/chat/user.action");
 
-      const results = await searchUsersWithRelationships("test", "current-user");
+      const results = await searchUsersWithRelationships(
+        "test",
+        "current-user",
+      );
 
       // Connected user (Adam with relationship) should come first
       expect(results[0].hasRelationship).toBe(true);
@@ -624,46 +645,45 @@ describe("User Actions", () => {
     it("should throw and log error on failure", async () => {
       mockPrisma.user.findMany.mockRejectedValue(new Error("DB failure"));
 
-      const { searchUsersWithRelationships } = await import(
-        "../../actions/stream/chat/user.action"
-      );
+      const { searchUsersWithRelationships } =
+        await import("../../actions/stream/chat/user.action");
 
       await expect(
-        searchUsersWithRelationships("test", "current-user")
+        searchUsersWithRelationships("test", "current-user"),
       ).rejects.toThrow("DB failure");
 
       expect(mockLogger.error).toHaveBeenCalledWith(
         "User search failed",
         expect.any(Error),
-        expect.objectContaining({ searchTerm: "test" })
+        expect.objectContaining({ searchTerm: "test" }),
       );
     });
 
     it("should reject empty search term", async () => {
-      const { searchUsersWithRelationships } = await import(
-        "../../actions/stream/chat/user.action"
-      );
+      const { searchUsersWithRelationships } =
+        await import("../../actions/stream/chat/user.action");
 
       await expect(
-        searchUsersWithRelationships("", "current-user")
+        searchUsersWithRelationships("", "current-user"),
       ).rejects.toThrow();
     });
   });
 
   describe("searchUsers error handling", () => {
     it("should throw and log error on database failure", async () => {
-      mockPrisma.user.findMany.mockRejectedValue(new Error("DB connection failed"));
-
-      const { searchUsers } = await import(
-        "../../actions/stream/chat/user.action"
+      mockPrisma.user.findMany.mockRejectedValue(
+        new Error("DB connection failed"),
       );
+
+      const { searchUsers } =
+        await import("../../actions/stream/chat/user.action");
 
       await expect(searchUsers("test")).rejects.toThrow("DB connection failed");
 
       expect(mockLogger.error).toHaveBeenCalledWith(
         "Legacy user search failed",
         expect.any(Error),
-        expect.objectContaining({ searchTerm: "test" })
+        expect.objectContaining({ searchTerm: "test" }),
       );
     });
   });

@@ -61,7 +61,8 @@ export function RequestedSlotsDialog({
   onCancel,
 }: RequestedSlotsDialogProps) {
   // Calculate reschedule info from slots with status
-  const tentativeCount = requestedSlotsWithStatus?.filter((s) => s.isTentative).length ?? 0;
+  const tentativeCount =
+    requestedSlotsWithStatus?.filter((s) => s.isTentative).length ?? 0;
   const totalCount = requestedSlotsWithStatus?.length ?? requestedSlots.length;
   const hasReschedule = tentativeCount > 0;
   const isFullReschedule = tentativeCount === totalCount && tentativeCount > 0;
@@ -448,14 +449,16 @@ export function RequestedSlotsDialog({
               <div className="flex items-center gap-2 text-sm font-medium text-blue-600 bg-blue-50 px-3 py-2 rounded-md border border-blue-200">
                 <RefreshCw className="h-4 w-4" />
                 <span>
-                  Full Reschedule - All {totalCount} session{totalCount !== 1 ? "s" : ""} need new times
+                  Full Reschedule - All {totalCount} session
+                  {totalCount !== 1 ? "s" : ""} need new times
                 </span>
               </div>
             ) : (
               <div className="flex items-center gap-2 text-sm font-medium text-amber-600 bg-amber-50 px-3 py-2 rounded-md border border-amber-200">
                 <AlertTriangle className="h-4 w-4" />
                 <span>
-                  Partial Reschedule - {tentativeCount} of {totalCount} session{tentativeCount !== 1 ? "s" : ""} need new times
+                  Partial Reschedule - {tentativeCount} of {totalCount} session
+                  {tentativeCount !== 1 ? "s" : ""} need new times
                 </span>
               </div>
             )}

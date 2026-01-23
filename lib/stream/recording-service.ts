@@ -41,7 +41,7 @@ export class RecordingService {
    */
   static async startRecording(
     streamCallId: string,
-    userId: string
+    userId: string,
   ): Promise<{ success: boolean; error?: string }> {
     try {
       const client = getStreamVideoClient();
@@ -78,7 +78,7 @@ export class RecordingService {
    * @param streamCallId The Stream call ID
    */
   static async stopRecording(
-    streamCallId: string
+    streamCallId: string,
   ): Promise<{ success: boolean; error?: string }> {
     try {
       const client = getStreamVideoClient();
@@ -111,7 +111,7 @@ export class RecordingService {
    * @param streamCallId The Stream call ID
    */
   static async getCallRecordingsFromStream(
-    streamCallId: string
+    streamCallId: string,
   ): Promise<StreamRecording[]> {
     try {
       const client = getStreamVideoClient();
@@ -143,7 +143,7 @@ export class RecordingService {
    * @param meetingSessionId The meeting session ID
    */
   static async getSessionRecordings(
-    meetingSessionId: string
+    meetingSessionId: string,
   ): Promise<Recording[]> {
     try {
       const recordings = await prisma.recording.findMany({
@@ -172,7 +172,7 @@ export class RecordingService {
    * @param webinarPlanId The webinar plan ID
    */
   static async getWebinarPlanRecordings(
-    webinarPlanId: string
+    webinarPlanId: string,
   ): Promise<WebinarPlanRecordingWithDetails[]> {
     try {
       const recordings = await prisma.recording.findMany({
@@ -210,7 +210,7 @@ export class RecordingService {
    * @param classPlanId The class plan ID
    */
   static async getClassPlanRecordings(
-    classPlanId: string
+    classPlanId: string,
   ): Promise<ClassPlanRecordingWithDetails[]> {
     try {
       const recordings = await prisma.recording.findMany({
@@ -253,7 +253,7 @@ export class RecordingService {
     filters?: {
       type?: "webinar" | "class";
       status?: RecordingStatus;
-    }
+    },
   ): Promise<ConsultantRecordingWithDetails[]> {
     try {
       // Build type-specific conditions based on filter
@@ -325,7 +325,7 @@ export class RecordingService {
     userId: string,
     filters?: {
       type?: "webinar" | "class";
-    }
+    },
   ): Promise<ConsulteeRecordingWithDetails[]> {
     try {
       // Find all enrollments (paid appointments) for this user
@@ -334,10 +334,7 @@ export class RecordingService {
           userId,
           paymentStatus: "SUCCEEDED",
           appointment: {
-            OR: [
-              { webinar: { isNot: null } },
-              { class: { isNot: null } },
-            ],
+            OR: [{ webinar: { isNot: null } }, { class: { isNot: null } }],
           },
         },
         select: {
@@ -363,15 +360,15 @@ export class RecordingService {
         new Set(
           enrolledAppointments
             .map((e) => e.appointment?.webinar?.webinarPlanId)
-            .filter((id): id is string => !!id)
-        )
+            .filter((id): id is string => !!id),
+        ),
       );
       const classPlanIds = Array.from(
         new Set(
           enrolledAppointments
             .map((e) => e.appointment?.class?.classPlanId)
-            .filter((id): id is string => !!id)
-        )
+            .filter((id): id is string => !!id),
+        ),
       );
 
       // Build query based on type filter
@@ -446,7 +443,7 @@ export class RecordingService {
    * @param recordingId The recording ID
    */
   static async getRecordingById(
-    recordingId: string
+    recordingId: string,
   ): Promise<RecordingWithAccessControl | null> {
     try {
       const recording = await prisma.recording.findUnique({
@@ -472,7 +469,7 @@ export class RecordingService {
   static async updateRecordingStatus(
     recordingId: string,
     status: RecordingStatus,
-    additionalData?: Partial<Recording>
+    additionalData?: Partial<Recording>,
   ): Promise<Recording | null> {
     try {
       const recording = await prisma.recording.update({
@@ -503,7 +500,7 @@ export class RecordingService {
    * @param appointmentId The appointment ID
    */
   static async isRecordingEnabledForAppointment(
-    appointmentId: string
+    appointmentId: string,
   ): Promise<boolean> {
     try {
       const appointment = await prisma.appointment.findUnique({
@@ -559,7 +556,7 @@ export class RecordingService {
    * @param daysBeforeExpiry Number of days before expiry to consider
    */
   static async getExpiringRecordings(
-    daysBeforeExpiry: number = 3
+    daysBeforeExpiry: number = 3,
   ): Promise<Recording[]> {
     const expiryThreshold = new Date();
     expiryThreshold.setDate(expiryThreshold.getDate() + daysBeforeExpiry);
@@ -591,9 +588,11 @@ export class RecordingService {
    * Get the current recording state for a meeting session
    * @param meetingSessionId The meeting session ID
    */
-  static async getRecordingState(
-    meetingSessionId: string
-  ): Promise<{ isRecording: boolean; startedAt: Date | null; startedBy: string | null }> {
+  static async getRecordingState(meetingSessionId: string): Promise<{
+    isRecording: boolean;
+    startedAt: Date | null;
+    startedBy: string | null;
+  }> {
     try {
       const session = await prisma.meetingSession.findUnique({
         where: { id: meetingSessionId },
@@ -627,7 +626,7 @@ export class RecordingService {
    * @param consultantProfileId The consultant profile ID
    */
   static async syncRecordingsForConsultant(
-    consultantProfileId: string
+    consultantProfileId: string,
   ): Promise<{ synced: number; recordings: Recording[] }> {
     const syncedRecordings: Recording[] = [];
 
@@ -703,7 +702,7 @@ export class RecordingService {
 
         try {
           const streamRecordings = await this.getCallRecordingsFromStream(
-            session.streamCallId
+            session.streamCallId,
           );
 
           for (const streamRec of streamRecordings) {
@@ -727,7 +726,7 @@ export class RecordingService {
             const startDate = new Date(streamRec.start_time);
             const endDate = new Date(streamRec.end_time);
             const durationInMinutes = Math.round(
-              (endDate.getTime() - startDate.getTime()) / (1000 * 60)
+              (endDate.getTime() - startDate.getTime()) / (1000 * 60),
             );
 
             // Generate title from appointment info (same logic as handleRecordingReady)
@@ -782,10 +781,14 @@ export class RecordingService {
             });
           }
         } catch (sessionError) {
-          streamLogger.error("Failed to sync recordings for session", sessionError, {
-            sessionId: session.id,
-            streamCallId: session.streamCallId,
-          });
+          streamLogger.error(
+            "Failed to sync recordings for session",
+            sessionError,
+            {
+              sessionId: session.id,
+              streamCallId: session.streamCallId,
+            },
+          );
           // Continue with next session even if one fails
         }
       }
@@ -815,7 +818,7 @@ export class RecordingService {
    */
   static async syncRecordingsForConsultee(
     consulteeProfileId: string,
-    userId?: string
+    userId?: string,
   ): Promise<{ synced: number; recordings: Recording[] }> {
     const syncedRecordings: Recording[] = [];
 
@@ -843,10 +846,7 @@ export class RecordingService {
           userId: effectiveUserId,
           paymentStatus: "SUCCEEDED",
           appointment: {
-            OR: [
-              { webinar: { isNot: null } },
-              { class: { isNot: null } },
-            ],
+            OR: [{ webinar: { isNot: null } }, { class: { isNot: null } }],
           },
         },
         include: {
@@ -910,7 +910,7 @@ export class RecordingService {
 
       // Deduplicate sessions by ID
       const uniqueSessions = Array.from(
-        new Map(meetingSessions.map((s) => [s.id, s])).values()
+        new Map(meetingSessions.map((s) => [s.id, s])).values(),
       );
 
       streamLogger.info("Syncing recordings for consultee", {
@@ -924,7 +924,7 @@ export class RecordingService {
 
         try {
           const streamRecordings = await this.getCallRecordingsFromStream(
-            session.streamCallId
+            session.streamCallId,
           );
 
           for (const streamRec of streamRecordings) {
@@ -948,7 +948,7 @@ export class RecordingService {
             const startDate = new Date(streamRec.start_time);
             const endDate = new Date(streamRec.end_time);
             const durationInMinutes = Math.round(
-              (endDate.getTime() - startDate.getTime()) / (1000 * 60)
+              (endDate.getTime() - startDate.getTime()) / (1000 * 60),
             );
 
             // Generate title from appointment info (same logic as handleRecordingReady)
@@ -1003,10 +1003,14 @@ export class RecordingService {
             });
           }
         } catch (sessionError) {
-          streamLogger.error("Failed to sync recordings for session", sessionError, {
-            sessionId: session.id,
-            streamCallId: session.streamCallId,
-          });
+          streamLogger.error(
+            "Failed to sync recordings for session",
+            sessionError,
+            {
+              sessionId: session.id,
+              streamCallId: session.streamCallId,
+            },
+          );
           // Continue with next session even if one fails
         }
       }

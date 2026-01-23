@@ -33,7 +33,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     });
 
     // Return 207 if missing files found (needs attention)
-    const status = result.missingFilesFound > 0 ? 207 : result.success ? 200 : 500;
+    const status =
+      result.missingFilesFound > 0 ? 207 : result.success ? 200 : 500;
 
     return NextResponse.json(result, { status });
   } catch (error) {

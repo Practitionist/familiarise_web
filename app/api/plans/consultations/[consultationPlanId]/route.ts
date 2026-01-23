@@ -88,7 +88,9 @@ export async function PUT(
 
     if (existingPlan.consultantProfile.userId !== session.user.id) {
       return NextResponse.json(
-        { error: "You do not have permission to update this consultation plan" },
+        {
+          error: "You do not have permission to update this consultation plan",
+        },
         { status: 403 },
       );
     }
@@ -207,7 +209,9 @@ export async function DELETE(
 
     if (existingPlan.consultantProfile.userId !== session.user.id) {
       return NextResponse.json(
-        { error: "You do not have permission to delete this consultation plan" },
+        {
+          error: "You do not have permission to delete this consultation plan",
+        },
         { status: 403 },
       );
     }

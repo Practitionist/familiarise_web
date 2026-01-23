@@ -376,7 +376,6 @@ export function DocumentUpload({
     }
   };
 
-
   const getErrorIcon = (errorCode?: string) => {
     switch (errorCode) {
       case "CONNECTION_ERROR":
@@ -595,7 +594,8 @@ export function DocumentUpload({
                   {documents
                     .filter(
                       (doc) =>
-                        !doc.uploadedByRole || doc.uploadedByRole === "CONSULTEE"
+                        !doc.uploadedByRole ||
+                        doc.uploadedByRole === "CONSULTEE",
                     )
                     .map((doc) => (
                       <div
@@ -631,13 +631,15 @@ export function DocumentUpload({
                                 <span>{formatFileSize(doc.fileSize)}</span>
                                 <span>
                                   Uploaded{" "}
-                                  {new Date(doc.uploadedAt).toLocaleDateString()}
+                                  {new Date(
+                                    doc.uploadedAt,
+                                  ).toLocaleDateString()}
                                 </span>
                                 {doc.reviewedAt && (
                                   <span>
                                     Reviewed{" "}
                                     {new Date(
-                                      doc.reviewedAt
+                                      doc.reviewedAt,
                                     ).toLocaleDateString()}
                                   </span>
                                 )}
@@ -729,11 +731,13 @@ export function DocumentUpload({
                                           )}
                                           <div className="flex items-center space-x-3 mt-1 text-xs text-purple-500">
                                             <span>
-                                              {formatFileSize(response.fileSize)}
+                                              {formatFileSize(
+                                                response.fileSize,
+                                              )}
                                             </span>
                                             <span>
                                               {new Date(
-                                                response.uploadedAt
+                                                response.uploadedAt,
                                               ).toLocaleDateString()}
                                             </span>
                                           </div>
@@ -746,7 +750,7 @@ export function DocumentUpload({
                                           onClick={() =>
                                             window.open(
                                               response.fileUrl,
-                                              "_blank"
+                                              "_blank",
                                             )
                                           }
                                           title="View response"
@@ -760,15 +764,18 @@ export function DocumentUpload({
                                           onClick={() => {
                                             const downloadUrl = `/api/appointments/${appointmentId}/documents/${response.id}/download`;
                                             const link =
-                                              window.document.createElement("a");
+                                              window.document.createElement(
+                                                "a",
+                                              );
                                             link.href = downloadUrl;
-                                            link.download = response.originalName;
+                                            link.download =
+                                              response.originalName;
                                             window.document.body.appendChild(
-                                              link
+                                              link,
                                             );
                                             link.click();
                                             window.document.body.removeChild(
-                                              link
+                                              link,
                                             );
                                           }}
                                           title="Download response"

@@ -164,7 +164,9 @@ export async function GET(req: NextRequest) {
     const byMonth: Record<string, number> = {};
     for (const cancellation of allCancellations) {
       if (cancellation.cancelledAt) {
-        const month = new Date(cancellation.cancelledAt).toISOString().slice(0, 7);
+        const month = new Date(cancellation.cancelledAt)
+          .toISOString()
+          .slice(0, 7);
         byMonth[month] = (byMonth[month] || 0) + 1;
       }
     }
@@ -176,7 +178,7 @@ export async function GET(req: NextRequest) {
     // Calculate potential refund amount (sum of cancelled booking values)
     const potentialRefundAmount = allCancellations.reduce(
       (sum, c) => sum + (c.price || 0),
-      0
+      0,
     );
 
     // Get actual refunds in period
@@ -241,7 +243,7 @@ export async function GET(req: NextRequest) {
     console.error("Error fetching cancellation analytics:", error);
     return NextResponse.json(
       { error: "Failed to fetch cancellation analytics" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

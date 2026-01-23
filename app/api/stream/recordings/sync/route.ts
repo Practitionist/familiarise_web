@@ -20,7 +20,16 @@ export async function POST(_req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    let result: { synced: number; recordings: { id: string; title: string; durationInMinutes: number; recordedAt: Date; status: string }[] };
+    let result: {
+      synced: number;
+      recordings: {
+        id: string;
+        title: string;
+        durationInMinutes: number;
+        recordedAt: Date;
+        status: string;
+      }[];
+    };
 
     if (session.user.role === "CONSULTANT") {
       // Consultant syncs their own sessions
@@ -28,32 +37,28 @@ export async function POST(_req: NextRequest) {
       if (!consultantProfileId) {
         return NextResponse.json(
           { error: "Consultant profile not found" },
-          { status: 400 }
+          { status: 400 },
         );
       }
 
-      result = await RecordingService.syncRecordingsForConsultant(
-        consultantProfileId
-      );
+      result =
+        await RecordingService.syncRecordingsForConsultant(consultantProfileId);
     } else if (session.user.role === "CONSULTEE") {
       // Consultee syncs their enrolled sessions
       const consulteeProfileId = session.user.consulteeProfileId;
       if (!consulteeProfileId) {
         return NextResponse.json(
           { error: "Consultee profile not found" },
-          { status: 400 }
+          { status: 400 },
         );
       }
 
       result = await RecordingService.syncRecordingsForConsultee(
         consulteeProfileId,
-        session.user.id
+        session.user.id,
       );
     } else {
-      return NextResponse.json(
-        { error: "Invalid user role" },
-        { status: 403 }
-      );
+      return NextResponse.json({ error: "Invalid user role" }, { status: 403 });
     }
 
     return NextResponse.json({
@@ -72,7 +77,7 @@ export async function POST(_req: NextRequest) {
 
     return NextResponse.json(
       { error: "Failed to sync recordings" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

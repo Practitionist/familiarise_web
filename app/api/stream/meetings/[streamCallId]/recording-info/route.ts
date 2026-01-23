@@ -64,7 +64,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     if (!meetingSession) {
       return NextResponse.json(
         { error: "Meeting session not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
@@ -136,7 +136,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     console.error("Error getting meeting recording info:", error);
     return NextResponse.json(
       { error: "Failed to get recording info" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

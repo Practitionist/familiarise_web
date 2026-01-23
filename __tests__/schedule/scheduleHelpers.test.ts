@@ -8,7 +8,11 @@ import {
   getActualUpcomingSlots,
   isEventJoinable,
 } from "@/app/dashboard/consultee/[consulteeId]/utils/scheduleHelpers";
-import { eventWithoutSlots, mockEvents, pastEvent } from "./__mocks__/scheduleHelpers.mockData";
+import {
+  eventWithoutSlots,
+  mockEvents,
+  pastEvent,
+} from "./__mocks__/scheduleHelpers.mockData";
 
 describe("Schedule Data Consistency Tests", () => {
   const now = new Date("2024-12-28T00:00:00Z");

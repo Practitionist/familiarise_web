@@ -67,7 +67,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     console.error("Error fetching invoice:", error);
     return NextResponse.json(
       { error: "Failed to fetch invoice" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

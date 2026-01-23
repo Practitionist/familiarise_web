@@ -24,7 +24,7 @@ export async function GET(req: NextRequest) {
   if (process.env.NODE_ENV !== "development") {
     return NextResponse.json(
       { error: "Dev bypass only available in development mode" },
-      { status: 403 }
+      { status: 403 },
     );
   }
 

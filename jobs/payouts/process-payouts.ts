@@ -35,7 +35,9 @@ function outputToGitHubActions(result: ProcessingResult): void {
 
   if (!result.success) {
     const allErrors = result.errors.join("; ");
-    console.log(`::error::Process payouts job completed with errors: ${allErrors}`);
+    console.log(
+      `::error::Process payouts job completed with errors: ${allErrors}`,
+    );
   }
 }
 
@@ -44,7 +46,9 @@ function outputToGitHubActions(result: ProcessingResult): void {
  */
 async function main(): Promise<void> {
   const startTime = Date.now();
-  console.log(`🚀 Starting payout processing job at ${new Date().toISOString()}`);
+  console.log(
+    `🚀 Starting payout processing job at ${new Date().toISOString()}`,
+  );
 
   try {
     // Run payout processing

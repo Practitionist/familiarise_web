@@ -37,10 +37,7 @@ export class ConsultationService {
       const { isDuplicate } = await response.json();
       return isDuplicate;
     } catch (error) {
-      console.error(
-        "[ConsultationService.checkDuplicateTitle] Error:",
-        error,
-      );
+      console.error("[ConsultationService.checkDuplicateTitle] Error:", error);
       return false;
     }
   }
@@ -137,10 +134,7 @@ export class ConsultationService {
         consultationPlan,
       };
     } catch (error) {
-      console.error(
-        "[ConsultationService.saveConsultationPlan] Error:",
-        error,
-      );
+      console.error("[ConsultationService.saveConsultationPlan] Error:", error);
       throw error;
     }
   }

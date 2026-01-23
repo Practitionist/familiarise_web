@@ -31,7 +31,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     if (session.user.role !== "CONSULTANT") {
       return NextResponse.json(
         { error: "Only consultants can transfer recordings" },
-        { status: 403 }
+        { status: 403 },
       );
     }
 
@@ -77,20 +77,20 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     if (!recording) {
       return NextResponse.json(
         { error: "Recording not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
     // Verify ownership using helper function
     const { isOwner } = getRecordingOwnershipInfo(
       recording,
-      session.user.consultantProfileId
+      session.user.consultantProfileId,
     );
 
     if (!isOwner) {
       return NextResponse.json(
         { error: "Not authorized to transfer this recording" },
-        { status: 403 }
+        { status: 403 },
       );
     }
 
@@ -98,7 +98,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     if (recording.storageType === "SUPABASE") {
       return NextResponse.json(
         { error: "Recording is already transferred to permanent storage" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -108,19 +108,18 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         {
           error: `Recording cannot be transferred in ${recording.status} state`,
         },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     // Start transfer
-    const result = await RecordingTransferService.transferRecordingToSupabase(
-      recordingId
-    );
+    const result =
+      await RecordingTransferService.transferRecordingToSupabase(recordingId);
 
     if (!result.success) {
       return NextResponse.json(
         { error: result.error || "Transfer failed" },
-        { status: 500 }
+        { status: 500 },
       );
     }
 
@@ -145,7 +144,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     console.error("Error transferring recording:", error);
     return NextResponse.json(
       { error: "Failed to transfer recording" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

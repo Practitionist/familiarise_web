@@ -16,7 +16,7 @@ const isDevelopment = () =>
  */
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ appointmentId: string }> }
+  { params }: { params: Promise<{ appointmentId: string }> },
 ) {
   try {
     const session = await getServerSession(authOptions);
@@ -27,7 +27,7 @@ export async function POST(
           message: "Please sign in to upload documents",
           code: "UNAUTHORIZED",
         },
-        { status: 401 }
+        { status: 401 },
       );
     }
 
@@ -143,7 +143,7 @@ export async function POST(
             "Appointment not found or you don't have consultant access to it",
           code: "FORBIDDEN",
         },
-        { status: 403 }
+        { status: 403 },
       );
     }
 
@@ -161,7 +161,7 @@ export async function POST(
           message: "Could not determine consultant for this appointment",
           code: "SERVER_ERROR",
         },
-        { status: 500 }
+        { status: 500 },
       );
     }
 
@@ -180,7 +180,7 @@ export async function POST(
           message: "Please select a file to upload",
           code: "INVALID_INPUT",
         },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -200,7 +200,7 @@ export async function POST(
             message: "The document you're responding to does not exist",
             code: "NOT_FOUND",
           },
-          { status: 404 }
+          { status: 404 },
         );
       }
     }
@@ -221,7 +221,7 @@ export async function POST(
           message: uploadResult.error || "Failed to upload file",
           code: "UPLOAD_ERROR",
         },
-        { status: 500 }
+        { status: 500 },
       );
     }
 
@@ -254,7 +254,7 @@ export async function POST(
         message: "Failed to upload document",
         code: "SERVER_ERROR",
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

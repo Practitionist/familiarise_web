@@ -38,10 +38,14 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     const body = await req.json();
 
     // Validate required fields
-    if (!body.message || typeof body.message !== "string" || !body.message.trim()) {
+    if (
+      !body.message ||
+      typeof body.message !== "string" ||
+      !body.message.trim()
+    ) {
       return NextResponse.json(
         { error: "Message is required" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -92,7 +96,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     console.error("Error creating support response:", error);
     return NextResponse.json(
       { error: "Failed to create response" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -140,7 +144,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     console.error("Error fetching support responses:", error);
     return NextResponse.json(
       { error: "Failed to fetch responses" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

@@ -51,9 +51,7 @@ export default async function RootLayout({
             <AnnouncementBar />
             <Navbar />
             <HeaderSpacer />
-            <div className="flex-1 w-full">
-              {children}
-            </div>
+            <div className="flex-1 w-full">{children}</div>
             <Footer />
           </NextAuthProvider>
         </ReactQueryProvider>

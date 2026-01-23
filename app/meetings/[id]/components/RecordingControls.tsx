@@ -222,7 +222,7 @@ const RecordingControls = ({
           isRecording
             ? "bg-red-500 hover:bg-red-600 text-white"
             : "bg-zinc-800 hover:bg-zinc-700 text-white",
-          isLoading && "opacity-50 cursor-not-allowed"
+          isLoading && "opacity-50 cursor-not-allowed",
         )}
         title={isRecording ? "Stop Recording" : "Start Recording"}
       >

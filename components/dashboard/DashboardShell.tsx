@@ -13,7 +13,9 @@ interface MobileSidebarContextType {
   toggle: () => void;
 }
 
-const MobileSidebarContext = createContext<MobileSidebarContextType | null>(null);
+const MobileSidebarContext = createContext<MobileSidebarContextType | null>(
+  null,
+);
 
 export function useMobileSidebar() {
   const context = useContext(MobileSidebarContext);
@@ -129,10 +131,7 @@ export function MobileMenuButton({ className }: { className?: string }) {
       variant="ghost"
       size="icon"
       onClick={toggle}
-      className={cn(
-        "lg:hidden h-9 w-9 shrink-0",
-        className
-      )}
+      className={cn("lg:hidden h-9 w-9 shrink-0", className)}
     >
       <Menu className="h-5 w-5" />
       <span className="sr-only">Toggle menu</span>
@@ -178,12 +177,20 @@ export function DashboardHeader({
 
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
-            <h1 className="text-xl sm:text-2xl font-bold text-zinc-900 truncate">{title}</h1>
+            <h1 className="text-xl sm:text-2xl font-bold text-zinc-900 truncate">
+              {title}
+            </h1>
             {subtitle && (
-              <p className="text-xs sm:text-sm text-zinc-500 mt-0.5 truncate">{subtitle}</p>
+              <p className="text-xs sm:text-sm text-zinc-500 mt-0.5 truncate">
+                {subtitle}
+              </p>
             )}
           </div>
-          {actions && <div className="flex items-center gap-2 sm:gap-3 shrink-0">{actions}</div>}
+          {actions && (
+            <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+              {actions}
+            </div>
+          )}
         </div>
       </div>
     </div>

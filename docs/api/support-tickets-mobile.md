@@ -114,6 +114,7 @@ Content-Type: application/json
 ```
 
 **Response (201 Created):**
+
 ```json
 {
   "id": "uuid-...",
@@ -138,6 +139,7 @@ Authorization: Bearer <token>
 ```
 
 **Response:**
+
 ```json
 [
   {
@@ -178,6 +180,7 @@ Content-Type: application/json
 ```
 
 **Response (201 Created):**
+
 ```json
 {
   "id": "uuid-...",
@@ -201,6 +204,7 @@ file: <binary file data>
 ```
 
 **Response (201 Created):**
+
 ```json
 {
   "attachment": {
@@ -215,6 +219,7 @@ file: <binary file data>
 ```
 
 **Limits:**
+
 - Max file size: 10MB
 - Max 5 attachments per ticket
 - Allowed types: PDF, Word docs, images (JPG, PNG, GIF, WebP), text files
@@ -302,13 +307,13 @@ await supabase.storage
 
 ## Error Handling
 
-| HTTP Status | Error | Description |
-|------------|-------|-------------|
-| 401 | Unauthorized | User not logged in |
-| 400 | Invalid issue type | Unknown issueType value |
-| 400 | Invalid consultation ID | Linked consultation doesn't exist or doesn't belong to user |
-| 404 | Ticket not found | Ticket ID doesn't exist |
-| 500 | Server error | Something went wrong |
+| HTTP Status | Error                   | Description                                                 |
+| ----------- | ----------------------- | ----------------------------------------------------------- |
+| 401         | Unauthorized            | User not logged in                                          |
+| 400         | Invalid issue type      | Unknown issueType value                                     |
+| 400         | Invalid consultation ID | Linked consultation doesn't exist or doesn't belong to user |
+| 404         | Ticket not found        | Ticket ID doesn't exist                                     |
+| 500         | Server error            | Something went wrong                                        |
 
 ---
 
@@ -317,6 +322,7 @@ await supabase.storage
 For local development, the API accepts tickets without real authentication when `NODE_ENV=development`.
 
 To test the full flow:
+
 1. Create a ticket from mobile
 2. Check the web staff dashboard - ticket should appear immediately
 3. Respond from staff dashboard

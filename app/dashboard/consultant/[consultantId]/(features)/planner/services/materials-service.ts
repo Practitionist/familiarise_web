@@ -31,7 +31,7 @@ export class MaterialsService {
    */
   static async getMaterials(
     planType: PlanType,
-    planId: string
+    planId: string,
   ): Promise<IPlanMaterial[]> {
     try {
       const response = await fetch(this.getEndpoint(planType, planId));
@@ -55,7 +55,7 @@ export class MaterialsService {
     planType: PlanType,
     planId: string,
     file: File,
-    description?: string
+    description?: string,
   ): Promise<IPlanMaterial> {
     try {
       const formData = new FormData();
@@ -106,7 +106,7 @@ export class MaterialsService {
    */
   static async updateMaterial(
     materialId: string,
-    updates: { order?: number; description?: string }
+    updates: { order?: number; description?: string },
   ): Promise<IPlanMaterial> {
     try {
       const response = await fetch(`/api/plans/materials/${materialId}`, {
@@ -136,14 +136,14 @@ export class MaterialsService {
   static async reorderMaterials(
     planType: PlanType,
     planId: string,
-    orderedIds: string[]
+    orderedIds: string[],
   ): Promise<void> {
     try {
       // Update each material's order
       await Promise.all(
         orderedIds.map((id, index) =>
-          this.updateMaterial(id, { order: index })
-        )
+          this.updateMaterial(id, { order: index }),
+        ),
       );
     } catch (error) {
       console.error("Error reordering materials:", error);
@@ -165,7 +165,7 @@ export class ConsultantDocumentService {
     options?: {
       description?: string;
       responseToDocumentId?: string;
-    }
+    },
   ): Promise<unknown> {
     try {
       const formData = new FormData();
@@ -182,7 +182,7 @@ export class ConsultantDocumentService {
         {
           method: "POST",
           body: formData,
-        }
+        },
       );
 
       const result = await response.json();

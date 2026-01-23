@@ -169,11 +169,12 @@ export default function SubscriptionPricingToggle({
           <TabsTrigger
             key={option.durationInMonths}
             value={option.title.toLowerCase().replace(" ", "-")}
-            className={`${activeSubscriptionOption ===
+            className={`${
+              activeSubscriptionOption ===
               option.title.toLowerCase().replace(" ", "-")
-              ? "bg-white text-zinc-900 shadow-sm"
-              : "text-zinc-400 hover:text-white hover:bg-zinc-700/50"
-              } flex-1 px-2 sm:px-4 py-2 rounded-lg font-medium text-xs sm:text-sm transition-all duration-200 whitespace-nowrap`}
+                ? "bg-white text-zinc-900 shadow-sm"
+                : "text-zinc-400 hover:text-white hover:bg-zinc-700/50"
+            } flex-1 px-2 sm:px-4 py-2 rounded-lg font-medium text-xs sm:text-sm transition-all duration-200 whitespace-nowrap`}
           >
             {option.title}
           </TabsTrigger>
@@ -188,7 +189,7 @@ export default function SubscriptionPricingToggle({
             animate={{
               opacity:
                 activeSubscriptionOption ===
-                  option.title.toLowerCase().replace(" ", "-")
+                option.title.toLowerCase().replace(" ", "-")
                   ? 1
                   : 0,
               y: 0,
@@ -196,7 +197,7 @@ export default function SubscriptionPricingToggle({
             transition={{ duration: 0.2 }}
             className={
               activeSubscriptionOption ===
-                option.title.toLowerCase().replace(" ", "-")
+              option.title.toLowerCase().replace(" ", "-")
                 ? "block"
                 : "hidden"
             }

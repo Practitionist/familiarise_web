@@ -16,16 +16,16 @@
 
 ## Current Status Summary (Updated December 2025)
 
-| Bug | Severity | Status | Fixed In | Verification |
-|-----|----------|--------|----------|--------------|
-| #1 WEEKLY setHours | 🔴 CRITICAL | ✅ FIXED | `5a-create-slots-of-availability.ts` | Uses `setUTCHours()` |
-| #2 WEEKLY date mismatch | 🔴 CRITICAL | ✅ FIXED | `getReferenceDateForDayOfWeek()` | Date matches dayOfWeek |
-| #3 CUSTOM setHours | 🔴 CRITICAL | ✅ FIXED | `5a-create-slots-of-availability.ts` | Uses `setUTCHours()` |
-| #4 Subscription setHours | 🟡 HIGH | ✅ FIXED | `6a-create-appointments.ts` | Uses `setUTCHours()` |
-| #5 Class random times | 🟡 HIGH | ✅ FIXED | `6a-create-appointments.ts:446` | Business hours enforced |
-| #6 Plan filtering | 🟠 MEDIUM | ✅ FIXED | `slotConsultantId` filtering | Plans filtered by consultant |
-| #7 Slot-consultant mapping | 🔴 CRITICAL | ✅ FIXED | `slotConsultantId` filtering | Correct consultant association |
-| #8 Inconsistent UTC | 🟠 MEDIUM | ✅ FIXED | All seed files | Consistent UTC usage |
+| Bug                        | Severity    | Status   | Fixed In                             | Verification                   |
+| -------------------------- | ----------- | -------- | ------------------------------------ | ------------------------------ |
+| #1 WEEKLY setHours         | 🔴 CRITICAL | ✅ FIXED | `5a-create-slots-of-availability.ts` | Uses `setUTCHours()`           |
+| #2 WEEKLY date mismatch    | 🔴 CRITICAL | ✅ FIXED | `getReferenceDateForDayOfWeek()`     | Date matches dayOfWeek         |
+| #3 CUSTOM setHours         | 🔴 CRITICAL | ✅ FIXED | `5a-create-slots-of-availability.ts` | Uses `setUTCHours()`           |
+| #4 Subscription setHours   | 🟡 HIGH     | ✅ FIXED | `6a-create-appointments.ts`          | Uses `setUTCHours()`           |
+| #5 Class random times      | 🟡 HIGH     | ✅ FIXED | `6a-create-appointments.ts:446`      | Business hours enforced        |
+| #6 Plan filtering          | 🟠 MEDIUM   | ✅ FIXED | `slotConsultantId` filtering         | Plans filtered by consultant   |
+| #7 Slot-consultant mapping | 🔴 CRITICAL | ✅ FIXED | `slotConsultantId` filtering         | Correct consultant association |
+| #8 Inconsistent UTC        | 🟠 MEDIUM   | ✅ FIXED | All seed files                       | Consistent UTC usage           |
 
 **All fixes verified in codebase on December 26, 2025.**
 
@@ -899,9 +899,10 @@ All 8 bugs have been successfully fixed:
 4. **Business hours enforcement** - Class and subscription slots now use proper business hours
 
 ### Files Modified:
+
 - `prisma/seedFiles/5a-create-slots-of-availability.ts`
 - `prisma/seedFiles/6a-create-appointments.ts`
 
 ---
 
-*This document is maintained for historical reference. All issues documented here have been resolved.*
+_This document is maintained for historical reference. All issues documented here have been resolved._

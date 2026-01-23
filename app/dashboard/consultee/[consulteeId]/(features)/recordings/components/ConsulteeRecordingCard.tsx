@@ -26,7 +26,9 @@ interface ConsulteeRecordingCardProps {
   recording: ConsulteeRecordingData;
 }
 
-export function ConsulteeRecordingCard({ recording }: ConsulteeRecordingCardProps) {
+export function ConsulteeRecordingCard({
+  recording,
+}: ConsulteeRecordingCardProps) {
   const formatDuration = (minutes: number) => {
     const hrs = Math.floor(minutes / 60);
     const mins = minutes % 60;
@@ -41,7 +43,9 @@ export function ConsulteeRecordingCard({ recording }: ConsulteeRecordingCardProp
       <CardHeader className="pb-3">
         <div className="flex items-start justify-between gap-2">
           <div className="flex-1 min-w-0">
-            <CardTitle className="text-lg truncate">{recording.title}</CardTitle>
+            <CardTitle className="text-lg truncate">
+              {recording.title}
+            </CardTitle>
             {recording.planTitle && (
               <p className="text-sm text-muted-foreground mt-1">
                 {recording.planType === "webinar" ? "Webinar" : "Class"}:{" "}

@@ -20,34 +20,34 @@ A comprehensive guide for developers working with Prisma migrations in this proj
 
 ### Safe (No Data Loss)
 
-| Operation | Migration Required? | Notes |
-|-----------|---------------------|-------|
-| Add new model | Yes | Safe, creates new table |
-| Add optional field (`String?`) | Yes | Safe, existing rows get `NULL` |
-| Add field with default (`@default()`) | Yes | Safe, existing rows get default value |
-| Add new index | Yes | Safe, just creates index |
-| Rename model/field | Yes | **Use `@@map`/`@map` to avoid data loss** |
-| Add new enum value | Yes | Safe in PostgreSQL |
-| Change `@updatedAt` behavior | No | Prisma client change only |
+| Operation                             | Migration Required? | Notes                                     |
+| ------------------------------------- | ------------------- | ----------------------------------------- |
+| Add new model                         | Yes                 | Safe, creates new table                   |
+| Add optional field (`String?`)        | Yes                 | Safe, existing rows get `NULL`            |
+| Add field with default (`@default()`) | Yes                 | Safe, existing rows get default value     |
+| Add new index                         | Yes                 | Safe, just creates index                  |
+| Rename model/field                    | Yes                 | **Use `@@map`/`@map` to avoid data loss** |
+| Add new enum value                    | Yes                 | Safe in PostgreSQL                        |
+| Change `@updatedAt` behavior          | No                  | Prisma client change only                 |
 
 ### Dangerous (Potential Data Loss)
 
-| Operation | Risk Level | What Happens |
-|-----------|------------|--------------|
-| Remove model | HIGH | Table and ALL data deleted |
-| Remove field | HIGH | Column and data deleted |
-| Make optional field required | MEDIUM | Fails if NULLs exist |
-| Change field type | HIGH | May fail or lose precision |
-| Remove enum value | HIGH | Fails if value is in use |
-| Rename without `@map` | HIGH | Creates new column, drops old one |
+| Operation                    | Risk Level | What Happens                      |
+| ---------------------------- | ---------- | --------------------------------- |
+| Remove model                 | HIGH       | Table and ALL data deleted        |
+| Remove field                 | HIGH       | Column and data deleted           |
+| Make optional field required | MEDIUM     | Fails if NULLs exist              |
+| Change field type            | HIGH       | May fail or lose precision        |
+| Remove enum value            | HIGH       | Fails if value is in use          |
+| Rename without `@map`        | HIGH       | Creates new column, drops old one |
 
 ### Requires Manual Migration
 
-| Operation | Why |
-|-----------|-----|
-| Data transformation | Prisma can't know your business logic |
-| Splitting/merging tables | Complex data movement |
-| Changing relation type (1:1 to 1:N) | Structural change |
+| Operation                           | Why                                   |
+| ----------------------------------- | ------------------------------------- |
+| Data transformation                 | Prisma can't know your business logic |
+| Splitting/merging tables            | Complex data movement                 |
+| Changing relation type (1:1 to 1:N) | Structural change                     |
 
 ---
 
@@ -172,15 +172,15 @@ enum Status {
 
 ### What Happens to Existing Data?
 
-| Schema Change | Existing Data |
-|---------------|---------------|
-| Add optional column | Gets `NULL` |
-| Add column with `@default(x)` | Gets `x` |
-| Add required column (no default) | **MIGRATION FAILS** |
-| Drop column | **DATA DELETED** |
-| Drop table | **ALL TABLE DATA DELETED** |
-| Rename column (without @map) | **DATA DELETED** (new column created) |
-| Change type (Int → String) | Converted if possible, else fails |
+| Schema Change                    | Existing Data                         |
+| -------------------------------- | ------------------------------------- |
+| Add optional column              | Gets `NULL`                           |
+| Add column with `@default(x)`    | Gets `x`                              |
+| Add required column (no default) | **MIGRATION FAILS**                   |
+| Drop column                      | **DATA DELETED**                      |
+| Drop table                       | **ALL TABLE DATA DELETED**            |
+| Rename column (without @map)     | **DATA DELETED** (new column created) |
+| Change type (Int → String)       | Converted if possible, else fails     |
 
 ### Safe Renaming Pattern
 
@@ -218,6 +218,7 @@ model Topic {
 **Actual table:** `_TopicToClassPlan`
 
 **Error:**
+
 ```
 PrismaClientKnownRequestError:
 The table `public._ClassPlanToTopic` does not exist in the current database.
@@ -226,6 +227,7 @@ The table `public._ClassPlanToTopic` does not exist in the current database.
 **Root Cause:** The table was likely created manually or through an older migration with different naming.
 
 **Fix:**
+
 ```sql
 ALTER TABLE "_TopicToClassPlan" RENAME TO "_ClassPlanToTopic";
 ```
@@ -248,6 +250,7 @@ const ClassContentSchema = z.object({
 ```
 
 **Error:**
+
 ```
 Validation Error: Expected date, received string
 path: ['classContents', 0, 'createdAt']
@@ -259,7 +262,7 @@ path: ['classContents', 0, 'createdAt']
 const ClassContentInputSchema = ClassContentSchema.omit({
   createdAt: true,
   updatedAt: true,
-  classPlanId: true,  // Also Prisma-managed
+  classPlanId: true, // Also Prisma-managed
 });
 ```
 
@@ -270,15 +273,18 @@ const ClassContentInputSchema = ClassContentSchema.omit({
 **Problem:** Local migrations don't match production database state.
 
 **Symptoms:**
+
 - `prisma migrate status` shows "Database schema is up to date!"
 - But queries fail because tables/columns are missing
 
 **Causes:**
+
 - Manual SQL changes in production
 - Migrations applied in different order
 - Skipped migrations
 
 **Fix:**
+
 ```bash
 # Check actual drift
 npx prisma migrate diff --from-schema-datamodel prisma/schema.prisma --to-url $DATABASE_URL
@@ -298,10 +304,11 @@ field String @default() // Database: NOT NULL with default, TypeScript: string
 ```
 
 **In queries:**
+
 ```typescript
 // This fails if field is required in DB but optional in schema
 await prisma.user.create({
-  data: { name: "John" }  // Missing required field!
+  data: { name: "John" }, // Missing required field!
 });
 ```
 
@@ -423,6 +430,7 @@ pg_dump --schema-only production_db > schema.sql
 ### 6. Explicit Join Tables for Complex Many-to-Many
 
 Instead of implicit:
+
 ```prisma
 model Class {
   topics Topic[]
@@ -430,6 +438,7 @@ model Class {
 ```
 
 Use explicit for more control:
+
 ```prisma
 model ClassTopic {
   id        String    @id @default(cuid())
@@ -470,6 +479,7 @@ npx prisma migrate resolve --applied "migration_name"
 ### "Column X cannot be cast to type Y"
 
 Data type change isn't compatible. Need multi-step migration:
+
 1. Add new column with new type
 2. Migrate data: `UPDATE table SET new_col = old_col::new_type`
 3. Drop old column

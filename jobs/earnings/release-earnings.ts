@@ -34,7 +34,9 @@ function outputToGitHubActions(result: ReleaseResult): void {
 
   if (!result.success) {
     const allErrors = result.errors.join("; ");
-    console.log(`::error::Release earnings job completed with errors: ${allErrors}`);
+    console.log(
+      `::error::Release earnings job completed with errors: ${allErrors}`,
+    );
   }
 }
 
@@ -43,7 +45,9 @@ function outputToGitHubActions(result: ReleaseResult): void {
  */
 async function main(): Promise<void> {
   const startTime = Date.now();
-  console.log(`🚀 Starting release earnings job at ${new Date().toISOString()}`);
+  console.log(
+    `🚀 Starting release earnings job at ${new Date().toISOString()}`,
+  );
 
   try {
     // Run earnings release

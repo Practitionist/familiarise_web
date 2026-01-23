@@ -96,10 +96,10 @@ graph TB
 
 ### Storage Architecture
 
-| Storage | Duration | Use Case | URL Format |
-|---------|----------|----------|------------|
-| **Stream S3** | 14 days | Initial processing | `https://stream-io-*.s3.amazonaws.com/...` |
-| **Supabase** | Permanent | Long-term storage | `https://[project].supabase.co/storage/...` |
+| Storage       | Duration  | Use Case           | URL Format                                  |
+| ------------- | --------- | ------------------ | ------------------------------------------- |
+| **Stream S3** | 14 days   | Initial processing | `https://stream-io-*.s3.amazonaws.com/...`  |
+| **Supabase**  | Permanent | Long-term storage  | `https://[project].supabase.co/storage/...` |
 
 ---
 
@@ -128,15 +128,15 @@ stateDiagram-v2
 
 ### Status Definitions
 
-| Status | Description | Storage Type | URL Available |
-|--------|-------------|--------------|---------------|
-| `RECORDING` | Recording in progress | N/A | No |
-| `PROCESSING` | Stream processing video | Stream S3 | No |
-| `READY` | Available on Stream S3 | STREAM_S3 | Yes (14 days) |
-| `TRANSFERRING` | Being transferred to Supabase | STREAM_S3 | Yes |
-| `AVAILABLE` | Permanently stored in Supabase | SUPABASE | Yes |
-| `EXPIRED` | Stream URL expired, not transferred | STREAM_S3 | No |
-| `FAILED` | Recording or transfer failed | N/A | No |
+| Status         | Description                         | Storage Type | URL Available |
+| -------------- | ----------------------------------- | ------------ | ------------- |
+| `RECORDING`    | Recording in progress               | N/A          | No            |
+| `PROCESSING`   | Stream processing video             | Stream S3    | No            |
+| `READY`        | Available on Stream S3              | STREAM_S3    | Yes (14 days) |
+| `TRANSFERRING` | Being transferred to Supabase       | STREAM_S3    | Yes           |
+| `AVAILABLE`    | Permanently stored in Supabase      | SUPABASE     | Yes           |
+| `EXPIRED`      | Stream URL expired, not transferred | STREAM_S3    | No            |
+| `FAILED`       | Recording or transfer failed        | N/A          | No            |
 
 ### Storage Type Transitions
 
@@ -322,14 +322,14 @@ sequenceDiagram
 
 ### Handled Event Types
 
-| Event Type | Description | Handler |
-|------------|-------------|---------|
-| `call.recording_started` | Recording has begun | `handleRecordingStarted()` |
-| `call.recording_stopped` | Recording has stopped | `handleRecordingStopped()` |
-| `call.recording_ready` | Recording is processed and available | `handleRecordingReady()` |
-| `call.recording_failed` | Recording failed | `handleRecordingFailed()` |
-| `call.session_ended` | A participant's session ended | `handleSessionEnded()` |
-| `call.ended` | The entire call has ended | `handleCallEnded()` |
+| Event Type               | Description                          | Handler                    |
+| ------------------------ | ------------------------------------ | -------------------------- |
+| `call.recording_started` | Recording has begun                  | `handleRecordingStarted()` |
+| `call.recording_stopped` | Recording has stopped                | `handleRecordingStopped()` |
+| `call.recording_ready`   | Recording is processed and available | `handleRecordingReady()`   |
+| `call.recording_failed`  | Recording failed                     | `handleRecordingFailed()`  |
+| `call.session_ended`     | A participant's session ended        | `handleSessionEnded()`     |
+| `call.ended`             | The entire call has ended            | `handleCallEnded()`        |
 
 ### Event Payload Structures
 
@@ -337,13 +337,13 @@ sequenceDiagram
 
 ```typescript
 interface StreamRecordingStartedEvent {
-  call_cid: string;        // "default:callId"
+  call_cid: string; // "default:callId"
   type: "call.recording_started";
   user?: {
     id: string;
     name?: string;
   };
-  created_at: string;      // ISO timestamp
+  created_at: string; // ISO timestamp
 }
 ```
 
@@ -364,10 +364,10 @@ interface StreamRecordingReadyEvent {
   call_cid: string;
   type: "call.recording_ready";
   call_recording: {
-    filename: string;      // Unique recording identifier
-    url: string;           // Stream S3 URL (expires in 14 days)
-    start_time: string;    // Recording start timestamp
-    end_time: string;      // Recording end timestamp
+    filename: string; // Unique recording identifier
+    url: string; // Stream S3 URL (expires in 14 days)
+    start_time: string; // Recording start timestamp
+    end_time: string; // Recording end timestamp
   };
   created_at: string;
 }
@@ -402,7 +402,7 @@ const expectedSignature = crypto
 // Constant-time comparison (prevents timing attacks)
 return crypto.timingSafeEqual(
   Buffer.from(signature),
-  Buffer.from(expectedSignature)
+  Buffer.from(expectedSignature),
 );
 ```
 
@@ -454,7 +454,7 @@ Webhooks may be delivered multiple times. The handler uses multiple idempotency 
 const existingRecording = await prisma.recording.findFirst({
   where: {
     meetingSessionId: meetingSession.id,
-    streamRecordingId: filename,  // Unique per recording
+    streamRecordingId: filename, // Unique per recording
   },
 });
 
@@ -463,7 +463,7 @@ if (existingRecording) {
     recordingId: existingRecording.id,
     streamRecordingId: filename,
   });
-  return;  // Safe to return early
+  return; // Safe to return early
 }
 ```
 
@@ -507,12 +507,12 @@ sequenceDiagram
 
 ### Transfer Configuration
 
-| Setting | Value | Description |
-|---------|-------|-------------|
-| `MAX_TRANSFER_SIZE` | 500MB | Maximum file size for direct transfer |
-| `RECORDINGS_BUCKET` | "recordings" | Supabase storage bucket name |
-| `daysBeforeExpiry` | 3 | Days before expiry to start transfer |
-| `batchSize` | 10 | Max recordings per cron run |
+| Setting             | Value        | Description                           |
+| ------------------- | ------------ | ------------------------------------- |
+| `MAX_TRANSFER_SIZE` | 500MB        | Maximum file size for direct transfer |
+| `RECORDINGS_BUCKET` | "recordings" | Supabase storage bucket name          |
+| `daysBeforeExpiry`  | 3            | Days before expiry to start transfer  |
+| `batchSize`         | 10           | Max recordings per cron run           |
 
 ### Storage Path Format
 
@@ -539,7 +539,7 @@ class RecordingTransferService {
   // Process batch of expiring recordings
   static async processExpiringRecordings(
     daysBeforeExpiry?: number,
-    batchSize?: number
+    batchSize?: number,
   ): Promise<{
     processed: number;
     succeeded: number;
@@ -574,6 +574,7 @@ Start recording for a video call.
 **Authorization:** Consultant only, must own the session
 
 **Request:**
+
 ```json
 {
   "streamCallId": "abc123",
@@ -582,6 +583,7 @@ Start recording for a video call.
 ```
 
 **Response:**
+
 ```json
 {
   "success": true,
@@ -590,6 +592,7 @@ Start recording for a video call.
 ```
 
 **Errors:**
+
 - `401` - Unauthorized
 - `403` - Not a consultant / Not session owner / Recording not enabled
 - `400` - Already recording
@@ -604,6 +607,7 @@ Stop recording for a video call.
 **Authorization:** Consultant only, must own the session
 
 **Request:**
+
 ```json
 {
   "streamCallId": "abc123",
@@ -612,6 +616,7 @@ Stop recording for a video call.
 ```
 
 **Response:**
+
 ```json
 {
   "success": true,
@@ -630,6 +635,7 @@ Get a single recording by ID.
 **Authorization:** Consultant (own recordings) or Consultee (paid enrollments) or Admin
 
 **Response:**
+
 ```json
 {
   "id": "clx123...",
@@ -652,6 +658,7 @@ Transfer a recording from Stream S3 to Supabase.
 **Authorization:** Consultant only, must own the recording
 
 **Response:**
+
 ```json
 {
   "success": true,
@@ -669,6 +676,7 @@ Sync recordings from Stream API for the current user.
 **Authorization:** Authenticated user (Consultant or Consultee)
 
 **Response:**
+
 ```json
 {
   "success": true,
@@ -686,9 +694,11 @@ Sync recordings from Stream API for the current user.
 Receives webhook events from Stream.
 
 **Headers:**
+
 - `x-signature` - HMAC SHA256 signature
 
 **Response:**
+
 ```json
 {
   "status": "ok"
@@ -701,13 +711,13 @@ Receives webhook events from Stream.
 
 ### Recording Operations
 
-| Role | Start | Stop | View Own | View All | Transfer | Delete |
-|------|:-----:|:----:|:--------:|:--------:|:--------:|:------:|
-| **Consultant** | Yes | Yes | Yes | No | Yes | No |
-| **Consultee** | No | No | Yes* | No | No | No |
-| **Admin** | No | No | Yes | Yes | No | No |
+| Role           | Start | Stop | View Own | View All | Transfer | Delete |
+| -------------- | :---: | :--: | :------: | :------: | :------: | :----: |
+| **Consultant** |  Yes  | Yes  |   Yes    |    No    |   Yes    |   No   |
+| **Consultee**  |  No   |  No  |  Yes\*   |    No    |    No    |   No   |
+| **Admin**      |  No   |  No  |   Yes    |   Yes    |    No    |   No   |
 
-*Consultees can only view recordings for webinars/classes they have paid enrollment for.
+\*Consultees can only view recordings for webinars/classes they have paid enrollment for.
 
 ### Access Verification Logic
 
@@ -715,7 +725,7 @@ Receives webhook events from Stream.
 // Consultant access check
 const isOwner = getMeetingSessionOwnershipInfo(
   meetingSession,
-  user.consultantProfileId
+  user.consultantProfileId,
 ).isOwner;
 
 // Consultee access check
@@ -725,8 +735,8 @@ const hasPaidEnrollment = await prisma.payment.findFirst({
     paymentStatus: "SUCCEEDED",
     appointment: {
       // ... matches recording's appointment
-    }
-  }
+    },
+  },
 });
 ```
 
@@ -743,29 +753,29 @@ const hasPaidEnrollment = await prisma.payment.findFirst({
 
 ### Core Services
 
-| File | Purpose |
-|------|---------|
-| `lib/stream/recording-service.ts` | Recording CRUD operations |
+| File                                       | Purpose                        |
+| ------------------------------------------ | ------------------------------ |
+| `lib/stream/recording-service.ts`          | Recording CRUD operations      |
 | `lib/stream/recording-transfer-service.ts` | Stream S3 to Supabase transfer |
-| `lib/stream/recording-handlers.ts` | Webhook event handlers |
-| `lib/stream/recording-utils.ts` | Helper functions |
-| `lib/stream/recording-types.ts` | Prisma payload types |
+| `lib/stream/recording-handlers.ts`         | Webhook event handlers         |
+| `lib/stream/recording-utils.ts`            | Helper functions               |
+| `lib/stream/recording-types.ts`            | Prisma payload types           |
 
 ### API Routes
 
-| File | Endpoint |
-|------|----------|
-| `app/api/stream/recordings/start/route.ts` | POST /start |
-| `app/api/stream/recordings/stop/route.ts` | POST /stop |
-| `app/api/stream/recordings/sync/route.ts` | POST /sync |
-| `app/api/stream/recordings/[recordingId]/route.ts` | GET /:id |
+| File                                                        | Endpoint           |
+| ----------------------------------------------------------- | ------------------ |
+| `app/api/stream/recordings/start/route.ts`                  | POST /start        |
+| `app/api/stream/recordings/stop/route.ts`                   | POST /stop         |
+| `app/api/stream/recordings/sync/route.ts`                   | POST /sync         |
+| `app/api/stream/recordings/[recordingId]/route.ts`          | GET /:id           |
 | `app/api/stream/recordings/[recordingId]/transfer/route.ts` | POST /:id/transfer |
-| `app/api/stream/webhooks/route.ts` | Webhook handler |
+| `app/api/stream/webhooks/route.ts`                          | Webhook handler    |
 
 ### Session Handlers
 
-| File | Purpose |
-|------|---------|
+| File                             | Purpose                         |
+| -------------------------------- | ------------------------------- |
 | `lib/stream/session-handlers.ts` | Call session lifecycle handlers |
 
 ---
@@ -800,6 +810,7 @@ SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 
 1. Create a bucket named `recordings`
 2. Set appropriate RLS policies:
+
    ```sql
    -- Allow service role full access
    CREATE POLICY "Service role access"
@@ -828,8 +839,8 @@ import { RecordingTransferService } from "@/lib/stream/recording-transfer-servic
 
 async function processExpiringRecordings() {
   const result = await RecordingTransferService.processExpiringRecordings(
-    3,  // daysBeforeExpiry
-    10  // batchSize
+    3, // daysBeforeExpiry
+    10, // batchSize
   );
 
   console.log(`Processed: ${result.processed}`);

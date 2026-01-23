@@ -78,9 +78,7 @@ export async function alertOrphanedPayments(): Promise<OrphanedPaymentsAlertResu
     criticalCount++;
 
     // Log each orphaned payment as CRITICAL
-    console.error(
-      `CRITICAL: Orphaned payment ${payment.id}`,
-    );
+    console.error(`CRITICAL: Orphaned payment ${payment.id}`);
     console.error(
       `   User: ${payment.user?.name || "Unknown"} (${payment.user?.email || "no email"})`,
     );

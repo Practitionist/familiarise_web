@@ -113,14 +113,14 @@ graph LR
 
 **Key Functions:**
 
-| Function | Purpose | Trigger |
-|----------|---------|---------|
+| Function                    | Purpose                                 | Trigger                  |
+| --------------------------- | --------------------------------------- | ------------------------ |
 | `createEarningsFromPayment` | Create earnings record with hold period | Webhook: payment.success |
-| `releaseEarningsFromHold` | PENDING → READY after hold period | Cron: hourly |
-| `getConsultantEarnings` | Fetch earnings for dashboard | API request |
-| `refundEarnings` | Mark as REFUNDED on payment refund | Webhook: refund |
-| `holdEarnings` | READY → HELD on dispute | Webhook: dispute |
-| `releaseHeldEarnings` | HELD → READY when dispute resolved | Admin action |
+| `releaseEarningsFromHold`   | PENDING → READY after hold period       | Cron: hourly             |
+| `getConsultantEarnings`     | Fetch earnings for dashboard            | API request              |
+| `refundEarnings`            | Mark as REFUNDED on payment refund      | Webhook: refund          |
+| `holdEarnings`              | READY → HELD on dispute                 | Webhook: dispute         |
+| `releaseHeldEarnings`       | HELD → READY when dispute resolved      | Admin action             |
 
 ---
 
@@ -152,14 +152,14 @@ graph LR
 
 **Key Functions:**
 
-| Function | Purpose | Trigger |
-|----------|---------|---------|
+| Function                 | Purpose                                | Trigger        |
+| ------------------------ | -------------------------------------- | -------------- |
 | `checkPayoutEligibility` | Validate consultant can receive payout | Batch creation |
-| `createPayoutBatch` | Group READY earnings into payouts | Cron: weekly |
-| `approvePayout` | Admin approves pending payout | Admin action |
-| `rejectPayout` | Admin rejects with reason | Admin action |
-| `processApprovedPayouts` | Send to payment provider | Cron: weekly |
-| `handlePayoutWebhook` | Update status from provider | Webhook event |
+| `createPayoutBatch`      | Group READY earnings into payouts      | Cron: weekly   |
+| `approvePayout`          | Admin approves pending payout          | Admin action   |
+| `rejectPayout`           | Admin rejects with reason              | Admin action   |
+| `processApprovedPayouts` | Send to payment provider               | Cron: weekly   |
+| `handlePayoutWebhook`    | Update status from provider            | Webhook event  |
 
 ---
 
@@ -300,6 +300,7 @@ sequenceDiagram
 ```
 
 **Fund Account Types:**
+
 - `bank_account`: NEFT/IMPS/RTGS transfer
 - `vpa`: UPI transfer (instant)
 
@@ -337,6 +338,7 @@ sequenceDiagram
 ```
 
 **Account Types:**
+
 - `express`: Stripe-hosted onboarding
 - `standard`: Full Stripe dashboard access
 - `custom`: Platform-controlled (not used)

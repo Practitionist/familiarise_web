@@ -27,7 +27,8 @@ export function AppointmentContextCard({
   onClear,
   className,
 }: AppointmentContextCardProps) {
-  const { appointmentType, appointmentStatus, consultantName, scheduledAt } = context;
+  const { appointmentType, appointmentStatus, consultantName, scheduledAt } =
+    context;
 
   const formatDate = (dateString?: string) => {
     if (!dateString) return null;
@@ -46,8 +47,10 @@ export function AppointmentContextCard({
     }
   };
 
-  const typeLabel = appointmentType === "CONSULTATION" ? "Consultation" : "Subscription";
-  const statusLabel = appointmentStatus === "COMPLETED" ? "Completed" : "Upcoming";
+  const typeLabel =
+    appointmentType === "CONSULTATION" ? "Consultation" : "Subscription";
+  const statusLabel =
+    appointmentStatus === "COMPLETED" ? "Completed" : "Upcoming";
   const statusColor =
     appointmentStatus === "COMPLETED"
       ? "bg-green-50 text-green-700 border-green-200"
@@ -58,7 +61,7 @@ export function AppointmentContextCard({
       className={cn(
         "p-4 rounded-xl bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200",
         "dark:from-amber-900/20 dark:to-orange-900/20 dark:border-amber-800",
-        className
+        className,
       )}
     >
       {/* Header */}
@@ -104,7 +107,7 @@ export function AppointmentContextCard({
           <span
             className={cn(
               "inline-flex items-center px-2 py-0.5 rounded text-xs font-medium border",
-              statusColor
+              statusColor,
             )}
           >
             {statusLabel}
@@ -114,7 +117,8 @@ export function AppointmentContextCard({
 
       {/* Helper Text */}
       <p className="mt-3 text-xs text-amber-700/80 dark:text-amber-400/80">
-        Your support ticket will be linked to this {typeLabel.toLowerCase()} for faster resolution.
+        Your support ticket will be linked to this {typeLabel.toLowerCase()} for
+        faster resolution.
       </p>
     </div>
   );

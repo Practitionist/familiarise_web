@@ -327,69 +327,72 @@ export async function processOnboardingData(
 
     await getExistingUserForValidation(userId);
 
-    const updatedUser = await prisma.$transaction(async (tx) => {
-      const baseUserData: Prisma.UserUpdateInput = {
-        name: validatedBody.name,
-        email: validatedBody.email,
-        phone: validatedBody.phone,
-        address: validatedBody.address,
-        role: validatedBody.role,
-        onboardingCompleted: true,
-        timezone: validatedBody.timezone,
-        // New user fields
-        dateOfBirth: validatedBody.dateOfBirth ?? null,
-        gender: validatedBody.gender ?? null,
-        city: validatedBody.city ?? null,
-        country: validatedBody.country ?? null,
-        linkedinUrl: validatedBody.linkedinUrl || null,
-        bio: validatedBody.bio ?? null,
-        // Reset profile IDs (will be set by profileFkData)
-        consultantProfileId: null,
-        consulteeProfileId: null,
-        staffProfileId: null,
-        adminProfileId: null,
-      };
+    const updatedUser = await prisma.$transaction(
+      async (tx) => {
+        const baseUserData: Prisma.UserUpdateInput = {
+          name: validatedBody.name,
+          email: validatedBody.email,
+          phone: validatedBody.phone,
+          address: validatedBody.address,
+          role: validatedBody.role,
+          onboardingCompleted: true,
+          timezone: validatedBody.timezone,
+          // New user fields
+          dateOfBirth: validatedBody.dateOfBirth ?? null,
+          gender: validatedBody.gender ?? null,
+          city: validatedBody.city ?? null,
+          country: validatedBody.country ?? null,
+          linkedinUrl: validatedBody.linkedinUrl || null,
+          bio: validatedBody.bio ?? null,
+          // Reset profile IDs (will be set by profileFkData)
+          consultantProfileId: null,
+          consulteeProfileId: null,
+          staffProfileId: null,
+          adminProfileId: null,
+        };
 
-      const profileFkData = await updateUserProfileAndGetFkData(
-        userId,
-        validatedBody,
-        tx,
-      );
+        const profileFkData = await updateUserProfileAndGetFkData(
+          userId,
+          validatedBody,
+          tx,
+        );
 
-      const finalUserData: Prisma.UserUpdateInput = {
-        ...baseUserData,
-        ...profileFkData,
-      };
+        const finalUserData: Prisma.UserUpdateInput = {
+          ...baseUserData,
+          ...profileFkData,
+        };
 
-      return tx.user.update({
-        where: { id: userId },
-        data: finalUserData,
-        include: {
-          consultantProfile: {
-            include: {
-              slotsOfAvailabilityWeekly: true,
-              slotsOfAvailabilityCustom: true,
-              domain: true,
-              subDomains: true,
-              tags: true,
-              workExperiences: true,
-              certifications: true,
-              education: true,
+        return tx.user.update({
+          where: { id: userId },
+          data: finalUserData,
+          include: {
+            consultantProfile: {
+              include: {
+                slotsOfAvailabilityWeekly: true,
+                slotsOfAvailabilityCustom: true,
+                domain: true,
+                subDomains: true,
+                tags: true,
+                workExperiences: true,
+                certifications: true,
+                education: true,
+              },
             },
-          },
-          consulteeProfile: {
-            include: {
-              educationHistory: true,
+            consulteeProfile: {
+              include: {
+                educationHistory: true,
+              },
             },
+            staffProfile: true,
+            adminProfile: true,
           },
-          staffProfile: true,
-          adminProfile: true,
-        },
-      });
-    }, {
-      maxWait: 10000,  // Max time to wait to acquire transaction lock (10s)
-      timeout: 30000,  // Max transaction execution time (30s)
-    });
+        });
+      },
+      {
+        maxWait: 10000, // Max time to wait to acquire transaction lock (10s)
+        timeout: 30000, // Max transaction execution time (30s)
+      },
+    );
 
     return { success: true, user: updatedUser };
   } catch (error: unknown) {

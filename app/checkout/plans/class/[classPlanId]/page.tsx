@@ -39,13 +39,13 @@ import type {
 
 export type CheckoutClassPlanData = ClassPlan & {
   consultantProfile:
-  | (ConsultantProfile & {
-    user: User;
-    domain: Domain | null;
-    subDomains: SubDomain[];
-    tags: PrismaTag[];
-  })
-  | null;
+    | (ConsultantProfile & {
+        user: User;
+        domain: Domain | null;
+        subDomains: SubDomain[];
+        tags: PrismaTag[];
+      })
+    | null;
   classes: (PrismaClass & {
     appointments: (Appointment & {
       slotsOfAppointment: SlotOfAppointment[];
@@ -297,7 +297,7 @@ export default function ClassCheckoutPage({
     }
     return calculatePricing(basePrice, {
       discountPercent: discountAmount > 0 ? 0 : discountPercent,
-      discountAmount
+      discountAmount,
     });
   }, [planData?.data?.price, appliedDiscount]);
 
@@ -528,13 +528,13 @@ export default function ClassCheckoutPage({
                     <li>
                       {planDetails?.totalSessions ||
                         (planDetails?.meetingsPerWeek || 2) *
-                        (planDetails?.durationInMonths || 1) *
-                        4}{" "}
+                          (planDetails?.durationInMonths || 1) *
+                          4}{" "}
                       total sessions (
                       {planDetails?.totalHours ||
                         (planDetails?.meetingsPerWeek || 2) *
-                        (planDetails?.durationInMonths || 1) *
-                        4}{" "}
+                          (planDetails?.durationInMonths || 1) *
+                          4}{" "}
                       hours)
                     </li>
                     <li>
@@ -657,7 +657,7 @@ export default function ClassCheckoutPage({
                         disabled={isCheckoutProcessing}
                       >
                         {isCheckoutProcessing &&
-                          processingGateway === `${gateway.gateway}-mock` ? (
+                        processingGateway === `${gateway.gateway}-mock` ? (
                           <>
                             <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-current mr-2"></div>
                             Processing...

@@ -51,7 +51,7 @@ export interface StreamRecordingFailedEvent {
  * Updates MeetingSession to mark recording as active
  */
 export async function handleRecordingStarted(
-  event: StreamRecordingStartedEvent
+  event: StreamRecordingStartedEvent,
 ): Promise<void> {
   const { call_cid, user, created_at } = event;
 
@@ -71,9 +71,12 @@ export async function handleRecordingStarted(
     });
 
     if (!meetingSession) {
-      streamLogger.warn("Meeting session not found for recording started event", {
-        streamCallId,
-      });
+      streamLogger.warn(
+        "Meeting session not found for recording started event",
+        {
+          streamCallId,
+        },
+      );
       return;
     }
 
@@ -104,7 +107,7 @@ export async function handleRecordingStarted(
  * Updates MeetingSession to mark recording as stopped
  */
 export async function handleRecordingStopped(
-  event: StreamRecordingStoppedEvent
+  event: StreamRecordingStoppedEvent,
 ): Promise<void> {
   const { call_cid } = event;
 
@@ -118,9 +121,12 @@ export async function handleRecordingStopped(
     });
 
     if (!meetingSession) {
-      streamLogger.warn("Meeting session not found for recording stopped event", {
-        streamCallId,
-      });
+      streamLogger.warn(
+        "Meeting session not found for recording stopped event",
+        {
+          streamCallId,
+        },
+      );
       return;
     }
 
@@ -149,7 +155,7 @@ export async function handleRecordingStopped(
  * Creates a Recording record in the database
  */
 export async function handleRecordingReady(
-  event: StreamRecordingReadyEvent
+  event: StreamRecordingReadyEvent,
 ): Promise<void> {
   const { call_cid, call_recording, created_at: _created_at } = event;
 
@@ -209,7 +215,7 @@ export async function handleRecordingReady(
     const startDate = new Date(start_time);
     const endDate = new Date(end_time);
     const durationInMinutes = Math.round(
-      (endDate.getTime() - startDate.getTime()) / (1000 * 60)
+      (endDate.getTime() - startDate.getTime()) / (1000 * 60),
     );
 
     // Generate title from appointment info
@@ -298,17 +304,21 @@ export async function handleRecordingReady(
  * Logs the error and optionally notifies the consultant
  */
 export async function handleRecordingFailed(
-  event: StreamRecordingFailedEvent
+  event: StreamRecordingFailedEvent,
 ): Promise<void> {
   const { call_cid, error: eventError } = event;
 
   const streamCallId = call_cid.split(":")[1] || call_cid;
 
-  streamLogger.error("Recording failed", new Error(eventError?.message || "Unknown error"), {
-    streamCallId,
-    errorCode: eventError?.code,
-    errorMessage: eventError?.message,
-  });
+  streamLogger.error(
+    "Recording failed",
+    new Error(eventError?.message || "Unknown error"),
+    {
+      streamCallId,
+      errorCode: eventError?.code,
+      errorMessage: eventError?.message,
+    },
+  );
 
   try {
     const meetingSession = await prisma.meetingSession.findUnique({
@@ -316,9 +326,12 @@ export async function handleRecordingFailed(
     });
 
     if (!meetingSession) {
-      streamLogger.warn("Meeting session not found for recording failed event", {
-        streamCallId,
-      });
+      streamLogger.warn(
+        "Meeting session not found for recording failed event",
+        {
+          streamCallId,
+        },
+      );
       return;
     }
 

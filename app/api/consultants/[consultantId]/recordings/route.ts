@@ -34,10 +34,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       session.user.role !== "STAFF" &&
       session.user.consultantProfileId !== consultantId
     ) {
-      return NextResponse.json(
-        { error: "Access denied" },
-        { status: 403 }
-      );
+      return NextResponse.json({ error: "Access denied" }, { status: 403 });
     }
 
     // Parse query params for filtering
@@ -51,7 +48,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       {
         type: type || undefined,
         status: status || undefined,
-      }
+      },
     );
 
     // Map recordings to response format with best URLs
@@ -100,7 +97,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     console.error("Error getting consultant recordings:", error);
     return NextResponse.json(
       { error: "Failed to get recordings" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

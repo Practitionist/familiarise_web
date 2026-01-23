@@ -13,7 +13,7 @@ const CONFIG: PlanMaterialsConfig = {
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ webinarPlanId: string }> }
+  { params }: { params: Promise<{ webinarPlanId: string }> },
 ) {
   const { webinarPlanId } = await params;
   return handleGetMaterials(request, webinarPlanId, CONFIG);
@@ -21,7 +21,7 @@ export async function GET(
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ webinarPlanId: string }> }
+  { params }: { params: Promise<{ webinarPlanId: string }> },
 ) {
   const { webinarPlanId } = await params;
   return handleUploadMaterial(request, webinarPlanId, CONFIG);

@@ -37,10 +37,7 @@ export class SubscriptionService {
       const { isDuplicate } = await response.json();
       return isDuplicate;
     } catch (error) {
-      console.error(
-        "[SubscriptionService.checkDuplicateTitle] Error:",
-        error,
-      );
+      console.error("[SubscriptionService.checkDuplicateTitle] Error:", error);
       return false;
     }
   }
@@ -140,10 +137,7 @@ export class SubscriptionService {
         subscriptionPlan,
       };
     } catch (error) {
-      console.error(
-        "[SubscriptionService.saveSubscriptionPlan] Error:",
-        error,
-      );
+      console.error("[SubscriptionService.saveSubscriptionPlan] Error:", error);
       throw error;
     }
   }

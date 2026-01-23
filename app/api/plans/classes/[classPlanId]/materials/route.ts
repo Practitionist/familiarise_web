@@ -13,7 +13,7 @@ const CONFIG: PlanMaterialsConfig = {
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ classPlanId: string }> }
+  { params }: { params: Promise<{ classPlanId: string }> },
 ) {
   const { classPlanId } = await params;
   return handleGetMaterials(request, classPlanId, CONFIG);
@@ -21,7 +21,7 @@ export async function GET(
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ classPlanId: string }> }
+  { params }: { params: Promise<{ classPlanId: string }> },
 ) {
   const { classPlanId } = await params;
   return handleUploadMaterial(request, classPlanId, CONFIG);

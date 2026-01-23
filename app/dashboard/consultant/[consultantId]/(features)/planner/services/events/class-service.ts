@@ -188,7 +188,9 @@ export class ClassService {
     const plan = classData.classPlan;
 
     if (!plan && isUpdate) {
-      throw new Error("Internal error: Class plan data is missing during update.");
+      throw new Error(
+        "Internal error: Class plan data is missing during update.",
+      );
     }
 
     // Build base payload with required fields

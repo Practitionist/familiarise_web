@@ -169,8 +169,7 @@ export function EventPlannerForWebinar({
       learningOutcomes: initialData?.webinarPlan?.learningOutcomes ?? [],
       certificateProvided:
         initialData?.webinarPlan?.certificateProvided ?? false,
-      recordingEnabled:
-        initialData?.webinarPlan?.recordingEnabled ?? false,
+      recordingEnabled: initialData?.webinarPlan?.recordingEnabled ?? false,
       topics: initialData?.webinarPlan?.topics ?? [],
       scheduledAt: getInitialScheduledAt(),
       consultantProfileId: consultantId,
@@ -194,8 +193,7 @@ export function EventPlannerForWebinar({
         learningOutcomes: initialData.webinarPlan.learningOutcomes ?? [],
         certificateProvided:
           initialData.webinarPlan.certificateProvided ?? false,
-        recordingEnabled:
-          initialData.webinarPlan.recordingEnabled ?? false,
+        recordingEnabled: initialData.webinarPlan.recordingEnabled ?? false,
         topics: initialData.webinarPlan.topics ?? [],
         scheduledAt: getInitialScheduledAt(),
         consultantProfileId: consultantId,
@@ -543,7 +541,8 @@ export function EventPlannerForWebinar({
                           Enable Recording
                         </FormLabel>
                         <FormDescription>
-                          Allow recording of this webinar for attendees to watch later
+                          Allow recording of this webinar for attendees to watch
+                          later
                         </FormDescription>
                       </div>
                       <FormControl>
@@ -659,7 +658,11 @@ export function EventPlannerForWebinar({
         <PlanMaterialsUpload
           planType="webinar"
           planId={initialData.id}
-          planTitle={form.getValues("title") || initialData.webinarPlan?.title || "Webinar"}
+          planTitle={
+            form.getValues("title") ||
+            initialData.webinarPlan?.title ||
+            "Webinar"
+          }
           isOpen={showMaterialsDialog}
           onClose={() => setShowMaterialsDialog(false)}
         />

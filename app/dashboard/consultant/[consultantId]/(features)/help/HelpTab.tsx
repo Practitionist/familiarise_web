@@ -105,7 +105,7 @@ export function HelpTab({ faqs: initialFaqs }: Readonly<HelpTabProps>) {
       result = result.filter(
         (faq) =>
           faq.question.toLowerCase().includes(query) ||
-          faq.answer.toLowerCase().includes(query)
+          faq.answer.toLowerCase().includes(query),
       );
     }
 
@@ -139,7 +139,9 @@ export function HelpTab({ faqs: initialFaqs }: Readonly<HelpTabProps>) {
               <HelpCircle className="h-5 w-5 sm:h-7 sm:w-7 text-white" />
             </div>
             <div>
-              <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-zinc-900 tracking-tight">Help Center</h1>
+              <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-zinc-900 tracking-tight">
+                Help Center
+              </h1>
               <p className="text-sm sm:text-base text-zinc-500 mt-0.5 sm:mt-1">
                 Find answers to common questions about using the platform
               </p>
@@ -166,7 +168,7 @@ export function HelpTab({ faqs: initialFaqs }: Readonly<HelpTabProps>) {
                 "px-3 sm:px-4 py-1.5 sm:py-2 rounded-full text-xs sm:text-sm font-medium transition-all",
                 selectedCategory === null
                   ? "bg-zinc-900 text-white"
-                  : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
+                  : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200",
               )}
             >
               All Topics
@@ -190,7 +192,7 @@ export function HelpTab({ faqs: initialFaqs }: Readonly<HelpTabProps>) {
                     "flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-1.5 sm:py-2 rounded-full text-xs sm:text-sm font-medium transition-all",
                     isSelected
                       ? "bg-zinc-900 text-white"
-                      : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
+                      : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200",
                   )}
                 >
                   <Icon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
@@ -202,7 +204,8 @@ export function HelpTab({ faqs: initialFaqs }: Readonly<HelpTabProps>) {
 
           {/* Results count */}
           <div className="mt-3 sm:mt-4 text-xs sm:text-sm text-zinc-500">
-            {filteredFaqs.length} {filteredFaqs.length === 1 ? "result" : "results"} found
+            {filteredFaqs.length}{" "}
+            {filteredFaqs.length === 1 ? "result" : "results"} found
             {searchQuery && ` for "${searchQuery}"`}
             {selectedCategory && ` in ${selectedCategory}`}
           </div>
@@ -225,8 +228,8 @@ export function HelpTab({ faqs: initialFaqs }: Readonly<HelpTabProps>) {
                 No results found
               </h3>
               <p className="text-sm sm:text-base text-zinc-500 max-w-sm px-4">
-                We couldn&apos;t find any FAQs matching your search. Try adjusting
-                your filters or search terms.
+                We couldn&apos;t find any FAQs matching your search. Try
+                adjusting your filters or search terms.
               </p>
               {(searchQuery || selectedCategory) && (
                 <button
@@ -267,23 +270,30 @@ export function HelpTab({ faqs: initialFaqs }: Readonly<HelpTabProps>) {
                       <div
                         className={cn(
                           "flex h-9 w-9 sm:h-10 sm:w-10 items-center justify-center rounded-lg sm:rounded-xl shrink-0",
-                          config.bgColor
+                          config.bgColor,
                         )}
                       >
-                        <Icon className={cn("h-4 w-4 sm:h-5 sm:w-5", config.color)} />
+                        <Icon
+                          className={cn("h-4 w-4 sm:h-5 sm:w-5", config.color)}
+                        />
                       </div>
                       <div>
                         <h2 className="text-base sm:text-lg font-semibold text-zinc-900">
                           {category}
                         </h2>
                         <p className="text-xs sm:text-sm text-zinc-500">
-                          {faqs.length} {faqs.length === 1 ? "question" : "questions"}
+                          {faqs.length}{" "}
+                          {faqs.length === 1 ? "question" : "questions"}
                         </p>
                       </div>
                     </div>
 
                     {/* FAQ Items */}
-                    <Accordion type="single" collapsible className="space-y-1.5 sm:space-y-2">
+                    <Accordion
+                      type="single"
+                      collapsible
+                      className="space-y-1.5 sm:space-y-2"
+                    >
                       {faqs.map((faq) => (
                         <AccordionItem
                           key={faq.id}
@@ -293,7 +303,9 @@ export function HelpTab({ faqs: initialFaqs }: Readonly<HelpTabProps>) {
                           <AccordionTrigger className="px-3 sm:px-5 py-3 sm:py-4 text-left text-sm sm:text-base font-medium text-zinc-900 hover:text-zinc-900 hover:no-underline hover:bg-zinc-50/50 [&[data-state=open]]:bg-zinc-50/50 transition-colors">
                             <div className="flex items-start sm:items-center gap-2 sm:gap-3 pr-2 sm:pr-4">
                               <ChevronRight className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-zinc-400 shrink-0 transition-transform duration-200 [[data-state=open]_&]:rotate-90 mt-0.5 sm:mt-0" />
-                              <span className="leading-snug">{faq.question}</span>
+                              <span className="leading-snug">
+                                {faq.question}
+                              </span>
                             </div>
                           </AccordionTrigger>
                           <AccordionContent className="px-3 sm:px-5 pb-3 sm:pb-5 pt-0">

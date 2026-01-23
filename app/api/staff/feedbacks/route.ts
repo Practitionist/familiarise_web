@@ -95,7 +95,7 @@ export async function GET(req: NextRequest) {
     console.error("Error fetching feedbacks:", error);
     return NextResponse.json(
       { error: "Failed to fetch feedbacks" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

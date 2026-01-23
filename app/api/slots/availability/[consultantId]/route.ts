@@ -191,7 +191,9 @@ async function removeBookedSlots(slots: TSlotTiming[]): Promise<TSlotTiming[]> {
  * Users cannot book slots that start within MINIMUM_BOOKING_LEAD_TIME_MINUTES of now.
  */
 function filterExpiredSlots(slots: TSlotTiming[]): TSlotTiming[] {
-  const minimumBookingTime = new Date(Date.now() + MINIMUM_BOOKING_LEAD_TIME_MS);
+  const minimumBookingTime = new Date(
+    Date.now() + MINIMUM_BOOKING_LEAD_TIME_MS,
+  );
 
   return slots.filter((slot) => {
     const slotStart = parseISO(slot.slotStartTimeInUTC);

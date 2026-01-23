@@ -54,10 +54,12 @@ Content-Type: application/json
 ```
 
 **Parameters:**
+
 - `reason` (optional): One of the `CancellationReason` enum values
 - `notes` (optional): Free-form text with additional details
 
 **Response (200 OK):**
+
 ```json
 {
   "success": true,
@@ -82,16 +84,16 @@ Content-Type: application/json
 
 ### Reason Display Labels
 
-| Enum Value | Display Label | Description for User |
-|------------|---------------|---------------------|
-| SCHEDULE_CONFLICT | Schedule conflict | I have a scheduling conflict |
-| FOUND_ALTERNATIVE | Found alternative | I've found another option |
-| FINANCIAL_REASONS | Financial reasons | I can no longer afford this |
-| PERSONAL_EMERGENCY | Personal emergency | An unexpected situation came up |
-| NO_LONGER_NEEDED | No longer needed | I don't need this anymore |
-| CONSULTANT_ISSUE | Issue with consultant | I'm having issues with the consultant |
-| TECHNICAL_ISSUE | Technical issues | I'm having technical problems |
-| OTHER | Other reason | Another reason not listed |
+| Enum Value         | Display Label         | Description for User                  |
+| ------------------ | --------------------- | ------------------------------------- |
+| SCHEDULE_CONFLICT  | Schedule conflict     | I have a scheduling conflict          |
+| FOUND_ALTERNATIVE  | Found alternative     | I've found another option             |
+| FINANCIAL_REASONS  | Financial reasons     | I can no longer afford this           |
+| PERSONAL_EMERGENCY | Personal emergency    | An unexpected situation came up       |
+| NO_LONGER_NEEDED   | No longer needed      | I don't need this anymore             |
+| CONSULTANT_ISSUE   | Issue with consultant | I'm having issues with the consultant |
+| TECHNICAL_ISSUE    | Technical issues      | I'm having technical problems         |
+| OTHER              | Other reason          | Another reason not listed             |
 
 ### Example Flutter Implementation
 
@@ -225,6 +227,7 @@ model Consultation {
 ```
 
 This enables:
+
 1. **Analytics:** "Why do users cancel?" reports
 2. **Customer Service:** Staff can see cancellation reason in ticket context
 3. **Retention:** Identify patterns and improve service
@@ -233,12 +236,12 @@ This enables:
 
 ## Error Handling
 
-| HTTP Status | Error | Description |
-|-------------|-------|-------------|
-| 401 | Unauthorized | User not logged in |
-| 400 | Invalid cancellation reason | Unknown reason value |
-| 404 | Appointment not found | Appointment ID doesn't exist |
-| 500 | Failed to cancel | Server error during cancellation |
+| HTTP Status | Error                       | Description                      |
+| ----------- | --------------------------- | -------------------------------- |
+| 401         | Unauthorized                | User not logged in               |
+| 400         | Invalid cancellation reason | Unknown reason value             |
+| 404         | Appointment not found       | Appointment ID doesn't exist     |
+| 500         | Failed to cancel            | Server error during cancellation |
 
 ---
 
@@ -258,6 +261,7 @@ curl -X POST http://localhost:3000/api/appointments/abc123/cancel \
 ## Analytics
 
 Admin can view cancellation analytics at:
+
 ```
 GET /api/admin/analytics/cancellations?startDate=2025-01-01&endDate=2025-12-31
 ```

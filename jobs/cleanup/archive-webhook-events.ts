@@ -56,7 +56,9 @@ async function main(): Promise<void> {
     const result = await archiveWebhookEvents();
 
     console.log("\n📊 Job Results:");
-    console.log(`   Processed Events Deleted: ${result.processedEventsDeleted}`);
+    console.log(
+      `   Processed Events Deleted: ${result.processedEventsDeleted}`,
+    );
     console.log(`   Failed Events Deleted: ${result.failedEventsDeleted}`);
     console.log(`   Total Deleted: ${result.totalDeleted}`);
     console.log(`   Success: ${result.success}`);

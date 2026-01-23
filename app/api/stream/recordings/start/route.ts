@@ -30,7 +30,7 @@ export async function POST(req: NextRequest) {
     if (session.user.role !== "CONSULTANT") {
       return NextResponse.json(
         { error: "Only consultants can start recordings" },
-        { status: 403 }
+        { status: 403 },
       );
     }
 
@@ -76,20 +76,20 @@ export async function POST(req: NextRequest) {
     if (!meetingSession) {
       return NextResponse.json(
         { error: "Meeting session not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
     // Verify the consultant owns this appointment using helper function
     const { isOwner, recordingEnabled } = getMeetingSessionOwnershipInfo(
       meetingSession,
-      session.user.consultantProfileId
+      session.user.consultantProfileId,
     );
 
     if (!isOwner) {
       return NextResponse.json(
         { error: "Not authorized to record this session" },
-        { status: 403 }
+        { status: 403 },
       );
     }
 
@@ -97,7 +97,7 @@ export async function POST(req: NextRequest) {
     if (!recordingEnabled) {
       return NextResponse.json(
         { error: "Recording is not enabled for this plan" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -105,20 +105,20 @@ export async function POST(req: NextRequest) {
     if (meetingSession.isRecording) {
       return NextResponse.json(
         { error: "Recording is already in progress" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     // Start recording via Stream API
     const result = await RecordingService.startRecording(
       streamCallId,
-      session.user.id
+      session.user.id,
     );
 
     if (!result.success) {
       return NextResponse.json(
         { error: result.error || "Failed to start recording" },
-        { status: 500 }
+        { status: 500 },
       );
     }
 
@@ -142,13 +142,13 @@ export async function POST(req: NextRequest) {
     if (error instanceof z.ZodError) {
       return NextResponse.json(
         { error: "Invalid request", details: error.errors },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     return NextResponse.json(
       { error: "Failed to start recording" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

@@ -3,10 +3,7 @@ import { Prisma, PaymentGateway } from "@prisma/client";
 import crypto from "crypto";
 import { stripeClient } from "@/lib/payments/core/stripe";
 import { razorpayClient } from "@/lib/payments/core/razorpay";
-import {
-  handlePayoutWebhook,
-  refundEarnings,
-} from "@/lib/payments/payouts";
+import { handlePayoutWebhook, refundEarnings } from "@/lib/payments/payouts";
 
 // Re-export payment handlers from lib (architectural fix)
 export {
@@ -453,9 +450,7 @@ export async function handleStripePayoutWebhook(
     failureReason,
   );
 
-  console.log(
-    `✅ Stripe payout ${payoutData.id} webhook processed: ${status}`,
-  );
+  console.log(`✅ Stripe payout ${payoutData.id} webhook processed: ${status}`);
 }
 
 /**
@@ -470,7 +465,9 @@ export async function handleRefundForEarnings(
   });
 
   if (!payment) {
-    console.warn(`Payment not found for refund earnings update: ${paymentIntentId}`);
+    console.warn(
+      `Payment not found for refund earnings update: ${paymentIntentId}`,
+    );
     return;
   }
 

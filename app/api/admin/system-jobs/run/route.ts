@@ -146,8 +146,10 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
       cleanedCount: result.totalCancelled,
       duplicateConsultations: result.duplicateConsultationsCancelled,
       duplicateSubscriptions: result.duplicateSubscriptionsCancelled,
-      invalidDurationConsultations: result.invalidDurationConsultationsCancelled,
-      invalidDurationSubscriptions: result.invalidDurationSubscriptionsCancelled,
+      invalidDurationConsultations:
+        result.invalidDurationConsultationsCancelled,
+      invalidDurationSubscriptions:
+        result.invalidDurationSubscriptionsCancelled,
       errorCount: result.errors.length,
     };
   },
@@ -255,7 +257,10 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
       consultationsExpired: result.consultationsExpired,
       subscriptionsExpired: result.subscriptionsExpired,
       paymentPendingExpired: result.paymentPendingExpired,
-      totalProcessed: result.consultationsExpired + result.subscriptionsExpired + result.paymentPendingExpired,
+      totalProcessed:
+        result.consultationsExpired +
+        result.subscriptionsExpired +
+        result.paymentPendingExpired,
       errorCount: result.errors.length,
     };
   },
@@ -342,7 +347,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       select: { role: true, name: true, email: true },
     });
 
-    if (!user || (user.role !== UserRole.STAFF && user.role !== UserRole.ADMIN)) {
+    if (
+      !user ||
+      (user.role !== UserRole.STAFF && user.role !== UserRole.ADMIN)
+    ) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 

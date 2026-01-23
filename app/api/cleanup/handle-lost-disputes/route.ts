@@ -36,7 +36,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     });
 
     // Return appropriate status based on critical cases
-    const status = result.alreadyPaidCount > 0 ? 207 : result.success ? 200 : 500;
+    const status =
+      result.alreadyPaidCount > 0 ? 207 : result.success ? 200 : 500;
 
     return NextResponse.json(result, { status });
   } catch (error) {

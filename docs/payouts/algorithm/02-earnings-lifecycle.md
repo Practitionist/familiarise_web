@@ -42,13 +42,13 @@ stateDiagram-v2
 
 ## Status Definitions
 
-| Status | Description | Next Actions |
-|--------|-------------|--------------|
-| **PENDING** | Earnings created, within hold period | Wait for hold expiry |
-| **READY** | Hold period passed, eligible for payout | Include in batch |
-| **HELD** | Frozen due to dispute | Await resolution |
-| **PAID** | Successfully paid to consultant | Terminal state |
-| **REFUNDED** | Payment was refunded | Terminal state |
+| Status       | Description                             | Next Actions         |
+| ------------ | --------------------------------------- | -------------------- |
+| **PENDING**  | Earnings created, within hold period    | Wait for hold expiry |
+| **READY**    | Hold period passed, eligible for payout | Include in batch     |
+| **HELD**     | Frozen due to dispute                   | Await resolution     |
+| **PAID**     | Successfully paid to consultant         | Terminal state       |
+| **REFUNDED** | Payment was refunded                    | Terminal state       |
 
 ---
 
@@ -163,12 +163,12 @@ gantt
     Ready for Payout     :done, sub-ready, after sub, 1h
 ```
 
-| Type | Hold Period | Rationale |
-|------|-------------|-----------|
-| **Consultation** | 24 hours | Short engagement, quick resolution |
-| **Class** | 24 hours | Similar to consultation |
-| **Webinar** | 48 hours | Allow time for participant feedback |
-| **Subscription** | 7 days | Longer commitment, higher refund risk |
+| Type             | Hold Period | Rationale                             |
+| ---------------- | ----------- | ------------------------------------- |
+| **Consultation** | 24 hours    | Short engagement, quick resolution    |
+| **Class**        | 24 hours    | Similar to consultation               |
+| **Webinar**      | 48 hours    | Allow time for participant feedback   |
+| **Subscription** | 7 days      | Longer commitment, higher refund risk |
 
 ---
 
@@ -188,8 +188,10 @@ const CONSULTANT_SHARE_PERCENTAGE = 80;
 
 function calculateSplit(grossAmount: number) {
   return {
-    platformFee: Math.floor(grossAmount * PLATFORM_FEE_PERCENTAGE / 100),
-    consultantShare: Math.floor(grossAmount * CONSULTANT_SHARE_PERCENTAGE / 100),
+    platformFee: Math.floor((grossAmount * PLATFORM_FEE_PERCENTAGE) / 100),
+    consultantShare: Math.floor(
+      (grossAmount * CONSULTANT_SHARE_PERCENTAGE) / 100,
+    ),
   };
 }
 
@@ -228,13 +230,13 @@ sequenceDiagram
 
 ### Refund States
 
-| Original Status | Can Refund? | Action |
-|-----------------|-------------|--------|
-| PENDING | Yes | Mark as REFUNDED |
-| READY | Yes | Mark as REFUNDED |
-| HELD | Yes | Mark as REFUNDED |
-| PAID | No | Already disbursed |
-| REFUNDED | No | Already refunded |
+| Original Status | Can Refund? | Action            |
+| --------------- | ----------- | ----------------- |
+| PENDING         | Yes         | Mark as REFUNDED  |
+| READY           | Yes         | Mark as REFUNDED  |
+| HELD            | Yes         | Mark as REFUNDED  |
+| PAID            | No          | Already disbursed |
+| REFUNDED        | No          | Already refunded  |
 
 ---
 
@@ -284,12 +286,12 @@ Consultants can view their earnings breakdown:
 
 ```typescript
 interface EarningsSummary {
-  totalEarnings: number;      // All time
-  pendingEarnings: number;    // Status: PENDING
-  readyForPayout: number;     // Status: READY
-  heldEarnings: number;       // Status: HELD
-  paidOutEarnings: number;    // Status: PAID
-  refundedEarnings: number;   // Status: REFUNDED
+  totalEarnings: number; // All time
+  pendingEarnings: number; // Status: PENDING
+  readyForPayout: number; // Status: READY
+  heldEarnings: number; // Status: HELD
+  paidOutEarnings: number; // Status: PAID
+  refundedEarnings: number; // Status: REFUNDED
 }
 ```
 

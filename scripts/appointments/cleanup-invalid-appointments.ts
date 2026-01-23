@@ -144,7 +144,9 @@ export async function cleanupDuplicateConsultations(): Promise<{
           },
         },
       });
-      console.log(`🔓 Released ${slotsDeleted.count} slots from duplicate consultations`);
+      console.log(
+        `🔓 Released ${slotsDeleted.count} slots from duplicate consultations`,
+      );
 
       // Then cancel the consultations
       const result = await prisma.consultation.updateMany({
@@ -258,7 +260,9 @@ export async function cleanupDuplicateSubscriptions(): Promise<{
           },
         },
       });
-      console.log(`🔓 Released ${slotsDeleted.count} slots from duplicate subscriptions`);
+      console.log(
+        `🔓 Released ${slotsDeleted.count} slots from duplicate subscriptions`,
+      );
 
       // Then cancel the subscriptions
       const result = await prisma.subscription.updateMany({
@@ -348,7 +352,9 @@ export async function cleanupInvalidDurationConsultations(): Promise<{
           },
         },
       });
-      console.log(`🔓 Released ${slotsDeleted.count} slots from invalid duration consultations`);
+      console.log(
+        `🔓 Released ${slotsDeleted.count} slots from invalid duration consultations`,
+      );
 
       // Then cancel the consultations
       const result = await prisma.consultation.updateMany({
@@ -432,7 +438,9 @@ export async function cleanupInvalidDurationSubscriptions(): Promise<{
           },
         },
       });
-      console.log(`🔓 Released ${slotsDeleted.count} slots from invalid duration subscriptions`);
+      console.log(
+        `🔓 Released ${slotsDeleted.count} slots from invalid duration subscriptions`,
+      );
 
       // Then cancel the subscriptions
       const result = await prisma.subscription.updateMany({

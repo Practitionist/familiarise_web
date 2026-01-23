@@ -78,14 +78,14 @@ export const ChatContainer = () => {
   // For VirtualizedMessageList, we need to set defaultItemHeight for optimal performance
   const messageListProps = shouldUseVirtualized
     ? {
-      Message: CustomMessage,
-      defaultItemHeight: 62, // Typical height of a one-line message
-      additionalVirtuosoProps: {
-        // Additional performance optimizations
-        increaseViewportBy: 200, // Render 200px outside viewport
-        overscan: 5, // Keep 5 extra items rendered
-      },
-    }
+        Message: CustomMessage,
+        defaultItemHeight: 62, // Typical height of a one-line message
+        additionalVirtuosoProps: {
+          // Additional performance optimizations
+          increaseViewportBy: 200, // Render 200px outside viewport
+          overscan: 5, // Keep 5 extra items rendered
+        },
+      }
     : { Message: CustomMessage };
 
   return (

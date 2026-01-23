@@ -297,7 +297,8 @@ export const impossibleCases: ValidationTestCase[] = [
 
   {
     name: "webinar_exceeds_max_participants",
-    description: "Adding more participants to a webinar than maxParticipants allows",
+    description:
+      "Adding more participants to a webinar than maxParticipants allows",
     category: "data_integrity",
     expectedError: "Webinar has reached maximum capacity",
     execute: async () => {
@@ -365,9 +366,7 @@ export const impossibleCases: ValidationTestCase[] = [
         },
       });
 
-      if (
-        !consultant?.consultantProfile?.consultationPlans?.length
-      ) {
+      if (!consultant?.consultantProfile?.consultationPlans?.length) {
         throw new Error("No consultant with plans found for test");
       }
 
@@ -456,7 +455,9 @@ export async function runValidationTests(): Promise<TestResult[]> {
         actualError: "No error was thrown - validation did not catch this case",
         executionTime,
       });
-      console.log(`  [${"FAILED".padEnd(10)}] No error thrown (${executionTime}ms)`);
+      console.log(
+        `  [${"FAILED".padEnd(10)}] No error thrown (${executionTime}ms)`,
+      );
     } catch (error) {
       // Test PASSED if an error was thrown
       const executionTime = Date.now() - startTime;
@@ -508,8 +509,12 @@ function printSummary(results: TestResult[]): void {
   const totalTime = results.reduce((acc, r) => acc + r.executionTime, 0);
 
   console.log(`\nTotal: ${results.length} tests`);
-  console.log(`Passed: ${passed} (${((passed / results.length) * 100).toFixed(1)}%)`);
-  console.log(`Failed: ${failed} (${((failed / results.length) * 100).toFixed(1)}%)`);
+  console.log(
+    `Passed: ${passed} (${((passed / results.length) * 100).toFixed(1)}%)`,
+  );
+  console.log(
+    `Failed: ${failed} (${((failed / results.length) * 100).toFixed(1)}%)`,
+  );
   console.log(`Total time: ${totalTime}ms`);
 
   // Group by category

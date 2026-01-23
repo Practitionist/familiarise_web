@@ -175,13 +175,13 @@ export function EventTimingsCalendar({
           }
           durationInHours={
             eventDetails.eventType === "webinar" ||
-              eventDetails.eventType === "consultation"
+            eventDetails.eventType === "consultation"
               ? eventDetails.durationInHours
               : undefined
           }
           sessionDurationInHours={
             eventDetails.eventType === "subscription" ||
-              eventDetails.eventType === "class"
+            eventDetails.eventType === "class"
               ? eventDetails.durationInHours
               : undefined
           }
@@ -199,8 +199,8 @@ export function EventTimingsCalendar({
               : appointment.appointmentType === "CLASS"
                 ? (appointment.class as any)?.schedulingPeriodStartsAt
                   ? new Date(
-                    (appointment.class as any).schedulingPeriodStartsAt,
-                  )
+                      (appointment.class as any).schedulingPeriodStartsAt,
+                    )
                   : undefined
                 : undefined
           }

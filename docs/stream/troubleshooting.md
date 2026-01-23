@@ -108,6 +108,7 @@ export function mapRoleToStream(role: string | null | undefined): string {
 #### Current Workaround
 
 **Temporary Mitigation:**
+
 - Application-level permission checks (don't rely on Stream roles)
 - Audit logging for sensitive operations
 - User education about not abusing permissions

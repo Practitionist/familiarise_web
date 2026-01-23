@@ -15,7 +15,12 @@ const nextConfig = {
 
   // Prevent pg (node-postgres) and related packages from being bundled into client-side code
   // These are server-only dependencies used by @prisma/adapter-pg
-  serverExternalPackages: ["pg", "@prisma/adapter-pg", "pg-pool", "pg-connection-string"],
+  serverExternalPackages: [
+    "pg",
+    "@prisma/adapter-pg",
+    "pg-pool",
+    "pg-connection-string",
+  ],
 
   images: {
     remotePatterns: [

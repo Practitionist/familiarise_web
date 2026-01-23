@@ -14,11 +14,11 @@ export function validateSlotTiming(slotStart: Date): string | null {
   }
 
   const minimumBookingTime = new Date(
-    now.getTime() + MINIMUM_BOOKING_LEAD_TIME_MS
+    now.getTime() + MINIMUM_BOOKING_LEAD_TIME_MS,
   );
   if (slotStart < minimumBookingTime) {
     const minutesUntilSlot = Math.ceil(
-      (slotStart.getTime() - now.getTime()) / (60 * 1000)
+      (slotStart.getTime() - now.getTime()) / (60 * 1000),
     );
     return `This time slot starts too soon (in ${minutesUntilSlot} minute${minutesUntilSlot === 1 ? "" : "s"}). Bookings must be made at least ${MINIMUM_BOOKING_LEAD_TIME_MINUTES} minutes in advance.`;
   }

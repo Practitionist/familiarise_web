@@ -5,10 +5,7 @@ import { WebinarPlanSchema } from "@/schemas/plans";
 import { WebinarStatus } from "@prisma/client";
 import { getServerSession } from "next-auth";
 import authOptions from "@/app/api/auth/[...nextauth]/options";
-import {
-  findOrCreateTopics,
-  transformNestedPlanTopics,
-} from "@/lib/topics";
+import { findOrCreateTopics, transformNestedPlanTopics } from "@/lib/topics";
 
 // Schema for POST request body based on WebinarPlanSchema
 // Topics are now accepted as names (strings) - API handles finding/creating
@@ -400,8 +397,10 @@ export async function PATCH(request: NextRequest) {
     }
 
     // Verify ownership - user must own this webinar plan
-    if (!existingPlan.consultantProfile ||
-        existingPlan.consultantProfile.userId !== session.user.id) {
+    if (
+      !existingPlan.consultantProfile ||
+      existingPlan.consultantProfile.userId !== session.user.id
+    ) {
       return NextResponse.json(
         { error: "You do not have permission to update this webinar" },
         { status: 403 },

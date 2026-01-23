@@ -46,9 +46,7 @@ function isConsultationPlanEvent(event: Event): event is ConsultationPlanEvent {
   return event.type === "consultation";
 }
 
-function isSubscriptionPlanEvent(
-  event: Event,
-): event is SubscriptionPlanEvent {
+function isSubscriptionPlanEvent(event: Event): event is SubscriptionPlanEvent {
   return event.type === "subscription";
 }
 
@@ -334,7 +332,9 @@ export function EventCard({
             {formatCurrency(price, currency)}
           </span>
           {durationSuffix && (
-            <span className="text-xs sm:text-sm text-zinc-400">{durationSuffix}</span>
+            <span className="text-xs sm:text-sm text-zinc-400">
+              {durationSuffix}
+            </span>
           )}
         </div>
 

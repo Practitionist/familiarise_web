@@ -112,7 +112,9 @@ export async function fetchActivities(
   consultantId: string,
 ): Promise<IActivity[]> {
   try {
-    const response = await fetch(`/api/activities?consultantId=${consultantId}`);
+    const response = await fetch(
+      `/api/activities?consultantId=${consultantId}`,
+    );
     if (!response.ok) {
       throw new Error(`Failed to fetch activities: ${response.statusText}`);
     }

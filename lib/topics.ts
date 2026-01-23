@@ -62,7 +62,9 @@ export async function findOrCreateTopics(
  * Build Prisma connect clause for topics
  * Use this when creating/updating entities with topics
  */
-export function buildTopicsConnect(topicIds: string[]): Prisma.TopicUpdateManyWithoutWebinarPlansNestedInput {
+export function buildTopicsConnect(
+  topicIds: string[],
+): Prisma.TopicUpdateManyWithoutWebinarPlansNestedInput {
   if (!topicIds || topicIds.length === 0) {
     return { set: [] };
   }

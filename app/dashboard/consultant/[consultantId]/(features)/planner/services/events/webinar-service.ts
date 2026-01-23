@@ -41,10 +41,7 @@ export class WebinarService {
       const { isDuplicate } = await response.json();
       return isDuplicate;
     } catch (error) {
-      console.error(
-        "[WebinarService.checkDuplicateTitle] Error:",
-        error,
-      );
+      console.error("[WebinarService.checkDuplicateTitle] Error:", error);
       return false;
     }
   }

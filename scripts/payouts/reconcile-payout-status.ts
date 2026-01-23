@@ -208,8 +208,12 @@ export async function reconcilePayoutStatus(): Promise<PayoutReconciliationResul
     console.log(`   Provider: ${payout.provider}`);
     console.log(`   Provider Payout ID: ${payout.providerPayoutId}`);
     console.log(`   Current Status: ${payout.status}`);
-    console.log(`   Consultant: ${payout.consultantProfile.user.name || "Unknown"}`);
-    console.log(`   Amount: ${payout.currency} ${(payout.amount / 100).toFixed(2)}`);
+    console.log(
+      `   Consultant: ${payout.consultantProfile.user.name || "Unknown"}`,
+    );
+    console.log(
+      `   Amount: ${payout.currency} ${(payout.amount / 100).toFixed(2)}`,
+    );
     console.log(`   Last updated: ${payout.updatedAt.toISOString()}`);
 
     // Skip if no provider payout ID
@@ -220,7 +224,11 @@ export async function reconcilePayoutStatus(): Promise<PayoutReconciliationResul
     }
 
     // Query gateway for actual status
-    let gatewayStatus: { status: string; failureMessage?: string; failureReason?: string } | null = null;
+    let gatewayStatus: {
+      status: string;
+      failureMessage?: string;
+      failureReason?: string;
+    } | null = null;
 
     if (payout.provider === PaymentGateway.STRIPE) {
       gatewayStatus = await getStripePayoutStatus(payout.providerPayoutId);
@@ -242,7 +250,10 @@ export async function reconcilePayoutStatus(): Promise<PayoutReconciliationResul
     console.log(`   Gateway status: ${gatewayStatus.status}`);
 
     // Map gateway status to our status
-    const mappedStatus = mapGatewayStatus(payout.provider, gatewayStatus.status);
+    const mappedStatus = mapGatewayStatus(
+      payout.provider,
+      gatewayStatus.status,
+    );
 
     if (!mappedStatus) {
       console.log(`   Unknown gateway status - skipping`);

@@ -97,7 +97,8 @@ export default function ExpertProfile(
           endDateInUtc.setHours(23, 59, 59, 999);
 
           const response = await fetch(
-            `/api/slots/availability-with-allocation/${consultantDetails.id
+            `/api/slots/availability-with-allocation/${
+              consultantDetails.id
             }?startDateInUtc=${startDateInUtc.toISOString()}&endDateInUtc=${endDateInUtc.toISOString()}&timezone=${timezone}`,
           );
 
@@ -251,9 +252,10 @@ export default function ExpertProfile(
         <button
           key={i}
           className={`w-10 h-10 lg:w-11 lg:h-11 rounded-full text-base font-medium transition-all duration-200 flex items-center justify-center
-            ${isSelected
-              ? "bg-white text-zinc-900 shadow-md"
-              : "text-zinc-300 hover:bg-zinc-700/60"
+            ${
+              isSelected
+                ? "bg-white text-zinc-900 shadow-md"
+                : "text-zinc-300 hover:bg-zinc-700/60"
             }`}
           onClick={() => {
             setSelectedDate(date);

@@ -32,7 +32,10 @@ import {
   StreamSessionEndedEvent,
   StreamCallEndedEvent,
 } from "@/lib/stream/session-handlers";
-import { logWebhookEvent, markWebhookEventProcessed } from "../../webhooks/utils";
+import {
+  logWebhookEvent,
+  markWebhookEventProcessed,
+} from "../../webhooks/utils";
 
 // Stream webhook event types we handle
 const HANDLED_EVENT_TYPES = [
@@ -124,7 +127,7 @@ const streamCallEndedSchema = streamBaseEventSchema.extend({
 async function verifyStreamSignature(
   req: NextRequest,
   body: string,
-  secret: string
+  secret: string,
 ): Promise<boolean> {
   const signature = req.headers.get("x-signature");
 
@@ -143,7 +146,7 @@ async function verifyStreamSignature(
     // Constant-time comparison to prevent timing attacks
     return crypto.timingSafeEqual(
       Buffer.from(signature),
-      Buffer.from(expectedSignature)
+      Buffer.from(expectedSignature),
     );
   } catch (error) {
     console.error("Error verifying Stream webhook signature:", error);
@@ -159,7 +162,7 @@ export async function POST(req: NextRequest) {
     console.error("STREAM_WEBHOOK_SECRET not configured");
     return NextResponse.json(
       { error: "Webhook secret not configured" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 
@@ -196,7 +199,7 @@ export async function POST(req: NextRequest) {
       eventId,
       eventType,
       event,
-      req.headers.get("x-signature") || undefined
+      req.headers.get("x-signature") || undefined,
     );
 
     if (!isNew) {
@@ -234,14 +237,18 @@ export async function POST(req: NextRequest) {
 
         case "call.recording_failed": {
           const failedEvent = streamRecordingFailedSchema.parse(event);
-          await handleRecordingFailed(failedEvent as StreamRecordingFailedEvent);
+          await handleRecordingFailed(
+            failedEvent as StreamRecordingFailedEvent,
+          );
           break;
         }
 
         // Session events
         case "call.session_ended": {
           const sessionEndedEvent = streamSessionEndedSchema.parse(event);
-          await handleSessionEnded(sessionEndedEvent as StreamSessionEndedEvent);
+          await handleSessionEnded(
+            sessionEndedEvent as StreamSessionEndedEvent,
+          );
           break;
         }
 
@@ -276,13 +283,13 @@ export async function POST(req: NextRequest) {
       console.error("Stream webhook validation error:", error.errors);
       return NextResponse.json(
         { error: "Invalid event format", details: error.errors },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     return NextResponse.json(
       { error: "Webhook handler failed" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

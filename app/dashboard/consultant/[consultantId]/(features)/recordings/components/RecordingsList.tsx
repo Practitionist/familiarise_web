@@ -29,7 +29,7 @@ export function RecordingsList({ consultantId, type }: RecordingsListProps) {
       }
 
       const response = await fetch(
-        `/api/consultants/${consultantId}/recordings?${params.toString()}`
+        `/api/consultants/${consultantId}/recordings?${params.toString()}`,
       );
 
       if (!response.ok) {
@@ -40,7 +40,9 @@ export function RecordingsList({ consultantId, type }: RecordingsListProps) {
       setRecordings(data.recordings);
     } catch (err) {
       console.error("Error fetching recordings:", err);
-      setError(err instanceof Error ? err.message : "Failed to load recordings");
+      setError(
+        err instanceof Error ? err.message : "Failed to load recordings",
+      );
     } finally {
       setIsLoading(false);
     }
@@ -53,7 +55,9 @@ export function RecordingsList({ consultantId, type }: RecordingsListProps) {
   const handleSync = async () => {
     setIsSyncing(true);
     try {
-      const response = await fetch("/api/stream/recordings/sync", { method: "POST" });
+      const response = await fetch("/api/stream/recordings/sync", {
+        method: "POST",
+      });
       const data = await response.json();
 
       if (!response.ok) {
@@ -76,7 +80,8 @@ export function RecordingsList({ consultantId, type }: RecordingsListProps) {
       console.error("Error syncing recordings:", err);
       toast({
         title: "Error",
-        description: err instanceof Error ? err.message : "Failed to sync recordings",
+        description:
+          err instanceof Error ? err.message : "Failed to sync recordings",
         variant: "destructive",
       });
     } finally {
@@ -85,9 +90,12 @@ export function RecordingsList({ consultantId, type }: RecordingsListProps) {
   };
 
   const handleTransfer = async (recordingId: string) => {
-    const response = await fetch(`/api/stream/recordings/${recordingId}/transfer`, {
-      method: "POST",
-    });
+    const response = await fetch(
+      `/api/stream/recordings/${recordingId}/transfer`,
+      {
+        method: "POST",
+      },
+    );
 
     if (!response.ok) {
       const data = await response.json();

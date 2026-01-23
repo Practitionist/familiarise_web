@@ -13,12 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/components/ui/use-toast";
-import {
-  Loader2Icon,
-  SearchIcon,
-  UserPlusIcon,
-  XIcon,
-} from "lucide-react";
+import { Loader2Icon, SearchIcon, UserPlusIcon, XIcon } from "lucide-react";
 import type { ConsulteeSearchResult } from "@/app/api/stream/search-consultees/route";
 
 interface AddMembersDialogProps {
@@ -70,7 +65,7 @@ export const AddMembersDialog = ({
     try {
       const excludeParam = existingMemberIds.join(",");
       const response = await fetch(
-        `/api/stream/search-consultees?term=${encodeURIComponent(searchTerm)}&exclude=${excludeParam}`
+        `/api/stream/search-consultees?term=${encodeURIComponent(searchTerm)}&exclude=${excludeParam}`,
       );
 
       if (!response.ok) {
@@ -130,7 +125,9 @@ export const AddMembersDialog = ({
     }
   };
 
-  const getRelationshipLabel = (type: ConsulteeSearchResult["relationshipType"]) => {
+  const getRelationshipLabel = (
+    type: ConsulteeSearchResult["relationshipType"],
+  ) => {
     switch (type) {
       case "consultation":
         return "Consultation";
@@ -233,7 +230,9 @@ export const AddMembersDialog = ({
                         />
                       ) : (
                         <span className="text-sm font-medium text-gray-600">
-                          {(consultee.name || consultee.email || "?").charAt(0).toUpperCase()}
+                          {(consultee.name || consultee.email || "?")
+                            .charAt(0)
+                            .toUpperCase()}
                         </span>
                       )}
                     </div>

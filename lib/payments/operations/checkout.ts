@@ -66,7 +66,7 @@ type SubscriptionCheckoutResult = {
 function buildPaymentMetadata(
   data: CheckoutInput,
   userId: string,
-): { appointmentId: string; appointmentType: string;[key: string]: string } {
+): { appointmentId: string; appointmentType: string; [key: string]: string } {
   return {
     appointmentId: "pending",
     appointmentType: data.appointmentType,
@@ -421,14 +421,14 @@ export async function validateSlotAvailability(
         // FIX: Filter by consultant - only check slots belonging to this consultant
         ...(consultantUserId
           ? [
-            {
-              user: {
-                some: {
-                  id: consultantUserId,
+              {
+                user: {
+                  some: {
+                    id: consultantUserId,
+                  },
                 },
               },
-            },
-          ]
+            ]
           : []),
       ],
     },
@@ -463,14 +463,14 @@ export async function validateSlotAvailability(
           // FIX: Filter by consultant - only check tentative slots for this consultant
           ...(consultantUserId
             ? [
-              {
-                user: {
-                  some: {
-                    id: consultantUserId,
+                {
+                  user: {
+                    some: {
+                      id: consultantUserId,
+                    },
                   },
                 },
-              },
-            ]
+              ]
             : []),
           {
             appointment: {
@@ -534,14 +534,14 @@ export async function validateSlotAvailability(
         // FIX: Filter by consultant - only count tentative slots for this consultant
         ...(consultantUserId
           ? [
-            {
-              user: {
-                some: {
-                  id: consultantUserId,
+              {
+                user: {
+                  some: {
+                    id: consultantUserId,
+                  },
                 },
               },
-            },
-          ]
+            ]
           : []),
         {
           appointment: {
@@ -1354,102 +1354,105 @@ export async function handleCheckout(
     // STEP 5: Create tentative appointment + payment record (INSIDE LOCK)
     // This prevents race conditions by making validation see tentative bookings
     try {
-      const result = await prisma.$transaction(async (tx) => {
-        let createdAppointment;
+      const result = await prisma.$transaction(
+        async (tx) => {
+          let createdAppointment;
 
-        // Create appointment based on type (with isTentative flag)
-        switch (validatedData.appointmentType) {
-          case "CONSULTATION": {
-            const consultationResult = await handleConsultationCheckout(
-              tx,
-              validatedData,
-              consulteeProfileId,
-              isMockPayment, // skipPayment = isMockPayment
-            );
-            createdAppointment = consultationResult.appointment;
-            break;
+          // Create appointment based on type (with isTentative flag)
+          switch (validatedData.appointmentType) {
+            case "CONSULTATION": {
+              const consultationResult = await handleConsultationCheckout(
+                tx,
+                validatedData,
+                consulteeProfileId,
+                isMockPayment, // skipPayment = isMockPayment
+              );
+              createdAppointment = consultationResult.appointment;
+              break;
+            }
+
+            case "SUBSCRIPTION": {
+              const subscriptionResult = await handleSubscriptionCheckout(
+                tx,
+                validatedData,
+                consulteeProfileId,
+                isMockPayment,
+              );
+              // Use placeholder appointment for payment linkage
+              // This ensures webhook uses NEW FLOW (confirm) not LEGACY FLOW (create duplicate)
+              createdAppointment = subscriptionResult.appointment;
+              break;
+            }
+
+            case "WEBINAR": {
+              const webinarResult = await handleWebinarCheckout(
+                tx,
+                validatedData,
+                userId,
+                isMockPayment,
+              );
+              createdAppointment = webinarResult.appointment;
+              break;
+            }
+
+            case "CLASS": {
+              const classResult = await handleClassCheckout(
+                tx,
+                validatedData,
+                userId,
+                isMockPayment,
+              );
+              // Class creates slots across multiple appointments
+              // Use first appointment for payment linkage
+              createdAppointment = classResult.appointment || null;
+              break;
+            }
+
+            default:
+              throw new Error(
+                `Unsupported appointment type: ${validatedData.appointmentType}`,
+              );
           }
 
-          case "SUBSCRIPTION": {
-            const subscriptionResult = await handleSubscriptionCheckout(
-              tx,
-              validatedData,
-              consulteeProfileId,
+          // Create payment record linked to appointment (if created)
+          // paymentResponse is guaranteed to be set at this point (we'd have thrown in the try-catch above)
+          const payment = await tx.payment.create({
+            data: {
+              amount,
+              currency,
+              paymentMethod: "CARD",
+              paymentIntent: paymentResponse!.id,
+              paymentGateway: validatedData.paymentGateway,
+              paymentStatus: PaymentStatus.PENDING,
               isMockPayment,
-            );
-            // Use placeholder appointment for payment linkage
-            // This ensures webhook uses NEW FLOW (confirm) not LEGACY FLOW (create duplicate)
-            createdAppointment = subscriptionResult.appointment;
-            break;
-          }
-
-          case "WEBINAR": {
-            const webinarResult = await handleWebinarCheckout(
-              tx,
-              validatedData,
-              userId,
-              isMockPayment,
-            );
-            createdAppointment = webinarResult.appointment;
-            break;
-          }
-
-          case "CLASS": {
-            const classResult = await handleClassCheckout(
-              tx,
-              validatedData,
-              userId,
-              isMockPayment,
-            );
-            // Class creates slots across multiple appointments
-            // Use first appointment for payment linkage
-            createdAppointment = classResult.appointment || null;
-            break;
-          }
-
-          default:
-            throw new Error(
-              `Unsupported appointment type: ${validatedData.appointmentType}`,
-            );
-        }
-
-        // Create payment record linked to appointment (if created)
-        // paymentResponse is guaranteed to be set at this point (we'd have thrown in the try-catch above)
-        const payment = await tx.payment.create({
-          data: {
-            amount,
-            currency,
-            paymentMethod: "CARD",
-            paymentIntent: paymentResponse!.id,
-            paymentGateway: validatedData.paymentGateway,
-            paymentStatus: PaymentStatus.PENDING,
-            isMockPayment,
-            userId: userId,
-            appointmentId: createdAppointment?.id || null,
-            discountCodeId,
-            expiresAt: new Date(Date.now() + 30 * 60 * 1000), // 30 minutes
-          },
-        });
-
-        // FIX Issue #6: Update mock payment status directly (no webhook for mock payments)
-        if (isMockPayment) {
-          await tx.payment.update({
-            where: { id: payment.id },
-            data: { paymentStatus: PaymentStatus.SUCCEEDED },
+              userId: userId,
+              appointmentId: createdAppointment?.id || null,
+              discountCodeId,
+              expiresAt: new Date(Date.now() + 30 * 60 * 1000), // 30 minutes
+            },
           });
-        }
 
-        // Increment discount code usage count atomically (only after payment is created)
-        // This ensures count only increases when payment is successfully created
-        if (discountCodeId) {
-          await tx.discountCode.update({
-            where: { id: discountCodeId },
-            data: { currentUses: { increment: 1 } },
-          });
-        }
+          // FIX Issue #6: Update mock payment status directly (no webhook for mock payments)
+          if (isMockPayment) {
+            await tx.payment.update({
+              where: { id: payment.id },
+              data: { paymentStatus: PaymentStatus.SUCCEEDED },
+            });
+          }
 
-        return { appointmentId: createdAppointment?.id };
-      }, { timeout: 25000 });
+          // Increment discount code usage count atomically (only after payment is created)
+          // This ensures count only increases when payment is successfully created
+          if (discountCodeId) {
+            await tx.discountCode.update({
+              where: { id: discountCodeId },
+              data: { currentUses: { increment: 1 } },
+            });
+          }
+
+          return { appointmentId: createdAppointment?.id };
+        },
+        { timeout: 25000 },
+      );
 
       const logMessage = isMockPayment
         ? `🎭 Mock payment + tentative appointment created: ${paymentResponse.id}`

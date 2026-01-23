@@ -15,7 +15,7 @@ const isDevelopment = () =>
 // GET - Get a single material by ID
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ materialId: string }> }
+  { params }: { params: Promise<{ materialId: string }> },
 ) {
   try {
     const session = await getServerSession(authOptions);
@@ -26,7 +26,7 @@ export async function GET(
           message: "Please sign in to view material",
           code: "UNAUTHORIZED",
         },
-        { status: 401 }
+        { status: 401 },
       );
     }
 
@@ -74,7 +74,7 @@ export async function GET(
           message: "The requested material does not exist",
           code: "NOT_FOUND",
         },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
@@ -92,12 +92,18 @@ export async function GET(
           message: "You don't have permission to view this material",
           code: "FORBIDDEN",
         },
-        { status: 403 }
+        { status: 403 },
       );
     }
 
     // Return material without the nested plan relationships
-    const { consultationPlan, subscriptionPlan, webinarPlan, classPlan, ...materialData } = material;
+    const {
+      consultationPlan,
+      subscriptionPlan,
+      webinarPlan,
+      classPlan,
+      ...materialData
+    } = material;
     return NextResponse.json({ data: materialData });
   } catch (error) {
     console.error("Error fetching material:", error);
@@ -107,7 +113,7 @@ export async function GET(
         message: "Failed to fetch material",
         code: "SERVER_ERROR",
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -115,7 +121,7 @@ export async function GET(
 // PATCH - Update material (order, description)
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: Promise<{ materialId: string }> }
+  { params }: { params: Promise<{ materialId: string }> },
 ) {
   const { materialId } = await params;
   return handleUpdateMaterial(request, materialId);
@@ -124,7 +130,7 @@ export async function PATCH(
 // DELETE - Delete material
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: Promise<{ materialId: string }> }
+  { params }: { params: Promise<{ materialId: string }> },
 ) {
   const { materialId } = await params;
   return handleDeleteMaterial(request, materialId);

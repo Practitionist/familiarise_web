@@ -93,14 +93,18 @@ export async function cleanupTentativeSlots(): Promise<TentativeSlotCleanupResul
       console.log(`\nProcessing tentative slot ${slot.id}`);
       console.log(`   Appointment ID: ${slot.appointmentId}`);
       console.log(`   Created: ${slot.createdAt.toISOString()}`);
-      console.log(`   Slot time: ${slot.startsAt.toISOString()} - ${slot.endsAt.toISOString()}`);
+      console.log(
+        `   Slot time: ${slot.startsAt.toISOString()} - ${slot.endsAt.toISOString()}`,
+      );
 
       // Get user info
       const consultation = slot.appointment.consultation;
       const subscription = slot.appointment.subscription;
       const user =
         consultation?.requestedBy?.user || subscription?.requestedBy?.user;
-      console.log(`   User: ${user?.name || "Unknown"} (${user?.email || "N/A"})`);
+      console.log(
+        `   User: ${user?.name || "Unknown"} (${user?.email || "N/A"})`,
+      );
 
       // Log payment status
       const payments = slot.appointment.payment;

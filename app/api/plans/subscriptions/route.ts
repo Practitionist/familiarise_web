@@ -83,7 +83,10 @@ export async function POST(request: NextRequest) {
 
     if (!consultantProfile) {
       return NextResponse.json(
-        { error: "You do not have permission to create plans for this consultant profile" },
+        {
+          error:
+            "You do not have permission to create plans for this consultant profile",
+        },
         { status: 403 },
       );
     }

@@ -199,7 +199,9 @@ export async function handleStuckPayouts(): Promise<StuckPayoutsResult> {
     console.log(
       `\nProcessing stuck payout ${payout.id} for ${payout.consultantProfile.user.name || "Unknown"}`,
     );
-    console.log(`   Amount: ${payout.currency} ${(payout.amount / 100).toFixed(2)}`);
+    console.log(
+      `   Amount: ${payout.currency} ${(payout.amount / 100).toFixed(2)}`,
+    );
     console.log(`   Provider: ${payout.provider}`);
     console.log(`   Provider Payout ID: ${payout.providerPayoutId || "none"}`);
     console.log(`   Last updated: ${payout.updatedAt.toISOString()}`);
@@ -214,7 +216,8 @@ export async function handleStuckPayouts(): Promise<StuckPayoutsResult> {
           where: { id: payout.id },
           data: {
             status: PayoutStatus.FAILED,
-            failureReason: "Payout never sent to gateway after multiple attempts",
+            failureReason:
+              "Payout never sent to gateway after multiple attempts",
           },
         });
         failedCount++;
@@ -229,13 +232,19 @@ export async function handleStuckPayouts(): Promise<StuckPayoutsResult> {
           },
         });
         retriedCount++;
-        console.log(`   Reset to APPROVED for retry (attempt ${payout.retryCount + 1})`);
+        console.log(
+          `   Reset to APPROVED for retry (attempt ${payout.retryCount + 1})`,
+        );
       }
       continue;
     }
 
     // Query gateway for actual status
-    let gatewayStatus: { status: string; failureMessage?: string; failureReason?: string } | null = null;
+    let gatewayStatus: {
+      status: string;
+      failureMessage?: string;
+      failureReason?: string;
+    } | null = null;
 
     if (payout.provider === PaymentGateway.STRIPE) {
       gatewayStatus = await getStripePayoutStatus(payout.providerPayoutId);
@@ -252,11 +261,18 @@ export async function handleStuckPayouts(): Promise<StuckPayoutsResult> {
     console.log(`   Gateway status: ${gatewayStatus.status}`);
 
     // Map gateway status to our status
-    const mappedStatus = mapGatewayStatus(payout.provider, gatewayStatus.status);
+    const mappedStatus = mapGatewayStatus(
+      payout.provider,
+      gatewayStatus.status,
+    );
 
     if (!mappedStatus) {
-      console.log(`   Unknown gateway status: ${gatewayStatus.status} - skipping`);
-      errors.push(`Payout ${payout.id}: Unknown gateway status ${gatewayStatus.status}`);
+      console.log(
+        `   Unknown gateway status: ${gatewayStatus.status} - skipping`,
+      );
+      errors.push(
+        `Payout ${payout.id}: Unknown gateway status ${gatewayStatus.status}`,
+      );
       continue;
     }
 

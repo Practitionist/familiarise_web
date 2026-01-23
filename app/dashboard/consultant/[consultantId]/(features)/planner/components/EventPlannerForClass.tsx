@@ -181,7 +181,10 @@ export function EventPlannerForClass({
         planType: "class",
       });
       // Set the scheduling start date/time from the class instance
-      if ("schedulingPeriodStartsAt" in initialData && initialData.schedulingPeriodStartsAt) {
+      if (
+        "schedulingPeriodStartsAt" in initialData &&
+        initialData.schedulingPeriodStartsAt
+      ) {
         const date = new Date(initialData.schedulingPeriodStartsAt);
         // Use slice(0, 16) to get datetime-local format: "YYYY-MM-DDTHH:mm"
         setSchedulingStartDate(date.toISOString().slice(0, 16));
@@ -289,7 +292,8 @@ export function EventPlannerForClass({
           sessionDurationInHours:
             initialData?.classPlan?.sessionDurationInHours ?? 1,
           meetingsPerWeek: formData.meetingsPerWeek,
-          totalSessions: formData.meetingsPerWeek * formData.durationInMonths * 4,
+          totalSessions:
+            formData.meetingsPerWeek * formData.durationInMonths * 4,
           totalHours:
             formData.meetingsPerWeek *
             formData.durationInMonths *
@@ -537,7 +541,8 @@ export function EventPlannerForClass({
                 {/* Class Start Date & Time - Required Field */}
                 <div className="space-y-2 mb-4">
                   <FormLabel htmlFor="schedulingStartDate">
-                    Class Start Date & Time <span className="text-destructive">*</span>
+                    Class Start Date & Time{" "}
+                    <span className="text-destructive">*</span>
                   </FormLabel>
                   <div className="relative">
                     <Input
@@ -551,7 +556,8 @@ export function EventPlannerForClass({
                     <CalendarIcon className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
                   </div>
                   <p className="text-sm text-muted-foreground">
-                    When should the first class session begin? (Your local timezone)
+                    When should the first class session begin? (Your local
+                    timezone)
                   </p>
                   {!schedulingStartDate && (
                     <p className="text-sm text-destructive">
@@ -665,7 +671,8 @@ export function EventPlannerForClass({
                           Enable Recording
                         </FormLabel>
                         <FormDescription>
-                          Allow recording of class sessions for students to watch later
+                          Allow recording of class sessions for students to
+                          watch later
                         </FormDescription>
                       </div>
                       <FormControl>
@@ -779,7 +786,9 @@ export function EventPlannerForClass({
                                   <FormItem>
                                     <FormLabel>
                                       Title{" "}
-                                      <span className="text-destructive">*</span>
+                                      <span className="text-destructive">
+                                        *
+                                      </span>
                                     </FormLabel>
                                     <FormControl>
                                       <Input
@@ -799,7 +808,9 @@ export function EventPlannerForClass({
                                   <FormItem>
                                     <FormLabel>
                                       Hours{" "}
-                                      <span className="text-destructive">*</span>
+                                      <span className="text-destructive">
+                                        *
+                                      </span>
                                     </FormLabel>
                                     <FormControl>
                                       <Input
@@ -830,7 +841,9 @@ export function EventPlannerForClass({
                                   <FormItem className="md:col-span-2">
                                     <FormLabel>
                                       Description{" "}
-                                      <span className="text-destructive">*</span>
+                                      <span className="text-destructive">
+                                        *
+                                      </span>
                                     </FormLabel>
                                     <FormControl>
                                       <Textarea
@@ -953,7 +966,9 @@ export function EventPlannerForClass({
         <PlanMaterialsUpload
           planType="class"
           planId={initialData.id}
-          planTitle={form.getValues("title") || initialData.classPlan?.title || "Class"}
+          planTitle={
+            form.getValues("title") || initialData.classPlan?.title || "Class"
+          }
           isOpen={showMaterialsDialog}
           onClose={() => setShowMaterialsDialog(false)}
         />

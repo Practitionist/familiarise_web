@@ -120,7 +120,10 @@ function UpcomingSessionCard({
       {/* Row 1: Avatar + Title/Name + Time Badge - Fixed height 48px */}
       <div className="flex items-center gap-3 h-12 shrink-0">
         <Avatar className="h-10 w-10 ring-2 ring-zinc-700 shrink-0">
-          <AvatarImage src={event.consultantImage ?? undefined} alt={event.consultantName} />
+          <AvatarImage
+            src={event.consultantImage ?? undefined}
+            alt={event.consultantName}
+          />
           <AvatarFallback className="bg-zinc-700 text-zinc-300 text-xs font-semibold">
             {event.consultantName
               .split(" ")
@@ -185,7 +188,9 @@ function UpcomingSessionCard({
             e.stopPropagation();
             onJoin?.();
           }}
-          disabled={isJoining || !event.joinableAppointment || !event.joinableSlot}
+          disabled={
+            isJoining || !event.joinableAppointment || !event.joinableSlot
+          }
         >
           {isJoining ? (
             <Loader2 className="h-3 w-3 mr-1 animate-spin" />
@@ -238,7 +243,10 @@ function MonthlyEventItem({
         className="flex items-center gap-4 p-4 cursor-pointer hover:bg-zinc-50/50 transition-colors"
       >
         <Avatar className="h-10 w-10 ring-1 ring-zinc-200 flex-shrink-0">
-          <AvatarImage src={event.consultantImage ?? undefined} alt={event.consultantName} />
+          <AvatarImage
+            src={event.consultantImage ?? undefined}
+            alt={event.consultantName}
+          />
           <AvatarFallback className="bg-zinc-100 text-zinc-600 text-xs font-medium">
             {event.consultantName
               .split(" ")
@@ -250,8 +258,12 @@ function MonthlyEventItem({
           {/* Desktop: single row layout */}
           <div className="hidden lg:flex items-center justify-between gap-3">
             <div className="min-w-0 flex-1">
-              <h4 className="font-medium text-zinc-900 text-sm truncate">{event.title}</h4>
-              <p className="text-xs text-zinc-500 truncate">{event.consultantName}</p>
+              <h4 className="font-medium text-zinc-900 text-sm truncate">
+                {event.title}
+              </h4>
+              <p className="text-xs text-zinc-500 truncate">
+                {event.consultantName}
+              </p>
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
               <Badge className="text-[10px] font-medium bg-transparent border border-zinc-300 text-zinc-600 rounded-md">
@@ -278,8 +290,12 @@ function MonthlyEventItem({
           <div className="lg:hidden">
             <div className="flex items-start justify-between gap-2 mb-1">
               <div className="min-w-0 flex-1">
-                <h4 className="font-medium text-zinc-900 text-sm truncate">{event.title}</h4>
-                <p className="text-xs text-zinc-500 truncate">{event.consultantName}</p>
+                <h4 className="font-medium text-zinc-900 text-sm truncate">
+                  {event.title}
+                </h4>
+                <p className="text-xs text-zinc-500 truncate">
+                  {event.consultantName}
+                </p>
               </div>
               <ChevronRight
                 className={cn(
@@ -426,7 +442,7 @@ export default function HomeTab({
       const meetingId = await getOrCreateAppointmentMeeting(
         client,
         event.joinableAppointment,
-        event.joinableSlot
+        event.joinableSlot,
       );
       router.push(`/meetings/${meetingId}`);
       toast({
@@ -449,19 +465,19 @@ export default function HomeTab({
   // Process events into unified format using the utility function
   const processedEvents = useMemo(
     () => processAllEvents(eventsData),
-    [eventsData]
+    [eventsData],
   );
 
   // Get upcoming events
   const upcomingEvents = useMemo(
     () => getUpcomingEvents(processedEvents),
-    [processedEvents]
+    [processedEvents],
   );
 
   // Get events for current month
   const monthlyEvents = useMemo(
     () => getMonthlyEvents(processedEvents, currentMonth),
-    [processedEvents, currentMonth]
+    [processedEvents, currentMonth],
   );
 
   // Scroll handlers

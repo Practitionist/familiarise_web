@@ -202,7 +202,9 @@ export function DashboardSidebar({
                 )}
                 <ul className="space-y-1">
                   {section.items.map((item) => {
-                    const isActive = relativePath === item.path || relativePath.startsWith(item.path + "/");
+                    const isActive =
+                      relativePath === item.path ||
+                      relativePath.startsWith(item.path + "/");
 
                     return (
                       <li key={item.path}>
@@ -253,7 +255,9 @@ export function DashboardSidebar({
           /* Render flat navigation for backward compatibility */
           <ul className="space-y-1">
             {navItems.map((item) => {
-              const isActive = relativePath === item.path || relativePath.startsWith(item.path + "/");
+              const isActive =
+                relativePath === item.path ||
+                relativePath.startsWith(item.path + "/");
 
               return (
                 <li key={item.path}>
@@ -313,7 +317,9 @@ export function DashboardSidebar({
         </Link>
 
         {bottomNavItems.map((item) => {
-          const isActive = relativePath === item.path || relativePath.startsWith(item.path + "/");
+          const isActive =
+            relativePath === item.path ||
+            relativePath.startsWith(item.path + "/");
 
           return (
             <Link

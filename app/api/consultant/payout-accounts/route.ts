@@ -49,7 +49,7 @@ export async function GET() {
     if (!consultantProfile) {
       return NextResponse.json(
         { error: "Consultant profile not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
@@ -60,7 +60,7 @@ export async function GET() {
     console.error("Error fetching payout accounts:", error);
     return NextResponse.json(
       { error: "Failed to fetch payout accounts" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -91,7 +91,7 @@ export async function POST(req: NextRequest) {
     if (!consultantProfile) {
       return NextResponse.json(
         { error: "Consultant profile not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
@@ -99,15 +99,18 @@ export async function POST(req: NextRequest) {
     if (data.accountType === "BANK_ACCOUNT") {
       if (!data.accountNumber || !data.ifscCode) {
         return NextResponse.json(
-          { error: "Account number and IFSC code are required for bank accounts" },
-          { status: 400 }
+          {
+            error:
+              "Account number and IFSC code are required for bank accounts",
+          },
+          { status: 400 },
         );
       }
     } else if (data.accountType === "UPI") {
       if (!data.upiId) {
         return NextResponse.json(
           { error: "UPI ID is required for UPI accounts" },
-          { status: 400 }
+          { status: 400 },
         );
       }
     }
@@ -121,7 +124,7 @@ export async function POST(req: NextRequest) {
 
       // Check if contact already exists
       const existingAccount = consultantProfile.payoutAccounts.find(
-        (acc) => acc.razorpayContactId
+        (acc) => acc.razorpayContactId,
       );
 
       if (existingAccount?.razorpayContactId) {
@@ -129,7 +132,8 @@ export async function POST(req: NextRequest) {
       } else {
         // Create new contact
         const contact = await razorpayPayouts.createContact({
-          name: data.accountHolderName || consultantProfile.user.name || "Unknown",
+          name:
+            data.accountHolderName || consultantProfile.user.name || "Unknown",
           email: consultantProfile.user.email || "",
           type: "vendor",
           referenceId: consultantProfile.id,
@@ -191,12 +195,12 @@ export async function POST(req: NextRequest) {
     if (error instanceof z.ZodError) {
       return NextResponse.json(
         { error: "Invalid data", details: error.errors },
-        { status: 400 }
+        { status: 400 },
       );
     }
     return NextResponse.json(
       { error: "Failed to create payout account" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

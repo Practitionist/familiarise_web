@@ -21,7 +21,10 @@
 
 import prisma from "../../lib/prisma";
 import { EarningStatus, PaymentStatus, AppointmentsType } from "@prisma/client";
-import { PAYOUT_CONSTANTS, AppointmentType } from "../../lib/payments/payouts/constants";
+import {
+  PAYOUT_CONSTANTS,
+  AppointmentType,
+} from "../../lib/payments/payouts/constants";
 
 // Only sync payments within the last 30 days
 const SYNC_WINDOW_DAYS = 30;
@@ -138,9 +141,7 @@ export async function syncPaymentEarnings(): Promise<PaymentEarningSyncResult> {
     });
 
     if (existingEarnings) {
-      console.log(
-        `⏭️ Skipping payment ${payment.id} - earnings already exist`,
-      );
+      console.log(`⏭️ Skipping payment ${payment.id} - earnings already exist`);
       skippedCount++;
       continue;
     }
@@ -208,7 +209,10 @@ export async function syncPaymentEarnings(): Promise<PaymentEarningSyncResult> {
       const errorMessage =
         error instanceof Error ? error.message : String(error);
       errors.push(`Payment ${payment.id}: ${errorMessage}`);
-      console.error(`❌ Error creating earnings for payment ${payment.id}:`, errorMessage);
+      console.error(
+        `❌ Error creating earnings for payment ${payment.id}:`,
+        errorMessage,
+      );
       errorCount++;
     }
   }

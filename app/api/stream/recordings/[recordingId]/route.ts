@@ -34,13 +34,12 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     if (!recording) {
       return NextResponse.json(
         { error: "Recording not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
     // Check access permissions
-    const appointment =
-      recording.meetingSession.slotOfAppointment.appointment;
+    const appointment = recording.meetingSession.slotOfAppointment.appointment;
 
     let hasAccess = false;
 
@@ -83,7 +82,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     if (!hasAccess) {
       return NextResponse.json(
         { error: "Access denied to this recording" },
-        { status: 403 }
+        { status: 403 },
       );
     }
 
@@ -111,7 +110,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     console.error("Error getting recording:", error);
     return NextResponse.json(
       { error: "Failed to get recording" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

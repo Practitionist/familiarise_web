@@ -57,7 +57,7 @@ export class RecordingTransferService {
    * @param recordingId The recording ID to transfer
    */
   static async transferRecordingToSupabase(
-    recordingId: string
+    recordingId: string,
   ): Promise<{ success: boolean; error?: string }> {
     let recording: Recording | null = null;
 
@@ -148,8 +148,7 @@ export class RecordingTransferService {
       const now = new Date();
       const year = now.getFullYear();
       const month = (now.getMonth() + 1).toString().padStart(2, "0");
-      const filename =
-        recording.streamRecordingId || `${recordingId}.mp4`;
+      const filename = recording.streamRecordingId || `${recordingId}.mp4`;
       const storagePath = `recordings/${year}/${month}/${recordingId}/${filename}`;
 
       // Upload to Supabase
@@ -217,7 +216,9 @@ export class RecordingTransferService {
       }
 
       const errorMessage =
-        error instanceof Error ? error.message : "Unknown error during transfer";
+        error instanceof Error
+          ? error.message
+          : "Unknown error during transfer";
       streamLogger.error("Failed to transfer recording", error, {
         recordingId,
       });
@@ -233,7 +234,7 @@ export class RecordingTransferService {
    */
   static async processExpiringRecordings(
     daysBeforeExpiry: number = 3,
-    batchSize: number = 10
+    batchSize: number = 10,
   ): Promise<{
     processed: number;
     succeeded: number;
@@ -281,7 +282,7 @@ export class RecordingTransferService {
         } else {
           results.failed++;
           results.errors.push(
-            `Recording ${recording.id}: ${result.error || "Unknown error"}`
+            `Recording ${recording.id}: ${result.error || "Unknown error"}`,
           );
         }
       }
@@ -334,7 +335,7 @@ export class RecordingTransferService {
    * @param recordingId The recording ID to delete
    */
   static async deleteRecordingFromSupabase(
-    recordingId: string
+    recordingId: string,
   ): Promise<{ success: boolean; error?: string }> {
     try {
       const recording = await prisma.recording.findUnique({
@@ -369,9 +370,11 @@ export class RecordingTransferService {
           supabaseUrl: null,
           supabasePath: null,
           storageType: "STREAM_S3",
-          status: recording.streamUrlExpiresAt && recording.streamUrlExpiresAt < new Date()
-            ? "EXPIRED"
-            : "READY",
+          status:
+            recording.streamUrlExpiresAt &&
+            recording.streamUrlExpiresAt < new Date()
+              ? "EXPIRED"
+              : "READY",
         },
       });
 
@@ -383,7 +386,9 @@ export class RecordingTransferService {
       return { success: true };
     } catch (error) {
       const errorMessage =
-        error instanceof Error ? error.message : "Unknown error during deletion";
+        error instanceof Error
+          ? error.message
+          : "Unknown error during deletion";
       streamLogger.error("Failed to delete recording from Supabase", error, {
         recordingId,
       });

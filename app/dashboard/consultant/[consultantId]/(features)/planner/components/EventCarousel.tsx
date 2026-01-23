@@ -104,7 +104,8 @@ const emptyStateConfig = {
   subscription: {
     icon: CalendarRange,
     title: "No subscription plans",
-    description: "Set up subscription plans for ongoing mentorship relationships.",
+    description:
+      "Set up subscription plans for ongoing mentorship relationships.",
     iconBg: "bg-purple-50",
     iconColor: "text-purple-600",
   },
@@ -229,7 +230,9 @@ export function EventCarousel({
         >
           <Icon className={cn("h-6 w-6 sm:h-8 sm:w-8", config.iconColor)} />
         </div>
-        <h4 className="text-base sm:text-lg font-semibold text-zinc-900">{config.title}</h4>
+        <h4 className="text-base sm:text-lg font-semibold text-zinc-900">
+          {config.title}
+        </h4>
         <p className="mt-1.5 sm:mt-2 text-xs sm:text-sm text-zinc-500 max-w-sm px-4">
           {config.description}
         </p>

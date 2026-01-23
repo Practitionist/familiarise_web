@@ -64,13 +64,25 @@ export class PlannerService {
 
     switch (eventType) {
       case "webinar":
-        return WebinarService.checkDuplicateTitle(title, consultantId, excludeId);
+        return WebinarService.checkDuplicateTitle(
+          title,
+          consultantId,
+          excludeId,
+        );
       case "class":
         return ClassService.checkDuplicateTitle(title, consultantId, excludeId);
       case "consultation":
-        return ConsultationService.checkDuplicateTitle(title, consultantId, excludeId);
+        return ConsultationService.checkDuplicateTitle(
+          title,
+          consultantId,
+          excludeId,
+        );
       case "subscription":
-        return SubscriptionService.checkDuplicateTitle(title, consultantId, excludeId);
+        return SubscriptionService.checkDuplicateTitle(
+          title,
+          consultantId,
+          excludeId,
+        );
       default:
         console.error(`Unsupported event type: ${eventType}`);
         return false;
@@ -178,21 +190,37 @@ export class PlannerService {
   ): Promise<Event> {
     switch (eventType) {
       case "webinar": {
-        const webinarData = this.buildWebinarDataFromForm(formData, existingData as WebinarEvent | undefined);
+        const webinarData = this.buildWebinarDataFromForm(
+          formData,
+          existingData as WebinarEvent | undefined,
+        );
         // Form input is a valid subset of Partial<WebinarEvent> - saveWebinar only uses the fields we provide
-        return this.saveWebinar(webinarData as Partial<WebinarEvent>, formData.scheduledAt, consultantId);
+        return this.saveWebinar(
+          webinarData as Partial<WebinarEvent>,
+          formData.scheduledAt,
+          consultantId,
+        );
       }
       case "class": {
-        const classData = this.buildClassDataFromForm(formData, existingData as ClassEvent | undefined);
+        const classData = this.buildClassDataFromForm(
+          formData,
+          existingData as ClassEvent | undefined,
+        );
         // Form input is a valid subset of Partial<ClassEvent> - saveClass only uses the fields we provide
         return this.saveClass(classData as Partial<ClassEvent>, consultantId);
       }
       case "consultation": {
-        const consultationData = this.buildConsultationDataFromForm(formData, existingData as ConsultationPlanEvent | undefined);
+        const consultationData = this.buildConsultationDataFromForm(
+          formData,
+          existingData as ConsultationPlanEvent | undefined,
+        );
         return this.saveConsultationPlan(consultationData, consultantId);
       }
       case "subscription": {
-        const subscriptionData = this.buildSubscriptionDataFromForm(formData, existingData as SubscriptionPlanEvent | undefined);
+        const subscriptionData = this.buildSubscriptionDataFromForm(
+          formData,
+          existingData as SubscriptionPlanEvent | undefined,
+        );
         return this.saveSubscriptionPlan(subscriptionData, consultantId);
       }
       default:
@@ -242,9 +270,12 @@ export class PlannerService {
     eventType: "webinar" | "class" | "consultation" | "subscription",
   ): void {
     const action = isUpdate ? "Updated" : "Created";
-    const typeLabel = eventType === "consultation" ? "consultation plan" :
-                      eventType === "subscription" ? "subscription plan" :
-                      eventType;
+    const typeLabel =
+      eventType === "consultation"
+        ? "consultation plan"
+        : eventType === "subscription"
+          ? "subscription plan"
+          : eventType;
     toast({
       title: "Success",
       description: `${action} ${typeLabel} "${title}" successfully`,
@@ -258,7 +289,8 @@ export class PlannerService {
     console.error(`[PlannerService] Error saving ${eventType}:`, error);
     toast({
       title: "Error",
-      description: error instanceof Error ? error.message : `Failed to save ${eventType}`,
+      description:
+        error instanceof Error ? error.message : `Failed to save ${eventType}`,
       variant: "destructive",
     });
   }
@@ -308,7 +340,10 @@ export class PlannerService {
         materialProvided: formData.materialProvided,
         learningOutcomes: formData.learningOutcomes || [],
         topics: formData.topics || [],
-        consultantProfileId: formData.consultantProfileId || existingData?.webinarPlan?.consultantProfileId || "",
+        consultantProfileId:
+          formData.consultantProfileId ||
+          existingData?.webinarPlan?.consultantProfileId ||
+          "",
       },
     };
   }
@@ -337,7 +372,10 @@ export class PlannerService {
         learningOutcomes: formData.learningOutcomes || [],
         topics: formData.topics || [],
         classContents: formData.classContents || [],
-        consultantProfileId: formData.consultantProfileId || existingData?.classPlan?.consultantProfileId || "",
+        consultantProfileId:
+          formData.consultantProfileId ||
+          existingData?.classPlan?.consultantProfileId ||
+          "",
       },
     };
   }
@@ -360,7 +398,10 @@ export class PlannerService {
         prerequisites: formData.prerequisites,
         materialProvided: formData.materialProvided,
         learningOutcomes: formData.learningOutcomes || [],
-        consultantProfileId: formData.consultantProfileId || existingData?.consultationPlan?.consultantProfileId || "",
+        consultantProfileId:
+          formData.consultantProfileId ||
+          existingData?.consultationPlan?.consultantProfileId ||
+          "",
       },
     } as Partial<ConsultationPlanEvent>;
   }
@@ -385,7 +426,10 @@ export class PlannerService {
         prerequisites: formData.prerequisites,
         materialProvided: formData.materialProvided,
         learningOutcomes: formData.learningOutcomes || [],
-        consultantProfileId: formData.consultantProfileId || existingData?.subscriptionPlan?.consultantProfileId || "",
+        consultantProfileId:
+          formData.consultantProfileId ||
+          existingData?.subscriptionPlan?.consultantProfileId ||
+          "",
       },
     } as Partial<SubscriptionPlanEvent>;
   }

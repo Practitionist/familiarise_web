@@ -34,7 +34,7 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
     if (!consultantProfile) {
       return NextResponse.json(
         { error: "Consultant profile not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
@@ -46,7 +46,7 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
     if (!account || account.consultantProfileId !== consultantProfile.id) {
       return NextResponse.json(
         { error: "Payout account not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
@@ -82,7 +82,7 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
     console.error("Error updating payout account:", error);
     return NextResponse.json(
       { error: "Failed to update payout account" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -108,7 +108,7 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
     if (!consultantProfile) {
       return NextResponse.json(
         { error: "Consultant profile not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
@@ -120,7 +120,7 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
     if (!account || account.consultantProfileId !== consultantProfile.id) {
       return NextResponse.json(
         { error: "Payout account not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
@@ -135,7 +135,7 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
     if (pendingPayouts > 0) {
       return NextResponse.json(
         { error: "Cannot delete account with pending payouts" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -167,7 +167,7 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
     console.error("Error deleting payout account:", error);
     return NextResponse.json(
       { error: "Failed to delete payout account" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

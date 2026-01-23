@@ -35,7 +35,7 @@ export function ConsulteeRecordingsList({
       }
 
       const response = await fetch(
-        `/api/consultees/${consulteeId}/recordings?${params.toString()}`
+        `/api/consultees/${consulteeId}/recordings?${params.toString()}`,
       );
 
       if (!response.ok) {
@@ -46,7 +46,9 @@ export function ConsulteeRecordingsList({
       setRecordings(data.recordings);
     } catch (err) {
       console.error("Error fetching recordings:", err);
-      setError(err instanceof Error ? err.message : "Failed to load recordings");
+      setError(
+        err instanceof Error ? err.message : "Failed to load recordings",
+      );
     } finally {
       setIsLoading(false);
     }
@@ -59,7 +61,9 @@ export function ConsulteeRecordingsList({
   const handleSync = async () => {
     setIsSyncing(true);
     try {
-      const response = await fetch("/api/stream/recordings/sync", { method: "POST" });
+      const response = await fetch("/api/stream/recordings/sync", {
+        method: "POST",
+      });
       const data = await response.json();
 
       if (!response.ok) {
@@ -82,7 +86,8 @@ export function ConsulteeRecordingsList({
       console.error("Error syncing recordings:", err);
       toast({
         title: "Error",
-        description: err instanceof Error ? err.message : "Failed to sync recordings",
+        description:
+          err instanceof Error ? err.message : "Failed to sync recordings",
         variant: "destructive",
       });
     } finally {

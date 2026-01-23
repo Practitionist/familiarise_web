@@ -6,10 +6,7 @@ import { z } from "zod";
 import { addMonthsSafely } from "@/utils/dateUtils";
 import { getServerSession } from "next-auth";
 import authOptions from "@/app/api/auth/[...nextauth]/options";
-import {
-  findOrCreateTopics,
-  transformNestedPlanTopics,
-} from "@/lib/topics";
+import { findOrCreateTopics, transformNestedPlanTopics } from "@/lib/topics";
 
 // Schema for class content input (without Prisma-managed fields like createdAt, updatedAt, classPlanId)
 const ClassContentInputSchema = ClassContentSchema.omit({
@@ -161,111 +158,115 @@ export async function POST(request: NextRequest) {
     }
 
     // Create class plan, instance, and appointments in a transaction
-    const result = await prisma.$transaction(async (tx) => {
-      // 1. Create the class plan using validated data
-      const classPlan = await tx.classPlan.create({
-        data: {
-          title,
-          description,
-          durationInMonths,
-          price,
-          priceCurrency,
-          maxParticipants,
-          language,
-          level,
-          prerequisites,
-          materialProvided,
-          learningOutcomes,
-          certificateProvided,
-          meetingsPerWeek,
-          sessionDurationInHours,
-          totalSessions,
-          totalHours,
-          emailSupport,
-          consultantProfile: { connect: { id: consultantProfileId } },
-          topics: topicIds // Use validated topics here
-            ? { connect: topicIds.map((id: string) => ({ id })) }
-            : undefined,
-          classContents: {
-            create: classContents.map((content) => ({
-              // No 'any' needed
-              title: content.title,
-              description: content.description,
-              contentType: content.contentType ?? null, // Use nullish coalescing
-              contentUrl: content.contentUrl ?? null, // Use nullish coalescing
-              order: content.order,
-              hoursAllotted: content.hoursAllotted,
-            })),
-          },
-        },
-        include: {
-          consultantProfile: true,
-          topics: true,
-          classContents: true,
-        },
-      });
-
-      // 2. Create the class instance with appointments
-      const classEvent = await tx.class.create({
-        data: {
-          status,
-          schedulingPeriodStartsAt: start, // Will be undefined if not provided
-          schedulingPeriodEndsAt: end, // Will be undefined if start is not provided
-          classPlan: { connect: { id: classPlan.id } },
-          // Create appointments for the full duration
-          appointments: {
-            // Only create appointments if startDate is defined
-            create: start
-              ? Array.from({
-                // Calculate total sessions based on duration
-                length: Math.ceil(durationInMonths * 4.33) * meetingsPerWeek,
-              }).map((_, index) => {
-                const appointmentDate = new Date(start!);
-                appointmentDate.setDate(
-                  appointmentDate.getDate() +
-                  Math.floor(index / meetingsPerWeek) * 7,
-                );
-                const slotStart = new Date(appointmentDate);
-                const slotEnd = new Date(appointmentDate);
-                slotEnd.setHours(slotEnd.getHours() + 1); // Default 1-hour slots
-
-                return {
-                  appointmentType: "CLASS",
-                  slotsOfAppointment: {
-                    create: {
-                      startsAt: slotStart,
-                      endsAt: slotEnd,
-                      isTentative: true, // Mark as tentative until confirmed
-                    },
-                  },
-                };
-              })
+    const result = await prisma.$transaction(
+      async (tx) => {
+        // 1. Create the class plan using validated data
+        const classPlan = await tx.classPlan.create({
+          data: {
+            title,
+            description,
+            durationInMonths,
+            price,
+            priceCurrency,
+            maxParticipants,
+            language,
+            level,
+            prerequisites,
+            materialProvided,
+            learningOutcomes,
+            certificateProvided,
+            meetingsPerWeek,
+            sessionDurationInHours,
+            totalSessions,
+            totalHours,
+            emailSupport,
+            consultantProfile: { connect: { id: consultantProfileId } },
+            topics: topicIds // Use validated topics here
+              ? { connect: topicIds.map((id: string) => ({ id })) }
               : undefined,
-          },
-        },
-        include: {
-          classPlan: {
-            include: {
-              consultantProfile: true,
-              topics: true,
-              classContents: true,
+            classContents: {
+              create: classContents.map((content) => ({
+                // No 'any' needed
+                title: content.title,
+                description: content.description,
+                contentType: content.contentType ?? null, // Use nullish coalescing
+                contentUrl: content.contentUrl ?? null, // Use nullish coalescing
+                order: content.order,
+                hoursAllotted: content.hoursAllotted,
+              })),
             },
           },
-          appointments: {
-            include: {
-              slotsOfAppointment: {
-                include: {
-                  user: true,
+          include: {
+            consultantProfile: true,
+            topics: true,
+            classContents: true,
+          },
+        });
+
+        // 2. Create the class instance with appointments
+        const classEvent = await tx.class.create({
+          data: {
+            status,
+            schedulingPeriodStartsAt: start, // Will be undefined if not provided
+            schedulingPeriodEndsAt: end, // Will be undefined if start is not provided
+            classPlan: { connect: { id: classPlan.id } },
+            // Create appointments for the full duration
+            appointments: {
+              // Only create appointments if startDate is defined
+              create: start
+                ? Array.from({
+                    // Calculate total sessions based on duration
+                    length:
+                      Math.ceil(durationInMonths * 4.33) * meetingsPerWeek,
+                  }).map((_, index) => {
+                    const appointmentDate = new Date(start!);
+                    appointmentDate.setDate(
+                      appointmentDate.getDate() +
+                        Math.floor(index / meetingsPerWeek) * 7,
+                    );
+                    const slotStart = new Date(appointmentDate);
+                    const slotEnd = new Date(appointmentDate);
+                    slotEnd.setHours(slotEnd.getHours() + 1); // Default 1-hour slots
+
+                    return {
+                      appointmentType: "CLASS",
+                      slotsOfAppointment: {
+                        create: {
+                          startsAt: slotStart,
+                          endsAt: slotEnd,
+                          isTentative: true, // Mark as tentative until confirmed
+                        },
+                      },
+                    };
+                  })
+                : undefined,
+            },
+          },
+          include: {
+            classPlan: {
+              include: {
+                consultantProfile: true,
+                topics: true,
+                classContents: true,
+              },
+            },
+            appointments: {
+              include: {
+                slotsOfAppointment: {
+                  include: {
+                    user: true,
+                  },
                 },
               },
             },
+            waitlist: true,
           },
-          waitlist: true,
-        },
-      });
+        });
 
-      return { classPlan, classEvent };
-    }, { timeout: 25000 });
+        return { classPlan, classEvent };
+      },
+      { timeout: 25000 },
+    );
 
     // Transform topics to strings in response
     const transformedEvent = transformNestedPlanTopics(
@@ -393,8 +394,10 @@ export async function PATCH(request: NextRequest) {
     }
 
     // Verify ownership - user must own this class plan
-    if (!existingPlan.consultantProfile ||
-      existingPlan.consultantProfile.userId !== session.user.id) {
+    if (
+      !existingPlan.consultantProfile ||
+      existingPlan.consultantProfile.userId !== session.user.id
+    ) {
       return NextResponse.json(
         { error: "You do not have permission to update this class" },
         { status: 403 },
@@ -404,8 +407,8 @@ export async function PATCH(request: NextRequest) {
     // Get the class instance - use the provided classId or the first one associated with the plan
     const classToUpdate = classId
       ? await prisma.class.findUnique({
-        where: { id: classId },
-      })
+          where: { id: classId },
+        })
       : existingPlan.classes.length > 0
         ? existingPlan.classes[0]
         : null;

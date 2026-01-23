@@ -14,11 +14,7 @@
  * Schedule: Runs weekly on Mondays at 2:30 AM IST (9:00 PM UTC Sunday)
  */
 
-import {
-  PayoutStatus,
-  PaymentGateway,
-  EarningStatus,
-} from "@prisma/client";
+import { PayoutStatus, PaymentGateway, EarningStatus } from "@prisma/client";
 import prisma from "@/lib/prisma";
 
 /**
@@ -209,7 +205,8 @@ async function processSinglePayout(payout: {
     result.providerPayoutId = providerPayoutId;
     console.log(`✅ Processed payout ${payout.id} → ${providerPayoutId}`);
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown error";
 
     // Mark as failed
     await prisma.payout.update({
@@ -267,7 +264,9 @@ export async function processApprovedPayouts(): Promise<ProcessingResult> {
       },
     });
 
-    console.log(`📊 Found ${approvedPayouts.length} approved payouts to process`);
+    console.log(
+      `📊 Found ${approvedPayouts.length} approved payouts to process`,
+    );
 
     if (approvedPayouts.length === 0) {
       console.log("✅ No approved payouts to process");
@@ -311,7 +310,8 @@ export async function processApprovedPayouts(): Promise<ProcessingResult> {
       });
     }
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown error";
     console.error("❌ Processing failed:", errorMessage);
     result.errors.push(`Job failed: ${errorMessage}`);
     result.success = false;
@@ -361,8 +361,12 @@ export async function runProcessingTask(): Promise<ProcessingResult> {
     // Get pre-processing stats
     const preStats = await getProcessingStats();
     console.log(`\n📊 Pre-processing Stats:`);
-    console.log(`   ✅ Approved: ${preStats.approvedCount} (₹${(preStats.approvedAmount / 100).toFixed(2)})`);
-    console.log(`   🔄 Processing: ${preStats.processingCount} (₹${(preStats.processingAmount / 100).toFixed(2)})`);
+    console.log(
+      `   ✅ Approved: ${preStats.approvedCount} (₹${(preStats.approvedAmount / 100).toFixed(2)})`,
+    );
+    console.log(
+      `   🔄 Processing: ${preStats.processingCount} (₹${(preStats.processingAmount / 100).toFixed(2)})`,
+    );
 
     // Process payouts
     const result = await processApprovedPayouts();
@@ -370,8 +374,12 @@ export async function runProcessingTask(): Promise<ProcessingResult> {
     // Get post-processing stats
     const postStats = await getProcessingStats();
     console.log(`\n📊 Post-processing Stats:`);
-    console.log(`   ✅ Approved: ${postStats.approvedCount} (₹${(postStats.approvedAmount / 100).toFixed(2)})`);
-    console.log(`   🔄 Processing: ${postStats.processingCount} (₹${(postStats.processingAmount / 100).toFixed(2)})`);
+    console.log(
+      `   ✅ Approved: ${postStats.approvedCount} (₹${(postStats.approvedAmount / 100).toFixed(2)})`,
+    );
+    console.log(
+      `   🔄 Processing: ${postStats.processingCount} (₹${(postStats.processingAmount / 100).toFixed(2)})`,
+    );
 
     const duration = (Date.now() - startTime) / 1000;
     console.log(`\n⏱️ Job completed in ${duration.toFixed(2)} seconds`);

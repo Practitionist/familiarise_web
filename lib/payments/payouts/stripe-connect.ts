@@ -148,7 +148,7 @@ export class StripeConnectService {
    * Create a connected account for a consultant
    */
   async createConnectedAccount(
-    request: CreateConnectedAccountRequest
+    request: CreateConnectedAccountRequest,
   ): Promise<ConnectedAccount> {
     const account = await this.stripe.accounts.create({
       type: request.type || "express",
@@ -181,7 +181,7 @@ export class StripeConnectService {
     updates: {
       email?: string;
       metadata?: Record<string, string>;
-    }
+    },
   ): Promise<ConnectedAccount> {
     const account = await this.stripe.accounts.update(accountId, {
       email: updates.email,
@@ -201,7 +201,7 @@ export class StripeConnectService {
    * Create account link for onboarding
    */
   async createAccountLink(
-    request: CreateAccountLinkRequest
+    request: CreateAccountLinkRequest,
   ): Promise<AccountLink> {
     const link = await this.stripe.accountLinks.create({
       account: request.accountId,
@@ -232,7 +232,9 @@ export class StripeConnectService {
    * Create a transfer to a connected account
    * Use this to move funds from platform to consultant
    */
-  async createTransfer(request: CreateTransferRequest): Promise<StripeTransfer> {
+  async createTransfer(
+    request: CreateTransferRequest,
+  ): Promise<StripeTransfer> {
     const transfer = await this.stripe.transfers.create({
       amount: request.amount,
       currency: request.currency,
@@ -263,7 +265,7 @@ export class StripeConnectService {
       amount?: number;
       description?: string;
       metadata?: Record<string, string>;
-    }
+    },
   ): Promise<{ id: string; amount: number; transferId: string }> {
     const reversal = await this.stripe.transfers.createReversal(transferId, {
       amount: options?.amount,
@@ -322,7 +324,7 @@ export class StripeConnectService {
       },
       {
         stripeAccount: request.destinationAccountId,
-      }
+      },
     );
 
     return this.mapPayout(payout);
@@ -331,7 +333,10 @@ export class StripeConnectService {
   /**
    * Fetch a payout
    */
-  async fetchPayout(payoutId: string, accountId: string): Promise<StripePayout> {
+  async fetchPayout(
+    payoutId: string,
+    accountId: string,
+  ): Promise<StripePayout> {
     const payout = await this.stripe.payouts.retrieve(payoutId, {
       stripeAccount: accountId,
     });
@@ -343,7 +348,7 @@ export class StripeConnectService {
    */
   async cancelPayout(
     payoutId: string,
-    accountId: string
+    accountId: string,
   ): Promise<StripePayout> {
     const payout = await this.stripe.payouts.cancel(payoutId, {
       stripeAccount: accountId,
@@ -383,7 +388,7 @@ export class StripeConnectService {
    */
   constructWebhookEvent(
     payload: string | Buffer,
-    signature: string
+    signature: string,
   ): Stripe.Event {
     if (!this.config.webhookSecret) {
       throw new Error("Stripe Connect webhook secret not configured");
@@ -392,7 +397,7 @@ export class StripeConnectService {
     return this.stripe.webhooks.constructEvent(
       payload,
       signature,
-      this.config.webhookSecret
+      this.config.webhookSecret,
     );
   }
 
@@ -400,7 +405,7 @@ export class StripeConnectService {
    * Map Stripe payout status to our internal status
    */
   mapPayoutStatus(
-    status: string
+    status: string,
   ): "PENDING" | "PROCESSING" | "COMPLETED" | "FAILED" | "CANCELLED" {
     switch (status) {
       case "pending":

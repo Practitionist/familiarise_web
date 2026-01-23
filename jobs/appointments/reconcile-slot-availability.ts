@@ -62,7 +62,9 @@ async function main(): Promise<void> {
 
     console.log("\n📊 Job Results:");
     console.log(`   Tentative Flags Cleared: ${result.tentativeFlagsCleared}`);
-    console.log(`   Double Bookings Detected: ${result.doubleBookingsDetected}`);
+    console.log(
+      `   Double Bookings Detected: ${result.doubleBookingsDetected}`,
+    );
     console.log(`   Success: ${result.success}`);
 
     if (result.doubleBookings.length > 0) {

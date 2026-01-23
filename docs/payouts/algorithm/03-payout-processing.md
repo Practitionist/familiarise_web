@@ -157,10 +157,10 @@ sequenceDiagram
 
 ### Approval Thresholds
 
-| Amount Range | Approval |
-|--------------|----------|
-| < ₹5,000 | Auto-approved at batch creation |
-| >= ₹5,000 | Requires admin approval |
+| Amount Range | Approval                        |
+| ------------ | ------------------------------- |
+| < ₹5,000     | Auto-approved at batch creation |
+| >= ₹5,000    | Requires admin approval         |
 
 ---
 
@@ -242,13 +242,13 @@ flowchart TD
 
 ### Payout Methods
 
-| Method | Provider | Speed | Limit |
-|--------|----------|-------|-------|
-| **UPI** | RazorpayX | Instant | ₹1 Lakh |
-| **IMPS** | RazorpayX | < 5 min | ₹5 Lakh |
-| **NEFT** | RazorpayX | 2-4 hours | Unlimited |
-| **RTGS** | RazorpayX | 30 min | ₹2 Lakh+ |
-| **Stripe Transfer** | Stripe | 2-7 days | Account limit |
+| Method              | Provider  | Speed     | Limit         |
+| ------------------- | --------- | --------- | ------------- |
+| **UPI**             | RazorpayX | Instant   | ₹1 Lakh       |
+| **IMPS**            | RazorpayX | < 5 min   | ₹5 Lakh       |
+| **NEFT**            | RazorpayX | 2-4 hours | Unlimited     |
+| **RTGS**            | RazorpayX | 30 min    | ₹2 Lakh+      |
+| **Stripe Transfer** | Stripe    | 2-7 days  | Account limit |
 
 ---
 
@@ -292,14 +292,14 @@ sequenceDiagram
 
 ### Webhook Events
 
-| Provider | Event | Our Action |
-|----------|-------|------------|
-| RazorpayX | `payout.processed` | Mark COMPLETED |
-| RazorpayX | `payout.failed` | Mark FAILED, retry |
-| RazorpayX | `payout.reversed` | Mark FAILED, refund |
-| Stripe | `transfer.created` | Mark COMPLETED |
-| Stripe | `transfer.failed` | Mark FAILED, retry |
-| Stripe | `transfer.reversed` | Mark FAILED, refund |
+| Provider  | Event               | Our Action          |
+| --------- | ------------------- | ------------------- |
+| RazorpayX | `payout.processed`  | Mark COMPLETED      |
+| RazorpayX | `payout.failed`     | Mark FAILED, retry  |
+| RazorpayX | `payout.reversed`   | Mark FAILED, refund |
+| Stripe    | `transfer.created`  | Mark COMPLETED      |
+| Stripe    | `transfer.failed`   | Mark FAILED, retry  |
+| Stripe    | `transfer.reversed` | Mark FAILED, refund |
 
 ---
 

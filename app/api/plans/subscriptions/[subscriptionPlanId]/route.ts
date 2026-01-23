@@ -100,7 +100,9 @@ export async function PUT(
 
     if (existingPlan.consultantProfile.userId !== session.user.id) {
       return NextResponse.json(
-        { error: "You do not have permission to update this subscription plan" },
+        {
+          error: "You do not have permission to update this subscription plan",
+        },
         { status: 403 },
       );
     }
@@ -127,9 +129,12 @@ export async function PUT(
       validatedData.durationInMonths !== undefined ||
       body.sessionDurationInHours !== undefined
     ) {
-      const callsPerWeek = validatedData.callsPerWeek ?? existingPlan.callsPerWeek;
-      const durationInMonths = validatedData.durationInMonths ?? existingPlan.durationInMonths;
-      const sessionDurationInHours = body.sessionDurationInHours ?? existingPlan.sessionDurationInHours;
+      const callsPerWeek =
+        validatedData.callsPerWeek ?? existingPlan.callsPerWeek;
+      const durationInMonths =
+        validatedData.durationInMonths ?? existingPlan.durationInMonths;
+      const sessionDurationInHours =
+        body.sessionDurationInHours ?? existingPlan.sessionDurationInHours;
 
       totalSessions = callsPerWeek * durationInMonths * 4;
       totalHours = totalSessions * sessionDurationInHours;
@@ -253,7 +258,9 @@ export async function DELETE(
 
     if (existingPlan.consultantProfile.userId !== session.user.id) {
       return NextResponse.json(
-        { error: "You do not have permission to delete this subscription plan" },
+        {
+          error: "You do not have permission to delete this subscription plan",
+        },
         { status: 403 },
       );
     }

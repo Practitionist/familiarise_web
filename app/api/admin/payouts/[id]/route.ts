@@ -56,7 +56,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     console.error("Error fetching payout:", error);
     return NextResponse.json(
       { error: "Failed to fetch payout" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -98,7 +98,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     if (payout.status !== "PENDING") {
       return NextResponse.json(
         { error: `Cannot ${action} payout with status ${payout.status}` },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -112,7 +112,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       if (!reason) {
         return NextResponse.json(
           { error: "Reason is required for rejection" },
-          { status: 400 }
+          { status: 400 },
         );
       }
       await rejectPayout(id, reason);
@@ -126,12 +126,12 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     if (error instanceof z.ZodError) {
       return NextResponse.json(
         { error: "Invalid action", details: error.errors },
-        { status: 400 }
+        { status: 400 },
       );
     }
     return NextResponse.json(
       { error: "Failed to process payout action" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

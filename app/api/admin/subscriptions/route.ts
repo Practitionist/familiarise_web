@@ -62,9 +62,10 @@ export async function GET(req: NextRequest) {
     let where: any = {
       appointment: {
         appointmentType: "SUBSCRIPTION",
-        subscription: Object.keys(subscriptionDateFilter).length > 0
-          ? subscriptionDateFilter
-          : undefined,
+        subscription:
+          Object.keys(subscriptionDateFilter).length > 0
+            ? subscriptionDateFilter
+            : undefined,
       },
     };
 
@@ -90,24 +91,26 @@ export async function GET(req: NextRequest) {
     };
 
     // Get subscription payments and stats in parallel
-    const [subscriptions, total, activeCount, expiringCount, expiredCount] = await Promise.all([
-      prisma.payment.findMany({
-        where: {
-          ...where,
-          paymentStatus: "SUCCEEDED",
-        },
-        include: {
-          user: {
-            select: { name: true, email: true },
+    const [subscriptions, total, activeCount, expiringCount, expiredCount] =
+      await Promise.all([
+        prisma.payment.findMany({
+          where: {
+            ...where,
+            paymentStatus: "SUCCEEDED",
           },
-          appointment: {
-            include: {
-              subscription: {
-                include: {
-                  subscriptionPlan: {
-                    include: {
-                      consultantProfile: {
-                        include: { user: { select: { name: true } } },
+          include: {
+            user: {
+              select: { name: true, email: true },
+            },
+            appointment: {
+              include: {
+                subscription: {
+                  include: {
+                    subscriptionPlan: {
+                      include: {
+                        consultantProfile: {
+                          include: { user: { select: { name: true } } },
+                        },
                       },
                     },
                   },
@@ -115,48 +118,49 @@ export async function GET(req: NextRequest) {
               },
             },
           },
-        },
-        orderBy: { createdAt: "desc" },
-        take: limit,
-        skip: offset,
-      }),
-      prisma.payment.count({
-        where: {
-          ...where,
-          paymentStatus: "SUCCEEDED",
-        },
-      }),
-      // Count active subscriptions (ends > 7 days from now)
-      prisma.payment.count({
-        where: {
-          ...baseWhere,
-          appointment: {
-            appointmentType: "SUBSCRIPTION",
-            subscription: { schedulingPeriodEndsAt: { gt: soonThreshold } },
+          orderBy: { createdAt: "desc" },
+          take: limit,
+          skip: offset,
+        }),
+        prisma.payment.count({
+          where: {
+            ...where,
+            paymentStatus: "SUCCEEDED",
           },
-        },
-      }),
-      // Count expiring soon subscriptions (ends within 7 days)
-      prisma.payment.count({
-        where: {
-          ...baseWhere,
-          appointment: {
-            appointmentType: "SUBSCRIPTION",
-            subscription: { schedulingPeriodEndsAt: { gt: now, lte: soonThreshold } },
+        }),
+        // Count active subscriptions (ends > 7 days from now)
+        prisma.payment.count({
+          where: {
+            ...baseWhere,
+            appointment: {
+              appointmentType: "SUBSCRIPTION",
+              subscription: { schedulingPeriodEndsAt: { gt: soonThreshold } },
+            },
           },
-        },
-      }),
-      // Count expired subscriptions
-      prisma.payment.count({
-        where: {
-          ...baseWhere,
-          appointment: {
-            appointmentType: "SUBSCRIPTION",
-            subscription: { schedulingPeriodEndsAt: { lte: now } },
+        }),
+        // Count expiring soon subscriptions (ends within 7 days)
+        prisma.payment.count({
+          where: {
+            ...baseWhere,
+            appointment: {
+              appointmentType: "SUBSCRIPTION",
+              subscription: {
+                schedulingPeriodEndsAt: { gt: now, lte: soonThreshold },
+              },
+            },
           },
-        },
-      }),
-    ]);
+        }),
+        // Count expired subscriptions
+        prisma.payment.count({
+          where: {
+            ...baseWhere,
+            appointment: {
+              appointmentType: "SUBSCRIPTION",
+              subscription: { schedulingPeriodEndsAt: { lte: now } },
+            },
+          },
+        }),
+      ]);
 
     // Format subscriptions with status
     const formattedSubscriptions = subscriptions.map((s) => {
@@ -176,11 +180,16 @@ export async function GET(req: NextRequest) {
         gateway: s.paymentGateway,
         userName: s.user?.name || "Unknown",
         userEmail: s.user?.email || "",
-        consultantName: subscription?.subscriptionPlan?.consultantProfile?.user?.name,
+        consultantName:
+          subscription?.subscriptionPlan?.consultantProfile?.user?.name,
         startDate: subscription?.schedulingPeriodStartsAt,
         endDate: subscription?.schedulingPeriodEndsAt,
         subscriptionStatus: subscription?.requestStatus,
-        status: isActive ? (isExpiringSoon ? "expiring_soon" : "active") : "expired",
+        status: isActive
+          ? isExpiringSoon
+            ? "expiring_soon"
+            : "active"
+          : "expired",
         createdAt: s.createdAt,
       };
     });
@@ -204,7 +213,7 @@ export async function GET(req: NextRequest) {
     console.error("Error fetching subscriptions:", error);
     return NextResponse.json(
       { error: "Failed to fetch subscriptions" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

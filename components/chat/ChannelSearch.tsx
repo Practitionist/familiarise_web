@@ -37,7 +37,9 @@ export const ChannelSearch = () => {
   const { client, setActiveChannel } = useChatContext();
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
-  const [searchResults, setSearchResults] = useState<AppointmentSearchResult[]>([]);
+  const [searchResults, setSearchResults] = useState<AppointmentSearchResult[]>(
+    [],
+  );
 
   // Group consultations/subscriptions by consultant, keep events separate
   const { groupedConsultants, events } = useMemo(() => {
@@ -88,7 +90,7 @@ export const ChannelSearch = () => {
       setLoading(true);
 
       const response = await fetch(
-        `/api/stream/channels/search-appointments?q=${encodeURIComponent(query.trim())}`
+        `/api/stream/channels/search-appointments?q=${encodeURIComponent(query.trim())}`,
       );
 
       if (!response.ok) {
@@ -217,11 +219,12 @@ export const ChannelSearch = () => {
                       <div className="flex items-center gap-1 mt-1">
                         <UserIcon className="w-3 h-3 text-gray-400" />
                         <span className="text-xs text-gray-500">
-                          {consultant.hasConsultation && consultant.hasSubscription
+                          {consultant.hasConsultation &&
+                          consultant.hasSubscription
                             ? "Consultation & Subscription"
                             : consultant.hasConsultation
-                            ? "Consultation"
-                            : "Subscription"}
+                              ? "Consultation"
+                              : "Subscription"}
                         </span>
                       </div>
                     </div>
@@ -240,7 +243,8 @@ export const ChannelSearch = () => {
                 </span>
               </div>
               {events.map((event) => {
-                const config = EVENT_TYPE_CONFIG[event.type as "webinar" | "class"];
+                const config =
+                  EVENT_TYPE_CONFIG[event.type as "webinar" | "class"];
                 const Icon = config.icon;
 
                 return (

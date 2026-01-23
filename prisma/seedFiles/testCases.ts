@@ -353,12 +353,8 @@ export const userCornerCases = {
   allPlanTypes: {
     name: "all_plan_types_consultant",
     description: "Consultant offering all 4 plan types",
-    getPlanTypes: () => [
-      "consultation",
-      "subscription",
-      "webinar",
-      "class",
-    ] as const,
+    getPlanTypes: () =>
+      ["consultation", "subscription", "webinar", "class"] as const,
   },
 
   /**

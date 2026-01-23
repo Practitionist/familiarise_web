@@ -82,7 +82,9 @@ async function completeWebinars(): Promise<{
       console.log(`\nCompleting webinar ${webinar.id}`);
       console.log(`   Title: ${webinar.webinarPlan.title}`);
       console.log(`   Previous status: ${webinar.status}`);
-      console.log(`   Last slot ended: ${lastSlot?.endsAt?.toISOString() || "Unknown"}`);
+      console.log(
+        `   Last slot ended: ${lastSlot?.endsAt?.toISOString() || "Unknown"}`,
+      );
 
       await prisma.webinar.update({
         where: { id: webinar.id },
@@ -158,7 +160,9 @@ async function completeClasses(): Promise<{
       console.log(`\nCompleting class ${cls.id}`);
       console.log(`   Title: ${cls.classPlan.title}`);
       console.log(`   Previous status: ${cls.status}`);
-      console.log(`   Last slot ended: ${latestEnd?.toISOString() || "Unknown"}`);
+      console.log(
+        `   Last slot ended: ${latestEnd?.toISOString() || "Unknown"}`,
+      );
 
       await prisma.class.update({
         where: { id: cls.id },
@@ -216,7 +220,9 @@ async function completeConsultations(): Promise<{
     },
   });
 
-  console.log(`Found ${consultationsToComplete.length} consultations to auto-complete`);
+  console.log(
+    `Found ${consultationsToComplete.length} consultations to auto-complete`,
+  );
 
   for (const consultation of consultationsToComplete) {
     try {
@@ -224,7 +230,9 @@ async function completeConsultations(): Promise<{
       console.log(`\nCompleting consultation ${consultation.id}`);
       console.log(`   Title: ${consultation.consultationPlan.title}`);
       console.log(`   Previous status: ${consultation.requestStatus}`);
-      console.log(`   Last slot ended: ${lastSlot?.endsAt?.toISOString() || "Unknown"}`);
+      console.log(
+        `   Last slot ended: ${lastSlot?.endsAt?.toISOString() || "Unknown"}`,
+      );
 
       await prisma.consultation.update({
         where: { id: consultation.id },
@@ -284,7 +292,9 @@ async function completeSubscriptions(): Promise<{
     },
   });
 
-  console.log(`Found ${subscriptionsToComplete.length} subscriptions to auto-complete`);
+  console.log(
+    `Found ${subscriptionsToComplete.length} subscriptions to auto-complete`,
+  );
 
   for (const subscription of subscriptionsToComplete) {
     try {
@@ -300,7 +310,9 @@ async function completeSubscriptions(): Promise<{
       console.log(`\nCompleting subscription ${subscription.id}`);
       console.log(`   Title: ${subscription.subscriptionPlan.title}`);
       console.log(`   Previous status: ${subscription.requestStatus}`);
-      console.log(`   Last slot ended: ${latestEnd?.toISOString() || "Unknown"}`);
+      console.log(
+        `   Last slot ended: ${latestEnd?.toISOString() || "Unknown"}`,
+      );
 
       await prisma.subscription.update({
         where: { id: subscription.id },
@@ -326,7 +338,9 @@ export async function autoCompleteAppointments(): Promise<AutoCompleteResult> {
   const allErrors: string[] = [];
 
   console.log("🔄 Starting auto-complete appointments scan...");
-  console.log(`   Buffer time: ${COMPLETION_BUFFER_HOURS} hour(s) after session end`);
+  console.log(
+    `   Buffer time: ${COMPLETION_BUFFER_HOURS} hour(s) after session end`,
+  );
 
   // Complete webinars
   const webinarResult = await completeWebinars();

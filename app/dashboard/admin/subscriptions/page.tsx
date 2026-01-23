@@ -13,7 +13,13 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { RefreshCw, AlertCircle, CheckCircle, XCircle, Search } from "lucide-react";
+import {
+  RefreshCw,
+  AlertCircle,
+  CheckCircle,
+  XCircle,
+  Search,
+} from "lucide-react";
 
 interface Subscription {
   id: string;
@@ -35,7 +41,7 @@ async function fetchSubscriptions(
   page: number,
   limit: number,
   status?: string,
-  search?: string
+  search?: string,
 ) {
   const offset = (page - 1) * limit;
   const params = new URLSearchParams({
@@ -118,7 +124,8 @@ export default function AdminSubscriptionsPage() {
   }
 
   // Use stats from API (includes total counts, not just current page)
-  const activeCount = (data?.stats?.activeCount || 0) + (data?.stats?.expiringCount || 0);
+  const activeCount =
+    (data?.stats?.activeCount || 0) + (data?.stats?.expiringCount || 0);
   const expiringCount = data?.stats?.expiringCount || 0;
 
   return (

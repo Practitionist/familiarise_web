@@ -221,7 +221,11 @@ export async function reconcilePaymentStatus(): Promise<PaymentReconciliationRes
     }
 
     // Query gateway for actual status
-    let gatewayStatus: { status: string; failureMessage?: string; paymentId?: string } | null = null;
+    let gatewayStatus: {
+      status: string;
+      failureMessage?: string;
+      paymentId?: string;
+    } | null = null;
 
     if (payment.paymentGateway === PaymentGateway.STRIPE) {
       gatewayStatus = await getStripePaymentStatus(payment.paymentIntent);
@@ -229,7 +233,9 @@ export async function reconcilePaymentStatus(): Promise<PaymentReconciliationRes
       // For Razorpay, paymentIntent might be orderId
       gatewayStatus = await getRazorpayPaymentStatus(payment.paymentIntent);
     } else {
-      console.log(`   Skipping - unsupported gateway: ${payment.paymentGateway}`);
+      console.log(
+        `   Skipping - unsupported gateway: ${payment.paymentGateway}`,
+      );
       skippedCount++;
       continue;
     }
@@ -264,12 +270,16 @@ export async function reconcilePaymentStatus(): Promise<PaymentReconciliationRes
         },
       });
 
-      console.log(`   Updated status: ${payment.paymentStatus} → ${mappedStatus}`);
+      console.log(
+        `   Updated status: ${payment.paymentStatus} → ${mappedStatus}`,
+      );
       reconciledCount++;
 
       if (mappedStatus === PaymentStatus.SUCCEEDED) {
         succeededCount++;
-        console.log(`   ⚠️ Payment succeeded - may need manual appointment creation!`);
+        console.log(
+          `   ⚠️ Payment succeeded - may need manual appointment creation!`,
+        );
       } else if (mappedStatus === PaymentStatus.FAILED) {
         failedCount++;
       }

@@ -790,8 +790,8 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
                           sessionTypes: checked
                             ? [...(prev.sessionTypes || []), type]
                             : (prev.sessionTypes || []).filter(
-                              (t) => t !== type,
-                            ),
+                                (t) => t !== type,
+                              ),
                         }));
                       }}
                     />
@@ -929,8 +929,8 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
             <AlertTitle>Schedule Type Locked</AlertTitle>
             <AlertDescription>
               {scheduleSwitchBlockedReason ||
-                "You have active appointments that prevent schedule type changes."}
-              {" "}Please complete or cancel all pending appointments before
+                "You have active appointments that prevent schedule type changes."}{" "}
+              Please complete or cancel all pending appointments before
               switching schedule types.
             </AlertDescription>
           </Alert>

@@ -239,7 +239,8 @@ export async function performStreamUserSync(
       // Identify stale users (in Stream but not in database)
       const staleUsers = streamUserIds.filter((userId) => {
         if (activeUserIdSet.has(userId)) return false;
-        if (shouldExcludeUser(userId, excludedSet, excludeUserIds)) return false;
+        if (shouldExcludeUser(userId, excludedSet, excludeUserIds))
+          return false;
         return true;
       });
 
@@ -344,7 +345,9 @@ export async function performStreamUserSync(
 export function printSyncSummary(summary: SyncSummary): void {
   console.log("\n📊 Stream Sync Summary:");
   console.log(`   Total Users Processed: ${summary.totalStreamUsersProcessed}`);
-  console.log(`   Stale Users Identified: ${summary.totalStaleUsersIdentified}`);
+  console.log(
+    `   Stale Users Identified: ${summary.totalStaleUsersIdentified}`,
+  );
   console.log(`   Users Deleted: ${summary.totalStaleUsersDeleted}`);
   console.log(`   Failed Deletions: ${summary.totalFailedDeletions}`);
   console.log(`   Success: ${summary.success}`);

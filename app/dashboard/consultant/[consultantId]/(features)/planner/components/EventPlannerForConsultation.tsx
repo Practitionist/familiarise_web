@@ -3,7 +3,13 @@
 import { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { FileText, DollarSign, Settings, GraduationCap, Upload } from "lucide-react";
+import {
+  FileText,
+  DollarSign,
+  Settings,
+  GraduationCap,
+  Upload,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -485,7 +491,11 @@ export function EventPlannerForConsultation({
         <PlanMaterialsUpload
           planType="consultation"
           planId={initialData.id}
-          planTitle={form.getValues("title") || initialData.consultationPlan?.title || "Consultation Plan"}
+          planTitle={
+            form.getValues("title") ||
+            initialData.consultationPlan?.title ||
+            "Consultation Plan"
+          }
           isOpen={showMaterialsDialog}
           onClose={() => setShowMaterialsDialog(false)}
         />

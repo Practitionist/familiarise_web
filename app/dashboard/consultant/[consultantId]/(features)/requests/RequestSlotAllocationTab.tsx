@@ -463,28 +463,35 @@ export function RequestSlotAllocationTab({
                     request.tentativeSlotCount > 0 &&
                     request.totalSlotCount !== undefined && (
                       <div className="mb-2">
-                        {request.tentativeSlotCount === request.totalSlotCount ? (
+                        {request.tentativeSlotCount ===
+                        request.totalSlotCount ? (
                           <div className="flex items-center gap-1.5 text-xs font-medium text-blue-600 bg-blue-50 px-2 py-1 rounded-md">
                             <RefreshCw className="h-3 w-3" />
-                            Full Reschedule (all {request.totalSlotCount} session
+                            Full Reschedule (all {request.totalSlotCount}{" "}
+                            session
                             {request.totalSlotCount !== 1 ? "s" : ""})
                           </div>
                         ) : request.tentativeSlotCount === 1 ? (
                           <div className="flex items-center gap-1.5 text-xs font-medium text-amber-600 bg-amber-50 px-2 py-1 rounded-md">
                             <AlertTriangle className="h-3 w-3" />
-                            Individual Session (1 of {request.totalSlotCount} needs new time)
+                            Individual Session (1 of {
+                              request.totalSlotCount
+                            }{" "}
+                            needs new time)
                           </div>
                         ) : (
                           <div className="flex items-center gap-1.5 text-xs font-medium text-amber-600 bg-amber-50 px-2 py-1 rounded-md">
                             <AlertTriangle className="h-3 w-3" />
-                            Multiple Sessions ({request.tentativeSlotCount} of{" "}
-                            {request.totalSlotCount} need new times)
+                            Multiple Sessions ({
+                              request.tentativeSlotCount
+                            } of {request.totalSlotCount} need new times)
                           </div>
                         )}
                       </div>
                     )}
 
-                  {request.requestedSlots && request.requestedSlots.length > 0 ? (
+                  {request.requestedSlots &&
+                  request.requestedSlots.length > 0 ? (
                     <div className="space-y-1">
                       {request.requestedSlots.slice(0, 5).map((slot, index) => {
                         const date = new Date(slot.startsAt);
@@ -505,7 +512,9 @@ export function RequestSlotAllocationTab({
                               <CheckCircle2 className="h-3 w-3 flex-shrink-0 text-green-500" />
                             )}
                             <span>
-                              {isValidDate ? date.toLocaleString() : "Invalid date"}
+                              {isValidDate
+                                ? date.toLocaleString()
+                                : "Invalid date"}
                             </span>
                             {slot.isTentative && (
                               <span className="text-xs text-amber-500">
@@ -522,7 +531,8 @@ export function RequestSlotAllocationTab({
                         </div>
                       )}
                     </div>
-                  ) : request.requestedTimes && request.requestedTimes.length > 0 ? (
+                  ) : request.requestedTimes &&
+                    request.requestedTimes.length > 0 ? (
                     // Fallback to old format if requestedSlots not available
                     <div className="space-y-1">
                       {request.requestedTimes.slice(0, 5).map((time, index) => {
@@ -534,7 +544,9 @@ export function RequestSlotAllocationTab({
                             key={`${request.id}-time-${index}`}
                             className="text-sm"
                           >
-                            {isValidDate ? date.toLocaleString() : "Invalid date"}
+                            {isValidDate
+                              ? date.toLocaleString()
+                              : "Invalid date"}
                           </div>
                         );
                       })}
