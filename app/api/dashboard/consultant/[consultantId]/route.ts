@@ -1,10 +1,188 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import {
-  TAppointment,
-  TConsultation,
-  TSubscription,
-} from "@/types/appointment";
+import { Prisma } from "@prisma/client";
+
+// =============================================================================
+// Prisma Query Types - Derived from actual query shape for type safety
+// =============================================================================
+
+const appointmentInclude = {
+  slotsOfAppointment: {
+    include: {
+      user: true,
+    },
+  },
+  consultation: {
+    include: {
+      consultationPlan: {
+        include: {
+          consultantProfile: {
+            include: {
+              user: true,
+            },
+          },
+        },
+      },
+      requestedBy: {
+        include: {
+          user: true,
+        },
+      },
+    },
+  },
+  subscription: {
+    select: {
+      id: true,
+      subscriptionPlan: {
+        include: {
+          consultantProfile: {
+            include: {
+              user: true,
+            },
+          },
+        },
+      },
+      requestedBy: {
+        include: {
+          user: true,
+        },
+      },
+      schedulingPeriodStartsAt: true,
+      schedulingPeriodEndsAt: true,
+      requestStatus: true,
+    },
+  },
+  webinar: {
+    include: {
+      webinarPlan: {
+        include: {
+          consultantProfile: {
+            include: {
+              user: true,
+            },
+          },
+        },
+      },
+    },
+  },
+  class: {
+    include: {
+      classPlan: {
+        include: {
+          consultantProfile: {
+            include: {
+              user: true,
+            },
+          },
+        },
+      },
+    },
+  },
+} satisfies Prisma.AppointmentInclude;
+
+const consultationInclude = {
+  consultationPlan: {
+    include: {
+      consultantProfile: {
+        include: {
+          user: true,
+        },
+      },
+    },
+  },
+  requestedBy: {
+    include: {
+      user: true,
+    },
+  },
+  appointment: {
+    include: {
+      slotsOfAppointment: {
+        include: {
+          user: true,
+        },
+        orderBy: {
+          startsAt: "asc" as const,
+        },
+      },
+      payment: true,
+    },
+  },
+} satisfies Prisma.ConsultationInclude;
+
+const subscriptionInclude = {
+  subscriptionPlan: {
+    include: {
+      consultantProfile: {
+        include: {
+          user: true,
+          domain: true,
+          subDomains: true,
+          tags: true,
+        },
+      },
+    },
+  },
+  requestedBy: {
+    include: {
+      user: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          image: true,
+        },
+      },
+    },
+  },
+  appointments: {
+    include: {
+      slotsOfAppointment: {
+        include: {
+          user: true,
+        },
+      },
+      payment: true,
+    },
+  },
+} satisfies Prisma.SubscriptionInclude;
+
+// Derive types from the include objects
+type DashboardAppointment = Prisma.AppointmentGetPayload<{ include: typeof appointmentInclude }>;
+type DashboardConsultation = Prisma.ConsultationGetPayload<{ include: typeof consultationInclude }>;
+type DashboardSubscription = Prisma.SubscriptionGetPayload<{ include: typeof subscriptionInclude }>;
+
+// =============================================================================
+// Helper Functions
+// =============================================================================
+
+function formatDate(dateString?: string | Date | null): string {
+  if (!dateString) return "Date not set";
+  const date = new Date(dateString);
+  if (isNaN(date.getTime())) return "Invalid date";
+
+  return date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+function formatTime(dateString?: string | Date | null): string {
+  if (!dateString) return "Time not set";
+  const date = new Date(dateString);
+  if (isNaN(date.getTime())) return "Invalid time";
+
+  return date.toLocaleString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
+}
+
+// =============================================================================
+// Route Handler
+// =============================================================================
 
 export async function GET(
   request: NextRequest,
@@ -58,79 +236,7 @@ export async function GET(
               },
             ],
           },
-          include: {
-            slotsOfAppointment: {
-              include: {
-                user: true,
-              },
-            },
-            consultation: {
-              include: {
-                consultationPlan: {
-                  include: {
-                    consultantProfile: {
-                      include: {
-                        user: true,
-                      },
-                    },
-                  },
-                },
-                requestedBy: {
-                  include: {
-                    user: true,
-                  },
-                },
-              },
-            },
-            subscription: {
-              select: {
-                id: true,
-                subscriptionPlan: {
-                  include: {
-                    consultantProfile: {
-                      include: {
-                        user: true,
-                      },
-                    },
-                  },
-                },
-                requestedBy: {
-                  include: {
-                    user: true,
-                  },
-                },
-                schedulingPeriodStartsAt: true,
-                schedulingPeriodEndsAt: true,
-                requestStatus: true,
-              },
-            },
-            webinar: {
-              include: {
-                webinarPlan: {
-                  include: {
-                    consultantProfile: {
-                      include: {
-                        user: true,
-                      },
-                    },
-                  },
-                },
-              },
-            },
-            class: {
-              include: {
-                classPlan: {
-                  include: {
-                    consultantProfile: {
-                      include: {
-                        user: true,
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
+          include: appointmentInclude,
         }),
         // Fetch pending consultations
         prisma.consultation.findMany({
@@ -142,35 +248,7 @@ export async function GET(
             },
             requestStatus: "PENDING",
           },
-          include: {
-            consultationPlan: {
-              include: {
-                consultantProfile: {
-                  include: {
-                    user: true,
-                  },
-                },
-              },
-            },
-            requestedBy: {
-              include: {
-                user: true,
-              },
-            },
-            appointment: {
-              include: {
-                slotsOfAppointment: {
-                  include: {
-                    user: true,
-                  },
-                  orderBy: {
-                    startsAt: "asc",
-                  },
-                },
-                payment: true,
-              },
-            },
-          },
+          include: consultationInclude,
           orderBy: {
             requestedAt: "desc",
           },
@@ -183,42 +261,7 @@ export async function GET(
             },
             requestStatus: "PENDING",
           },
-          include: {
-            subscriptionPlan: {
-              include: {
-                consultantProfile: {
-                  include: {
-                    user: true,
-                    domain: true,
-                    subDomains: true,
-                    tags: true,
-                  },
-                },
-              },
-            },
-            requestedBy: {
-              include: {
-                user: {
-                  select: {
-                    id: true,
-                    name: true,
-                    email: true,
-                    image: true,
-                  },
-                },
-              },
-            },
-            appointments: {
-              include: {
-                slotsOfAppointment: {
-                  include: {
-                    user: true,
-                  },
-                },
-                payment: true,
-              },
-            },
-          },
+          include: subscriptionInclude,
           orderBy: {
             requestedAt: "desc",
           },
@@ -237,112 +280,111 @@ export async function GET(
       return new Date(aTime).getTime() - new Date(bTime).getTime();
     });
 
-    // Cast to match expected types
-    const appointmentsData = sortedAppointments as unknown as TAppointment[];
-    const consultationsData = pendingConsultations as unknown as TConsultation[];
-    const subscriptionsData = pendingSubscriptions as unknown as TSubscription[];
-
     // Transform appointments (same logic as fetchHelpers.ts)
-    const transformedAppointments = appointmentsData.map((appointment) => ({
-      id: appointment.id,
-      appointmentType: appointment.appointmentType,
-      slotsOfAppointment: appointment.slotsOfAppointment.map((slot) => ({
-        id: slot.id,
-        slotStartTimeInUTC: new Date(slot.startsAt),
-        slotEndTimeInUTC: slot.endsAt ? new Date(slot.endsAt) : null,
-        isTentative: slot.isTentative,
-        user: Array.isArray(slot.user)
-          ? slot.user.map((u) => ({
-              id: u.id,
-              name: u.name,
-              email: u.email,
-              image: u.image,
-              phone: u.phone || null,
-              address: u.address || null,
-              password: u.password || null,
-              passwordResetToken: u.passwordResetToken || null,
-              passwordResetExpires: u.passwordResetExpires || null,
-              onlineStatus: u.onlineStatus,
-              currentTimezone: u.timezone || null,
-              onboardingCompleted: u.onboardingCompleted,
-              role: u.role,
-              consultantProfileId: u.consultantProfileId,
-              consulteeProfileId: u.consulteeProfileId,
-              staffProfileId: u.staffProfileId,
-            }))
-          : [],
-      })),
-      consultation: appointment.consultation
-        ? {
-            id: appointment.consultation.id,
-            consultationPlan: {
-              ...appointment.consultation.consultationPlan,
-              consultantProfile: appointment.consultation.consultationPlan
-                .consultantProfile as any,
-            },
-            requestStatus: appointment.consultation.requestStatus,
-            requestedBy: {
-              id: appointment.consultation.requestedBy?.id ?? "",
-              user: {
-                name: appointment.consultation.requestedBy?.user?.name ?? null,
-                image:
-                  appointment.consultation.requestedBy?.user?.image ?? null,
+    const transformedAppointments = sortedAppointments.map(
+      (appointment: DashboardAppointment) => ({
+        id: appointment.id,
+        appointmentType: appointment.appointmentType,
+        slotsOfAppointment: appointment.slotsOfAppointment.map((slot) => ({
+          id: slot.id,
+          slotStartTimeInUTC: new Date(slot.startsAt),
+          slotEndTimeInUTC: slot.endsAt ? new Date(slot.endsAt) : null,
+          isTentative: slot.isTentative,
+          user: Array.isArray(slot.user)
+            ? slot.user.map((u) => ({
+                id: u.id,
+                name: u.name,
+                email: u.email,
+                image: u.image,
+                phone: u.phone || null,
+                address: u.address || null,
+                password: u.password || null,
+                passwordResetToken: u.passwordResetToken || null,
+                passwordResetExpires: u.passwordResetExpires || null,
+                onlineStatus: u.onlineStatus,
+                currentTimezone: u.timezone || null,
+                onboardingCompleted: u.onboardingCompleted,
+                role: u.role,
+                consultantProfileId: u.consultantProfileId,
+                consulteeProfileId: u.consulteeProfileId,
+                staffProfileId: u.staffProfileId,
+              }))
+            : [],
+        })),
+        consultation: appointment.consultation
+          ? {
+              id: appointment.consultation.id,
+              consultationPlan: {
+                ...appointment.consultation.consultationPlan,
+                consultantProfile:
+                  appointment.consultation.consultationPlan.consultantProfile,
               },
-            },
-          }
-        : undefined,
-      subscription: appointment.subscription
-        ? {
-            id: appointment.subscription.id,
-            subscriptionPlan: {
-              ...appointment.subscription.subscriptionPlan,
-              consultantProfile: appointment.subscription.subscriptionPlan
-                .consultantProfile as any,
-            },
-            requestStatus: appointment.subscription.requestStatus,
-            requestedBy: {
-              id: appointment.subscription.requestedBy?.id ?? "",
-              user: {
-                name: appointment.subscription.requestedBy?.user?.name ?? null,
-                image:
-                  appointment.subscription.requestedBy?.user?.image ?? null,
+              requestStatus: appointment.consultation.requestStatus,
+              requestedBy: {
+                id: appointment.consultation.requestedBy?.id ?? "",
+                user: {
+                  name:
+                    appointment.consultation.requestedBy?.user?.name ?? null,
+                  image:
+                    appointment.consultation.requestedBy?.user?.image ?? null,
+                },
               },
-            },
-            startDate: new Date(
-              appointment.subscription.schedulingPeriodStartsAt,
-            ).toISOString(),
-            endDate: new Date(
-              appointment.subscription.schedulingPeriodEndsAt,
-            ).toISOString(),
-          }
-        : undefined,
-      webinar: appointment.webinar
-        ? {
-            id: appointment.webinar.id,
-            webinarPlan: {
-              ...appointment.webinar.webinarPlan,
-              consultantProfile: appointment.webinar.webinarPlan
-                .consultantProfile as any,
-            },
-            status: appointment.webinar.status,
-          }
-        : undefined,
-      class: appointment.class
-        ? {
-            id: appointment.class.id,
-            classPlan: {
-              ...appointment.class.classPlan,
-              consultantProfile: appointment.class.classPlan
-                .consultantProfile as any,
-            },
-            status: appointment.class.status,
-          }
-        : undefined,
-    }));
+            }
+          : undefined,
+        subscription: appointment.subscription
+          ? {
+              id: appointment.subscription.id,
+              subscriptionPlan: {
+                ...appointment.subscription.subscriptionPlan,
+                consultantProfile:
+                  appointment.subscription.subscriptionPlan.consultantProfile,
+              },
+              requestStatus: appointment.subscription.requestStatus,
+              requestedBy: {
+                id: appointment.subscription.requestedBy?.id ?? "",
+                user: {
+                  name:
+                    appointment.subscription.requestedBy?.user?.name ?? null,
+                  image:
+                    appointment.subscription.requestedBy?.user?.image ?? null,
+                },
+              },
+              startDate: new Date(
+                appointment.subscription.schedulingPeriodStartsAt,
+              ).toISOString(),
+              endDate: new Date(
+                appointment.subscription.schedulingPeriodEndsAt,
+              ).toISOString(),
+            }
+          : undefined,
+        webinar: appointment.webinar
+          ? {
+              id: appointment.webinar.id,
+              webinarPlan: {
+                ...appointment.webinar.webinarPlan,
+                consultantProfile:
+                  appointment.webinar.webinarPlan.consultantProfile,
+              },
+              status: appointment.webinar.status,
+            }
+          : undefined,
+        class: appointment.class
+          ? {
+              id: appointment.class.id,
+              classPlan: {
+                ...appointment.class.classPlan,
+                consultantProfile:
+                  appointment.class.classPlan.consultantProfile,
+              },
+              status: appointment.class.status,
+            }
+          : undefined,
+      }),
+    );
 
     // Transform approvals (same logic as fetchHelpers.ts)
-    const consultationApprovals = consultationsData.map(
-      (consultation: TConsultation) => ({
+    const consultationApprovals = pendingConsultations.map(
+      (consultation: DashboardConsultation) => ({
         id: consultation.id,
         type: "Consultation",
         name: consultation.requestedBy?.user?.name ?? "Unknown",
@@ -350,8 +392,8 @@ export async function GET(
       }),
     );
 
-    const subscriptionApprovals = subscriptionsData.map(
-      (subscription: TSubscription) => ({
+    const subscriptionApprovals = pendingSubscriptions.map(
+      (subscription: DashboardSubscription) => ({
         id: subscription.id,
         type: "Subscription",
         name: subscription.requestedBy?.user?.name ?? "Unknown",
@@ -378,7 +420,7 @@ export async function GET(
     }));
 
     // Activities are empty for now (as in original)
-    const activities: any[] = [];
+    const activities: unknown[] = [];
 
     // Return consolidated response
     return NextResponse.json({
@@ -400,28 +442,4 @@ export async function GET(
       { status: 500 },
     );
   }
-}
-
-function formatDate(dateString?: string | Date | null): string {
-  if (!dateString) return "Date not set";
-  const date = new Date(dateString);
-  if (isNaN(date.getTime())) return "Invalid date";
-
-  return date.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-}
-
-function formatTime(dateString?: string | Date | null): string {
-  if (!dateString) return "Time not set";
-  const date = new Date(dateString);
-  if (isNaN(date.getTime())) return "Invalid time";
-
-  return date.toLocaleString("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-  });
 }

@@ -1,23 +1,63 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { TWebinar, TClass } from "@/types/appointment";
+import { Prisma } from "@prisma/client";
 import { transformNestedPlanTopics } from "@/lib/topics";
 
-// Type for webinar events in planner with type discriminator
-type WebinarEvent = TWebinar & {
-  type: "webinar";
-};
+// =============================================================================
+// Prisma Query Types - Derived from actual query shape for type safety
+// =============================================================================
 
-// Type for class events in planner with type discriminator
-type ClassEvent = TClass & {
-  type: "class";
-};
+const webinarInclude = {
+  webinarPlan: {
+    include: {
+      consultantProfile: true,
+      topics: true,
+    },
+  },
+  appointment: {
+    include: {
+      slotsOfAppointment: {
+        include: {
+          user: true,
+        },
+      },
+    },
+  },
+  waitlist: true,
+} satisfies Prisma.WebinarInclude;
+
+const classInclude = {
+  classPlan: {
+    include: {
+      consultantProfile: true,
+      topics: true,
+      classContents: {
+        orderBy: {
+          order: "asc" as const,
+        },
+      },
+    },
+  },
+  appointments: true,
+} satisfies Prisma.ClassInclude;
+
+// Derive types from the include objects
+type PlannerWebinar = Prisma.WebinarGetPayload<{ include: typeof webinarInclude }>;
+type PlannerClass = Prisma.ClassGetPayload<{ include: typeof classInclude }>;
+
+// Response types with discriminators
+type WebinarEvent = PlannerWebinar & { type: "webinar" };
+type ClassEvent = PlannerClass & { type: "class" };
 
 interface PlannerData {
   webinars: WebinarEvent[];
   classes: ClassEvent[];
   participantCounts: Record<string, number>;
 }
+
+// =============================================================================
+// Helper Functions
+// =============================================================================
 
 /**
  * Helper function to fetch participant counts directly via Prisma
@@ -96,6 +136,10 @@ async function getParticipantCounts(
   return counts;
 }
 
+// =============================================================================
+// Route Handler
+// =============================================================================
+
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ consultantId: string }> },
@@ -122,24 +166,7 @@ export async function GET(
             consultantProfileId: consultantId,
           },
         },
-        include: {
-          webinarPlan: {
-            include: {
-              consultantProfile: true,
-              topics: true,
-            },
-          },
-          appointment: {
-            include: {
-              slotsOfAppointment: {
-                include: {
-                  user: true,
-                },
-              },
-            },
-          },
-          waitlist: true,
-        },
+        include: webinarInclude,
       }),
       prisma.class.findMany({
         where: {
@@ -147,20 +174,7 @@ export async function GET(
             consultantProfileId: consultantId,
           },
         },
-        include: {
-          classPlan: {
-            include: {
-              consultantProfile: true,
-              topics: true,
-              classContents: {
-                orderBy: {
-                  order: "asc",
-                },
-              },
-            },
-          },
-          appointments: true,
-        },
+        include: classInclude,
       }),
     ]);
 
@@ -172,23 +186,20 @@ export async function GET(
       transformNestedPlanTopics(c, "classPlan"),
     );
 
-    // Transform webinars to include type discriminator
-    // Cast to unknown first to avoid type mismatch with TWebinar (which expects more fields)
+    // Transform to include type discriminator
     const webinars: WebinarEvent[] = transformedWebinars.map((webinar) => ({
-      ...(webinar as unknown as TWebinar),
+      ...webinar,
       type: "webinar" as const,
     }));
 
-    // Transform classes to include type discriminator
-    // Cast to unknown first to avoid type mismatch with TClass (which expects more fields)
     const classes: ClassEvent[] = transformedClasses.map((classEvent) => ({
-      ...(classEvent as unknown as TClass),
+      ...classEvent,
       type: "class" as const,
     }));
 
     // FIX #142: Fetch participant counts using direct Prisma query (not internal API)
-    const webinarIds = webinars.map((w) => w.id).filter(Boolean) as string[];
-    const classIds = classes.map((c) => c.id).filter(Boolean) as string[];
+    const webinarIds = webinars.map((w) => w.id);
+    const classIds = classes.map((c) => c.id);
 
     const participantCounts = await getParticipantCounts(webinarIds, classIds);
 

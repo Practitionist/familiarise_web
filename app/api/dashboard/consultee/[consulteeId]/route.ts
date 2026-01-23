@@ -1,5 +1,163 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { Prisma } from "@prisma/client";
+
+// =============================================================================
+// Prisma Query Types - Derived from actual query shape for type safety
+// =============================================================================
+
+const consultationInclude = {
+  consultationPlan: {
+    include: {
+      consultantProfile: {
+        include: {
+          user: true,
+        },
+      },
+    },
+  },
+  requestedBy: {
+    include: {
+      user: true,
+    },
+  },
+  appointment: {
+    include: {
+      slotsOfAppointment: {
+        include: {
+          user: true,
+        },
+        orderBy: {
+          startsAt: "asc" as const,
+        },
+      },
+      payment: true,
+    },
+  },
+} satisfies Prisma.ConsultationInclude;
+
+const subscriptionInclude = {
+  subscriptionPlan: {
+    include: {
+      consultantProfile: {
+        include: {
+          user: true,
+          domain: true,
+          subDomains: true,
+          tags: true,
+        },
+      },
+    },
+  },
+  requestedBy: {
+    include: {
+      user: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          image: true,
+        },
+      },
+    },
+  },
+  appointments: {
+    include: {
+      slotsOfAppointment: {
+        include: {
+          user: true,
+        },
+      },
+      payment: true,
+    },
+  },
+} satisfies Prisma.SubscriptionInclude;
+
+const webinarInclude = {
+  webinarPlan: {
+    include: {
+      consultantProfile: {
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              image: true,
+            },
+          },
+        },
+      },
+      topics: true,
+    },
+  },
+  appointment: {
+    include: {
+      slotsOfAppointment: {
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              image: true,
+              consulteeProfileId: true,
+            },
+          },
+        },
+      },
+      payment: true,
+    },
+  },
+  // Note: waitlist include is dynamic based on consulteeId, handled separately
+} satisfies Prisma.WebinarInclude;
+
+const classInclude = {
+  classPlan: {
+    include: {
+      consultantProfile: {
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              image: true,
+            },
+          },
+        },
+      },
+      classContents: {
+        orderBy: {
+          order: "asc" as const,
+        },
+      },
+    },
+  },
+  appointments: {
+    include: {
+      slotsOfAppointment: {
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              image: true,
+              consulteeProfileId: true,
+            },
+          },
+        },
+      },
+      payment: true,
+    },
+  },
+  // Note: waitlist include is dynamic based on consulteeId, handled separately
+} satisfies Prisma.ClassInclude;
+
+// =============================================================================
+// Route Handler
+// =============================================================================
 
 export async function GET(
   request: NextRequest,
@@ -39,35 +197,7 @@ export async function GET(
         // Fetch consultations for this consultee
         prisma.consultation.findMany({
           where: { requestedById: consulteeId },
-          include: {
-            consultationPlan: {
-              include: {
-                consultantProfile: {
-                  include: {
-                    user: true,
-                  },
-                },
-              },
-            },
-            requestedBy: {
-              include: {
-                user: true,
-              },
-            },
-            appointment: {
-              include: {
-                slotsOfAppointment: {
-                  include: {
-                    user: true,
-                  },
-                  orderBy: {
-                    startsAt: "asc",
-                  },
-                },
-                payment: true,
-              },
-            },
-          },
+          include: consultationInclude,
           orderBy: {
             requestedAt: "desc",
           },
@@ -75,42 +205,7 @@ export async function GET(
         // Fetch subscriptions for this consultee
         prisma.subscription.findMany({
           where: { requestedById: consulteeId },
-          include: {
-            subscriptionPlan: {
-              include: {
-                consultantProfile: {
-                  include: {
-                    user: true,
-                    domain: true,
-                    subDomains: true,
-                    tags: true,
-                  },
-                },
-              },
-            },
-            requestedBy: {
-              include: {
-                user: {
-                  select: {
-                    id: true,
-                    name: true,
-                    email: true,
-                    image: true,
-                  },
-                },
-              },
-            },
-            appointments: {
-              include: {
-                slotsOfAppointment: {
-                  include: {
-                    user: true,
-                  },
-                },
-                payment: true,
-              },
-            },
-          },
+          include: subscriptionInclude,
           orderBy: {
             requestedAt: "desc",
           },
@@ -150,41 +245,7 @@ export async function GET(
             ],
           },
           include: {
-            webinarPlan: {
-              include: {
-                consultantProfile: {
-                  include: {
-                    user: {
-                      select: {
-                        id: true,
-                        name: true,
-                        email: true,
-                        image: true,
-                      },
-                    },
-                  },
-                },
-                topics: true,
-              },
-            },
-            appointment: {
-              include: {
-                slotsOfAppointment: {
-                  include: {
-                    user: {
-                      select: {
-                        id: true,
-                        name: true,
-                        email: true,
-                        image: true,
-                        consulteeProfileId: true,
-                      },
-                    },
-                  },
-                },
-                payment: true,
-              },
-            },
+            ...webinarInclude,
             waitlist: {
               where: {
                 user: {
@@ -244,45 +305,7 @@ export async function GET(
             ],
           },
           include: {
-            classPlan: {
-              include: {
-                consultantProfile: {
-                  include: {
-                    user: {
-                      select: {
-                        id: true,
-                        name: true,
-                        email: true,
-                        image: true,
-                      },
-                    },
-                  },
-                },
-                classContents: {
-                  orderBy: {
-                    order: "asc",
-                  },
-                },
-              },
-            },
-            appointments: {
-              include: {
-                slotsOfAppointment: {
-                  include: {
-                    user: {
-                      select: {
-                        id: true,
-                        name: true,
-                        email: true,
-                        image: true,
-                        consulteeProfileId: true,
-                      },
-                    },
-                  },
-                },
-                payment: true,
-              },
-            },
+            ...classInclude,
             waitlist: {
               where: {
                 userId: consulteeId,

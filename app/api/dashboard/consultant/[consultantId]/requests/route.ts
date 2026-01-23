@@ -1,55 +1,229 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import {
-  TAppointment,
-  TConsultation,
-  TSubscription,
-} from "@/types/appointment";
-import { TConsultantProfile } from "@/types/consultant";
 import { Prisma } from "@prisma/client";
 
-// Type for weekly availability slots
-type TWeeklyAvailability = Prisma.SlotOfAvailabilityWeeklyGetPayload<{
-  include: {
-    consultantProfile: {
-      select: {
-        id: true;
-        user: {
-          select: {
-            name: true;
-            email: true;
-          };
-        };
-      };
-    };
-  };
+// =============================================================================
+// Prisma Query Types - Derived from actual query shape for type safety
+// =============================================================================
+
+const consultationInclude = {
+  consultationPlan: {
+    include: {
+      consultantProfile: {
+        include: {
+          user: true,
+        },
+      },
+    },
+  },
+  requestedBy: {
+    include: {
+      user: true,
+    },
+  },
+  appointment: {
+    include: {
+      slotsOfAppointment: {
+        include: {
+          user: true,
+        },
+        orderBy: {
+          startsAt: "asc" as const,
+        },
+      },
+      payment: true,
+    },
+  },
+} satisfies Prisma.ConsultationInclude;
+
+const subscriptionInclude = {
+  subscriptionPlan: {
+    include: {
+      consultantProfile: {
+        include: {
+          user: true,
+          domain: true,
+          subDomains: true,
+          tags: true,
+        },
+      },
+    },
+  },
+  requestedBy: {
+    include: {
+      user: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          image: true,
+        },
+      },
+    },
+  },
+  appointments: {
+    include: {
+      slotsOfAppointment: {
+        include: {
+          user: true,
+        },
+      },
+      payment: true,
+    },
+  },
+} satisfies Prisma.SubscriptionInclude;
+
+const weeklyAvailabilityInclude = {
+  consultantProfile: {
+    select: {
+      id: true,
+      user: {
+        select: {
+          name: true,
+          email: true,
+        },
+      },
+    },
+  },
+} satisfies Prisma.SlotOfAvailabilityWeeklyInclude;
+
+const customAvailabilityInclude = {
+  consultantProfile: {
+    select: {
+      id: true,
+      user: {
+        select: {
+          name: true,
+          email: true,
+        },
+      },
+    },
+  },
+} satisfies Prisma.SlotOfAvailabilityCustomInclude;
+
+const appointmentInclude = {
+  slotsOfAppointment: {
+    include: {
+      user: true,
+    },
+  },
+  consultation: {
+    include: {
+      consultationPlan: {
+        include: {
+          consultantProfile: {
+            include: {
+              user: true,
+            },
+          },
+        },
+      },
+      requestedBy: {
+        include: {
+          user: true,
+        },
+      },
+    },
+  },
+  subscription: {
+    select: {
+      id: true,
+      subscriptionPlan: {
+        include: {
+          consultantProfile: {
+            include: {
+              user: true,
+            },
+          },
+        },
+      },
+      requestedBy: {
+        include: {
+          user: true,
+        },
+      },
+      schedulingPeriodStartsAt: true,
+      schedulingPeriodEndsAt: true,
+      requestStatus: true,
+    },
+  },
+  webinar: {
+    include: {
+      webinarPlan: {
+        include: {
+          consultantProfile: {
+            include: {
+              user: true,
+            },
+          },
+        },
+      },
+    },
+  },
+  class: {
+    include: {
+      classPlan: {
+        include: {
+          consultantProfile: {
+            include: {
+              user: true,
+            },
+          },
+        },
+      },
+    },
+  },
+} satisfies Prisma.AppointmentInclude;
+
+const consultantInclude = {
+  user: true,
+  domain: true,
+  subDomains: true,
+  tags: true,
+  slotsOfAvailabilityWeekly: true,
+  slotsOfAvailabilityCustom: true,
+  consultationPlans: true,
+  subscriptionPlans: true,
+  webinarPlans: true,
+  classPlans: true,
+  workExperiences: true,
+  certifications: true,
+  education: true,
+} satisfies Prisma.ConsultantProfileInclude;
+
+// Derive types from the include objects
+type RequestsConsultation = Prisma.ConsultationGetPayload<{
+  include: typeof consultationInclude;
+}>;
+type RequestsSubscription = Prisma.SubscriptionGetPayload<{
+  include: typeof subscriptionInclude;
+}>;
+type RequestsWeeklyAvailability = Prisma.SlotOfAvailabilityWeeklyGetPayload<{
+  include: typeof weeklyAvailabilityInclude;
+}>;
+type RequestsCustomAvailability = Prisma.SlotOfAvailabilityCustomGetPayload<{
+  include: typeof customAvailabilityInclude;
+}>;
+type RequestsAppointment = Prisma.AppointmentGetPayload<{
+  include: typeof appointmentInclude;
+}>;
+type RequestsConsultant = Prisma.ConsultantProfileGetPayload<{
+  include: typeof consultantInclude;
 }>;
 
-// Type for custom availability slots
-type TCustomAvailability = Prisma.SlotOfAvailabilityCustomGetPayload<{
-  include: {
-    consultantProfile: {
-      select: {
-        id: true;
-        user: {
-          select: {
-            name: true;
-            email: true;
-          };
-        };
-      };
-    };
-  };
-}>;
-
+// Response data interface
 interface RequestsData {
-  consultations: TConsultation[];
-  subscriptions: TSubscription[];
-  weeklyAvailability: TWeeklyAvailability[];
-  customAvailability: TCustomAvailability[];
-  appointments: TAppointment[];
-  consultant: TConsultantProfile | null;
+  consultations: RequestsConsultation[];
+  subscriptions: RequestsSubscription[];
+  weeklyAvailability: RequestsWeeklyAvailability[];
+  customAvailability: RequestsCustomAvailability[];
+  appointments: RequestsAppointment[];
+  consultant: RequestsConsultant | null;
 }
+
+// =============================================================================
+// Route Handler
+// =============================================================================
 
 export async function GET(
   request: Request,
@@ -89,35 +263,7 @@ export async function GET(
           },
           requestStatus: "PENDING",
         },
-        include: {
-          consultationPlan: {
-            include: {
-              consultantProfile: {
-                include: {
-                  user: true,
-                },
-              },
-            },
-          },
-          requestedBy: {
-            include: {
-              user: true,
-            },
-          },
-          appointment: {
-            include: {
-              slotsOfAppointment: {
-                include: {
-                  user: true,
-                },
-                orderBy: {
-                  startsAt: "asc",
-                },
-              },
-              payment: true,
-            },
-          },
-        },
+        include: consultationInclude,
         orderBy: {
           requestedAt: "desc",
         },
@@ -130,42 +276,7 @@ export async function GET(
           },
           requestStatus: "PENDING",
         },
-        include: {
-          subscriptionPlan: {
-            include: {
-              consultantProfile: {
-                include: {
-                  user: true,
-                  domain: true,
-                  subDomains: true,
-                  tags: true,
-                },
-              },
-            },
-          },
-          requestedBy: {
-            include: {
-              user: {
-                select: {
-                  id: true,
-                  name: true,
-                  email: true,
-                  image: true,
-                },
-              },
-            },
-          },
-          appointments: {
-            include: {
-              slotsOfAppointment: {
-                include: {
-                  user: true,
-                },
-              },
-              payment: true,
-            },
-          },
-        },
+        include: subscriptionInclude,
         orderBy: {
           requestedAt: "desc",
         },
@@ -179,19 +290,7 @@ export async function GET(
           { dayOfWeekForStartsAt: "asc" },
           { availabilityStartsAt: "asc" },
         ],
-        include: {
-          consultantProfile: {
-            select: {
-              id: true,
-              user: {
-                select: {
-                  name: true,
-                  email: true,
-                },
-              },
-            },
-          },
-        },
+        include: weeklyAvailabilityInclude,
       }),
       // Fetch custom availability slots
       prisma.slotOfAvailabilityCustom.findMany({
@@ -201,19 +300,7 @@ export async function GET(
         orderBy: {
           availabilityStartsAt: "asc",
         },
-        include: {
-          consultantProfile: {
-            select: {
-              id: true,
-              user: {
-                select: {
-                  name: true,
-                  email: true,
-                },
-              },
-            },
-          },
-        },
+        include: customAvailabilityInclude,
       }),
       // Fetch approved appointments for consultations, subscriptions, webinars, and classes
       prisma.appointment.findMany({
@@ -245,98 +332,12 @@ export async function GET(
             },
           ],
         },
-        include: {
-          slotsOfAppointment: {
-            include: {
-              user: true,
-            },
-          },
-          consultation: {
-            include: {
-              consultationPlan: {
-                include: {
-                  consultantProfile: {
-                    include: {
-                      user: true,
-                    },
-                  },
-                },
-              },
-              requestedBy: {
-                include: {
-                  user: true,
-                },
-              },
-            },
-          },
-          subscription: {
-            select: {
-              id: true,
-              subscriptionPlan: {
-                include: {
-                  consultantProfile: {
-                    include: {
-                      user: true,
-                    },
-                  },
-                },
-              },
-              requestedBy: {
-                include: {
-                  user: true,
-                },
-              },
-              schedulingPeriodStartsAt: true,
-              schedulingPeriodEndsAt: true,
-              requestStatus: true,
-            },
-          },
-          webinar: {
-            include: {
-              webinarPlan: {
-                include: {
-                  consultantProfile: {
-                    include: {
-                      user: true,
-                    },
-                  },
-                },
-              },
-            },
-          },
-          class: {
-            include: {
-              classPlan: {
-                include: {
-                  consultantProfile: {
-                    include: {
-                      user: true,
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
+        include: appointmentInclude,
       }),
       // Fetch consultant profile
       prisma.consultantProfile.findUnique({
         where: { id: consultantId },
-        include: {
-          user: true,
-          domain: true,
-          subDomains: true,
-          tags: true,
-          slotsOfAvailabilityWeekly: true,
-          slotsOfAvailabilityCustom: true,
-          consultationPlans: true,
-          subscriptionPlans: true,
-          webinarPlans: true,
-          classPlans: true,
-          workExperiences: true,
-          certifications: true,
-          education: true,
-        },
+        include: consultantInclude,
       }),
     ]);
 
@@ -353,14 +354,12 @@ export async function GET(
     });
 
     const requestsData: RequestsData = {
-      consultations: (consultations || []) as unknown as TConsultation[],
-      subscriptions: (subscriptions || []) as unknown as TSubscription[],
-      weeklyAvailability: (weeklyAvailability ||
-        []) as unknown as TWeeklyAvailability[],
-      customAvailability: (customAvailability ||
-        []) as unknown as TCustomAvailability[],
-      appointments: (sortedAppointments || []) as unknown as TAppointment[],
-      consultant: (consultant || null) as unknown as TConsultantProfile | null,
+      consultations: consultations || [],
+      subscriptions: subscriptions || [],
+      weeklyAvailability: weeklyAvailability || [],
+      customAvailability: customAvailability || [],
+      appointments: sortedAppointments || [],
+      consultant: consultant || null,
     };
 
     return NextResponse.json({
