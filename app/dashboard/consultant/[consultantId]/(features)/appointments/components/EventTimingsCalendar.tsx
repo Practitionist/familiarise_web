@@ -129,7 +129,8 @@ export function EventTimingsCalendar({
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-7xl">
+      {/* FIX: Added max-h-[90vh] + overflow-y-auto to prevent footer cutoff on small screens */}
+      <DialogContent className="max-w-7xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>
             {appointment.appointmentType === "CLASS"
@@ -174,13 +175,13 @@ export function EventTimingsCalendar({
           }
           durationInHours={
             eventDetails.eventType === "webinar" ||
-            eventDetails.eventType === "consultation"
+              eventDetails.eventType === "consultation"
               ? eventDetails.durationInHours
               : undefined
           }
           sessionDurationInHours={
             eventDetails.eventType === "subscription" ||
-            eventDetails.eventType === "class"
+              eventDetails.eventType === "class"
               ? eventDetails.durationInHours
               : undefined
           }
@@ -198,8 +199,8 @@ export function EventTimingsCalendar({
               : appointment.appointmentType === "CLASS"
                 ? (appointment.class as any)?.schedulingPeriodStartsAt
                   ? new Date(
-                      (appointment.class as any).schedulingPeriodStartsAt,
-                    )
+                    (appointment.class as any).schedulingPeriodStartsAt,
+                  )
                   : undefined
                 : undefined
           }

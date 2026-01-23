@@ -21,6 +21,7 @@ const NAV_ITEMS: NavItem[] = [
   { name: "Home", path: "home" },
   { name: "Chats", path: "chats" },
   { name: "Appointments", path: "appointments" },
+  { name: "Recordings", path: "recordings" },
   { name: "Event Planner", path: "planner" },
   { name: "Requests", path: "requests" },
   { name: "Documents", path: "documents" },
@@ -232,9 +233,9 @@ function ErrorDisplay({ message }: { message: string }) {
               onClick={
                 config.secondaryAction.href === "#"
                   ? (e) => {
-                      e.preventDefault();
-                      window.location.reload();
-                    }
+                    e.preventDefault();
+                    window.location.reload();
+                  }
                   : undefined
               }
               className="w-full px-6 py-2.5 bg-zinc-100 text-zinc-700 rounded-lg font-medium hover:bg-zinc-200 transition-colors"

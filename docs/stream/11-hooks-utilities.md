@@ -4,13 +4,12 @@ Comprehensive guide to custom hooks and utilities for Stream Chat and Video inte
 
 ## Navigation
 
-- [Back to README](./README.md)
 - [Architecture](./01-architecture.md)
 - [Setup & Configuration](./02-setup-configuration.md)
 - [Provider & Authentication](./03-provider-authentication.md)
 - [Error Handling](./12-error-handling.md)
-- [Known Issues](./13-known-issues.md)
-- [Troubleshooting](./14-troubleshooting.md)
+- [Troubleshooting](./troubleshooting.md)
+- [Recording & Webhooks](./13-recording-webhooks.md)
 
 ---
 
@@ -837,9 +836,8 @@ function useStreamWithErrorContext(userId: string) {
 ## Next Steps
 
 - Learn about [Error Handling](./12-error-handling.md)
-- Review [Known Issues](./13-known-issues.md)
-- Check [Troubleshooting Guide](./14-troubleshooting.md)
-- Return to [README](./README.md)
+- Review [Troubleshooting Guide](./troubleshooting.md)
+- Check [Recording & Webhooks](./13-recording-webhooks.md)
 
 ---
 

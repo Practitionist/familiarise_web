@@ -835,5 +835,5 @@ if (existingChannel.name !== expectedName) {
 ## Navigation
 
 - [Previous: 05. Video Implementation](./05-video-implementation.md)
-- [Next: 13. Known Issues](./13-known-issues.md)
-- [Back to Index](./README.md)
+- [Next: 13. Recording & Webhooks](./13-recording-webhooks.md)
+- [Troubleshooting](./troubleshooting.md)

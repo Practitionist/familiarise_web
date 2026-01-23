@@ -265,7 +265,7 @@ Stream provides default channel types. For Familiarise, configure:
 **Navigation:** Dashboard → Chat → Roles & Permissions
 
 ⚠️ **CRITICAL BUG:** Currently all users get "admin" role regardless of actual role.
-See: [Known Issues #1](./13-known-issues.md#critical-bug-1-universal-admin-role)
+See: [Troubleshooting - Universal Admin Role](./troubleshooting.md#universal-admin-role-critical)
 
 #### Built-in Roles
 
@@ -1081,8 +1081,9 @@ railway variables set STREAM_API_SECRET=xxx
 2. **Learn provider internals:** [03. Provider & Authentication](./03-provider-authentication.md)
 3. **Implement chat:** [04. Chat Implementation](./04-chat-implementation.md)
 4. **Add video calls:** [05. Video Implementation](./05-video-implementation.md)
+5. **Recording & Webhooks:** [13. Recording & Webhooks](./13-recording-webhooks.md)
 
-**Troubleshooting:** [14. Troubleshooting Guide](./14-troubleshooting.md)
+**Troubleshooting:** [Troubleshooting Guide](./troubleshooting.md)
 
 ---
 

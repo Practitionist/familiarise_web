@@ -28,6 +28,7 @@ import {
   LogOut,
   Menu,
   X,
+  Video,
 } from "lucide-react";
 import { useState } from "react";
 
@@ -36,6 +37,7 @@ const NAV_ITEMS: NavItem[] = [
   { name: "Home", path: "home" },
   { name: "Appointments", path: "appointments" },
   { name: "History", path: "history" },
+  { name: "Recordings", path: "recordings" },
   { name: "Messages", path: "messages" },
   { name: "Support", path: "feedback" },
   { name: "Settings", path: "settings" },
@@ -51,6 +53,7 @@ const iconMap: Record<string, typeof Home> = {
   feedback: Ticket,
   settings: Settings,
   policy: Shield,
+  recordings: Video,
 };
 
 interface PageProps {

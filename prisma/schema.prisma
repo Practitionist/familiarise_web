@@ -766,6 +766,7 @@ model WebinarPlan {
   price               Int
   priceCurrency       String   @default("INR")
   certificateProvided Boolean  @default(false)
+  recordingEnabled    Boolean  @default(false) // Allow consultant to record sessions
   durationInHours     Float    @default(1) // Duration in hours
   maxParticipants     Int      @default(100)
   language            String?  @default("English")
@@ -817,6 +818,7 @@ model ClassPlan {
   price                  Int
   priceCurrency          String           @default("INR")
   certificateProvided    Boolean          @default(false)
+  recordingEnabled       Boolean          @default(false) // Allow consultant to record sessions
   durationInMonths       Int              @default(1) // Duration in months
   meetingsPerWeek        Int              @default(1)
   sessionDurationInHours Float            @default(1.0) // Duration of each session in hours
@@ -1085,6 +1087,15 @@ model MeetingSession {
   passcode     String?
   hostKeys     String[]
 
+  // Recording state
+  isRecording        Boolean   @default(false)
+  recordingStartedAt DateTime?
+  recordingStartedBy String? // userId who started recording
+
+  // Session lifecycle
+  endedAt     DateTime? // When session actually ended
+  endedReason String? // "call_ended", "session_timeout", "error"
+
   recordings Recording[]
 
   slotOfAppointment   SlotOfAppointment @relation(fields: [slotOfAppointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
@@ -1092,15 +1103,60 @@ model MeetingSession {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([isRecording])
 }
 
-// New model for storing recording details
+// Recording storage types
+enum RecordingStorageType {
+  STREAM_S3 // Default: expires in 2 weeks
+  SUPABASE // Permanent storage
+}
+
+// Recording status lifecycle
+enum RecordingStatus {
+  RECORDING // Currently being recorded
+  PROCESSING // Stream is processing the recording
+  READY // Available on Stream S3
+  TRANSFERRING // Being transferred to Supabase
+  AVAILABLE // Available on Supabase (permanent)
+  FAILED // Recording failed
+  EXPIRED // Stream S3 URL expired
+}
+
+// Model for storing recording details with dual storage support
 model Recording {
   id                String   @id @default(cuid())
   title             String
   recordingUrl      String
   durationInMinutes Int
   recordedAt        DateTime
+
+  // Stream-specific identifiers
+  streamRecordingId String? @unique
+  streamCallId      String?
+
+  // Storage configuration
+  storageType RecordingStorageType @default(STREAM_S3)
+  status      RecordingStatus      @default(READY)
+
+  // Supabase permanent storage
+  supabaseUrl  String?
+  supabasePath String?
+
+  // Media metadata
+  thumbnailUrl String?
+  fileSize     BigInt? // File size in bytes
+  codec        String? // e.g., "h264", "vp9"
+  resolution   String? // e.g., "1920x1080", "1280x720"
+
+  // Preview clip (for explore pages)
+  previewClipUrl      String?
+  previewClipDuration Int? // Duration in seconds
+
+  // Expiration tracking
+  streamUrlExpiresAt DateTime? // When Stream S3 URL expires
+  transferredAt      DateTime? // When transferred to Supabase
 
   meetingSession   MeetingSession @relation(fields: [meetingSessionId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   meetingSessionId String
@@ -1109,6 +1165,10 @@ model Recording {
   updatedAt DateTime @updatedAt
 
   @@index([meetingSessionId])
+  @@index([streamRecordingId])
+  @@index([status])
+  @@index([storageType])
+  @@index([streamUrlExpiresAt])
 }
 
 enum Platform {

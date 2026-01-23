@@ -18,7 +18,7 @@ type WebinarCallback = (
   data: Partial<WebinarEvent>,
   scheduledAt?: string | Date,
 ) => void;
-type ClassCallback = (data: Partial<ClassEvent>) => void;
+type ClassCallback = (data: Partial<ClassEvent>, startDate?: string) => void;
 type ConsultationCallback = (data: Partial<ConsultationPlanEvent>) => void;
 type SubscriptionCallback = (data: Partial<SubscriptionPlanEvent>) => void;
 
@@ -109,16 +109,17 @@ export function EventPlanner({
       : undefined;
 
     // Create a wrapper around the save callback to handle topic formats if needed
-    const handleClassSave = (data: Partial<ClassEvent>) => {
+    const handleClassSave = (data: Partial<ClassEvent>, startDate?: string) => {
       console.log(
         "EventPlanner - preparing to save class data:",
         JSON.stringify(data, null, 2),
       );
+      console.log("EventPlanner - class startDate:", startDate);
 
       // No need for additional validation as we're now using string[] directly
 
-      // Call the original callback
-      classSaveCallback(data);
+      // Call the original callback with startDate
+      classSaveCallback(data, startDate);
     };
 
     return (

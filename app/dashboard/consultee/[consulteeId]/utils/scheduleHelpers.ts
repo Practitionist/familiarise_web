@@ -24,10 +24,11 @@ export function getActualSlots(event: EventWithType): SlotOfAppointment[] {
   const now = new Date(); // Get current time for comparison
 
   // Filter out past slots and sort
+  // Use endsAt instead of startsAt to include ongoing sessions (started but not yet ended)
+  // This allows consultees to see and join sessions that have already started
   return appointmentSlots
     .filter(
-      (slot) => new Date(slot.startsAt).getTime() >= now.getTime(), // Keep only future or current slots
-      // && new Date(slot.startsAt).getFullYear() > PREVIOUS_YEAR // Removed year filter
+      (slot) => new Date(slot.endsAt).getTime() >= now.getTime(), // Keep ongoing + future slots
     )
     .sort(
       (a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),

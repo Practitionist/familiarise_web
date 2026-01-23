@@ -1,30 +1,389 @@
-# Stream SDK Troubleshooting Guide
+# Stream Troubleshooting Guide
 
-Comprehensive troubleshooting guide for Stream Chat and Video integration issues.
+Comprehensive troubleshooting guide for Stream Chat and Video integration issues, including critical known issues and workarounds.
 
 ## Navigation
 
-- [Back to README](./README.md)
 - [Architecture](./01-architecture.md)
 - [Setup & Configuration](./02-setup-configuration.md)
 - [Provider & Authentication](./03-provider-authentication.md)
 - [Hooks & Utilities](./11-hooks-utilities.md)
 - [Error Handling](./12-error-handling.md)
-- [Known Issues](./13-known-issues.md)
+- [Recording & Webhooks](./13-recording-webhooks.md)
 
 ---
 
 ## Table of Contents
 
-1. [Quick Debug Checklist](#quick-debug-checklist)
-2. [Connection Issues](#connection-issues)
-3. [Token Issues](#token-issues)
-4. [Channel Issues](#channel-issues)
-5. [Meeting Issues](#meeting-issues)
-6. [Common Error Messages](#common-error-messages)
-7. [Debug Tools](#debug-tools)
-8. [Server Log Analysis](#server-log-analysis)
-9. [Browser Console Inspection](#browser-console-inspection)
+1. [Critical Issues & Workarounds](#critical-issues--workarounds)
+2. [Quick Debug Checklist](#quick-debug-checklist)
+3. [Connection Issues](#connection-issues)
+4. [Token Issues](#token-issues)
+5. [Channel Issues](#channel-issues)
+6. [Meeting Issues](#meeting-issues)
+7. [Common Error Messages](#common-error-messages)
+8. [Debug Tools](#debug-tools)
+9. [Server Log Analysis](#server-log-analysis)
+10. [Browser Console Inspection](#browser-console-inspection)
+
+---
+
+## Critical Issues & Workarounds
+
+This section documents known critical bugs and their workarounds. Review before deploying to production.
+
+### Universal Admin Role (Critical)
+
+**Severity:** CRITICAL | **Security Impact:** HIGH
+
+#### Problem Description
+
+All users receive "admin" role in Stream Chat regardless of their actual role in the system. This means there is no permission differentiation between user types.
+
+#### Location
+
+**File:** `/Users/kaustavghosh/Desktop/familiarise_web/lib/user.ts`
+**Lines:** 98-115
+
+#### Current Code
+
+```typescript
+export function mapRoleToStream(role: string | null | undefined): string {
+  if (!role) return "admin"; // Default to admin for team channel access
+
+  switch (role.toUpperCase()) {
+    case "ADMIN":
+      return "admin";
+    case "CONSULTANT":
+      return "admin"; // Should be custom role or "channel_moderator"
+    case "CONSULTEE":
+      return "admin"; // Should be "user" or "channel_member"
+    case "USER":
+      return "admin";
+    default:
+      return "admin";
+  }
+}
+```
+
+#### Impact
+
+1. **No Permission Enforcement:**
+   - Consultees can moderate channels they shouldn't
+   - All users can delete messages from anyone
+   - No role-based access control
+
+2. **Security Risks:**
+   - Unauthorized access to sensitive operations
+   - Potential data tampering
+   - No audit trail for privileged operations
+
+3. **Billing Impact:**
+   - Stream pricing may differ based on user roles
+   - All users counted as admin users
+
+#### Recommended Fix
+
+**Option 1: Custom Roles** (Recommended)
+
+```typescript
+export function mapRoleToStream(role: string | null | undefined): string {
+  if (!role) return "user";
+
+  switch (role.toUpperCase()) {
+    case "ADMIN":
+      return "admin";
+    case "CONSULTANT":
+      return "channel_moderator"; // Can moderate their own channels
+    case "CONSULTEE":
+      return "user"; // Regular user permissions
+    case "STAFF":
+      return "admin"; // Full administrative access
+    default:
+      return "user";
+  }
+}
+```
+
+#### Current Workaround
+
+**Temporary Mitigation:**
+- Application-level permission checks (don't rely on Stream roles)
+- Audit logging for sensitive operations
+- User education about not abusing permissions
+
+---
+
+### Token Expiry Race Condition (Medium)
+
+**Severity:** MEDIUM | **Impact:** Potential connection drops during long sessions
+
+#### Problem Description
+
+Tokens are cached for 50 minutes but have a 1-hour validity. There's a 10-minute window where the cached token might be used even though it's close to expiry.
+
+#### Location
+
+**File:** `providers/StreamProvider.tsx`
+**Function:** `getCachedToken()`
+
+#### Current Implementation
+
+```typescript
+const TOKEN_CACHE_DURATION = 50 * 60 * 1000; // 50 minutes
+
+const getCachedToken = useCallback(async (type: "chat" | "video") => {
+  const cached = tokenCache.current[type];
+
+  if (cached && Date.now() - cached.timestamp < TOKEN_CACHE_DURATION) {
+    return cached.token; // Token might expire soon
+  }
+
+  // Generate new token
+  const newToken = await generateToken(type);
+  return newToken;
+}, []);
+```
+
+#### Impact
+
+1. **Potential Disconnections:**
+   - User might use token in the last 10 minutes
+   - Token expires mid-operation
+   - Connection drops unexpectedly
+
+2. **Poor User Experience:**
+   - Unexpected disconnections
+   - Message send failures
+   - Video call drops
+
+#### Recommended Fix
+
+**Option 1: Proactive Token Refresh** (Recommended)
+
+```typescript
+const TOKEN_REFRESH_THRESHOLD = 45 * 60 * 1000; // Refresh at 45 minutes
+
+useEffect(() => {
+  const interval = setInterval(async () => {
+    // Proactively refresh token before it expires
+    await refreshAllTokens();
+  }, TOKEN_REFRESH_THRESHOLD);
+
+  return () => clearInterval(interval);
+}, []);
+```
+
+**Option 2: Token Expiry Listeners**
+
+```typescript
+chatClient.on("token.expired", async () => {
+  const newToken = await chatTokenProvider(userId);
+  await chatClient.setToken(newToken);
+});
+```
+
+#### Current Workaround
+
+5-minute safety buffer in cache check:
+
+```typescript
+// Check if token will expire soon
+const willExpireSoon = Date.now() - cached.timestamp > 55 * 60 * 1000;
+if (willExpireSoon) {
+  // Generate new token
+}
+```
+
+---
+
+### Channel Creation Race Conditions (Medium)
+
+**Severity:** MEDIUM | **Impact:** Channel creation failures for concurrent users
+
+#### Problem Description
+
+Event channels (webinars, classes) are created lazily on first access. When multiple users access the same event simultaneously, they may attempt to create the same channel concurrently.
+
+#### Location
+
+**File:** `actions/stream/chat/event-channel.action.ts`
+**Functions:** `createWebinarChannel()`, `createClassChannel()`
+
+#### Impact
+
+1. **Creation Failures:**
+   - Second request fails with "channel already exists"
+   - User sees error message
+   - Must retry manually
+
+2. **Inconsistent State:**
+   - First user might be added as member
+   - Second user might not be added
+   - Channel membership incomplete
+
+#### Recommended Fix
+
+**Option 1: Idempotency Pattern** (Recommended)
+
+```typescript
+export async function getOrCreateWebinarChannel(webinarId: string) {
+  try {
+    // Try to get existing channel
+    const channel = chatClient.channel("team", `webinar-${webinarId}`);
+    await channel.watch(); // Will fail if doesn't exist
+    return channel;
+  } catch (error) {
+    // Channel doesn't exist, create it
+    return await createWebinarChannel(webinarId);
+  }
+}
+```
+
+**Option 2: Eager Creation**
+
+```typescript
+// Create channel when webinar is scheduled (not on first access)
+export async function handleWebinarScheduled(webinar: Webinar) {
+  await createWebinarChannel(webinar.id);
+}
+```
+
+#### Current Workaround
+
+Atomic creation with members:
+
+```typescript
+// Create channel AND add members in one call (reduces race window)
+await channel.create({
+  members: allParticipants,
+  data: {
+    /* metadata */
+  },
+});
+```
+
+---
+
+### Aggressive User Cleanup (Low)
+
+**Severity:** LOW | **Impact:** Potential deletion of legitimate users
+
+#### Problem Description
+
+The daily sync job hard-deletes users from Stream who don't exist in Prisma. This could accidentally delete users being registered or temporarily removed from DB.
+
+#### Location
+
+**File:** `jobs/stream-sync.ts`
+**Scheduled:** Daily at 03:30 UTC (09:00 AM IST)
+
+#### Current Behavior
+
+```typescript
+// Delete users immediately if not in Prisma
+for (const streamUser of staleUsers) {
+  await chatClient.deleteUser(streamUser.id, {
+    delete_conversation_channels: true, // Deletes ALL messages
+    hard_delete: true, // Permanent deletion
+  });
+}
+```
+
+#### Impact
+
+1. **Data Loss Risk:**
+   - User and all their messages deleted permanently
+   - No recovery possible
+   - Conversation history lost
+
+2. **Timing Issues:**
+   - User being registered during sync window
+   - User temporarily removed from Prisma
+   - Race conditions with signup flow
+
+#### Recommended Fix
+
+**Option 1: Grace Period** (Recommended)
+
+```typescript
+// Add "deletedAt" timestamp to Stream user metadata
+await chatClient.upsertUser({
+  id: userId,
+  deleted_at: new Date().toISOString(),
+});
+
+// Delete only after 7 days
+const gracePeriod = 7 * 24 * 60 * 60 * 1000;
+if (Date.now() - deletedAt > gracePeriod) {
+  await deleteUser(userId);
+}
+```
+
+#### Current Workaround
+
+Exclusion list:
+
+```typescript
+const EXCLUDED_USERS = ["system", "teetangh" /* others */];
+const shouldSkip =
+  EXCLUDED_USERS.includes(streamUser.id) ||
+  streamUser.id.startsWith("system-") ||
+  streamUser.id.startsWith("recording-egress-");
+```
+
+---
+
+### Missing Error Context (Low)
+
+**Severity:** LOW | **Impact:** Difficult debugging
+
+#### Problem Description
+
+Error logs don't include sufficient context for debugging Stream issues.
+
+#### Examples
+
+```typescript
+// Current
+console.log("Chat connection failed:", error);
+
+// Better
+console.log("Chat connection failed:", {
+  userId,
+  error: error.message,
+  code: error.code,
+  timestamp: new Date().toISOString(),
+  retryAttempt: attemptNumber,
+});
+```
+
+#### Recommended Fix
+
+Implement structured logging:
+
+```typescript
+import { logger } from "@/lib/logger";
+
+logger.error("stream.chat.connection_failed", {
+  userId,
+  error,
+  context: {
+    /* additional context */
+  },
+});
+```
+
+---
+
+### Workarounds Summary
+
+| Issue           | Workaround                   | Effectiveness | Notes                            |
+| --------------- | ---------------------------- | ------------- | -------------------------------- |
+| Admin role bug  | Application-level checks     | Partial       | Doesn't prevent Stream API abuse |
+| Token expiry    | 50-min cache (10-min buffer) | Good          | Still occasional drops           |
+| Race conditions | Atomic creation              | Moderate      | Race window still exists         |
+| User cleanup    | Exclusion list               | Good          | Manual maintenance required      |
 
 ---
 
@@ -216,7 +575,7 @@ const connectChat = async () => {
 <StreamProvider
   userId={userId}
   enableChat={true}
-  enableVideo={true}  // ← Ensure this is true
+  enableVideo={true}  // Ensure this is true
 >
   <MeetingPage />
 </StreamProvider>
@@ -256,36 +615,6 @@ function MeetingPage({ callId }: { callId: string }) {
 
   return <VideoCall call={call} />;
 }
-```
-
-**Solution 4: Debug Client Initialization**
-
-```typescript
-// providers/StreamProvider.tsx
-const connectVideo = async () => {
-  try {
-    console.log("Initializing video client...");
-    console.log("API Key:", apiKey);
-    console.log("User:", userDetails);
-
-    const client = new StreamVideoClient({
-      apiKey: apiKey,
-      user: {
-        id: userDetails.id,
-        name: userDetails.name ?? userDetails.id,
-        image: userDetails.image ?? undefined,
-      },
-      tokenProvider: () => getCachedToken("video"),
-    });
-
-    console.log("Video client created:", !!client);
-    setVideoClient(client);
-    setVideoConnected(true);
-  } catch (error) {
-    console.error("Video client initialization failed:", error);
-    throw error;
-  }
-};
 ```
 
 ---
@@ -845,26 +1174,6 @@ if (calls.length === 0) {
 }
 ```
 
-**Solution 3: Verify Call Type**
-
-```typescript
-// Try querying without type filter
-const { calls } = await client.queryCalls({
-  filter_conditions: { id: callId },
-  // Don't filter by type initially
-});
-
-if (calls.length > 0) {
-  console.log(`Found call with type: ${calls[0].type}`);
-  // Use the found call's type
-  setCall(calls[0]);
-} else {
-  // Create with correct type
-  const callInstance = client.call("default", callId);
-  await callInstance.getOrCreate();
-}
-```
-
 ---
 
 ### Issue: Audio/Video Not Working
@@ -1089,8 +1398,8 @@ curl -X GET "http://localhost:3000/api/stream/debug?userId=USER_ID"
       "messageCount": 15
     }
   ],
-  "consultations": [...],
-  "subscriptions": [...]
+  "consultations": [],
+  "subscriptions": []
 }
 ```
 
@@ -1439,21 +1748,20 @@ function EventLogger() {
 
 If you're still experiencing issues:
 
-1. **Check Known Issues**: Review [Known Issues](./13-known-issues.md)
-2. **Review Error Handling**: See [Error Handling](./12-error-handling.md)
-3. **Consult Stream Docs**: https://getstream.io/chat/docs/
-4. **Contact Support**: support@getstream.io
-5. **Check Status Page**: https://status.stream-io-api.com/
+1. **Review Error Handling**: See [Error Handling](./12-error-handling.md)
+2. **Consult Stream Docs**: https://getstream.io/chat/docs/
+3. **Contact Support**: support@getstream.io
+4. **Check Status Page**: https://status.stream-io-api.com/
 
 ---
 
 ## Next Steps
 
 - Review [Error Handling](./12-error-handling.md)
-- Check [Known Issues](./13-known-issues.md)
 - Learn about [Hooks & Utilities](./11-hooks-utilities.md)
-- Return to [README](./README.md)
+- Check [Recording & Webhooks](./13-recording-webhooks.md)
+- Return to [Architecture](./01-architecture.md)
 
 ---
 
-**Last Updated:** 2025-11-29
+**Last Updated:** 2025-01-22

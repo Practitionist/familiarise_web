@@ -24,6 +24,8 @@ import {
 import Loader from "./Loader";
 import EndCallButton from "./EndCallButton";
 import CallEnded from "./CallEnded";
+import RecordingControls from "./RecordingControls";
+import { useMeetingRecording } from "../hooks/useMeetingRecording";
 import { cn } from "@/utils/tailwind";
 import { StreamVideoErrorBoundary } from "@/components/stream/StreamErrorBoundary";
 
@@ -60,6 +62,9 @@ const MeetingRoom = () => {
   const call = useCall();
   const { useCallCallingState, useCallEndedAt, useParticipantCount } =
     useCallStateHooks();
+
+  // Get recording info for this meeting
+  const { meetingSessionId, recordingEnabled } = useMeetingRecording(call?.id);
 
   const callingState = useCallCallingState();
   const callEndedAt = useCallEndedAt();
@@ -298,6 +303,17 @@ const MeetingRoom = () => {
                   </span>
                 )}
               </button>
+
+              {/* Recording Controls */}
+              {meetingSessionId && (
+                <>
+                  <div className="w-px h-8 bg-zinc-700 mx-1" />
+                  <RecordingControls
+                    meetingSessionId={meetingSessionId}
+                    recordingEnabled={recordingEnabled}
+                  />
+                </>
+              )}
 
               {/* Divider */}
               {!isPersonalRoom && <div className="w-px h-8 bg-zinc-700 mx-1" />}

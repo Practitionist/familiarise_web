@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
@@ -13,6 +13,7 @@ import {
   Trash2,
   Plus,
   Upload,
+  CalendarIcon,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -74,7 +75,14 @@ export function EventPlannerForClass({
     { id: string; name: string; createdAt: Date; updatedAt: Date }[]
   >([]);
   const [isLoadingTopics, setIsLoadingTopics] = useState(false);
+  // State for scheduling start date (separate from form as it's not part of ClassPlanSchema)
+  const [schedulingStartDate, setSchedulingStartDate] = useState<string>("");
   const { toast } = useToast();
+
+  // Get minimum datetime (now) for datetime-local picker
+  const minDateTime = useMemo(() => {
+    return new Date().toISOString().slice(0, 16);
+  }, []);
 
   const isSaving = externalIsSaving ?? internalIsSaving;
 
@@ -119,6 +127,7 @@ export function EventPlannerForClass({
           learningOutcomes: initialData.classPlan.learningOutcomes,
           topics: initialData.classPlan.topics ?? [],
           certificateProvided: initialData.classPlan.certificateProvided,
+          recordingEnabled: initialData.classPlan.recordingEnabled ?? false,
           meetingsPerWeek: initialData.classPlan.meetingsPerWeek,
           emailSupport: initialData.classPlan.emailSupport,
           consultantProfileId: initialData.classPlan.consultantProfileId,
@@ -139,6 +148,7 @@ export function EventPlannerForClass({
           learningOutcomes: [],
           topics: [],
           certificateProvided: false,
+          recordingEnabled: false,
           meetingsPerWeek: 2,
           emailSupport: "GENERAL" as const,
           classContents: [],
@@ -163,12 +173,19 @@ export function EventPlannerForClass({
         learningOutcomes: initialData.classPlan.learningOutcomes,
         topics: initialData.classPlan.topics ?? [],
         certificateProvided: initialData.classPlan.certificateProvided,
+        recordingEnabled: initialData.classPlan.recordingEnabled ?? false,
         meetingsPerWeek: initialData.classPlan.meetingsPerWeek,
         emailSupport: initialData.classPlan.emailSupport,
         consultantProfileId: initialData.classPlan.consultantProfileId,
         classContents: initialData.classPlan.classContents ?? [],
         planType: "class",
       });
+      // Set the scheduling start date/time from the class instance
+      if ("schedulingPeriodStartsAt" in initialData && initialData.schedulingPeriodStartsAt) {
+        const date = new Date(initialData.schedulingPeriodStartsAt);
+        // Use slice(0, 16) to get datetime-local format: "YYYY-MM-DDTHH:mm"
+        setSchedulingStartDate(date.toISOString().slice(0, 16));
+      }
     }
   }, [initialData, form, consultantId]);
 
@@ -190,6 +207,15 @@ export function EventPlannerForClass({
 
   const handleFormSubmit = form.handleSubmit(
     async () => {
+      // Validate scheduling start date/time is required
+      if (!schedulingStartDate) {
+        toast({
+          title: "Validation Error",
+          description: "Please select a class start date and time",
+          variant: "destructive",
+        });
+        return;
+      }
       setShowConfirmation(true);
     },
     (errors) => {
@@ -259,6 +285,7 @@ export function EventPlannerForClass({
           consultantProfileId: consultantId,
           consultantProfile: null,
           certificateProvided: formData.certificateProvided ?? false,
+          recordingEnabled: formData.recordingEnabled ?? false,
           sessionDurationInHours:
             initialData?.classPlan?.sessionDurationInHours ?? 1,
           meetingsPerWeek: formData.meetingsPerWeek,
@@ -284,7 +311,8 @@ export function EventPlannerForClass({
       };
 
       // Await onSave to ensure API call completes before showing success
-      await onSave(classData);
+      // Pass schedulingStartDate as the second argument
+      await onSave(classData, schedulingStartDate);
 
       toast({
         title: "Success",
@@ -503,9 +531,35 @@ export function EventPlannerForClass({
               {/* Schedule & Support Section */}
               <FormSection
                 title="Schedule & Support"
-                description="Define meeting frequency and support options"
+                description="Define class start date, meeting frequency and support options"
                 icon={Calendar}
               >
+                {/* Class Start Date & Time - Required Field */}
+                <div className="space-y-2 mb-4">
+                  <FormLabel htmlFor="schedulingStartDate">
+                    Class Start Date & Time <span className="text-destructive">*</span>
+                  </FormLabel>
+                  <div className="relative">
+                    <Input
+                      type="datetime-local"
+                      id="schedulingStartDate"
+                      value={schedulingStartDate}
+                      onChange={(e) => setSchedulingStartDate(e.target.value)}
+                      min={minDateTime}
+                      className="w-full"
+                    />
+                    <CalendarIcon className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+                  </div>
+                  <p className="text-sm text-muted-foreground">
+                    When should the first class session begin? (Your local timezone)
+                  </p>
+                  {!schedulingStartDate && (
+                    <p className="text-sm text-destructive">
+                      Please select a start date and time for your class
+                    </p>
+                  )}
+                </div>
+
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <FormField
                     control={form.control}
@@ -589,6 +643,29 @@ export function EventPlannerForClass({
                         </FormLabel>
                         <FormDescription>
                           Provide students with a certificate upon completion
+                        </FormDescription>
+                      </div>
+                      <FormControl>
+                        <Switch
+                          checked={field.value}
+                          onCheckedChange={field.onChange}
+                        />
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name="recordingEnabled"
+                  render={({ field }) => (
+                    <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4 mt-4">
+                      <div className="space-y-0.5">
+                        <FormLabel className="text-base">
+                          Enable Recording
+                        </FormLabel>
+                        <FormDescription>
+                          Allow recording of class sessions for students to watch later
                         </FormDescription>
                       </div>
                       <FormControl>

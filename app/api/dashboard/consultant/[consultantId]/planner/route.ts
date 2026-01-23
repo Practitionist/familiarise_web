@@ -54,7 +54,7 @@ async function getParticipantCounts(
     }
   }
 
-  // Fetch class participant counts in a single query
+  // Fetch class participant counts - count UNIQUE users across all sessions
   if (classIds.length > 0) {
     const classCounts = await prisma.class.findMany({
       where: { id: { in: classIds } },
@@ -63,7 +63,11 @@ async function getParticipantCounts(
         appointments: {
           select: {
             slotsOfAppointment: {
-              select: { _count: { select: { user: true } } },
+              select: {
+                user: {
+                  select: { id: true },
+                },
+              },
               where: { isTentative: false },
             },
           },
@@ -72,15 +76,19 @@ async function getParticipantCounts(
     });
 
     for (const classEvent of classCounts) {
-      counts[classEvent.id] = classEvent.appointments.reduce(
-        (total, appointment) =>
-          total +
-          appointment.slotsOfAppointment.reduce(
-            (slotTotal, slot) => slotTotal + slot._count.user,
-            0,
-          ),
-        0,
-      );
+      // Use a Set to count unique users across ALL appointments/sessions
+      const uniqueUserIds = new Set<string>();
+
+      for (const appointment of classEvent.appointments) {
+        for (const slot of appointment.slotsOfAppointment) {
+          // slot.user is an array of users connected to this slot
+          for (const user of slot.user) {
+            uniqueUserIds.add(user.id);
+          }
+        }
+      }
+
+      counts[classEvent.id] = uniqueUserIds.size;
     }
   }
 
