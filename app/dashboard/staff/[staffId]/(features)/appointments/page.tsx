@@ -1,12 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   Card,
   CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -20,14 +17,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -35,20 +24,24 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Search,
   Calendar,
   Clock,
   AlertTriangle,
   CheckCircle2,
-  XCircle,
-  MoreHorizontal,
   Video,
-  RefreshCw,
-  User,
   Users,
+  Monitor,
+  BookOpen,
+  MoreHorizontal,
+  Eye,
+  RefreshCw,
+  Loader2,
+  ArrowUpRight,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -56,148 +49,105 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useToast } from "@/hooks/use-toast";
 
-// Mock data
-const appointments = [
-  {
-    id: "APT-001",
-    type: "consultation",
-    consultant: { name: "Dr. Jane Smith", avatar: "" },
-    consultee: { name: "John Doe", avatar: "" },
-    scheduledAt: "2025-12-21T10:00:00",
-    duration: 60,
-    status: "scheduled",
-    hasIssue: false,
-  },
-  {
-    id: "APT-002",
-    type: "webinar",
-    consultant: { name: "Mike Wilson", avatar: "" },
-    consultee: { name: "Multiple Attendees", avatar: "" },
-    scheduledAt: "2025-12-21T14:00:00",
-    duration: 90,
-    status: "issue",
-    hasIssue: true,
-    issueType: "Technical problem reported",
-  },
-  {
-    id: "APT-003",
-    type: "consultation",
-    consultant: { name: "Dr. Priya Sharma", avatar: "" },
-    consultee: { name: "Sarah Connor", avatar: "" },
-    scheduledAt: "2025-12-20T16:00:00",
-    duration: 45,
-    status: "completed",
-    hasIssue: false,
-  },
-  {
-    id: "APT-004",
-    type: "class",
-    consultant: { name: "Alex Brown", avatar: "" },
-    consultee: { name: "Multiple Students", avatar: "" },
-    scheduledAt: "2025-12-20T11:00:00",
-    duration: 120,
-    status: "cancelled",
-    hasIssue: true,
-    issueType: "Consultant no-show",
-  },
-  {
-    id: "APT-005",
-    type: "consultation",
-    consultant: { name: "Dr. Rajesh Kumar", avatar: "" },
-    consultee: { name: "Emily Chen", avatar: "" },
-    scheduledAt: "2025-12-22T09:00:00",
-    duration: 60,
-    status: "reschedule_requested",
-    hasIssue: true,
-    issueType: "Reschedule request pending",
-  },
-];
+// Types
+interface Appointment {
+  id: string;
+  type: string;
+  title: string;
+  consultant: {
+    id: string;
+    name: string | null;
+    email: string | null;
+    avatar: string | null;
+  } | null;
+  consultee: {
+    id: string;
+    name: string | null;
+    email: string | null;
+    avatar: string | null;
+  } | null;
+  scheduledAt: string;
+  endsAt?: string;
+  duration: number;
+  status: string;
+  hasIssue: boolean;
+  issueType: string | null;
+  payment: {
+    id: string;
+    amount: number;
+    currency: string;
+    status: string;
+    gateway: string;
+  } | null;
+  createdAt: string;
+}
 
-const issues = [
-  {
-    id: "ISS-001",
-    appointmentId: "APT-002",
-    type: "technical",
-    description: "User unable to join video call - black screen issue",
-    reportedBy: "John Doe",
-    status: "open",
-    createdAt: "2025-12-20T14:30:00",
-    priority: "high",
-  },
-  {
-    id: "ISS-002",
-    appointmentId: "APT-004",
-    type: "no_show",
-    description: "Consultant did not join the scheduled class session",
-    reportedBy: "System",
-    status: "open",
-    createdAt: "2025-12-20T11:15:00",
-    priority: "high",
-  },
-  {
-    id: "ISS-003",
-    appointmentId: "APT-005",
-    type: "reschedule",
-    description: "Consultee requested reschedule due to emergency",
-    reportedBy: "Emily Chen",
-    status: "pending",
-    createdAt: "2025-12-20T08:00:00",
-    priority: "medium",
-  },
-];
+interface AppointmentResponse {
+  appointments: Appointment[];
+  counts: {
+    all: number;
+    issues: number;
+    scheduled: number;
+    completed: number;
+  };
+  pagination: {
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+    hasMore: boolean;
+  };
+}
 
-const getStatusColor = (status: string) => {
-  switch (status) {
-    case "scheduled":
-      return "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300";
-    case "in_progress":
-      return "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300";
-    case "completed":
-      return "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400";
-    case "cancelled":
-      return "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300";
-    case "issue":
-      return "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300";
-    case "reschedule_requested":
-      return "bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300";
+const getTypeIcon = (type: string) => {
+  switch (type.toLowerCase()) {
+    case "consultation":
+      return Video;
+    case "subscription":
+      return Clock;
+    case "webinar":
+      return Monitor;
+    case "class":
+      return BookOpen;
     default:
-      return "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300";
+      return Calendar;
   }
 };
 
 const getTypeColor = (type: string) => {
-  switch (type) {
+  switch (type.toLowerCase()) {
     case "consultation":
       return "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300";
-    case "webinar":
+    case "subscription":
       return "bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300";
+    case "webinar":
+      return "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300";
     case "class":
       return "bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300";
-    case "subscription":
-      return "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300";
     default:
       return "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300";
   }
 };
 
-const getPriorityColor = (priority: string) => {
-  switch (priority) {
-    case "high":
+const getStatusColor = (status: string) => {
+  switch (status.toLowerCase()) {
+    case "scheduled":
+      return "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300";
+    case "in_progress":
+      return "bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300";
+    case "completed":
+      return "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300";
+    case "cancelled":
       return "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300";
-    case "medium":
-      return "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300";
-    case "low":
-      return "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400";
     default:
-      return "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400";
+      return "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300";
   }
 };
 
-const formatDateTime = (dateString: string) => {
-  const date = new Date(dateString);
-  return date.toLocaleString("en-IN", {
+const formatDate = (dateString: string) => {
+  return new Date(dateString).toLocaleString("en-IN", {
     day: "numeric",
     month: "short",
     hour: "2-digit",
@@ -205,32 +155,86 @@ const formatDateTime = (dateString: string) => {
   });
 };
 
-export default function AppointmentsSupportPage() {
-  const [activeTab, setActiveTab] = useState("all");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
-  const [selectedAppointment, setSelectedAppointment] = useState<
-    (typeof appointments)[0] | null
-  >(null);
-  const [selectedIssue, setSelectedIssue] = useState<(typeof issues)[0] | null>(
-    null,
-  );
+const formatFullDate = (dateString: string) => {
+  return new Date(dateString).toLocaleString("en-IN", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+};
 
-  const filteredAppointments = appointments.filter((apt) => {
-    const matchesSearch =
-      apt.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      apt.consultant.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      apt.consultee.name.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesStatus = statusFilter === "all" || apt.status === statusFilter;
-    return matchesSearch && matchesStatus;
+const formatCurrency = (amount: number, currency: string = "INR") => {
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: currency,
+    maximumFractionDigits: 0,
+  }).format(amount / 100);
+};
+
+export default function AppointmentsPage() {
+  const { toast } = useToast();
+  const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [counts, setCounts] = useState({
+    all: 0,
+    issues: 0,
+    scheduled: 0,
+    completed: 0,
   });
 
-  const appointmentCounts = {
-    all: appointments.length,
-    issues: appointments.filter((a) => a.hasIssue).length,
-    scheduled: appointments.filter((a) => a.status === "scheduled").length,
-    completed: appointments.filter((a) => a.status === "completed").length,
-  };
+  const [activeTab, setActiveTab] = useState("all");
+  const [typeFilter, setTypeFilter] = useState("all");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [selectedAppointment, setSelectedAppointment] =
+    useState<Appointment | null>(null);
+
+  // Debounced search
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchQuery);
+      setPage(1);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  const fetchAppointments = useCallback(async () => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams();
+      params.set("page", page.toString());
+      if (typeFilter !== "all") params.set("type", typeFilter.toUpperCase());
+      if (activeTab !== "all") params.set("status", activeTab);
+      if (debouncedSearch) params.set("search", debouncedSearch);
+
+      const response = await fetch(`/api/staff/appointments?${params}`);
+      if (!response.ok) throw new Error("Failed to fetch appointments");
+
+      const data: AppointmentResponse = await response.json();
+      setAppointments(data.appointments);
+      setCounts(data.counts);
+      setTotalPages(data.pagination.totalPages);
+    } catch (error) {
+      console.error("Error fetching appointments:", error);
+      toast({
+        title: "Error",
+        description: "Failed to load appointments",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
+  }, [page, typeFilter, activeTab, debouncedSearch, toast]);
+
+  useEffect(() => {
+    fetchAppointments();
+  }, [fetchAppointments]);
 
   return (
     <div className="space-y-6">
@@ -238,12 +242,18 @@ export default function AppointmentsSupportPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">
-            Appointments Support
+            Appointments Management
           </h1>
           <p className="text-zinc-500 dark:text-zinc-400">
-            Manage appointment issues and support requests
+            Monitor and manage all scheduled appointments
           </p>
         </div>
+        <Button variant="outline" onClick={fetchAppointments} disabled={loading}>
+          <RefreshCw
+            className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`}
+          />
+          Refresh
+        </Button>
       </div>
 
       {/* Stats */}
@@ -254,7 +264,7 @@ export default function AppointmentsSupportPage() {
               <Calendar className="h-5 w-5 text-blue-600" />
             </div>
             <div>
-              <p className="text-2xl font-bold">{appointmentCounts.all}</p>
+              <p className="text-2xl font-bold">{counts.all}</p>
               <p className="text-sm text-zinc-500">Total Appointments</p>
             </div>
           </CardContent>
@@ -265,21 +275,19 @@ export default function AppointmentsSupportPage() {
               <AlertTriangle className="h-5 w-5 text-amber-600" />
             </div>
             <div>
-              <p className="text-2xl font-bold">{appointmentCounts.issues}</p>
-              <p className="text-sm text-zinc-500">With Issues</p>
+              <p className="text-2xl font-bold">{counts.issues}</p>
+              <p className="text-sm text-zinc-500">Issues (page)</p>
             </div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="p-4 flex items-center gap-4">
-            <div className="p-2 rounded-lg bg-emerald-50 dark:bg-emerald-950">
-              <Clock className="h-5 w-5 text-emerald-600" />
+            <div className="p-2 rounded-lg bg-purple-50 dark:bg-purple-950">
+              <Clock className="h-5 w-5 text-purple-600" />
             </div>
             <div>
-              <p className="text-2xl font-bold">
-                {appointmentCounts.scheduled}
-              </p>
-              <p className="text-sm text-zinc-500">Upcoming</p>
+              <p className="text-2xl font-bold">{counts.scheduled}</p>
+              <p className="text-sm text-zinc-500">Scheduled (page)</p>
             </div>
           </CardContent>
         </Card>
@@ -289,227 +297,258 @@ export default function AppointmentsSupportPage() {
               <CheckCircle2 className="h-5 w-5 text-green-600" />
             </div>
             <div>
-              <p className="text-2xl font-bold">
-                {appointmentCounts.completed}
-              </p>
-              <p className="text-sm text-zinc-500">Completed</p>
+              <p className="text-2xl font-bold">{counts.completed}</p>
+              <p className="text-sm text-zinc-500">Completed (page)</p>
             </div>
           </CardContent>
         </Card>
       </div>
 
-      {/* Tabs */}
-      <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList>
-          <TabsTrigger value="all">All Appointments</TabsTrigger>
-          <TabsTrigger value="issues" className="gap-2">
-            Issues
-            <Badge variant="destructive" className="ml-1">
-              {issues.filter((i) => i.status === "open").length}
-            </Badge>
-          </TabsTrigger>
-        </TabsList>
+      {/* Tabs and Filters */}
+      <div className="space-y-4">
+        <Tabs
+          value={activeTab}
+          onValueChange={(v) => {
+            setActiveTab(v);
+            setPage(1);
+          }}
+        >
+          <div className="flex flex-col sm:flex-row gap-4 justify-between">
+            <TabsList>
+              <TabsTrigger value="all">All</TabsTrigger>
+              <TabsTrigger value="issue" className="gap-1">
+                Issues
+                {counts.issues > 0 && (
+                  <Badge variant="destructive" className="ml-1 h-5 px-1.5">
+                    {counts.issues}
+                  </Badge>
+                )}
+              </TabsTrigger>
+              <TabsTrigger value="scheduled">Scheduled</TabsTrigger>
+              <TabsTrigger value="completed">Completed</TabsTrigger>
+            </TabsList>
 
-        {/* All Appointments Tab */}
-        <TabsContent value="all" className="space-y-4">
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex flex-col sm:flex-row gap-4">
-                <div className="relative flex-1">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
-                  <Input
-                    placeholder="Search by ID, consultant, or consultee..."
-                    className="pl-9"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                  />
-                </div>
-                <Select value={statusFilter} onValueChange={setStatusFilter}>
-                  <SelectTrigger className="w-full sm:w-40">
-                    <SelectValue placeholder="Status" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Status</SelectItem>
-                    <SelectItem value="scheduled">Scheduled</SelectItem>
-                    <SelectItem value="completed">Completed</SelectItem>
-                    <SelectItem value="cancelled">Cancelled</SelectItem>
-                    <SelectItem value="issue">Has Issue</SelectItem>
-                  </SelectContent>
-                </Select>
+            <div className="flex gap-2">
+              <div className="relative flex-1 min-w-[200px]">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
+                <Input
+                  placeholder="Search..."
+                  className="pl-9"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
               </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent className="p-0">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>ID</TableHead>
-                    <TableHead>Type</TableHead>
-                    <TableHead>Consultant</TableHead>
-                    <TableHead>Consultee</TableHead>
-                    <TableHead>Scheduled</TableHead>
-                    <TableHead>Duration</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="w-12"></TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredAppointments.map((apt) => (
-                    <TableRow
-                      key={apt.id}
-                      className="cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-900"
-                      onClick={() => setSelectedAppointment(apt)}
-                    >
-                      <TableCell className="font-mono text-sm">
-                        <div className="flex items-center gap-2">
-                          {apt.hasIssue && (
-                            <AlertTriangle className="h-4 w-4 text-amber-500" />
-                          )}
-                          {apt.id}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Badge
-                          className={getTypeColor(apt.type)}
-                          variant="secondary"
-                        >
-                          {apt.type}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-2">
-                          <Avatar className="h-6 w-6">
-                            <AvatarImage src={apt.consultant.avatar} />
-                            <AvatarFallback className="text-xs">
-                              {apt.consultant.name
-                                .split(" ")
-                                .map((n) => n[0])
-                                .join("")}
-                            </AvatarFallback>
-                          </Avatar>
-                          <span className="text-sm">{apt.consultant.name}</span>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-2">
-                          {apt.consultee.name.includes("Multiple") ? (
-                            <Users className="h-4 w-4 text-zinc-400" />
-                          ) : (
-                            <Avatar className="h-6 w-6">
-                              <AvatarImage src={apt.consultee.avatar} />
-                              <AvatarFallback className="text-xs">
-                                {apt.consultee.name
-                                  .split(" ")
-                                  .map((n) => n[0])
-                                  .join("")}
-                              </AvatarFallback>
-                            </Avatar>
-                          )}
-                          <span className="text-sm">{apt.consultee.name}</span>
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-sm">
-                        {formatDateTime(apt.scheduledAt)}
-                      </TableCell>
-                      <TableCell className="text-sm text-zinc-500">
-                        {apt.duration} min
-                      </TableCell>
-                      <TableCell>
-                        <Badge
-                          className={getStatusColor(apt.status)}
-                          variant="secondary"
-                        >
-                          {apt.status.replace("_", " ")}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger
-                            asChild
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8"
-                            >
-                              <MoreHorizontal className="h-4 w-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem>
-                              <Video className="h-4 w-4 mr-2" />
-                              Join Meeting
-                            </DropdownMenuItem>
-                            <DropdownMenuItem>
-                              <RefreshCw className="h-4 w-4 mr-2" />
-                              Reschedule
-                            </DropdownMenuItem>
-                            <DropdownMenuItem className="text-red-600">
-                              <XCircle className="h-4 w-4 mr-2" />
-                              Cancel
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* Issues Tab */}
-        <TabsContent value="issues" className="space-y-4">
-          <div className="space-y-3">
-            {issues.map((issue) => (
-              <Card
-                key={issue.id}
-                className="cursor-pointer hover:shadow-md transition-shadow"
-                onClick={() => setSelectedIssue(issue)}
+              <Select
+                value={typeFilter}
+                onValueChange={(v) => {
+                  setTypeFilter(v);
+                  setPage(1);
+                }}
               >
-                <CardContent className="p-4">
-                  <div className="flex items-start justify-between">
-                    <div className="flex items-start gap-3">
-                      <div className="p-2 rounded-lg bg-amber-50 dark:bg-amber-950">
-                        <AlertTriangle className="h-5 w-5 text-amber-600" />
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <p className="font-medium">{issue.id}</p>
-                          <Badge variant="outline">
-                            Apt: {issue.appointmentId}
-                          </Badge>
-                          <Badge
-                            className={getPriorityColor(issue.priority)}
-                            variant="secondary"
-                          >
-                            {issue.priority}
-                          </Badge>
-                        </div>
-                        <p className="text-sm text-zinc-600 dark:text-zinc-400 mt-1">
-                          {issue.description}
-                        </p>
-                        <div className="flex items-center gap-4 mt-2 text-xs text-zinc-500">
-                          <span>Type: {issue.type.replace("_", " ")}</span>
-                          <span>Reported by: {issue.reportedBy}</span>
-                          <span>Status: {issue.status}</span>
-                        </div>
-                      </div>
-                    </div>
-                    <span className="text-xs text-zinc-400">
-                      {formatDateTime(issue.createdAt)}
-                    </span>
-                  </div>
+                <SelectTrigger className="w-40">
+                  <SelectValue placeholder="Type" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Types</SelectItem>
+                  <SelectItem value="consultation">Consultation</SelectItem>
+                  <SelectItem value="subscription">Subscription</SelectItem>
+                  <SelectItem value="webinar">Webinar</SelectItem>
+                  <SelectItem value="class">Class</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          {/* All Tabs Content */}
+          <TabsContent value={activeTab} className="mt-4">
+            {loading ? (
+              <div className="flex items-center justify-center h-64">
+                <Loader2 className="h-8 w-8 animate-spin text-zinc-400" />
+              </div>
+            ) : appointments.length === 0 ? (
+              <Card>
+                <CardContent className="flex flex-col items-center justify-center h-64 text-zinc-500">
+                  <Calendar className="h-12 w-12 mb-4 text-zinc-300" />
+                  <p>No appointments found</p>
                 </CardContent>
               </Card>
-            ))}
+            ) : (
+              <div className="space-y-3">
+                {appointments.map((appointment) => {
+                  const TypeIcon = getTypeIcon(appointment.type);
+                  return (
+                    <Card
+                      key={appointment.id}
+                      className={`cursor-pointer hover:shadow-md transition-shadow ${
+                        appointment.hasIssue
+                          ? "border-amber-200 bg-amber-50/30 dark:border-amber-800 dark:bg-amber-950/20"
+                          : ""
+                      }`}
+                      onClick={() => setSelectedAppointment(appointment)}
+                    >
+                      <CardContent className="p-4">
+                        <div className="flex items-start justify-between">
+                          <div className="flex items-start gap-3">
+                            <div
+                              className={`p-2 rounded-lg ${getTypeColor(appointment.type)}`}
+                            >
+                              <TypeIcon className="h-4 w-4" />
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <p className="font-medium">{appointment.title}</p>
+                                <Badge
+                                  className={getTypeColor(appointment.type)}
+                                  variant="secondary"
+                                >
+                                  {appointment.type}
+                                </Badge>
+                                <Badge
+                                  className={getStatusColor(appointment.status)}
+                                  variant="secondary"
+                                >
+                                  {appointment.status.replace("_", " ")}
+                                </Badge>
+                                {appointment.hasIssue && (
+                                  <Badge variant="destructive">
+                                    <AlertTriangle className="h-3 w-3 mr-1" />
+                                    {appointment.issueType}
+                                  </Badge>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-4 mt-2">
+                                {appointment.consultant && (
+                                  <div className="flex items-center gap-2 text-sm text-zinc-500">
+                                    <Avatar className="h-5 w-5">
+                                      <AvatarImage
+                                        src={appointment.consultant.avatar || ""}
+                                      />
+                                      <AvatarFallback className="text-xs">
+                                        {(
+                                          appointment.consultant.name ||
+                                          appointment.consultant.email ||
+                                          "C"
+                                        )
+                                          .charAt(0)
+                                          .toUpperCase()}
+                                      </AvatarFallback>
+                                    </Avatar>
+                                    <span>
+                                      {appointment.consultant.name || "Unknown"}
+                                    </span>
+                                  </div>
+                                )}
+                                {appointment.consultee && (
+                                  <>
+                                    <span className="text-zinc-400">→</span>
+                                    <div className="flex items-center gap-2 text-sm text-zinc-500">
+                                      <Avatar className="h-5 w-5">
+                                        <AvatarImage
+                                          src={appointment.consultee.avatar || ""}
+                                        />
+                                        <AvatarFallback className="text-xs">
+                                          {(
+                                            appointment.consultee.name ||
+                                            appointment.consultee.email ||
+                                            "U"
+                                          )
+                                            .charAt(0)
+                                            .toUpperCase()}
+                                        </AvatarFallback>
+                                      </Avatar>
+                                      <span>
+                                        {appointment.consultee.name || "Unknown"}
+                                      </span>
+                                    </div>
+                                  </>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-4 mt-2 text-xs text-zinc-400">
+                                <span className="flex items-center gap-1">
+                                  <Calendar className="h-3 w-3" />
+                                  {formatDate(appointment.scheduledAt)}
+                                </span>
+                                {appointment.duration > 0 && (
+                                  <span className="flex items-center gap-1">
+                                    <Clock className="h-3 w-3" />
+                                    {appointment.duration} min
+                                  </span>
+                                )}
+                                {appointment.payment && (
+                                  <span>
+                                    {formatCurrency(
+                                      appointment.payment.amount,
+                                      appointment.payment.currency,
+                                    )}{" "}
+                                    • {appointment.payment.status.toLowerCase()}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger
+                              asChild
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8"
+                              >
+                                <MoreHorizontal className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem>
+                                <Eye className="h-4 w-4 mr-2" />
+                                View Details
+                              </DropdownMenuItem>
+                              <DropdownMenuItem>
+                                <Users className="h-4 w-4 mr-2" />
+                                Contact Participants
+                              </DropdownMenuItem>
+                              {appointment.hasIssue && (
+                                <DropdownMenuItem>
+                                  <AlertTriangle className="h-4 w-4 mr-2" />
+                                  Resolve Issue
+                                </DropdownMenuItem>
+                              )}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  );
+                })}
+              </div>
+            )}
+          </TabsContent>
+        </Tabs>
+
+        {/* Pagination */}
+        {totalPages > 1 && (
+          <div className="flex justify-center gap-2 mt-4">
+            <Button
+              variant="outline"
+              disabled={page <= 1}
+              onClick={() => setPage(page - 1)}
+            >
+              Previous
+            </Button>
+            <span className="flex items-center px-4 text-sm text-zinc-500">
+              Page {page} of {totalPages}
+            </span>
+            <Button
+              variant="outline"
+              disabled={page >= totalPages}
+              onClick={() => setPage(page + 1)}
+            >
+              Next
+            </Button>
           </div>
-        </TabsContent>
-      </Tabs>
+        )}
+      </div>
 
       {/* Appointment Detail Dialog */}
       <Dialog
@@ -521,84 +560,146 @@ export default function AppointmentsSupportPage() {
             <>
               <DialogHeader>
                 <DialogTitle className="flex items-center gap-2">
-                  <Calendar className="h-5 w-5" />
-                  Appointment {selectedAppointment.id}
+                  {(() => {
+                    const TypeIcon = getTypeIcon(selectedAppointment.type);
+                    return <TypeIcon className="h-5 w-5" />;
+                  })()}
+                  {selectedAppointment.title}
                 </DialogTitle>
                 <DialogDescription>
-                  View and manage appointment details
+                  {selectedAppointment.id.slice(-8).toUpperCase()} •{" "}
+                  {selectedAppointment.type}
                 </DialogDescription>
               </DialogHeader>
               <div className="space-y-4">
+                {/* Status */}
                 <div className="flex items-center gap-2">
-                  <Badge
-                    className={getTypeColor(selectedAppointment.type)}
-                    variant="secondary"
-                  >
-                    {selectedAppointment.type}
-                  </Badge>
                   <Badge
                     className={getStatusColor(selectedAppointment.status)}
                     variant="secondary"
                   >
                     {selectedAppointment.status.replace("_", " ")}
                   </Badge>
+                  <Badge
+                    className={getTypeColor(selectedAppointment.type)}
+                    variant="secondary"
+                  >
+                    {selectedAppointment.type}
+                  </Badge>
                   {selectedAppointment.hasIssue && (
-                    <Badge variant="destructive" className="gap-1">
-                      <AlertTriangle className="h-3 w-3" />
+                    <Badge variant="destructive">
+                      <AlertTriangle className="h-3 w-3 mr-1" />
                       {selectedAppointment.issueType}
                     </Badge>
                   )}
                 </div>
+
+                {/* Participants */}
                 <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="p-3 rounded-lg bg-zinc-50 dark:bg-zinc-900">
-                    <Label className="text-xs text-zinc-500">Consultant</Label>
-                    <div className="flex items-center gap-2 mt-1">
-                      <Avatar className="h-8 w-8">
-                        <AvatarFallback>
-                          {selectedAppointment.consultant.name
-                            .split(" ")
-                            .map((n) => n[0])
-                            .join("")}
-                        </AvatarFallback>
-                      </Avatar>
-                      <span className="font-medium">
-                        {selectedAppointment.consultant.name}
-                      </span>
+                  {selectedAppointment.consultant && (
+                    <div className="p-3 rounded-lg bg-zinc-50 dark:bg-zinc-900">
+                      <Label className="text-xs text-zinc-500">Consultant</Label>
+                      <div className="flex items-center gap-2 mt-2">
+                        <Avatar>
+                          <AvatarImage
+                            src={selectedAppointment.consultant.avatar || ""}
+                          />
+                          <AvatarFallback>
+                            {(
+                              selectedAppointment.consultant.name ||
+                              selectedAppointment.consultant.email ||
+                              "C"
+                            )
+                              .charAt(0)
+                              .toUpperCase()}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div>
+                          <p className="font-medium">
+                            {selectedAppointment.consultant.name || "Unknown"}
+                          </p>
+                          <p className="text-xs text-zinc-500">
+                            {selectedAppointment.consultant.email}
+                          </p>
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                  <div className="p-3 rounded-lg bg-zinc-50 dark:bg-zinc-900">
-                    <Label className="text-xs text-zinc-500">Consultee</Label>
-                    <div className="flex items-center gap-2 mt-1">
-                      <Avatar className="h-8 w-8">
-                        <AvatarFallback>
-                          {selectedAppointment.consultee.name
-                            .split(" ")
-                            .map((n) => n[0])
-                            .join("")}
-                        </AvatarFallback>
-                      </Avatar>
-                      <span className="font-medium">
-                        {selectedAppointment.consultee.name}
-                      </span>
+                  )}
+                  {selectedAppointment.consultee && (
+                    <div className="p-3 rounded-lg bg-zinc-50 dark:bg-zinc-900">
+                      <Label className="text-xs text-zinc-500">Consultee</Label>
+                      <div className="flex items-center gap-2 mt-2">
+                        <Avatar>
+                          <AvatarImage
+                            src={selectedAppointment.consultee.avatar || ""}
+                          />
+                          <AvatarFallback>
+                            {(
+                              selectedAppointment.consultee.name ||
+                              selectedAppointment.consultee.email ||
+                              "U"
+                            )
+                              .charAt(0)
+                              .toUpperCase()}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div>
+                          <p className="font-medium">
+                            {selectedAppointment.consultee.name || "Unknown"}
+                          </p>
+                          <p className="text-xs text-zinc-500">
+                            {selectedAppointment.consultee.email}
+                          </p>
+                        </div>
+                      </div>
                     </div>
-                  </div>
+                  )}
                 </div>
-                <div className="grid gap-4 sm:grid-cols-2">
+
+                {/* Schedule */}
+                <div className="grid gap-3 sm:grid-cols-2">
                   <div>
-                    <Label className="text-sm text-zinc-500">
-                      Scheduled Time
+                    <Label className="text-xs text-zinc-500">Scheduled At</Label>
+                    <p>{formatFullDate(selectedAppointment.scheduledAt)}</p>
+                  </div>
+                  {selectedAppointment.duration > 0 && (
+                    <div>
+                      <Label className="text-xs text-zinc-500">Duration</Label>
+                      <p>{selectedAppointment.duration} minutes</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Payment */}
+                {selectedAppointment.payment && (
+                  <div className="p-3 rounded-lg bg-zinc-50 dark:bg-zinc-900">
+                    <Label className="text-xs text-zinc-500">
+                      Payment Details
                     </Label>
-                    <p className="font-medium">
-                      {formatDateTime(selectedAppointment.scheduledAt)}
-                    </p>
+                    <div className="grid gap-3 sm:grid-cols-3 mt-2">
+                      <div>
+                        <p className="text-lg font-bold">
+                          {formatCurrency(
+                            selectedAppointment.payment.amount,
+                            selectedAppointment.payment.currency,
+                          )}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-zinc-500">Status</p>
+                        <p className="capitalize">
+                          {selectedAppointment.payment.status.toLowerCase()}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-zinc-500">Gateway</p>
+                        <p>{selectedAppointment.payment.gateway}</p>
+                      </div>
+                    </div>
                   </div>
-                  <div>
-                    <Label className="text-sm text-zinc-500">Duration</Label>
-                    <p className="font-medium">
-                      {selectedAppointment.duration} minutes
-                    </p>
-                  </div>
-                </div>
+                )}
+
+                {/* Staff Notes */}
                 <div>
                   <Label htmlFor="note">Staff Note</Label>
                   <Textarea
@@ -608,7 +709,7 @@ export default function AppointmentsSupportPage() {
                   />
                 </div>
               </div>
-              <DialogFooter className="gap-2">
+              <DialogFooter>
                 <Button
                   variant="outline"
                   onClick={() => setSelectedAppointment(null)}
@@ -616,81 +717,8 @@ export default function AppointmentsSupportPage() {
                   Close
                 </Button>
                 <Button variant="outline">
-                  <RefreshCw className="h-4 w-4 mr-2" />
-                  Reschedule
-                </Button>
-                <Button>
-                  <Video className="h-4 w-4 mr-2" />
-                  Join Meeting
-                </Button>
-              </DialogFooter>
-            </>
-          )}
-        </DialogContent>
-      </Dialog>
-
-      {/* Issue Detail Dialog */}
-      <Dialog
-        open={!!selectedIssue}
-        onOpenChange={() => setSelectedIssue(null)}
-      >
-        <DialogContent>
-          {selectedIssue && (
-            <>
-              <DialogHeader>
-                <DialogTitle className="flex items-center gap-2">
-                  <AlertTriangle className="h-5 w-5 text-amber-500" />
-                  Issue {selectedIssue.id}
-                </DialogTitle>
-                <DialogDescription>
-                  Review and resolve this issue
-                </DialogDescription>
-              </DialogHeader>
-              <div className="space-y-4">
-                <div className="flex items-center gap-2">
-                  <Badge variant="outline">
-                    Appointment: {selectedIssue.appointmentId}
-                  </Badge>
-                  <Badge
-                    className={getPriorityColor(selectedIssue.priority)}
-                    variant="secondary"
-                  >
-                    {selectedIssue.priority} priority
-                  </Badge>
-                </div>
-                <div>
-                  <Label className="text-sm text-zinc-500">Issue Type</Label>
-                  <p className="font-medium capitalize">
-                    {selectedIssue.type.replace("_", " ")}
-                  </p>
-                </div>
-                <div>
-                  <Label className="text-sm text-zinc-500">Description</Label>
-                  <p className="text-sm">{selectedIssue.description}</p>
-                </div>
-                <div>
-                  <Label className="text-sm text-zinc-500">Reported By</Label>
-                  <p className="text-sm">{selectedIssue.reportedBy}</p>
-                </div>
-                <div>
-                  <Label htmlFor="resolution">Resolution Notes</Label>
-                  <Textarea
-                    id="resolution"
-                    placeholder="Describe how the issue was resolved..."
-                    className="mt-1"
-                  />
-                </div>
-              </div>
-              <DialogFooter className="gap-2">
-                <Button
-                  variant="outline"
-                  onClick={() => setSelectedIssue(null)}
-                >
-                  Cancel
-                </Button>
-                <Button>
-                  <CheckCircle2 className="h-4 w-4 mr-2" />
-                  Mark Resolved
+                  <ArrowUpRight className="h-4 w-4 mr-2" />
+                  Escalate to Admin
                 </Button>
               </DialogFooter>
             </>
