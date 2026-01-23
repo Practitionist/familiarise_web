@@ -600,6 +600,10 @@ export function groupSlotsByDate(
 
 /**
  * Main function to process all availability slots with allocation detection
+ *
+ * @param durationInHours - Duration for breaking down slots (default: 0.5 = 30 minutes)
+ *   This ensures each returned slot has its own per-interval booking status
+ *   rather than inheriting status from the entire availability block.
  */
 export function processAvailabilitySlots(
   weeklySlots: WeeklySlot[],
@@ -608,6 +612,7 @@ export function processAvailabilitySlots(
   startDate: Date,
   endDate: Date,
   timezone: string,
+  durationInHours: number = 0.5, // Default to 30-minute intervals
 ): Record<
   string,
   (TSlotTiming & {
@@ -641,6 +646,16 @@ export function processAvailabilitySlots(
     timezone,
   );
 
+  // FIX: Break down into smaller intervals (default 30 min) with per-interval booking status
+  // This fixes the bug where an 8-hour availability block with 1-hour appointment
+  // showed ALL intervals as "Partially Booked" instead of only the booked intervals
+  const brokenDownSlots = breakDownSlotsByDuration(
+    slotTimings,
+    durationInHours,
+    appointmentSlots,
+    timezone,
+  );
+
   // Group by date
-  return groupSlotsByDate(slotTimings, timezone);
+  return groupSlotsByDate(brokenDownSlots, timezone);
 }
