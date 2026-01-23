@@ -2,10 +2,7 @@
 
 import { cn } from "@/lib/utils";
 import {
-  BarChart3,
-  CircleHelp,
   CreditCard,
-  FileText,
   Home,
   MessageSquare,
   Settings,
@@ -41,11 +38,8 @@ const sidebarItems = [
   { name: "Payments", icon: CreditCard, path: "payments" },
   { name: "Payouts", icon: Wallet, path: "payouts" },
   { name: "Invoices", icon: Receipt, path: "invoices" },
-  { name: "Reports", icon: BarChart3, path: "reports" },
   { name: "System Jobs", icon: Play, path: "system-jobs" },
   { name: "Team Chat", icon: MessageSquare, path: "chat" },
-  { name: "Knowledge Base", icon: FileText, path: "knowledge-base" },
-  { name: "Help", icon: CircleHelp, path: "help" },
   { name: "Settings", icon: Settings, path: "settings" },
 ];
 

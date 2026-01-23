@@ -62,7 +62,6 @@ model User {
   reportsSubmitted       ModerationReport[] @relation("ReportsSubmitted")
   reportsReceived        ModerationReport[] @relation("ReportsReceived")
   moderationActions      ModerationAction[]
-  knowledgeBaseArticles  KnowledgeBaseArticle[]
   customerSupportChannels StaffSupportChannel[] @relation("CustomerSupportChannels")
   staffSupportChannels   StaffSupportChannel[] @relation("StaffSupportChannels")
 
@@ -1615,24 +1614,11 @@ enum ProfileVerificationStatus {
   NEEDS_INFO
 }
 
-enum KnowledgeBaseArticleStatus {
-  DRAFT
-  PUBLISHED
-  ARCHIVED
-}
-
 enum SystemJobStatus {
   RUNNING
   COMPLETED
   FAILED
   CANCELLED
-}
-
-enum SystemServiceStatus {
-  OPERATIONAL
-  DEGRADED
-  OUTAGE
-  MAINTENANCE
 }
 
 enum SupportChannelStatus {
@@ -1751,59 +1737,6 @@ model ProfileVerificationDocument {
   @@index([verificationId])
 }
 
-// Knowledge Base Models
-model KnowledgeBaseCategory {
-  id          String  @id @default(uuid())
-  name        String  @unique
-  slug        String  @unique
-  description String?
-  icon        String? // Icon identifier
-  color       String? // Color for UI
-  order       Int     @default(0)
-
-  articles KnowledgeBaseArticle[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([order])
-}
-
-model KnowledgeBaseArticle {
-  id      String                     @id @default(uuid())
-  title   String
-  slug    String                     @unique
-  content String                     @db.Text
-  excerpt String?                    @db.VarChar(300)
-  status  KnowledgeBaseArticleStatus @default(DRAFT)
-
-  category   KnowledgeBaseCategory @relation(fields: [categoryId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  categoryId String
-
-  // Author
-  authorId String
-  author   User   @relation(fields: [authorId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-
-  // Analytics
-  viewCount       Int @default(0)
-  helpfulCount    Int @default(0)
-  notHelpfulCount Int @default(0)
-
-  // SEO
-  metaTitle       String?
-  metaDescription String?
-
-  publishedAt DateTime?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-
-  @@index([categoryId])
-  @@index([authorId])
-  @@index([status])
-  @@index([publishedAt])
-  @@index([viewCount])
-}
-
 // System Jobs Models
 model SystemJobExecution {
   id        String          @id @default(uuid())
@@ -1865,39 +1798,3 @@ model StaffSupportChannel {
   @@index([createdAt])
 }
 
-// System Status Models (for status page)
-model SystemStatus {
-  id          String              @id @default(uuid())
-  serviceName String              @unique
-  displayName String
-  status      SystemServiceStatus @default(OPERATIONAL)
-  description String?
-  order       Int                 @default(0)
-
-  // Last incident info
-  lastIncidentAt DateTime?
-  incidentNote   String?
-
-  updatedAt DateTime @updatedAt
-  createdAt DateTime @default(now())
-
-  @@index([status])
-  @@index([order])
-}
-
-// Help FAQ Models
-model HelpFAQ {
-  id       String  @id @default(uuid())
-  question String
-  answer   String  @db.Text
-  category String // e.g., "technical", "account", "billing"
-  order    Int     @default(0)
-  isActive Boolean @default(true)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([category])
-  @@index([isActive])
-  @@index([order])
-}
