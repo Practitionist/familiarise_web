@@ -5,8 +5,6 @@
  * (GitHub Actions, Vercel Cron, AWS Lambda, etc.)
  */
 
-import prisma from "@/lib/prisma";
-import { WaitlistStatus } from "@prisma/client";
 import {
   processExpiredNotifications,
   handleSlotOpening,
@@ -32,40 +30,13 @@ export async function processExpiredNotificationsJob(): Promise<ProcessExpiredRe
   const startTime = Date.now();
   const errors: Array<{ id: string; error: string }> = [];
 
-  // Process expired notifications
+  // Process expired notifications - now returns the processed entries directly
   const result = await processExpiredNotifications();
-
-  // Get recently expired entries to send emails and notify next
-  const expiredEntries = await prisma.waitlist.findMany({
-    where: {
-      status: WaitlistStatus.EXPIRED,
-      respondedAt: {
-        gte: new Date(Date.now() - 5 * 60 * 1000), // Within last 5 minutes
-      },
-    },
-    include: {
-      user: {
-        select: {
-          email: true,
-          name: true,
-        },
-      },
-      webinar: {
-        include: {
-          webinarPlan: true,
-        },
-      },
-      class: {
-        include: {
-          classPlan: true,
-        },
-      },
-    },
-  });
 
   let emailsSent = 0;
 
-  for (const entry of expiredEntries) {
+  // Use the entries returned from processExpiredNotifications instead of re-querying
+  for (const entry of result.entries) {
     try {
       const eventTitle =
         entry.webinar?.webinarPlan.title ||

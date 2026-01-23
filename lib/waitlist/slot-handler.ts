@@ -5,7 +5,7 @@
 
 import prisma from "@/lib/prisma";
 import { WaitlistStatus } from "@prisma/client";
-import { getNextInQueue, updatePositions } from "./queue-manager";
+import { getNextInQueue, updatePositions, calculatePosition } from "./queue-manager";
 import { sendWaitlistSpotAvailableEmail } from "./notifications";
 
 // Notification window in hours (48 hours to respond)
@@ -449,8 +449,8 @@ export async function joinWaitlist(params: {
     },
   });
 
-  // Calculate position
-  const position = availability.waitlistCount + 1;
+  // Calculate position using priority-based queue
+  const position = await calculatePosition(entry.id);
 
   // Update the position in the entry
   await prisma.waitlist.update({

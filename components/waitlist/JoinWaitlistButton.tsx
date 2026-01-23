@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useSession } from "next-auth/react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -29,6 +29,12 @@ export function JoinWaitlistButton({
   const [isJoining, setIsJoining] = useState(false);
   const [position, setPosition] = useState<number | null>(waitlistPosition ?? null);
   const [joined, setJoined] = useState(isOnWaitlist);
+
+  // Sync state with props when they change
+  useEffect(() => {
+    setPosition(waitlistPosition ?? null);
+    setJoined(isOnWaitlist);
+  }, [waitlistPosition, isOnWaitlist]);
 
   const handleJoinWaitlist = async () => {
     if (!session?.user) {

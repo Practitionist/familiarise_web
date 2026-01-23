@@ -421,7 +421,7 @@ export default function WaitlistsPage() {
             selectedNotifiedEntry.class?.appointments?.[0]
               ?.slotsOfAppointment?.[0]?.startsAt
           }
-          expiresAt={selectedNotifiedEntry.expiresAt || new Date().toISOString()}
+          expiresAt={selectedNotifiedEntry.expiresAt}
         />
       )}
     </motion.div>

@@ -21,7 +21,7 @@ interface SlotAvailableModalProps {
   eventTitle: string;
   eventType: "webinar" | "class";
   scheduledDate?: Date | string;
-  expiresAt: Date | string;
+  expiresAt?: Date | string | null;
 }
 
 export function SlotAvailableModal({
@@ -40,6 +40,11 @@ export function SlotAvailableModal({
 
   // Calculate time remaining
   useEffect(() => {
+    if (!expiresAt) {
+      setTimeRemaining("Unknown");
+      return;
+    }
+
     const updateTimeRemaining = () => {
       const now = new Date();
       const expires = new Date(expiresAt);

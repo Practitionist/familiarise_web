@@ -170,12 +170,16 @@ export function ClientClassRegistration({
                 We'll notify you when a spot opens up
               </p>
             </div>
-          ) : (
+          ) : classInstanceId ? (
             <JoinWaitlistButton
               eventType="class"
-              eventId={classInstanceId || ""}
+              eventId={classInstanceId}
               className="w-full"
             />
+          ) : (
+            <p className="text-sm text-gray-500 text-center">
+              No class instance available for waitlist
+            </p>
           )}
         </CardFooter>
       </Card>
