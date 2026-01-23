@@ -59,11 +59,9 @@ model User {
   sessions Session[] // NextAuth Sessions
 
   // Staff Dashboard Relations
-  reportsSubmitted       ModerationReport[] @relation("ReportsSubmitted")
-  reportsReceived        ModerationReport[] @relation("ReportsReceived")
-  moderationActions      ModerationAction[]
-  customerSupportChannels StaffSupportChannel[] @relation("CustomerSupportChannels")
-  staffSupportChannels   StaffSupportChannel[] @relation("StaffSupportChannels")
+  reportsSubmitted  ModerationReport[] @relation("ReportsSubmitted")
+  reportsReceived   ModerationReport[] @relation("ReportsReceived")
+  moderationActions ModerationAction[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1621,13 +1619,6 @@ enum SystemJobStatus {
   CANCELLED
 }
 
-enum SupportChannelStatus {
-  OPEN
-  ASSIGNED
-  RESOLVED
-  CLOSED
-}
-
 // Content Moderation Models
 model ModerationReport {
   id          String                 @id @default(uuid())
@@ -1762,39 +1753,5 @@ model SystemJobExecution {
   @@index([status])
   @@index([startedAt])
   @@index([triggeredBy])
-}
-
-// Staff Support Channel Models (for real-time chat)
-model StaffSupportChannel {
-  id               String               @id @default(uuid())
-  streamChannelId  String               @unique // Stream Chat channel ID
-  status           SupportChannelStatus @default(OPEN)
-  topic            String? // Initial topic/question
-  priority         SupportPriority      @default(MEDIUM)
-
-  // Customer
-  customerId String
-  customer   User   @relation("CustomerSupportChannels", fields: [customerId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-
-  // Staff assignment
-  assignedStaffId String?
-  assignedStaff   User?   @relation("StaffSupportChannels", fields: [assignedStaffId], references: [id], onUpdate: Cascade, onDelete: SetNull)
-
-  // Linked ticket (if escalated)
-  linkedTicketId String?
-
-  // Timestamps
-  assignedAt DateTime?
-  resolvedAt DateTime?
-  closedAt   DateTime?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([customerId])
-  @@index([assignedStaffId])
-  @@index([status])
-  @@index([priority])
-  @@index([createdAt])
 }
 

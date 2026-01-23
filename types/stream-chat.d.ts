@@ -41,13 +41,6 @@ declare module "stream-chat" {
     // Channel metadata
     title?: string;
     description?: string;
-    // Support channel fields
-    support_channel_id?: string;
-    customer_id?: string;
-    assigned_staff_id?: string;
-    support_status?: "OPEN" | "ASSIGNED" | "RESOLVED" | "CLOSED";
-    support_priority?: "LOW" | "MEDIUM" | "HIGH" | "URGENT";
-    linked_ticket_id?: string;
   }
 
   /**

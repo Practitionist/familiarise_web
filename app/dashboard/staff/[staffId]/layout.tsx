@@ -4,7 +4,6 @@ import { cn } from "@/lib/utils";
 import {
   CreditCard,
   Home,
-  MessageSquare,
   Settings,
   Shield,
   Ticket,
@@ -39,7 +38,6 @@ const sidebarItems = [
   { name: "Payouts", icon: Wallet, path: "payouts" },
   { name: "Invoices", icon: Receipt, path: "invoices" },
   { name: "System Jobs", icon: Play, path: "system-jobs" },
-  { name: "Team Chat", icon: MessageSquare, path: "chat" },
   { name: "Settings", icon: Settings, path: "settings" },
 ];
 
