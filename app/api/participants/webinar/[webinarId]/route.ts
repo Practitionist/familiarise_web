@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { handleSlotOpening } from "@/lib/waitlist/slot-handler";
 
 export async function GET(
   request: Request,
@@ -83,6 +84,7 @@ export async function DELETE(
     }
 
     // Disconnect user from all slots they are in
+    let participantRemoved = false;
     if (webinarEvent.appointment) {
       for (const slot of webinarEvent.appointment.slotsOfAppointment) {
         if (slot.user.some((user) => user.id === userId)) {
@@ -94,7 +96,18 @@ export async function DELETE(
               },
             },
           });
+          participantRemoved = true;
         }
+      }
+    }
+
+    // Trigger waitlist notification if a participant was removed
+    if (participantRemoved) {
+      try {
+        await handleSlotOpening({ webinarId, slotsAvailable: 1 });
+      } catch (error) {
+        // Log error but don't fail the request - participant removal succeeded
+        console.error("[WEBINAR_WAITLIST_NOTIFICATION]", error);
       }
     }
 

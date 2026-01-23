@@ -910,9 +910,34 @@ model Newsletter {
   updatedAt DateTime @updatedAt
 }
 
+// Waitlist status for tracking user position and notification state
+enum WaitlistStatus {
+  WAITING // In queue, waiting for spot
+  NOTIFIED // Spot available, awaiting user response
+  BOOKED // Successfully booked the spot
+  EXPIRED // Notification window expired (48h)
+  CANCELLED // User left waitlist voluntarily
+  SKIPPED // User declined spot, moved to back of queue
+}
+
 model Waitlist {
   id       String   @id @default(uuid())
   joinedAt DateTime @default(now())
+
+  // Queue management
+  position Int? // Calculated queue position (null until calculated)
+  status   WaitlistStatus @default(WAITING)
+  priority Int            @default(0) // Higher value = higher priority (for VIP/premium users)
+
+  // Notification tracking
+  notifiedAt        DateTime? // When user was notified of available spot
+  expiresAt         DateTime? // 48 hours after notifiedAt
+  reminderSentAt    DateTime? // When 12-hour reminder was sent
+  bookedAt          DateTime? // When user successfully booked
+  respondedAt       DateTime? // When user responded to notification
+
+  // User preferences (for future enhancements)
+  preferences Json? // e.g., { preferredDates: [], maxPrice: 500 }
 
   user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   userId String
@@ -923,11 +948,19 @@ model Waitlist {
   class   Class?  @relation(fields: [classId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   classId String?
 
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
   @@unique([userId, webinarId])
   @@unique([userId, classId])
   @@index([userId])
   @@index([webinarId])
   @@index([classId])
+  @@index([status])
+  @@index([status, webinarId])
+  @@index([status, classId])
+  @@index([expiresAt])
+  @@index([priority, joinedAt])
 }
 
 ////////////////////////////////////////////// APPOINTMENT ////////////////////////////////////////////////////
