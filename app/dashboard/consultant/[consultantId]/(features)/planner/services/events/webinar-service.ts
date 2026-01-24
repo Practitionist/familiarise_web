@@ -140,7 +140,7 @@ export class WebinarService {
         const errorData = await response.json();
         throw new Error(
           errorData.error ||
-          `Failed to ${isUpdate ? "update" : "create"} webinar`,
+            `Failed to ${isUpdate ? "update" : "create"} webinar`,
         );
       }
 

@@ -237,7 +237,7 @@ const RecordingControls = ({
         className={cn(
           "w-[46px] h-[46px] rounded-full transition-all duration-200 flex items-center justify-center",
           "bg-zinc-800 hover:bg-zinc-700",
-          isLoading && "opacity-50 cursor-not-allowed"
+          isLoading && "opacity-50 cursor-not-allowed",
         )}
         title={isRecording ? "Stop Recording" : "Start Recording"}
       >
@@ -272,7 +272,7 @@ const RecordingControls = ({
         className={cn(
           "p-3 rounded-full transition-all duration-200 flex items-center justify-center",
           "bg-zinc-800 hover:bg-zinc-700",
-          isLoading && "opacity-50 cursor-not-allowed"
+          isLoading && "opacity-50 cursor-not-allowed",
         )}
         title={isRecording ? "Stop Recording" : "Start Recording"}
       >

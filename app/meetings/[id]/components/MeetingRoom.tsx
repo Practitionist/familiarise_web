@@ -255,8 +255,9 @@ const MeetingRoom = () => {
               <ScreenShareButton />
 
               {/* Recording BUTTON for Consultant - Left of Leave Call (only if recording enabled) */}
-              {session?.user?.role === "CONSULTANT" && recordingEnabled && (
-                meetingSessionId ? (
+              {session?.user?.role === "CONSULTANT" &&
+                recordingEnabled &&
+                (meetingSessionId ? (
                   <RecordingControls
                     meetingSessionId={meetingSessionId}
                     recordingEnabled={recordingEnabled}
@@ -264,8 +265,7 @@ const MeetingRoom = () => {
                   />
                 ) : (
                   <RecordCallButton />
-                )
-              )}
+                ))}
 
               {/* Leave Call Button */}
               <button
@@ -338,30 +338,33 @@ const MeetingRoom = () => {
                 )}
               </button>
 
-
               {/* Divider */}
               {!isPersonalRoom && <div className="w-px h-8 bg-zinc-700 mx-1" />}
 
               {/* REC TIME Indicator for Consultant - Before End Call (only if recording enabled) */}
-              {session?.user?.role === "CONSULTANT" && meetingSessionId && recordingEnabled && (
-                <RecordingControls
-                  meetingSessionId={meetingSessionId}
-                  recordingEnabled={recordingEnabled}
-                  showOnlyIndicator={true}
-                />
-              )}
+              {session?.user?.role === "CONSULTANT" &&
+                meetingSessionId &&
+                recordingEnabled && (
+                  <RecordingControls
+                    meetingSessionId={meetingSessionId}
+                    recordingEnabled={recordingEnabled}
+                    showOnlyIndicator={true}
+                  />
+                )}
 
               {/* End Call Button - Only for Consultant */}
               {!isPersonalRoom && <EndCallButton />}
 
               {/* Recording Indicator for Consultee - At the very end (only if recording enabled) */}
-              {session?.user?.role === "CONSULTEE" && meetingSessionId && recordingEnabled && (
-                <RecordingControls
-                  meetingSessionId={meetingSessionId}
-                  recordingEnabled={recordingEnabled}
-                  showOnlyIndicator={true}
-                />
-              )}
+              {session?.user?.role === "CONSULTEE" &&
+                meetingSessionId &&
+                recordingEnabled && (
+                  <RecordingControls
+                    meetingSessionId={meetingSessionId}
+                    recordingEnabled={recordingEnabled}
+                    showOnlyIndicator={true}
+                  />
+                )}
             </div>
           </div>
         </div>

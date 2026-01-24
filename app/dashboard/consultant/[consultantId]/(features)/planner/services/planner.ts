@@ -210,7 +210,7 @@ export class PlannerService {
         return this.saveClass(
           classData as Partial<ClassEvent>,
           consultantId,
-          formData.scheduledAt?.toString()
+          formData.scheduledAt?.toString(),
         );
       }
       case "consultation": {

@@ -216,18 +216,18 @@ export async function POST(request: NextRequest) {
             appointment:
               startTime && endTime
                 ? {
-                  // Check if dates were successfully calculated
-                  create: {
-                    appointmentType: "WEBINAR",
-                    slotsOfAppointment: {
-                      create: {
-                        startsAt: startTime, // Use calculated startTime
-                        endsAt: endTime, // Use calculated endTime
-                        isTentative: false,
+                    // Check if dates were successfully calculated
+                    create: {
+                      appointmentType: "WEBINAR",
+                      slotsOfAppointment: {
+                        create: {
+                          startsAt: startTime, // Use calculated startTime
+                          endsAt: endTime, // Use calculated endTime
+                          isTentative: false,
+                        },
                       },
                     },
-                  },
-                }
+                  }
                 : undefined, // Don't create appointment if no valid scheduledAt
           },
           include: {
@@ -414,15 +414,15 @@ export async function PATCH(request: NextRequest) {
     // Get the webinar instance - use the provided webinarId or the first one associated with the plan
     const webinarToUpdate = webinarId
       ? await prisma.webinar.findUnique({
-        where: { id: webinarId },
-        include: {
-          appointment: {
-            include: {
-              slotsOfAppointment: true,
+          where: { id: webinarId },
+          include: {
+            appointment: {
+              include: {
+                slotsOfAppointment: true,
+              },
             },
           },
-        },
-      })
+        })
       : existingPlan.webinars.length > 0
         ? existingPlan.webinars[0]
         : null;

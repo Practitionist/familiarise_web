@@ -8,7 +8,16 @@ import {
   useCallStateHooks,
   VideoPreview,
 } from "@stream-io/video-react-sdk";
-import { Mic, MicOff, Video, VideoOff, Settings, Loader2, Volume2, MonitorSpeaker } from "lucide-react";
+import {
+  Mic,
+  MicOff,
+  Video,
+  VideoOff,
+  Settings,
+  Loader2,
+  Volume2,
+  MonitorSpeaker,
+} from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { cn } from "@/utils/tailwind";
 import { Label } from "@/components/ui/label";

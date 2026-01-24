@@ -217,30 +217,30 @@ export async function POST(request: NextRequest) {
               // Only create appointments if startDate is defined
               create: start
                 ? Array.from({
-                  // Calculate total sessions based on duration
-                  length:
-                    Math.ceil(durationInMonths * 4.33) * meetingsPerWeek,
-                }).map((_, index) => {
-                  const appointmentDate = new Date(start!);
-                  appointmentDate.setDate(
-                    appointmentDate.getDate() +
-                    Math.floor(index / meetingsPerWeek) * 7,
-                  );
-                  const slotStart = new Date(appointmentDate);
-                  const slotEnd = new Date(appointmentDate);
-                  slotEnd.setHours(slotEnd.getHours() + 1); // Default 1-hour slots
+                    // Calculate total sessions based on duration
+                    length:
+                      Math.ceil(durationInMonths * 4.33) * meetingsPerWeek,
+                  }).map((_, index) => {
+                    const appointmentDate = new Date(start!);
+                    appointmentDate.setDate(
+                      appointmentDate.getDate() +
+                        Math.floor(index / meetingsPerWeek) * 7,
+                    );
+                    const slotStart = new Date(appointmentDate);
+                    const slotEnd = new Date(appointmentDate);
+                    slotEnd.setHours(slotEnd.getHours() + 1); // Default 1-hour slots
 
-                  return {
-                    appointmentType: "CLASS",
-                    slotsOfAppointment: {
-                      create: {
-                        startsAt: slotStart,
-                        endsAt: slotEnd,
-                        isTentative: true, // Mark as tentative until confirmed
+                    return {
+                      appointmentType: "CLASS",
+                      slotsOfAppointment: {
+                        create: {
+                          startsAt: slotStart,
+                          endsAt: slotEnd,
+                          isTentative: true, // Mark as tentative until confirmed
+                        },
                       },
-                    },
-                  };
-                })
+                    };
+                  })
                 : undefined,
             },
           },
@@ -410,8 +410,8 @@ export async function PATCH(request: NextRequest) {
     // Get the class instance - use the provided classId or the first one associated with the plan
     const classToUpdate = classId
       ? await prisma.class.findUnique({
-        where: { id: classId },
-      })
+          where: { id: classId },
+        })
       : existingPlan.classes.length > 0
         ? existingPlan.classes[0]
         : null;

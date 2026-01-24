@@ -111,10 +111,10 @@ export type FormData = {
   scheduledAt?: string | Date | null;
   priceCurrency?: string;
 } & (
-    | {
+  | {
       durationInHours: number;
     }
-    | {
+  | {
       durationInMonths: number;
       meetingsPerWeek: number;
       emailSupport: "GENERAL" | "PRIORITY" | "DEDICATED";
@@ -129,7 +129,7 @@ export type FormData = {
         hoursAllotted: number;
       }[];
     }
-  );
+);
 
 export interface BasePlannerProps {
   isOpen: boolean;
