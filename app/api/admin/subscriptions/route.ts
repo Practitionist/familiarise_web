@@ -25,7 +25,7 @@ export async function GET(req: NextRequest) {
       select: { role: true },
     });
 
-    if (user?.role !== "ADMIN") {
+    if (user?.role !== "ADMIN" && user?.role !== "STAFF") {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
