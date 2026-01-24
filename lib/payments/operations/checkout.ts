@@ -26,6 +26,7 @@ import {
   countUniqueParticipants,
   isUserEnrolled,
 } from "@/lib/payments/utils/participants";
+import { markWaitlistAsBooked } from "@/lib/waitlist/slot-handler";
 
 // Re-export for backward compatibility
 export const unifiedCheckoutSchema = checkoutSchema;
@@ -1477,6 +1478,23 @@ export async function handleCheckout(
           timestamp: new Date().toISOString(),
         }),
       );
+
+      // Update waitlist status if coming from waitlist flow
+      if (isMockPayment && validatedData.fromWaitlist) {
+        try {
+          await markWaitlistAsBooked(validatedData.fromWaitlist);
+          console.log(
+            JSON.stringify({
+              event: "waitlist_booking_completed",
+              waitlistId: validatedData.fromWaitlist,
+              timestamp: new Date().toISOString(),
+            }),
+          );
+        } catch (waitlistError) {
+          // Log but don't fail the checkout - payment was successful
+          console.error("Failed to update waitlist status:", waitlistError);
+        }
+      }
 
       return {
         success: true,

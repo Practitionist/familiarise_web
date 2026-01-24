@@ -19,7 +19,7 @@ import { JoinWaitlistButton, WaitlistBadge } from "@/components/waitlist";
 type ClientClassRegistrationProps = {
   readonly plan: ClassPlanProgram;
   maxParticipants?: number;
-  waitlist?: Array<{ userId: string; position?: number }>;
+  waitlist?: Array<{ userId: string; position?: number | null }>;
 };
 
 export function ClientClassRegistration({

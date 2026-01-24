@@ -38,10 +38,10 @@ export function countUniqueParticipants(
 
 /**
  * Count participants for a single appointment (webinar)
- * Wrapper for countUniqueParticipants with single appointment
+ * For webinars, there's typically one slot with multiple users
  *
  * @param appointment - Single appointment with slots
- * @returns Number of participants (slots with users)
+ * @returns Number of unique participants across all slots
  */
 export function countWebinarParticipants(
   appointment: {
@@ -50,8 +50,14 @@ export function countWebinarParticipants(
 ): number {
   if (!appointment?.slotsOfAppointment) return 0;
 
-  // For webinars, each slot represents one participant booking
-  return appointment.slotsOfAppointment.length;
+  // Count users across all slots (webinars have 1 slot with many users)
+  const uniqueUserIds = new Set<string>();
+  for (const slot of appointment.slotsOfAppointment) {
+    if (Array.isArray(slot.user)) {
+      slot.user.filter(isUserWithId).forEach((u) => uniqueUserIds.add(u.id));
+    }
+  }
+  return uniqueUserIds.size;
 }
 
 /**

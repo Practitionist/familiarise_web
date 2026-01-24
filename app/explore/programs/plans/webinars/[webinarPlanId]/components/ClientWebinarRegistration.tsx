@@ -13,6 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { CheckCircle } from "lucide-react";
 import { formatCurrency } from "@/app/checkout/plans/math";
 import { JoinWaitlistButton, WaitlistBadge } from "@/components/waitlist";
+import { countWebinarParticipants } from "@/lib/payments/utils/participants";
 
 // Redefine SessionStatus (or import if moved to a shared file)
 type SessionStatus =
@@ -32,7 +33,7 @@ type ClientWebinarRegistrationProps = {
     slotsOfAppointment?: Array<{ user?: Array<{ id: string }> }>;
   } | null;
   maxParticipants?: number;
-  waitlist?: Array<{ userId: string; position?: number }>;
+  waitlist?: Array<{ userId: string; position?: number | null }>;
 };
 
 export function ClientWebinarRegistration({
@@ -57,8 +58,8 @@ export function ClientWebinarRegistration({
       slot.user?.some((u) => u.id === userId),
     );
 
-  // Check capacity
-  const currentParticipants = appointment?.slotsOfAppointment?.length || 0;
+  // Check capacity using shared utility
+  const currentParticipants = countWebinarParticipants(appointment ?? null);
   const isFull = currentParticipants >= maxParticipants;
 
   // Check if user is on the waitlist

@@ -6,14 +6,6 @@ import { motion } from "framer-motion";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
-  CalendarIcon,
-  ClockIcon,
-  UsersIcon,
-  VideoIcon,
-  GlobeIcon,
-  CertificateIcon,
-} from "../icons";
-import {
   ArrowLeft,
   CheckCircle2,
   Calendar,
@@ -22,7 +14,6 @@ import {
   Video,
   Globe,
   GraduationCap,
-  Play,
 } from "lucide-react";
 import { ClientWebinarRegistration } from "./ClientWebinarRegistration";
 import { generateProgramImageUrl } from "../../../../utils";
@@ -49,6 +40,7 @@ export type WebinarPlanData = Prisma.WebinarPlanGetPayload<{
             payment: true;
           };
         };
+        waitlist: true;
       };
     };
   };
@@ -364,6 +356,8 @@ export function WebinarDetails({
                 }
                 sessionStatus={sessionStatus}
                 appointment={plan.webinars?.[0]?.appointment}
+                maxParticipants={plan.maxParticipants ?? 100}
+                waitlist={plan.webinars?.[0]?.waitlist ?? []}
               />
             </div>
           </motion.div>

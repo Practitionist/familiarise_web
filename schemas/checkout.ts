@@ -85,6 +85,7 @@ export const checkoutSchema = z
     discountCode: z.string().optional(),
     paymentGateway: paymentGatewaySchema,
     notes: z.string().optional(),
+    fromWaitlist: z.string().optional(), // Waitlist ID if coming from waitlist flow
   })
   .superRefine((data, ctx) => {
     // === CONSULTATION validation ===
@@ -298,6 +299,7 @@ export const createCheckoutData = (params: {
   schedulingPeriodEndsAt?: string;
   discountCode?: string;
   notes?: string;
+  fromWaitlist?: string;
 }): CheckoutInput => {
   return {
     appointmentType: params.appointmentType,
@@ -312,5 +314,6 @@ export const createCheckoutData = (params: {
     schedulingPeriodEndsAt: params.schedulingPeriodEndsAt,
     discountCode: params.discountCode,
     notes: params.notes,
+    fromWaitlist: params.fromWaitlist,
   };
 };
