@@ -412,7 +412,9 @@ export function SystemJobsPanel({ className }: SystemJobsPanelProps) {
   const fetchExecutions = async () => {
     try {
       setLoadingExecutions(true);
-      const response = await fetch("/api/staff/system-jobs/executions?limit=10");
+      const response = await fetch(
+        "/api/staff/system-jobs/executions?limit=10",
+      );
       if (!response.ok) throw new Error("Failed to fetch executions");
       const data = await response.json();
       setExecutions(data.executions || []);
@@ -485,7 +487,7 @@ export function SystemJobsPanel({ className }: SystemJobsPanelProps) {
           error instanceof Error ? error.message : "An error occurred",
         variant: "destructive",
       });
-    // Refresh executions after job runs
+      // Refresh executions after job runs
       fetchExecutions();
     } finally {
       setRunningJobs((prev) => {
@@ -555,9 +557,7 @@ export function SystemJobsPanel({ className }: SystemJobsPanelProps) {
                 <History className="h-5 w-5" />
                 Recent Executions
               </CardTitle>
-              <CardDescription>
-                Last 10 job executions
-              </CardDescription>
+              <CardDescription>Last 10 job executions</CardDescription>
             </div>
             <Button
               variant="ghost"

@@ -1,10 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import {
-  Card,
-  CardContent,
-} from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -248,7 +245,11 @@ export default function AppointmentsPage() {
             Monitor and manage all scheduled appointments
           </p>
         </div>
-        <Button variant="outline" onClick={fetchAppointments} disabled={loading}>
+        <Button
+          variant="outline"
+          onClick={fetchAppointments}
+          disabled={loading}
+        >
           <RefreshCw
             className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`}
           />
@@ -396,7 +397,9 @@ export default function AppointmentsPage() {
                             </div>
                             <div>
                               <div className="flex items-center gap-2 flex-wrap">
-                                <p className="font-medium">{appointment.title}</p>
+                                <p className="font-medium">
+                                  {appointment.title}
+                                </p>
                                 <Badge
                                   className={getTypeColor(appointment.type)}
                                   variant="secondary"
@@ -421,7 +424,9 @@ export default function AppointmentsPage() {
                                   <div className="flex items-center gap-2 text-sm text-zinc-500">
                                     <Avatar className="h-5 w-5">
                                       <AvatarImage
-                                        src={appointment.consultant.avatar || ""}
+                                        src={
+                                          appointment.consultant.avatar || ""
+                                        }
                                       />
                                       <AvatarFallback className="text-xs">
                                         {(
@@ -444,7 +449,9 @@ export default function AppointmentsPage() {
                                     <div className="flex items-center gap-2 text-sm text-zinc-500">
                                       <Avatar className="h-5 w-5">
                                         <AvatarImage
-                                          src={appointment.consultee.avatar || ""}
+                                          src={
+                                            appointment.consultee.avatar || ""
+                                          }
                                         />
                                         <AvatarFallback className="text-xs">
                                           {(
@@ -457,7 +464,8 @@ export default function AppointmentsPage() {
                                         </AvatarFallback>
                                       </Avatar>
                                       <span>
-                                        {appointment.consultee.name || "Unknown"}
+                                        {appointment.consultee.name ||
+                                          "Unknown"}
                                       </span>
                                     </div>
                                   </>
@@ -598,7 +606,9 @@ export default function AppointmentsPage() {
                 <div className="grid gap-4 sm:grid-cols-2">
                   {selectedAppointment.consultant && (
                     <div className="p-3 rounded-lg bg-zinc-50 dark:bg-zinc-900">
-                      <Label className="text-xs text-zinc-500">Consultant</Label>
+                      <Label className="text-xs text-zinc-500">
+                        Consultant
+                      </Label>
                       <div className="flex items-center gap-2 mt-2">
                         <Avatar>
                           <AvatarImage
@@ -659,7 +669,9 @@ export default function AppointmentsPage() {
                 {/* Schedule */}
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div>
-                    <Label className="text-xs text-zinc-500">Scheduled At</Label>
+                    <Label className="text-xs text-zinc-500">
+                      Scheduled At
+                    </Label>
                     <p>{formatFullDate(selectedAppointment.scheduledAt)}</p>
                   </div>
                   {selectedAppointment.duration > 0 && (

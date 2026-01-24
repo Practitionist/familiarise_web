@@ -21,7 +21,7 @@ export async function POST(request: NextRequest) {
     if (!session?.user?.id) {
       return NextResponse.json(
         { success: false, error: "Unauthorized" },
-        { status: 401 }
+        { status: 401 },
       );
     }
 
@@ -31,7 +31,7 @@ export async function POST(request: NextRequest) {
     if (!webinarId && !classId) {
       return NextResponse.json(
         { success: false, error: "Either webinarId or classId is required" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -46,7 +46,7 @@ export async function POST(request: NextRequest) {
     if (!result.success) {
       return NextResponse.json(
         { success: false, error: result.message },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -95,7 +95,7 @@ export async function POST(request: NextRequest) {
     console.error("Error joining waitlist:", error);
     return NextResponse.json(
       { success: false, error: "Failed to join waitlist" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -110,7 +110,7 @@ export async function GET() {
     if (!session?.user?.id) {
       return NextResponse.json(
         { success: false, error: "Unauthorized" },
-        { status: 401 }
+        { status: 401 },
       );
     }
 
@@ -124,7 +124,7 @@ export async function GET() {
     console.error("Error fetching waitlist entries:", error);
     return NextResponse.json(
       { success: false, error: "Failed to fetch waitlist entries" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

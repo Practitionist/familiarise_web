@@ -175,10 +175,7 @@ export async function updatePositions(params: {
       ...eventFilter,
       status: WaitlistStatus.WAITING,
     },
-    orderBy: [
-      { priority: "desc" },
-      { joinedAt: "asc" },
-    ],
+    orderBy: [{ priority: "desc" }, { joinedAt: "asc" }],
     select: { id: true },
   });
 
@@ -188,8 +185,8 @@ export async function updatePositions(params: {
       prisma.waitlist.update({
         where: { id: entry.id },
         data: { position: index + 1 },
-      })
-    )
+      }),
+    ),
   );
 }
 
@@ -274,15 +271,23 @@ export async function processExpiredNotifications(): Promise<{
 
       processedEntries.push(entry);
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error";
       errors.push({ id: entry.id, error: errorMessage });
-      console.error(`Error processing expired waitlist entry ${entry.id}:`, error);
+      console.error(
+        `Error processing expired waitlist entry ${entry.id}:`,
+        error,
+      );
     }
   }
 
   // Update positions for affected events
-  const webinarIds = Array.from(new Set(expiredEntries.filter(e => e.webinarId).map(e => e.webinarId!)));
-  const classIds = Array.from(new Set(expiredEntries.filter(e => e.classId).map(e => e.classId!)));
+  const webinarIds = Array.from(
+    new Set(expiredEntries.filter((e) => e.webinarId).map((e) => e.webinarId!)),
+  );
+  const classIds = Array.from(
+    new Set(expiredEntries.filter((e) => e.classId).map((e) => e.classId!)),
+  );
 
   for (const webinarId of webinarIds) {
     await updatePositions({ webinarId });
@@ -292,7 +297,11 @@ export async function processExpiredNotifications(): Promise<{
     await updatePositions({ classId });
   }
 
-  return { processed: processedEntries.length, entries: processedEntries, errors };
+  return {
+    processed: processedEntries.length,
+    entries: processedEntries,
+    errors,
+  };
 }
 
 /**
@@ -408,7 +417,8 @@ export async function getWaitlistStats(consultantProfileId: string) {
     byWebinar,
     byClass,
     averageWaitTimeMs,
-    averageWaitTimeDays: Math.round(averageWaitTimeMs / (1000 * 60 * 60 * 24) * 10) / 10,
+    averageWaitTimeDays:
+      Math.round((averageWaitTimeMs / (1000 * 60 * 60 * 24)) * 10) / 10,
   };
 }
 
@@ -483,11 +493,12 @@ export async function getUserWaitlistEntries(userId: string) {
   // Calculate positions for waiting entries
   const entriesWithPositions = await Promise.all(
     entries.map(async (entry) => {
-      const position = entry.status === WaitlistStatus.WAITING
-        ? await calculatePosition(entry.id)
-        : null;
+      const position =
+        entry.status === WaitlistStatus.WAITING
+          ? await calculatePosition(entry.id)
+          : null;
       return { ...entry, position };
-    })
+    }),
   );
 
   // Separate into webinars and classes

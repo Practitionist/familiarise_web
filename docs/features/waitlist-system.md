@@ -212,14 +212,14 @@ model Waitlist {
 
 ### WaitlistStatus Enum
 
-| Status | Description |
-|--------|-------------|
-| `WAITING` | In queue, waiting for spot to open |
-| `NOTIFIED` | Spot offered, 48h window active |
-| `BOOKED` | Successfully completed booking |
-| `EXPIRED` | 48h window passed without response |
-| `CANCELLED` | User left waitlist voluntarily |
-| `SKIPPED` | User declined, moved to back of queue |
+| Status      | Description                           |
+| ----------- | ------------------------------------- |
+| `WAITING`   | In queue, waiting for spot to open    |
+| `NOTIFIED`  | Spot offered, 48h window active       |
+| `BOOKED`    | Successfully completed booking        |
+| `EXPIRED`   | 48h window passed without response    |
+| `CANCELLED` | User left waitlist voluntarily        |
+| `SKIPPED`   | User declined, moved to back of queue |
 
 ---
 
@@ -230,15 +230,17 @@ model Waitlist {
 Join a waitlist for a webinar or class.
 
 **Request:**
+
 ```json
 {
-  "webinarId": "uuid",  // OR
+  "webinarId": "uuid", // OR
   "classId": "uuid",
-  "preferences": {}     // Optional
+  "preferences": {} // Optional
 }
 ```
 
 **Response:**
+
 ```json
 {
   "success": true,
@@ -249,6 +251,7 @@ Join a waitlist for a webinar or class.
 ```
 
 **Errors:**
+
 - `400`: Missing event ID
 - `401`: Not authenticated
 - `409`: Already on waitlist
@@ -261,6 +264,7 @@ Join a waitlist for a webinar or class.
 Get current user's waitlist entries.
 
 **Response:**
+
 ```json
 {
   "webinars": [
@@ -286,6 +290,7 @@ Get current user's waitlist entries.
 Get details of a specific waitlist entry.
 
 **Response:**
+
 ```json
 {
   "id": "entry-uuid",
@@ -306,6 +311,7 @@ Get details of a specific waitlist entry.
 Leave a waitlist.
 
 **Response:**
+
 ```json
 {
   "success": true,
@@ -320,6 +326,7 @@ Leave a waitlist.
 Respond to a spot available notification.
 
 **Request:**
+
 ```json
 {
   "action": "ACCEPT" | "DECLINE" | "SKIP"
@@ -327,6 +334,7 @@ Respond to a spot available notification.
 ```
 
 **Response (ACCEPT):**
+
 ```json
 {
   "success": true,
@@ -335,6 +343,7 @@ Respond to a spot available notification.
 ```
 
 **Response (DECLINE/SKIP):**
+
 ```json
 {
   "success": true,
@@ -349,6 +358,7 @@ Respond to a spot available notification.
 Get waitlist statistics for consultant dashboard.
 
 **Response:**
+
 ```json
 {
   "totalWaiting": 15,
@@ -367,6 +377,7 @@ Get waitlist statistics for consultant dashboard.
 Get all waitlist entries for admin dashboard.
 
 **Query Parameters:**
+
 - `status`: Filter by status (WAITING, NOTIFIED, etc.)
 - `eventType`: Filter by webinar or class
 - `search`: Search by user name/email
@@ -375,6 +386,7 @@ Get all waitlist entries for admin dashboard.
 - `page`, `limit`: Pagination
 
 **Response:**
+
 ```json
 {
   "waitlists": [...],
@@ -591,6 +603,7 @@ sequenceDiagram
 **Schedule:** Run every hour via GitHub Actions
 
 **Logic:**
+
 ```typescript
 // Find NOTIFIED entries expiring in 12-13 hours (not yet reminded)
 const entries = await prisma.waitlist.findMany({
@@ -625,6 +638,7 @@ for (const entry of entries) {
 **Schedule:** Run hourly via GitHub Actions
 
 **Logic:**
+
 ```typescript
 // 1. Process all expired notifications
 const result = await processExpiredNotifications();
@@ -658,6 +672,7 @@ All email templates are located in `emails/waitlist/` and use React Email.
 **Purpose:** Confirm position and explain the process
 
 **Content:**
+
 - Queue position (#N in line)
 - Event details (title, date, consultant)
 - How it works explanation
@@ -671,6 +686,7 @@ All email templates are located in `emails/waitlist/` and use React Email.
 **Purpose:** Urgent call-to-action to book
 
 **Content:**
+
 - Strong urgency messaging
 - Event details
 - 48-hour deadline countdown
@@ -684,6 +700,7 @@ All email templates are located in `emails/waitlist/` and use React Email.
 **Purpose:** Final reminder to take action
 
 **Content:**
+
 - "Only 12 hours left!" messaging
 - Red-themed urgency
 - Single "Complete My Booking" button
@@ -697,6 +714,7 @@ All email templates are located in `emails/waitlist/` and use React Email.
 **Purpose:** Inform user and suggest next steps
 
 **Content:**
+
 - Explanation of what happened
 - Next person was notified
 - Option to rejoin if interested
@@ -712,11 +730,13 @@ All email templates are located in `emails/waitlist/` and use React Email.
 **Purpose:** Display booking status for webinars/classes
 
 **Variants:**
+
 - `CONFIRMED` (green): User has paid and has a confirmed slot
 - `WAITLISTED` (amber): User is on waitlist, shows position #
 - `NOTIFIED` (blue, animated): Spot available, needs action
 
 **Usage:**
+
 ```tsx
 <WaitlistStatusBadge
   bookingStatus="WAITLISTED"
@@ -735,6 +755,7 @@ All email templates are located in `emails/waitlist/` and use React Email.
 **Purpose:** Allow users to join waitlist from event pages
 
 **Features:**
+
 - Shows current position if already joined
 - Handles loading states
 - Updates when props change (useEffect sync)
@@ -756,6 +777,7 @@ All email templates are located in `emails/waitlist/` and use React Email.
 **Purpose:** Modal for NOTIFIED users to take action
 
 **Features:**
+
 - Countdown timer to expiration
 - Accept/Decline/Skip buttons
 - Handles undefined expiresAt gracefully
@@ -780,19 +802,21 @@ DATABASE_URL=postgresql://...
 ### GitHub Actions Cron Jobs
 
 **send-waitlist-reminders.yml:**
+
 ```yaml
 on:
   schedule:
-    - cron: '0 * * * *'  # Every hour
-  workflow_dispatch: {}  # Manual trigger
+    - cron: "0 * * * *" # Every hour
+  workflow_dispatch: {} # Manual trigger
 ```
 
 **process-waitlist-expirations.yml:**
+
 ```yaml
 on:
   schedule:
-    - cron: '0 * * * *'  # Every hour
-  workflow_dispatch: {}  # Manual trigger
+    - cron: "0 * * * *" # Every hour
+  workflow_dispatch: {} # Manual trigger
 ```
 
 ### Notification Window
@@ -803,7 +827,7 @@ The 48-hour window is configured in `lib/waitlist/slot-handler.ts`:
 const NOTIFICATION_WINDOW_HOURS = 48;
 
 // In handleSlotOpening:
-expiresAt: new Date(Date.now() + NOTIFICATION_WINDOW_HOURS * 60 * 60 * 1000)
+expiresAt: new Date(Date.now() + NOTIFICATION_WINDOW_HOURS * 60 * 60 * 1000);
 ```
 
 ### Priority System
@@ -812,10 +836,10 @@ Priority is stored as an integer in the Waitlist model. Higher values = higher p
 
 ```typescript
 // Default priority
-priority: 0
+priority: 0;
 
 // Premium users could get higher priority
-priority: 10
+priority: 10;
 ```
 
 Queue ordering: `ORDER BY priority DESC, joinedAt ASC`
@@ -827,16 +851,19 @@ Queue ordering: `ORDER BY priority DESC, joinedAt ASC`
 ### Common Issues
 
 **User didn't receive notification email:**
+
 1. Check `notifiedAt` timestamp in database
 2. Verify email service logs (Resend dashboard)
 3. Check spam folder
 
 **Position seems wrong:**
+
 1. Run `calculatePosition(entryId)` to verify
 2. Check if `updatePositions()` ran after last change
 3. Verify no duplicate entries exist
 
 **Booking didn't mark as complete:**
+
 1. Verify `markWaitlistAsBooked()` was called
 2. Check checkout flow includes `fromWaitlist` param
 3. Verify entry status is NOTIFIED (not already expired)

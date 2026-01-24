@@ -105,7 +105,9 @@ const getDaysUntilDue = (dueBy: string | null) => {
   if (!dueBy) return null;
   const now = new Date();
   const due = new Date(dueBy);
-  const diffDays = Math.ceil((due.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+  const diffDays = Math.ceil(
+    (due.getTime() - now.getTime()) / (1000 * 60 * 60 * 24),
+  );
   return diffDays;
 };
 
@@ -171,8 +173,11 @@ export default function StaffDisputeDetailPage() {
   }
 
   const daysUntilDue = getDaysUntilDue(dispute.dueBy);
-  const isUrgent = daysUntilDue !== null && daysUntilDue <= 3 && daysUntilDue >= 0;
-  const needsResponse = dispute.status === "NEEDS_RESPONSE" || dispute.status === "WARNING_NEEDS_RESPONSE";
+  const isUrgent =
+    daysUntilDue !== null && daysUntilDue <= 3 && daysUntilDue >= 0;
+  const needsResponse =
+    dispute.status === "NEEDS_RESPONSE" ||
+    dispute.status === "WARNING_NEEDS_RESPONSE";
 
   return (
     <div className="space-y-6">
@@ -210,8 +215,9 @@ export default function StaffDisputeDetailPage() {
           <AlertCircle className="h-4 w-4" />
           <AlertTitle>Urgent: Response Required</AlertTitle>
           <AlertDescription>
-            This dispute is due {daysUntilDue === 0 ? "today" : `in ${daysUntilDue} days`}.
-            Please escalate to an admin immediately for evidence submission.
+            This dispute is due{" "}
+            {daysUntilDue === 0 ? "today" : `in ${daysUntilDue} days`}. Please
+            escalate to an admin immediately for evidence submission.
           </AlertDescription>
         </Alert>
       )}
@@ -221,8 +227,8 @@ export default function StaffDisputeDetailPage() {
         <Lock className="h-4 w-4" />
         <AlertTitle>Staff View (Read-Only)</AlertTitle>
         <AlertDescription>
-          As a staff member, you can view dispute details but cannot submit evidence.
-          Please escalate to an admin if action is required.
+          As a staff member, you can view dispute details but cannot submit
+          evidence. Please escalate to an admin if action is required.
         </AlertDescription>
       </Alert>
 
@@ -257,14 +263,22 @@ export default function StaffDisputeDetailPage() {
             </div>
 
             {dispute.dueBy && (
-              <div className={isUrgent ? "p-3 rounded-lg bg-red-50 dark:bg-red-950/20" : ""}>
+              <div
+                className={
+                  isUrgent ? "p-3 rounded-lg bg-red-50 dark:bg-red-950/20" : ""
+                }
+              >
                 <p className="text-sm text-zinc-500">Response Due By</p>
                 <p className={`font-medium ${isUrgent ? "text-red-600" : ""}`}>
                   {formatDate(dispute.dueBy)}
                 </p>
                 {daysUntilDue !== null && daysUntilDue >= 0 && (
-                  <p className={`text-sm ${isUrgent ? "text-red-500" : "text-zinc-400"}`}>
-                    {daysUntilDue === 0 ? "Due today!" : `${daysUntilDue} days remaining`}
+                  <p
+                    className={`text-sm ${isUrgent ? "text-red-500" : "text-zinc-400"}`}
+                  >
+                    {daysUntilDue === 0
+                      ? "Due today!"
+                      : `${daysUntilDue} days remaining`}
                   </p>
                 )}
               </div>
@@ -297,14 +311,19 @@ export default function StaffDisputeDetailPage() {
             <CardContent className="space-y-4">
               <div>
                 <p className="text-sm text-zinc-500">Payment ID</p>
-                <p className="font-mono text-sm">{dispute.payment.paymentIntent}</p>
+                <p className="font-mono text-sm">
+                  {dispute.payment.paymentIntent}
+                </p>
               </div>
 
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
                   <p className="text-sm text-zinc-500">Amount</p>
                   <p className="font-medium">
-                    {formatCurrency(dispute.payment.amount, dispute.payment.currency)}
+                    {formatCurrency(
+                      dispute.payment.amount,
+                      dispute.payment.currency,
+                    )}
                   </p>
                 </div>
                 <div>
@@ -323,7 +342,9 @@ export default function StaffDisputeDetailPage() {
                   <p className="font-medium">
                     {dispute.payment.user.name || "Unknown User"}
                   </p>
-                  <p className="text-sm text-zinc-500">{dispute.payment.user.email}</p>
+                  <p className="text-sm text-zinc-500">
+                    {dispute.payment.user.email}
+                  </p>
                 </div>
               </div>
 
@@ -331,7 +352,9 @@ export default function StaffDisputeDetailPage() {
                 <Calendar className="h-5 w-5 text-zinc-400" />
                 <div>
                   <p className="text-sm text-zinc-500">Payment Date</p>
-                  <p className="font-medium">{formatDate(dispute.payment.createdAt)}</p>
+                  <p className="font-medium">
+                    {formatDate(dispute.payment.createdAt)}
+                  </p>
                 </div>
               </div>
             </CardContent>
@@ -354,11 +377,16 @@ export default function StaffDisputeDetailPage() {
                 <CheckCircle className="h-4 w-4 text-green-600" />
                 <AlertTitle>Evidence Submitted</AlertTitle>
                 <AlertDescription>
-                  Evidence was submitted on {dispute.evidenceSubmittedAt ? formatDate(dispute.evidenceSubmittedAt) : "N/A"}
+                  Evidence was submitted on{" "}
+                  {dispute.evidenceSubmittedAt
+                    ? formatDate(dispute.evidenceSubmittedAt)
+                    : "N/A"}
                 </AlertDescription>
               </Alert>
               <div className="p-4 rounded-lg bg-zinc-50 dark:bg-zinc-900">
-                <p className="text-sm whitespace-pre-wrap">{dispute.evidence}</p>
+                <p className="text-sm whitespace-pre-wrap">
+                  {dispute.evidence}
+                </p>
               </div>
             </div>
           ) : (

@@ -352,7 +352,7 @@ export function processClass(
   // Otherwise check waitlist status
   const hasConfirmedSlot =
     classEvent.appointments?.some(
-      (a) => (a.slotsOfAppointment?.length ?? 0) > 0
+      (a) => (a.slotsOfAppointment?.length ?? 0) > 0,
     ) ?? false;
   const waitlistEntry = classEvent.waitlist?.[0]; // User's waitlist entry (filtered by API)
 

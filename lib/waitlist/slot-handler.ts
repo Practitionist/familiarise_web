@@ -5,7 +5,11 @@
 
 import prisma from "@/lib/prisma";
 import { WaitlistStatus } from "@prisma/client";
-import { getNextInQueue, updatePositions, calculatePosition } from "./queue-manager";
+import {
+  getNextInQueue,
+  updatePositions,
+  calculatePosition,
+} from "./queue-manager";
 import { sendWaitlistSpotAvailableEmail } from "./notifications";
 
 // Notification window in hours (48 hours to respond)
@@ -30,7 +34,12 @@ export async function handleSlotOpening(params: SlotOpeningParams): Promise<{
   notified: number;
   errors: Array<{ userId: string; error: string }>;
 }> {
-  const { webinarId, classId, slotsAvailable = 1, reason = "cancellation" } = params;
+  const {
+    webinarId,
+    classId,
+    slotsAvailable = 1,
+    reason = "cancellation",
+  } = params;
 
   if (!webinarId && !classId) {
     throw new Error("Either webinarId or classId must be provided");
@@ -50,7 +59,9 @@ export async function handleSlotOpening(params: SlotOpeningParams): Promise<{
 
     try {
       const now = new Date();
-      const expiresAt = new Date(now.getTime() + NOTIFICATION_WINDOW_HOURS * 60 * 60 * 1000);
+      const expiresAt = new Date(
+        now.getTime() + NOTIFICATION_WINDOW_HOURS * 60 * 60 * 1000,
+      );
 
       // Update waitlist entry to NOTIFIED
       await prisma.waitlist.update({
@@ -65,7 +76,8 @@ export async function handleSlotOpening(params: SlotOpeningParams): Promise<{
 
       // Send notification email
       if (nextInQueue.user.email) {
-        const eventTitle = nextInQueue.webinar?.webinarPlan.title ||
+        const eventTitle =
+          nextInQueue.webinar?.webinarPlan.title ||
           nextInQueue.class?.classPlan.title ||
           "Event";
 
@@ -75,9 +87,13 @@ export async function handleSlotOpening(params: SlotOpeningParams): Promise<{
         // Get scheduled date if available
         let scheduledDate: Date | undefined;
         if (nextInQueue.webinar?.appointment?.slotsOfAppointment?.[0]) {
-          scheduledDate = nextInQueue.webinar.appointment.slotsOfAppointment[0].startsAt;
-        } else if (nextInQueue.class?.appointments?.[0]?.slotsOfAppointment?.[0]) {
-          scheduledDate = nextInQueue.class.appointments[0].slotsOfAppointment[0].startsAt;
+          scheduledDate =
+            nextInQueue.webinar.appointment.slotsOfAppointment[0].startsAt;
+        } else if (
+          nextInQueue.class?.appointments?.[0]?.slotsOfAppointment?.[0]
+        ) {
+          scheduledDate =
+            nextInQueue.class.appointments[0].slotsOfAppointment[0].startsAt;
         }
 
         await sendWaitlistSpotAvailableEmail({
@@ -104,12 +120,16 @@ export async function handleSlotOpening(params: SlotOpeningParams): Promise<{
           reason,
           expiresAt: expiresAt.toISOString(),
           timestamp: new Date().toISOString(),
-        })
+        }),
       );
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error";
       errors.push({ userId: nextInQueue.userId, error: errorMessage });
-      console.error(`Error notifying waitlist user ${nextInQueue.userId}:`, error);
+      console.error(
+        `Error notifying waitlist user ${nextInQueue.userId}:`,
+        error,
+      );
     }
   }
 
@@ -175,7 +195,8 @@ export async function handleWaitlistResponse(params: {
     });
     return {
       success: false,
-      message: "This spot offer has expired. You have been moved back in the queue.",
+      message:
+        "This spot offer has expired. You have been moved back in the queue.",
     };
   }
 
@@ -264,7 +285,8 @@ export async function handleWaitlistResponse(params: {
 
       return {
         success: true,
-        message: "You have been moved to the back of the queue. We'll notify you when another spot opens up.",
+        message:
+          "You have been moved to the back of the queue. We'll notify you when another spot opens up.",
       };
     }
 
@@ -291,7 +313,7 @@ export async function markWaitlistAsBooked(waitlistId: string): Promise<void> {
       event: "waitlist_booking_completed",
       waitlistId,
       timestamp: new Date().toISOString(),
-    })
+    }),
   );
 }
 
@@ -331,7 +353,8 @@ export async function checkEventAvailability(params: {
       throw new Error("Webinar not found");
     }
 
-    const currentParticipants = webinar.appointment?.slotsOfAppointment?.length || 0;
+    const currentParticipants =
+      webinar.appointment?.slotsOfAppointment?.length || 0;
     const maxParticipants = webinar.webinarPlan.maxParticipants;
 
     return {
@@ -409,7 +432,10 @@ export async function joinWaitlist(params: {
   const { userId, webinarId, classId, preferences } = params;
 
   if (!webinarId && !classId) {
-    return { success: false, message: "Either webinarId or classId must be provided" };
+    return {
+      success: false,
+      message: "Either webinarId or classId must be provided",
+    };
   }
 
   // Check if user is already on the waitlist
@@ -434,7 +460,8 @@ export async function joinWaitlist(params: {
   if (availability.available) {
     return {
       success: false,
-      message: "Spots are still available. You can register directly without joining the waitlist.",
+      message:
+        "Spots are still available. You can register directly without joining the waitlist.",
     };
   }
 
@@ -467,7 +494,7 @@ export async function joinWaitlist(params: {
       classId,
       position,
       timestamp: new Date().toISOString(),
-    })
+    }),
   );
 
   return {
@@ -540,7 +567,7 @@ export async function leaveWaitlist(params: {
       userId,
       previousStatus: entry.status,
       timestamp: new Date().toISOString(),
-    })
+    }),
   );
 
   return {

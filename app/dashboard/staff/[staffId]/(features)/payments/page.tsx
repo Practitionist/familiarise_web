@@ -540,7 +540,8 @@ export default function PaymentsAssistancePage() {
                           </div>
                           <div className="flex items-center gap-4 mt-2 text-xs text-zinc-500">
                             <span>
-                              Payment: {refund.payment?.paymentIntent.slice(-12)}
+                              Payment:{" "}
+                              {refund.payment?.paymentIntent.slice(-12)}
                             </span>
                             <span>
                               Amount:{" "}

@@ -179,8 +179,14 @@ export default function StaffSubscriptionsPage() {
             View platform subscriptions (read-only)
           </p>
         </div>
-        <Button variant="outline" onClick={fetchSubscriptions} disabled={loading}>
-          <RefreshCw className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`} />
+        <Button
+          variant="outline"
+          onClick={fetchSubscriptions}
+          disabled={loading}
+        >
+          <RefreshCw
+            className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`}
+          />
           Refresh
         </Button>
       </div>
@@ -198,13 +204,21 @@ export default function StaffSubscriptionsPage() {
             </div>
           </CardContent>
         </Card>
-        <Card className={stats.expiringCount > 0 ? "border-yellow-200 bg-yellow-50 dark:bg-yellow-950/20" : ""}>
+        <Card
+          className={
+            stats.expiringCount > 0
+              ? "border-yellow-200 bg-yellow-50 dark:bg-yellow-950/20"
+              : ""
+          }
+        >
           <CardContent className="p-4 flex items-center gap-4">
             <div className="p-2 rounded-lg bg-yellow-100 dark:bg-yellow-900">
               <AlertTriangle className="h-5 w-5 text-yellow-600" />
             </div>
             <div>
-              <p className="text-2xl font-bold text-yellow-600">{stats.expiringCount}</p>
+              <p className="text-2xl font-bold text-yellow-600">
+                {stats.expiringCount}
+              </p>
               <p className="text-sm text-zinc-500">Expiring Soon</p>
             </div>
           </CardContent>
@@ -303,19 +317,26 @@ export default function StaffSubscriptionsPage() {
                     <TableCell>
                       <div>
                         <p className="font-medium">{subscription.userName}</p>
-                        <p className="text-xs text-zinc-400">{subscription.userEmail}</p>
+                        <p className="text-xs text-zinc-400">
+                          {subscription.userEmail}
+                        </p>
                       </div>
                     </TableCell>
                     <TableCell className="text-sm text-zinc-600 dark:text-zinc-400">
                       {subscription.consultantName || "-"}
                     </TableCell>
                     <TableCell className="font-medium">
-                      {formatCurrency(subscription.amount, subscription.currency)}
+                      {formatCurrency(
+                        subscription.amount,
+                        subscription.currency,
+                      )}
                     </TableCell>
                     <TableCell>
                       <div className="text-sm">
                         <p>{formatDate(subscription.startDate)}</p>
-                        <p className="text-zinc-400">to {formatDate(subscription.endDate)}</p>
+                        <p className="text-zinc-400">
+                          to {formatDate(subscription.endDate)}
+                        </p>
                       </div>
                     </TableCell>
                     <TableCell>
@@ -342,7 +363,8 @@ export default function StaffSubscriptionsPage() {
       {totalPages > 1 && (
         <div className="flex items-center justify-between">
           <div className="text-sm text-zinc-500">
-            Showing {(page - 1) * limit + 1} to {Math.min(page * limit, total)} of {total}
+            Showing {(page - 1) * limit + 1} to {Math.min(page * limit, total)}{" "}
+            of {total}
           </div>
           <div className="flex gap-2">
             <Button

@@ -74,7 +74,7 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
     console.error("Error deleting review:", error);
     return NextResponse.json(
       { error: "Failed to delete review" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

@@ -50,7 +50,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     if (!actionType || !validActions.includes(actionType)) {
       return NextResponse.json(
         { error: "Invalid action type" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -105,7 +105,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     console.error("Error taking moderation action:", error);
     return NextResponse.json(
       { error: "Failed to take action" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

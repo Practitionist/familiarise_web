@@ -43,7 +43,7 @@ const NAV_ITEMS: NavItem[] = [
   { name: "Support", path: "feedback" },
   { name: "Settings", path: "settings" },
   { name: "Policy", path: "policy" },
-  { name: "Waitlists", path: "waitlists" }
+  { name: "Waitlists", path: "waitlists" },
 ];
 
 // Icon mapping

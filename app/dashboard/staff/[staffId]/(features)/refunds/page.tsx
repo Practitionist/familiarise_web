@@ -179,7 +179,9 @@ export default function StaffRefundsPage() {
           </p>
         </div>
         <Button variant="outline" onClick={fetchRefunds} disabled={loading}>
-          <RefreshCw className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`} />
+          <RefreshCw
+            className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`}
+          />
           Refresh
         </Button>
       </div>
@@ -322,7 +324,8 @@ export default function StaffRefundsPage() {
                     <TableCell>
                       <div>
                         <p className="font-mono text-sm">
-                          {refund.refundId?.slice(-12) || refund.id.slice(-8).toUpperCase()}
+                          {refund.refundId?.slice(-12) ||
+                            refund.id.slice(-8).toUpperCase()}
                         </p>
                         {refund.payment && (
                           <p className="text-xs text-zinc-400">

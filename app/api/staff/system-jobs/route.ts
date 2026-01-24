@@ -112,7 +112,7 @@ export async function GET() {
       recentExecutions.map((e) => [
         e.jobId,
         { count: e._count.id, lastRun: e._max.startedAt },
-      ])
+      ]),
     );
 
     const jobsWithStats = SYSTEM_JOBS.map((job) => ({
@@ -126,7 +126,7 @@ export async function GET() {
     console.error("Error fetching system jobs:", error);
     return NextResponse.json(
       { error: "Failed to fetch system jobs" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

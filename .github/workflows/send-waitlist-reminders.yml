@@ -3,13 +3,13 @@ name: Send Waitlist Reminders
 on:
   schedule:
     # Run every hour
-    - cron: '30 * * * *'
+    - cron: "30 * * * *"
   workflow_dispatch:
     inputs:
       dry_run:
-        description: 'Run in dry-run mode (no actual changes)'
+        description: "Run in dry-run mode (no actual changes)"
         required: false
-        default: 'false'
+        default: "false"
 
 env:
   DATABASE_URL: ${{ secrets.DATABASE_URL }}
@@ -29,8 +29,8 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: "20"
+          cache: "npm"
 
       - name: Install dependencies
         run: npm ci

@@ -97,7 +97,8 @@ export async function sendExpirationRemindersJob(): Promise<SendRemindersResult>
 
       sent++;
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error";
       errors.push({ id: entry.id, error: errorMessage });
     }
   }

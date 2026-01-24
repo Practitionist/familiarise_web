@@ -7,7 +7,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import authOptions from "@/app/api/auth/[...nextauth]/options";
 import prisma from "@/lib/prisma";
-import { UserRole, ModerationReportType, ModerationReportStatus, Prisma } from "@prisma/client";
+import {
+  UserRole,
+  ModerationReportType,
+  ModerationReportStatus,
+  Prisma,
+} from "@prisma/client";
 
 /**
  * GET /api/staff/moderation/reports
@@ -53,7 +58,13 @@ export async function GET(req: NextRequest) {
             select: { id: true, name: true, email: true, image: true },
           },
           targetUser: {
-            select: { id: true, name: true, email: true, image: true, role: true },
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              image: true,
+              role: true,
+            },
           },
           _count: {
             select: { actions: true },
@@ -96,8 +107,7 @@ export async function GET(req: NextRequest) {
 
     const counts = {
       total,
-      pending:
-        statusCounts.find((s) => s.status === "PENDING")?._count.id || 0,
+      pending: statusCounts.find((s) => s.status === "PENDING")?._count.id || 0,
       underReview:
         statusCounts.find((s) => s.status === "UNDER_REVIEW")?._count.id || 0,
       dismissed:
@@ -123,7 +133,7 @@ export async function GET(req: NextRequest) {
     console.error("Error fetching moderation reports:", error);
     return NextResponse.json(
       { error: "Failed to fetch moderation reports" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

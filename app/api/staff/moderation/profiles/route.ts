@@ -30,7 +30,9 @@ export async function GET(req: NextRequest) {
     }
 
     const { searchParams } = new URL(req.url);
-    const status = searchParams.get("status") as ProfileVerificationStatus | null;
+    const status = searchParams.get(
+      "status",
+    ) as ProfileVerificationStatus | null;
     const page = parseInt(searchParams.get("page") || "1");
     const limit = parseInt(searchParams.get("limit") || "20");
     const offset = (page - 1) * limit;
@@ -100,8 +102,7 @@ export async function GET(req: NextRequest) {
 
     const counts = {
       total,
-      pending:
-        statusCounts.find((s) => s.status === "PENDING")?._count.id || 0,
+      pending: statusCounts.find((s) => s.status === "PENDING")?._count.id || 0,
       approved:
         statusCounts.find((s) => s.status === "APPROVED")?._count.id || 0,
       rejected:
@@ -125,7 +126,7 @@ export async function GET(req: NextRequest) {
     console.error("Error fetching profile verifications:", error);
     return NextResponse.json(
       { error: "Failed to fetch verifications" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

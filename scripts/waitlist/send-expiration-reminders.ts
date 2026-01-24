@@ -89,17 +89,20 @@ async function main() {
 
         sentCount++;
         console.log(
-          `  ✅ Sent reminder to ${entry.user.email} for "${eventTitle}"`
+          `  ✅ Sent reminder to ${entry.user.email} for "${eventTitle}"`,
         );
       } catch (error) {
         errorCount++;
-        console.error(`  ❌ Failed to send reminder for entry ${entry.id}:`, error);
+        console.error(
+          `  ❌ Failed to send reminder for entry ${entry.id}:`,
+          error,
+        );
       }
     }
 
     const duration = ((Date.now() - startTime) / 1000).toFixed(2);
     console.log(
-      `\n🎉 Completed in ${duration}s. Reminders sent: ${sentCount}, Errors: ${errorCount}`
+      `\n🎉 Completed in ${duration}s. Reminders sent: ${sentCount}, Errors: ${errorCount}`,
     );
 
     process.exit(0);

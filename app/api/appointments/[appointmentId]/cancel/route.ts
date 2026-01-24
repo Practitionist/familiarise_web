@@ -128,11 +128,14 @@ export async function POST(
             webinarId: result.webinarId,
             classId: result.classId,
             timestamp: new Date().toISOString(),
-          })
+          }),
         );
       } catch (waitlistError) {
         // Log but don't fail the cancellation - waitlist notification is best-effort
-        console.error("Failed to notify waitlist after cancellation:", waitlistError);
+        console.error(
+          "Failed to notify waitlist after cancellation:",
+          waitlistError,
+        );
       }
     }
 

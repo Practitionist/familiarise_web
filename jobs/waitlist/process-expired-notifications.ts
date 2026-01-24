@@ -5,10 +5,7 @@
  * (GitHub Actions, Vercel Cron, AWS Lambda, etc.)
  */
 
-import {
-  processExpiredNotifications,
-  handleSlotOpening,
-} from "@/lib/waitlist";
+import { processExpiredNotifications, handleSlotOpening } from "@/lib/waitlist";
 import { sendWaitlistExpiredEmail } from "@/lib/waitlist/notifications";
 
 export interface ProcessExpiredResult {
@@ -67,7 +64,8 @@ export async function processExpiredNotificationsJob(): Promise<ProcessExpiredRe
         reason: "cancellation",
       });
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error";
       errors.push({ id: entry.id, error: errorMessage });
     }
   }

@@ -276,7 +276,7 @@ export async function GET(req: NextRequest) {
         acc[curr.status] = curr._count;
         return acc;
       },
-      {} as Record<string, number>
+      {} as Record<string, number>,
     );
 
     // Group entries if requested
@@ -351,7 +351,7 @@ export async function GET(req: NextRequest) {
     console.error("Error fetching admin waitlists:", error);
     return NextResponse.json(
       { error: "Internal server error" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

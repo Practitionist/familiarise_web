@@ -73,15 +73,12 @@ export function WaitlistStatusBadge({
         size === "sm" ? "text-xs px-2 py-0.5" : "text-sm px-2.5 py-1",
         // Add pulse animation for NOTIFIED status to draw attention
         bookingStatus === "NOTIFIED" && "animate-pulse",
-        className
+        className,
       )}
     >
       {showIcon && (
         <Icon
-          className={cn(
-            "mr-1",
-            size === "sm" ? "h-3 w-3" : "h-3.5 w-3.5"
-          )}
+          className={cn("mr-1", size === "sm" ? "h-3 w-3" : "h-3.5 w-3.5")}
         />
       )}
       {label}
@@ -94,7 +91,7 @@ export function WaitlistStatusBadge({
  */
 export function determineBookingStatus(
   hasConfirmedSlot: boolean,
-  waitlistEntry?: { status: string; position?: number | null } | null
+  waitlistEntry?: { status: string; position?: number | null } | null,
 ): { bookingStatus: BookingStatus; waitlistPosition?: number } {
   if (hasConfirmedSlot) {
     return { bookingStatus: "CONFIRMED" };

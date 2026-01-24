@@ -356,7 +356,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
             waitlistId: metadata.fromWaitlist,
             paymentIntent: paymentIntentId,
             timestamp: new Date().toISOString(),
-          })
+          }),
         );
       } catch (waitlistError) {
         // Log but don't fail the payment - waitlist update is best-effort

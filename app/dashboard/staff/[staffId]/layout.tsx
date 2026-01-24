@@ -106,9 +106,17 @@ export default function StaffDashboardLayout({
 
           {/* User Profile */}
           <div className={cn("px-4 pb-4", collapsed && "px-2")}>
-            <div className={cn("flex items-center gap-3", collapsed && "justify-center")}>
+            <div
+              className={cn(
+                "flex items-center gap-3",
+                collapsed && "justify-center",
+              )}
+            >
               <Avatar className="h-10 w-10 flex-shrink-0">
-                <AvatarImage src={session?.user?.image || ""} alt={session?.user?.name || ""} />
+                <AvatarImage
+                  src={session?.user?.image || ""}
+                  alt={session?.user?.name || ""}
+                />
                 <AvatarFallback className="bg-blue-600 text-white font-semibold">
                   {session?.user?.name?.charAt(0)?.toUpperCase() || "S"}
                 </AvatarFallback>

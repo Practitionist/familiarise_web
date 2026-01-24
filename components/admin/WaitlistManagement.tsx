@@ -115,7 +115,9 @@ async function fetchWaitlists(params: {
     queryParams.set("page", params.page.toString());
   }
 
-  const response = await fetch(`/api/admin/waitlists?${queryParams.toString()}`);
+  const response = await fetch(
+    `/api/admin/waitlists?${queryParams.toString()}`,
+  );
   if (!response.ok) {
     throw new Error("Failed to fetch waitlists");
   }
@@ -191,7 +193,9 @@ function WaitlistTableRow({ entry }: { entry: WaitlistEntry }) {
             </AvatarFallback>
           </Avatar>
           <div>
-            <p className="font-medium text-sm">{entry.user.name || "No name"}</p>
+            <p className="font-medium text-sm">
+              {entry.user.name || "No name"}
+            </p>
             <p className="text-xs text-gray-500">{entry.user.email}</p>
           </div>
         </div>
@@ -199,7 +203,9 @@ function WaitlistTableRow({ entry }: { entry: WaitlistEntry }) {
       <TableCell>{getStatusBadge(entry.status)}</TableCell>
       <TableCell>
         {entry.position ? (
-          <span className="font-semibold text-amber-700">#{entry.position}</span>
+          <span className="font-semibold text-amber-700">
+            #{entry.position}
+          </span>
         ) : (
           <span className="text-gray-400">-</span>
         )}
@@ -265,7 +271,9 @@ function EventGroupCard({
                     {firstEntry?.consultant && (
                       <span className="flex items-center gap-1">
                         <Avatar className="h-4 w-4">
-                          <AvatarImage src={firstEntry.consultant.image || undefined} />
+                          <AvatarImage
+                            src={firstEntry.consultant.image || undefined}
+                          />
                           <AvatarFallback className="text-[8px]">
                             {firstEntry.consultant.name?.[0] || "?"}
                           </AvatarFallback>
@@ -276,7 +284,10 @@ function EventGroupCard({
                     {firstEntry?.scheduledDate && (
                       <span className="flex items-center gap-1">
                         <Calendar className="h-3.5 w-3.5" />
-                        {format(new Date(firstEntry.scheduledDate), "MMM d, yyyy 'at' h:mm a")}
+                        {format(
+                          new Date(firstEntry.scheduledDate),
+                          "MMM d, yyyy 'at' h:mm a",
+                        )}
                       </span>
                     )}
                   </div>
@@ -373,7 +384,9 @@ export function WaitlistManagement() {
   if (error) {
     return (
       <div className="space-y-6">
-        <h1 className="text-3xl font-bold text-gray-900">Waitlist Management</h1>
+        <h1 className="text-3xl font-bold text-gray-900">
+          Waitlist Management
+        </h1>
         <Card>
           <CardContent className="py-8">
             <p className="text-center text-red-500">
@@ -388,7 +401,9 @@ export function WaitlistManagement() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold text-gray-900">Waitlist Management</h1>
+        <h1 className="text-3xl font-bold text-gray-900">
+          Waitlist Management
+        </h1>
         <p className="text-gray-600 mt-1">
           View and manage all waitlist entries across webinars and classes
         </p>
@@ -488,10 +503,14 @@ export function WaitlistManagement() {
               <SelectContent>
                 <SelectItem value="all">All Statuses</SelectItem>
                 <SelectItem value={WaitlistStatus.WAITING}>Waiting</SelectItem>
-                <SelectItem value={WaitlistStatus.NOTIFIED}>Notified</SelectItem>
+                <SelectItem value={WaitlistStatus.NOTIFIED}>
+                  Notified
+                </SelectItem>
                 <SelectItem value={WaitlistStatus.BOOKED}>Booked</SelectItem>
                 <SelectItem value={WaitlistStatus.EXPIRED}>Expired</SelectItem>
-                <SelectItem value={WaitlistStatus.CANCELLED}>Cancelled</SelectItem>
+                <SelectItem value={WaitlistStatus.CANCELLED}>
+                  Cancelled
+                </SelectItem>
                 <SelectItem value={WaitlistStatus.SKIPPED}>Skipped</SelectItem>
               </SelectContent>
             </Select>
@@ -562,10 +581,10 @@ export function WaitlistManagement() {
               .sort(([, a], [, b]) => {
                 // Sort by number of active entries (notified + waiting)
                 const aActive = a.filter(
-                  (e) => e.status === "WAITING" || e.status === "NOTIFIED"
+                  (e) => e.status === "WAITING" || e.status === "NOTIFIED",
                 ).length;
                 const bActive = b.filter(
-                  (e) => e.status === "WAITING" || e.status === "NOTIFIED"
+                  (e) => e.status === "WAITING" || e.status === "NOTIFIED",
                 ).length;
                 return bActive - aActive;
               })
@@ -587,7 +606,9 @@ export function WaitlistManagement() {
                   No Waitlist Entries
                 </h3>
                 <p className="text-sm text-gray-500 mt-1">
-                  {searchTerm || statusFilter !== "all" || eventTypeFilter !== "all"
+                  {searchTerm ||
+                  statusFilter !== "all" ||
+                  eventTypeFilter !== "all"
                     ? "No entries match your filters"
                     : "No one is currently on any waitlists"}
                 </p>
@@ -599,7 +620,8 @@ export function WaitlistManagement() {
         <Card>
           <CardHeader>
             <CardTitle className="text-lg">
-              All Entries {data?.filteredTotal !== undefined && `(${data.filteredTotal})`}
+              All Entries{" "}
+              {data?.filteredTotal !== undefined && `(${data.filteredTotal})`}
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -655,7 +677,10 @@ export function WaitlistManagement() {
                           </Link>
                         </TableCell>
                         <TableCell>
-                          <Badge variant="outline" className="capitalize text-xs">
+                          <Badge
+                            variant="outline"
+                            className="capitalize text-xs"
+                          >
                             {entry.eventType}
                           </Badge>
                         </TableCell>
@@ -671,7 +696,10 @@ export function WaitlistManagement() {
                         </TableCell>
                         <TableCell className="text-sm text-gray-600">
                           {entry.scheduledDate
-                            ? format(new Date(entry.scheduledDate), "MMM d, yyyy")
+                            ? format(
+                                new Date(entry.scheduledDate),
+                                "MMM d, yyyy",
+                              )
                             : "-"}
                         </TableCell>
                         <TableCell className="text-sm text-gray-600">
@@ -686,7 +714,10 @@ export function WaitlistManagement() {
                                   : "text-gray-600"
                               }
                             >
-                              {format(new Date(entry.expiresAt), "MMM d, h:mm a")}
+                              {format(
+                                new Date(entry.expiresAt),
+                                "MMM d, h:mm a",
+                              )}
                             </span>
                           ) : (
                             "-"
@@ -731,7 +762,9 @@ export function WaitlistManagement() {
                   No Waitlist Entries
                 </h3>
                 <p className="text-sm text-gray-500 mt-1">
-                  {searchTerm || statusFilter !== "all" || eventTypeFilter !== "all"
+                  {searchTerm ||
+                  statusFilter !== "all" ||
+                  eventTypeFilter !== "all"
                     ? "No entries match your filters"
                     : "No one is currently on any waitlists"}
                 </p>

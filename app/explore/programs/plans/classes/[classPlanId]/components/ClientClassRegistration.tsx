@@ -12,7 +12,10 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { CheckCircle } from "lucide-react";
 import { ClassPlanProgram } from "@/app/explore/programs/utils";
-import { isUserEnrolled, countUniqueParticipants } from "@/lib/payments/utils/participants";
+import {
+  isUserEnrolled,
+  countUniqueParticipants,
+} from "@/lib/payments/utils/participants";
 import { formatCurrency } from "@/app/checkout/plans/math";
 import { JoinWaitlistButton, WaitlistBadge } from "@/components/waitlist";
 
@@ -40,7 +43,8 @@ export function ClientClassRegistration({
     : false;
 
   // Calculate capacity - use plan's maxParticipants or prop override
-  const effectiveMaxParticipants = maxParticipants ?? plan.maxParticipants ?? 100;
+  const effectiveMaxParticipants =
+    maxParticipants ?? plan.maxParticipants ?? 100;
   const currentParticipants = countUniqueParticipants(appointments);
   const isFull = currentParticipants >= effectiveMaxParticipants;
 
@@ -71,16 +75,23 @@ export function ClientClassRegistration({
         <CardContent>
           <p className="text-gray-600 mb-4">
             {startDate
-              ? `Class starts on ${new Date(startDate).toLocaleString(undefined, {
-                  dateStyle: "long",
-                  timeStyle: "short",
-                  timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-                })}`
+              ? `Class starts on ${new Date(startDate).toLocaleString(
+                  undefined,
+                  {
+                    dateStyle: "long",
+                    timeStyle: "short",
+                    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                  },
+                )}`
               : "Start date to be announced"}
           </p>
           {isFull && (
-            <Badge variant="secondary" className="mb-4 bg-amber-100 text-amber-800">
-              Class is full ({currentParticipants}/{effectiveMaxParticipants} spots)
+            <Badge
+              variant="secondary"
+              className="mb-4 bg-amber-100 text-amber-800"
+            >
+              Class is full ({currentParticipants}/{effectiveMaxParticipants}{" "}
+              spots)
             </Badge>
           )}
           {!isFull && (
@@ -148,15 +159,22 @@ export function ClientClassRegistration({
         <CardContent>
           <p className="text-sm text-gray-600 mb-4">
             {startDate
-              ? `Class starts on ${new Date(startDate).toLocaleString(undefined, {
-                  dateStyle: "long",
-                  timeStyle: "short",
-                  timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-                })}`
+              ? `Class starts on ${new Date(startDate).toLocaleString(
+                  undefined,
+                  {
+                    dateStyle: "long",
+                    timeStyle: "short",
+                    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                  },
+                )}`
               : "Start date to be announced"}
           </p>
-          <Badge variant="secondary" className="mb-4 bg-amber-100 text-amber-800">
-            Class is full ({currentParticipants}/{effectiveMaxParticipants} spots)
+          <Badge
+            variant="secondary"
+            className="mb-4 bg-amber-100 text-amber-800"
+          >
+            Class is full ({currentParticipants}/{effectiveMaxParticipants}{" "}
+            spots)
           </Badge>
         </CardContent>
         <CardFooter>

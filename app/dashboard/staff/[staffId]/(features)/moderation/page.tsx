@@ -169,7 +169,7 @@ export default function ContentModerationPage() {
   const [activeTab, setActiveTab] = useState("reports");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedReport, setSelectedReport] = useState<ModerationReport | null>(
-    null
+    null,
   );
   const [selectedProfile, setSelectedProfile] =
     useState<ProfileVerification | null>(null);
@@ -209,7 +209,9 @@ export default function ContentModerationPage() {
   const fetchReports = async () => {
     try {
       setLoadingReports(true);
-      const response = await fetch("/api/staff/moderation/reports?status=PENDING");
+      const response = await fetch(
+        "/api/staff/moderation/reports?status=PENDING",
+      );
       if (!response.ok) throw new Error("Failed to fetch reports");
       const data = await response.json();
       setReports(data.reports || []);
@@ -230,7 +232,7 @@ export default function ContentModerationPage() {
     try {
       setLoadingProfiles(true);
       const response = await fetch(
-        "/api/staff/moderation/profiles?status=PENDING"
+        "/api/staff/moderation/profiles?status=PENDING",
       );
       if (!response.ok) throw new Error("Failed to fetch profiles");
       const data = await response.json();
@@ -277,7 +279,7 @@ export default function ContentModerationPage() {
   // Handle report action (dismiss or take action)
   const handleReportAction = async (
     reportId: string,
-    action: "DISMISS" | "WARN" | "SUSPEND" | "BAN"
+    action: "DISMISS" | "WARN" | "SUSPEND" | "BAN",
   ) => {
     try {
       setSubmitting(true);
@@ -290,7 +292,7 @@ export default function ContentModerationPage() {
             actionType: action,
             reason: moderationNote,
           }),
-        }
+        },
       );
 
       if (!response.ok) throw new Error("Failed to process action");
@@ -318,7 +320,7 @@ export default function ContentModerationPage() {
   // Handle profile verification
   const handleProfileVerification = async (
     verificationId: string,
-    status: "VERIFIED" | "REJECTED"
+    status: "VERIFIED" | "REJECTED",
   ) => {
     try {
       setSubmitting(true);
@@ -331,7 +333,7 @@ export default function ContentModerationPage() {
             status,
             notes: moderationNote,
           }),
-        }
+        },
       );
 
       if (!response.ok) throw new Error("Failed to update verification");
@@ -359,9 +361,12 @@ export default function ContentModerationPage() {
   // Handle review deletion
   const handleDeleteReview = async (reviewId: string) => {
     try {
-      const response = await fetch(`/api/staff/moderation/reviews/${reviewId}`, {
-        method: "DELETE",
-      });
+      const response = await fetch(
+        `/api/staff/moderation/reviews/${reviewId}`,
+        {
+          method: "DELETE",
+        },
+      );
 
       if (!response.ok) throw new Error("Failed to delete review");
 
@@ -388,7 +393,9 @@ export default function ContentModerationPage() {
           r.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
           r.reason.toLowerCase().includes(searchQuery.toLowerCase()) ||
           r.reporter.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          r.reportedUser.name?.toLowerCase().includes(searchQuery.toLowerCase())
+          r.reportedUser.name
+            ?.toLowerCase()
+            .includes(searchQuery.toLowerCase()),
       )
     : reports;
 
@@ -432,7 +439,9 @@ export default function ContentModerationPage() {
               {loadingStats ? (
                 <Loader2 className="h-5 w-5 animate-spin text-zinc-400" />
               ) : (
-                <p className="text-2xl font-bold">{stats?.pendingReports ?? 0}</p>
+                <p className="text-2xl font-bold">
+                  {stats?.pendingReports ?? 0}
+                </p>
               )}
               <p className="text-sm text-zinc-500">Pending Reports</p>
             </div>
@@ -464,7 +473,9 @@ export default function ContentModerationPage() {
               {loadingStats ? (
                 <Loader2 className="h-5 w-5 animate-spin text-zinc-400" />
               ) : (
-                <p className="text-2xl font-bold">{stats?.pendingReviews ?? 0}</p>
+                <p className="text-2xl font-bold">
+                  {stats?.pendingReviews ?? 0}
+                </p>
               )}
               <p className="text-sm text-zinc-500">Reviews to Check</p>
             </div>
@@ -479,7 +490,9 @@ export default function ContentModerationPage() {
               {loadingStats ? (
                 <Loader2 className="h-5 w-5 animate-spin text-zinc-400" />
               ) : (
-                <p className="text-2xl font-bold">{stats?.resolvedToday ?? 0}</p>
+                <p className="text-2xl font-bold">
+                  {stats?.resolvedToday ?? 0}
+                </p>
               )}
               <p className="text-sm text-zinc-500">Resolved Today</p>
             </div>
@@ -573,7 +586,8 @@ export default function ContentModerationPage() {
                             </span>
                             <span>
                               Against:{" "}
-                              {report.reportedUser.name || report.reportedUser.email}
+                              {report.reportedUser.name ||
+                                report.reportedUser.email}
                             </span>
                             <span>Reason: {report.reason}</span>
                           </div>
@@ -632,11 +646,13 @@ export default function ContentModerationPage() {
                             {profile.profile.user.email}
                           </p>
                           <div className="flex items-center gap-2 mt-1">
-                            {profile.profile.specialization.slice(0, 2).map((s) => (
-                              <Badge key={s} variant="outline">
-                                {s}
-                              </Badge>
-                            ))}
+                            {profile.profile.specialization
+                              .slice(0, 2)
+                              .map((s) => (
+                                <Badge key={s} variant="outline">
+                                  {s}
+                                </Badge>
+                              ))}
                             {profile.profile.yearsOfExperience && (
                               <span className="text-xs text-zinc-500">
                                 {profile.profile.yearsOfExperience} years
@@ -675,7 +691,9 @@ export default function ContentModerationPage() {
               <Loader2 className="h-6 w-6 animate-spin text-zinc-400" />
             </div>
           ) : reviews.length === 0 ? (
-            <p className="text-center text-zinc-500 py-8">No reviews to check</p>
+            <p className="text-center text-zinc-500 py-8">
+              No reviews to check
+            </p>
           ) : (
             <div className="space-y-3">
               {reviews.map((review) => (
@@ -768,7 +786,9 @@ export default function ContentModerationPage() {
               </DialogHeader>
               <div className="space-y-4">
                 <div className="p-4 rounded-lg bg-zinc-50 dark:bg-zinc-900">
-                  <Label className="text-sm font-medium">Reported Content</Label>
+                  <Label className="text-sm font-medium">
+                    Reported Content
+                  </Label>
                   <p className="mt-1 text-sm">
                     {selectedReport.description || selectedReport.reason}
                   </p>
@@ -796,7 +816,9 @@ export default function ContentModerationPage() {
                 </div>
                 <div>
                   <Label className="text-sm font-medium">Reason</Label>
-                  <p className="text-sm text-zinc-600">{selectedReport.reason}</p>
+                  <p className="text-sm text-zinc-600">
+                    {selectedReport.reason}
+                  </p>
                 </div>
                 <div>
                   <Label htmlFor="note">Moderation Note</Label>
@@ -820,7 +842,9 @@ export default function ContentModerationPage() {
                 <Button
                   variant="outline"
                   className="text-green-600"
-                  onClick={() => handleReportAction(selectedReport.id, "DISMISS")}
+                  onClick={() =>
+                    handleReportAction(selectedReport.id, "DISMISS")
+                  }
                   disabled={submitting}
                 >
                   {submitting ? (
@@ -888,7 +912,9 @@ export default function ContentModerationPage() {
                 </div>
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div>
-                    <Label className="text-sm font-medium">Specialization</Label>
+                    <Label className="text-sm font-medium">
+                      Specialization
+                    </Label>
                     <p className="text-sm text-zinc-600">
                       {selectedProfile.profile.specialization.join(", ") ||
                         "Not specified"}

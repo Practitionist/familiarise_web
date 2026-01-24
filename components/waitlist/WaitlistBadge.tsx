@@ -24,7 +24,7 @@ export function WaitlistBadge({
       <Badge
         className={cn(
           "bg-amber-100 text-amber-800 border-amber-300 font-semibold",
-          className
+          className,
         )}
       >
         #{position}
@@ -36,7 +36,7 @@ export function WaitlistBadge({
     <Badge
       className={cn(
         "bg-amber-100 text-amber-800 border-amber-300 flex items-center gap-1.5",
-        className
+        className,
       )}
     >
       <Clock className="h-3 w-3" />

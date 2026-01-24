@@ -115,7 +115,9 @@ export default function StaffMetricsPage() {
           </p>
         </div>
         <Button variant="outline" onClick={fetchMetrics} disabled={loading}>
-          <RefreshCw className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`} />
+          <RefreshCw
+            className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`}
+          />
           Refresh
         </Button>
       </div>
@@ -174,12 +176,18 @@ export default function StaffMetricsPage() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-zinc-500">Open Tickets</p>
-                  <p className={`text-3xl font-bold ${metrics.supportMetrics.openTickets > 10 ? "text-red-600" : "text-yellow-600"}`}>
+                  <p
+                    className={`text-3xl font-bold ${metrics.supportMetrics.openTickets > 10 ? "text-red-600" : "text-yellow-600"}`}
+                  >
                     {metrics.supportMetrics.openTickets}
                   </p>
                 </div>
-                <div className={`p-3 rounded-full ${metrics.supportMetrics.openTickets > 10 ? "bg-red-50 dark:bg-red-950" : "bg-yellow-50 dark:bg-yellow-950"}`}>
-                  <Ticket className={`h-6 w-6 ${metrics.supportMetrics.openTickets > 10 ? "text-red-600" : "text-yellow-600"}`} />
+                <div
+                  className={`p-3 rounded-full ${metrics.supportMetrics.openTickets > 10 ? "bg-red-50 dark:bg-red-950" : "bg-yellow-50 dark:bg-yellow-950"}`}
+                >
+                  <Ticket
+                    className={`h-6 w-6 ${metrics.supportMetrics.openTickets > 10 ? "text-red-600" : "text-yellow-600"}`}
+                  />
                 </div>
               </div>
             </CardContent>
@@ -214,7 +222,9 @@ export default function StaffMetricsPage() {
             <CardContent className="p-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-zinc-500">Users Helped This Week</p>
+                  <p className="text-sm text-zinc-500">
+                    Users Helped This Week
+                  </p>
                   <p className="text-3xl font-bold text-indigo-600">
                     {metrics.userMetrics.usersHelpedThisWeek}
                   </p>
@@ -306,12 +316,18 @@ export default function StaffMetricsPage() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-zinc-500">Pending Payments</p>
-                  <p className={`text-3xl font-bold ${metrics.platformMetrics.pendingPayments > 20 ? "text-orange-600" : "text-teal-600"}`}>
+                  <p
+                    className={`text-3xl font-bold ${metrics.platformMetrics.pendingPayments > 20 ? "text-orange-600" : "text-teal-600"}`}
+                  >
                     {metrics.platformMetrics.pendingPayments}
                   </p>
                 </div>
-                <div className={`p-3 rounded-full ${metrics.platformMetrics.pendingPayments > 20 ? "bg-orange-50 dark:bg-orange-950" : "bg-teal-50 dark:bg-teal-950"}`}>
-                  <Clock className={`h-6 w-6 ${metrics.platformMetrics.pendingPayments > 20 ? "text-orange-600" : "text-teal-600"}`} />
+                <div
+                  className={`p-3 rounded-full ${metrics.platformMetrics.pendingPayments > 20 ? "bg-orange-50 dark:bg-orange-950" : "bg-teal-50 dark:bg-teal-950"}`}
+                >
+                  <Clock
+                    className={`h-6 w-6 ${metrics.platformMetrics.pendingPayments > 20 ? "text-orange-600" : "text-teal-600"}`}
+                  />
                 </div>
               </div>
             </CardContent>

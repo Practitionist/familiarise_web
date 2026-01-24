@@ -133,9 +133,8 @@ export async function GET() {
           new Date(ticket.createdAt).getTime();
         return sum + diffMs / (1000 * 60 * 60);
       }, 0);
-      avgResponseTimeHours = Math.round(
-        (totalHours / recentResolvedTickets.length) * 10,
-      ) / 10;
+      avgResponseTimeHours =
+        Math.round((totalHours / recentResolvedTickets.length) * 10) / 10;
     }
 
     return NextResponse.json({

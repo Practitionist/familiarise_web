@@ -28,7 +28,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     if (!session?.user?.id) {
       return NextResponse.json(
         { success: false, error: "Unauthorized" },
-        { status: 401 }
+        { status: 401 },
       );
     }
 
@@ -40,9 +40,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json(
         {
           success: false,
-          error: "Invalid action. Must be ACCEPT, DECLINE, or SKIP"
+          error: "Invalid action. Must be ACCEPT, DECLINE, or SKIP",
         },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -55,7 +55,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     if (!result.success) {
       return NextResponse.json(
         { success: false, error: result.message },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -68,7 +68,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     console.error("Error responding to waitlist:", error);
     return NextResponse.json(
       { success: false, error: "Failed to process response" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -92,7 +92,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
     if (!action || !["ACCEPT", "DECLINE", "SKIP"].includes(action)) {
       return NextResponse.redirect(
-        new URL(`/dashboard?error=invalid_action`, request.url)
+        new URL(`/dashboard?error=invalid_action`, request.url),
       );
     }
 
@@ -105,7 +105,10 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     if (!result.success) {
       // Redirect to dashboard with error message
       return NextResponse.redirect(
-        new URL(`/dashboard?error=${encodeURIComponent(result.message)}`, request.url)
+        new URL(
+          `/dashboard?error=${encodeURIComponent(result.message)}`,
+          request.url,
+        ),
       );
     }
 
@@ -116,12 +119,15 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
     // Default redirect to dashboard with success message
     return NextResponse.redirect(
-      new URL(`/dashboard?message=${encodeURIComponent(result.message)}`, request.url)
+      new URL(
+        `/dashboard?message=${encodeURIComponent(result.message)}`,
+        request.url,
+      ),
     );
   } catch (error) {
     console.error("Error responding to waitlist via GET:", error);
     return NextResponse.redirect(
-      new URL("/dashboard?error=processing_failed", request.url)
+      new URL("/dashboard?error=processing_failed", request.url),
     );
   }
 }

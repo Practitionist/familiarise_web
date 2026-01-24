@@ -134,10 +134,12 @@ export function SlotAvailableModal({
           <div className="mx-auto w-12 h-12 rounded-full bg-green-100 flex items-center justify-center mb-4">
             <Check className="h-6 w-6 text-green-600" />
           </div>
-          <DialogTitle className="text-center">A Spot is Available!</DialogTitle>
+          <DialogTitle className="text-center">
+            A Spot is Available!
+          </DialogTitle>
           <DialogDescription className="text-center">
-            A spot has opened up for <strong>{eventTitle}</strong>. Would you like
-            to book it now?
+            A spot has opened up for <strong>{eventTitle}</strong>. Would you
+            like to book it now?
           </DialogDescription>
         </DialogHeader>
 
@@ -165,9 +167,10 @@ export function SlotAvailableModal({
                 className={`font-medium ${
                   timeRemaining === "Expired"
                     ? "text-red-600"
-                    : timeRemaining.includes("m remaining") && !timeRemaining.includes("h")
-                    ? "text-amber-600"
-                    : "text-green-600"
+                    : timeRemaining.includes("m remaining") &&
+                        !timeRemaining.includes("h")
+                      ? "text-amber-600"
+                      : "text-green-600"
                 }`}
               >
                 {timeRemaining}

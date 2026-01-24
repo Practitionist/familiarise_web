@@ -53,8 +53,9 @@ export const WaitlistJoinedEmail = ({
 
             <Text style={paragraph}>Hi {name},</Text>
             <Text style={paragraph}>
-              You've been added to the waitlist for <strong>{eventTitle}</strong>!
-              We'll notify you as soon as a spot becomes available.
+              You've been added to the waitlist for{" "}
+              <strong>{eventTitle}</strong>! We'll notify you as soon as a spot
+              becomes available.
             </Text>
 
             <Section style={details}>

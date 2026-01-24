@@ -720,10 +720,7 @@ export async function PATCH(request: NextRequest) {
     const oldMaxParticipants = existingPlan.maxParticipants;
     const newMaxParticipants = result.webinarPlan.maxParticipants;
 
-    if (
-      newMaxParticipants > oldMaxParticipants &&
-      result.webinar?.id
-    ) {
+    if (newMaxParticipants > oldMaxParticipants && result.webinar?.id) {
       const newSlotsAvailable = newMaxParticipants - oldMaxParticipants;
 
       try {
@@ -741,11 +738,14 @@ export async function PATCH(request: NextRequest) {
             newMaxParticipants,
             newSlotsAvailable,
             timestamp: new Date().toISOString(),
-          })
+          }),
         );
       } catch (waitlistError) {
         // Log but don't fail the update - waitlist notification is best-effort
-        console.error("Failed to notify waitlist after capacity increase:", waitlistError);
+        console.error(
+          "Failed to notify waitlist after capacity increase:",
+          waitlistError,
+        );
       }
     }
 

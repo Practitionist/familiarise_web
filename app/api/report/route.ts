@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
     if (!type || !reason || !targetUserId) {
       return NextResponse.json(
         { error: "Type, reason, and targetUserId are required" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -48,14 +48,17 @@ export async function POST(req: NextRequest) {
       "OTHER",
     ];
     if (!validTypes.includes(type)) {
-      return NextResponse.json({ error: "Invalid report type" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Invalid report type" },
+        { status: 400 },
+      );
     }
 
     // Prevent self-reporting
     if (targetUserId === session.user.id) {
       return NextResponse.json(
         { error: "You cannot report yourself" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -67,7 +70,7 @@ export async function POST(req: NextRequest) {
     if (!targetUser) {
       return NextResponse.json(
         { error: "Target user not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
@@ -85,7 +88,7 @@ export async function POST(req: NextRequest) {
     if (existingReport) {
       return NextResponse.json(
         { error: "You have already reported this content" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -135,13 +138,13 @@ export async function POST(req: NextRequest) {
         message: "Report submitted successfully",
         reportId: report.id,
       },
-      { status: 201 }
+      { status: 201 },
     );
   } catch (error) {
     console.error("Error submitting report:", error);
     return NextResponse.json(
       { error: "Failed to submit report" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

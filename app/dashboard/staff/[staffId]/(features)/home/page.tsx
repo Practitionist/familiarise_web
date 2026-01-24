@@ -194,9 +194,7 @@ export default function StaffHomePage() {
             }}
             disabled={loading}
           >
-            <RefreshCw
-              className={`h-4 w-4 ${loading ? "animate-spin" : ""}`}
-            />
+            <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
           </Button>
           <Button variant="outline" className="gap-2">
             <Bell className="h-4 w-4" />
@@ -212,41 +210,39 @@ export default function StaffHomePage() {
 
       {/* Stats Grid */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        {loading ? (
-          Array.from({ length: 4 }).map((_, i) => (
-            <Card key={i}>
-              <CardContent className="p-6">
-                <div className="flex items-center justify-center h-24">
-                  <Loader2 className="h-6 w-6 animate-spin text-zinc-400" />
-                </div>
-              </CardContent>
-            </Card>
-          ))
-        ) : (
-          statsConfig.map((stat) => (
-            <Card key={stat.title}>
-              <CardContent className="p-6">
-                <div className="flex items-center justify-between">
-                  <div className={`p-2 rounded-lg ${stat.bgColor}`}>
-                    <stat.icon className={`h-5 w-5 ${stat.color}`} />
+        {loading
+          ? Array.from({ length: 4 }).map((_, i) => (
+              <Card key={i}>
+                <CardContent className="p-6">
+                  <div className="flex items-center justify-center h-24">
+                    <Loader2 className="h-6 w-6 animate-spin text-zinc-400" />
                   </div>
-                  <TrendingUp className="h-4 w-4 text-zinc-400" />
-                </div>
-                <div className="mt-4">
-                  <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">
-                    {stat.value}
-                  </p>
-                  <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                    {stat.title}
-                  </p>
-                  <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-1">
-                    {stat.change}
-                  </p>
-                </div>
-              </CardContent>
-            </Card>
-          ))
-        )}
+                </CardContent>
+              </Card>
+            ))
+          : statsConfig.map((stat) => (
+              <Card key={stat.title}>
+                <CardContent className="p-6">
+                  <div className="flex items-center justify-between">
+                    <div className={`p-2 rounded-lg ${stat.bgColor}`}>
+                      <stat.icon className={`h-5 w-5 ${stat.color}`} />
+                    </div>
+                    <TrendingUp className="h-4 w-4 text-zinc-400" />
+                  </div>
+                  <div className="mt-4">
+                    <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">
+                      {stat.value}
+                    </p>
+                    <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                      {stat.title}
+                    </p>
+                    <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-1">
+                      {stat.change}
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
       </div>
 
       <div className="grid gap-6 lg:grid-cols-3">

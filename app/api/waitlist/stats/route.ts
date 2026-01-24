@@ -19,7 +19,7 @@ export async function GET() {
     if (!session?.user?.id) {
       return NextResponse.json(
         { success: false, error: "Unauthorized" },
-        { status: 401 }
+        { status: 401 },
       );
     }
 
@@ -34,7 +34,7 @@ export async function GET() {
     if (!user?.consultantProfile) {
       return NextResponse.json(
         { success: false, error: "Consultant profile not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
@@ -48,7 +48,7 @@ export async function GET() {
     console.error("Error fetching waitlist stats:", error);
     return NextResponse.json(
       { success: false, error: "Failed to fetch waitlist statistics" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

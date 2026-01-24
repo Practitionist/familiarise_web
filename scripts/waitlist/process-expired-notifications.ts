@@ -9,10 +9,7 @@
 
 import prisma from "@/lib/prisma";
 import { WaitlistStatus } from "@prisma/client";
-import {
-  processExpiredNotifications,
-  handleSlotOpening,
-} from "@/lib/waitlist";
+import { processExpiredNotifications, handleSlotOpening } from "@/lib/waitlist";
 import { sendWaitlistExpiredEmail } from "@/lib/waitlist/notifications";
 
 async function main() {
@@ -92,7 +89,7 @@ async function main() {
 
     const duration = ((Date.now() - startTime) / 1000).toFixed(2);
     console.log(
-      `\n🎉 Completed in ${duration}s. Processed: ${result.processed}, Emails sent: ${expiredEntries.length}`
+      `\n🎉 Completed in ${duration}s. Processed: ${result.processed}, Emails sent: ${expiredEntries.length}`,
     );
 
     process.exit(0);

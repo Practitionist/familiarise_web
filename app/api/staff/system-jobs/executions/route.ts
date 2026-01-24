@@ -105,7 +105,7 @@ export async function GET(req: NextRequest) {
     console.error("Error fetching job executions:", error);
     return NextResponse.json(
       { error: "Failed to fetch job executions" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

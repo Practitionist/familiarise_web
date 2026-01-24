@@ -41,7 +41,13 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
           select: { id: true, name: true, email: true, image: true },
         },
         targetUser: {
-          select: { id: true, name: true, email: true, image: true, role: true },
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            image: true,
+            role: true,
+          },
         },
         actions: {
           include: {
@@ -63,7 +69,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     console.error("Error fetching moderation report:", error);
     return NextResponse.json(
       { error: "Failed to fetch report" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -109,10 +115,7 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
       updateData.status = status;
 
       // Set resolved info if resolving
-      if (
-        status === "DISMISSED" ||
-        status === "ACTION_TAKEN"
-      ) {
+      if (status === "DISMISSED" || status === "ACTION_TAKEN") {
         updateData.resolvedAt = new Date();
         updateData.resolvedBy = session.user.id;
       }
@@ -140,7 +143,7 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
     console.error("Error updating moderation report:", error);
     return NextResponse.json(
       { error: "Failed to update report" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

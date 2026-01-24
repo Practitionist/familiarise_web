@@ -196,7 +196,10 @@ export function ClientWebinarRegistration({
         </CardHeader>
         <CardContent>
           <p className="text-sm text-gray-600 mb-4">{sessionInfoText}</p>
-          <Badge variant="secondary" className="mb-4 bg-amber-100 text-amber-800">
+          <Badge
+            variant="secondary"
+            className="mb-4 bg-amber-100 text-amber-800"
+          >
             Event is full ({currentParticipants}/{maxParticipants} spots)
           </Badge>
         </CardContent>

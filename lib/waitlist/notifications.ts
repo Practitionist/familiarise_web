@@ -18,7 +18,7 @@ function getResendClient(): Resend | null {
 
   if (!RESEND_API_KEY) {
     console.warn(
-      "WARNING: RESEND_API_KEY is not defined. Email functionality will not work."
+      "WARNING: RESEND_API_KEY is not defined. Email functionality will not work.",
     );
     return null;
   }
@@ -49,7 +49,7 @@ export async function sendWaitlistJoinedEmail(params: {
 
     if (!resend) {
       console.error(
-        "RESEND_API_KEY is not configured. Cannot send waitlist joined email."
+        "RESEND_API_KEY is not configured. Cannot send waitlist joined email.",
       );
       return { success: false, error: "Email service not configured" };
     }
@@ -63,11 +63,11 @@ export async function sendWaitlistJoinedEmail(params: {
         position: params.position,
         estimatedWait: params.estimatedWait,
         dashboardUrl,
-      })
+      }),
     );
 
     console.log(
-      `Sending waitlist joined email to ${params.email} for ${params.eventType}: ${params.eventTitle}`
+      `Sending waitlist joined email to ${params.email} for ${params.eventType}: ${params.eventTitle}`,
     );
 
     const data = await resend.emails.send({
@@ -77,7 +77,10 @@ export async function sendWaitlistJoinedEmail(params: {
       html,
     });
 
-    console.log("Waitlist joined email sent successfully:", data.data?.id ?? "unknown");
+    console.log(
+      "Waitlist joined email sent successfully:",
+      data.data?.id ?? "unknown",
+    );
     return { success: true, data };
   } catch (error) {
     console.error("Failed to send waitlist joined email:", error);
@@ -103,7 +106,7 @@ export async function sendWaitlistSpotAvailableEmail(params: {
 
     if (!resend) {
       console.error(
-        "RESEND_API_KEY is not configured. Cannot send spot available email."
+        "RESEND_API_KEY is not configured. Cannot send spot available email.",
       );
       return { success: false, error: "Email service not configured" };
     }
@@ -122,11 +125,11 @@ export async function sendWaitlistSpotAvailableEmail(params: {
         bookNowUrl,
         declineUrl: `${respondUrl}?action=DECLINE`,
         skipUrl: `${respondUrl}?action=SKIP`,
-      })
+      }),
     );
 
     console.log(
-      `Sending spot available email to ${params.email} for ${params.eventType}: ${params.eventTitle}`
+      `Sending spot available email to ${params.email} for ${params.eventType}: ${params.eventTitle}`,
     );
 
     const data = await resend.emails.send({
@@ -136,7 +139,10 @@ export async function sendWaitlistSpotAvailableEmail(params: {
       html,
     });
 
-    console.log("Spot available email sent successfully:", data.data?.id ?? "unknown");
+    console.log(
+      "Spot available email sent successfully:",
+      data.data?.id ?? "unknown",
+    );
     return { success: true, data };
   } catch (error) {
     console.error("Failed to send spot available email:", error);
@@ -161,7 +167,7 @@ export async function sendWaitlistExpiringEmail(params: {
 
     if (!resend) {
       console.error(
-        "RESEND_API_KEY is not configured. Cannot send expiring email."
+        "RESEND_API_KEY is not configured. Cannot send expiring email.",
       );
       return { success: false, error: "Email service not configured" };
     }
@@ -175,11 +181,11 @@ export async function sendWaitlistExpiringEmail(params: {
         eventType: params.eventType,
         expiresAt: params.expiresAt.toISOString(),
         bookNowUrl,
-      })
+      }),
     );
 
     console.log(
-      `Sending expiring reminder email to ${params.email} for ${params.eventType}: ${params.eventTitle}`
+      `Sending expiring reminder email to ${params.email} for ${params.eventType}: ${params.eventTitle}`,
     );
 
     const data = await resend.emails.send({
@@ -189,7 +195,10 @@ export async function sendWaitlistExpiringEmail(params: {
       html,
     });
 
-    console.log("Expiring reminder email sent successfully:", data.data?.id ?? "unknown");
+    console.log(
+      "Expiring reminder email sent successfully:",
+      data.data?.id ?? "unknown",
+    );
     return { success: true, data };
   } catch (error) {
     console.error("Failed to send expiring email:", error);
@@ -212,7 +221,7 @@ export async function sendWaitlistExpiredEmail(params: {
 
     if (!resend) {
       console.error(
-        "RESEND_API_KEY is not configured. Cannot send expired email."
+        "RESEND_API_KEY is not configured. Cannot send expired email.",
       );
       return { success: false, error: "Email service not configured" };
     }
@@ -226,11 +235,11 @@ export async function sendWaitlistExpiredEmail(params: {
         eventType: params.eventType,
         rejoinUrl: params.rejoinUrl,
         dashboardUrl,
-      })
+      }),
     );
 
     console.log(
-      `Sending expired notification email to ${params.email} for ${params.eventType}: ${params.eventTitle}`
+      `Sending expired notification email to ${params.email} for ${params.eventType}: ${params.eventTitle}`,
     );
 
     const data = await resend.emails.send({
@@ -240,7 +249,10 @@ export async function sendWaitlistExpiredEmail(params: {
       html,
     });
 
-    console.log("Expired notification email sent successfully:", data.data?.id ?? "unknown");
+    console.log(
+      "Expired notification email sent successfully:",
+      data.data?.id ?? "unknown",
+    );
     return { success: true, data };
   } catch (error) {
     console.error("Failed to send expired email:", error);

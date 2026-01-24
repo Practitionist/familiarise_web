@@ -297,7 +297,7 @@ export function Overview({
               // Determine booking status from appointments and waitlist
               const hasConfirmedSlot =
                 classItem.appointments?.some(
-                  (a) => (a.slotsOfAppointment?.length ?? 0) > 0
+                  (a) => (a.slotsOfAppointment?.length ?? 0) > 0,
                 ) ?? false;
               const waitlistEntry = classItem.waitlist?.[0];
 

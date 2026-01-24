@@ -72,8 +72,8 @@ export const WaitlistSpotAvailableEmail = ({
 
             <Text style={paragraph}>Hi {name},</Text>
             <Text style={paragraph}>
-              Great news! A spot has opened up for <strong>{eventTitle}</strong>.
-              You now have the opportunity to complete your registration!
+              Great news! A spot has opened up for <strong>{eventTitle}</strong>
+              . You now have the opportunity to complete your registration!
             </Text>
 
             <Section style={urgentBox}>

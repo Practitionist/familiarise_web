@@ -114,7 +114,9 @@ const getDaysUntilDue = (dueBy: string | null) => {
   if (!dueBy) return null;
   const now = new Date();
   const due = new Date(dueBy);
-  const diffDays = Math.ceil((due.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+  const diffDays = Math.ceil(
+    (due.getTime() - now.getTime()) / (1000 * 60 * 60 * 24),
+  );
   return diffDays;
 };
 
@@ -195,7 +197,9 @@ export default function StaffDisputesPage() {
           </p>
         </div>
         <Button variant="outline" onClick={fetchDisputes} disabled={loading}>
-          <RefreshCw className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`} />
+          <RefreshCw
+            className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`}
+          />
           Refresh
         </Button>
       </div>
@@ -206,7 +210,9 @@ export default function StaffDisputesPage() {
           <AlertCircle className="h-4 w-4" />
           <AlertTitle>Urgent Attention Required</AlertTitle>
           <AlertDescription>
-            {urgentCount} dispute{urgentCount > 1 ? "s" : ""} require{urgentCount === 1 ? "s" : ""} response within 3 days. Please escalate to admin for evidence submission.
+            {urgentCount} dispute{urgentCount > 1 ? "s" : ""} require
+            {urgentCount === 1 ? "s" : ""} response within 3 days. Please
+            escalate to admin for evidence submission.
           </AlertDescription>
         </Alert>
       )}
@@ -224,7 +230,11 @@ export default function StaffDisputesPage() {
             </div>
           </CardContent>
         </Card>
-        <Card className={urgentCount > 0 ? "border-red-200 bg-red-50 dark:bg-red-950/20" : ""}>
+        <Card
+          className={
+            urgentCount > 0 ? "border-red-200 bg-red-50 dark:bg-red-950/20" : ""
+          }
+        >
           <CardContent className="p-4 flex items-center gap-4">
             <div className="p-2 rounded-lg bg-red-100 dark:bg-red-900">
               <AlertCircle className="h-5 w-5 text-red-600" />
@@ -289,7 +299,9 @@ export default function StaffDisputesPage() {
               <SelectContent>
                 <SelectItem value="all">All Status</SelectItem>
                 <SelectItem value="NEEDS_RESPONSE">Needs Response</SelectItem>
-                <SelectItem value="WARNING_NEEDS_RESPONSE">Warning - Needs Response</SelectItem>
+                <SelectItem value="WARNING_NEEDS_RESPONSE">
+                  Warning - Needs Response
+                </SelectItem>
                 <SelectItem value="UNDER_REVIEW">Under Review</SelectItem>
                 <SelectItem value="WON">Won</SelectItem>
                 <SelectItem value="LOST">Lost</SelectItem>
@@ -351,7 +363,10 @@ export default function StaffDisputesPage() {
               <TableBody>
                 {disputes.map((dispute) => {
                   const daysUntilDue = getDaysUntilDue(dispute.dueBy);
-                  const isUrgent = daysUntilDue !== null && daysUntilDue <= 3 && daysUntilDue >= 0;
+                  const isUrgent =
+                    daysUntilDue !== null &&
+                    daysUntilDue <= 3 &&
+                    daysUntilDue >= 0;
 
                   return (
                     <TableRow
@@ -362,11 +377,13 @@ export default function StaffDisputesPage() {
                       <TableCell>
                         <div>
                           <p className="font-mono text-sm">
-                            {dispute.disputeId?.slice(-12) || dispute.id.slice(-8).toUpperCase()}
+                            {dispute.disputeId?.slice(-12) ||
+                              dispute.id.slice(-8).toUpperCase()}
                           </p>
                           {dispute.payment && (
                             <p className="text-xs text-zinc-400">
-                              Payment: {dispute.payment.paymentIntent.slice(-12)}
+                              Payment:{" "}
+                              {dispute.payment.paymentIntent.slice(-12)}
                             </p>
                           )}
                         </div>
@@ -388,11 +405,19 @@ export default function StaffDisputesPage() {
                       </TableCell>
                       <TableCell>
                         {dispute.dueBy ? (
-                          <div className={isUrgent ? "text-red-600 font-medium" : "text-zinc-500"}>
+                          <div
+                            className={
+                              isUrgent
+                                ? "text-red-600 font-medium"
+                                : "text-zinc-500"
+                            }
+                          >
                             {formatDate(dispute.dueBy)}
                             {daysUntilDue !== null && daysUntilDue >= 0 && (
                               <p className="text-xs">
-                                {daysUntilDue === 0 ? "Due today!" : `${daysUntilDue} days left`}
+                                {daysUntilDue === 0
+                                  ? "Due today!"
+                                  : `${daysUntilDue} days left`}
                               </p>
                             )}
                           </div>

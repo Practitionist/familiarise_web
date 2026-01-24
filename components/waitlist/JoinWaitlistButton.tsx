@@ -27,7 +27,9 @@ export function JoinWaitlistButton({
   const { data: session } = useSession();
   const { toast } = useToast();
   const [isJoining, setIsJoining] = useState(false);
-  const [position, setPosition] = useState<number | null>(waitlistPosition ?? null);
+  const [position, setPosition] = useState<number | null>(
+    waitlistPosition ?? null,
+  );
   const [joined, setJoined] = useState(isOnWaitlist);
 
   // Sync state with props when they change

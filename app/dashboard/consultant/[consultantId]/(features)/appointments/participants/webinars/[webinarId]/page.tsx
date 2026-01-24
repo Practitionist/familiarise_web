@@ -155,7 +155,10 @@ export default function WebinarParticipantsPage() {
               <TabsTrigger value="waitlist">
                 Waitlist
                 {waitlist.length > 0 && (
-                  <Badge variant="secondary" className="ml-2 h-5 px-1.5 min-w-5">
+                  <Badge
+                    variant="secondary"
+                    className="ml-2 h-5 px-1.5 min-w-5"
+                  >
                     {waitlist.length}
                   </Badge>
                 )}
@@ -193,7 +196,9 @@ export default function WebinarParticipantsPage() {
                           <Button
                             variant="outline"
                             size="sm"
-                            onClick={() => handleRemoveParticipant(participant.id)}
+                            onClick={() =>
+                              handleRemoveParticipant(participant.id)
+                            }
                             disabled={removeParticipantMutation.isPending}
                           >
                             {removeParticipantMutation.isPending
@@ -237,16 +242,20 @@ export default function WebinarParticipantsPage() {
                         <TableCell>{entry.user.name}</TableCell>
                         <TableCell>{entry.user.email}</TableCell>
                         <TableCell>
-                          {format(new Date(entry.joinedAt), "MMM d, yyyy h:mm a")}
+                          {format(
+                            new Date(entry.joinedAt),
+                            "MMM d, yyyy h:mm a",
+                          )}
                         </TableCell>
                         <TableCell>
                           <span
-                            className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${entry.status === "NOTIFIED"
+                            className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                              entry.status === "NOTIFIED"
                                 ? "bg-amber-100 text-amber-800"
                                 : entry.status === "EXPIRED"
                                   ? "bg-red-100 text-red-800"
                                   : "bg-gray-100 text-gray-800"
-                              }`}
+                            }`}
                           >
                             {entry.status}
                           </span>

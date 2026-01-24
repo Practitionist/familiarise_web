@@ -101,7 +101,7 @@ export async function GET(req: NextRequest) {
     });
 
     const distribution = Object.fromEntries(
-      ratingDistribution.map((r) => [r.rating, r._count.id])
+      ratingDistribution.map((r) => [r.rating, r._count.id]),
     );
 
     return NextResponse.json({
@@ -119,7 +119,7 @@ export async function GET(req: NextRequest) {
     console.error("Error fetching reviews:", error);
     return NextResponse.json(
       { error: "Failed to fetch reviews" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

@@ -94,7 +94,7 @@ export async function GET(req: NextRequest) {
     console.error("Error fetching moderation stats:", error);
     return NextResponse.json(
       { error: "Failed to fetch stats" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

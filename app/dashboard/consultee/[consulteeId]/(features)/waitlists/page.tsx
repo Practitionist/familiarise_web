@@ -109,9 +109,10 @@ export default function WaitlistsPage() {
           setEntries(result.data);
 
           // Check for any NOTIFIED entries and show modal
-          const notifiedEntry = [...result.data.webinars, ...result.data.classes].find(
-            (e: WaitlistEntry) => e.status === "NOTIFIED"
-          );
+          const notifiedEntry = [
+            ...result.data.webinars,
+            ...result.data.classes,
+          ].find((e: WaitlistEntry) => e.status === "NOTIFIED");
           if (notifiedEntry) {
             setSelectedNotifiedEntry(notifiedEntry);
           }
@@ -243,7 +244,10 @@ export default function WaitlistsPage() {
                   {scheduledDate && (
                     <span className="flex items-center gap-1">
                       <Calendar className="h-3.5 w-3.5" />
-                      {format(new Date(scheduledDate), "MMM d, yyyy 'at' h:mm a")}
+                      {format(
+                        new Date(scheduledDate),
+                        "MMM d, yyyy 'at' h:mm a",
+                      )}
                     </span>
                   )}
 
@@ -259,7 +263,7 @@ export default function WaitlistsPage() {
                       A spot is available! Book before{" "}
                       {format(
                         new Date(entry.expiresAt),
-                        "MMM d, yyyy 'at' h:mm a"
+                        "MMM d, yyyy 'at' h:mm a",
                       )}
                     </p>
                   </div>
@@ -281,7 +285,7 @@ export default function WaitlistsPage() {
                       variant="outline"
                       onClick={() =>
                         router.push(
-                          `/explore/programs/plans/${type}s/${plan.id}`
+                          `/explore/programs/plans/${type}s/${plan.id}`,
                         )
                       }
                     >

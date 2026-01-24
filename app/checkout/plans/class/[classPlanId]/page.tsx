@@ -177,9 +177,10 @@ export default function ClassCheckoutPage({
         const firstClassId = availableClass.id;
 
         // Get waitlist ID from URL if coming from waitlist flow
-        const fromWaitlist = typeof resolvedSearchParams.fromWaitlist === 'string'
-          ? resolvedSearchParams.fromWaitlist
-          : undefined;
+        const fromWaitlist =
+          typeof resolvedSearchParams.fromWaitlist === "string"
+            ? resolvedSearchParams.fromWaitlist
+            : undefined;
         const checkoutData = createCheckoutData({
           appointmentType: "CLASS",
           planId: planData.data.id,

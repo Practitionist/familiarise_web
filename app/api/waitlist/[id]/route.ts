@@ -24,7 +24,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     if (!session?.user?.id) {
       return NextResponse.json(
         { success: false, error: "Unauthorized" },
-        { status: 401 }
+        { status: 401 },
       );
     }
 
@@ -98,7 +98,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     if (!entry) {
       return NextResponse.json(
         { success: false, error: "Waitlist entry not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
@@ -106,7 +106,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     if (entry.userId !== session.user.id) {
       return NextResponse.json(
         { success: false, error: "Unauthorized" },
-        { status: 403 }
+        { status: 403 },
       );
     }
 
@@ -127,7 +127,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     console.error("Error fetching waitlist entry:", error);
     return NextResponse.json(
       { success: false, error: "Failed to fetch waitlist entry" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -142,7 +142,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     if (!session?.user?.id) {
       return NextResponse.json(
         { success: false, error: "Unauthorized" },
-        { status: 401 }
+        { status: 401 },
       );
     }
 
@@ -156,7 +156,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     if (!result.success) {
       return NextResponse.json(
         { success: false, error: result.message },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -168,7 +168,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     console.error("Error leaving waitlist:", error);
     return NextResponse.json(
       { success: false, error: "Failed to leave waitlist" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

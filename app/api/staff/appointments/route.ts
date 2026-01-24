@@ -322,7 +322,8 @@ export async function GET(req: NextRequest) {
           break;
         case "WEBINAR":
           if (apt.webinar) {
-            consultant = apt.webinar.webinarPlan.consultantProfile?.user || null;
+            consultant =
+              apt.webinar.webinarPlan.consultantProfile?.user || null;
             consultee = {
               name: `${apt.webinar._count.waitlist} attendees`,
               email: "",

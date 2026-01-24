@@ -68,7 +68,7 @@ type SubscriptionCheckoutResult = {
 function buildPaymentMetadata(
   data: CheckoutInput,
   userId: string,
-): { appointmentId: string; appointmentType: string;[key: string]: string } {
+): { appointmentId: string; appointmentType: string; [key: string]: string } {
   return {
     appointmentId: "pending",
     appointmentType: data.appointmentType,
@@ -439,14 +439,14 @@ export async function validateSlotAvailability(
         // FIX: Filter by consultant - only check slots belonging to this consultant
         ...(consultantUserId
           ? [
-            {
-              user: {
-                some: {
-                  id: consultantUserId,
+              {
+                user: {
+                  some: {
+                    id: consultantUserId,
+                  },
                 },
               },
-            },
-          ]
+            ]
           : []),
       ],
     },
@@ -481,14 +481,14 @@ export async function validateSlotAvailability(
           // FIX: Filter by consultant - only check tentative slots for this consultant
           ...(consultantUserId
             ? [
-              {
-                user: {
-                  some: {
-                    id: consultantUserId,
+                {
+                  user: {
+                    some: {
+                      id: consultantUserId,
+                    },
                   },
                 },
-              },
-            ]
+              ]
             : []),
           {
             appointment: {
@@ -552,14 +552,14 @@ export async function validateSlotAvailability(
         // FIX: Filter by consultant - only count tentative slots for this consultant
         ...(consultantUserId
           ? [
-            {
-              user: {
-                some: {
-                  id: consultantUserId,
+              {
+                user: {
+                  some: {
+                    id: consultantUserId,
+                  },
                 },
               },
-            },
-          ]
+            ]
           : []),
         {
           appointment: {

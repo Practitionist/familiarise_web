@@ -51,9 +51,9 @@ export const WaitlistExpiredEmail = ({
 
             <Text style={paragraph}>Hi {name},</Text>
             <Text style={paragraph}>
-              Unfortunately, your reserved spot for <strong>{eventTitle}</strong>{" "}
-              has expired because we didn't receive your response within the
-              48-hour window.
+              Unfortunately, your reserved spot for{" "}
+              <strong>{eventTitle}</strong> has expired because we didn't
+              receive your response within the 48-hour window.
             </Text>
 
             <Section style={details}>
@@ -102,8 +102,8 @@ export const WaitlistExpiredEmail = ({
 
             <Text style={paragraph}>
               To avoid missing future opportunities, make sure to check your
-              email regularly when you're on a waitlist. You can also manage your
-              notification preferences in your{" "}
+              email regularly when you're on a waitlist. You can also manage
+              your notification preferences in your{" "}
               <Link href={dashboardUrl} style={link}>
                 dashboard settings
               </Link>
