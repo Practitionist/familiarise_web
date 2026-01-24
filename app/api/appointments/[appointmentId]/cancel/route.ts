@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import { NextRequest, NextResponse } from "next/server";
 import authOptions from "@/app/api/auth/[...nextauth]/options";
 import { CancellationReason } from "@prisma/client";
+import { handleSlotOpening } from "@/lib/waitlist/slot-handler";
 
 interface CancelRequestBody {
   reason?: CancellationReason;
@@ -106,8 +107,34 @@ export async function POST(
         success: true,
         cancellationReason: body.reason,
         cancelledAt: cancellationData.cancelledAt,
+        webinarId: appointment.webinar?.id,
+        classId: appointment.class?.id,
       };
     });
+
+    // Notify waitlist if a webinar or class appointment was cancelled
+    if (result.webinarId || result.classId) {
+      try {
+        await handleSlotOpening({
+          webinarId: result.webinarId ?? undefined,
+          classId: result.classId ?? undefined,
+          slotsAvailable: 1,
+          reason: "cancellation",
+        });
+
+        console.log(
+          JSON.stringify({
+            event: "waitlist_notified_after_cancellation",
+            webinarId: result.webinarId,
+            classId: result.classId,
+            timestamp: new Date().toISOString(),
+          })
+        );
+      } catch (waitlistError) {
+        // Log but don't fail the cancellation - waitlist notification is best-effort
+        console.error("Failed to notify waitlist after cancellation:", waitlistError);
+      }
+    }
 
     return NextResponse.json(result);
   } catch (error) {

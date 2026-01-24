@@ -6,6 +6,7 @@ import { WebinarStatus } from "@prisma/client";
 import { getServerSession } from "next-auth";
 import authOptions from "@/app/api/auth/[...nextauth]/options";
 import { findOrCreateTopics, transformNestedPlanTopics } from "@/lib/topics";
+import { handleSlotOpening } from "@/lib/waitlist/slot-handler";
 
 // Schema for POST request body based on WebinarPlanSchema
 // Topics are now accepted as names (strings) - API handles finding/creating
@@ -706,6 +707,39 @@ export async function PATCH(request: NextRequest) {
     console.log(
       "Update transaction completed successfully. Returning updated webinar data.",
     );
+
+    // Notify waitlist if capacity was increased
+    const oldMaxParticipants = existingPlan.maxParticipants;
+    const newMaxParticipants = result.webinarPlan.maxParticipants;
+
+    if (
+      newMaxParticipants > oldMaxParticipants &&
+      result.webinar?.id
+    ) {
+      const newSlotsAvailable = newMaxParticipants - oldMaxParticipants;
+
+      try {
+        await handleSlotOpening({
+          webinarId: result.webinar.id,
+          slotsAvailable: newSlotsAvailable,
+          reason: "capacity_increase",
+        });
+
+        console.log(
+          JSON.stringify({
+            event: "waitlist_notified_after_capacity_increase",
+            webinarId: result.webinar.id,
+            oldMaxParticipants,
+            newMaxParticipants,
+            newSlotsAvailable,
+            timestamp: new Date().toISOString(),
+          })
+        );
+      } catch (waitlistError) {
+        // Log but don't fail the update - waitlist notification is best-effort
+        console.error("Failed to notify waitlist after capacity increase:", waitlistError);
+      }
+    }
 
     // Transform topics to strings in response
     let responseData;

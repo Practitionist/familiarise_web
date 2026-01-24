@@ -83,6 +83,7 @@ function buildPaymentMetadata(
     discountCode: data.discountCode || "",
     notes: data.notes || "",
     ...(data.eventId && { eventId: data.eventId }),
+    ...(data.fromWaitlist && { fromWaitlist: data.fromWaitlist }),
   };
 }
 

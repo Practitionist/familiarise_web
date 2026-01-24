@@ -21,6 +21,7 @@ import {
   createInvoiceFromPayment,
   type AppointmentType,
 } from "@/lib/payments/payouts";
+import { markWaitlistAsBooked } from "@/lib/waitlist/slot-handler";
 
 // ============================================================================
 // Type Definitions
@@ -343,6 +344,27 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
         `⚠️ Failed to create invoice for payment ${payment.id}:`,
         invoiceError,
       );
+    }
+
+    // Update waitlist status if coming from waitlist flow
+    if (metadata.fromWaitlist) {
+      try {
+        await markWaitlistAsBooked(metadata.fromWaitlist);
+        console.log(
+          JSON.stringify({
+            event: "waitlist_booking_completed",
+            waitlistId: metadata.fromWaitlist,
+            paymentIntent: paymentIntentId,
+            timestamp: new Date().toISOString(),
+          })
+        );
+      } catch (waitlistError) {
+        // Log but don't fail the payment - waitlist update is best-effort
+        console.error(
+          `⚠️ Failed to update waitlist status for payment ${payment.id}:`,
+          waitlistError,
+        );
+      }
     }
 
     console.log(

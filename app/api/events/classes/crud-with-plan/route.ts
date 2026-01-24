@@ -7,6 +7,7 @@ import { addMonthsSafely } from "@/utils/dateUtils";
 import { getServerSession } from "next-auth";
 import authOptions from "@/app/api/auth/[...nextauth]/options";
 import { findOrCreateTopics, transformNestedPlanTopics } from "@/lib/topics";
+import { handleSlotOpening } from "@/lib/waitlist/slot-handler";
 
 // Schema for class content input (without Prisma-managed fields like createdAt, updatedAt, classPlanId)
 const ClassContentInputSchema = ClassContentSchema.omit({
@@ -677,6 +678,39 @@ export async function PATCH(request: NextRequest) {
     console.log(
       "Update transaction completed successfully. Returning updated class data.",
     );
+
+    // Notify waitlist if capacity was increased
+    const oldMaxParticipants = existingPlan.maxParticipants;
+    const newMaxParticipants = result.classPlan.maxParticipants;
+
+    if (
+      newMaxParticipants > oldMaxParticipants &&
+      result.class?.id
+    ) {
+      const newSlotsAvailable = newMaxParticipants - oldMaxParticipants;
+
+      try {
+        await handleSlotOpening({
+          classId: result.class.id,
+          slotsAvailable: newSlotsAvailable,
+          reason: "capacity_increase",
+        });
+
+        console.log(
+          JSON.stringify({
+            event: "waitlist_notified_after_capacity_increase",
+            classId: result.class.id,
+            oldMaxParticipants,
+            newMaxParticipants,
+            newSlotsAvailable,
+            timestamp: new Date().toISOString(),
+          })
+        );
+      } catch (waitlistError) {
+        // Log but don't fail the update - waitlist notification is best-effort
+        console.error("Failed to notify waitlist after capacity increase:", waitlistError);
+      }
+    }
 
     // Return the appropriate response based on whether we had a class instance
     // Transform topics to strings in response
