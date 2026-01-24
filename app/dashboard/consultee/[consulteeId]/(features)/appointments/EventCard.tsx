@@ -46,6 +46,10 @@ import { CancelConfirmationDialog } from "./CancelConfirmationDialog";
 import type { AppointmentStatus } from "@/utils/supportTicketUrl";
 import type { TAppointment } from "@/types/appointment";
 import type { SlotOfAppointment } from "@prisma/client";
+import {
+  WaitlistStatusBadge,
+  type BookingStatus,
+} from "@/components/ui/waitlist-status-badge";
 
 interface EventCardProps {
   title: string;
@@ -64,6 +68,9 @@ interface EventCardProps {
   appointment?: TAppointment;
   rawSlots?: SlotOfAppointment[];
   pendingPaymentUrl?: string | null;
+  // Booking status for webinars/classes
+  bookingStatus?: BookingStatus;
+  waitlistPosition?: number;
 }
 
 function formatSlotDate(date: Date | string): string {
@@ -133,6 +140,8 @@ export function EventCard({
   appointment,
   rawSlots = [],
   pendingPaymentUrl,
+  bookingStatus,
+  waitlistPosition,
 }: Readonly<EventCardProps>) {
   const { toast } = useToast();
   const router = useRouter();
@@ -518,22 +527,35 @@ export function EventCard({
         </div>
 
         {/* Badges */}
-        <div className="flex items-center gap-2 mb-4">
+        <div className="flex items-center gap-2 mb-4 flex-wrap">
           <Badge className="text-[10px] font-medium px-2 py-0.5 bg-transparent border border-zinc-300 text-zinc-600 rounded-md">
             {type}
           </Badge>
-          <Badge
-            className={cn(
-              "text-[10px] font-semibold px-2 py-0.5 border-0 flex items-center gap-1",
-              displayStatusStyle.bg,
-              displayStatusStyle.text,
-            )}
-          >
-            <span
-              className={cn("h-1.5 w-1.5 rounded-full", displayStatusStyle.dot)}
+          {/* Show booking status badge for webinars and classes */}
+          {(type === "Webinar" || type === "Class") && bookingStatus ? (
+            <WaitlistStatusBadge
+              bookingStatus={bookingStatus}
+              waitlistPosition={waitlistPosition}
+              size="sm"
+              showIcon={false}
             />
-            {displayStatusStyle.label || displayStatus?.replace(/_/g, " ")}
-          </Badge>
+          ) : (
+            <Badge
+              className={cn(
+                "text-[10px] font-semibold px-2 py-0.5 border-0 flex items-center gap-1",
+                displayStatusStyle.bg,
+                displayStatusStyle.text,
+              )}
+            >
+              <span
+                className={cn(
+                  "h-1.5 w-1.5 rounded-full",
+                  displayStatusStyle.dot
+                )}
+              />
+              {displayStatusStyle.label || displayStatus?.replace(/_/g, " ")}
+            </Badge>
+          )}
         </div>
 
         {/* Schedule Section */}

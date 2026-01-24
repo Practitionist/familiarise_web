@@ -437,13 +437,13 @@ export const ClassContentSchema = z.object({
       (val) => !val || profanityFreeRefinement(val),
       "URL contains inappropriate language",
     ),
-  order: z.number().min(1, "Order must be a positive number"),
+  order: z.number().optional(),
   hoursAllotted: z
     .number()
     .min(0.5, "Hours allotted must be at least 30 minutes"),
   // Optional fields for Prisma compatibility
-  createdAt: z.date().optional(),
-  updatedAt: z.date().optional(),
+  createdAt: z.union([z.date(), z.string()]).optional(),
+  updatedAt: z.union([z.date(), z.string()]).optional(),
   classPlanId: z.string().optional(),
 });
 

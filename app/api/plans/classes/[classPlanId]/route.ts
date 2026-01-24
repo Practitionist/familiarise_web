@@ -39,6 +39,13 @@ export async function GET(
                 },
               },
             },
+            waitlist: {
+              select: {
+                userId: true,
+                position: true,
+                status: true,
+              },
+            },
           },
         },
         topics: true,

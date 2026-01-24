@@ -20,6 +20,7 @@ export interface CreateWebinarPayload {
   durationInHours: number;
   maxParticipants: number;
   certificateProvided?: boolean;
+  recordingEnabled?: boolean;
   language?: string;
   level?: string;
   prerequisites?: string;

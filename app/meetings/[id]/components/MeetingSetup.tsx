@@ -4,14 +4,30 @@ import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/use-toast";
 import {
   CallingState,
-  DeviceSettings,
   useCall,
   useCallStateHooks,
   VideoPreview,
 } from "@stream-io/video-react-sdk";
-import { Mic, MicOff, Video, VideoOff, Settings, Loader2 } from "lucide-react";
+import {
+  Mic,
+  MicOff,
+  Video,
+  VideoOff,
+  Settings,
+  Loader2,
+  Volume2,
+  MonitorSpeaker,
+} from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { cn } from "@/utils/tailwind";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 interface MeetingSetupProps {
   setIsSetupComplete: (value: boolean) => void;
@@ -39,6 +55,115 @@ const createAudioAnalyzer = async () => {
     console.error("Error accessing microphone:", error);
     return null;
   }
+};
+
+const DeviceSelector = () => {
+  const { useMicrophoneState, useCameraState, useSpeakerState } =
+    useCallStateHooks();
+  const micState = useMicrophoneState();
+  const camState = useCameraState();
+  const speakerState = useSpeakerState?.();
+
+  const [selectedMic, setSelectedMic] = useState<string>("");
+  const [selectedCam, setSelectedCam] = useState<string>("");
+  const [selectedSpeaker, setSelectedSpeaker] = useState<string>("");
+
+  useEffect(() => {
+    if (micState.selectedDevice) setSelectedMic(micState.selectedDevice);
+  }, [micState.selectedDevice]);
+
+  useEffect(() => {
+    if (camState.selectedDevice) setSelectedCam(camState.selectedDevice);
+  }, [camState.selectedDevice]);
+
+  useEffect(() => {
+    if (speakerState?.selectedDevice)
+      setSelectedSpeaker(speakerState.selectedDevice);
+  }, [speakerState?.selectedDevice]);
+
+  return (
+    <div className="space-y-4">
+      {/* Camera */}
+      <div className="space-y-2">
+        <div className="flex items-center gap-2 text-zinc-700">
+          <Video className="w-4 h-4" />
+          <Label className="text-sm font-medium">Camera</Label>
+        </div>
+        <Select
+          value={selectedCam}
+          onValueChange={async (val) => {
+            setSelectedCam(val);
+            await camState.camera.select(val);
+          }}
+        >
+          <SelectTrigger className="bg-white border-zinc-200">
+            <SelectValue placeholder="Select Camera" />
+          </SelectTrigger>
+          <SelectContent>
+            {camState.devices?.map((d) => (
+              <SelectItem key={d.deviceId} value={d.deviceId}>
+                {d.label || `Camera ${d.deviceId}`}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      {/* Microphone */}
+      <div className="space-y-2">
+        <div className="flex items-center gap-2 text-zinc-700">
+          <Mic className="w-4 h-4" />
+          <Label className="text-sm font-medium">Microphone</Label>
+        </div>
+        <Select
+          value={selectedMic}
+          onValueChange={async (val) => {
+            setSelectedMic(val);
+            await micState.microphone.select(val);
+          }}
+        >
+          <SelectTrigger className="bg-white border-zinc-200">
+            <SelectValue placeholder="Select Microphone" />
+          </SelectTrigger>
+          <SelectContent>
+            {micState.devices?.map((d) => (
+              <SelectItem key={d.deviceId} value={d.deviceId}>
+                {d.label || `Microphone ${d.deviceId}`}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      {/* Speakers */}
+      {speakerState?.devices && speakerState.devices.length > 0 && (
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 text-zinc-700">
+            <Volume2 className="w-4 h-4" />
+            <Label className="text-sm font-medium">Speakers</Label>
+          </div>
+          <Select
+            value={selectedSpeaker}
+            onValueChange={async (val) => {
+              setSelectedSpeaker(val);
+              await speakerState.speaker.select(val);
+            }}
+          >
+            <SelectTrigger className="bg-white border-zinc-200">
+              <SelectValue placeholder="Select Speakers" />
+            </SelectTrigger>
+            <SelectContent>
+              {speakerState.devices.map((d) => (
+                <SelectItem key={d.deviceId} value={d.deviceId}>
+                  {d.label || `Speaker ${d.deviceId}`}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
+    </div>
+  );
 };
 
 const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
@@ -368,9 +493,9 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
             {showSettings && (
               <div className="mt-4 p-4 bg-zinc-50 rounded-xl border border-zinc-200">
                 <p className="text-sm font-medium text-zinc-700 mb-3">
-                  Device Settings
+                  Audio & Video Settings
                 </p>
-                <DeviceSettings />
+                <DeviceSelector />
               </div>
             )}
           </div>

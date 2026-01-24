@@ -209,7 +209,7 @@ export function EventPlannerForClass({
   const canAddMoreTopics = currentTopicCount < maxTopics;
 
   const handleFormSubmit = form.handleSubmit(
-    async () => {
+    async (values) => {
       // Validate scheduling start date/time is required
       if (!schedulingStartDate) {
         toast({
@@ -222,7 +222,11 @@ export function EventPlannerForClass({
       setShowConfirmation(true);
     },
     (errors) => {
-      console.log("Form validation failed with errors:", errors);
+      console.error(
+        "Form validation failed with errors:",
+        JSON.stringify(errors, null, 2),
+      );
+      console.log("Current form values:", form.getValues());
       toast({
         title: "Validation Error",
         description: "Please check the form for errors",
@@ -300,15 +304,18 @@ export function EventPlannerForClass({
             4 *
             (initialData?.classPlan?.sessionDurationInHours ?? 1),
           emailSupport: formData.emailSupport ?? "GENERAL",
-          classContents: (formData.classContents ?? []).map((content) => ({
-            ...content,
-            id: content.id || "",
-            createdAt: content.createdAt || now,
-            updatedAt: content.updatedAt || now,
-            classPlanId: content.classPlanId || "",
-            contentType: content.contentType || null,
-            contentUrl: content.contentUrl || null,
-          })),
+          classContents: (formData.classContents ?? []).map(
+            (content, index) => ({
+              ...content,
+              order: index + 1,
+              id: content.id || "",
+              createdAt: content.createdAt ? new Date(content.createdAt) : now,
+              updatedAt: content.updatedAt ? new Date(content.updatedAt) : now,
+              classPlanId: content.classPlanId || "",
+              contentType: content.contentType || null,
+              contentUrl: content.contentUrl || null,
+            }),
+          ),
           createdAt: initialData?.classPlan?.createdAt ?? now,
           updatedAt: now,
         },

@@ -25,7 +25,9 @@ import { validateSlotTiming } from "@/lib/payments/utils/slot-validation";
 import {
   countUniqueParticipants,
   isUserEnrolled,
+  countWebinarParticipants,
 } from "@/lib/payments/utils/participants";
+import { markWaitlistAsBooked } from "@/lib/waitlist/slot-handler";
 
 // Re-export for backward compatibility
 export const unifiedCheckoutSchema = checkoutSchema;
@@ -66,7 +68,7 @@ type SubscriptionCheckoutResult = {
 function buildPaymentMetadata(
   data: CheckoutInput,
   userId: string,
-): { appointmentId: string; appointmentType: string; [key: string]: string } {
+): { appointmentId: string; appointmentType: string;[key: string]: string } {
   return {
     appointmentId: "pending",
     appointmentType: data.appointmentType,
@@ -81,6 +83,7 @@ function buildPaymentMetadata(
     discountCode: data.discountCode || "",
     notes: data.notes || "",
     ...(data.eventId && { eventId: data.eventId }),
+    ...(data.fromWaitlist && { fromWaitlist: data.fromWaitlist }),
   };
 }
 
@@ -235,10 +238,18 @@ export async function calculateAmountAndValidate(
         const webinar = await tx.webinar.findUnique({
           where: { id: validatedData.eventId },
           include: {
-            webinarPlan: true,
+            webinarPlan: {
+              include: {
+                consultantProfile: true,
+              },
+            },
             appointment: {
               include: {
-                slotsOfAppointment: true,
+                slotsOfAppointment: {
+                  include: {
+                    user: { select: { id: true } },
+                  },
+                },
               },
             },
           },
@@ -249,8 +260,11 @@ export async function calculateAmountAndValidate(
         }
 
         plan = webinar.webinarPlan;
-        const currentWebinarParticipants =
-          webinar.appointment?.slotsOfAppointment?.length || 0;
+        const consultantUserId = plan.consultantProfile?.userId;
+        const currentWebinarParticipants = countWebinarParticipants(
+          webinar.appointment,
+          [consultantUserId || ""],
+        );
 
         if (currentWebinarParticipants >= plan.maxParticipants) {
           throw new Error("Webinar is full");
@@ -270,7 +284,11 @@ export async function calculateAmountAndValidate(
             classPlan: true,
             appointments: {
               include: {
-                slotsOfAppointment: true,
+                slotsOfAppointment: {
+                  include: {
+                    user: true,
+                  },
+                },
               },
             },
           },
@@ -281,10 +299,10 @@ export async function calculateAmountAndValidate(
         }
 
         plan = classInstance.classPlan;
-        const currentClassParticipants = classInstance.appointments.reduce(
-          (total: number, apt: { slotsOfAppointment: unknown[] }) =>
-            total + apt.slotsOfAppointment.length,
-          0,
+        // FIX: Count unique participants, not total slots
+        // A user enrolled in a class with 8 sessions should count as 1 participant, not 8
+        const currentClassParticipants = countUniqueParticipants(
+          classInstance.appointments,
         );
 
         if (currentClassParticipants >= plan.maxParticipants) {
@@ -421,14 +439,14 @@ export async function validateSlotAvailability(
         // FIX: Filter by consultant - only check slots belonging to this consultant
         ...(consultantUserId
           ? [
-              {
-                user: {
-                  some: {
-                    id: consultantUserId,
-                  },
+            {
+              user: {
+                some: {
+                  id: consultantUserId,
                 },
               },
-            ]
+            },
+          ]
           : []),
       ],
     },
@@ -463,14 +481,14 @@ export async function validateSlotAvailability(
           // FIX: Filter by consultant - only check tentative slots for this consultant
           ...(consultantUserId
             ? [
-                {
-                  user: {
-                    some: {
-                      id: consultantUserId,
-                    },
+              {
+                user: {
+                  some: {
+                    id: consultantUserId,
                   },
                 },
-              ]
+              },
+            ]
             : []),
           {
             appointment: {
@@ -534,14 +552,14 @@ export async function validateSlotAvailability(
         // FIX: Filter by consultant - only count tentative slots for this consultant
         ...(consultantUserId
           ? [
-              {
-                user: {
-                  some: {
-                    id: consultantUserId,
-                  },
+            {
+              user: {
+                some: {
+                  id: consultantUserId,
                 },
               },
-            ]
+            },
+          ]
           : []),
         {
           appointment: {
@@ -850,7 +868,11 @@ async function revalidateInsideLock(
         const webinar = await tx.webinar.findUnique({
           where: { id: data.eventId },
           include: {
-            webinarPlan: true,
+            webinarPlan: {
+              include: {
+                consultantProfile: true,
+              },
+            },
             appointment: {
               include: { slotsOfAppointment: true },
             },
@@ -859,8 +881,12 @@ async function revalidateInsideLock(
 
         if (!webinar) throw new Error("Webinar not found");
 
-        const currentParticipants =
-          webinar.appointment?.slotsOfAppointment?.length || 0;
+        const plan = webinar.webinarPlan;
+        const consultantUserId = plan.consultantProfile?.userId;
+        const currentParticipants = countWebinarParticipants(
+          webinar.appointment,
+          [consultantUserId || ""],
+        );
 
         if (currentParticipants >= webinar.webinarPlan.maxParticipants) {
           throw new Error("Webinar is full");
@@ -876,17 +902,22 @@ async function revalidateInsideLock(
           include: {
             classPlan: true,
             appointments: {
-              include: { slotsOfAppointment: true },
+              include: {
+                slotsOfAppointment: {
+                  include: {
+                    user: true,
+                  },
+                },
+              },
             },
           },
         });
 
         if (!classInstance) throw new Error("Class not found");
 
-        const currentParticipants = classInstance.appointments.reduce(
-          (total: number, apt: { slotsOfAppointment: unknown[] }) =>
-            total + apt.slotsOfAppointment.length,
-          0,
+        // FIX: Count unique participants, not total slots
+        const currentParticipants = countUniqueParticipants(
+          classInstance.appointments,
         );
 
         if (currentParticipants >= classInstance.classPlan.maxParticipants) {
@@ -1067,7 +1098,11 @@ export async function handleWebinarCheckout(
   const webinar = await tx.webinar.findUnique({
     where: { id: data.eventId },
     include: {
-      webinarPlan: true,
+      webinarPlan: {
+        include: {
+          consultantProfile: true,
+        },
+      },
       waitlist: true,
       appointment: {
         include: {
@@ -1086,8 +1121,10 @@ export async function handleWebinarCheckout(
   }
 
   const plan = webinar.webinarPlan;
-  const currentParticipants =
-    webinar.appointment?.slotsOfAppointment?.length || 0;
+  const consultantUserId = plan.consultantProfile?.userId;
+  const currentParticipants = countWebinarParticipants(webinar.appointment, [
+    consultantUserId || "",
+  ]);
 
   // Check if max participants reached
   if (currentParticipants >= plan.maxParticipants) {
@@ -1468,6 +1505,23 @@ export async function handleCheckout(
           timestamp: new Date().toISOString(),
         }),
       );
+
+      // Update waitlist status if coming from waitlist flow
+      if (isMockPayment && validatedData.fromWaitlist) {
+        try {
+          await markWaitlistAsBooked(validatedData.fromWaitlist);
+          console.log(
+            JSON.stringify({
+              event: "waitlist_booking_completed",
+              waitlistId: validatedData.fromWaitlist,
+              timestamp: new Date().toISOString(),
+            }),
+          );
+        } catch (waitlistError) {
+          // Log but don't fail the checkout - payment was successful
+          console.error("Failed to update waitlist status:", waitlistError);
+        }
+      }
 
       return {
         success: true,

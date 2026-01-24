@@ -173,12 +173,16 @@ export default function WebinarCheckoutPage({
         }
 
         // Create checkout data using the shared utility
+        const fromWaitlist = typeof resolvedSearchParams.fromWaitlist === 'string'
+          ? resolvedSearchParams.fromWaitlist
+          : undefined;
         const checkoutData = createCheckoutData({
           appointmentType: "WEBINAR",
           planId: planData.data.id,
           eventId: searchParamsValidation.data.eventId,
           discountCode: appliedDiscount?.code,
           paymentGateway: gateway,
+          fromWaitlist,
         });
 
         // Handle unified checkout flow using the utility

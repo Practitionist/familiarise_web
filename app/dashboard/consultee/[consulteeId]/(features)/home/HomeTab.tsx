@@ -30,6 +30,7 @@ import {
   getUpcomingEvents,
   getMonthlyEvents,
 } from "./event-processor";
+import { WaitlistStatusBadge } from "@/components/ui/waitlist-status-badge";
 
 interface HomeTabProps {
   userDetails: {
@@ -171,15 +172,32 @@ function UpcomingSessionCard({
           <Badge className="text-[10px] font-medium px-2 py-0.5 bg-transparent border border-zinc-600 text-zinc-300 shrink-0 rounded-md">
             {typeLabel}
           </Badge>
-          <Badge
-            className={cn(
-              "text-[10px] font-semibold px-2 py-0.5 border-0 shrink-0",
-              statusStyle.bg,
-              statusStyle.text,
+          {/* Show booking status badge for webinars and classes */}
+          {(event.type === "webinar" || event.type === "class") &&
+            event.bookingStatus && (
+              <WaitlistStatusBadge
+                bookingStatus={event.bookingStatus}
+                waitlistPosition={event.waitlistPosition}
+                size="sm"
+                showIcon={false}
+                className="shrink-0 border-0"
+              />
             )}
-          >
-            {event.status.replace(/_/g, " ")}
-          </Badge>
+          {/* Only show event status if not showing booking status */}
+          {!(
+            (event.type === "webinar" || event.type === "class") &&
+            event.bookingStatus
+          ) && (
+            <Badge
+              className={cn(
+                "text-[10px] font-semibold px-2 py-0.5 border-0 shrink-0",
+                statusStyle.bg,
+                statusStyle.text,
+              )}
+            >
+              {event.status.replace(/_/g, " ")}
+            </Badge>
+          )}
         </div>
         <Button
           size="sm"
@@ -269,15 +287,31 @@ function MonthlyEventItem({
               <Badge className="text-[10px] font-medium bg-transparent border border-zinc-300 text-zinc-600 rounded-md">
                 {typeLabel}
               </Badge>
-              <Badge
-                className={cn(
-                  "text-[10px] font-medium border-0",
-                  statusStyle.bg,
-                  statusStyle.text,
+              {/* Show booking status badge for webinars and classes */}
+              {(event.type === "webinar" || event.type === "class") &&
+                event.bookingStatus && (
+                  <WaitlistStatusBadge
+                    bookingStatus={event.bookingStatus}
+                    waitlistPosition={event.waitlistPosition}
+                    size="sm"
+                    showIcon={false}
+                  />
                 )}
-              >
-                {event.status.replace(/_/g, " ")}
-              </Badge>
+              {/* Only show event status if not showing booking status */}
+              {!(
+                (event.type === "webinar" || event.type === "class") &&
+                event.bookingStatus
+              ) && (
+                <Badge
+                  className={cn(
+                    "text-[10px] font-medium border-0",
+                    statusStyle.bg,
+                    statusStyle.text,
+                  )}
+                >
+                  {event.status.replace(/_/g, " ")}
+                </Badge>
+              )}
               <ChevronRight
                 className={cn(
                   "h-4 w-4 text-zinc-400 transition-transform duration-200",
@@ -308,15 +342,31 @@ function MonthlyEventItem({
               <Badge className="text-[10px] font-medium bg-transparent border border-zinc-300 text-zinc-600 rounded-md">
                 {typeLabel}
               </Badge>
-              <Badge
-                className={cn(
-                  "text-[10px] font-medium border-0",
-                  statusStyle.bg,
-                  statusStyle.text,
+              {/* Show booking status badge for webinars and classes (mobile) */}
+              {(event.type === "webinar" || event.type === "class") &&
+                event.bookingStatus && (
+                  <WaitlistStatusBadge
+                    bookingStatus={event.bookingStatus}
+                    waitlistPosition={event.waitlistPosition}
+                    size="sm"
+                    showIcon={false}
+                  />
                 )}
-              >
-                {event.status.replace(/_/g, " ")}
-              </Badge>
+              {/* Only show event status if not showing booking status (mobile) */}
+              {!(
+                (event.type === "webinar" || event.type === "class") &&
+                event.bookingStatus
+              ) && (
+                <Badge
+                  className={cn(
+                    "text-[10px] font-medium border-0",
+                    statusStyle.bg,
+                    statusStyle.text,
+                  )}
+                >
+                  {event.status.replace(/_/g, " ")}
+                </Badge>
+              )}
             </div>
           </div>
         </div>

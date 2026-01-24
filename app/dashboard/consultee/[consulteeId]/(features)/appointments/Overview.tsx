@@ -25,6 +25,7 @@ import {
   BookOpen,
 } from "lucide-react";
 import { motion } from "framer-motion";
+import type { BookingStatus } from "@/components/ui/waitlist-status-badge";
 
 interface OverviewProps {
   consultations: ConsultationWithPlan[];
@@ -54,6 +55,9 @@ interface DashboardCardProps {
     appointment?: TAppointment;
     rawSlots?: SlotOfAppointment[];
     pendingPaymentUrl?: string | null;
+    // Booking status for webinars/classes
+    bookingStatus?: BookingStatus;
+    waitlistPosition?: number;
   }>;
 }
 
@@ -226,6 +230,26 @@ export function Overview({
                 ...webinar,
                 type: "Webinar",
               });
+
+              // Determine booking status from appointment and waitlist
+              const hasConfirmedSlot =
+                (webinar.appointment?.slotsOfAppointment?.length ?? 0) > 0;
+              const waitlistEntry = webinar.waitlist?.[0];
+
+              let bookingStatus: BookingStatus = null;
+              let waitlistPosition: number | undefined;
+
+              if (hasConfirmedSlot) {
+                bookingStatus = "CONFIRMED";
+              } else if (waitlistEntry) {
+                if (waitlistEntry.status === "NOTIFIED") {
+                  bookingStatus = "NOTIFIED";
+                } else if (waitlistEntry.status === "WAITING") {
+                  bookingStatus = "WAITLISTED";
+                  waitlistPosition = waitlistEntry.position ?? undefined;
+                }
+              }
+
               return {
                 id: webinar.id,
                 title: webinar.webinarPlan.title,
@@ -246,6 +270,8 @@ export function Overview({
                 appointmentId: webinar.appointment?.id,
                 appointment: webinar.appointment as TAppointment | undefined,
                 rawSlots,
+                bookingStatus,
+                waitlistPosition,
               };
             }),
           )}
@@ -267,6 +293,27 @@ export function Overview({
                 ...classItem,
                 type: "Class",
               });
+
+              // Determine booking status from appointments and waitlist
+              const hasConfirmedSlot =
+                classItem.appointments?.some(
+                  (a) => (a.slotsOfAppointment?.length ?? 0) > 0
+                ) ?? false;
+              const waitlistEntry = classItem.waitlist?.[0];
+
+              let bookingStatus: BookingStatus = null;
+              let waitlistPosition: number | undefined;
+
+              if (hasConfirmedSlot) {
+                bookingStatus = "CONFIRMED";
+              } else if (waitlistEntry) {
+                if (waitlistEntry.status === "NOTIFIED") {
+                  bookingStatus = "NOTIFIED";
+                } else if (waitlistEntry.status === "WAITING") {
+                  bookingStatus = "WAITLISTED";
+                  waitlistPosition = waitlistEntry.position ?? undefined;
+                }
+              }
 
               return {
                 id: classItem.id,
@@ -290,6 +337,8 @@ export function Overview({
                   | TAppointment
                   | undefined,
                 rawSlots,
+                bookingStatus,
+                waitlistPosition,
               };
             }),
           )}
@@ -491,6 +540,8 @@ function DashboardCard({
                   appointment={item.appointment}
                   rawSlots={item.rawSlots}
                   pendingPaymentUrl={item.pendingPaymentUrl}
+                  bookingStatus={item.bookingStatus}
+                  waitlistPosition={item.waitlistPosition}
                 />
               </div>
             ))}
@@ -516,6 +567,8 @@ function DashboardCard({
                   appointment={item.appointment}
                   rawSlots={item.rawSlots}
                   pendingPaymentUrl={item.pendingPaymentUrl}
+                  bookingStatus={item.bookingStatus}
+                  waitlistPosition={item.waitlistPosition}
                 />
               </div>
             ))}

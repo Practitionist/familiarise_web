@@ -213,6 +213,7 @@ export class WebinarService {
       durationInHours: plan?.durationInHours ?? 1,
       maxParticipants: plan?.maxParticipants ?? 1,
       certificateProvided: plan?.certificateProvided,
+      recordingEnabled: plan?.recordingEnabled,
       language: plan?.language ?? undefined,
       level: plan?.level ?? undefined,
       prerequisites: plan?.prerequisites ?? undefined,
