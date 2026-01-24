@@ -207,7 +207,11 @@ export class PlannerService {
           existingData as ClassEvent | undefined,
         );
         // Form input is a valid subset of Partial<ClassEvent> - saveClass only uses the fields we provide
-        return this.saveClass(classData as Partial<ClassEvent>, consultantId);
+        return this.saveClass(
+          classData as Partial<ClassEvent>,
+          consultantId,
+          formData.scheduledAt?.toString(),
+        );
       }
       case "consultation": {
         const consultationData = this.buildConsultationDataFromForm(
@@ -364,6 +368,7 @@ export class PlannerService {
         meetingsPerWeek: formData.meetingsPerWeek ?? 1,
         maxParticipants: formData.maxParticipants,
         certificateProvided: formData.certificateProvided ?? false,
+        recordingEnabled: formData.recordingEnabled ?? false,
         emailSupport: formData.emailSupport || "GENERAL",
         language: formData.language || null,
         level: formData.level || null,

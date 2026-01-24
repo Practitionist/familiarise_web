@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import {
-  CallControls,
   CallParticipantsList,
   CallStatsButton,
   CallingState,
@@ -10,10 +9,15 @@ import {
   SpeakerLayout,
   useCall,
   useCallStateHooks,
+  ToggleAudioPublishingButton,
+  ToggleVideoPublishingButton,
+  ReactionsButton,
+  ScreenShareButton,
+  RecordCallButton,
 } from "@stream-io/video-react-sdk";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
-import { Users, LayoutList, Grid3X3, Monitor, X } from "lucide-react";
+import { Users, LayoutList, Grid3X3, Monitor, X, Phone } from "lucide-react";
 
 import {
   DropdownMenu,
@@ -237,13 +241,43 @@ const MeetingRoom = () => {
         <div className="fixed bottom-0 left-0 right-0 z-50">
           <div className="flex items-center justify-center px-4 py-4">
             <div className="flex items-center gap-2 px-4 py-3 bg-zinc-900/90 backdrop-blur-xl rounded-2xl border border-zinc-800 shadow-2xl">
-              {/* Stream Call Controls */}
-              <CallControls
-                onLeave={async () => {
+              {/* Custom Call Controls - Replaces default CallControls */}
+              {/* Audio Toggle */}
+              <ToggleAudioPublishingButton />
+
+              {/* Video Toggle */}
+              <ToggleVideoPublishingButton />
+
+              {/* Reactions */}
+              <ReactionsButton />
+
+              {/* Screen Share */}
+              <ScreenShareButton />
+
+              {/* Recording BUTTON for Consultant - Left of Leave Call (only if recording enabled) */}
+              {session?.user?.role === "CONSULTANT" &&
+                recordingEnabled &&
+                (meetingSessionId ? (
+                  <RecordingControls
+                    meetingSessionId={meetingSessionId}
+                    recordingEnabled={recordingEnabled}
+                    showOnlyButton={true}
+                  />
+                ) : (
+                  <RecordCallButton />
+                ))}
+
+              {/* Leave Call Button */}
+              <button
+                onClick={async () => {
                   console.log("Participant leaving call");
                   await cleanupAndNavigate(getDashboardUrl());
                 }}
-              />
+                className="p-3 rounded-full bg-red-500 hover:bg-red-600 transition-colors"
+                title="Leave call"
+              >
+                <Phone className="w-5 h-5 rotate-[135deg] text-white" />
+              </button>
 
               {/* Divider */}
               <div className="w-px h-8 bg-zinc-700 mx-1" />
@@ -304,22 +338,33 @@ const MeetingRoom = () => {
                 )}
               </button>
 
-              {/* Recording Controls */}
-              {meetingSessionId && (
-                <>
-                  <div className="w-px h-8 bg-zinc-700 mx-1" />
-                  <RecordingControls
-                    meetingSessionId={meetingSessionId}
-                    recordingEnabled={recordingEnabled}
-                  />
-                </>
-              )}
-
               {/* Divider */}
               {!isPersonalRoom && <div className="w-px h-8 bg-zinc-700 mx-1" />}
 
-              {/* End Call Button */}
+              {/* REC TIME Indicator for Consultant - Before End Call (only if recording enabled) */}
+              {session?.user?.role === "CONSULTANT" &&
+                meetingSessionId &&
+                recordingEnabled && (
+                  <RecordingControls
+                    meetingSessionId={meetingSessionId}
+                    recordingEnabled={recordingEnabled}
+                    showOnlyIndicator={true}
+                  />
+                )}
+
+              {/* End Call Button - Only for Consultant */}
               {!isPersonalRoom && <EndCallButton />}
+
+              {/* Recording Indicator for Consultee - At the very end (only if recording enabled) */}
+              {session?.user?.role === "CONSULTEE" &&
+                meetingSessionId &&
+                recordingEnabled && (
+                  <RecordingControls
+                    meetingSessionId={meetingSessionId}
+                    recordingEnabled={recordingEnabled}
+                    showOnlyIndicator={true}
+                  />
+                )}
             </div>
           </div>
         </div>

@@ -106,6 +106,7 @@ export async function POST(request: NextRequest) {
       consultantProfileId,
       topics: topicNames,
       certificateProvided,
+      recordingEnabled,
       meetingsPerWeek,
       emailSupport,
       classContents,
@@ -175,6 +176,7 @@ export async function POST(request: NextRequest) {
             materialProvided,
             learningOutcomes,
             certificateProvided,
+            recordingEnabled,
             meetingsPerWeek,
             sessionDurationInHours,
             totalSessions,
@@ -359,6 +361,7 @@ export async function PATCH(request: NextRequest) {
       status,
       startDate: startDateString,
       endDate: endDateString,
+      recordingEnabled,
     } = validatedData;
 
     // Find or create topics by name if provided
@@ -479,6 +482,8 @@ export async function PATCH(request: NextRequest) {
           updateData.priceCurrency = priceCurrency;
         if (certificateProvided !== undefined)
           updateData.certificateProvided = certificateProvided;
+        if (recordingEnabled !== undefined)
+          updateData.recordingEnabled = recordingEnabled;
         if (meetingsPerWeek !== undefined)
           updateData.meetingsPerWeek = meetingsPerWeek;
         if (emailSupport !== undefined) updateData.emailSupport = emailSupport;
