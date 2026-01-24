@@ -12,15 +12,20 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { CheckCircle } from "lucide-react";
 import { ClassPlanProgram } from "@/app/explore/programs/utils";
-import { isUserEnrolled } from "@/lib/payments/utils/participants";
+import { isUserEnrolled, countUniqueParticipants } from "@/lib/payments/utils/participants";
 import { formatCurrency } from "@/app/checkout/plans/math";
+import { JoinWaitlistButton, WaitlistBadge } from "@/components/waitlist";
 
 type ClientClassRegistrationProps = {
   readonly plan: ClassPlanProgram;
+  maxParticipants?: number;
+  waitlist?: Array<{ userId: string; position?: number | null }>;
 };
 
 export function ClientClassRegistration({
   plan,
+  maxParticipants,
+  waitlist = [],
 }: ClientClassRegistrationProps) {
   const { id: classId, price, priceCurrency, classes } = plan;
   const startDate = classes?.[0]?.startDate; // Corrected to startDate
@@ -34,6 +39,17 @@ export function ClientClassRegistration({
     ? isUserEnrolled(appointments, userId)
     : false;
 
+  // Calculate capacity - use plan's maxParticipants or prop override
+  const effectiveMaxParticipants = maxParticipants ?? plan.maxParticipants ?? 100;
+  const currentParticipants = countUniqueParticipants(appointments);
+  const isFull = currentParticipants >= effectiveMaxParticipants;
+
+  // Check if user is on the waitlist
+  const userWaitlistEntry = userId
+    ? waitlist.find((w) => w.userId === userId)
+    : null;
+  const isOnWaitlist = !!userWaitlistEntry;
+
   const handleRegistration = () => {
     if (!isLoggedIn) {
       window.location.href = `/auth/signin?callbackUrl=${encodeURIComponent(window.location.href)}`;
@@ -43,6 +59,10 @@ export function ClientClassRegistration({
   };
 
   if (!isLoggedIn) {
+    // Determine button state for non-logged in users
+    const signInButtonText = isFull ? "Class is Full" : "Sign in to Register";
+    const signInButtonDisabled = isFull;
+
     return (
       <Card>
         <CardHeader>
@@ -50,78 +70,30 @@ export function ClientClassRegistration({
         </CardHeader>
         <CardContent>
           <p className="text-gray-600 mb-4">
-            Please sign in to register for this class.
+            {startDate
+              ? `Class starts on ${new Date(startDate).toLocaleString(undefined, {
+                  dateStyle: "long",
+                  timeStyle: "short",
+                  timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                })}`
+              : "Start date to be announced"}
           </p>
-          {/* TODO: Implement registration form for non-logged in users
-          <div className="space-y-4">
-            <div>
-              <label
-                htmlFor="name"
-                className="block text-sm font-medium text-gray-700"
-              >
-                Full Name
-              </label>
-              <input
-                type="text"
-                id="name"
-                name="name"
-                className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2"
-                required
-              />
-            </div>
-            <div>
-              <label
-                htmlFor="email"
-                className="block text-sm font-medium text-gray-700"
-              >
-                Email
-              </label>
-              <input
-                type="email"
-                id="email"
-                name="email"
-                className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2"
-                required
-              />
-            </div>
-            <div>
-              <label
-                htmlFor="phone"
-                className="block text-sm font-medium text-gray-700"
-              >
-                Phone Number
-              </label>
-              <input
-                type="tel"
-                id="phone"
-                name="phone"
-                className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2"
-                placeholder="+1234567890"
-              />
-            </div>
-            <div>
-              <label
-                htmlFor="preferredLanguage"
-                className="block text-sm font-medium text-gray-700"
-              >
-                Preferred Language
-              </label>
-              <input
-                type="text"
-                id="preferredLanguage"
-                name="preferredLanguage"
-                className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2"
-                placeholder="e.g., English, Spanish, etc."
-                defaultValue={language || ""}
-              />
-            </div>
-          </div>
-          */}
+          {isFull && (
+            <Badge variant="secondary" className="mb-4 bg-amber-100 text-amber-800">
+              Class is full ({currentParticipants}/{effectiveMaxParticipants} spots)
+            </Badge>
+          )}
+          {!isFull && (
+            <p className="text-gray-600 mb-4">
+              Please sign in to register for this class.
+            </p>
+          )}
           <Button
             onClick={handleRegistration}
             className="w-full bg-black hover:bg-gray-800"
+            disabled={signInButtonDisabled}
           >
-            Sign in to Register
+            {signInButtonText}
           </Button>
         </CardContent>
       </Card>
@@ -159,6 +131,57 @@ export function ClientClassRegistration({
             details.
           </p>
         </CardContent>
+      </Card>
+    );
+  }
+
+  // Show waitlist UI when class is full
+  if (isFull && isLoggedIn && !isAlreadyEnrolled) {
+    // Get the first class instance ID for waitlist operations
+    const classInstanceId = classes?.[0]?.id;
+
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Join Class</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-gray-600 mb-4">
+            {startDate
+              ? `Class starts on ${new Date(startDate).toLocaleString(undefined, {
+                  dateStyle: "long",
+                  timeStyle: "short",
+                  timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                })}`
+              : "Start date to be announced"}
+          </p>
+          <Badge variant="secondary" className="mb-4 bg-amber-100 text-amber-800">
+            Class is full ({currentParticipants}/{effectiveMaxParticipants} spots)
+          </Badge>
+        </CardContent>
+        <CardFooter>
+          {isOnWaitlist ? (
+            <div className="w-full text-center">
+              <WaitlistBadge
+                position={userWaitlistEntry?.position ?? null}
+                variant="extended"
+              />
+              <p className="text-xs text-gray-500 mt-2">
+                We'll notify you when a spot opens up
+              </p>
+            </div>
+          ) : classInstanceId ? (
+            <JoinWaitlistButton
+              eventType="class"
+              eventId={classInstanceId}
+              className="w-full"
+            />
+          ) : (
+            <p className="text-sm text-gray-500 text-center">
+              No class instance available for waitlist
+            </p>
+          )}
+        </CardFooter>
       </Card>
     );
   }

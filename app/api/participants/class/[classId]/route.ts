@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { handleSlotOpening } from "@/lib/waitlist/slot-handler";
 
 export async function GET(
   request: Request,
@@ -43,9 +44,26 @@ export async function GET(
       ).values(),
     );
 
+    // Get waitlist entries with user details
+    const waitlist = await prisma.waitlist.findMany({
+      where: {
+        classId: classId,
+        status: {
+          in: ["WAITING", "NOTIFIED", "EXPIRED"],
+        },
+      },
+      include: {
+        user: true,
+      },
+      orderBy: {
+        joinedAt: "asc",
+      },
+    });
+
     return NextResponse.json({
       classEvent,
       participants,
+      waitlist,
     });
   } catch (error) {
     console.error("[CLASS_PARTICIPANTS_GET]", error);
@@ -88,6 +106,7 @@ export async function DELETE(
     }
 
     // Disconnect user from all slots they are in
+    let participantRemoved = false;
     for (const appointment of classEvent.appointments) {
       for (const slot of appointment.slotsOfAppointment) {
         if (slot.user.some((user) => user.id === userId)) {
@@ -99,7 +118,18 @@ export async function DELETE(
               },
             },
           });
+          participantRemoved = true;
         }
+      }
+    }
+
+    // Trigger waitlist notification if a participant was removed
+    if (participantRemoved) {
+      try {
+        await handleSlotOpening({ classId, slotsAvailable: 1 });
+      } catch (error) {
+        // Log error but don't fail the request - participant removal succeeded
+        console.error("[CLASS_WAITLIST_NOTIFICATION]", error);
       }
     }
 

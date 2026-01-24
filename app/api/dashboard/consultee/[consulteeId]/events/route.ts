@@ -97,16 +97,11 @@ export async function GET(
         // Webinars: User registered via waitlist or via appointment slots
         prisma.webinar.findMany({
           where: {
-            OR: [
-              { waitlist: { some: { userId } } },
-              {
-                appointment: {
-                  slotsOfAppointment: {
-                    some: { user: { some: { id: userId } } },
-                  },
-                },
+            appointment: {
+              slotsOfAppointment: {
+                some: { user: { some: { id: userId } } },
               },
-            ],
+            },
           },
           include: {
             webinarPlan: {
@@ -142,18 +137,13 @@ export async function GET(
         // Classes: User registered via waitlist or via appointment slots
         prisma.class.findMany({
           where: {
-            OR: [
-              { waitlist: { some: { userId } } },
-              {
-                appointments: {
-                  some: {
-                    slotsOfAppointment: {
-                      some: { user: { some: { id: userId } } },
-                    },
-                  },
+            appointments: {
+              some: {
+                slotsOfAppointment: {
+                  some: { user: { some: { id: userId } } },
                 },
               },
-            ],
+            },
           },
           include: {
             classPlan: {

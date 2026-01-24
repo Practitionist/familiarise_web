@@ -32,16 +32,21 @@ export async function GET(
               include: {
                 slotsOfAppointment: {
                   include: {
-                    user: true, // or select specific fields
+                    user: {
+                      select: { id: true },
+                    },
                   },
                 },
                 payment: true,
               },
             },
-            // Include other necessary fields/relations for each Webinar instance if needed
-            // For example, if WebinarDetails needs 'status' or 'meetingRoom' from the Webinar instance:
-            // status: true,
-            // meetingRoom: true,
+            waitlist: {
+              select: {
+                userId: true,
+                position: true,
+                status: true,
+              },
+            },
           },
         },
         topics: true,
