@@ -236,9 +236,7 @@ const RecordingControls = ({
         disabled={isLoading}
         className={cn(
           "w-[46px] h-[46px] rounded-full transition-all duration-200 flex items-center justify-center",
-          isRecording
-            ? "bg-red-500/20 border-2 border-red-500 hover:bg-red-500/30"
-            : "bg-zinc-800 hover:bg-zinc-700",
+          "bg-zinc-800 hover:bg-zinc-700",
           isLoading && "opacity-50 cursor-not-allowed"
         )}
         title={isRecording ? "Stop Recording" : "Start Recording"}
@@ -273,19 +271,17 @@ const RecordingControls = ({
         disabled={isLoading}
         className={cn(
           "p-3 rounded-full transition-all duration-200 flex items-center justify-center",
-          isRecording
-            ? "bg-red-500 hover:bg-red-600 text-white"
-            : "bg-zinc-800 hover:bg-zinc-700 text-white",
+          "bg-zinc-800 hover:bg-zinc-700",
           isLoading && "opacity-50 cursor-not-allowed"
         )}
         title={isRecording ? "Stop Recording" : "Start Recording"}
       >
         {isLoading ? (
-          <Loader2 className="w-5 h-5 animate-spin" />
+          <Loader2 className="w-5 h-5 animate-spin text-white" />
         ) : isRecording ? (
-          <Square className="w-5 h-5 fill-current" />
+          <Square className="w-4 h-4 fill-red-500 text-red-500" />
         ) : (
-          <Circle className="w-5 h-5 fill-red-500 text-red-500" />
+          <div className="w-4 h-4 rounded-full bg-red-500" />
         )}
       </button>
     </div>
