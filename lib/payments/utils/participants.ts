@@ -22,13 +22,17 @@ export function countUniqueParticipants(
   appointments: Array<{
     slotsOfAppointment: Array<{ user?: Array<{ id: string }> | unknown }>;
   }>,
+  excludeUserIds: string[] = [],
 ): number {
   const uniqueUserIds = new Set<string>();
 
   for (const apt of appointments) {
     for (const slot of apt.slotsOfAppointment) {
       if (Array.isArray(slot.user)) {
-        slot.user.filter(isUserWithId).forEach((u) => uniqueUserIds.add(u.id));
+        slot.user
+          .filter(isUserWithId)
+          .filter((u) => !excludeUserIds.includes(u.id))
+          .forEach((u) => uniqueUserIds.add(u.id));
       }
     }
   }
@@ -44,9 +48,8 @@ export function countUniqueParticipants(
  * @returns Number of unique participants across all slots
  */
 export function countWebinarParticipants(
-  appointment: {
-    slotsOfAppointment?: Array<{ user?: Array<{ id: string }> | unknown }>;
-  } | null,
+  appointment: any,
+  excludeUserIds: string[] = [],
 ): number {
   if (!appointment?.slotsOfAppointment) return 0;
 
@@ -54,7 +57,10 @@ export function countWebinarParticipants(
   const uniqueUserIds = new Set<string>();
   for (const slot of appointment.slotsOfAppointment) {
     if (Array.isArray(slot.user)) {
-      slot.user.filter(isUserWithId).forEach((u) => uniqueUserIds.add(u.id));
+      slot.user
+        .filter(isUserWithId)
+        .filter((u: { id: string }) => !excludeUserIds.includes(u.id))
+        .forEach((u: { id: string }) => uniqueUserIds.add(u.id));
     }
   }
   return uniqueUserIds.size;

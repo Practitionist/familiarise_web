@@ -25,6 +25,7 @@ import { validateSlotTiming } from "@/lib/payments/utils/slot-validation";
 import {
   countUniqueParticipants,
   isUserEnrolled,
+  countWebinarParticipants,
 } from "@/lib/payments/utils/participants";
 import { markWaitlistAsBooked } from "@/lib/waitlist/slot-handler";
 
@@ -236,10 +237,18 @@ export async function calculateAmountAndValidate(
         const webinar = await tx.webinar.findUnique({
           where: { id: validatedData.eventId },
           include: {
-            webinarPlan: true,
+            webinarPlan: {
+              include: {
+                consultantProfile: true,
+              },
+            },
             appointment: {
               include: {
-                slotsOfAppointment: true,
+                slotsOfAppointment: {
+                  include: {
+                    user: { select: { id: true } },
+                  },
+                },
               },
             },
           },
@@ -250,8 +259,11 @@ export async function calculateAmountAndValidate(
         }
 
         plan = webinar.webinarPlan;
-        const currentWebinarParticipants =
-          webinar.appointment?.slotsOfAppointment?.length || 0;
+        const consultantUserId = plan.consultantProfile?.userId;
+        const currentWebinarParticipants = countWebinarParticipants(
+          webinar.appointment,
+          [consultantUserId || ""],
+        );
 
         if (currentWebinarParticipants >= plan.maxParticipants) {
           throw new Error("Webinar is full");
@@ -855,7 +867,11 @@ async function revalidateInsideLock(
         const webinar = await tx.webinar.findUnique({
           where: { id: data.eventId },
           include: {
-            webinarPlan: true,
+            webinarPlan: {
+              include: {
+                consultantProfile: true,
+              },
+            },
             appointment: {
               include: { slotsOfAppointment: true },
             },
@@ -864,8 +880,12 @@ async function revalidateInsideLock(
 
         if (!webinar) throw new Error("Webinar not found");
 
-        const currentParticipants =
-          webinar.appointment?.slotsOfAppointment?.length || 0;
+        const plan = webinar.webinarPlan;
+        const consultantUserId = plan.consultantProfile?.userId;
+        const currentParticipants = countWebinarParticipants(
+          webinar.appointment,
+          [consultantUserId || ""],
+        );
 
         if (currentParticipants >= webinar.webinarPlan.maxParticipants) {
           throw new Error("Webinar is full");
@@ -1077,7 +1097,11 @@ export async function handleWebinarCheckout(
   const webinar = await tx.webinar.findUnique({
     where: { id: data.eventId },
     include: {
-      webinarPlan: true,
+      webinarPlan: {
+        include: {
+          consultantProfile: true,
+        },
+      },
       waitlist: true,
       appointment: {
         include: {
@@ -1096,8 +1120,10 @@ export async function handleWebinarCheckout(
   }
 
   const plan = webinar.webinarPlan;
-  const currentParticipants =
-    webinar.appointment?.slotsOfAppointment?.length || 0;
+  const consultantUserId = plan.consultantProfile?.userId;
+  const currentParticipants = countWebinarParticipants(webinar.appointment, [
+    consultantUserId || "",
+  ]);
 
   // Check if max participants reached
   if (currentParticipants >= plan.maxParticipants) {
