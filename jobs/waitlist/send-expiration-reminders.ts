@@ -84,7 +84,7 @@ export async function sendExpirationRemindersJob(): Promise<SendRemindersResult>
         name: entry.user.name || "Valued User",
         eventTitle,
         eventType,
-        eventId: planId,
+        eventId: eventId,
         expiresAt: entry.expiresAt,
         waitlistId: entry.id,
       });

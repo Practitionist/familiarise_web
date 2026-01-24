@@ -193,17 +193,42 @@ export async function updatePositions(params: {
   );
 }
 
+// Type for expired entry with user and event details
+export type ExpiredEntryWithDetails = Prisma.WaitlistGetPayload<{
+  include: {
+    user: {
+      select: {
+        id: true;
+        name: true;
+        email: true;
+      };
+    };
+    webinar: {
+      include: {
+        webinarPlan: true;
+      };
+    };
+    class: {
+      include: {
+        classPlan: true;
+      };
+    };
+  };
+}>;
+
 /**
  * Process expired notifications and notify next person in queue
  * Called by cron job to handle users who didn't respond in time
- * Returns the number of expired entries processed
+ * Returns the number of expired entries processed and the entries themselves
  */
 export async function processExpiredNotifications(): Promise<{
   processed: number;
+  entries: ExpiredEntryWithDetails[];
   errors: Array<{ id: string; error: string }>;
 }> {
   const now = new Date();
   const errors: Array<{ id: string; error: string }> = [];
+  const processedEntries: ExpiredEntryWithDetails[] = [];
 
   // Find all expired NOTIFIED entries
   const expiredEntries = await prisma.waitlist.findMany({
@@ -232,8 +257,6 @@ export async function processExpiredNotifications(): Promise<{
     },
   });
 
-  let processed = 0;
-
   for (const entry of expiredEntries) {
     try {
       await prisma.$transaction(async (tx) => {
@@ -249,7 +272,7 @@ export async function processExpiredNotifications(): Promise<{
         // Note: The slot-handler will be called separately to notify next person
       });
 
-      processed++;
+      processedEntries.push(entry);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
       errors.push({ id: entry.id, error: errorMessage });
@@ -269,7 +292,7 @@ export async function processExpiredNotifications(): Promise<{
     await updatePositions({ classId });
   }
 
-  return { processed, errors };
+  return { processed: processedEntries.length, entries: processedEntries, errors };
 }
 
 /**

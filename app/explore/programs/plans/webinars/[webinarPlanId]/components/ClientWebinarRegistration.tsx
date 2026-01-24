@@ -210,12 +210,16 @@ export function ClientWebinarRegistration({
                 We'll notify you when a spot opens up
               </p>
             </div>
-          ) : (
+          ) : webinarId ? (
             <JoinWaitlistButton
               eventType="webinar"
-              eventId={webinarId || ""}
+              eventId={webinarId}
               className="w-full"
             />
+          ) : (
+            <p className="text-sm text-gray-500 text-center">
+              No session available for waitlist
+            </p>
           )}
         </CardFooter>
       </Card>

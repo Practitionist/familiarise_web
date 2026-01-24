@@ -55,6 +55,10 @@ const NAV_SECTIONS: NavSection[] = [
     ],
   },
   {
+    title: null,
+    items: [{ name: "Waitlists", path: "waitlists" }],
+  },
+  {
     title: "System",
     items: [{ name: "System Jobs", path: "system-jobs" }],
   },

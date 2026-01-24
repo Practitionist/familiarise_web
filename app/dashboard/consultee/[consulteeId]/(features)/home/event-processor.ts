@@ -13,6 +13,7 @@ import type {
   TConsulteeEventsResponse,
 } from "@/types/consultee-events";
 import type { MeetingAppointment, MeetingSlot } from "@/lib/meeting";
+import type { BookingStatus } from "@/components/ui/waitlist-status-badge";
 
 /**
  * Unified event type for display in the dashboard
@@ -31,6 +32,9 @@ export interface ProcessedEvent {
   // Data needed for joining meetings
   joinableAppointment?: MeetingAppointment;
   joinableSlot?: MeetingSlot;
+  // Booking status for webinars/classes (CONFIRMED = paid, WAITLISTED/NOTIFIED = on waitlist)
+  bookingStatus?: BookingStatus;
+  waitlistPosition?: number;
 }
 
 /**
@@ -249,6 +253,27 @@ export function processWebinar(
     },
   };
 
+  // Determine booking status
+  // If user has appointment with slots, they're confirmed (paid)
+  // Otherwise check waitlist status
+  const hasConfirmedSlot =
+    (webinar.appointment?.slotsOfAppointment?.length ?? 0) > 0;
+  const waitlistEntry = webinar.waitlist?.[0]; // User's waitlist entry (filtered by API)
+
+  let bookingStatus: BookingStatus = null;
+  let waitlistPosition: number | undefined;
+
+  if (hasConfirmedSlot) {
+    bookingStatus = "CONFIRMED";
+  } else if (waitlistEntry) {
+    if (waitlistEntry.status === "NOTIFIED") {
+      bookingStatus = "NOTIFIED";
+    } else if (waitlistEntry.status === "WAITING") {
+      bookingStatus = "WAITLISTED";
+      waitlistPosition = waitlistEntry.position ?? undefined;
+    }
+  }
+
   return {
     id: webinar.id,
     type: "webinar",
@@ -263,6 +288,8 @@ export function processWebinar(
     appointmentId,
     joinableAppointment,
     joinableSlot: nextSlot.rawSlot,
+    bookingStatus,
+    waitlistPosition,
   };
 }
 
@@ -320,6 +347,29 @@ export function processClass(
     },
   };
 
+  // Determine booking status
+  // If user has appointment with slots, they're confirmed (paid)
+  // Otherwise check waitlist status
+  const hasConfirmedSlot =
+    classEvent.appointments?.some(
+      (a) => (a.slotsOfAppointment?.length ?? 0) > 0
+    ) ?? false;
+  const waitlistEntry = classEvent.waitlist?.[0]; // User's waitlist entry (filtered by API)
+
+  let bookingStatus: BookingStatus = null;
+  let waitlistPosition: number | undefined;
+
+  if (hasConfirmedSlot) {
+    bookingStatus = "CONFIRMED";
+  } else if (waitlistEntry) {
+    if (waitlistEntry.status === "NOTIFIED") {
+      bookingStatus = "NOTIFIED";
+    } else if (waitlistEntry.status === "WAITING") {
+      bookingStatus = "WAITLISTED";
+      waitlistPosition = waitlistEntry.position ?? undefined;
+    }
+  }
+
   return {
     id: classEvent.id,
     type: "class",
@@ -334,6 +384,8 @@ export function processClass(
     appointmentId: nextSlot.appointmentId,
     joinableAppointment,
     joinableSlot: nextSlot.rawSlot,
+    bookingStatus,
+    waitlistPosition,
   };
 }
 
