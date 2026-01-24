@@ -106,14 +106,15 @@ export type FormData = {
   meetingsPerWeek?: number;
   emailSupport?: PlanEmailSupport;
   certificateProvided?: boolean;
+  recordingEnabled?: boolean;
   classContents?: ClassContentInput[];
   scheduledAt?: string | Date | null;
   priceCurrency?: string;
 } & (
-  | {
+    | {
       durationInHours: number;
     }
-  | {
+    | {
       durationInMonths: number;
       meetingsPerWeek: number;
       emailSupport: "GENERAL" | "PRIORITY" | "DEDICATED";
@@ -128,7 +129,7 @@ export type FormData = {
         hoursAllotted: number;
       }[];
     }
-);
+  );
 
 export interface BasePlannerProps {
   isOpen: boolean;
@@ -166,6 +167,9 @@ export type ClassContentInput = {
   contentUrl?: string | null;
   order: number;
   hoursAllotted: number;
+  classPlanId?: string;
+  createdAt?: string | Date;
+  updatedAt?: string | Date;
 };
 
 // Form-to-Event input types - used when building event data from form submissions
@@ -204,6 +208,7 @@ export type ClassFormInput = {
     meetingsPerWeek: number;
     maxParticipants: number;
     certificateProvided: boolean;
+    recordingEnabled: boolean;
     emailSupport: string;
     language?: string | null;
     level?: string | null;

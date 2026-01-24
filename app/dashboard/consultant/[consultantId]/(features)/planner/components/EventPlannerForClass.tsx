@@ -114,46 +114,46 @@ export function EventPlannerForClass({
     resolver: zodResolver(ClassPlanSchema),
     defaultValues: initialData?.classPlan
       ? {
-          title: initialData.classPlan.title,
-          description: initialData.classPlan.description ?? "",
-          price: initialData.classPlan.price,
-          priceCurrency: initialData.classPlan.priceCurrency ?? "INR",
-          durationInMonths: initialData.classPlan.durationInMonths,
-          maxParticipants: initialData.classPlan.maxParticipants,
-          language: initialData.classPlan.language ?? "English",
-          level: initialData.classPlan.level ?? "Beginner",
-          prerequisites: initialData.classPlan.prerequisites ?? "",
-          materialProvided: initialData.classPlan.materialProvided ?? "",
-          learningOutcomes: initialData.classPlan.learningOutcomes,
-          topics: initialData.classPlan.topics ?? [],
-          certificateProvided: initialData.classPlan.certificateProvided,
-          recordingEnabled: initialData.classPlan.recordingEnabled ?? false,
-          meetingsPerWeek: initialData.classPlan.meetingsPerWeek,
-          emailSupport: initialData.classPlan.emailSupport,
-          consultantProfileId: initialData.classPlan.consultantProfileId,
-          classContents: initialData.classPlan.classContents ?? [],
-          planType: "class",
-        }
+        title: initialData.classPlan.title,
+        description: initialData.classPlan.description ?? "",
+        price: initialData.classPlan.price,
+        priceCurrency: initialData.classPlan.priceCurrency ?? "INR",
+        durationInMonths: initialData.classPlan.durationInMonths,
+        maxParticipants: initialData.classPlan.maxParticipants,
+        language: initialData.classPlan.language ?? "English",
+        level: initialData.classPlan.level ?? "Beginner",
+        prerequisites: initialData.classPlan.prerequisites ?? "",
+        materialProvided: initialData.classPlan.materialProvided ?? "",
+        learningOutcomes: initialData.classPlan.learningOutcomes,
+        topics: initialData.classPlan.topics ?? [],
+        certificateProvided: initialData.classPlan.certificateProvided,
+        recordingEnabled: initialData.classPlan.recordingEnabled ?? false,
+        meetingsPerWeek: initialData.classPlan.meetingsPerWeek,
+        emailSupport: initialData.classPlan.emailSupport,
+        consultantProfileId: initialData.classPlan.consultantProfileId,
+        classContents: initialData.classPlan.classContents ?? [],
+        planType: "class",
+      }
       : {
-          title: "",
-          description: "",
-          price: 0,
-          priceCurrency: "INR",
-          durationInMonths: 1,
-          maxParticipants: 30,
-          language: "English",
-          level: "Beginner",
-          prerequisites: "",
-          materialProvided: "",
-          learningOutcomes: [],
-          topics: [],
-          certificateProvided: false,
-          recordingEnabled: false,
-          meetingsPerWeek: 2,
-          emailSupport: "GENERAL" as const,
-          classContents: [],
-          planType: "class",
-        },
+        title: "",
+        description: "",
+        price: 0,
+        priceCurrency: "INR",
+        durationInMonths: 1,
+        maxParticipants: 30,
+        language: "English",
+        level: "Beginner",
+        prerequisites: "",
+        materialProvided: "",
+        learningOutcomes: [],
+        topics: [],
+        certificateProvided: false,
+        recordingEnabled: false,
+        meetingsPerWeek: 2,
+        emailSupport: "GENERAL" as const,
+        classContents: [],
+        planType: "class",
+      },
     mode: "onChange",
   });
 
@@ -209,7 +209,9 @@ export function EventPlannerForClass({
   const canAddMoreTopics = currentTopicCount < maxTopics;
 
   const handleFormSubmit = form.handleSubmit(
-    async () => {
+    async (values) => {
+
+
       // Validate scheduling start date/time is required
       if (!schedulingStartDate) {
         toast({
@@ -222,7 +224,8 @@ export function EventPlannerForClass({
       setShowConfirmation(true);
     },
     (errors) => {
-      console.log("Form validation failed with errors:", errors);
+      console.error("Form validation failed with errors:", JSON.stringify(errors, null, 2));
+      console.log("Current form values:", form.getValues());
       toast({
         title: "Validation Error",
         description: "Please check the form for errors",
@@ -300,11 +303,12 @@ export function EventPlannerForClass({
             4 *
             (initialData?.classPlan?.sessionDurationInHours ?? 1),
           emailSupport: formData.emailSupport ?? "GENERAL",
-          classContents: (formData.classContents ?? []).map((content) => ({
+          classContents: (formData.classContents ?? []).map((content, index) => ({
             ...content,
+            order: index + 1,
             id: content.id || "",
-            createdAt: content.createdAt || now,
-            updatedAt: content.updatedAt || now,
+            createdAt: content.createdAt ? new Date(content.createdAt) : now,
+            updatedAt: content.updatedAt ? new Date(content.updatedAt) : now,
             classPlanId: content.classPlanId || "",
             contentType: content.contentType || null,
             contentUrl: content.contentUrl || null,
