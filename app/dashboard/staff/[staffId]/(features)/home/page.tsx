@@ -393,12 +393,6 @@ export default function StaffHomePage() {
                 Review Content
               </Button>
             </Link>
-            <Link href={`/dashboard/staff/${staffId}/knowledge-base`}>
-              <Button variant="outline" className="w-full justify-start gap-2">
-                <Clock className="h-4 w-4" />
-                Knowledge Base
-              </Button>
-            </Link>
           </div>
         </CardContent>
       </Card>
