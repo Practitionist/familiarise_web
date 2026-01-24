@@ -146,7 +146,7 @@ The Waitlist System allows users to join a queue when webinars or classes are at
 │                    Background Jobs                               │
 ├─────────────────────────────────────────────────────────────────┤
 │  jobs/waitlist/send-expiration-reminders.ts (hourly)            │
-│  jobs/waitlist/process-expired-notifications.ts (every 30 min)  │
+│  jobs/waitlist/process-expired-notifications.ts (hourly)        │
 └─────────────────────────────────────────────────────────────────┘
                                 │
                                 ▼
@@ -455,7 +455,7 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    A[Cron job runs every 30 min] --> B[Find NOTIFIED entries with expiresAt < now]
+    A[Cron job runs hourly] --> B[Find NOTIFIED entries with expiresAt < now]
     B --> C{Any expired?}
     C -->|No| D[End]
     C -->|Yes| E[Loop through expired entries]
@@ -622,7 +622,7 @@ for (const entry of entries) {
 
 **Purpose:** Mark expired notifications and notify next users in queue.
 
-**Schedule:** Run every 30 minutes via GitHub Actions
+**Schedule:** Run hourly via GitHub Actions
 
 **Logic:**
 ```typescript
@@ -791,7 +791,7 @@ on:
 ```yaml
 on:
   schedule:
-    - cron: '*/30 * * * *'  # Every 30 minutes
+    - cron: '0 * * * *'  # Every hour
   workflow_dispatch: {}  # Manual trigger
 ```
 

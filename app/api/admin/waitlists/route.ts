@@ -64,6 +64,88 @@ export async function GET(req: NextRequest) {
       };
     }
 
+    // Filter by timeline at database level
+    const now = new Date();
+    if (timeline === "upcoming") {
+      // Upcoming: scheduled date is in the future
+      where.OR = [
+        {
+          webinar: {
+            appointment: {
+              slotsOfAppointment: {
+                some: {
+                  startsAt: { gt: now },
+                },
+              },
+            },
+          },
+        },
+        {
+          class: {
+            appointments: {
+              some: {
+                slotsOfAppointment: {
+                  some: {
+                    startsAt: { gt: now },
+                  },
+                },
+              },
+            },
+          },
+        },
+      ];
+    } else if (timeline === "past") {
+      // Past: scheduled date is in the past (or no schedule)
+      where.AND = [
+        {
+          OR: [
+            // Webinar with past date
+            {
+              webinar: {
+                appointment: {
+                  slotsOfAppointment: {
+                    every: {
+                      startsAt: { lte: now },
+                    },
+                  },
+                },
+              },
+            },
+            // Class with past date
+            {
+              class: {
+                appointments: {
+                  every: {
+                    slotsOfAppointment: {
+                      every: {
+                        startsAt: { lte: now },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            // No appointment scheduled (webinar with null appointment)
+            {
+              webinarId: { not: null },
+              webinar: {
+                appointment: null,
+              },
+            },
+            // No appointments scheduled (class with empty appointments)
+            {
+              classId: { not: null },
+              class: {
+                appointments: {
+                  none: {},
+                },
+              },
+            },
+          ],
+        },
+      ];
+    }
+
     // Fetch waitlist entries with full appointment data
     const [waitlists, total] = await Promise.all([
       prisma.waitlist.findMany({
@@ -142,8 +224,6 @@ export async function GET(req: NextRequest) {
       prisma.waitlist.count({ where }),
     ]);
 
-    const now = new Date();
-
     // Transform data for frontend
     const transformedWaitlists = waitlists.map((entry) => {
       // Get scheduled date
@@ -183,17 +263,7 @@ export async function GET(req: NextRequest) {
       };
     });
 
-    // Filter by timeline after transformation (since we need scheduledDate)
-    let filteredWaitlists = transformedWaitlists;
-    if (timeline === "upcoming") {
-      filteredWaitlists = transformedWaitlists.filter(
-        (w) => w.isUpcoming === true
-      );
-    } else if (timeline === "past") {
-      filteredWaitlists = transformedWaitlists.filter(
-        (w) => w.isUpcoming === false
-      );
-    }
+    // Timeline filtering is now done at database level (see where clause above)
 
     // Get stats for the header
     const stats = await prisma.waitlist.groupBy({
@@ -210,11 +280,11 @@ export async function GET(req: NextRequest) {
     );
 
     // Group entries if requested
-    let groupedData: Record<string, typeof filteredWaitlists> | null = null;
+    let groupedData: Record<string, typeof transformedWaitlists> | null = null;
 
     if (groupBy === "event") {
       groupedData = {};
-      for (const entry of filteredWaitlists) {
+      for (const entry of transformedWaitlists) {
         const key = `${entry.eventType}:${entry.eventId}`;
         const label = entry.eventTitle;
         if (!groupedData[label]) {
@@ -224,7 +294,7 @@ export async function GET(req: NextRequest) {
       }
     } else if (groupBy === "status") {
       groupedData = {};
-      for (const entry of filteredWaitlists) {
+      for (const entry of transformedWaitlists) {
         if (!groupedData[entry.status]) {
           groupedData[entry.status] = [];
         }
@@ -236,7 +306,7 @@ export async function GET(req: NextRequest) {
         "Past Events": [],
         "No Date Set": [],
       };
-      for (const entry of filteredWaitlists) {
+      for (const entry of transformedWaitlists) {
         if (entry.isUpcoming === true) {
           groupedData["Upcoming Events"].push(entry);
         } else if (entry.isUpcoming === false) {
@@ -261,10 +331,9 @@ export async function GET(req: NextRequest) {
     });
 
     return NextResponse.json({
-      waitlists: filteredWaitlists,
+      waitlists: transformedWaitlists,
       grouped: groupedData,
       total,
-      filteredTotal: filteredWaitlists.length,
       page,
       totalPages: Math.ceil(total / limit),
       stats: {
