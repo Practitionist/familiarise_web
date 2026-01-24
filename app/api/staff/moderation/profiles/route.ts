@@ -7,7 +7,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import authOptions from "@/app/api/auth/[...nextauth]/options";
 import prisma from "@/lib/prisma";
-import { UserRole, ProfileVerificationStatus } from "@prisma/client";
+import { UserRole, ProfileVerificationStatus, Prisma } from "@prisma/client";
 
 /**
  * GET /api/staff/moderation/profiles
@@ -35,8 +35,7 @@ export async function GET(req: NextRequest) {
     const limit = parseInt(searchParams.get("limit") || "20");
     const offset = (page - 1) * limit;
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const where: any = {};
+    const where: Prisma.ConsultantProfileVerificationWhereInput = {};
     if (status) where.status = status;
 
     const [verifications, total] = await Promise.all([

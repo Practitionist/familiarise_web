@@ -7,7 +7,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import authOptions from "@/app/api/auth/[...nextauth]/options";
 import prisma from "@/lib/prisma";
-import { UserRole } from "@prisma/client";
+import { UserRole, Prisma } from "@prisma/client";
 
 /**
  * GET /api/staff/moderation/reviews
@@ -37,17 +37,16 @@ export async function GET(req: NextRequest) {
     const limit = parseInt(searchParams.get("limit") || "20");
     const offset = (page - 1) * limit;
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const where: any = {};
+    const where: Prisma.ConsultantReviewWhereInput = {};
 
     if (consultantProfileId) {
       where.consultantProfileId = consultantProfileId;
     }
-    if (minRating) {
-      where.rating = { ...where.rating, gte: parseInt(minRating) };
-    }
-    if (maxRating) {
-      where.rating = { ...where.rating, lte: parseInt(maxRating) };
+    if (minRating || maxRating) {
+      where.rating = {
+        ...(minRating && { gte: parseInt(minRating) }),
+        ...(maxRating && { lte: parseInt(maxRating) }),
+      };
     }
 
     const [reviews, total] = await Promise.all([

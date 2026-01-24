@@ -44,10 +44,21 @@ export async function GET(req: NextRequest) {
       where.appointmentType = type;
     }
 
+    // Filter by date at the database level using slotsOfAppointment
+    if (dateFrom || dateTo) {
+      where.slotsOfAppointment = {
+        some: {
+          ...(dateFrom && { startsAt: { gte: new Date(dateFrom) } }),
+          ...(dateTo && { startsAt: { lte: new Date(dateTo) } }),
+        },
+      };
+    }
+
     // Handle search across multiple fields
     if (search) {
       where.OR = [
         { id: { contains: search, mode: "insensitive" } },
+        // Consultation search
         {
           consultation: {
             consultationPlan: {
@@ -78,6 +89,30 @@ export async function GET(req: NextRequest) {
                   { email: { contains: search, mode: "insensitive" } },
                 ],
               },
+            },
+          },
+        },
+        // Subscription search
+        {
+          subscription: {
+            subscriptionPlan: {
+              title: { contains: search, mode: "insensitive" },
+            },
+          },
+        },
+        // Webinar search
+        {
+          webinar: {
+            webinarPlan: {
+              title: { contains: search, mode: "insensitive" },
+            },
+          },
+        },
+        // Class search
+        {
+          class: {
+            classPlan: {
+              title: { contains: search, mode: "insensitive" },
             },
           },
         },
@@ -385,20 +420,6 @@ export async function GET(req: NextRequest) {
           (apt) => apt.status === status,
         );
       }
-    }
-
-    // Filter by date if provided
-    if (dateFrom) {
-      const fromDate = new Date(dateFrom);
-      filteredAppointments = filteredAppointments.filter(
-        (apt) => new Date(apt.scheduledAt) >= fromDate,
-      );
-    }
-    if (dateTo) {
-      const toDate = new Date(dateTo);
-      filteredAppointments = filteredAppointments.filter(
-        (apt) => new Date(apt.scheduledAt) <= toDate,
-      );
     }
 
     // Get counts for stats

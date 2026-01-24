@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "lib/prisma";
 import { getServerSession } from "next-auth";
 import authOptions from "../../auth/[...nextauth]/options";
-import { FeedbackStatus } from "@prisma/client";
+import { FeedbackStatus, Prisma } from "@prisma/client";
 
 export async function GET(req: NextRequest) {
   try {
@@ -28,7 +28,7 @@ export async function GET(req: NextRequest) {
     const limit = parseInt(searchParams.get("limit") || "20");
 
     // Build where clause
-    const where: any = {};
+    const where: Prisma.FeedbackWhereInput = {};
 
     if (status && status !== "all") {
       where.status = status as FeedbackStatus;

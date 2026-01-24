@@ -7,7 +7,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import authOptions from "@/app/api/auth/[...nextauth]/options";
 import prisma from "@/lib/prisma";
-import { UserRole, SystemJobStatus } from "@prisma/client";
+import { UserRole, SystemJobStatus, Prisma } from "@prisma/client";
 
 /**
  * GET /api/staff/system-jobs/executions
@@ -36,8 +36,7 @@ export async function GET(req: NextRequest) {
     const limit = parseInt(searchParams.get("limit") || "20");
     const offset = (page - 1) * limit;
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const where: any = {};
+    const where: Prisma.SystemJobExecutionWhereInput = {};
 
     if (jobId) {
       where.jobId = jobId;
@@ -82,7 +81,11 @@ export async function GET(req: NextRequest) {
       itemsProcessed: execution.itemsProcessed,
       errorCount: execution.errorCount,
       triggeredBy: execution.triggeredBy
-        ? userMap.get(execution.triggeredBy) || { id: execution.triggeredBy }
+        ? userMap.get(execution.triggeredBy) || {
+            id: execution.triggeredBy,
+            name: "Deleted User",
+            email: null,
+          }
         : null,
       result: execution.result,
       errorLog: execution.errorLog,
