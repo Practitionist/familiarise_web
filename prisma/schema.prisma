@@ -58,6 +58,11 @@ model User {
   accounts Account[] // NextAuth Accounts
   sessions Session[] // NextAuth Sessions
 
+  // Staff Dashboard Relations
+  reportsSubmitted  ModerationReport[] @relation("ReportsSubmitted")
+  reportsReceived   ModerationReport[] @relation("ReportsReceived")
+  moderationActions ModerationAction[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -355,6 +360,9 @@ model ConsultantProfile {
   earnings       ConsultantEarnings[]
   payouts        Payout[]
   payoutAccounts PayoutAccount[]
+
+  // Profile verification
+  verificationRequests ConsultantProfileVerification[]
 
   // Cached balances (in smallest currency unit, e.g., paise)
   totalRevenue   Int @default(0)
@@ -1601,3 +1609,182 @@ enum SessionType {
   GROUP // Group sessions
   ASYNC_REVIEW // Asynchronous document/code review
 }
+
+//////////////////////////////////////////////////// STAFF DASHBOARD MODELS ////////////////////////////////////////////////////
+
+// Content Moderation Enums
+enum ModerationReportType {
+  REVIEW
+  PROFILE
+  MESSAGE
+  DOCUMENT
+  OTHER
+}
+
+enum ModerationReportStatus {
+  PENDING
+  UNDER_REVIEW
+  DISMISSED
+  ACTION_TAKEN
+  ESCALATED
+}
+
+enum ModerationActionType {
+  WARNING_ISSUED
+  CONTENT_REMOVED
+  USER_SUSPENDED
+  USER_BANNED
+  PROFILE_UNVERIFIED
+  NO_ACTION
+}
+
+enum ProfileVerificationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  NEEDS_INFO
+}
+
+enum SystemJobStatus {
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+// Content Moderation Models
+model ModerationReport {
+  id          String                 @id @default(uuid())
+  type        ModerationReportType
+  status      ModerationReportStatus @default(PENDING)
+  reason      String
+  description String?                @db.Text
+  reportCount Int                    @default(1) // Aggregated count for duplicates
+
+  // Content reference - one of these will be set based on type
+  contentText String? @db.Text // For review text, message content, etc.
+  contentUrl  String? // For profile URLs, document URLs, etc.
+
+  // Reporter
+  reportedById String
+  reportedBy   User   @relation("ReportsSubmitted", fields: [reportedById], references: [id], onUpdate: Cascade, onDelete: Cascade)
+
+  // Target user (who is being reported)
+  targetUserId String
+  targetUser   User   @relation("ReportsReceived", fields: [targetUserId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+
+  // Optional entity references
+  reviewId String? // If reporting a ConsultantReview
+
+  // Staff assignment
+  assignedToId String?
+
+  // Resolution
+  resolvedAt DateTime?
+  resolvedBy String? // Staff user ID
+
+  actions ModerationAction[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([type])
+  @@index([reportedById])
+  @@index([targetUserId])
+  @@index([assignedToId])
+  @@index([createdAt])
+}
+
+model ModerationAction {
+  id         String               @id @default(uuid())
+  actionType ModerationActionType
+  notes      String?              @db.Text
+
+  report   ModerationReport @relation(fields: [reportId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  reportId String
+
+  // Staff who took the action
+  takenById String
+  takenBy   User   @relation(fields: [takenById], references: [id], onUpdate: Cascade, onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([reportId])
+  @@index([takenById])
+  @@index([actionType])
+}
+
+// Profile Verification Models
+model ConsultantProfileVerification {
+  id     String                     @id @default(uuid())
+  status ProfileVerificationStatus @default(PENDING)
+
+  consultantProfileId String
+  consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+
+  // Verification details
+  submittedAt DateTime @default(now())
+  notes       String?  @db.Text // Applicant notes
+
+  // Staff review
+  reviewedAt   DateTime?
+  reviewedById String?
+  reviewNotes  String?  @db.Text // Staff notes
+
+  documents ProfileVerificationDocument[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([consultantProfileId])
+  @@index([status])
+  @@index([reviewedById])
+  @@index([submittedAt])
+}
+
+model ProfileVerificationDocument {
+  id           String @id @default(uuid())
+  fileName     String
+  originalName String
+  fileSize     Int
+  mimeType     String
+  fileUrl      String
+  storagePath  String
+  description  String? // Type of document (ID, degree, certificate, etc.)
+
+  verification   ConsultantProfileVerification @relation(fields: [verificationId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  verificationId String
+
+  uploadedAt DateTime @default(now())
+
+  @@index([verificationId])
+}
+
+// System Jobs Models
+model SystemJobExecution {
+  id        String          @id @default(uuid())
+  jobId     String // Maps to job configuration ID
+  jobName   String
+  status    SystemJobStatus
+  startedAt DateTime        @default(now())
+  endedAt   DateTime?
+
+  // Execution details
+  triggeredBy String? // User ID if manual, null if cron
+  result      Json? // JSON result of the job
+  errorLog    String? @db.Text
+
+  // Performance metrics
+  itemsProcessed Int?
+  errorCount     Int?
+  durationMs     Int?
+
+  createdAt DateTime @default(now())
+
+  @@index([jobId])
+  @@index([status])
+  @@index([startedAt])
+  @@index([triggeredBy])
+}
+
