@@ -92,7 +92,7 @@ export function AddWorkExperienceModal({
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:'none'] [scrollbar-width:'none']">
         <DialogHeader>
           <DialogTitle>
             {isEditing ? "Edit Work Experience" : "Add Work Experience"}
