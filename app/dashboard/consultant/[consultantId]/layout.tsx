@@ -9,12 +9,16 @@ import {
   DashboardSidebar,
   type NavItem,
 } from "@/components/dashboard";
-import { signOut, useSession } from "next-auth/react";
+import { useSession } from "next-auth/react";
 import { usePathname, useRouter } from "next/navigation";
 import { use, useEffect, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { consultantFetchers, schedulePrefetch } from "@/lib/dashboard-queries";
 import { motion } from "framer-motion";
+import {
+  VerificationPendingOverlay,
+  type VerificationStatus,
+} from "@/components/verification";
 
 // Navigation configuration
 const NAV_ITEMS: NavItem[] = [
@@ -439,7 +443,23 @@ export default function ConsultantLayout({
     />
   );
 
+  // Check verification status
+  console.log("consultantData:", consultantData);
+  console.log("verificationStatus:", consultantData?.verificationStatus);
+  const verificationStatus = consultantData?.verificationStatus as
+    | VerificationStatus
+    | undefined;
+  const isVerified = verificationStatus === "VERIFIED";
+
   return (
-    <DashboardShell sidebar={sidebar}>{memoizedStreamContent}</DashboardShell>
+    <>
+      {!isVerified && verificationStatus && (
+        <VerificationPendingOverlay
+          status={verificationStatus}
+          resubmitUrl={`/dashboard/consultant/${consultantId}/settings`}
+        />
+      )}
+      <DashboardShell sidebar={sidebar}>{memoizedStreamContent}</DashboardShell>
+    </>
   );
 }

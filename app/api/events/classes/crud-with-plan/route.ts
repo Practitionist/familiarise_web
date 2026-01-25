@@ -8,6 +8,7 @@ import { getServerSession } from "next-auth";
 import authOptions from "@/app/api/auth/[...nextauth]/options";
 import { findOrCreateTopics, transformNestedPlanTopics } from "@/lib/topics";
 import { handleSlotOpening } from "@/lib/waitlist/slot-handler";
+import { checkConsultantVerification } from "@/lib/verification";
 
 // Schema for class content input (without Prisma-managed fields like createdAt, updatedAt, classPlanId)
 const ClassContentInputSchema = ClassContentSchema.omit({
@@ -79,6 +80,23 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
+
+    // Verification check - consultant must be verified to create classes
+    if (body.consultantProfileId) {
+      const verification = await checkConsultantVerification(
+        body.consultantProfileId
+      );
+      if (!verification.isVerified) {
+        return NextResponse.json(
+          {
+            error: "Verification required",
+            message: verification.message,
+            verificationStatus: verification.status,
+          },
+          { status: 403 }
+        );
+      }
+    }
 
     // --- Zod Validation ---
     const validationResult = PostClassWithPlanBodySchema.safeParse(body);
