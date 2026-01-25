@@ -36,6 +36,10 @@ import {
   ClipboardCheck,
   RotateCcw,
   Video,
+  Megaphone,
+  LifeBuoy,
+  Timer,
+  Server,
 } from "lucide-react";
 import { ReactNode } from "react";
 
@@ -69,6 +73,10 @@ const iconMap: Record<string, typeof Home> = {
   "payouts/earnings": Wallet,
   subscriptions: RefreshCw,
   invoices: FileText,
+  announcements: Megaphone,
+  tickets: LifeBuoy,
+  waitlists: Timer,
+  "system-jobs": Server,
 };
 
 export interface NavItem {
