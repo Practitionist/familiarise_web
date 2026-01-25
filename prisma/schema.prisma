@@ -32,6 +32,7 @@ model User {
   country     String?
   linkedinUrl String?
   bio         String?   @db.VarChar(160) // Short tagline, max 160 chars
+  coverImage  String?   // URL to Supabase storage for cover/banner image
 
   cookiePreferences       CookiePreference?
   notificationPreferences NotificationPreference?
@@ -324,6 +325,7 @@ model ConsultantProfile {
   sessionTypes                SessionType[] @default([])
   profileCompletionPercentage Int           @default(0)
   isVerified                  Boolean       @default(false)
+  verificationStatus          ConsultantVerificationStatus @default(PENDING_VERIFICATION)
   totalMenteesHelped          Int           @default(0)
 
   // Deprecated fields - to be removed in Phase 6
@@ -374,6 +376,7 @@ model ConsultantProfile {
   @@index([userId])
   @@index([domainId])
   @@index([isVerified])
+  @@index([verificationStatus])
 }
 
 model Domain {
@@ -1786,5 +1789,37 @@ model SystemJobExecution {
   @@index([status])
   @@index([startedAt])
   @@index([triggeredBy])
+}
+
+//////////////////////////////////////////////////// ANNOUNCEMENT SYSTEM ////////////////////////////////////////////////////
+
+model Announcement {
+  id              String   @id @default(cuid())
+  title           String
+  content         String   @db.Text
+  isActive        Boolean  @default(true)
+  startDate       DateTime?
+  endDate         DateTime?
+  backgroundColor String?  @default("#000000")
+  textColor       String?  @default("#FFFFFF")
+  linkUrl         String?
+  linkText        String?
+  createdBy       String
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([isActive])
+  @@index([startDate, endDate])
+  @@map("announcements")
+}
+
+//////////////////////////////////////////////////// CONSULTANT VERIFICATION ////////////////////////////////////////////////////
+
+enum ConsultantVerificationStatus {
+  PENDING_VERIFICATION  // Onboarding complete, awaiting review
+  UNDER_REVIEW          // Staff reviewing
+  VERIFIED              // Approved
+  REJECTED              // Needs resubmission
 }
 

@@ -47,7 +47,7 @@ export async function GET(req: NextRequest) {
           consultantProfile: {
             include: {
               user: {
-                select: { id: true, name: true, email: true, image: true },
+                select: { id: true, name: true, email: true, image: true, linkedinUrl: true },
               },
               domain: { select: { id: true, name: true } },
             },
@@ -75,10 +75,12 @@ export async function GET(req: NextRequest) {
         name: v.consultantProfile.user.name,
         email: v.consultantProfile.user.email,
         image: v.consultantProfile.user.image,
+        linkedinUrl: v.consultantProfile.user.linkedinUrl,
         domain: v.consultantProfile.domain.name,
         experience: v.consultantProfile.experience,
         headline: v.consultantProfile.headline,
         isVerified: v.consultantProfile.isVerified,
+        verificationStatus: v.consultantProfile.verificationStatus,
       },
       documents: v.documents.map((d) => ({
         id: d.id,

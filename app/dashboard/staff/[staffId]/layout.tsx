@@ -21,6 +21,7 @@ import {
   RefreshCw,
   BarChart3,
   Clock,
+  Megaphone,
 } from "lucide-react";
 import Link from "next/link";
 import { useParams, usePathname } from "next/navigation";
@@ -37,6 +38,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
 const sidebarItems = [
   { name: "Home", icon: Home, path: "home" },
+  { name: "Announcements", icon: Megaphone, path: "announcements" },
   { name: "Support Tickets", icon: Ticket, path: "tickets" },
   { name: "User Feedback", icon: Star, path: "feedback" },
   { name: "Users", icon: Users, path: "users" },

@@ -118,6 +118,13 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
       );
     }
 
+    // Map verification status to consultant profile verification status
+    const profileStatusMap: Record<string, string> = {
+      APPROVED: "VERIFIED",
+      REJECTED: "REJECTED",
+      NEEDS_INFO: "PENDING_VERIFICATION",
+    };
+
     // Update verification and optionally update consultant profile
     const [updatedVerification] = await prisma.$transaction([
       prisma.consultantProfileVerification.update({
@@ -129,22 +136,37 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
           reviewNotes,
         },
       }),
-      // If approved, update consultant profile isVerified
+      // Update consultant profile isVerified and verificationStatus
       ...(status === "APPROVED"
         ? [
             prisma.consultantProfile.update({
               where: { id: verification.consultantProfileId },
-              data: { isVerified: true },
+              data: {
+                isVerified: true,
+                verificationStatus: profileStatusMap[status] as any,
+              },
             }),
           ]
         : status === "REJECTED"
           ? [
               prisma.consultantProfile.update({
                 where: { id: verification.consultantProfileId },
-                data: { isVerified: false },
+                data: {
+                  isVerified: false,
+                  verificationStatus: profileStatusMap[status] as any,
+                },
               }),
             ]
-          : []),
+          : status === "NEEDS_INFO"
+            ? [
+                prisma.consultantProfile.update({
+                  where: { id: verification.consultantProfileId },
+                  data: {
+                    verificationStatus: profileStatusMap[status] as any,
+                  },
+                }),
+              ]
+            : []),
     ]);
 
     return NextResponse.json({

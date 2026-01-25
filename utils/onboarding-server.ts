@@ -394,6 +394,66 @@ export async function processOnboardingData(
       },
     );
 
+    // If this is a consultant, submit verification request
+    if (
+      validatedBody.role === UserRole.CONSULTANT &&
+      updatedUser.consultantProfileId
+    ) {
+      try {
+        // Extract verification data from original body (not validated schema)
+        const verificationLinkedinUrl = body.verificationLinkedinUrl;
+        const verificationNotes = body.verificationNotes;
+        const verificationDocuments = body.verificationDocuments;
+
+        // Update user's LinkedIn URL if provided in verification
+        if (verificationLinkedinUrl) {
+          await prisma.user.update({
+            where: { id: userId },
+            data: { linkedinUrl: verificationLinkedinUrl },
+          });
+        }
+
+        // Create verification request
+        const verification = await prisma.consultantProfileVerification.create({
+          data: {
+            consultantProfileId: updatedUser.consultantProfileId,
+            notes: verificationNotes || null,
+            status: "PENDING",
+          },
+        });
+
+        // Connect any uploaded documents to the verification
+        if (verificationDocuments && verificationDocuments.length > 0) {
+          const documentIds = verificationDocuments
+            .filter((doc: any) => doc.id)
+            .map((doc: any) => doc.id);
+
+          if (documentIds.length > 0) {
+            await prisma.profileVerificationDocument.updateMany({
+              where: { id: { in: documentIds } },
+              data: { verificationId: verification.id },
+            });
+          }
+        }
+
+        // Update consultant profile verification status
+        await prisma.consultantProfile.update({
+          where: { id: updatedUser.consultantProfileId },
+          data: {
+            verificationStatus: "UNDER_REVIEW",
+          },
+        });
+
+        console.log(
+          "Verification request created for consultant:",
+          updatedUser.consultantProfileId
+        );
+      } catch (verificationError) {
+        // Log but don't fail the entire onboarding if verification submission fails
+        console.error("Failed to create verification request:", verificationError);
+      }
+    }
+
     return { success: true, user: updatedUser };
   } catch (error: unknown) {
     console.error("Error in processOnboardingData:", error);

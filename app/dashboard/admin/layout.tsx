@@ -21,6 +21,10 @@ const NAV_SECTIONS: NavSection[] = [
     items: [{ name: "Overview", path: "home" }],
   },
   {
+    title: null,
+    items: [{ name: "Announcements", path: "announcements" }],
+  },
+  {
     title: "Support",
     items: [
       { name: "Support Tickets", path: "tickets" },

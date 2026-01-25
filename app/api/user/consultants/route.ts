@@ -16,10 +16,18 @@ export async function GET(request: NextRequest) {
     // Calculate offset
     const skip = (page - 1) * limit;
 
+    // Check if this is an admin/staff request (can see all) or public (only verified)
+    const includeUnverified = searchParams.get("includeUnverified") === "true";
+
     // Build where clause
     const where: any = {
       AND: [],
     };
+
+    // Only show verified consultants in public listings
+    if (!includeUnverified) {
+      where.AND.push({ verificationStatus: "VERIFIED" });
+    }
 
     // Domain filter
     if (domain) {

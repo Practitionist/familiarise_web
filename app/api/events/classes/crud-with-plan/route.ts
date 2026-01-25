@@ -188,13 +188,13 @@ export async function POST(request: NextRequest) {
               ? { connect: topicIds.map((id: string) => ({ id })) }
               : undefined,
             classContents: {
-              create: classContents.map((content) => ({
+              create: classContents.map((content, index) => ({
                 // No 'any' needed
                 title: content.title,
                 description: content.description,
                 contentType: content.contentType ?? null, // Use nullish coalescing
                 contentUrl: content.contentUrl ?? null, // Use nullish coalescing
-                order: content.order,
+                order: content.order ?? index, // Default to index if order is undefined
                 hoursAllotted: content.hoursAllotted,
               })),
             },

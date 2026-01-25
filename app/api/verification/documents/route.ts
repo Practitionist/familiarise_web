@@ -1,0 +1,249 @@
+import { NextRequest, NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
+import authOptions from "@/app/api/auth/[...nextauth]/options";
+import prisma from "@/lib/prisma";
+import { uploadToSupabase, deleteFromSupabase } from "@/lib/supabase";
+
+const ALLOWED_TYPES = [
+  "image/png",
+  "image/jpeg",
+  "image/jpg",
+  "image/webp",
+  "application/pdf",
+];
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+
+/**
+ * POST /api/verification/documents
+ * Upload a verification document
+ */
+export async function POST(request: NextRequest) {
+  try {
+    const session = await getServerSession(authOptions);
+
+    if (!session?.user?.id) {
+      return NextResponse.json(
+        { success: false, error: "Unauthorized" },
+        { status: 401 }
+      );
+    }
+
+    const formData = await request.formData();
+    const file = formData.get("file") as File;
+    const description = formData.get("description") as string | null;
+    const verificationId = formData.get("verificationId") as string | null;
+
+    if (!file) {
+      return NextResponse.json(
+        { success: false, error: "No file provided" },
+        { status: 400 }
+      );
+    }
+
+    // Validate file type
+    if (!ALLOWED_TYPES.includes(file.type)) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Invalid file type. Allowed: PNG, JPG, WEBP, PDF",
+        },
+        { status: 400 }
+      );
+    }
+
+    // Validate file size
+    if (file.size > MAX_FILE_SIZE) {
+      return NextResponse.json(
+        { success: false, error: "File size exceeds 10MB limit" },
+        { status: 400 }
+      );
+    }
+
+    // Get the consultant profile
+    const consultantProfile = await prisma.consultantProfile.findUnique({
+      where: { userId: session.user.id },
+      include: {
+        verificationRequests: {
+          where: { status: "PENDING" },
+          orderBy: { createdAt: "desc" },
+          take: 1,
+        },
+      },
+    });
+
+    if (!consultantProfile) {
+      return NextResponse.json(
+        { success: false, error: "Consultant profile not found" },
+        { status: 404 }
+      );
+    }
+
+    // Create or get verification request
+    let verification = consultantProfile.verificationRequests[0] ?? null;
+
+    if (!verification && verificationId) {
+      const found = await prisma.consultantProfileVerification.findUnique({
+        where: { id: verificationId },
+      });
+      if (found) {
+        verification = found;
+      }
+    }
+
+    if (!verification) {
+      // Create a new verification request if none exists
+      verification = await prisma.consultantProfileVerification.create({
+        data: {
+          consultantProfileId: consultantProfile.id,
+          status: "PENDING",
+        },
+      });
+    }
+
+    // Upload file to Supabase
+    const fileBuffer = await file.arrayBuffer();
+    const buffer = Buffer.from(fileBuffer);
+    const ext = file.name.split(".").pop() || "pdf";
+    const fileName = `verification-${consultantProfile.id}-${Date.now()}.${ext}`;
+    const storagePath = `verification-documents/${fileName}`;
+
+    const { url: fileUrl, error: uploadError } = await uploadToSupabase(
+      storagePath,
+      buffer,
+      file.type
+    );
+
+    if (uploadError || !fileUrl) {
+      return NextResponse.json(
+        { success: false, error: uploadError || "Failed to upload file" },
+        { status: 500 }
+      );
+    }
+
+    // Create document record
+    const document = await prisma.profileVerificationDocument.create({
+      data: {
+        verificationId: verification.id,
+        fileName,
+        originalName: file.name,
+        fileSize: file.size,
+        mimeType: file.type,
+        fileUrl,
+        storagePath,
+        description: description || undefined,
+      },
+    });
+
+    return NextResponse.json({
+      success: true,
+      data: {
+        id: document.id,
+        fileName: document.fileName,
+        originalName: document.originalName,
+        fileSize: document.fileSize,
+        mimeType: document.mimeType,
+        fileUrl: document.fileUrl,
+        description: document.description,
+        status: "uploaded",
+      },
+    });
+  } catch (error) {
+    console.error("Document upload error:", error);
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          error instanceof Error ? error.message : "Failed to upload document",
+      },
+      { status: 500 }
+    );
+  }
+}
+
+/**
+ * DELETE /api/verification/documents
+ * Delete a verification document
+ */
+export async function DELETE(request: NextRequest) {
+  try {
+    const session = await getServerSession(authOptions);
+
+    if (!session?.user?.id) {
+      return NextResponse.json(
+        { success: false, error: "Unauthorized" },
+        { status: 401 }
+      );
+    }
+
+    const { searchParams } = new URL(request.url);
+    const documentId = searchParams.get("id");
+
+    if (!documentId) {
+      return NextResponse.json(
+        { success: false, error: "Document ID required" },
+        { status: 400 }
+      );
+    }
+
+    // Get the document and verify ownership
+    const document = await prisma.profileVerificationDocument.findUnique({
+      where: { id: documentId },
+      include: {
+        verification: {
+          include: {
+            consultantProfile: true,
+          },
+        },
+      },
+    });
+
+    if (!document) {
+      return NextResponse.json(
+        { success: false, error: "Document not found" },
+        { status: 404 }
+      );
+    }
+
+    // Check ownership
+    if (document.verification.consultantProfile.userId !== session.user.id) {
+      return NextResponse.json(
+        { success: false, error: "Unauthorized" },
+        { status: 403 }
+      );
+    }
+
+    // Only allow deletion if verification is still pending
+    if (document.verification.status !== "PENDING") {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Cannot delete documents from processed verification",
+        },
+        { status: 400 }
+      );
+    }
+
+    // Delete from Supabase storage
+    await deleteFromSupabase(document.storagePath);
+
+    // Delete the document record
+    await prisma.profileVerificationDocument.delete({
+      where: { id: documentId },
+    });
+
+    return NextResponse.json({
+      success: true,
+      message: "Document deleted successfully",
+    });
+  } catch (error) {
+    console.error("Document delete error:", error);
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          error instanceof Error ? error.message : "Failed to delete document",
+      },
+      { status: 500 }
+    );
+  }
+}

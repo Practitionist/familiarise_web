@@ -519,6 +519,55 @@ export const OnboardingFormDataSchema = PersonalInfoAndRoleFormSchema.extend({
   // Agreement fields
   termsAccepted: z.boolean().optional(),
   privacyAccepted: z.boolean().optional(),
+
+  // Verification fields (for consultants)
+  verificationLinkedinUrl: z.string().url().optional().or(z.literal("")),
+  verificationNotes: z.string().max(500).optional(),
+  verificationDocuments: z.array(z.any()).optional(),
+
+  // Professional background fields (for consultants)
+  workExperiences: z
+    .array(
+      z.object({
+        id: z.string().optional(),
+        company: z.string(),
+        title: z.string(),
+        location: z.string().optional(),
+        startDate: z.coerce.date(),
+        endDate: z.coerce.date().optional(),
+        isCurrent: z.boolean(),
+        description: z.string().optional(),
+      }),
+    )
+    .optional(),
+  educationHistory: z
+    .array(
+      z.object({
+        id: z.string().optional(),
+        institution: z.string(),
+        degree: z.string(),
+        fieldOfStudy: z.string().optional(),
+        startYear: z.number().optional().nullable(),
+        endYear: z.number().optional().nullable(),
+        grade: z.string().optional(),
+        activities: z.string().optional(),
+        description: z.string().optional(),
+      }),
+    )
+    .optional(),
+  certificationsList: z
+    .array(
+      z.object({
+        id: z.string().optional(),
+        name: z.string(),
+        issuingOrganization: z.string(),
+        issueDate: z.coerce.date(),
+        expiryDate: z.coerce.date().optional(),
+        credentialId: z.string().optional(),
+        credentialUrl: z.string().optional(),
+      }),
+    )
+    .optional(),
 });
 
 export type OnboardingFormData = z.infer<typeof OnboardingFormDataSchema>;
