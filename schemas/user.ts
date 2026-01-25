@@ -456,10 +456,21 @@ export type PreferredSchedule = z.infer<typeof PreferredScheduleSchema>;
 // #region Preferences Schemas
 
 export const CookiePreferenceSchema = z.object({
+  // Essential: Required for core functionality - authentication, security, CSRF tokens
+  // Cannot be disabled by users. Examples: NextAuth session, security tokens
   essential: z.boolean().default(true),
+
+  // Analytics: Usage tracking and performance measurement
+  // Examples: Google Analytics (GA4), Hotjar, Mixpanel, PostHog, Amplitude
   analytics: z.boolean().default(false),
+
+  // Marketing: Advertising and retargeting
+  // Examples: Facebook Pixel, Google Ads, LinkedIn Insight Tag, TikTok Pixel
   marketing: z.boolean().default(false),
-  functional: z.boolean().default(false), // For chat widgets, video embeds, personalization
+
+  // Functional: Enhanced features and third-party integrations
+  // Examples: Live chat (Intercom, Crisp), video embeds, social sharing, personalization
+  functional: z.boolean().default(false),
 });
 
 export type CookiePreference = z.infer<typeof CookiePreferenceSchema>;

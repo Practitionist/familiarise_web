@@ -1,14 +1,35 @@
 "use client";
 
+import { useState } from "react";
 import { cn } from "@/lib/utils";
-import { Clock, AlertCircle, XCircle, Shield, ArrowRight } from "lucide-react";
+import {
+  Clock,
+  AlertCircle,
+  XCircle,
+  Shield,
+  ArrowRight,
+  ChevronDown,
+  ChevronUp,
+  FileText,
+  CheckCircle,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
 import type { VerificationStatus } from "./VerificationStatusBadge";
 
+interface DocumentFeedback {
+  documentId: string;
+  fileName: string;
+  originalName?: string;
+  isValid: boolean | null;
+  staffFeedback?: string | null;
+}
+
 interface VerificationPendingOverlayProps {
   status: VerificationStatus;
   rejectionReason?: string;
+  feedbackDetails?: string;
+  documentFeedback?: DocumentFeedback[];
   resubmitUrl?: string;
   className?: string;
 }
@@ -52,9 +73,13 @@ const statusContent: Record<
 export function VerificationPendingOverlay({
   status,
   rejectionReason,
+  feedbackDetails,
+  documentFeedback,
   resubmitUrl = "/settings/verification",
   className,
 }: VerificationPendingOverlayProps) {
+  const [showDetails, setShowDetails] = useState(false);
+
   // Don't show overlay for verified consultants
   if (status === "VERIFIED") {
     return null;
@@ -62,15 +87,17 @@ export function VerificationPendingOverlay({
 
   const content = statusContent[status];
   const Icon = content.icon;
+  const hasDetailedFeedback = feedbackDetails || (documentFeedback && documentFeedback.length > 0);
+  const invalidDocuments = documentFeedback?.filter((doc) => doc.isValid === false) || [];
 
   return (
     <div
       className={cn(
-        "fixed inset-0 z-50 flex items-center justify-center bg-white/95 backdrop-blur-sm",
+        "fixed inset-0 z-50 flex items-center justify-center bg-white/95 backdrop-blur-sm overflow-y-auto py-8",
         className
       )}
     >
-      <div className="max-w-md mx-auto p-8 text-center">
+      <div className="max-w-lg mx-auto p-8 text-center">
         <div
           className={cn(
             "w-16 h-16 mx-auto mb-6 rounded-full flex items-center justify-center",
@@ -87,11 +114,100 @@ export function VerificationPendingOverlay({
         <p className="text-zinc-600 mb-6">{content.description}</p>
 
         {status === "REJECTED" && rejectionReason && (
-          <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6 text-left">
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4 text-left">
             <p className="text-sm font-medium text-red-800 mb-1">
               Reason for rejection:
             </p>
             <p className="text-sm text-red-700">{rejectionReason}</p>
+          </div>
+        )}
+
+        {/* Detailed feedback section */}
+        {status === "REJECTED" && hasDetailedFeedback && (
+          <div className="mb-6">
+            <button
+              onClick={() => setShowDetails(!showDetails)}
+              className="flex items-center justify-center gap-2 w-full py-2 text-sm font-medium text-zinc-600 hover:text-zinc-900 transition-colors"
+            >
+              {showDetails ? (
+                <>
+                  <ChevronUp className="w-4 h-4" />
+                  Hide detailed feedback
+                </>
+              ) : (
+                <>
+                  <ChevronDown className="w-4 h-4" />
+                  View detailed feedback
+                </>
+              )}
+            </button>
+
+            {showDetails && (
+              <div className="mt-3 space-y-4 text-left">
+                {/* Detailed feedback text */}
+                {feedbackDetails && (
+                  <div className="bg-zinc-50 border border-zinc-200 rounded-lg p-4">
+                    <p className="text-sm font-medium text-zinc-700 mb-2">
+                      Additional feedback from reviewer:
+                    </p>
+                    <p className="text-sm text-zinc-600 whitespace-pre-wrap">
+                      {feedbackDetails}
+                    </p>
+                  </div>
+                )}
+
+                {/* Per-document feedback */}
+                {invalidDocuments.length > 0 && (
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                    <p className="text-sm font-medium text-amber-800 mb-3">
+                      Documents requiring attention:
+                    </p>
+                    <ul className="space-y-3">
+                      {invalidDocuments.map((doc) => (
+                        <li
+                          key={doc.documentId}
+                          className="flex items-start gap-3 text-sm"
+                        >
+                          <FileText className="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" />
+                          <div>
+                            <p className="font-medium text-amber-900">
+                              {doc.originalName || doc.fileName}
+                            </p>
+                            {doc.staffFeedback && (
+                              <p className="text-amber-700 mt-0.5">
+                                {doc.staffFeedback}
+                              </p>
+                            )}
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {/* Valid documents */}
+                {documentFeedback && documentFeedback.filter((doc) => doc.isValid === true).length > 0 && (
+                  <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                    <p className="text-sm font-medium text-green-800 mb-2">
+                      Verified documents:
+                    </p>
+                    <ul className="space-y-2">
+                      {documentFeedback
+                        .filter((doc) => doc.isValid === true)
+                        .map((doc) => (
+                          <li
+                            key={doc.documentId}
+                            className="flex items-center gap-2 text-sm text-green-700"
+                          >
+                            <CheckCircle className="w-4 h-4 flex-shrink-0" />
+                            <span>{doc.originalName || doc.fileName}</span>
+                          </li>
+                        ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -113,7 +229,7 @@ export function VerificationPendingOverlay({
         {status === "REJECTED" && (
           <Button asChild className="gap-2">
             <Link href={resubmitUrl}>
-              Update Profile
+              Update Profile & Resubmit
               <ArrowRight className="w-4 h-4" />
             </Link>
           </Button>
@@ -127,15 +243,21 @@ export function VerificationPendingOverlay({
 export function VerificationPendingCard({
   status,
   rejectionReason,
+  feedbackDetails,
+  documentFeedback,
   resubmitUrl = "/settings/verification",
   className,
 }: VerificationPendingOverlayProps) {
+  const [showDetails, setShowDetails] = useState(false);
+
   if (status === "VERIFIED") {
     return null;
   }
 
   const content = statusContent[status];
   const Icon = content.icon;
+  const hasDetailedFeedback = feedbackDetails || (documentFeedback && documentFeedback.length > 0);
+  const invalidDocuments = documentFeedback?.filter((doc) => doc.isValid === false) || [];
 
   return (
     <div
@@ -170,10 +292,75 @@ export function VerificationPendingCard({
             </div>
           )}
 
+          {/* Detailed feedback section */}
+          {status === "REJECTED" && hasDetailedFeedback && (
+            <div className="mb-3">
+              <button
+                onClick={() => setShowDetails(!showDetails)}
+                className="flex items-center gap-1.5 text-xs font-medium text-zinc-600 hover:text-zinc-900 transition-colors"
+              >
+                {showDetails ? (
+                  <>
+                    <ChevronUp className="w-3.5 h-3.5" />
+                    Hide details
+                  </>
+                ) : (
+                  <>
+                    <ChevronDown className="w-3.5 h-3.5" />
+                    View details
+                  </>
+                )}
+              </button>
+
+              {showDetails && (
+                <div className="mt-2 space-y-2">
+                  {feedbackDetails && (
+                    <div className="bg-zinc-100 rounded-lg p-3">
+                      <p className="text-xs font-medium text-zinc-700 mb-1">
+                        Additional feedback:
+                      </p>
+                      <p className="text-xs text-zinc-600 whitespace-pre-wrap">
+                        {feedbackDetails}
+                      </p>
+                    </div>
+                  )}
+
+                  {invalidDocuments.length > 0 && (
+                    <div className="bg-amber-100 rounded-lg p-3">
+                      <p className="text-xs font-medium text-amber-800 mb-2">
+                        Documents to fix:
+                      </p>
+                      <ul className="space-y-1.5">
+                        {invalidDocuments.map((doc) => (
+                          <li
+                            key={doc.documentId}
+                            className="flex items-start gap-2 text-xs"
+                          >
+                            <FileText className="w-3.5 h-3.5 text-amber-600 mt-0.5 flex-shrink-0" />
+                            <div>
+                              <span className="font-medium text-amber-900">
+                                {doc.originalName || doc.fileName}
+                              </span>
+                              {doc.staffFeedback && (
+                                <span className="text-amber-700">
+                                  : {doc.staffFeedback}
+                                </span>
+                              )}
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
           {status === "REJECTED" && (
             <Button asChild size="sm" className="gap-1.5">
               <Link href={resubmitUrl}>
-                Update Profile
+                Update Profile & Resubmit
                 <ArrowRight className="w-3.5 h-3.5" />
               </Link>
             </Button>

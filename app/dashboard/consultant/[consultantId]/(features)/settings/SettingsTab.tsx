@@ -18,6 +18,15 @@ import { Textarea } from "components/ui/textarea";
 import { useToast } from "components/ui/use-toast";
 import { Checkbox } from "components/ui/checkbox";
 import { Alert, AlertDescription, AlertTitle } from "components/ui/alert";
+import {
+  XCircle,
+  ChevronDown,
+  ChevronUp,
+  FileText,
+  CheckCircle,
+  Loader2,
+  RefreshCw,
+} from "lucide-react";
 import React, { useCallback, useEffect, useState } from "react";
 import { TConsultantProfile } from "types/consultant";
 import { MultiSelect } from "../../components/MultiSelect";
@@ -57,6 +66,23 @@ interface SettingsTabProps {
   consultant: TConsultantProfile;
 }
 
+interface DocumentFeedback {
+  id: string;
+  fileName: string;
+  originalName?: string;
+  isValid: boolean | null;
+  staffFeedback?: string | null;
+}
+
+interface VerificationDetails {
+  id: string;
+  status: string;
+  rejectionReason?: string | null;
+  feedbackDetails?: string | null;
+  reviewedAt?: string;
+  documents: DocumentFeedback[];
+}
+
 export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
   const { toast } = useToast();
   const { timezone, isLoading: timezoneLoading } = useTimezone();
@@ -79,6 +105,13 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
   const [canSwitchSchedule, setCanSwitchSchedule] = useState(true);
   const [scheduleSwitchBlockedReason, setScheduleSwitchBlockedReason] =
     useState<string | null>(null);
+
+  // Verification resubmission state
+  const [verificationDetails, setVerificationDetails] =
+    useState<VerificationDetails | null>(null);
+  const [isLoadingVerification, setIsLoadingVerification] = useState(false);
+  const [isResubmitting, setIsResubmitting] = useState(false);
+  const [showVerificationDetails, setShowVerificationDetails] = useState(false);
 
   // Initialize slots data when timezone is available
   useEffect(() => {
@@ -110,6 +143,38 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
     }
     checkScheduleSwitchEligibility();
   }, [consultant.id]);
+
+  // Fetch verification details when status is REJECTED
+  useEffect(() => {
+    async function fetchVerificationDetails() {
+      if (consultant.verificationStatus !== "REJECTED") {
+        return;
+      }
+
+      setIsLoadingVerification(true);
+      try {
+        const res = await fetch("/api/verification/status");
+        if (res.ok) {
+          const data = await res.json();
+          if (data.latestVerification) {
+            setVerificationDetails({
+              id: data.latestVerification.id,
+              status: data.latestVerification.status,
+              rejectionReason: data.latestVerification.rejectionReason,
+              feedbackDetails: data.latestVerification.feedbackDetails,
+              reviewedAt: data.latestVerification.reviewedAt,
+              documents: data.latestVerification.documents || [],
+            });
+          }
+        }
+      } catch (error) {
+        console.error("Error fetching verification details:", error);
+      } finally {
+        setIsLoadingVerification(false);
+      }
+    }
+    fetchVerificationDetails();
+  }, [consultant.verificationStatus]);
 
   // Convert subdomains and tags to options format with safety checks
   const subDomainOptions = React.useMemo<Option[]>(() => {
@@ -208,6 +273,48 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
 
     fetchDomainContent();
   }, [formData.domainId, toast]);
+
+  // Handle verification resubmission
+  const handleResubmitVerification = async () => {
+    setIsResubmitting(true);
+    try {
+      const res = await fetch("/api/verification/resubmit", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          notes: "Profile updated and resubmitted for review",
+        }),
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.error || "Failed to resubmit verification");
+      }
+
+      toast({
+        title: "Verification Resubmitted",
+        description:
+          "Your profile has been resubmitted for review. You'll receive an email once the review is complete.",
+      });
+
+      // Refresh the page to update the verification status
+      window.location.reload();
+    } catch (error) {
+      console.error("Error resubmitting verification:", error);
+      toast({
+        title: "Error",
+        description:
+          error instanceof Error
+            ? error.message
+            : "Failed to resubmit verification. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsResubmitting(false);
+    }
+  };
 
   const handleInputChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
@@ -564,6 +671,13 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
     );
   }
 
+  // Computed values for verification display
+  const invalidDocuments =
+    verificationDetails?.documents?.filter((doc) => doc.isValid === false) ||
+    [];
+  const validDocuments =
+    verificationDetails?.documents?.filter((doc) => doc.isValid === true) || [];
+
   return (
     <form
       onSubmit={handleSubmit}
@@ -571,6 +685,167 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
       role="form"
       aria-label="Settings form"
     >
+      {/* Verification Resubmission Section */}
+      {consultant.verificationStatus === "REJECTED" && (
+        <div className="border-2 border-red-200 rounded-xl p-6 bg-red-50">
+          <div className="flex items-start gap-4">
+            <div className="flex-shrink-0 w-12 h-12 rounded-full flex items-center justify-center bg-red-100">
+              <XCircle className="w-6 h-6 text-red-600" />
+            </div>
+
+            <div className="flex-1">
+              <h2 className="text-xl font-bold text-red-900 mb-2">
+                Verification Not Approved
+              </h2>
+              <p className="text-sm text-red-700 mb-4">
+                Your profile verification was not approved. Please review the
+                feedback below, update your profile as needed, and resubmit for
+                review.
+              </p>
+
+              {isLoadingVerification ? (
+                <div className="flex items-center gap-2 text-red-600">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span className="text-sm">Loading feedback...</span>
+                </div>
+              ) : verificationDetails ? (
+                <>
+                  {/* Brief Rejection Reason */}
+                  {verificationDetails.rejectionReason && (
+                    <div className="bg-red-100 border border-red-200 rounded-lg p-4 mb-4">
+                      <p className="text-sm font-medium text-red-800 mb-1">
+                        Reason for rejection:
+                      </p>
+                      <p className="text-sm text-red-700">
+                        {verificationDetails.rejectionReason}
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Expandable detailed feedback */}
+                  {(verificationDetails.feedbackDetails ||
+                    invalidDocuments.length > 0 ||
+                    validDocuments.length > 0) && (
+                    <div className="mb-4">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setShowVerificationDetails(!showVerificationDetails)
+                        }
+                        className="flex items-center gap-2 text-sm font-medium text-red-700 hover:text-red-900 transition-colors"
+                      >
+                        {showVerificationDetails ? (
+                          <>
+                            <ChevronUp className="w-4 h-4" />
+                            Hide detailed feedback
+                          </>
+                        ) : (
+                          <>
+                            <ChevronDown className="w-4 h-4" />
+                            View detailed feedback
+                          </>
+                        )}
+                      </button>
+
+                      {showVerificationDetails && (
+                        <div className="mt-3 space-y-3">
+                          {/* Detailed feedback text */}
+                          {verificationDetails.feedbackDetails && (
+                            <div className="bg-white border border-zinc-200 rounded-lg p-4">
+                              <p className="text-sm font-medium text-zinc-700 mb-2">
+                                Additional feedback from reviewer:
+                              </p>
+                              <p className="text-sm text-zinc-600 whitespace-pre-wrap">
+                                {verificationDetails.feedbackDetails}
+                              </p>
+                            </div>
+                          )}
+
+                          {/* Documents requiring attention */}
+                          {invalidDocuments.length > 0 && (
+                            <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                              <p className="text-sm font-medium text-amber-800 mb-3">
+                                Documents requiring attention:
+                              </p>
+                              <ul className="space-y-2">
+                                {invalidDocuments.map((doc) => (
+                                  <li
+                                    key={doc.id}
+                                    className="flex items-start gap-3 text-sm"
+                                  >
+                                    <FileText className="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" />
+                                    <div>
+                                      <p className="font-medium text-amber-900">
+                                        {doc.originalName || doc.fileName}
+                                      </p>
+                                      {doc.staffFeedback && (
+                                        <p className="text-amber-700 mt-0.5">
+                                          {doc.staffFeedback}
+                                        </p>
+                                      )}
+                                    </div>
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+
+                          {/* Verified documents */}
+                          {validDocuments.length > 0 && (
+                            <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                              <p className="text-sm font-medium text-green-800 mb-2">
+                                Verified documents:
+                              </p>
+                              <ul className="space-y-1">
+                                {validDocuments.map((doc) => (
+                                  <li
+                                    key={doc.id}
+                                    className="flex items-center gap-2 text-sm text-green-700"
+                                  >
+                                    <CheckCircle className="w-4 h-4 flex-shrink-0" />
+                                    <span>
+                                      {doc.originalName || doc.fileName}
+                                    </span>
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </>
+              ) : null}
+
+              <div className="flex items-center gap-4">
+                <Button
+                  type="button"
+                  onClick={handleResubmitVerification}
+                  disabled={isResubmitting}
+                  className="gap-2"
+                >
+                  {isResubmitting ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Resubmitting...
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw className="w-4 h-4" />
+                      Resubmit for Verification
+                    </>
+                  )}
+                </Button>
+                <p className="text-xs text-red-600">
+                  Make sure to update your profile below before resubmitting
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Professional Profile */}
       <div>
         <h2 className="text-2xl font-bold mb-3">Professional Profile</h2>

@@ -242,13 +242,30 @@ enum SupportIssueType {
 }
 
 model CookiePreference {
-  id         String  @id @default(cuid())
-  user       User    @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  userId     String  @unique
+  id        String  @id @default(cuid())
+
+  // For authenticated users
+  user      User?   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  userId    String? @unique
+
+  // For anonymous users (browser session identifier)
+  sessionId String? @unique
+
+  // Essential: Core functionality - auth, security, CSRF (cannot be disabled)
   essential  Boolean @default(true)
+
+  // Analytics: Usage tracking - GA4, Hotjar, Mixpanel, PostHog
   analytics  Boolean @default(false)
+
+  // Marketing: Advertising - Facebook Pixel, Google Ads, LinkedIn, TikTok
   marketing  Boolean @default(false)
-  functional Boolean @default(false) // For chat widgets, video embeds, personalization
+
+  // Functional: Third-party features - chat widgets (Intercom), video embeds
+  functional Boolean @default(false)
+
+  // Consent timestamps for GDPR compliance
+  consentGivenAt   DateTime @default(now())
+  consentUpdatedAt DateTime @updatedAt
 
   @@map("cookie_preferences")
 }
@@ -1721,7 +1738,7 @@ model ModerationAction {
 
 // Profile Verification Models
 model ConsultantProfileVerification {
-  id     String                     @id @default(uuid())
+  id     String                    @id @default(uuid())
   status ProfileVerificationStatus @default(PENDING)
 
   consultantProfileId String
@@ -1729,12 +1746,16 @@ model ConsultantProfileVerification {
 
   // Verification details
   submittedAt DateTime @default(now())
-  notes       String?  @db.Text // Applicant notes
+  notes       String?  @db.Text // Applicant notes when submitting
 
   // Staff review
   reviewedAt   DateTime?
   reviewedById String?
-  reviewNotes  String?  @db.Text // Staff notes
+  reviewNotes  String?  @db.Text // Internal staff notes (not shown to consultant)
+
+  // Feedback to consultant (shown when rejected/needs revision)
+  rejectionReason String? @db.Text // Brief reason shown to consultant (e.g., "Documents unclear")
+  feedbackDetails String? @db.Text // Detailed feedback (e.g., "12th certificate appears to be forged")
 
   documents ProfileVerificationDocument[]
 
@@ -1748,7 +1769,7 @@ model ConsultantProfileVerification {
 }
 
 model ProfileVerificationDocument {
-  id           String @id @default(uuid())
+  id           String  @id @default(uuid())
   fileName     String
   originalName String
   fileSize     Int
@@ -1756,6 +1777,10 @@ model ProfileVerificationDocument {
   fileUrl      String
   storagePath  String
   description  String? // Type of document (ID, degree, certificate, etc.)
+
+  // Document-specific review (for granular feedback)
+  isValid       Boolean? // null = not reviewed, true = valid, false = invalid
+  staffFeedback String?  // Feedback on this specific document (e.g., "Certificate appears forged")
 
   verification   ConsultantProfileVerification @relation(fields: [verificationId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   verificationId String
@@ -1823,4 +1848,5 @@ enum ConsultantVerificationStatus {
   VERIFIED              // Approved
   REJECTED              // Needs resubmission
 }
+
 
