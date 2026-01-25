@@ -7,7 +7,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import authOptions from "@/app/api/auth/[...nextauth]/options";
 import prisma from "@/lib/prisma";
-import { UserRole } from "@prisma/client";
+import { UserRole, ProfileVerificationStatus } from "@prisma/client";
 
 export async function GET(req: NextRequest) {
   try {
@@ -31,7 +31,7 @@ export async function GET(req: NextRequest) {
 
     const verifications = await prisma.consultantProfileVerification.findMany({
       where: {
-        status: status as never,
+        status: status as ProfileVerificationStatus,
       },
       include: {
         consultantProfile: {

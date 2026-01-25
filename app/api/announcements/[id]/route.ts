@@ -62,10 +62,16 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
         ...(content !== undefined && { content }),
         ...(isActive !== undefined && { isActive }),
         ...(startDate !== undefined && {
-          startDate: startDate ? new Date(startDate) : null,
+          startDate:
+            startDate && !isNaN(new Date(startDate).getTime())
+              ? new Date(startDate)
+              : null,
         }),
         ...(endDate !== undefined && {
-          endDate: endDate ? new Date(endDate) : null,
+          endDate:
+            endDate && !isNaN(new Date(endDate).getTime())
+              ? new Date(endDate)
+              : null,
         }),
         ...(backgroundColor !== undefined && { backgroundColor }),
         ...(textColor !== undefined && { textColor }),
@@ -110,6 +116,17 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     }
 
     const { id } = await params;
+
+    const existingAnnouncement = await prisma.announcement.findUnique({
+      where: { id },
+    });
+
+    if (!existingAnnouncement) {
+      return NextResponse.json(
+        { success: false, error: "Announcement not found" },
+        { status: 404 }
+      );
+    }
 
     await prisma.announcement.delete({
       where: { id },

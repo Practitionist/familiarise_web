@@ -6,7 +6,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import authOptions from "@/app/api/auth/[...nextauth]/options";
 import prisma from "@/lib/prisma";
-import { UserRole, ProfileVerificationStatus } from "@prisma/client";
+import {
+  UserRole,
+  ProfileVerificationStatus,
+  ConsultantVerificationStatus,
+} from "@prisma/client";
 
 interface RouteParams {
   params: Promise<{ verificationId: string }>;
@@ -142,7 +146,7 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
     }
 
     // Map verification status to consultant profile verification status
-    const profileStatusMap: Record<string, string> = {
+    const profileStatusMap: Record<string, ConsultantVerificationStatus> = {
       APPROVED: "VERIFIED",
       REJECTED: "REJECTED",
       NEEDS_INFO: "PENDING_VERIFICATION",
@@ -189,7 +193,7 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
               where: { id: verification.consultantProfileId },
               data: {
                 isVerified: true,
-                verificationStatus: profileStatusMap[status] as never,
+                verificationStatus: profileStatusMap[status],
               },
             }),
           ]
@@ -199,7 +203,7 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
                 where: { id: verification.consultantProfileId },
                 data: {
                   isVerified: false,
-                  verificationStatus: profileStatusMap[status] as never,
+                  verificationStatus: profileStatusMap[status],
                 },
               }),
             ]
@@ -208,7 +212,7 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
                 prisma.consultantProfile.update({
                   where: { id: verification.consultantProfileId },
                   data: {
-                    verificationStatus: profileStatusMap[status] as never,
+                    verificationStatus: profileStatusMap[status],
                   },
                 }),
               ]

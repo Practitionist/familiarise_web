@@ -85,8 +85,14 @@ export async function POST(request: NextRequest) {
         title,
         content,
         isActive,
-        startDate: startDate ? new Date(startDate) : null,
-        endDate: endDate ? new Date(endDate) : null,
+        startDate:
+          startDate && !isNaN(new Date(startDate).getTime())
+            ? new Date(startDate)
+            : null,
+        endDate:
+          endDate && !isNaN(new Date(endDate).getTime())
+            ? new Date(endDate)
+            : null,
         backgroundColor: backgroundColor || "#000000",
         textColor: textColor || "#FFFFFF",
         linkUrl,
