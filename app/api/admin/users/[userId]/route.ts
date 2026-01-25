@@ -40,6 +40,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       select: {
         id: true,
         name: true,
+        bio: true,
         email: true,
         phone: true,
         image: true,
@@ -51,14 +52,13 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         consultantProfile: {
           select: {
             id: true,
-            displayName: true,
-            bio: true,
+
+            description: true,
             isVerified: true,
             verificationStatus: true,
             domain: { select: { id: true, name: true } },
             specialization: true,
-            yearsOfExperience: true,
-            hourlyRate: true,
+            experience: true,
           },
         },
         consulteeProfile: {

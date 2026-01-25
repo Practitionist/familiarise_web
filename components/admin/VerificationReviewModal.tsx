@@ -59,7 +59,7 @@ interface ProfileVerification {
     id: string;
     displayName: string | null;
     bio: string | null;
-    specialization: string[];
+    specialization: string | null;
     yearsOfExperience: number | null;
     hourlyRate?: number | null;
     user: {
@@ -310,11 +310,11 @@ export function VerificationReviewModal({
           )}
 
           {/* Specializations */}
-          {profile.specialization && profile.specialization.length > 0 && (
+          {profile.specialization && (
             <div>
               <Label className="text-sm font-medium">Specializations</Label>
               <div className="flex flex-wrap gap-2 mt-1">
-                {profile.specialization.map((spec, idx) => (
+                {profile.specialization.split(',').map((s) => s.trim()).filter(Boolean).map((spec, idx) => (
                   <Badge key={idx} variant="outline">
                     {spec}
                   </Badge>

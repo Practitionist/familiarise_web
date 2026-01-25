@@ -32,7 +32,7 @@ interface ProfileVerification {
     id: string;
     displayName: string | null;
     bio: string | null;
-    specialization: string[];
+    specialization: string | null;
     yearsOfExperience: number | null;
     user: {
       id: string;
@@ -201,6 +201,11 @@ export function VerificationQueue({
           const profile = verification.consultantProfile;
           const user = profile.user;
 
+          // Handle specialization string splitting
+          const specializations = profile.specialization
+            ? profile.specialization.split(',').map(s => s.trim()).filter(Boolean)
+            : [];
+
           return (
             <Card
               key={verification.id}
@@ -232,7 +237,7 @@ export function VerificationQueue({
                             {profile.domain.name}
                           </Badge>
                         )}
-                        {profile.specialization?.slice(0, 2).map((s, idx) => (
+                        {specializations.slice(0, 2).map((s, idx) => (
                           <Badge
                             key={idx}
                             variant="secondary"
@@ -241,12 +246,11 @@ export function VerificationQueue({
                             {s}
                           </Badge>
                         ))}
-                        {profile.specialization &&
-                          profile.specialization.length > 2 && (
-                            <span className="text-xs text-zinc-400">
-                              +{profile.specialization.length - 2} more
-                            </span>
-                          )}
+                        {specializations.length > 2 && (
+                          <span className="text-xs text-zinc-400">
+                            +{specializations.length - 2} more
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>
