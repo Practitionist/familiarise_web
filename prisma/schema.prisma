@@ -242,12 +242,13 @@ enum SupportIssueType {
 }
 
 model CookiePreference {
-  id        String  @id @default(cuid())
-  user      User    @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  userId    String  @unique
-  essential Boolean @default(true)
-  analytics Boolean @default(false)
-  marketing Boolean @default(false)
+  id         String  @id @default(cuid())
+  user       User    @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  userId     String  @unique
+  essential  Boolean @default(true)
+  analytics  Boolean @default(false)
+  marketing  Boolean @default(false)
+  functional Boolean @default(false) // For chat widgets, video embeds, personalization
 
   @@map("cookie_preferences")
 }

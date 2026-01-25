@@ -459,6 +459,7 @@ export const CookiePreferenceSchema = z.object({
   essential: z.boolean().default(true),
   analytics: z.boolean().default(false),
   marketing: z.boolean().default(false),
+  functional: z.boolean().default(false), // For chat widgets, video embeds, personalization
 });
 
 export type CookiePreference = z.infer<typeof CookiePreferenceSchema>;

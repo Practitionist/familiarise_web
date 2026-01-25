@@ -530,6 +530,7 @@ export async function createUsers(): Promise<UserWithProfiles[]> {
             essential: true,
             analytics: faker.datatype.boolean(),
             marketing: faker.datatype.boolean(),
+            functional: faker.datatype.boolean(),
           },
         },
         notificationPreferences: {
