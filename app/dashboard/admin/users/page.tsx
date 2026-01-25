@@ -462,7 +462,7 @@ export default function AdminUsersPage() {
 
         {/* Pending Verification Tab */}
         <TabsContent value="pending-verification">
-          <VerificationQueue apiBasePath="/api/staff/moderation/profiles" />
+          <VerificationQueue apiBasePath="/api/admin/verification" />
         </TabsContent>
       </Tabs>
 

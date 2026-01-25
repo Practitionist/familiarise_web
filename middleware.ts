@@ -27,7 +27,7 @@ const ROUTE_PATTERNS = {
   PUBLIC_AUTH_PREFIXES: ["/auth/"],
 
   PRIVATE_API_PREFIXES: ["/api/inngest/"],
-  PROTECTED_API_PREFIXES: ["/api/form/onboarding/"],
+  PROTECTED_API_PREFIXES: ["/api/form/onboarding/", "/api/verification/"],
   PUBLIC_API_PREFIXES: ["/api/user/", "/api/auth/"],
 };
 
