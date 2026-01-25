@@ -25,9 +25,9 @@ const statusContent: Record<
 > = {
   PENDING_VERIFICATION: {
     icon: Clock,
-    title: "Verification Required",
+    title: "Awaiting Verification",
     description:
-      "Your profile needs to be verified before you can start accepting consultations. Please complete the verification process.",
+      "Your profile is pending verification by our team. This usually takes 1-2 business days. You'll receive an email once your profile is approved.",
     iconBg: "bg-amber-100",
     iconColor: "text-amber-600",
   },
@@ -35,7 +35,7 @@ const statusContent: Record<
     icon: Shield,
     title: "Verification Under Review",
     description:
-      "Thank you for submitting your verification documents. Our team is reviewing your application. This usually takes 1-2 business days.",
+      "Our team is currently reviewing your profile. This usually takes 1-2 business days. You'll receive an email once the review is complete.",
     iconBg: "bg-blue-100",
     iconColor: "text-blue-600",
   },
@@ -43,7 +43,7 @@ const statusContent: Record<
     icon: XCircle,
     title: "Verification Not Approved",
     description:
-      "Unfortunately, your verification was not approved. Please review the feedback below and resubmit your verification.",
+      "Unfortunately, your verification was not approved. Please review the feedback below and update your profile.",
     iconBg: "bg-red-100",
     iconColor: "text-red-600",
   },
@@ -95,29 +95,20 @@ export function VerificationPendingOverlay({
           </div>
         )}
 
-        {status === "PENDING_VERIFICATION" && (
-          <Button asChild className="gap-2">
-            <Link href={resubmitUrl}>
-              Complete Verification
-              <ArrowRight className="w-4 h-4" />
-            </Link>
-          </Button>
+        {(status === "PENDING_VERIFICATION" || status === "UNDER_REVIEW") && (
+          <div className="flex items-center justify-center gap-2 text-sm text-zinc-500">
+            <AlertCircle className="w-4 h-4" />
+            <span>You&apos;ll receive an email once the review is complete</span>
+          </div>
         )}
 
         {status === "REJECTED" && (
           <Button asChild className="gap-2">
             <Link href={resubmitUrl}>
-              Resubmit Verification
+              Update Profile
               <ArrowRight className="w-4 h-4" />
             </Link>
           </Button>
-        )}
-
-        {status === "UNDER_REVIEW" && (
-          <div className="flex items-center justify-center gap-2 text-sm text-zinc-500">
-            <AlertCircle className="w-4 h-4" />
-            <span>You&apos;ll receive an email once the review is complete</span>
-          </div>
         )}
       </div>
     </div>
@@ -171,10 +162,10 @@ export function VerificationPendingCard({
             </div>
           )}
 
-          {(status === "PENDING_VERIFICATION" || status === "REJECTED") && (
+          {status === "REJECTED" && (
             <Button asChild size="sm" className="gap-1.5">
               <Link href={resubmitUrl}>
-                {status === "REJECTED" ? "Resubmit" : "Complete"} Verification
+                Update Profile
                 <ArrowRight className="w-3.5 h-3.5" />
               </Link>
             </Button>

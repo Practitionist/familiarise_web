@@ -443,17 +443,18 @@ export default function ConsultantLayout({
     />
   );
 
-  // Check verification status
-  console.log("consultantData:", consultantData);
-  console.log("verificationStatus:", consultantData?.verificationStatus);
+  // Check verification status - don't block settings page
+  const isSettingsPage = pathname.includes("/settings");
   const verificationStatus = consultantData?.verificationStatus as
     | VerificationStatus
     | undefined;
   const isVerified = verificationStatus === "VERIFIED";
+  const showVerificationOverlay =
+    !isVerified && verificationStatus && !isSettingsPage;
 
   return (
     <>
-      {!isVerified && verificationStatus && (
+      {showVerificationOverlay && (
         <VerificationPendingOverlay
           status={verificationStatus}
           resubmitUrl={`/dashboard/consultant/${consultantId}/settings`}
