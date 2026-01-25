@@ -31,9 +31,11 @@ export function ProfileHeader({
             </AvatarFallback>
           </Avatar>
           {/* Verified Badge */}
-          <div className="absolute -bottom-1 -right-1 w-8 h-8 bg-emerald-500 rounded-full flex items-center justify-center border-4 border-white">
-            <CheckCircle2 className="w-4 h-4 text-white" />
-          </div>
+          {consultantDetails.isVerified && (
+            <div className="absolute -bottom-1 -right-1 w-8 h-8 bg-emerald-500 rounded-full flex items-center justify-center border-4 border-white">
+              <CheckCircle2 className="w-4 h-4 text-white" />
+            </div>
+          )}
         </div>
 
         {/* Info */}
@@ -53,11 +55,10 @@ export function ProfileHeader({
               {[...Array(5)].map((_, i) => (
                 <Star
                   key={i}
-                  className={`w-5 h-5 ${
-                    i < Math.floor(consultantDetails.rating)
+                  className={`w-5 h-5 ${i < Math.floor(consultantDetails.rating)
                       ? "fill-amber-400 text-amber-400"
                       : "fill-zinc-200 text-zinc-200"
-                  }`}
+                    }`}
                 />
               ))}
             </div>
