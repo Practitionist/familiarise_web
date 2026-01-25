@@ -18,8 +18,6 @@ export type SlotsType = Record<string, SlotType[]>;
 
 export interface FormData {
   description: string;
-  qualifications: string;
-  specialization: string;
   experience: number;
   scheduleType: ScheduleType;
   domainId: string;
@@ -72,8 +70,6 @@ export const getInitialFormData = (
   consultant: TConsultantProfile,
 ): FormData => ({
   description: consultant?.description ?? "",
-  qualifications: consultant?.qualifications ?? "",
-  specialization: consultant?.specialization ?? "",
   experience: consultant?.experience ?? 0,
   scheduleType: consultant?.scheduleType ?? ScheduleType.WEEKLY,
   domainId: consultant?.domain?.id ?? "",

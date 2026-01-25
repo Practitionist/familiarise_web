@@ -4,21 +4,16 @@ import { getEffectiveUserId } from "@/utils/auth";
 import { Skeleton } from "@/components/ui/skeleton";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import StreamProvider from "@/providers/StreamProvider";
-import {
-  DashboardShell,
-  DashboardSidebar,
-  type NavItem,
-} from "@/components/dashboard";
+import { DashboardShell } from "@/components/dashboard/DashboardShell";
+import { DashboardSidebar, type NavItem } from "@/components/dashboard/DashboardSidebar";
 import { useSession } from "next-auth/react";
 import { usePathname, useRouter } from "next/navigation";
 import { use, useEffect, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { consultantFetchers, schedulePrefetch } from "@/lib/dashboard-queries";
 import { motion } from "framer-motion";
-import {
-  VerificationPendingOverlay,
-  type VerificationStatus,
-} from "@/components/verification";
+import { VerificationPendingOverlay } from "@/components/verification/VerificationPendingOverlay";
+import type { VerificationStatus } from "@/components/verification/VerificationStatusBadge";
 
 // Navigation configuration
 const NAV_ITEMS: NavItem[] = [

@@ -53,8 +53,7 @@ const ConsultantProfileForm: React.FC<Props> = ({
     mode: "onChange",
     defaultValues: {
       description: "",
-      qualifications: "",
-      specialization: "",
+      headline: "",
       experience: 0,
       scheduleType: "WEEKLY",
       domain: { id: "", name: "" },
@@ -149,55 +148,39 @@ const ConsultantProfileForm: React.FC<Props> = ({
           )}
         </div>
 
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div className="space-y-2">
-            <Label htmlFor="specialization">Specialization</Label>
-            <Input
-              id="specialization"
-              {...register("specialization")}
-              placeholder="e.g., Career Coaching, Technical Mentorship"
-            />
-            {errors.specialization && (
-              <p className="text-sm text-destructive">
-                {errors.specialization.message}
-              </p>
-            )}
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="experience">
-              Years of Experience <span className="text-destructive">*</span>
-            </Label>
-            <Input
-              id="experience"
-              type="number"
-              min="0"
-              max="100"
-              step="0.5"
-              {...register("experience", { valueAsNumber: true })}
-              placeholder="0"
-            />
-            {errors.experience && (
-              <p className="text-sm text-destructive">
-                {errors.experience.message}
-              </p>
-            )}
-          </div>
+        <div className="space-y-2">
+          <Label htmlFor="headline">Professional Headline</Label>
+          <Input
+            id="headline"
+            {...register("headline")}
+            placeholder="e.g., Senior Software Engineer | Career Coach | 10+ Years Experience"
+          />
+          {errors.headline && (
+            <p className="text-sm text-destructive">
+              {errors.headline.message}
+            </p>
+          )}
+          <p className="text-xs text-muted-foreground">
+            A brief tagline that appears on your profile
+          </p>
         </div>
 
         <div className="space-y-2">
-          <Label htmlFor="qualifications">
-            Qualifications & Certifications
+          <Label htmlFor="experience">
+            Years of Experience <span className="text-destructive">*</span>
           </Label>
-          <Textarea
-            id="qualifications"
-            {...register("qualifications")}
-            placeholder="Your education, certifications, and relevant qualifications"
-            rows={3}
+          <Input
+            id="experience"
+            type="number"
+            min="0"
+            max="100"
+            step="0.5"
+            {...register("experience", { valueAsNumber: true })}
+            placeholder="0"
           />
-          {errors.qualifications && (
+          {errors.experience && (
             <p className="text-sm text-destructive">
-              {errors.qualifications.message}
+              {errors.experience.message}
             </p>
           )}
         </div>

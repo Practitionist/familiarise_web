@@ -40,13 +40,18 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         consultantProfile: {
           include: {
             user: {
-              select: { id: true, name: true, email: true, image: true },
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                image: true,
+                workExperiences: true,
+                certifications: true,
+                education: true,
+              },
             },
             domain: { select: { id: true, name: true } },
             subDomains: { select: { id: true, name: true } },
-            workExperiences: true,
-            certifications: true,
-            education: true,
           },
         },
         documents: true,

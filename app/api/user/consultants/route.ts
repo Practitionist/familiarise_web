@@ -74,8 +74,7 @@ export async function GET(request: NextRequest) {
           { user: { name: { contains: search, mode: "insensitive" } } },
           { user: { email: { contains: search, mode: "insensitive" } } },
           { description: { contains: search, mode: "insensitive" } },
-          { specialization: { contains: search, mode: "insensitive" } },
-          { qualifications: { contains: search, mode: "insensitive" } },
+          { headline: { contains: search, mode: "insensitive" } },
           { domain: { name: { contains: search, mode: "insensitive" } } },
           {
             subDomains: {

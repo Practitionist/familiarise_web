@@ -52,20 +52,19 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         consultantProfile: {
           select: {
             id: true,
-
+            headline: true,
             description: true,
             isVerified: true,
             verificationStatus: true,
             domain: { select: { id: true, name: true } },
-            specialization: true,
             experience: true,
           },
         },
         consulteeProfile: {
           select: {
             id: true,
-            interests: true,
             preferredCommunicationMethod: true,
+            skillsToDevelop: true,
           },
         },
         staffProfile: {

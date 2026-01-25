@@ -806,6 +806,29 @@ const ALLOWED_COVER_IMAGE_TYPES = [
 
 const COVER_IMAGE_MAX_SIZE = 5 * 1024 * 1024; // 5MB
 
+// Profile display image upload types (square image for Explore Experts page)
+export interface ProfileDisplayImageUploadOptions {
+  userId: string;
+  file: File;
+}
+
+export interface ProfileDisplayImageUploadResult {
+  success: boolean;
+  fileUrl?: string;
+  storagePath?: string;
+  error?: string;
+}
+
+// Allowed MIME types for profile display images
+const ALLOWED_PROFILE_DISPLAY_IMAGE_TYPES = [
+  "image/jpeg",
+  "image/jpg",
+  "image/png",
+  "image/webp",
+];
+
+const PROFILE_DISPLAY_IMAGE_MAX_SIZE = 2 * 1024 * 1024; // 2MB
+
 /**
  * Upload cover image to Supabase storage
  * Structure: profile-images/covers/{userId}/{filename}
@@ -962,6 +985,143 @@ const getCoverImageUrl = (
 };
 
 /**
+ * Upload profile display image to Supabase storage (square image for Explore Experts)
+ * Structure: profile-images/display/{userId}/{filename}
+ */
+const uploadProfileDisplayImage = async (
+  options: ProfileDisplayImageUploadOptions,
+): Promise<ProfileDisplayImageUploadResult> => {
+  try {
+    const { userId, file } = options;
+
+    // Validate file
+    if (!file) {
+      return { success: false, error: "No file provided" };
+    }
+
+    // Check file size (max 2MB)
+    if (file.size > PROFILE_DISPLAY_IMAGE_MAX_SIZE) {
+      return { success: false, error: "File size exceeds 2MB limit" };
+    }
+
+    // Validate file type
+    if (!ALLOWED_PROFILE_DISPLAY_IMAGE_TYPES.includes(file.type)) {
+      return {
+        success: false,
+        error: "File type not supported. Please use JPEG, PNG, or WebP.",
+      };
+    }
+
+    // Ensure the profile-images bucket exists
+    const bucketReady = await ensureBucketExists("profile-images");
+    if (!bucketReady) {
+      return {
+        success: false,
+        error:
+          "Profile images storage bucket not found. Please create a 'profile-images' bucket in your Supabase dashboard.",
+      };
+    }
+
+    // Generate unique filename
+    const timestamp = Date.now();
+    const fileExt = file.name.split(".").pop();
+    const fileName = `display_${timestamp}.${fileExt}`;
+
+    // Create folder structure: display/{userId}/
+    const folderPath = `display/${userId}`;
+    const storagePath = `${folderPath}/${fileName}`;
+
+    // Ensure folder structure exists
+    await ensureFolderExists("profile-images", folderPath);
+
+    // Delete any existing profile display images for this user first
+    try {
+      const { data: existingFiles } = await supabase.storage
+        .from("profile-images")
+        .list(folderPath);
+
+      if (existingFiles && existingFiles.length > 0) {
+        const filesToDelete = existingFiles.map(
+          (f) => `${folderPath}/${f.name}`,
+        );
+        await supabase.storage.from("profile-images").remove(filesToDelete);
+      }
+    } catch {
+      // Ignore errors when cleaning up old files
+    }
+
+    // Upload file to Supabase storage
+    const { error: uploadError } = await supabase.storage
+      .from("profile-images")
+      .upload(storagePath, file, {
+        cacheControl: "3600",
+        upsert: true,
+      });
+
+    if (uploadError) {
+      console.error("Supabase upload error:", uploadError);
+      return { success: false, error: uploadError.message };
+    }
+
+    // Get public URL
+    const { data: urlData } = supabase.storage
+      .from("profile-images")
+      .getPublicUrl(storagePath);
+
+    return {
+      success: true,
+      fileUrl: urlData.publicUrl,
+      storagePath,
+    };
+  } catch (error) {
+    console.error("Error uploading profile display image:", error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Upload failed",
+    };
+  }
+};
+
+/**
+ * Delete profile display image from Supabase storage
+ */
+const deleteProfileDisplayImage = async (userId: string): Promise<boolean> => {
+  try {
+    const folderPath = `display/${userId}`;
+
+    // List all files in the user's display folder
+    const { data: files, error: listError } = await supabase.storage
+      .from("profile-images")
+      .list(folderPath);
+
+    if (listError) {
+      console.error("Error listing profile display images:", listError);
+      return false;
+    }
+
+    if (!files || files.length === 0) {
+      return true; // No files to delete
+    }
+
+    // Delete all files in the folder
+    const filesToDelete = files.map((f) => `${folderPath}/${f.name}`);
+    const { error: deleteError } = await supabase.storage
+      .from("profile-images")
+      .remove(filesToDelete);
+
+    if (deleteError) {
+      console.error("Error deleting profile display images:", deleteError);
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    console.error("Error deleting profile display image:", error);
+    return false;
+  }
+};
+
+/**
  * Generic upload to Supabase storage
  * Returns { url, error } - url is the public URL if successful
  */
@@ -1055,6 +1215,11 @@ export {
   getCoverImageUrl,
   ALLOWED_COVER_IMAGE_TYPES,
   COVER_IMAGE_MAX_SIZE,
+  // Profile display image (square image for Explore Experts)
+  uploadProfileDisplayImage,
+  deleteProfileDisplayImage,
+  ALLOWED_PROFILE_DISPLAY_IMAGE_TYPES,
+  PROFILE_DISPLAY_IMAGE_MAX_SIZE,
   // Generic upload/delete
   uploadToSupabase,
   deleteFromSupabase,

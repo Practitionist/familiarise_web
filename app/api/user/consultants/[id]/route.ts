@@ -47,8 +47,6 @@ const customSlotSchema = z.object({
 const updateConsultantSchema = z
   .object({
     description: z.string().optional(),
-    qualifications: z.string().optional(),
-    specialization: z.string().optional(),
     experience: experienceValidation,
     scheduleType: z.enum(["WEEKLY", "CUSTOM"]),
     domainId: uuidSchema,
@@ -110,7 +108,19 @@ export async function GET(
     const consultant = await prisma.consultantProfile.findUnique({
       where: { id },
       include: {
-        user: true,
+        user: {
+          include: {
+            workExperiences: {
+              orderBy: [{ isCurrent: "desc" }, { startDate: "desc" }],
+            },
+            education: {
+              orderBy: { endYear: "desc" },
+            },
+            certifications: {
+              orderBy: { issueDate: "desc" },
+            },
+          },
+        },
         domain: true,
         subDomains: true,
         tags: true,
@@ -120,9 +130,7 @@ export async function GET(
         subscriptionPlans: true,
         webinarPlans: true,
         classPlans: true,
-        workExperiences: true,
-        certifications: true,
-        education: true,
+        reviews: true,
       },
     });
 
@@ -171,8 +179,6 @@ export async function PUT(
     const data = validationResult.data;
     const {
       description,
-      qualifications,
-      specialization,
       experience,
       scheduleType,
       domainId,
@@ -222,8 +228,6 @@ export async function PUT(
       where: { id },
       data: {
         description,
-        qualifications,
-        specialization,
         experience,
         scheduleType,
         domain: {
@@ -298,7 +302,19 @@ export async function PUT(
     const updatedConsultant = await prisma.consultantProfile.findUnique({
       where: { id },
       include: {
-        user: true,
+        user: {
+          include: {
+            workExperiences: {
+              orderBy: [{ isCurrent: "desc" }, { startDate: "desc" }],
+            },
+            education: {
+              orderBy: { endYear: "desc" },
+            },
+            certifications: {
+              orderBy: { issueDate: "desc" },
+            },
+          },
+        },
         domain: true,
         subDomains: true,
         tags: true,
@@ -308,9 +324,7 @@ export async function PUT(
         subscriptionPlans: true,
         webinarPlans: true,
         classPlans: true,
-        workExperiences: true,
-        certifications: true,
-        education: true,
+        reviews: true,
       },
     });
 

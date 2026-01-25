@@ -46,7 +46,7 @@ export async function createCertifications(
 
         await prisma.certification.create({
           data: {
-            consultantProfileId: consultant.consultantProfile.id,
+            userId: consultant.id,
             name: certName,
             issuingOrganization: generateIssuingOrganization(certName),
             issueDate,

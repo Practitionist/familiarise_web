@@ -367,7 +367,7 @@ export default function ClassCheckoutPage({
                 {userDetails?.name || "Consultant Name"}
               </div>
               <div className="text-sm text-muted-foreground">
-                {consultantDetails?.specialization || "Consultant"}
+                {consultantDetails?.headline || consultantDetails?.domain?.name || "Consultant"}
               </div>
             </div>
           </div>

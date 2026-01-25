@@ -2,7 +2,7 @@
 
 import { use } from "react";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
-import { SettingsSkeleton } from "@/components/dashboard";
+import { SettingsSkeleton } from "@/components/dashboard/DashboardSkeletons";
 import { useQuery } from "@tanstack/react-query";
 import { fetchConsultantData } from "../../utils/fetchHelpers";
 import { SettingsTab } from "./SettingsTab";

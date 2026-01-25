@@ -17,7 +17,8 @@ import {
   countUniqueParticipants,
 } from "@/lib/payments/utils/participants";
 import { formatCurrency } from "@/app/checkout/plans/math";
-import { JoinWaitlistButton, WaitlistBadge } from "@/components/waitlist";
+import { JoinWaitlistButton } from "@/components/waitlist/JoinWaitlistButton";
+import { WaitlistBadge } from "@/components/waitlist/WaitlistBadge";
 
 type ClientClassRegistrationProps = {
   readonly plan: ClassPlanProgram;

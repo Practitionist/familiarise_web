@@ -919,32 +919,6 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
               <div className="space-y-4">
                 <div>
                   <Label className="text-sm text-gray-600">
-                    Qualifications
-                  </Label>
-                  <Textarea
-                    name="qualifications"
-                    value={formData.qualifications}
-                    onChange={handleInputChange}
-                    placeholder="List your degrees, certifications, and relevant qualifications"
-                    className="mt-1 resize-none h-24"
-                  />
-                </div>
-
-                <div>
-                  <Label className="text-sm text-gray-600">
-                    Specialization
-                  </Label>
-                  <Input
-                    name="specialization"
-                    value={formData.specialization}
-                    onChange={handleInputChange}
-                    placeholder="Your core area of expertise"
-                    className="mt-1"
-                  />
-                </div>
-
-                <div>
-                  <Label className="text-sm text-gray-600">
                     Years of Experience
                   </Label>
                   <Input

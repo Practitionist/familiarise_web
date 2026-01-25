@@ -176,7 +176,13 @@ const appointmentInclude = {
 } satisfies Prisma.AppointmentInclude;
 
 const consultantInclude = {
-  user: true,
+  user: {
+    include: {
+      workExperiences: true,
+      certifications: true,
+      education: true,
+    },
+  },
   domain: true,
   subDomains: true,
   tags: true,
@@ -186,9 +192,6 @@ const consultantInclude = {
   subscriptionPlans: true,
   webinarPlans: true,
   classPlans: true,
-  workExperiences: true,
-  certifications: true,
-  education: true,
 } satisfies Prisma.ConsultantProfileInclude;
 
 // Derive types from the include objects

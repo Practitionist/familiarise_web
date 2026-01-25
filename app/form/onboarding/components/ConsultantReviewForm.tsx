@@ -179,8 +179,7 @@ const ConsultantReviewForm: React.FC<Props> = ({
         "Professional Details",
         <div className="bg-muted/50 rounded-lg p-4">
           {renderField("Description", formData.description)}
-          {renderField("Qualifications", formData.qualifications)}
-          {renderField("Specialization", formData.specialization)}
+          {renderField("Headline", formData.headline)}
           {renderField(
             "Experience",
             formData.experience ? `${formData.experience} years` : undefined,

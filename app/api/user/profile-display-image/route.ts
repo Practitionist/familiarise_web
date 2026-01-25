@@ -3,15 +3,15 @@ import { getServerSession } from "next-auth";
 import authOptions from "@/app/api/auth/[...nextauth]/options";
 import prisma from "@/lib/prisma";
 import {
-  uploadCoverImage,
-  deleteCoverImage,
-  ALLOWED_COVER_IMAGE_TYPES,
-  COVER_IMAGE_MAX_SIZE,
+  uploadProfileDisplayImage,
+  deleteProfileDisplayImage,
+  ALLOWED_PROFILE_DISPLAY_IMAGE_TYPES,
+  PROFILE_DISPLAY_IMAGE_MAX_SIZE,
 } from "@/lib/supabase";
 
 /**
- * POST /api/user/cover-image
- * Upload a cover image for the authenticated user
+ * POST /api/user/profile-display-image
+ * Upload a profile display image for the authenticated user
  */
 export async function POST(request: NextRequest) {
   try {
@@ -28,7 +28,7 @@ export async function POST(request: NextRequest) {
     const file = formData.get("file") as File | null;
     const userId = formData.get("userId") as string | null;
 
-    // Verify the user is uploading their own cover image
+    // Verify the user is uploading their own profile display image
     if (userId && userId !== session.user.id) {
       return NextResponse.json(
         { success: false, error: "Forbidden" },
@@ -44,7 +44,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Validate file type
-    if (!ALLOWED_COVER_IMAGE_TYPES.includes(file.type)) {
+    if (!ALLOWED_PROFILE_DISPLAY_IMAGE_TYPES.includes(file.type)) {
       return NextResponse.json(
         {
           success: false,
@@ -55,15 +55,15 @@ export async function POST(request: NextRequest) {
     }
 
     // Validate file size
-    if (file.size > COVER_IMAGE_MAX_SIZE) {
+    if (file.size > PROFILE_DISPLAY_IMAGE_MAX_SIZE) {
       return NextResponse.json(
-        { success: false, error: "File size exceeds 5MB limit" },
+        { success: false, error: "File size exceeds 2MB limit" },
         { status: 400 },
       );
     }
 
     // Upload to Supabase
-    const uploadResult = await uploadCoverImage({
+    const uploadResult = await uploadProfileDisplayImage({
       userId: session.user.id,
       file,
     });
@@ -75,26 +75,26 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Update user record with cover image URL
+    // Update user record with profile display image URL
     await prisma.user.update({
       where: { id: session.user.id },
-      data: { coverImage: uploadResult.fileUrl },
+      data: { profileDisplayImage: uploadResult.fileUrl },
     });
 
     return NextResponse.json({
       success: true,
       data: {
-        coverImage: uploadResult.fileUrl,
+        profileDisplayImage: uploadResult.fileUrl,
         storagePath: uploadResult.storagePath,
       },
     });
   } catch (error) {
-    console.error("Cover image upload error:", error);
+    console.error("Profile display image upload error:", error);
     return NextResponse.json(
       {
         success: false,
         error:
-          error instanceof Error ? error.message : "Failed to upload cover image",
+          error instanceof Error ? error.message : "Failed to upload profile display image",
       },
       { status: 500 },
     );
@@ -102,8 +102,8 @@ export async function POST(request: NextRequest) {
 }
 
 /**
- * DELETE /api/user/cover-image
- * Delete the cover image for the authenticated user
+ * DELETE /api/user/profile-display-image
+ * Delete the profile display image for the authenticated user
  */
 export async function DELETE(request: NextRequest) {
   try {
@@ -119,7 +119,7 @@ export async function DELETE(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const userId = searchParams.get("userId");
 
-    // Verify the user is deleting their own cover image
+    // Verify the user is deleting their own profile display image
     if (userId && userId !== session.user.id) {
       return NextResponse.json(
         { success: false, error: "Forbidden" },
@@ -127,44 +127,44 @@ export async function DELETE(request: NextRequest) {
       );
     }
 
-    // Check if user has a cover image
+    // Check if user has a profile display image
     const user = await prisma.user.findUnique({
       where: { id: session.user.id },
-      select: { coverImage: true },
+      select: { profileDisplayImage: true },
     });
 
-    if (!user?.coverImage) {
+    if (!user?.profileDisplayImage) {
       return NextResponse.json({
         success: true,
-        message: "No cover image to delete",
+        message: "No profile display image to delete",
       });
     }
 
     // Delete from Supabase
-    const deleteResult = await deleteCoverImage(session.user.id);
+    const deleteResult = await deleteProfileDisplayImage(session.user.id);
 
     if (!deleteResult) {
-      console.warn("Failed to delete cover image from storage");
+      console.warn("Failed to delete profile display image from storage");
       // Continue anyway to clear the database reference
     }
 
-    // Update user record to remove cover image URL
+    // Update user record to remove profile display image URL
     await prisma.user.update({
       where: { id: session.user.id },
-      data: { coverImage: null },
+      data: { profileDisplayImage: null },
     });
 
     return NextResponse.json({
       success: true,
-      message: "Cover image deleted successfully",
+      message: "Profile display image deleted successfully",
     });
   } catch (error) {
-    console.error("Cover image delete error:", error);
+    console.error("Profile display image delete error:", error);
     return NextResponse.json(
       {
         success: false,
         error:
-          error instanceof Error ? error.message : "Failed to delete cover image",
+          error instanceof Error ? error.message : "Failed to delete profile display image",
       },
       { status: 500 },
     );
@@ -172,8 +172,8 @@ export async function DELETE(request: NextRequest) {
 }
 
 /**
- * GET /api/user/cover-image
- * Get the cover image URL for a user
+ * GET /api/user/profile-display-image
+ * Get the profile display image URL for a user
  */
 export async function GET(request: NextRequest) {
   try {
@@ -189,7 +189,7 @@ export async function GET(request: NextRequest) {
 
     const user = await prisma.user.findUnique({
       where: { id: userId },
-      select: { coverImage: true },
+      select: { profileDisplayImage: true },
     });
 
     if (!user) {
@@ -201,15 +201,15 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      data: { coverImage: user.coverImage },
+      data: { profileDisplayImage: user.profileDisplayImage },
     });
   } catch (error) {
-    console.error("Get cover image error:", error);
+    console.error("Get profile display image error:", error);
     return NextResponse.json(
       {
         success: false,
         error:
-          error instanceof Error ? error.message : "Failed to get cover image",
+          error instanceof Error ? error.message : "Failed to get profile display image",
       },
       { status: 500 },
     );

@@ -609,8 +609,7 @@ export function transformOnboardingFormToServerData(
         consultantProfile: {
           create: {
             description: formData.description,
-            qualifications: formData.qualifications,
-            specialization: formData.specialization,
+            headline: formData.headline,
             experience: formData.experience,
             scheduleType: formData.scheduleType || ScheduleType.WEEKLY,
             domain: { connect: { id: formData.domain.id } },
@@ -643,8 +642,6 @@ export function transformOnboardingFormToServerData(
                   })),
                 }
               : undefined,
-            // New consultant fields
-            headline: formData.headline,
             websiteUrl: formData.websiteUrl,
             twitterUrl: formData.twitterUrl,
             githubUrl: formData.githubUrl,
@@ -666,16 +663,12 @@ export function transformOnboardingFormToServerData(
         consultantProfile: undefined,
         consulteeProfile: {
           create: {
-            education: formData.education,
             occupation: formData.occupation,
             aboutMe: formData.aboutMe,
             preferredCommunicationMethod:
               formData.preferredCommunicationMethod || ConsultationMode.VIDEO,
             preferredLanguage: formData.preferredLanguage,
-            specialRequirements: formData.specialRequirements,
-            interests: formData.interests,
             goals: formData.goals,
-            // New consultee fields
             careerStage: formData.careerStage,
             currentCompany: formData.currentCompany,
             industry: formData.industry,
@@ -810,8 +803,7 @@ function transformConsultantProfile(
 ): ConsultantProfileCreateData {
   return {
     description: profile.description,
-    qualifications: profile.qualifications,
-    specialization: profile.specialization,
+    headline: profile.headline,
     experience: profile.experience,
     scheduleType: profile.scheduleType,
     domain: {
@@ -837,8 +829,6 @@ function transformConsultantProfile(
           create: profile.customSlots,
         }
       : undefined,
-    // New fields
-    headline: profile.headline,
     websiteUrl: profile.websiteUrl,
     twitterUrl: profile.twitterUrl,
     githubUrl: profile.githubUrl,
@@ -854,15 +844,11 @@ function transformConsulteeProfile(
   profile: FrontendConsulteeProfile,
 ): ConsulteeProfileCreateData {
   return {
-    education: profile.education,
     occupation: profile.occupation,
     aboutMe: profile.aboutMe,
     preferredCommunicationMethod: profile.preferredCommunicationMethod,
     preferredLanguage: profile.preferredLanguage,
-    specialRequirements: profile.specialRequirements,
-    interests: profile.interests,
     goals: profile.goals,
-    // New fields
     careerStage: profile.careerStage,
     currentCompany: profile.currentCompany,
     industry: profile.industry,

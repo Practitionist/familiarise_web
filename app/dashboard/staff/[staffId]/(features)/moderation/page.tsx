@@ -79,7 +79,7 @@ interface ProfileVerification {
     id: string;
     displayName: string | null;
     bio: string | null;
-    specialization: string[];
+    headline: string | null;
     yearsOfExperience: number | null;
     user: {
       id: string;
@@ -646,16 +646,14 @@ export default function ContentModerationPage() {
                             {profile.profile.user.email}
                           </p>
                           <div className="flex items-center gap-2 mt-1">
-                            {profile.profile.specialization
-                              .slice(0, 2)
-                              .map((s) => (
-                                <Badge key={s} variant="outline">
-                                  {s}
-                                </Badge>
-                              ))}
+                            {profile.profile.headline && (
+                              <span className="text-sm text-zinc-600 dark:text-zinc-400">
+                                {profile.profile.headline}
+                              </span>
+                            )}
                             {profile.profile.yearsOfExperience && (
                               <span className="text-xs text-zinc-500">
-                                {profile.profile.yearsOfExperience} years
+                                • {profile.profile.yearsOfExperience} years
                                 experience
                               </span>
                             )}
@@ -912,12 +910,9 @@ export default function ContentModerationPage() {
                 </div>
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div>
-                    <Label className="text-sm font-medium">
-                      Specialization
-                    </Label>
+                    <Label className="text-sm font-medium">Headline</Label>
                     <p className="text-sm text-zinc-600">
-                      {selectedProfile.profile.specialization.join(", ") ||
-                        "Not specified"}
+                      {selectedProfile.profile.headline || "Not specified"}
                     </p>
                   </div>
                   <div>

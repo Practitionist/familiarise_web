@@ -159,8 +159,8 @@ export function ConsultantCard({ consultant, metadata }: ConsultantCardProps) {
             />
             <ConsultantInfo
               icon={Briefcase}
-              label="Specialization"
-              value={consultant.specialization}
+              label="Headline"
+              value={consultant.headline}
             />
             <ConsultantInfo
               icon={MapPin}

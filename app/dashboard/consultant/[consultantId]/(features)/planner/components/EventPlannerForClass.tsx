@@ -47,14 +47,12 @@ import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { ClassPlanSchema } from "@/schemas/plans";
 
-import {
-  FormSection,
-  LearningOutcomesField,
-  PriceField,
-  LanguageLevelFields,
-  SubmitButton,
-  FormConfirmationDialog,
-} from "./form-fields";
+import { FormSection } from "./form-fields/FormSection";
+import { LearningOutcomesField } from "./form-fields/LearningOutcomesField";
+import { PriceField } from "./form-fields/PriceField";
+import { LanguageLevelFields } from "./form-fields/LanguageLevelFields";
+import { SubmitButton } from "./form-fields/SubmitButton";
+import { FormConfirmationDialog } from "./form-fields/FormConfirmationDialog";
 import { TopicsMultiSelect } from "./TopicsMultiSelect";
 import { PlannerService } from "../services/planner";
 import { ClassEvent, ClassPlannerProps } from "../types/event";

@@ -3,7 +3,7 @@
 import { use } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
-import { TableSkeleton } from "@/components/dashboard";
+import { TableSkeleton } from "@/components/dashboard/DashboardSkeletons";
 import { createConsulteeQueries } from "@/hooks/useConsulteePrefetchDashboard";
 import { BookingHistoryTab } from "./BookingHistoryTab";
 

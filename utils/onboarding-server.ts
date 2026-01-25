@@ -35,8 +35,6 @@ async function updateConsultantProfileAndRelations(
     create: {
       userId: userId,
       description: profileData.description ?? "",
-      qualifications: profileData.qualifications ?? "",
-      specialization: profileData.specialization ?? "",
       experience: profileData.experience ?? null,
       scheduleType: scheduleTypeEnum,
       rating: 0,
@@ -60,8 +58,6 @@ async function updateConsultantProfileAndRelations(
     },
     update: {
       description: profileData.description ?? "",
-      qualifications: profileData.qualifications ?? "",
-      specialization: profileData.specialization ?? "",
       experience: profileData.experience ?? null,
       scheduleType: scheduleTypeEnum,
       domain: { connect: { id: domainId } },
@@ -156,13 +152,10 @@ async function updateConsulteeProfileAndRelations(
     where: { userId: userId },
     create: {
       userId: userId,
-      education: profileData.education ?? "",
       occupation: profileData.occupation ?? "",
       aboutMe: profileData.aboutMe ?? "",
       preferredCommunicationMethod: profileData.preferredCommunicationMethod,
       preferredLanguage: profileData.preferredLanguage ?? "",
-      specialRequirements: profileData.specialRequirements ?? "",
-      interests: interests,
       goals: goals,
       // New fields
       careerStage: profileData.careerStage ?? null,
@@ -173,13 +166,10 @@ async function updateConsulteeProfileAndRelations(
       budgetPreference: profileData.budgetPreference ?? null,
     },
     update: {
-      education: profileData.education ?? "",
       occupation: profileData.occupation ?? "",
       aboutMe: profileData.aboutMe ?? "",
       preferredCommunicationMethod: profileData.preferredCommunicationMethod,
       preferredLanguage: profileData.preferredLanguage ?? "",
-      specialRequirements: profileData.specialRequirements ?? "",
-      interests: interests,
       goals: goals,
       // New fields
       careerStage: profileData.careerStage ?? null,
@@ -373,16 +363,13 @@ export async function processOnboardingData(
                 domain: true,
                 subDomains: true,
                 tags: true,
-                workExperiences: true,
-                certifications: true,
-                education: true,
               },
             },
-            consulteeProfile: {
-              include: {
-                educationHistory: true,
-              },
-            },
+            consulteeProfile: true,
+            // Professional background is now at User level
+            workExperiences: true,
+            education: true,
+            certifications: true,
             staffProfile: true,
             adminProfile: true,
           },
