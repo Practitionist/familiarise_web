@@ -96,9 +96,17 @@ export function VerificationPendingOverlay({
         )}
 
         {(status === "PENDING_VERIFICATION" || status === "UNDER_REVIEW") && (
-          <div className="flex items-center justify-center gap-2 text-sm text-zinc-500">
-            <AlertCircle className="w-4 h-4" />
-            <span>You&apos;ll receive an email once the review is complete</span>
+          <div className="space-y-4">
+            <div className="flex items-center justify-center gap-2 text-sm text-zinc-500">
+              <AlertCircle className="w-4 h-4" />
+              <span>You&apos;ll receive an email once the review is complete</span>
+            </div>
+            <Button asChild className="gap-2">
+              <Link href={resubmitUrl}>
+                View Settings
+                <ArrowRight className="w-4 h-4" />
+              </Link>
+            </Button>
           </div>
         )}
 
