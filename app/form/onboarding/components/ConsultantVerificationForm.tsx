@@ -68,8 +68,6 @@ export default function ConsultantVerificationForm({
         }
 
         return result.data as UploadedDocument;
-      } catch (err) {
-        throw err;
       } finally {
         setIsUploading(false);
       }
