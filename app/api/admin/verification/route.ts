@@ -42,6 +42,7 @@ export async function GET(req: NextRequest) {
                 name: true,
                 email: true,
                 image: true,
+                linkedinUrl: true,
                 workExperiences: true,
                 certifications: true,
                 education: true,

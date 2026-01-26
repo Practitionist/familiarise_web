@@ -39,21 +39,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Check if there's already a pending verification
-    const existingPending = consultantProfile.verificationRequests.find(
-      (v) => v.status === "PENDING"
-    );
-
-    if (existingPending) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "You already have a pending verification request",
-        },
-        { status: 400 }
-      );
-    }
-
     // Update user's LinkedIn URL if provided
     if (linkedinUrl) {
       await prisma.user.update({
@@ -62,29 +47,66 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Create the verification request
-    const verification = await prisma.consultantProfileVerification.create({
-      data: {
-        consultantProfileId: consultantProfile.id,
-        notes,
-        status: "PENDING",
-        // Connect existing documents if provided
-        ...(documentIds?.length && {
-          documents: {
-            connect: documentIds.map((id: string) => ({ id })),
-          },
-        }),
-      },
-      include: {
-        documents: true,
-      },
-    });
+    // Check for the latest verification request
+    const latestVerification = consultantProfile.verificationRequests[0];
+
+    // Determine if we should update existing or create new
+    const shouldUpdate =
+      latestVerification &&
+      (latestVerification.status === "PENDING" ||
+        latestVerification.status === "NEEDS_INFO");
+
+    let verification;
+
+    if (shouldUpdate) {
+      // Update the existing request
+      verification = await prisma.consultantProfileVerification.update({
+        where: { id: latestVerification.id },
+        data: {
+          status: "PENDING", // Reset to PENDING for review
+          notes,
+          reviewedAt: null, // Reset review details
+          reviewedById: null,
+          reviewNotes: null,
+          rejectionReason: null,
+          feedbackDetails: null,
+          // Connect new documents if provided
+          ...(documentIds?.length && {
+            documents: {
+              connect: documentIds.map((id: string) => ({ id })),
+            },
+          }),
+        },
+        include: {
+          documents: true,
+        },
+      });
+    } else {
+      // Create a new verification request (for initial or after REJECTED/APPROVED)
+      verification = await prisma.consultantProfileVerification.create({
+        data: {
+          consultantProfileId: consultantProfile.id,
+          notes,
+          status: "PENDING",
+          // Connect existing documents if provided
+          ...(documentIds?.length && {
+            documents: {
+              connect: documentIds.map((id: string) => ({ id })),
+            },
+          }),
+        },
+        include: {
+          documents: true,
+        },
+      });
+    }
 
     // Update consultant profile verification status
     await prisma.consultantProfile.update({
       where: { id: consultantProfile.id },
       data: {
         verificationStatus: "UNDER_REVIEW",
+        isVerified: false,
       },
     });
 

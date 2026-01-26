@@ -51,6 +51,8 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
                 name: true,
                 email: true,
                 image: true,
+                linkedinUrl: true,
+                bio: true,
                 workExperiences: true,
                 certifications: true,
                 education: true,
@@ -191,16 +193,26 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
       // Update consultant profile isVerified and verificationStatus
       ...(status === "APPROVED"
         ? [
+          prisma.consultantProfile.update({
+            where: { id: verification.consultantProfileId },
+            data: {
+              isVerified: true,
+              verificationStatus: profileStatusMap[status],
+            },
+          }),
+        ]
+        : status === "REJECTED"
+          ? [
             prisma.consultantProfile.update({
               where: { id: verification.consultantProfileId },
               data: {
-                isVerified: true,
+                isVerified: false,
                 verificationStatus: profileStatusMap[status],
               },
             }),
           ]
-        : status === "REJECTED"
-          ? [
+          : status === "NEEDS_INFO"
+            ? [
               prisma.consultantProfile.update({
                 where: { id: verification.consultantProfileId },
                 data: {
@@ -209,15 +221,6 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
                 },
               }),
             ]
-          : status === "NEEDS_INFO"
-            ? [
-                prisma.consultantProfile.update({
-                  where: { id: verification.consultantProfileId },
-                  data: {
-                    verificationStatus: profileStatusMap[status],
-                  },
-                }),
-              ]
             : []),
     ]);
 

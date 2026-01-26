@@ -58,7 +58,9 @@ interface ProfileVerification {
   consultantProfile: {
     id: string;
     displayName: string | null;
-    bio: string | null;
+    description: string | null; // Professional Summary
+    headline: string | null; // Professional Headline
+    // bio: string | null; // Removed, bio is on User
     specialization: string | null;
     yearsOfExperience: number | null;
     hourlyRate?: number | null;
@@ -67,6 +69,8 @@ interface ProfileVerification {
       name: string | null;
       email: string;
       image?: string | null;
+      linkedinUrl?: string | null;
+      bio?: string | null; // Short Bio
     };
     domain?: { id: string; name: string } | null;
     subDomains?: { id: string; name: string }[];
@@ -270,6 +274,22 @@ export function VerificationReviewModal({
                 {profile.displayName || user.name || "Unnamed"}
               </h3>
               <p className="text-sm text-zinc-500">{user.email}</p>
+              {user.linkedinUrl && (
+                <a
+                  href={user.linkedinUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-1 text-sm text-blue-600 hover:text-blue-700 hover:underline mt-0.5"
+                >
+                  <img
+                    src="https://upload.wikimedia.org/wikipedia/commons/c/ca/LinkedIn_logo_initials.png"
+                    alt="LinkedIn"
+                    className="w-3 h-3"
+                  />
+                  LinkedIn Profile
+                  <ExternalLink className="h-3 w-3" />
+                </a>
+              )}
               <div className="flex items-center gap-2 mt-1">
                 {profile.domain && (
                   <Badge variant="secondary">{profile.domain.name}</Badge>
@@ -299,12 +319,45 @@ export function VerificationReviewModal({
             </Badge>
           </div>
 
-          {/* Bio */}
-          {profile.bio && (
+          {/* Applicant Notes */}
+          {verification.notes && (
+            <div className="bg-amber-50 dark:bg-amber-950/30 p-4 rounded-lg border border-amber-100 dark:border-amber-900">
+              <Label className="text-sm font-medium text-amber-800 dark:text-amber-200 flex items-center gap-2">
+                <FileText className="h-4 w-4" />
+                Applicant Notes
+              </Label>
+              <p className="text-sm text-amber-700 dark:text-amber-300 mt-1 whitespace-pre-wrap">
+                {verification.notes}
+              </p>
+            </div>
+          )}
+
+          {/* Professional Headline */}
+          {profile.headline && (
             <div>
-              <Label className="text-sm font-medium">Bio</Label>
+              <Label className="text-sm font-medium">Professional Headline</Label>
+              <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100 mt-1">
+                {profile.headline}
+              </p>
+            </div>
+          )}
+
+          {/* Short Bio */}
+          {user.bio && (
+            <div>
+              <Label className="text-sm font-medium">Short Bio</Label>
               <p className="text-sm text-zinc-600 dark:text-zinc-400 mt-1">
-                {profile.bio}
+                {user.bio}
+              </p>
+            </div>
+          )}
+
+          {/* Professional Summary (Description) */}
+          {profile.description && (
+            <div>
+              <Label className="text-sm font-medium">Professional Summary</Label>
+              <p className="text-sm text-zinc-600 dark:text-zinc-400 mt-1 whitespace-pre-wrap">
+                {profile.description}
               </p>
             </div>
           )}

@@ -428,6 +428,7 @@ export async function processOnboardingData(
           where: { id: updatedUser.consultantProfileId },
           data: {
             verificationStatus: "UNDER_REVIEW",
+            isVerified: false,
           },
         });
 

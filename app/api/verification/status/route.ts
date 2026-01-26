@@ -34,6 +34,8 @@ export async function GET() {
             submittedAt: true,
             reviewedAt: true,
             reviewNotes: true,
+            rejectionReason: true,
+            feedbackDetails: true,
             notes: true,
             documents: {
               select: {
@@ -45,6 +47,8 @@ export async function GET() {
                 fileUrl: true,
                 description: true,
                 uploadedAt: true,
+                isValid: true,
+                staffFeedback: true,
               },
             },
           },
@@ -76,14 +80,16 @@ export async function GET() {
         linkedinUrl: user?.linkedinUrl,
         latestRequest: latestRequest
           ? {
-              id: latestRequest.id,
-              status: latestRequest.status,
-              submittedAt: latestRequest.submittedAt,
-              reviewedAt: latestRequest.reviewedAt,
-              reviewNotes: latestRequest.reviewNotes,
-              notes: latestRequest.notes,
-              documents: latestRequest.documents,
-            }
+            id: latestRequest.id,
+            status: latestRequest.status,
+            submittedAt: latestRequest.submittedAt,
+            reviewedAt: latestRequest.reviewedAt,
+            reviewNotes: latestRequest.reviewNotes,
+            rejectionReason: latestRequest.rejectionReason,
+            feedbackDetails: latestRequest.feedbackDetails,
+            notes: latestRequest.notes,
+            documents: latestRequest.documents,
+          }
           : null,
       },
     });
