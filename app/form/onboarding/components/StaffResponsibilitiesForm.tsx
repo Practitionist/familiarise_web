@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { responsibilitiesAndPermissions } from "@/schemas/responsibbilities-permissions";
 import { StaffProfile, PersonalInfoAndRole } from "@/schemas/user";
 import React, { useEffect, useState } from "react";
-import { useFormContext } from "react-hook-form";
+import { useForm } from "react-hook-form";
 
 interface Props {
   onNext: (data: any) => void;
@@ -30,10 +30,16 @@ const StaffResponsibilitiesForm: React.FC<Props> = ({
     setValue,
     watch,
     formState: { errors },
-  } = useFormContext();
+    handleSubmit: localHandleSubmit,
+  } = useForm({
+    defaultValues: {
+      responsibilities: initialData.responsibilities || {},
+      permissions: initialData.permissions || {},
+    },
+  });
 
-  const responsibilities = watch("responsibilities", {});
-  const permissions = watch("permissions", {});
+  const responsibilities = watch("responsibilities");
+  const permissions = watch("permissions");
 
   useEffect(() => {
     if (initialData.department && initialData.position) {
@@ -42,7 +48,7 @@ const StaffResponsibilitiesForm: React.FC<Props> = ({
     }
   }, [initialData]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const onSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
     // Validate that at least one responsibility and permission is selected
@@ -119,7 +125,7 @@ const StaffResponsibilitiesForm: React.FC<Props> = ({
         </p>
       </div>
 
-      <form onSubmit={handleSubmit} className="space-y-6">
+      <form onSubmit={onSubmit} className="space-y-6">
         <Accordion type="single" collapsible className="w-full">
           <AccordionItem value="responsibilities" className="border rounded-lg">
             <AccordionTrigger className="px-4 font-medium hover:no-underline">

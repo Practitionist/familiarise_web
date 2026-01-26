@@ -1,7 +1,7 @@
 import React from "react";
 import { Button } from "@/components/ui/button";
 import { StaffProfile, PersonalInfoAndRole } from "@/schemas/user";
-import { useFormContext } from "react-hook-form";
+
 import TermsAndPrivacyAgreement from "./TermsAndPrivacyAgreement";
 
 interface Props {
@@ -9,10 +9,10 @@ interface Props {
   onBack: () => void;
   initialData: Partial<
     StaffProfile &
-      PersonalInfoAndRole & {
-        termsAccepted?: boolean;
-        privacyAccepted?: boolean;
-      }
+    PersonalInfoAndRole & {
+      termsAccepted?: boolean;
+      privacyAccepted?: boolean;
+    }
   >;
 }
 
@@ -21,37 +21,35 @@ const StaffAgreementForm: React.FC<Props> = ({
   onBack,
   initialData,
 }) => {
-  const {
-    setValue,
-    watch,
-    handleSubmit,
-    formState: { errors },
-  } = useFormContext();
+  const [termsAccepted, setTermsAccepted] = React.useState(
+    initialData.termsAccepted || false,
+  );
+  const [privacyAccepted, setPrivacyAccepted] = React.useState(
+    initialData.privacyAccepted || false,
+  );
 
-  const termsAccepted = watch("termsAccepted", initialData.termsAccepted);
-  const privacyAccepted = watch("privacyAccepted", initialData.privacyAccepted);
-
-  const onSubmit = (data: any) => {
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
     if (!termsAccepted || !privacyAccepted) {
       return;
     }
+    // Only pass the fields this form is responsible for
     onNext({
-      ...data,
       termsAccepted: true,
       privacyAccepted: true,
     });
   };
 
   const handleTermsChange = (checked: boolean) => {
-    setValue("termsAccepted", checked, { shouldValidate: true });
+    setTermsAccepted(checked);
   };
 
   const handlePrivacyChange = (checked: boolean) => {
-    setValue("privacyAccepted", checked, { shouldValidate: true });
+    setPrivacyAccepted(checked);
   };
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+    <form onSubmit={handleSubmit} className="space-y-6">
       <div className="space-y-4">
         <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
           Terms and Conditions
@@ -62,17 +60,10 @@ const StaffAgreementForm: React.FC<Props> = ({
         <TermsAndPrivacyAgreement
           onTermsChange={handleTermsChange}
           onPrivacyChange={handlePrivacyChange}
-          termsChecked={termsAccepted || false}
-          privacyChecked={privacyAccepted || false}
+          termsChecked={termsAccepted}
+          privacyChecked={privacyAccepted}
         />
       </div>
-
-      {(errors.termsAccepted || errors.privacyAccepted) && (
-        <p className="text-sm text-destructive bg-destructive/10 rounded-lg p-3">
-          Please accept both the Terms of Service and Privacy Policy to
-          continue.
-        </p>
-      )}
 
       <div className="flex gap-4 pt-4">
         <Button
