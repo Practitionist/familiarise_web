@@ -42,7 +42,7 @@ export async function createConsultantEducation(
 
         await prisma.education.create({
           data: {
-            consultantProfileId: consultant.consultantProfile.id,
+            userId: consultant.id,
             institution: generateInstitution(),
             degree: generateDegree(),
             fieldOfStudy: generateFieldOfStudy(domainName),

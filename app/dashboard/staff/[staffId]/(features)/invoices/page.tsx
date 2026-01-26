@@ -1,6 +1,6 @@
 "use client";
 
-import { InvoicesPage } from "@/components/dashboard/shared";
+import { InvoicesPage } from "@/components/dashboard/shared/InvoicesPage";
 
 export default function StaffInvoicesPage() {
   return (

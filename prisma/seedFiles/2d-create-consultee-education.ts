@@ -59,7 +59,7 @@ export async function createConsulteeEducation(
 
         await prisma.education.create({
           data: {
-            consulteeProfileId: consultee.consulteeProfile.id,
+            userId: consultee.id,
             institution: generateInstitution(),
             degree: generateDegree(),
             fieldOfStudy: faker.helpers.arrayElement(fields),

@@ -10,7 +10,7 @@ import {
 import { responsibilitiesAndPermissions } from "@/schemas/responsibbilities-permissions";
 import { StaffProfile, PersonalInfoAndRole } from "@/schemas/user";
 import React, { useEffect, useState } from "react";
-import { Controller, useFormContext } from "react-hook-form";
+import { Controller, useForm } from "react-hook-form";
 
 interface Props {
   onNext: (data: any) => void;
@@ -28,22 +28,19 @@ const StaffProfileForm: React.FC<Props> = ({ onNext, onBack, initialData }) => {
     watch,
     setValue,
     formState: { errors },
-  } = useFormContext();
+  } = useForm<StaffProfile & PersonalInfoAndRole>({
+    defaultValues: {
+      department: initialData.department || "",
+      position: initialData.position || "",
+    },
+  });
 
   const watchDepartment = watch("department");
 
   useEffect(() => {
     // Initialize departments from the schema
     setDepartments(Object.keys(responsibilitiesAndPermissions.departments));
-
-    // Initialize with initial data if available
-    if (initialData.department) {
-      setValue("department", initialData.department);
-      if (initialData.position) {
-        setValue("position", initialData.position);
-      }
-    }
-  }, [initialData, setValue]);
+  }, []);
 
   useEffect(() => {
     if (watchDepartment) {
@@ -60,10 +57,11 @@ const StaffProfileForm: React.FC<Props> = ({ onNext, onBack, initialData }) => {
     }
   }, [watchDepartment]);
 
-  const onSubmit = (data: Partial<StaffProfile>) => {
+  const onSubmit = (data: any) => {
     // Initialize empty responsibilities and permissions objects
     onNext({
-      ...data,
+      department: data.department,
+      position: data.position,
       responsibilities: {},
       permissions: {},
     });

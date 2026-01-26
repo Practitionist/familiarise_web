@@ -26,12 +26,18 @@ model User {
   role                 UserRole? @default(CONSULTEE)
 
   // New fields for enhanced user profile
-  dateOfBirth DateTime?
-  gender      Gender?
-  city        String?
-  country     String?
-  linkedinUrl String?
-  bio         String?   @db.VarChar(160) // Short tagline, max 160 chars
+  dateOfBirth         DateTime?
+  gender              Gender?
+  city                String?
+  country             String?
+  linkedinUrl         String?
+  bio                 String?   @db.VarChar(160) // Short tagline, max 160 chars
+  profileDisplayImage String? // Square profile image for Explore Experts page
+
+  // Professional background (consolidated from profile level)
+  workExperiences WorkExperience[]
+  certifications  Certification[]
+  education       Education[]
 
   cookiePreferences       CookiePreference?
   notificationPreferences NotificationPreference?
@@ -241,12 +247,30 @@ enum SupportIssueType {
 }
 
 model CookiePreference {
-  id        String  @id @default(cuid())
-  user      User    @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  userId    String  @unique
+  id String @id @default(cuid())
+
+  // For authenticated users
+  user   User?   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  userId String? @unique
+
+  // For anonymous users (browser session identifier)
+  sessionId String? @unique
+
+  // Essential: Core functionality - auth, security, CSRF (cannot be disabled)
   essential Boolean @default(true)
+
+  // Analytics: Usage tracking - GA4, Hotjar, Mixpanel, PostHog
   analytics Boolean @default(false)
+
+  // Marketing: Advertising - Facebook Pixel, Google Ads, LinkedIn, TikTok
   marketing Boolean @default(false)
+
+  // Functional: Third-party features - chat widgets (Intercom), video embeds
+  functional Boolean @default(false)
+
+  // Consent timestamps for GDPR compliance
+  consentGivenAt   DateTime @default(now())
+  consentUpdatedAt DateTime @updatedAt
 
   @@map("cookie_preferences")
 }
@@ -313,24 +337,19 @@ model ConsultantProfile {
   rating      Float   @default(0)
 
   // New fields for enhanced consultant profile
-  headline                    String?       @db.VarChar(120) // Professional headline, max 120 chars
+  headline                    String?                      @db.VarChar(120) // Professional headline, max 120 chars
   websiteUrl                  String?
   twitterUrl                  String?
   githubUrl                   String?
   videoIntroUrl               String?
-  languages                   String[]      @default([])
-  toolsAndTechnologies        String[]      @default([])
-  mentoringStyle              String?       @db.Text
-  sessionTypes                SessionType[] @default([])
-  profileCompletionPercentage Int           @default(0)
-  isVerified                  Boolean       @default(false)
-  totalMenteesHelped          Int           @default(0)
-
-  // Deprecated fields - to be removed in Phase 6
-  // @deprecated Use Certification and Education models instead
-  qualifications String?
-  // @deprecated Use subDomains, tags, and headline instead
-  specialization String?
+  languages                   String[]                     @default([])
+  toolsAndTechnologies        String[]                     @default([])
+  mentoringStyle              String?                      @db.Text
+  sessionTypes                SessionType[]                @default([])
+  profileCompletionPercentage Int                          @default(0)
+  isVerified                  Boolean                      @default(false)
+  verificationStatus          ConsultantVerificationStatus @default(PENDING_VERIFICATION)
+  totalMenteesHelped          Int                          @default(0)
 
   domain     Domain      @relation(fields: [domainId], references: [id])
   domainId   String
@@ -348,10 +367,8 @@ model ConsultantProfile {
   webinarPlans      WebinarPlan[]
   classPlans        ClassPlan[]
 
-  // New relations for professional background
-  workExperiences WorkExperience[]
-  certifications  Certification[]
-  education       Education[]
+  // Note: Professional background (workExperiences, certifications, education)
+  // has been consolidated to User level for DRY principle
 
   user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   userId String @unique
@@ -374,6 +391,7 @@ model ConsultantProfile {
   @@index([userId])
   @@index([domainId])
   @@index([isVerified])
+  @@index([verificationStatus])
 }
 
 model Domain {
@@ -448,16 +466,7 @@ model ConsulteeProfile {
   linkedinUrl      String?
   budgetPreference BudgetPreference?
 
-  // Deprecated fields - to be removed in Phase 6
-  // @deprecated Use Education model instead
-  education           String?
-  // @deprecated Merge into goals or aboutMe
-  specialRequirements String?
-  // @deprecated Use skillsToDevelop instead
-  interests           String?
-
-  // New relation for education background
-  educationHistory Education[]
+  // Note: Education has been consolidated to User level for DRY principle
 
   consultationRequests Consultation[]
   subscriptionRequests Subscription[]
@@ -533,13 +542,14 @@ model WorkExperience {
   isCurrent   Boolean   @default(false)
   description String?   @db.Text
 
-  consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  consultantProfileId String
+  // Consolidated to User level (was ConsultantProfile)
+  user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  userId String
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@index([consultantProfileId])
+  @@index([userId])
   @@index([isCurrent])
 }
 
@@ -552,13 +562,14 @@ model Certification {
   credentialId        String?
   credentialUrl       String?
 
-  consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  consultantProfileId String
+  // Consolidated to User level (was ConsultantProfile)
+  user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  userId String
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@index([consultantProfileId])
+  @@index([userId])
 }
 
 model Education {
@@ -572,19 +583,14 @@ model Education {
   activities   String?
   description  String? @db.Text
 
-  // NOTE: Application logic must ensure exactly one of consultantProfileId or
-  // consulteeProfileId is set, never both or neither (to prevent orphaned records).
-  consultantProfile   ConsultantProfile? @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  consultantProfileId String?
-
-  consulteeProfile   ConsulteeProfile? @relation(fields: [consulteeProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  consulteeProfileId String?
+  // Consolidated to User level (was ConsultantProfile/ConsulteeProfile)
+  user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  userId String
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@index([consultantProfileId])
-  @@index([consulteeProfileId])
+  @@index([userId])
 }
 
 //////////////////////////////////////////////////// AVAILABILITY SLOTS ////////////////////////////////////////////////////
@@ -938,11 +944,11 @@ model Waitlist {
   priority Int            @default(0) // Higher value = higher priority (for VIP/premium users)
 
   // Notification tracking
-  notifiedAt        DateTime? // When user was notified of available spot
-  expiresAt         DateTime? // 48 hours after notifiedAt
-  reminderSentAt    DateTime? // When 12-hour reminder was sent
-  bookedAt          DateTime? // When user successfully booked
-  respondedAt       DateTime? // When user responded to notification
+  notifiedAt     DateTime? // When user was notified of available spot
+  expiresAt      DateTime? // 48 hours after notifiedAt
+  reminderSentAt DateTime? // When 12-hour reminder was sent
+  bookedAt       DateTime? // When user successfully booked
+  respondedAt    DateTime? // When user responded to notification
 
   // User preferences (for future enhancements)
   preferences Json? // e.g., { preferredDates: [], maxPrice: 500 }
@@ -1717,7 +1723,7 @@ model ModerationAction {
 
 // Profile Verification Models
 model ConsultantProfileVerification {
-  id     String                     @id @default(uuid())
+  id     String                    @id @default(uuid())
   status ProfileVerificationStatus @default(PENDING)
 
   consultantProfileId String
@@ -1725,12 +1731,16 @@ model ConsultantProfileVerification {
 
   // Verification details
   submittedAt DateTime @default(now())
-  notes       String?  @db.Text // Applicant notes
+  notes       String?  @db.Text // Applicant notes when submitting
 
   // Staff review
   reviewedAt   DateTime?
   reviewedById String?
-  reviewNotes  String?  @db.Text // Staff notes
+  reviewNotes  String?   @db.Text // Internal staff notes (not shown to consultant)
+
+  // Feedback to consultant (shown when rejected/needs revision)
+  rejectionReason String? @db.Text // Brief reason shown to consultant (e.g., "Documents unclear")
+  feedbackDetails String? @db.Text // Detailed feedback (e.g., "12th certificate appears to be forged")
 
   documents ProfileVerificationDocument[]
 
@@ -1744,7 +1754,7 @@ model ConsultantProfileVerification {
 }
 
 model ProfileVerificationDocument {
-  id           String @id @default(uuid())
+  id           String  @id @default(uuid())
   fileName     String
   originalName String
   fileSize     Int
@@ -1752,6 +1762,10 @@ model ProfileVerificationDocument {
   fileUrl      String
   storagePath  String
   description  String? // Type of document (ID, degree, certificate, etc.)
+
+  // Document-specific review (for granular feedback)
+  isValid       Boolean? // null = not reviewed, true = valid, false = invalid
+  staffFeedback String? // Feedback on this specific document (e.g., "Certificate appears forged")
 
   verification   ConsultantProfileVerification @relation(fields: [verificationId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   verificationId String
@@ -1788,3 +1802,34 @@ model SystemJobExecution {
   @@index([triggeredBy])
 }
 
+//////////////////////////////////////////////////// ANNOUNCEMENT SYSTEM ////////////////////////////////////////////////////
+
+model Announcement {
+  id              String    @id @default(cuid())
+  title           String
+  content         String    @db.Text
+  isActive        Boolean   @default(true)
+  startDate       DateTime?
+  endDate         DateTime?
+  backgroundColor String?   @default("#000000")
+  textColor       String?   @default("#FFFFFF")
+  linkUrl         String?
+  linkText        String?
+  createdBy       String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive])
+  @@index([startDate, endDate])
+  @@map("announcements")
+}
+
+//////////////////////////////////////////////////// CONSULTANT VERIFICATION ////////////////////////////////////////////////////
+
+enum ConsultantVerificationStatus {
+  PENDING_VERIFICATION // Onboarding complete, awaiting review
+  UNDER_REVIEW // Staff reviewing
+  VERIFIED // Approved
+  REJECTED // Needs resubmission
+}

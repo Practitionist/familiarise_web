@@ -13,12 +13,10 @@ import {
   DashboardHeader,
   DashboardContent,
   DashboardGrid,
-  StatCard,
-  DataCard,
-  ActivityItem,
-  EmptyState,
-  AppointmentCard,
-} from "@/components/dashboard";
+} from "@/components/dashboard/DashboardShell";
+import { StatCard } from "@/components/dashboard/StatCard";
+import { DataCard, ActivityItem, EmptyState } from "@/components/dashboard/DataCard";
+import { AppointmentCard } from "@/components/dashboard/AppointmentCard";
 import {
   Calendar,
   Clock,

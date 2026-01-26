@@ -4,17 +4,16 @@ import { getEffectiveUserId } from "@/utils/auth";
 import { Skeleton } from "@/components/ui/skeleton";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import StreamProvider from "@/providers/StreamProvider";
-import {
-  DashboardShell,
-  DashboardSidebar,
-  type NavItem,
-} from "@/components/dashboard";
-import { signOut, useSession } from "next-auth/react";
+import { DashboardShell } from "@/components/dashboard/DashboardShell";
+import { DashboardSidebar, type NavItem } from "@/components/dashboard/DashboardSidebar";
+import { useSession } from "next-auth/react";
 import { usePathname, useRouter } from "next/navigation";
 import { use, useEffect, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { consultantFetchers, schedulePrefetch } from "@/lib/dashboard-queries";
 import { motion } from "framer-motion";
+import { VerificationPendingOverlay } from "@/components/verification/VerificationPendingOverlay";
+import type { VerificationStatus } from "@/components/verification/VerificationStatusBadge";
 
 // Navigation configuration
 const NAV_ITEMS: NavItem[] = [
@@ -439,7 +438,24 @@ export default function ConsultantLayout({
     />
   );
 
+  // Check verification status - don't block settings page
+  const isSettingsPage = pathname.includes("/settings");
+  const verificationStatus = consultantData?.verificationStatus as
+    | VerificationStatus
+    | undefined;
+  const isVerified = verificationStatus === "VERIFIED";
+  const showVerificationOverlay =
+    !isVerified && verificationStatus && !isSettingsPage;
+
   return (
-    <DashboardShell sidebar={sidebar}>{memoizedStreamContent}</DashboardShell>
+    <>
+      {showVerificationOverlay && (
+        <VerificationPendingOverlay
+          status={verificationStatus}
+          resubmitUrl={`/dashboard/consultant/${consultantId}/settings`}
+        />
+      )}
+      <DashboardShell sidebar={sidebar}>{memoizedStreamContent}</DashboardShell>
+    </>
   );
 }

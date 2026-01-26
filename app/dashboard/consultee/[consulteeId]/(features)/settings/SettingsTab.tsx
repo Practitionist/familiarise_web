@@ -30,13 +30,10 @@ interface SettingsTabProps {
 type ProfileFormData = Omit<
   Pick<
     ConsulteeProfile,
-    | "education"
     | "occupation"
     | "aboutMe"
     | "preferredCommunicationMethod"
     | "preferredLanguage"
-    | "specialRequirements"
-    | "interests"
     | "goals"
     | "careerStage"
     | "currentCompany"
@@ -67,13 +64,10 @@ export default function SettingsTab({ consulteeId }: SettingsTabProps) {
 
   const [profileSettings, setProfileSettings] = React.useState<ProfileFormData>(
     {
-      education: null,
       occupation: null,
       aboutMe: null,
       preferredCommunicationMethod: ConsultationMode.VIDEO,
       preferredLanguage: null,
-      specialRequirements: null,
-      interests: null,
       goals: null,
       // New fields
       careerStage: null,
@@ -104,14 +98,11 @@ export default function SettingsTab({ consulteeId }: SettingsTabProps) {
   useEffect(() => {
     if (consulteeData) {
       setProfileSettings({
-        education: consulteeData.education,
         occupation: consulteeData.occupation,
         aboutMe: consulteeData.aboutMe,
         preferredCommunicationMethod:
           consulteeData.preferredCommunicationMethod ?? ConsultationMode.VIDEO,
         preferredLanguage: consulteeData.preferredLanguage,
-        specialRequirements: consulteeData.specialRequirements,
-        interests: consulteeData.interests,
         goals: consulteeData.goals,
         // New fields
         careerStage: consulteeData.careerStage ?? null,
@@ -214,16 +205,6 @@ export default function SettingsTab({ consulteeId }: SettingsTabProps) {
         <CardContent className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label htmlFor="education">Education</Label>
-              <Input
-                id="education"
-                name="education"
-                value={profileSettings.education ?? ""}
-                onChange={handleProfileChange}
-                placeholder="Your educational background"
-              />
-            </div>
-            <div className="space-y-2">
               <Label htmlFor="occupation">Occupation</Label>
               <Input
                 id="occupation"
@@ -268,26 +249,6 @@ export default function SettingsTab({ consulteeId }: SettingsTabProps) {
               value={profileSettings.aboutMe ?? ""}
               onChange={handleProfileChange}
               placeholder="Tell us about yourself"
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="specialRequirements">Special Requirements</Label>
-            <Textarea
-              id="specialRequirements"
-              name="specialRequirements"
-              value={profileSettings.specialRequirements ?? ""}
-              onChange={handleProfileChange}
-              placeholder="Any special requirements or accommodations needed"
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="interests">Interests</Label>
-            <Textarea
-              id="interests"
-              name="interests"
-              value={profileSettings.interests ?? ""}
-              onChange={handleProfileChange}
-              placeholder="Your interests and areas you'd like to explore"
             />
           </div>
           <div className="space-y-2">

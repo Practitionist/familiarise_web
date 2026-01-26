@@ -8,6 +8,7 @@ import { getServerSession } from "next-auth";
 import authOptions from "@/app/api/auth/[...nextauth]/options";
 import { findOrCreateTopics, transformNestedPlanTopics } from "@/lib/topics";
 import { handleSlotOpening } from "@/lib/waitlist/slot-handler";
+import { checkConsultantVerification } from "@/lib/verification";
 
 // Schema for class content input (without Prisma-managed fields like createdAt, updatedAt, classPlanId)
 const ClassContentInputSchema = ClassContentSchema.omit({
@@ -79,6 +80,23 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
+
+    // Verification check - consultant must be verified to create classes
+    if (body.consultantProfileId) {
+      const verification = await checkConsultantVerification(
+        body.consultantProfileId
+      );
+      if (!verification.isVerified) {
+        return NextResponse.json(
+          {
+            error: "Verification required",
+            message: verification.message,
+            verificationStatus: verification.status,
+          },
+          { status: 403 }
+        );
+      }
+    }
 
     // --- Zod Validation ---
     const validationResult = PostClassWithPlanBodySchema.safeParse(body);
@@ -188,13 +206,13 @@ export async function POST(request: NextRequest) {
               ? { connect: topicIds.map((id: string) => ({ id })) }
               : undefined,
             classContents: {
-              create: classContents.map((content) => ({
+              create: classContents.map((content, index) => ({
                 // No 'any' needed
                 title: content.title,
                 description: content.description,
                 contentType: content.contentType ?? null, // Use nullish coalescing
                 contentUrl: content.contentUrl ?? null, // Use nullish coalescing
-                order: content.order,
+                order: content.order ?? index, // Default to index if order is undefined
                 hoursAllotted: content.hoursAllotted,
               })),
             },

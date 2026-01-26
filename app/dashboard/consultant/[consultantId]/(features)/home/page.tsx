@@ -3,7 +3,7 @@
 import { use } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
-import { HomeSkeleton } from "@/components/dashboard";
+import { HomeSkeleton } from "@/components/dashboard/DashboardSkeletons";
 import { createConsultantQueries } from "@/hooks/useCosultantPrefetchDashboard";
 import { BADGE_STYLES } from "../../types";
 import { HomeTab } from "./HomeTab";

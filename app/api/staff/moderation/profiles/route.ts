@@ -47,9 +47,10 @@ export async function GET(req: NextRequest) {
           consultantProfile: {
             include: {
               user: {
-                select: { id: true, name: true, email: true, image: true },
+                select: { id: true, name: true, email: true, image: true, linkedinUrl: true, bio: true },
               },
               domain: { select: { id: true, name: true } },
+              subDomains: { select: { id: true, name: true } },
             },
           },
           documents: true,
@@ -64,21 +65,34 @@ export async function GET(req: NextRequest) {
       prisma.consultantProfileVerification.count({ where }),
     ]);
 
-    const formattedVerifications = verifications.map((v) => ({
+    // Filter out verifications with missing profile data (defensive)
+    const validVerifications = verifications.filter(
+      (v) => v.consultantProfile && v.consultantProfile.user
+    );
+
+    const formattedVerifications = validVerifications.map((v) => ({
       id: v.id,
       status: v.status,
       submittedAt: v.submittedAt,
       notes: v.notes,
-      consultant: {
-        profileId: v.consultantProfile.id,
-        userId: v.consultantProfile.user.id,
-        name: v.consultantProfile.user.name,
-        email: v.consultantProfile.user.email,
-        image: v.consultantProfile.user.image,
-        domain: v.consultantProfile.domain.name,
-        experience: v.consultantProfile.experience,
+      rejectionReason: v.rejectionReason,
+      feedbackDetails: v.feedbackDetails,
+      // Return consultantProfile in the shape the frontend expects
+      consultantProfile: {
+        id: v.consultantProfile.id,
+        description: v.consultantProfile.description,
         headline: v.consultantProfile.headline,
-        isVerified: v.consultantProfile.isVerified,
+        experience: v.consultantProfile.experience,
+        user: {
+          id: v.consultantProfile.user.id,
+          name: v.consultantProfile.user.name,
+          email: v.consultantProfile.user.email,
+          image: v.consultantProfile.user.image,
+          linkedinUrl: v.consultantProfile.user.linkedinUrl,
+          bio: v.consultantProfile.user.bio,
+        },
+        domain: v.consultantProfile.domain,
+        subDomains: v.consultantProfile.subDomains,
       },
       documents: v.documents.map((d) => ({
         id: d.id,

@@ -11,7 +11,7 @@ export const faqs: FAQ[] = [
     id: "profile-setup",
     question: "How do I set up my consultant profile?",
     answer:
-      "Your consultant profile includes your qualifications, specialization, experience, and domain expertise. You can add these details along with your availability schedule and service offerings.",
+      "Your consultant profile includes your headline, experience, work history, education, certifications, and domain expertise. You can add these details along with your availability schedule and service offerings.",
     category: "Profile",
   },
   {

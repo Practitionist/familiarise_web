@@ -18,8 +18,6 @@ export type SlotsType = Record<string, SlotType[]>;
 
 export interface FormData {
   description: string;
-  qualifications: string;
-  specialization: string;
   experience: number;
   scheduleType: ScheduleType;
   domainId: string;
@@ -30,6 +28,7 @@ export interface FormData {
   websiteUrl: string;
   twitterUrl: string;
   githubUrl: string;
+  linkedinUrl: string; // Stored on User model, not ConsultantProfile
   videoIntroUrl: string;
   languages: string[];
   toolsAndTechnologies: string[];
@@ -72,8 +71,6 @@ export const getInitialFormData = (
   consultant: TConsultantProfile,
 ): FormData => ({
   description: consultant?.description ?? "",
-  qualifications: consultant?.qualifications ?? "",
-  specialization: consultant?.specialization ?? "",
   experience: consultant?.experience ?? 0,
   scheduleType: consultant?.scheduleType ?? ScheduleType.WEEKLY,
   domainId: consultant?.domain?.id ?? "",
@@ -84,6 +81,7 @@ export const getInitialFormData = (
   websiteUrl: consultant?.websiteUrl ?? "",
   twitterUrl: consultant?.twitterUrl ?? "",
   githubUrl: consultant?.githubUrl ?? "",
+  linkedinUrl: consultant?.user?.linkedinUrl ?? "", // From User model
   videoIntroUrl: consultant?.videoIntroUrl ?? "",
   languages: consultant?.languages ?? [],
   toolsAndTechnologies: consultant?.toolsAndTechnologies ?? [],

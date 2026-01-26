@@ -141,6 +141,10 @@ export const OnboardingBaseSchema = z.object({
   country: z.string().optional(),
   linkedinUrl: z.string().url().optional().or(z.literal("")),
   bio: z.string().max(160).optional(),
+  // Verification fields (passed through for server handling)
+  verificationLinkedinUrl: z.string().optional(),
+  verificationNotes: z.string().optional(),
+  verificationDocuments: z.array(z.any()).optional(),
 });
 
 export const OnboardingDataSchema = z.discriminatedUnion("role", [
@@ -519,6 +523,55 @@ export const OnboardingFormDataSchema = PersonalInfoAndRoleFormSchema.extend({
   // Agreement fields
   termsAccepted: z.boolean().optional(),
   privacyAccepted: z.boolean().optional(),
+
+  // Verification fields (for consultants)
+  verificationLinkedinUrl: z.string().url().optional().or(z.literal("")),
+  verificationNotes: z.string().max(500).optional(),
+  verificationDocuments: z.array(z.any()).optional(),
+
+  // Professional background fields (for consultants)
+  workExperiences: z
+    .array(
+      z.object({
+        id: z.string().optional(),
+        company: z.string(),
+        title: z.string(),
+        location: z.string().optional(),
+        startDate: z.coerce.date(),
+        endDate: z.coerce.date().optional(),
+        isCurrent: z.boolean(),
+        description: z.string().optional(),
+      }),
+    )
+    .optional(),
+  educationHistory: z
+    .array(
+      z.object({
+        id: z.string().optional(),
+        institution: z.string(),
+        degree: z.string(),
+        fieldOfStudy: z.string().optional(),
+        startYear: z.number().optional().nullable(),
+        endYear: z.number().optional().nullable(),
+        grade: z.string().optional(),
+        activities: z.string().optional(),
+        description: z.string().optional(),
+      }),
+    )
+    .optional(),
+  certificationsList: z
+    .array(
+      z.object({
+        id: z.string().optional(),
+        name: z.string(),
+        issuingOrganization: z.string(),
+        issueDate: z.coerce.date(),
+        expiryDate: z.coerce.date().optional(),
+        credentialId: z.string().optional(),
+        credentialUrl: z.string().optional(),
+      }),
+    )
+    .optional(),
 });
 
 export type OnboardingFormData = z.infer<typeof OnboardingFormDataSchema>;
@@ -547,6 +600,10 @@ export function transformOnboardingFormToServerData(
     country: formData.country,
     linkedinUrl: formData.linkedinUrl,
     bio: formData.bio,
+    // Pass verification data
+    verificationLinkedinUrl: formData.verificationLinkedinUrl,
+    verificationNotes: formData.verificationNotes,
+    verificationDocuments: formData.verificationDocuments,
   };
 
   switch (formData.role) {
@@ -560,42 +617,39 @@ export function transformOnboardingFormToServerData(
         consultantProfile: {
           create: {
             description: formData.description,
-            qualifications: formData.qualifications,
-            specialization: formData.specialization,
+            headline: formData.headline,
             experience: formData.experience,
             scheduleType: formData.scheduleType || ScheduleType.WEEKLY,
             domain: { connect: { id: formData.domain.id } },
             subDomains: formData.subDomains?.length
               ? {
-                  connect: formData.subDomains
-                    .filter((sd) => sd.id !== undefined && sd.id !== null)
-                    .map((sd) => ({ id: sd.id })),
-                }
+                connect: formData.subDomains
+                  .filter((sd) => sd.id !== undefined && sd.id !== null)
+                  .map((sd) => ({ id: sd.id })),
+              }
               : undefined,
             tags: formData.tags?.length
               ? {
-                  connect: formData.tags
-                    .filter((t) => t.id !== undefined && t.id !== null)
-                    .map((t) => ({ id: t.id })),
-                }
+                connect: formData.tags
+                  .filter((t) => t.id !== undefined && t.id !== null)
+                  .map((t) => ({ id: t.id })),
+              }
               : undefined,
             slotsOfAvailabilityWeekly: formData.weeklySlots?.length
               ? { create: formData.weeklySlots }
               : undefined,
             slotsOfAvailabilityCustom: formData.customSlots?.length
               ? {
-                  create: formData.customSlots.map((slot) => ({
-                    availabilityStartsAt: new Date(
-                      slot.availabilityStartsAt,
-                    ).toISOString(),
-                    availabilityEndsAt: new Date(
-                      slot.availabilityEndsAt,
-                    ).toISOString(),
-                  })),
-                }
+                create: formData.customSlots.map((slot) => ({
+                  availabilityStartsAt: new Date(
+                    slot.availabilityStartsAt,
+                  ).toISOString(),
+                  availabilityEndsAt: new Date(
+                    slot.availabilityEndsAt,
+                  ).toISOString(),
+                })),
+              }
               : undefined,
-            // New consultant fields
-            headline: formData.headline,
             websiteUrl: formData.websiteUrl,
             twitterUrl: formData.twitterUrl,
             githubUrl: formData.githubUrl,
@@ -617,16 +671,12 @@ export function transformOnboardingFormToServerData(
         consultantProfile: undefined,
         consulteeProfile: {
           create: {
-            education: formData.education,
             occupation: formData.occupation,
             aboutMe: formData.aboutMe,
             preferredCommunicationMethod:
               formData.preferredCommunicationMethod || ConsultationMode.VIDEO,
             preferredLanguage: formData.preferredLanguage,
-            specialRequirements: formData.specialRequirements,
-            interests: formData.interests,
             goals: formData.goals,
-            // New consultee fields
             careerStage: formData.careerStage,
             currentCompany: formData.currentCompany,
             industry: formData.industry,
@@ -761,8 +811,7 @@ function transformConsultantProfile(
 ): ConsultantProfileCreateData {
   return {
     description: profile.description,
-    qualifications: profile.qualifications,
-    specialization: profile.specialization,
+    headline: profile.headline,
     experience: profile.experience,
     scheduleType: profile.scheduleType,
     domain: {
@@ -770,26 +819,24 @@ function transformConsultantProfile(
     },
     subDomains: profile.subDomains?.length
       ? {
-          connect: profile.subDomains.map((sub) => ({ id: sub.id })),
-        }
+        connect: profile.subDomains.map((sub) => ({ id: sub.id })),
+      }
       : undefined,
     tags: profile.tags?.length
       ? {
-          connect: profile.tags.map((tag) => ({ id: tag.id })),
-        }
+        connect: profile.tags.map((tag) => ({ id: tag.id })),
+      }
       : undefined,
     slotsOfAvailabilityWeekly: profile.weeklySlots?.length
       ? {
-          create: profile.weeklySlots,
-        }
+        create: profile.weeklySlots,
+      }
       : undefined,
     slotsOfAvailabilityCustom: profile.customSlots?.length
       ? {
-          create: profile.customSlots,
-        }
+        create: profile.customSlots,
+      }
       : undefined,
-    // New fields
-    headline: profile.headline,
     websiteUrl: profile.websiteUrl,
     twitterUrl: profile.twitterUrl,
     githubUrl: profile.githubUrl,
@@ -805,15 +852,11 @@ function transformConsulteeProfile(
   profile: FrontendConsulteeProfile,
 ): ConsulteeProfileCreateData {
   return {
-    education: profile.education,
     occupation: profile.occupation,
     aboutMe: profile.aboutMe,
     preferredCommunicationMethod: profile.preferredCommunicationMethod,
     preferredLanguage: profile.preferredLanguage,
-    specialRequirements: profile.specialRequirements,
-    interests: profile.interests,
     goals: profile.goals,
-    // New fields
     careerStage: profile.careerStage,
     currentCompany: profile.currentCompany,
     industry: profile.industry,

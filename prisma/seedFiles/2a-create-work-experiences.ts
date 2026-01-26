@@ -53,7 +53,7 @@ export async function createWorkExperiences(
 
         await prisma.workExperience.create({
           data: {
-            consultantProfileId: consultant.consultantProfile.id,
+            userId: consultant.id,
             company: generateCompanyName(),
             title: generateJobTitle(domainName),
             location: `${generateCity(generateCountry())}, ${generateCountry()}`,

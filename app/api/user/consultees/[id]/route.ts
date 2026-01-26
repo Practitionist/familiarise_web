@@ -62,14 +62,17 @@ export async function POST(
 
     const createdConsultee = await prisma.consulteeProfile.create({
       data: {
-        education: body.education,
         occupation: body.occupation,
         aboutMe: body.aboutMe,
         preferredCommunicationMethod: body.preferredCommunicationMethod,
         preferredLanguage: body.preferredLanguage,
-        specialRequirements: body.specialRequirements,
-        interests: body.interests,
         goals: body.goals,
+        careerStage: body.careerStage,
+        currentCompany: body.currentCompany,
+        industry: body.industry,
+        skillsToDevelop: body.skillsToDevelop ?? [],
+        linkedinUrl: body.linkedinUrl,
+        budgetPreference: body.budgetPreference,
         user: { connect: { id: id } },
       },
       include: {
@@ -116,14 +119,17 @@ export async function PATCH(
     const updatedConsultee = await prisma.consulteeProfile.update({
       where: { id: id },
       data: {
-        education: body.education,
         occupation: body.occupation,
         aboutMe: body.aboutMe,
         preferredCommunicationMethod: body.preferredCommunicationMethod,
         preferredLanguage: body.preferredLanguage,
-        specialRequirements: body.specialRequirements,
-        interests: body.interests,
         goals: body.goals,
+        careerStage: body.careerStage,
+        currentCompany: body.currentCompany,
+        industry: body.industry,
+        skillsToDevelop: body.skillsToDevelop ?? [],
+        linkedinUrl: body.linkedinUrl,
+        budgetPreference: body.budgetPreference,
       },
       include: {
         consultantReviews: true,

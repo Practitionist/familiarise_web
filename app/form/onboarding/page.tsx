@@ -17,11 +17,13 @@ import ConsultantAgreementForm from "./components/ConsultantAgreementForm";
 import ConsultantPreferredScheduleForm from "./components/ConsultantPreferredScheduleForm";
 import ConsultantProfileForm from "./components/ConsultantProfileForm";
 import ConsultantReviewForm from "./components/ConsultantReviewForm";
+import ConsultantVerificationForm from "./components/ConsultantVerificationForm";
 import ConsulteeAgreementForm from "./components/ConsulteeAgreementForm";
 import ConsulteePreferencesForm from "./components/ConsulteePreferencesForm";
 import ConsulteeProfileForm from "./components/ConsulteeProfileForm";
 import ConsulteeReviewForm from "./components/ConsulteeReviewForm";
 import PersonalInfoAndRoleForm from "./components/PersonalInfoAndRoleForm";
+import ProfessionalBackgroundForm from "./components/ProfessionalBackgroundForm";
 import StaffAgreementForm from "./components/StaffAgreementForm";
 import StaffProfileForm from "./components/StaffProfileForm";
 import StaffResponsibilitiesForm from "./components/StaffResponsibilitiesForm";
@@ -32,8 +34,10 @@ const STEP_LABELS = {
   CONSULTANT: [
     "Personal Info",
     "Professional Profile",
+    "Experience",
     "Availability",
     "Agreement",
+    "Verification",
     "Review",
   ],
   CONSULTEE: ["Personal Info", "Profile", "Preferences", "Agreement", "Review"],
@@ -259,7 +263,7 @@ const MultiStepForm: React.FC = () => {
         switch (formData.role) {
           case "CONSULTANT":
             return (
-              <ConsultantPreferredScheduleForm
+              <ProfessionalBackgroundForm
                 onNext={handleNext}
                 onBack={handleBack}
                 initialData={formData}
@@ -288,7 +292,7 @@ const MultiStepForm: React.FC = () => {
         switch (formData.role) {
           case "CONSULTANT":
             return (
-              <ConsultantAgreementForm
+              <ConsultantPreferredScheduleForm
                 onNext={handleNext}
                 onBack={handleBack}
                 initialData={formData}
@@ -317,10 +321,10 @@ const MultiStepForm: React.FC = () => {
         switch (formData.role) {
           case "CONSULTANT":
             return (
-              <ConsultantReviewForm
-                onSubmit={handleSubmit}
+              <ConsultantAgreementForm
+                onNext={handleNext}
                 onBack={handleBack}
-                formData={formData}
+                initialData={formData}
               />
             );
           case "CONSULTEE":
@@ -334,6 +338,32 @@ const MultiStepForm: React.FC = () => {
           case "STAFF":
             return (
               <StaffReviewForm
+                onSubmit={handleSubmit}
+                onBack={handleBack}
+                formData={formData}
+              />
+            );
+          default:
+            return null;
+        }
+      case 5:
+        switch (formData.role) {
+          case "CONSULTANT":
+            return (
+              <ConsultantVerificationForm
+                onNext={handleNext}
+                onBack={handleBack}
+                initialData={formData}
+              />
+            );
+          default:
+            return null;
+        }
+      case 6:
+        switch (formData.role) {
+          case "CONSULTANT":
+            return (
+              <ConsultantReviewForm
                 onSubmit={handleSubmit}
                 onBack={handleBack}
                 formData={formData}

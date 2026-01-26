@@ -47,8 +47,6 @@ const customSlotSchema = z.object({
 const updateConsultantSchema = z
   .object({
     description: z.string().optional(),
-    qualifications: z.string().optional(),
-    specialization: z.string().optional(),
     experience: experienceValidation,
     scheduleType: z.enum(["WEEKLY", "CUSTOM"]),
     domainId: uuidSchema,
@@ -66,6 +64,8 @@ const updateConsultantSchema = z
     toolsAndTechnologies: z.array(z.string()).nullable().optional(),
     mentoringStyle: z.string().nullable().optional(),
     sessionTypes: z.array(z.nativeEnum(SessionType)).nullable().optional(),
+    // User-level field (stored on User model, not ConsultantProfile)
+    linkedinUrl: z.string().url().nullable().optional().or(z.literal("")),
   })
   .refine(
     (data) => {
@@ -110,7 +110,19 @@ export async function GET(
     const consultant = await prisma.consultantProfile.findUnique({
       where: { id },
       include: {
-        user: true,
+        user: {
+          include: {
+            workExperiences: {
+              orderBy: [{ isCurrent: "desc" }, { startDate: "desc" }],
+            },
+            education: {
+              orderBy: { endYear: "desc" },
+            },
+            certifications: {
+              orderBy: { issueDate: "desc" },
+            },
+          },
+        },
         domain: true,
         subDomains: true,
         tags: true,
@@ -120,9 +132,7 @@ export async function GET(
         subscriptionPlans: true,
         webinarPlans: true,
         classPlans: true,
-        workExperiences: true,
-        certifications: true,
-        education: true,
+        reviews: true,
       },
     });
 
@@ -171,8 +181,6 @@ export async function PUT(
     const data = validationResult.data;
     const {
       description,
-      qualifications,
-      specialization,
       experience,
       scheduleType,
       domainId,
@@ -190,6 +198,8 @@ export async function PUT(
       toolsAndTechnologies,
       mentoringStyle,
       sessionTypes,
+      // User-level field
+      linkedinUrl,
     } = data;
 
     // Check if schedule type is being changed
@@ -222,8 +232,6 @@ export async function PUT(
       where: { id },
       data: {
         description,
-        qualifications,
-        specialization,
         experience,
         scheduleType,
         domain: {
@@ -247,6 +255,21 @@ export async function PUT(
         sessionTypes: sessionTypes ?? [],
       },
     });
+
+    // Update user's linkedinUrl if provided (linkedinUrl is stored on User model)
+    if (linkedinUrl !== undefined) {
+      const consultant = await prisma.consultantProfile.findUnique({
+        where: { id },
+        select: { userId: true },
+      });
+
+      if (consultant?.userId) {
+        await prisma.user.update({
+          where: { id: consultant.userId },
+          data: { linkedinUrl: linkedinUrl || null },
+        });
+      }
+    }
 
     // Update weekly slots if schedule type is WEEKLY
     if (scheduleType === ScheduleType.WEEKLY) {
@@ -298,7 +321,19 @@ export async function PUT(
     const updatedConsultant = await prisma.consultantProfile.findUnique({
       where: { id },
       include: {
-        user: true,
+        user: {
+          include: {
+            workExperiences: {
+              orderBy: [{ isCurrent: "desc" }, { startDate: "desc" }],
+            },
+            education: {
+              orderBy: { endYear: "desc" },
+            },
+            certifications: {
+              orderBy: { issueDate: "desc" },
+            },
+          },
+        },
         domain: true,
         subDomains: true,
         tags: true,
@@ -308,9 +343,7 @@ export async function PUT(
         subscriptionPlans: true,
         webinarPlans: true,
         classPlans: true,
-        workExperiences: true,
-        certifications: true,
-        education: true,
+        reviews: true,
       },
     });
 

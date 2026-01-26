@@ -35,8 +35,6 @@ async function updateConsultantProfileAndRelations(
     create: {
       userId: userId,
       description: profileData.description ?? "",
-      qualifications: profileData.qualifications ?? "",
-      specialization: profileData.specialization ?? "",
       experience: profileData.experience ?? null,
       scheduleType: scheduleTypeEnum,
       rating: 0,
@@ -60,8 +58,6 @@ async function updateConsultantProfileAndRelations(
     },
     update: {
       description: profileData.description ?? "",
-      qualifications: profileData.qualifications ?? "",
-      specialization: profileData.specialization ?? "",
       experience: profileData.experience ?? null,
       scheduleType: scheduleTypeEnum,
       domain: { connect: { id: domainId } },
@@ -156,13 +152,10 @@ async function updateConsulteeProfileAndRelations(
     where: { userId: userId },
     create: {
       userId: userId,
-      education: profileData.education ?? "",
       occupation: profileData.occupation ?? "",
       aboutMe: profileData.aboutMe ?? "",
       preferredCommunicationMethod: profileData.preferredCommunicationMethod,
       preferredLanguage: profileData.preferredLanguage ?? "",
-      specialRequirements: profileData.specialRequirements ?? "",
-      interests: interests,
       goals: goals,
       // New fields
       careerStage: profileData.careerStage ?? null,
@@ -173,13 +166,10 @@ async function updateConsulteeProfileAndRelations(
       budgetPreference: profileData.budgetPreference ?? null,
     },
     update: {
-      education: profileData.education ?? "",
       occupation: profileData.occupation ?? "",
       aboutMe: profileData.aboutMe ?? "",
       preferredCommunicationMethod: profileData.preferredCommunicationMethod,
       preferredLanguage: profileData.preferredLanguage ?? "",
-      specialRequirements: profileData.specialRequirements ?? "",
-      interests: interests,
       goals: goals,
       // New fields
       careerStage: profileData.careerStage ?? null,
@@ -373,16 +363,13 @@ export async function processOnboardingData(
                 domain: true,
                 subDomains: true,
                 tags: true,
-                workExperiences: true,
-                certifications: true,
-                education: true,
               },
             },
-            consulteeProfile: {
-              include: {
-                educationHistory: true,
-              },
-            },
+            consulteeProfile: true,
+            // Professional background is now at User level
+            workExperiences: true,
+            education: true,
+            certifications: true,
             staffProfile: true,
             adminProfile: true,
           },
@@ -393,6 +380,87 @@ export async function processOnboardingData(
         timeout: 30000, // Max transaction execution time (30s)
       },
     );
+
+    // If this is a consultant, submit verification request
+    if (
+      validatedBody.role === UserRole.CONSULTANT &&
+      updatedUser.consultantProfileId
+    ) {
+      try {
+        // Extract verification data from original body (not validated schema)
+        const verificationLinkedinUrl = body.verificationLinkedinUrl;
+        const verificationNotes = body.verificationNotes;
+        const verificationDocuments = body.verificationDocuments;
+
+        // Update user's LinkedIn URL if provided in verification
+        if (verificationLinkedinUrl) {
+          await prisma.user.update({
+            where: { id: userId },
+            data: { linkedinUrl: verificationLinkedinUrl },
+          });
+        }
+
+        // Create verification request
+        const verification = await prisma.consultantProfileVerification.create({
+          data: {
+            consultantProfileId: updatedUser.consultantProfileId,
+            notes: verificationNotes || null,
+            status: "PENDING",
+          },
+        });
+
+        // Connect or create uploaded documents for the verification
+        if (verificationDocuments && verificationDocuments.length > 0) {
+          // Handle documents that have IDs (created before profile existed - legacy)
+          const existingDocuments = verificationDocuments.filter(
+            (doc: any) => doc.id && !doc.isOnboardingUpload
+          );
+          if (existingDocuments.length > 0) {
+            const documentIds = existingDocuments.map((doc: any) => doc.id);
+            await prisma.profileVerificationDocument.updateMany({
+              where: { id: { in: documentIds } },
+              data: { verificationId: verification.id },
+            });
+          }
+
+          // Handle documents uploaded during onboarding (no ID yet, have file info)
+          const onboardingDocuments = verificationDocuments.filter(
+            (doc: any) => doc.isOnboardingUpload || (!doc.id && doc.fileUrl)
+          );
+          if (onboardingDocuments.length > 0) {
+            await prisma.profileVerificationDocument.createMany({
+              data: onboardingDocuments.map((doc: any) => ({
+                verificationId: verification.id,
+                fileName: doc.fileName,
+                originalName: doc.originalName,
+                fileSize: doc.fileSize,
+                mimeType: doc.mimeType,
+                fileUrl: doc.fileUrl,
+                storagePath: doc.storagePath,
+                description: doc.description || null,
+              })),
+            });
+          }
+        }
+
+        // Update consultant profile verification status
+        await prisma.consultantProfile.update({
+          where: { id: updatedUser.consultantProfileId },
+          data: {
+            verificationStatus: "UNDER_REVIEW",
+            isVerified: false,
+          },
+        });
+
+        console.log(
+          "Verification request created for consultant:",
+          updatedUser.consultantProfileId
+        );
+      } catch (verificationError) {
+        // Log but don't fail the entire onboarding if verification submission fails
+        console.error("Failed to create verification request:", verificationError);
+      }
+    }
 
     return { success: true, user: updatedUser };
   } catch (error: unknown) {

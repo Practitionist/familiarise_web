@@ -2,11 +2,8 @@
 
 import { Skeleton } from "@/components/ui/skeleton";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
-import {
-  DashboardShell,
-  DashboardSidebar,
-  type NavSection,
-} from "@/components/dashboard";
+import { DashboardShell } from "@/components/dashboard/DashboardShell";
+import { DashboardSidebar, type NavSection } from "@/components/dashboard/DashboardSidebar";
 import { useSession } from "next-auth/react";
 import { usePathname, useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
@@ -19,6 +16,10 @@ const NAV_SECTIONS: NavSection[] = [
   {
     title: null,
     items: [{ name: "Overview", path: "home" }],
+  },
+  {
+    title: null,
+    items: [{ name: "Announcements", path: "announcements" }],
   },
   {
     title: "Support",

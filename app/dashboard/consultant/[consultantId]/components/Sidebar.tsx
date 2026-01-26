@@ -70,7 +70,7 @@ export function Sidebar({
                 {consultant?.user?.name}
               </h3>
               <span className="text-xs font-medium text-blue-600 bg-blue-50 px-2 py-1 rounded-full">
-                {consultant?.specialization}
+                {consultant?.headline || consultant?.domain?.name || "Consultant"}
               </span>
             </div>
           </div>

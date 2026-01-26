@@ -3,7 +3,7 @@
 import { use } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
-import { PageSkeleton } from "@/components/dashboard";
+import { PageSkeleton } from "@/components/dashboard/DashboardSkeletons";
 import { createConsultantQueries } from "@/hooks/useCosultantPrefetchDashboard";
 import { BADGE_STYLES } from "../../types";
 import { AppointmentsTab } from "./AppointmentsTab";

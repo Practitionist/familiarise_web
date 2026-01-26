@@ -12,7 +12,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { CheckCircle } from "lucide-react";
 import { formatCurrency } from "@/app/checkout/plans/math";
-import { JoinWaitlistButton, WaitlistBadge } from "@/components/waitlist";
+import { JoinWaitlistButton } from "@/components/waitlist/JoinWaitlistButton";
+import { WaitlistBadge } from "@/components/waitlist/WaitlistBadge";
 import { countWebinarParticipants } from "@/lib/payments/utils/participants";
 
 // Redefine SessionStatus (or import if moved to a shared file)

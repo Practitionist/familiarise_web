@@ -17,7 +17,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import familiariseLogoWhite from "@/public/avif/static/assets/logos/images/logos/Familiarise-logos_white.avif";
 
-const FOOTER_LINKS = {
+interface FooterLink {
+  label: string;
+  href: string;
+}
+
+const FOOTER_LINKS: Record<string, FooterLink[]> = {
   expertise: [
     { label: "Technology", href: "/explore/experts?category=technology" },
     { label: "Business", href: "/explore/experts?category=business" },

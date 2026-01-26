@@ -6,7 +6,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import authOptions from "@/app/api/auth/[...nextauth]/options";
 import prisma from "@/lib/prisma";
-import { UserRole, ProfileVerificationStatus } from "@prisma/client";
+import {
+  UserRole,
+  ProfileVerificationStatus,
+  ConsultantVerificationStatus,
+} from "@prisma/client";
 
 interface RouteParams {
   params: Promise<{ verificationId: string }>;
@@ -40,13 +44,18 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         consultantProfile: {
           include: {
             user: {
-              select: { id: true, name: true, email: true, image: true },
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                image: true,
+                workExperiences: true,
+                certifications: true,
+                education: true,
+              },
             },
             domain: { select: { id: true, name: true } },
             subDomains: { select: { id: true, name: true } },
-            workExperiences: true,
-            certifications: true,
-            education: true,
           },
         },
         documents: true,
@@ -70,9 +79,15 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
   }
 }
 
+interface DocumentFeedback {
+  documentId: string;
+  isValid: boolean;
+  staffFeedback?: string;
+}
+
 /**
  * PATCH /api/staff/moderation/profiles/[verificationId]
- * Review profile verification (approve/reject)
+ * Review profile verification (approve/reject) with structured feedback
  */
 export async function PATCH(req: NextRequest, { params }: RouteParams) {
   try {
@@ -92,7 +107,19 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
 
     const { verificationId } = await params;
     const body = await req.json();
-    const { status, reviewNotes } = body;
+    const {
+      status,
+      reviewNotes,
+      rejectionReason,
+      feedbackDetails,
+      documentFeedback,
+    } = body as {
+      status: ProfileVerificationStatus;
+      reviewNotes?: string;
+      rejectionReason?: string;
+      feedbackDetails?: string;
+      documentFeedback?: DocumentFeedback[];
+    };
 
     // Validate status
     const validStatuses: ProfileVerificationStatus[] = [
@@ -118,7 +145,26 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
       );
     }
 
-    // Update verification and optionally update consultant profile
+    // Map verification status to consultant profile verification status
+    const profileStatusMap: Record<string, ConsultantVerificationStatus> = {
+      APPROVED: "VERIFIED",
+      REJECTED: "REJECTED",
+      NEEDS_INFO: "PENDING_VERIFICATION",
+    };
+
+    // Prepare document feedback updates
+    const documentUpdates =
+      documentFeedback?.map((df) =>
+        prisma.profileVerificationDocument.update({
+          where: { id: df.documentId },
+          data: {
+            isValid: df.isValid,
+            staffFeedback: df.staffFeedback || null,
+          },
+        })
+      ) || [];
+
+    // Update verification, documents, and optionally update consultant profile
     const [updatedVerification] = await prisma.$transaction([
       prisma.consultantProfileVerification.update({
         where: { id: verificationId },
@@ -127,24 +173,50 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
           reviewedAt: new Date(),
           reviewedById: session.user.id,
           reviewNotes,
+          // Store rejection feedback (shown to consultant)
+          rejectionReason:
+            status === "REJECTED" || status === "NEEDS_INFO"
+              ? rejectionReason
+              : null,
+          feedbackDetails:
+            status === "REJECTED" || status === "NEEDS_INFO"
+              ? feedbackDetails
+              : null,
         },
       }),
-      // If approved, update consultant profile isVerified
+      // Update document feedback
+      ...documentUpdates,
+      // Update consultant profile isVerified and verificationStatus
       ...(status === "APPROVED"
         ? [
             prisma.consultantProfile.update({
               where: { id: verification.consultantProfileId },
-              data: { isVerified: true },
+              data: {
+                isVerified: true,
+                verificationStatus: profileStatusMap[status],
+              },
             }),
           ]
         : status === "REJECTED"
           ? [
               prisma.consultantProfile.update({
                 where: { id: verification.consultantProfileId },
-                data: { isVerified: false },
+                data: {
+                  isVerified: false,
+                  verificationStatus: profileStatusMap[status],
+                },
               }),
             ]
-          : []),
+          : status === "NEEDS_INFO"
+            ? [
+                prisma.consultantProfile.update({
+                  where: { id: verification.consultantProfileId },
+                  data: {
+                    verificationStatus: profileStatusMap[status],
+                  },
+                }),
+              ]
+            : []),
     ]);
 
     return NextResponse.json({
