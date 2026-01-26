@@ -84,7 +84,7 @@ export async function POST(request: NextRequest) {
     // Verification check - consultant must be verified to create classes
     if (body.consultantProfileId) {
       const verification = await checkConsultantVerification(
-        body.consultantProfileId
+        body.consultantProfileId,
       );
       if (!verification.isVerified) {
         return NextResponse.json(
@@ -93,7 +93,7 @@ export async function POST(request: NextRequest) {
             message: verification.message,
             verificationStatus: verification.status,
           },
-          { status: 403 }
+          { status: 403 },
         );
       }
     }

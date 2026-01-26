@@ -7,7 +7,7 @@ import { ConsultantVerificationStatus } from "@prisma/client";
  * @returns Object with isVerified status and verification details
  */
 export async function checkConsultantVerification(
-  consultantProfileId: string
+  consultantProfileId: string,
 ): Promise<{
   isVerified: boolean;
   status: ConsultantVerificationStatus;
@@ -59,7 +59,7 @@ export async function checkConsultantVerification(
  * @returns Object with isVerified status and verification details
  */
 export async function checkConsultantVerificationByUserId(
-  userId: string
+  userId: string,
 ): Promise<{
   isVerified: boolean;
   status: ConsultantVerificationStatus | null;

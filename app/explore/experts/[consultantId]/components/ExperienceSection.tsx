@@ -1,6 +1,12 @@
 "use client";
 
-import { Briefcase, GraduationCap, Award, Calendar, MapPin } from "lucide-react";
+import {
+  Briefcase,
+  GraduationCap,
+  Award,
+  Calendar,
+  MapPin,
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { WorkExperience, Education, Certification } from "@prisma/client";
 
@@ -21,7 +27,7 @@ function formatDate(date: Date | null | undefined): string {
 function formatDateRange(
   startDate: Date | null | undefined,
   endDate: Date | null | undefined,
-  isCurrent?: boolean
+  isCurrent?: boolean,
 ): string {
   const start = formatDate(startDate);
   if (isCurrent) return `${start} - Present`;
@@ -29,7 +35,10 @@ function formatDateRange(
   return end ? `${start} - ${end}` : start;
 }
 
-function formatYearRange(startYear: number | null, endYear: number | null): string {
+function formatYearRange(
+  startYear: number | null,
+  endYear: number | null,
+): string {
   if (!startYear && !endYear) return "";
   if (!endYear) return `${startYear} - Present`;
   if (!startYear) return `${endYear}`;
@@ -48,7 +57,11 @@ function WorkExperienceCard({ experience }: { experience: WorkExperience }) {
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-sm text-zinc-500">
           <span className="flex items-center gap-1">
             <Calendar className="w-3.5 h-3.5" />
-            {formatDateRange(experience.startDate, experience.endDate, experience.isCurrent)}
+            {formatDateRange(
+              experience.startDate,
+              experience.endDate,
+              experience.isCurrent,
+            )}
           </span>
           {experience.location && (
             <span className="flex items-center gap-1">
@@ -84,9 +97,7 @@ function EducationCard({ education }: { education: Education }) {
             <Calendar className="w-3.5 h-3.5" />
             {formatYearRange(education.startYear, education.endYear)}
           </span>
-          {education.grade && (
-            <span>Grade: {education.grade}</span>
-          )}
+          {education.grade && <span>Grade: {education.grade}</span>}
         </div>
         {education.activities && (
           <p className="mt-2 text-sm text-zinc-600 line-clamp-2">
@@ -98,7 +109,11 @@ function EducationCard({ education }: { education: Education }) {
   );
 }
 
-function CertificationBadge({ certification }: { certification: Certification }) {
+function CertificationBadge({
+  certification,
+}: {
+  certification: Certification;
+}) {
   return (
     <div className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-50 border border-amber-100">
       <Award className="w-4 h-4 text-amber-600 flex-shrink-0" />
@@ -146,7 +161,10 @@ export function ExperienceSection({
                 // Sort by isCurrent first, then by startDate
                 if (a.isCurrent && !b.isCurrent) return -1;
                 if (!a.isCurrent && b.isCurrent) return 1;
-                return new Date(b.startDate).getTime() - new Date(a.startDate).getTime();
+                return (
+                  new Date(b.startDate).getTime() -
+                  new Date(a.startDate).getTime()
+                );
               })
               .map((exp) => (
                 <WorkExperienceCard key={exp.id} experience={exp} />
@@ -180,14 +198,20 @@ export function ExperienceSection({
         <div>
           <div className="flex items-center gap-2 mb-4">
             <Award className="w-5 h-5 text-zinc-600" />
-            <h3 className="text-lg font-semibold text-zinc-900">Certifications</h3>
+            <h3 className="text-lg font-semibold text-zinc-900">
+              Certifications
+            </h3>
             <Badge variant="secondary" className="ml-auto">
               {certifications.length}
             </Badge>
           </div>
           <div className="flex flex-wrap gap-2">
             {certifications
-              .sort((a, b) => new Date(b.issueDate).getTime() - new Date(a.issueDate).getTime())
+              .sort(
+                (a, b) =>
+                  new Date(b.issueDate).getTime() -
+                  new Date(a.issueDate).getTime(),
+              )
               .map((cert) => (
                 <CertificationBadge key={cert.id} certification={cert} />
               ))}

@@ -18,14 +18,14 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     if (!session?.user?.id) {
       return NextResponse.json(
         { success: false, error: "Unauthorized" },
-        { status: 401 }
+        { status: 401 },
       );
     }
 
     if (!["STAFF", "ADMIN"].includes(session.user.role)) {
       return NextResponse.json(
         { success: false, error: "Forbidden" },
-        { status: 403 }
+        { status: 403 },
       );
     }
 
@@ -39,7 +39,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     if (!existingAnnouncement) {
       return NextResponse.json(
         { success: false, error: "Announcement not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
@@ -88,7 +88,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     console.error("Update announcement error:", error);
     return NextResponse.json(
       { success: false, error: "Failed to update announcement" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -104,14 +104,14 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     if (!session?.user?.id) {
       return NextResponse.json(
         { success: false, error: "Unauthorized" },
-        { status: 401 }
+        { status: 401 },
       );
     }
 
     if (!["STAFF", "ADMIN"].includes(session.user.role)) {
       return NextResponse.json(
         { success: false, error: "Forbidden" },
-        { status: 403 }
+        { status: 403 },
       );
     }
 
@@ -124,7 +124,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     if (!existingAnnouncement) {
       return NextResponse.json(
         { success: false, error: "Announcement not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
@@ -140,7 +140,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     console.error("Delete announcement error:", error);
     return NextResponse.json(
       { success: false, error: "Failed to delete announcement" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

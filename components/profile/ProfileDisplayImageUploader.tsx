@@ -84,7 +84,8 @@ export function ProfileDisplayImageUploader({
 
         toast({
           title: "Profile image updated",
-          description: "Your profile display image has been uploaded successfully.",
+          description:
+            "Your profile display image has been uploaded successfully.",
         });
 
         onUploadSuccess?.(result.data.profileDisplayImage);
@@ -115,9 +116,12 @@ export function ProfileDisplayImageUploader({
 
     setIsDeleting(true);
     try {
-      const response = await fetch(`/api/user/profile-display-image?userId=${userId}`, {
-        method: "DELETE",
-      });
+      const response = await fetch(
+        `/api/user/profile-display-image?userId=${userId}`,
+        {
+          method: "DELETE",
+        },
+      );
 
       const result = await response.json();
 
@@ -217,7 +221,8 @@ export function ProfileDisplayImageUploader({
 
       {/* Help text */}
       <p className="text-xs text-zinc-500 mt-2">
-        Square image (1:1), max 2MB. This will be displayed on your expert profile.
+        Square image (1:1), max 2MB. This will be displayed on your expert
+        profile.
       </p>
 
       {/* Hidden file input */}

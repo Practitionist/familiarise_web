@@ -14,7 +14,7 @@ export async function POST(request: NextRequest) {
     if (!session?.user?.id) {
       return NextResponse.json(
         { success: false, error: "Unauthorized" },
-        { status: 401 }
+        { status: 401 },
       );
     }
 
@@ -35,7 +35,7 @@ export async function POST(request: NextRequest) {
     if (!consultantProfile) {
       return NextResponse.json(
         { success: false, error: "Consultant profile not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
@@ -126,7 +126,7 @@ export async function POST(request: NextRequest) {
             ? error.message
             : "Failed to submit verification",
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

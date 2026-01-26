@@ -29,7 +29,7 @@ export async function POST(request: NextRequest) {
     if (!session?.user?.id) {
       return NextResponse.json(
         { success: false, error: "Unauthorized" },
-        { status: 401 }
+        { status: 401 },
       );
     }
 
@@ -42,7 +42,7 @@ export async function POST(request: NextRequest) {
     if (!file) {
       return NextResponse.json(
         { success: false, error: "No file provided" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -53,7 +53,7 @@ export async function POST(request: NextRequest) {
           success: false,
           error: "Invalid file type. Allowed: PNG, JPG, WEBP, PDF",
         },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -61,7 +61,7 @@ export async function POST(request: NextRequest) {
     if (file.size > MAX_FILE_SIZE) {
       return NextResponse.json(
         { success: false, error: "File size exceeds 10MB limit" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -82,7 +82,7 @@ export async function POST(request: NextRequest) {
     if (!consultantProfile && !isOnboarding) {
       return NextResponse.json(
         { success: false, error: "Consultant profile not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
@@ -117,20 +117,21 @@ export async function POST(request: NextRequest) {
     const fileBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(fileBuffer);
     const ext = file.name.split(".").pop() || "pdf";
-    const fileIdentifier = consultantProfile?.id || `onboarding-${session.user.id}`;
+    const fileIdentifier =
+      consultantProfile?.id || `onboarding-${session.user.id}`;
     const fileName = `verification-${fileIdentifier}-${Date.now()}.${ext}`;
     const storagePath = `verification-documents/${fileName}`;
 
     const { url: fileUrl, error: uploadError } = await uploadToSupabase(
       storagePath,
       buffer,
-      file.type
+      file.type,
     );
 
     if (uploadError || !fileUrl) {
       return NextResponse.json(
         { success: false, error: uploadError || "Failed to upload file" },
-        { status: 500 }
+        { status: 500 },
       );
     }
 
@@ -189,7 +190,7 @@ export async function POST(request: NextRequest) {
         error:
           error instanceof Error ? error.message : "Failed to upload document",
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -205,7 +206,7 @@ export async function DELETE(request: NextRequest) {
     if (!session?.user?.id) {
       return NextResponse.json(
         { success: false, error: "Unauthorized" },
-        { status: 401 }
+        { status: 401 },
       );
     }
 
@@ -215,7 +216,7 @@ export async function DELETE(request: NextRequest) {
     if (!documentId) {
       return NextResponse.json(
         { success: false, error: "Document ID required" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -234,7 +235,7 @@ export async function DELETE(request: NextRequest) {
     if (!document) {
       return NextResponse.json(
         { success: false, error: "Document not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
@@ -242,7 +243,7 @@ export async function DELETE(request: NextRequest) {
     if (document.verification.consultantProfile.userId !== session.user.id) {
       return NextResponse.json(
         { success: false, error: "Unauthorized" },
-        { status: 403 }
+        { status: 403 },
       );
     }
 
@@ -253,7 +254,7 @@ export async function DELETE(request: NextRequest) {
           success: false,
           error: "Cannot delete documents from processed verification",
         },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -277,7 +278,7 @@ export async function DELETE(request: NextRequest) {
         error:
           error instanceof Error ? error.message : "Failed to delete document",
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

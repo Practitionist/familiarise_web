@@ -161,7 +161,7 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
             isValid: df.isValid,
             staffFeedback: df.staffFeedback || null,
           },
-        })
+        }),
       ) || [];
 
     // Update verification, documents, and optionally update consultant profile

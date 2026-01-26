@@ -707,7 +707,8 @@ export default function ContentModerationPage() {
                     <div className="mt-3 flex items-center gap-2">
                       <FileText className="h-4 w-4 text-zinc-400" />
                       <span className="text-sm text-zinc-500">
-                        {profile.documents.length} document{profile.documents.length !== 1 ? "s" : ""} attached
+                        {profile.documents.length} document
+                        {profile.documents.length !== 1 ? "s" : ""} attached
                       </span>
                     </div>
                   </CardContent>
@@ -732,7 +733,8 @@ export default function ContentModerationPage() {
               {reviews.map((review) => {
                 const consulteeName = review.consultee?.name || "Anonymous";
                 const consulteeImage = review.consultee?.image || "";
-                const consultantName = review.consultation?.consultant?.user?.name || "Consultant";
+                const consultantName =
+                  review.consultation?.consultant?.user?.name || "Consultant";
 
                 return (
                   <Card key={review.id}>
@@ -975,7 +977,9 @@ export default function ContentModerationPage() {
                     </p>
                   </div>
                   <div>
-                    <Label className="text-sm font-medium">Current Status</Label>
+                    <Label className="text-sm font-medium">
+                      Current Status
+                    </Label>
                     <p className="text-sm text-zinc-600">
                       {selectedProfile.consultant.verificationStatus}
                     </p>
@@ -983,17 +987,23 @@ export default function ContentModerationPage() {
                 </div>
                 {selectedProfile.notes && (
                   <div>
-                    <Label className="text-sm font-medium">Applicant Notes</Label>
+                    <Label className="text-sm font-medium">
+                      Applicant Notes
+                    </Label>
                     <p className="text-sm text-zinc-600 bg-zinc-100 dark:bg-zinc-800 p-2 rounded">
                       {selectedProfile.notes}
                     </p>
                   </div>
                 )}
                 <div>
-                  <Label className="text-sm font-medium">Documents ({selectedProfile.documents.length})</Label>
+                  <Label className="text-sm font-medium">
+                    Documents ({selectedProfile.documents.length})
+                  </Label>
                   <div className="flex flex-wrap gap-2 mt-1">
                     {selectedProfile.documents.length === 0 ? (
-                      <p className="text-sm text-zinc-500">No documents uploaded</p>
+                      <p className="text-sm text-zinc-500">
+                        No documents uploaded
+                      </p>
                     ) : (
                       selectedProfile.documents.map((doc) => (
                         <Button
@@ -1063,7 +1073,11 @@ export default function ContentModerationPage() {
                     handleProfileVerification(selectedProfile.id, "NEEDS_INFO")
                   }
                   disabled={submitting || !moderationNote.trim()}
-                  title={!moderationNote.trim() ? "Add a note explaining what information is needed" : ""}
+                  title={
+                    !moderationNote.trim()
+                      ? "Add a note explaining what information is needed"
+                      : ""
+                  }
                 >
                   {submitting ? (
                     <Loader2 className="h-4 w-4 mr-2 animate-spin" />

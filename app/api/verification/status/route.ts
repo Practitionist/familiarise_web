@@ -14,7 +14,7 @@ export async function GET() {
     if (!session?.user?.id) {
       return NextResponse.json(
         { success: false, error: "Unauthorized" },
-        { status: 401 }
+        { status: 401 },
       );
     }
 
@@ -59,7 +59,7 @@ export async function GET() {
     if (!consultantProfile) {
       return NextResponse.json(
         { success: false, error: "Consultant profile not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
@@ -80,16 +80,16 @@ export async function GET() {
         linkedinUrl: user?.linkedinUrl,
         latestRequest: latestRequest
           ? {
-            id: latestRequest.id,
-            status: latestRequest.status,
-            submittedAt: latestRequest.submittedAt,
-            reviewedAt: latestRequest.reviewedAt,
-            reviewNotes: latestRequest.reviewNotes,
-            rejectionReason: latestRequest.rejectionReason,
-            feedbackDetails: latestRequest.feedbackDetails,
-            notes: latestRequest.notes,
-            documents: latestRequest.documents,
-          }
+              id: latestRequest.id,
+              status: latestRequest.status,
+              submittedAt: latestRequest.submittedAt,
+              reviewedAt: latestRequest.reviewedAt,
+              reviewNotes: latestRequest.reviewNotes,
+              rejectionReason: latestRequest.rejectionReason,
+              feedbackDetails: latestRequest.feedbackDetails,
+              notes: latestRequest.notes,
+              documents: latestRequest.documents,
+            }
           : null,
       },
     });
@@ -103,7 +103,7 @@ export async function GET() {
             ? error.message
             : "Failed to get verification status",
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

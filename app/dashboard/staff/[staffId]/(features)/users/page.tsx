@@ -274,7 +274,10 @@ export default function UserManagementPage() {
             <ShieldCheck className="h-4 w-4" />
             Pending Verification
             {pendingCount > 0 && (
-              <Badge variant="secondary" className="ml-1 bg-amber-100 text-amber-700">
+              <Badge
+                variant="secondary"
+                className="ml-1 bg-amber-100 text-amber-700"
+              >
                 {pendingCount}
               </Badge>
             )}
@@ -368,7 +371,9 @@ export default function UserManagementPage() {
                                   <CheckCircle className="h-3.5 w-3.5 text-blue-500" />
                                 )}
                               </p>
-                              <p className="text-sm text-zinc-500">{user.email}</p>
+                              <p className="text-sm text-zinc-500">
+                                {user.email}
+                              </p>
                             </div>
                           </div>
                         </TableCell>

@@ -47,7 +47,14 @@ export async function GET(req: NextRequest) {
           consultantProfile: {
             include: {
               user: {
-                select: { id: true, name: true, email: true, image: true, linkedinUrl: true, bio: true },
+                select: {
+                  id: true,
+                  name: true,
+                  email: true,
+                  image: true,
+                  linkedinUrl: true,
+                  bio: true,
+                },
               },
               domain: { select: { id: true, name: true } },
               subDomains: { select: { id: true, name: true } },
@@ -67,7 +74,7 @@ export async function GET(req: NextRequest) {
 
     // Filter out verifications with missing profile data (defensive)
     const validVerifications = verifications.filter(
-      (v) => v.consultantProfile && v.consultantProfile.user
+      (v) => v.consultantProfile && v.consultantProfile.user,
     );
 
     const formattedVerifications = validVerifications.map((v) => ({

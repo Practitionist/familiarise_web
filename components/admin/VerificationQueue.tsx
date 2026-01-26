@@ -6,13 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  FileText,
-  RefreshCw,
-  User,
-  Clock,
-  CheckCircle2,
-} from "lucide-react";
+import { FileText, RefreshCw, User, Clock, CheckCircle2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { VerificationReviewModal } from "./VerificationReviewModal";
 
@@ -115,7 +109,8 @@ export function VerificationQueue({
       setLoading(true);
       const response = await fetch(`${apiBasePath}?status=PENDING`);
       if (!response.ok) throw new Error("Failed to fetch verifications");
-      const data: { verifications?: ProfileVerification[] } = await response.json();
+      const data: { verifications?: ProfileVerification[] } =
+        await response.json();
       setVerifications(data.verifications || []);
     } catch (error) {
       console.error("Error fetching verifications:", error);
@@ -207,13 +202,17 @@ export function VerificationQueue({
           const profile = verification.consultantProfile;
           // Skip verifications with missing profile or user data
           if (!profile || !profile.user) {
-            console.warn("Skipping verification with missing profile data:", verification.id);
+            console.warn(
+              "Skipping verification with missing profile data:",
+              verification.id,
+            );
             return null;
           }
           const user = profile.user;
 
           // Use subDomains for specialization display
-          const subDomainNames = profile.subDomains?.map((s: { name: string }) => s.name) || [];
+          const subDomainNames =
+            profile.subDomains?.map((s: { name: string }) => s.name) || [];
 
           return (
             <Card
@@ -236,9 +235,7 @@ export function VerificationQueue({
                       </AvatarFallback>
                     </Avatar>
                     <div>
-                      <p className="font-medium">
-                        {user.name || "Unnamed"}
-                      </p>
+                      <p className="font-medium">{user.name || "Unnamed"}</p>
                       <p className="text-sm text-zinc-500">{user.email}</p>
                       <div className="flex items-center gap-2 mt-1 flex-wrap">
                         {profile.domain && (
@@ -246,15 +243,17 @@ export function VerificationQueue({
                             {profile.domain.name}
                           </Badge>
                         )}
-                        {subDomainNames.slice(0, 2).map((s: string, idx: number) => (
-                          <Badge
-                            key={idx}
-                            variant="secondary"
-                            className="text-xs"
-                          >
-                            {s}
-                          </Badge>
-                        ))}
+                        {subDomainNames
+                          .slice(0, 2)
+                          .map((s: string, idx: number) => (
+                            <Badge
+                              key={idx}
+                              variant="secondary"
+                              className="text-xs"
+                            >
+                              {s}
+                            </Badge>
+                          ))}
                         {subDomainNames.length > 2 && (
                           <span className="text-xs text-zinc-400">
                             +{subDomainNames.length - 2} more

@@ -244,31 +244,32 @@ const ConsultantReviewForm: React.FC<Props> = ({
           )}
 
           {/* Education */}
-          {formData.educationHistory && formData.educationHistory.length > 0 && (
-            <div className="bg-muted/50 rounded-lg p-4 space-y-3">
-              <div className="flex items-center gap-2 text-sm font-medium">
-                <GraduationCap className="h-4 w-4" />
-                Education
-              </div>
-              {formData.educationHistory.map((edu, index) => (
-                <div
-                  key={index}
-                  className="px-3 py-2 bg-background border rounded-lg text-sm"
-                >
-                  <p className="font-medium">{edu.degree}</p>
-                  <p className="text-muted-foreground">
-                    {edu.institution}
-                    {edu.fieldOfStudy && ` • ${edu.fieldOfStudy}`}
-                  </p>
-                  {(edu.startYear || edu.endYear) && (
-                    <p className="text-xs text-muted-foreground">
-                      {edu.startYear || ""} - {edu.endYear || ""}
-                    </p>
-                  )}
+          {formData.educationHistory &&
+            formData.educationHistory.length > 0 && (
+              <div className="bg-muted/50 rounded-lg p-4 space-y-3">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <GraduationCap className="h-4 w-4" />
+                  Education
                 </div>
-              ))}
-            </div>
-          )}
+                {formData.educationHistory.map((edu, index) => (
+                  <div
+                    key={index}
+                    className="px-3 py-2 bg-background border rounded-lg text-sm"
+                  >
+                    <p className="font-medium">{edu.degree}</p>
+                    <p className="text-muted-foreground">
+                      {edu.institution}
+                      {edu.fieldOfStudy && ` • ${edu.fieldOfStudy}`}
+                    </p>
+                    {(edu.startYear || edu.endYear) && (
+                      <p className="text-xs text-muted-foreground">
+                        {edu.startYear || ""} - {edu.endYear || ""}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
 
           {/* Certifications */}
           {formData.certificationsList &&

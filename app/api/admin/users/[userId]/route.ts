@@ -86,7 +86,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     console.error("Error fetching user details:", error);
     return NextResponse.json(
       { error: "Failed to fetch user details" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

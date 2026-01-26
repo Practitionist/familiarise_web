@@ -15,7 +15,11 @@ import {
   DashboardGrid,
 } from "@/components/dashboard/DashboardShell";
 import { StatCard } from "@/components/dashboard/StatCard";
-import { DataCard, ActivityItem, EmptyState } from "@/components/dashboard/DataCard";
+import {
+  DataCard,
+  ActivityItem,
+  EmptyState,
+} from "@/components/dashboard/DataCard";
 import { AppointmentCard } from "@/components/dashboard/AppointmentCard";
 import {
   Calendar,

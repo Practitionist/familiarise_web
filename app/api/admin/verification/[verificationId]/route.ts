@@ -69,7 +69,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
     if (!verification) {
       return NextResponse.json(
         { error: "Verification not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
@@ -78,7 +78,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
     console.error("Error fetching verification:", error);
     return NextResponse.json(
       { error: "Failed to fetch verification" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -145,7 +145,7 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
     if (!verification) {
       return NextResponse.json(
         { error: "Verification not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
@@ -165,7 +165,7 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
             isValid: df.isValid,
             staffFeedback: df.staffFeedback || null,
           },
-        })
+        }),
       ) || [];
 
     // Update verification, documents, and optionally update consultant profile
@@ -193,26 +193,16 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
       // Update consultant profile isVerified and verificationStatus
       ...(status === "APPROVED"
         ? [
-          prisma.consultantProfile.update({
-            where: { id: verification.consultantProfileId },
-            data: {
-              isVerified: true,
-              verificationStatus: profileStatusMap[status],
-            },
-          }),
-        ]
-        : status === "REJECTED"
-          ? [
             prisma.consultantProfile.update({
               where: { id: verification.consultantProfileId },
               data: {
-                isVerified: false,
+                isVerified: true,
                 verificationStatus: profileStatusMap[status],
               },
             }),
           ]
-          : status === "NEEDS_INFO"
-            ? [
+        : status === "REJECTED"
+          ? [
               prisma.consultantProfile.update({
                 where: { id: verification.consultantProfileId },
                 data: {
@@ -221,6 +211,16 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
                 },
               }),
             ]
+          : status === "NEEDS_INFO"
+            ? [
+                prisma.consultantProfile.update({
+                  where: { id: verification.consultantProfileId },
+                  data: {
+                    isVerified: false,
+                    verificationStatus: profileStatusMap[status],
+                  },
+                }),
+              ]
             : []),
     ]);
 
@@ -237,7 +237,7 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
     console.error("Error reviewing verification:", error);
     return NextResponse.json(
       { error: "Failed to review verification" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

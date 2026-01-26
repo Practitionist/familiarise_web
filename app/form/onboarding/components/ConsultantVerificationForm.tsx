@@ -32,11 +32,11 @@ export default function ConsultantVerificationForm({
   initialData,
 }: ConsultantVerificationFormProps) {
   const [linkedinUrl, setLinkedinUrl] = useState(
-    initialData?.verificationLinkedinUrl || ""
+    initialData?.verificationLinkedinUrl || "",
   );
   const [notes, setNotes] = useState(initialData?.verificationNotes || "");
   const [documents, setDocuments] = useState<UploadedDocument[]>(
-    initialData?.verificationDocuments || []
+    initialData?.verificationDocuments || [],
   );
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -74,7 +74,7 @@ export default function ConsultantVerificationForm({
         setIsUploading(false);
       }
     },
-    []
+    [],
   );
 
   const handleRemove = useCallback(async (documentId: string) => {

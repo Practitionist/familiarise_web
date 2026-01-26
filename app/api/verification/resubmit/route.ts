@@ -34,22 +34,25 @@ export async function POST(req: NextRequest) {
     if (user?.role !== UserRole.CONSULTANT) {
       return NextResponse.json(
         { error: "Only consultants can resubmit verification" },
-        { status: 403 }
+        { status: 403 },
       );
     }
 
     if (!user.consultantProfile) {
       return NextResponse.json(
         { error: "Consultant profile not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
     // Only allow resubmission if status is REJECTED
-    if (user.consultantProfile.verificationStatus !== ConsultantVerificationStatus.REJECTED) {
+    if (
+      user.consultantProfile.verificationStatus !==
+      ConsultantVerificationStatus.REJECTED
+    ) {
       return NextResponse.json(
         { error: "Verification can only be resubmitted after rejection" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -57,17 +60,18 @@ export async function POST(req: NextRequest) {
     const { notes } = body as { notes?: string };
 
     // Get the most recent verification to link existing documents
-    const previousVerification = await prisma.consultantProfileVerification.findFirst({
-      where: {
-        consultantProfileId: user.consultantProfile.id,
-      },
-      orderBy: {
-        createdAt: "desc",
-      },
-      include: {
-        documents: true,
-      },
-    });
+    const previousVerification =
+      await prisma.consultantProfileVerification.findFirst({
+        where: {
+          consultantProfileId: user.consultantProfile.id,
+        },
+        orderBy: {
+          createdAt: "desc",
+        },
+        include: {
+          documents: true,
+        },
+      });
 
     // Create new verification request
     const newVerification = await prisma.consultantProfileVerification.create({
@@ -112,7 +116,7 @@ export async function POST(req: NextRequest) {
     console.error("Error resubmitting verification:", error);
     return NextResponse.json(
       { error: "Failed to resubmit verification" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

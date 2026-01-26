@@ -169,7 +169,6 @@ const ConsulteeProfileForm: React.FC<Props> = ({
             <p className="text-sm text-destructive">{errors.aboutMe.message}</p>
           )}
         </div>
-
       </div>
 
       {/* Goals & Preferences */}

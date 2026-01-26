@@ -142,7 +142,16 @@ export function VerificationDocumentUpload({
         fileInputRef.current.value = "";
       }
     },
-    [documents, onDocumentsChange, onUpload, maxFiles, maxSize, acceptedTypes, disabled, uploading]
+    [
+      documents,
+      onDocumentsChange,
+      onUpload,
+      maxFiles,
+      maxSize,
+      acceptedTypes,
+      disabled,
+      uploading,
+    ],
   );
 
   const handleDrag = useCallback((e: React.DragEvent) => {
@@ -162,7 +171,7 @@ export function VerificationDocumentUpload({
       setDragActive(false);
       handleFiles(e.dataTransfer.files);
     },
-    [handleFiles]
+    [handleFiles],
   );
 
   const handleRemove = async (doc: UploadedDocument) => {
@@ -206,7 +215,7 @@ export function VerificationDocumentUpload({
           dragActive
             ? "border-primary bg-primary/5"
             : "border-zinc-200 hover:border-zinc-300",
-          !canAddMore && "opacity-50"
+          !canAddMore && "opacity-50",
         )}
       >
         <input
@@ -244,13 +253,13 @@ export function VerificationDocumentUpload({
                 "flex items-center gap-3 p-3 rounded-lg border",
                 doc.status === "error"
                   ? "border-red-200 bg-red-50"
-                  : "border-zinc-200 bg-zinc-50"
+                  : "border-zinc-200 bg-zinc-50",
               )}
             >
               <div
                 className={cn(
                   "flex-shrink-0",
-                  doc.status === "error" ? "text-red-500" : "text-zinc-500"
+                  doc.status === "error" ? "text-red-500" : "text-zinc-500",
                 )}
               >
                 {doc.status === "uploading" ? (
@@ -304,8 +313,8 @@ export function VerificationDocumentUpload({
       {/* File count indicator */}
       {documents.length > 0 && (
         <p className="text-xs text-zinc-500 text-right">
-          {documents.filter((d) => d.status === "uploaded").length} of {maxFiles}{" "}
-          files uploaded
+          {documents.filter((d) => d.status === "uploaded").length} of{" "}
+          {maxFiles} files uploaded
         </p>
       )}
     </div>

@@ -28,7 +28,7 @@ export function ProfileCompletionIndicator({
         <span
           className={cn(
             "text-sm font-medium",
-            isComplete ? "text-emerald-600" : "text-zinc-600"
+            isComplete ? "text-emerald-600" : "text-zinc-600",
           )}
         >
           {percentage}%
@@ -44,7 +44,7 @@ export function ProfileCompletionIndicator({
         isComplete
           ? "bg-emerald-50 border-emerald-200"
           : "bg-amber-50 border-amber-200",
-        className
+        className,
       )}
     >
       <div className="flex items-start gap-3">
@@ -58,7 +58,7 @@ export function ProfileCompletionIndicator({
             <h4
               className={cn(
                 "font-medium",
-                isComplete ? "text-emerald-800" : "text-amber-800"
+                isComplete ? "text-emerald-800" : "text-amber-800",
               )}
             >
               {isComplete ? "Profile Complete" : "Complete Your Profile"}
@@ -66,7 +66,7 @@ export function ProfileCompletionIndicator({
             <span
               className={cn(
                 "text-sm font-semibold",
-                isComplete ? "text-emerald-700" : "text-amber-700"
+                isComplete ? "text-emerald-700" : "text-amber-700",
               )}
             >
               {percentage}%
@@ -76,9 +76,7 @@ export function ProfileCompletionIndicator({
             value={percentage}
             className={cn(
               "h-2",
-              isComplete
-                ? "[&>div]:bg-emerald-500"
-                : "[&>div]:bg-amber-500"
+              isComplete ? "[&>div]:bg-emerald-500" : "[&>div]:bg-amber-500",
             )}
           />
           {showMissingFields && missingFields.length > 0 && (

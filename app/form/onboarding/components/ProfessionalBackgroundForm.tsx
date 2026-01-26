@@ -3,10 +3,25 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { WorkExperienceSection, type WorkExperience } from "./experience/WorkExperienceSection";
-import { EducationSection, type Education } from "./experience/EducationSection";
-import { CertificationsSection, type Certification } from "./experience/CertificationsSection";
-import { Briefcase, GraduationCap, Award, ChevronLeft, ChevronRight } from "lucide-react";
+import {
+  WorkExperienceSection,
+  type WorkExperience,
+} from "./experience/WorkExperienceSection";
+import {
+  EducationSection,
+  type Education,
+} from "./experience/EducationSection";
+import {
+  CertificationsSection,
+  type Certification,
+} from "./experience/CertificationsSection";
+import {
+  Briefcase,
+  GraduationCap,
+  Award,
+  ChevronLeft,
+  ChevronRight,
+} from "lucide-react";
 import type { OnboardingFormData } from "@/utils/onboarding";
 
 interface ProfessionalBackgroundFormProps {

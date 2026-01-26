@@ -9,10 +9,10 @@ interface Props {
   onBack: () => void;
   initialData: Partial<
     StaffProfile &
-    PersonalInfoAndRole & {
-      termsAccepted?: boolean;
-      privacyAccepted?: boolean;
-    }
+      PersonalInfoAndRole & {
+        termsAccepted?: boolean;
+        privacyAccepted?: boolean;
+      }
   >;
 }
 

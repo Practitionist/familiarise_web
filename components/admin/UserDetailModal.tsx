@@ -255,11 +255,16 @@ export function UserDetailModal({
                   )}
                 </h3>
                 <div className="flex items-center gap-2 mt-1">
-                  <Badge className={getRoleColor(user.role)} variant="secondary">
+                  <Badge
+                    className={getRoleColor(user.role)}
+                    variant="secondary"
+                  >
                     {user.role.toLowerCase()}
                   </Badge>
                   {user.onboardingCompleted ? (
-                    <Badge className="bg-green-100 text-green-700">Active</Badge>
+                    <Badge className="bg-green-100 text-green-700">
+                      Active
+                    </Badge>
                   ) : (
                     <Badge className="bg-yellow-100 text-yellow-700">
                       Pending Onboarding
@@ -289,7 +294,9 @@ export function UserDetailModal({
               </div>
               <div className="flex items-center gap-2">
                 <Calendar className="h-4 w-4 text-zinc-400" />
-                <span className="text-sm">Joined {formatDate(user.createdAt)}</span>
+                <span className="text-sm">
+                  Joined {formatDate(user.createdAt)}
+                </span>
               </div>
             </div>
 
@@ -305,10 +312,12 @@ export function UserDetailModal({
                 <div className="grid gap-4 sm:grid-cols-2">
                   <Card>
                     <CardContent className="p-3">
-                      <p className="text-xs text-zinc-500">Verification Status</p>
+                      <p className="text-xs text-zinc-500">
+                        Verification Status
+                      </p>
                       <div className="mt-1">
                         {getVerificationStatusBadge(
-                          user.consultantProfile.verificationStatus
+                          user.consultantProfile.verificationStatus,
                         )}
                       </div>
                     </CardContent>
@@ -343,7 +352,9 @@ export function UserDetailModal({
                 {user.consultantProfile.subDomains &&
                   user.consultantProfile.subDomains.length > 0 && (
                     <div>
-                      <p className="text-xs text-zinc-500 mb-2">Specializations</p>
+                      <p className="text-xs text-zinc-500 mb-2">
+                        Specializations
+                      </p>
                       <div className="flex flex-wrap gap-2">
                         {user.consultantProfile.subDomains.map((s) => (
                           <Badge key={s.id} variant="outline">
