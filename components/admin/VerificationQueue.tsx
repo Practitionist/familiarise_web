@@ -18,9 +18,10 @@ import { VerificationReviewModal } from "./VerificationReviewModal";
 
 interface Document {
   id: string;
-  documentType: string;
-  documentUrl: string;
-  status: string;
+  fileName: string;
+  originalName: string;
+  fileUrl: string;
+  description?: string | null;
   isValid?: boolean | null;
   staffFeedback?: string | null;
 }

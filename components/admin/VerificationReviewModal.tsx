@@ -41,9 +41,10 @@ import { useToast } from "@/hooks/use-toast";
 
 interface Document {
   id: string;
-  documentType: string;
-  documentUrl: string;
-  status: string;
+  fileName: string;
+  originalName: string;
+  fileUrl: string;
+  description?: string | null;
   isValid?: boolean | null;
   staffFeedback?: string | null;
 }
@@ -240,7 +241,7 @@ export function VerificationReviewModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto scrollbar-hide">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <User className="h-5 w-5" />
@@ -461,22 +462,24 @@ export function VerificationReviewModal({
                     <div className="flex items-start justify-between gap-4">
                       <div className="flex-1">
                         <div className="flex items-center gap-2">
-                          <p className="font-medium text-sm">{doc.documentType}</p>
+                          <p className="font-medium text-sm">{doc.description || doc.fileName || "Document"}</p>
                           <Button
                             variant="ghost"
                             size="sm"
-                            className="h-6 px-2"
-                            asChild
+                            className="h-6 px-2 text-blue-600 hover:text-blue-700"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              if (doc.fileUrl) {
+                                window.open(doc.fileUrl, "_blank", "noopener,noreferrer");
+                              } else {
+                                console.error("No document URL found for document", doc.id);
+                              }
+                            }}
                           >
-                            <a
-                              href={doc.documentUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                            >
-                              <Eye className="h-3 w-3 mr-1" />
-                              View
-                              <ExternalLink className="h-3 w-3 ml-1" />
-                            </a>
+                            <Eye className="h-3 w-3 mr-1" />
+                            View
+                            <ExternalLink className="h-3 w-3 ml-1" />
                           </Button>
                         </div>
                         <div className="mt-2">
