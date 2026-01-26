@@ -64,6 +64,8 @@ const updateConsultantSchema = z
     toolsAndTechnologies: z.array(z.string()).nullable().optional(),
     mentoringStyle: z.string().nullable().optional(),
     sessionTypes: z.array(z.nativeEnum(SessionType)).nullable().optional(),
+    // User-level field (stored on User model, not ConsultantProfile)
+    linkedinUrl: z.string().url().nullable().optional().or(z.literal("")),
   })
   .refine(
     (data) => {
@@ -196,6 +198,8 @@ export async function PUT(
       toolsAndTechnologies,
       mentoringStyle,
       sessionTypes,
+      // User-level field
+      linkedinUrl,
     } = data;
 
     // Check if schedule type is being changed
@@ -251,6 +255,21 @@ export async function PUT(
         sessionTypes: sessionTypes ?? [],
       },
     });
+
+    // Update user's linkedinUrl if provided (linkedinUrl is stored on User model)
+    if (linkedinUrl !== undefined) {
+      const consultant = await prisma.consultantProfile.findUnique({
+        where: { id },
+        select: { userId: true },
+      });
+
+      if (consultant?.userId) {
+        await prisma.user.update({
+          where: { id: consultant.userId },
+          data: { linkedinUrl: linkedinUrl || null },
+        });
+      }
+    }
 
     // Update weekly slots if schedule type is WEEKLY
     if (scheduleType === ScheduleType.WEEKLY) {

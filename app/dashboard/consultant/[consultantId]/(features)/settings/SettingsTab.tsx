@@ -639,6 +639,7 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
         websiteUrl: formData.websiteUrl || null,
         twitterUrl: formData.twitterUrl || null,
         githubUrl: formData.githubUrl || null,
+        linkedinUrl: formData.linkedinUrl || null, // Saved to User model
         videoIntroUrl: formData.videoIntroUrl || null,
         languages: formData.languages || [],
         toolsAndTechnologies: formData.toolsAndTechnologies || [],
@@ -1227,6 +1228,18 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
                     value={formData.twitterUrl}
                     onChange={handleInputChange}
                     placeholder="https://twitter.com/username"
+                    className="mt-1"
+                    type="url"
+                  />
+                </div>
+
+                <div>
+                  <Label className="text-sm text-gray-600">LinkedIn</Label>
+                  <Input
+                    name="linkedinUrl"
+                    value={formData.linkedinUrl}
+                    onChange={handleInputChange}
+                    placeholder="https://linkedin.com/in/username"
                     className="mt-1"
                     type="url"
                   />

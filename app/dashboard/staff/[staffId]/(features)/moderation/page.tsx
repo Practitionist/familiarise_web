@@ -44,8 +44,44 @@ import {
   ThumbsDown,
   Loader2,
   RefreshCw,
+  ExternalLink,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+
+// Types for Staff Moderation API responses
+interface ProfileVerificationDocument {
+  id: string;
+  fileName: string;
+  originalName: string;
+  fileSize: number;
+  mimeType: string;
+  fileUrl: string;
+  description: string | null;
+}
+
+interface ProfileVerificationResponse {
+  id: string;
+  status: string;
+  submittedAt: string;
+  notes: string | null;
+  consultant: {
+    profileId: string;
+    userId: string;
+    name: string | null;
+    email: string;
+    image: string | null;
+    linkedinUrl: string | null;
+    domain: string;
+    experience: number | null;
+    headline: string | null;
+    isVerified: boolean;
+    verificationStatus: string;
+  };
+  documents: ProfileVerificationDocument[];
+  reviewedAt: string | null;
+  reviewedById: string | null;
+  reviewNotes: string | null;
+}
 
 interface ModerationReport {
   id: string;
@@ -70,32 +106,7 @@ interface ModerationReport {
   };
 }
 
-interface ProfileVerification {
-  id: string;
-  status: string;
-  notes: string | null;
-  submittedAt: string;
-  profile: {
-    id: string;
-    description: string | null;
-    headline: string | null;
-    experience: number | null;
-    user: {
-      id: string;
-      name: string | null;
-      email: string;
-      bio?: string | null;
-    };
-  };
-  documents: {
-    id: string;
-    documentType: string;
-    documentUrl: string;
-    status: string;
-  }[];
-}
-
-interface Review {
+interface ModerationReview {
   id: string;
   rating: number;
   comment: string | null;
@@ -104,16 +115,16 @@ interface Review {
     id: string;
     name: string | null;
     image: string | null;
-  };
+  } | null;
   consultation: {
     consultant: {
       user: {
         id: string;
         name: string | null;
         image: string | null;
-      };
-    };
-  };
+      } | null;
+    } | null;
+  } | null;
 }
 
 interface ModerationStats {
@@ -172,13 +183,13 @@ export default function ContentModerationPage() {
     null,
   );
   const [selectedProfile, setSelectedProfile] =
-    useState<ProfileVerification | null>(null);
+    useState<ProfileVerificationResponse | null>(null);
   const [moderationNote, setModerationNote] = useState("");
 
   // Data states
   const [reports, setReports] = useState<ModerationReport[]>([]);
-  const [profiles, setProfiles] = useState<ProfileVerification[]>([]);
-  const [reviews, setReviews] = useState<Review[]>([]);
+  const [profiles, setProfiles] = useState<ProfileVerificationResponse[]>([]);
+  const [reviews, setReviews] = useState<ModerationReview[]>([]);
   const [stats, setStats] = useState<ModerationStats | null>(null);
 
   // Loading states
@@ -320,7 +331,7 @@ export default function ContentModerationPage() {
   // Handle profile verification
   const handleProfileVerification = async (
     verificationId: string,
-    status: "VERIFIED" | "REJECTED",
+    status: "APPROVED" | "REJECTED" | "NEEDS_INFO",
   ) => {
     try {
       setSubmitting(true);
@@ -331,16 +342,29 @@ export default function ContentModerationPage() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             status,
-            notes: moderationNote,
+            reviewNotes: moderationNote,
+            // For rejection or needs_info, include the note as feedback
+            ...(status === "REJECTED" || status === "NEEDS_INFO"
+              ? {
+                  rejectionReason: moderationNote,
+                  feedbackDetails: moderationNote,
+                }
+              : {}),
           }),
         },
       );
 
       if (!response.ok) throw new Error("Failed to update verification");
 
+      const statusMessages = {
+        APPROVED: "approved",
+        REJECTED: "rejected",
+        NEEDS_INFO: "marked as needing more information",
+      };
+
       toast({
         title: "Profile Updated",
-        description: `Profile has been ${status === "VERIFIED" ? "approved" : "rejected"}`,
+        description: `Profile has been ${statusMessages[status]}`,
       });
 
       setSelectedProfile(null);
@@ -626,8 +650,9 @@ export default function ContentModerationPage() {
                     <div className="flex items-start justify-between">
                       <div className="flex items-center gap-4">
                         <Avatar className="h-12 w-12">
+                          <AvatarImage src={profile.consultant.image || ""} />
                           <AvatarFallback>
-                            {(profile.profile.user.name || "?")
+                            {(profile.consultant.name || "?")
                               .split(" ")
                               .map((n: string) => n[0])
                               .join("")}
@@ -635,24 +660,36 @@ export default function ContentModerationPage() {
                         </Avatar>
                         <div>
                           <p className="font-medium">
-                            {profile.profile.user.name || "Unnamed"}
+                            {profile.consultant.name || "Unnamed"}
                           </p>
                           <p className="text-sm text-zinc-500">
-                            {profile.profile.user.email}
+                            {profile.consultant.email}
                           </p>
                           <div className="flex items-center gap-2 mt-1">
-                            {profile.profile.headline && (
+                            {profile.consultant.headline && (
                               <span className="text-sm text-zinc-600 dark:text-zinc-400">
-                                {profile.profile.headline}
+                                {profile.consultant.headline}
                               </span>
                             )}
-                            {profile.profile.experience && (
+                            {profile.consultant.experience && (
                               <span className="text-xs text-zinc-500">
-                                • {profile.profile.experience} years
+                                • {profile.consultant.experience} years
                                 experience
                               </span>
                             )}
                           </div>
+                          {profile.consultant.linkedinUrl && (
+                            <a
+                              href={profile.consultant.linkedinUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-xs text-blue-600 hover:underline flex items-center gap-1 mt-1"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <ExternalLink className="h-3 w-3" />
+                              LinkedIn Profile
+                            </a>
+                          )}
                         </div>
                       </div>
                       <div className="text-right">
@@ -662,12 +699,15 @@ export default function ContentModerationPage() {
                         <p className="text-xs text-zinc-400 mt-1">
                           {formatDate(profile.submittedAt)}
                         </p>
+                        <p className="text-xs text-zinc-500 mt-1">
+                          {profile.consultant.domain}
+                        </p>
                       </div>
                     </div>
                     <div className="mt-3 flex items-center gap-2">
                       <FileText className="h-4 w-4 text-zinc-400" />
                       <span className="text-sm text-zinc-500">
-                        {profile.documents.length} documents attached
+                        {profile.documents.length} document{profile.documents.length !== 1 ? "s" : ""} attached
                       </span>
                     </div>
                   </CardContent>
@@ -689,72 +729,75 @@ export default function ContentModerationPage() {
             </p>
           ) : (
             <div className="space-y-3">
-              {reviews.map((review) => (
-                <Card key={review.id}>
-                  <CardContent className="p-4">
-                    <div className="flex items-start justify-between">
-                      <div className="flex items-start gap-3">
-                        <Avatar>
-                          <AvatarImage src={review.consultee.image || ""} />
-                          <AvatarFallback>
-                            {(review.consultee.name || "?")
-                              .split(" ")
-                              .map((n) => n[0])
-                              .join("")}
-                          </AvatarFallback>
-                        </Avatar>
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <p className="font-medium">
-                              {review.consultee.name || "Anonymous"}
-                            </p>
-                            <span className="text-zinc-400">→</span>
-                            <p className="text-zinc-600 dark:text-zinc-400">
-                              {review.consultation.consultant.user.name ||
-                                "Consultant"}
-                            </p>
+              {reviews.map((review) => {
+                const consulteeName = review.consultee?.name || "Anonymous";
+                const consulteeImage = review.consultee?.image || "";
+                const consultantName = review.consultation?.consultant?.user?.name || "Consultant";
+
+                return (
+                  <Card key={review.id}>
+                    <CardContent className="p-4">
+                      <div className="flex items-start justify-between">
+                        <div className="flex items-start gap-3">
+                          <Avatar>
+                            <AvatarImage src={consulteeImage} />
+                            <AvatarFallback>
+                              {consulteeName
+                                .split(" ")
+                                .map((n) => n[0])
+                                .join("")}
+                            </AvatarFallback>
+                          </Avatar>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <p className="font-medium">{consulteeName}</p>
+                              <span className="text-zinc-400">→</span>
+                              <p className="text-zinc-600 dark:text-zinc-400">
+                                {consultantName}
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-1 mt-1">
+                              {Array.from({ length: 5 }).map((_, i) => (
+                                <Star
+                                  key={i}
+                                  className={`h-4 w-4 ${
+                                    i < review.rating
+                                      ? "text-yellow-400 fill-yellow-400"
+                                      : "text-zinc-300"
+                                  }`}
+                                />
+                              ))}
+                            </div>
+                            {review.comment && (
+                              <p className="text-sm text-zinc-600 dark:text-zinc-400 mt-2">
+                                {review.comment}
+                              </p>
+                            )}
                           </div>
-                          <div className="flex items-center gap-1 mt-1">
-                            {Array.from({ length: 5 }).map((_, i) => (
-                              <Star
-                                key={i}
-                                className={`h-4 w-4 ${
-                                  i < review.rating
-                                    ? "text-yellow-400 fill-yellow-400"
-                                    : "text-zinc-300"
-                                }`}
-                              />
-                            ))}
-                          </div>
-                          {review.comment && (
-                            <p className="text-sm text-zinc-600 dark:text-zinc-400 mt-2">
-                              {review.comment}
-                            </p>
-                          )}
                         </div>
+                        <span className="text-xs text-zinc-400">
+                          {formatDate(review.createdAt)}
+                        </span>
                       </div>
-                      <span className="text-xs text-zinc-400">
-                        {formatDate(review.createdAt)}
-                      </span>
-                    </div>
-                    <div className="flex justify-end gap-2 mt-4">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="gap-1"
-                        onClick={() => handleDeleteReview(review.id)}
-                      >
-                        <ThumbsDown className="h-4 w-4" />
-                        Remove
-                      </Button>
-                      <Button size="sm" className="gap-1">
-                        <ThumbsUp className="h-4 w-4" />
-                        Approve
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
+                      <div className="flex justify-end gap-2 mt-4">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="gap-1"
+                          onClick={() => handleDeleteReview(review.id)}
+                        >
+                          <ThumbsDown className="h-4 w-4" />
+                          Remove
+                        </Button>
+                        <Button size="sm" className="gap-1">
+                          <ThumbsUp className="h-4 w-4" />
+                          Approve
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
             </div>
           )}
         </TabsContent>
@@ -882,8 +925,9 @@ export default function ContentModerationPage() {
               <div className="space-y-4">
                 <div className="flex items-center gap-4 p-4 rounded-lg bg-zinc-50 dark:bg-zinc-900">
                   <Avatar className="h-16 w-16">
+                    <AvatarImage src={selectedProfile.consultant.image || ""} />
                     <AvatarFallback className="text-lg">
-                      {(selectedProfile.profile.user.name || "?")
+                      {(selectedProfile.consultant.name || "?")
                         .split(" ")
                         .map((n: string) => n[0])
                         .join("")}
@@ -891,66 +935,98 @@ export default function ContentModerationPage() {
                   </Avatar>
                   <div>
                     <h3 className="text-lg font-semibold">
-                      {selectedProfile.profile.user.name || "Unnamed"}
+                      {selectedProfile.consultant.name || "Unnamed"}
                     </h3>
                     <p className="text-sm text-zinc-500">
-                      {selectedProfile.profile.user.email}
+                      {selectedProfile.consultant.email}
                     </p>
+                    {selectedProfile.consultant.linkedinUrl && (
+                      <a
+                        href={selectedProfile.consultant.linkedinUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-sm text-blue-600 hover:underline flex items-center gap-1 mt-1"
+                      >
+                        <ExternalLink className="h-3 w-3" />
+                        View LinkedIn Profile
+                      </a>
+                    )}
                   </div>
                 </div>
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div>
                     <Label className="text-sm font-medium">Headline</Label>
                     <p className="text-sm text-zinc-600">
-                      {selectedProfile.profile.headline || "Not specified"}
+                      {selectedProfile.consultant.headline || "Not specified"}
                     </p>
                   </div>
                   <div>
                     <Label className="text-sm font-medium">Experience</Label>
                     <p className="text-sm text-zinc-600">
-                      {selectedProfile.profile.experience
-                        ? `${selectedProfile.profile.experience} years`
+                      {selectedProfile.consultant.experience
+                        ? `${selectedProfile.consultant.experience} years`
                         : "Not specified"}
                     </p>
                   </div>
-                </div>
-                {selectedProfile.profile.user.bio && (
                   <div>
-                    <Label className="text-sm font-medium">Bio</Label>
+                    <Label className="text-sm font-medium">Domain</Label>
                     <p className="text-sm text-zinc-600">
-                      {selectedProfile.profile.user.bio}
+                      {selectedProfile.consultant.domain}
+                    </p>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-medium">Current Status</Label>
+                    <p className="text-sm text-zinc-600">
+                      {selectedProfile.consultant.verificationStatus}
+                    </p>
+                  </div>
+                </div>
+                {selectedProfile.notes && (
+                  <div>
+                    <Label className="text-sm font-medium">Applicant Notes</Label>
+                    <p className="text-sm text-zinc-600 bg-zinc-100 dark:bg-zinc-800 p-2 rounded">
+                      {selectedProfile.notes}
                     </p>
                   </div>
                 )}
                 <div>
-                  <Label className="text-sm font-medium">Documents</Label>
+                  <Label className="text-sm font-medium">Documents ({selectedProfile.documents.length})</Label>
                   <div className="flex flex-wrap gap-2 mt-1">
-                    {selectedProfile.documents.map((doc) => (
-                      <Button
-                        key={doc.id}
-                        variant="outline"
-                        size="sm"
-                        className="gap-1"
-                        asChild
-                      >
-                        <a
-                          href={doc.documentUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
+                    {selectedProfile.documents.length === 0 ? (
+                      <p className="text-sm text-zinc-500">No documents uploaded</p>
+                    ) : (
+                      selectedProfile.documents.map((doc) => (
+                        <Button
+                          key={doc.id}
+                          variant="outline"
+                          size="sm"
+                          className="gap-1"
+                          asChild
                         >
-                          <FileText className="h-4 w-4" />
-                          {doc.documentType}
-                          <Eye className="h-3 w-3 ml-1" />
-                        </a>
-                      </Button>
-                    ))}
+                          <a
+                            href={doc.fileUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            <FileText className="h-4 w-4" />
+                            {doc.description || doc.originalName}
+                            <Eye className="h-3 w-3 ml-1" />
+                          </a>
+                        </Button>
+                      ))
+                    )}
                   </div>
                 </div>
                 <div>
-                  <Label htmlFor="verifyNote">Verification Note</Label>
+                  <Label htmlFor="verifyNote">
+                    Verification Note{" "}
+                    <span className="text-xs text-zinc-500 font-normal">
+                      (required for Request Info or Reject)
+                    </span>
+                  </Label>
                   <Textarea
                     id="verifyNote"
-                    placeholder="Add notes about the verification..."
+                    placeholder="Add notes about the verification... (e.g., what documents or info is needed, reasons for rejection)"
                     className="mt-1"
                     value={moderationNote}
                     onChange={(e) => setModerationNote(e.target.value)}
@@ -981,9 +1057,25 @@ export default function ContentModerationPage() {
                   Reject
                 </Button>
                 <Button
+                  variant="outline"
+                  className="text-amber-600 border-amber-300 hover:bg-amber-50"
+                  onClick={() =>
+                    handleProfileVerification(selectedProfile.id, "NEEDS_INFO")
+                  }
+                  disabled={submitting || !moderationNote.trim()}
+                  title={!moderationNote.trim() ? "Add a note explaining what information is needed" : ""}
+                >
+                  {submitting ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <MessageSquare className="h-4 w-4 mr-2" />
+                  )}
+                  Request Info
+                </Button>
+                <Button
                   className="bg-green-600 hover:bg-green-700"
                   onClick={() =>
-                    handleProfileVerification(selectedProfile.id, "VERIFIED")
+                    handleProfileVerification(selectedProfile.id, "APPROVED")
                   }
                   disabled={submitting}
                 >
