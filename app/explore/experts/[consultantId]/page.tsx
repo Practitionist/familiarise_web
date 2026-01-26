@@ -9,7 +9,8 @@ import {
 } from "@/lib/user";
 import { TConsultantProfile } from "@/types/consultant";
 import { TSlotTiming } from "@/types/slots";
-import { ConsultantReview, User } from "@prisma/client";
+import { TUserWithProfessionalBackground } from "@/types/user";
+import { ConsultantReview } from "@prisma/client";
 import Link from "next/link";
 import { use, useCallback, useEffect, useState } from "react";
 import { motion } from "framer-motion";
@@ -18,6 +19,7 @@ import { AboutSection } from "./components/AboutSection";
 import { ClassesAndWebinars } from "./components/ClassesAndWebinars";
 import { ConsultantAvailability } from "./components/ConsultantAvailability";
 import { ConsultantSkeletonLoader } from "./components/ConsultantSkeletonLoader";
+import { ExperienceSection } from "./components/ExperienceSection";
 import { ExpertPricing } from "./components/ExpertPricing";
 import { ProfileHeader } from "./components/ProfileHeader";
 import { ReviewsSection } from "./components/ReviewsSection";
@@ -37,7 +39,8 @@ export default function ExpertProfile(
   const { timezone: browserTimezone, isLoading: isTimezoneLoading } =
     useTimezone();
 
-  const [userDetails, setUserDetails] = useState<User | null>(null);
+  const [userDetails, setUserDetails] =
+    useState<TUserWithProfessionalBackground | null>(null);
   const [consultantDetails, setConsultantDetails] =
     useState<TConsultantProfile | null>(null);
   const [reviews, setReviews] = useState<ConsultantReview[]>([]);
@@ -97,7 +100,8 @@ export default function ExpertProfile(
           endDateInUtc.setHours(23, 59, 59, 999);
 
           const response = await fetch(
-            `/api/slots/availability-with-allocation/${consultantDetails.id
+            `/api/slots/availability-with-allocation/${
+              consultantDetails.id
             }?startDateInUtc=${startDateInUtc.toISOString()}&endDateInUtc=${endDateInUtc.toISOString()}&timezone=${timezone}`,
           );
 
@@ -251,9 +255,10 @@ export default function ExpertProfile(
         <button
           key={i}
           className={`w-10 h-10 lg:w-11 lg:h-11 rounded-full text-base font-medium transition-all duration-200 flex items-center justify-center
-            ${isSelected
-              ? "bg-white text-zinc-900 shadow-md"
-              : "text-zinc-300 hover:bg-zinc-700/60"
+            ${
+              isSelected
+                ? "bg-white text-zinc-900 shadow-md"
+                : "text-zinc-300 hover:bg-zinc-700/60"
             }`}
           onClick={() => {
             setSelectedDate(date);
@@ -336,6 +341,12 @@ export default function ExpertProfile(
               <AboutSection
                 userDetails={userDetails}
                 consultantDetails={consultantDetails}
+              />
+
+              <ExperienceSection
+                workExperiences={userDetails.workExperiences || []}
+                education={userDetails.education || []}
+                certifications={userDetails.certifications || []}
               />
 
               <ConsultantAvailability

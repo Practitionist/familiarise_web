@@ -48,7 +48,7 @@ export async function createEarningsFromPayment({
 
   if (!consultantProfileId) {
     console.warn(
-      `No consultant profile found for payment ${payment.id}. Skipping earnings creation.`
+      `No consultant profile found for payment ${payment.id}. Skipping earnings creation.`,
     );
     return null;
   }
@@ -59,16 +59,14 @@ export async function createEarningsFromPayment({
   });
 
   if (existingEarnings) {
-    console.warn(
-      `Earnings already exist for payment ${payment.id}. Skipping.`
-    );
+    console.warn(`Earnings already exist for payment ${payment.id}. Skipping.`);
     return existingEarnings.id;
   }
 
   // Calculate revenue split
   const grossAmount = payment.amount;
   const platformFee = Math.round(
-    (grossAmount * PAYOUT_CONSTANTS.PLATFORM_FEE_PERCENTAGE) / 100
+    (grossAmount * PAYOUT_CONSTANTS.PLATFORM_FEE_PERCENTAGE) / 100,
   );
   const consultantShare = grossAmount - platformFee;
 
@@ -128,7 +126,7 @@ export async function releaseEarningsFromHold(): Promise<number> {
  * Get consultant earnings summary
  */
 export async function getConsultantEarningsSummary(
-  consultantProfileId: string
+  consultantProfileId: string,
 ): Promise<EarningsSummary> {
   const [pending, ready, paid, held] = await Promise.all([
     prisma.consultantEarnings.aggregate({
@@ -156,7 +154,8 @@ export async function getConsultantEarningsSummary(
 
   return {
     consultantProfileId,
-    totalEarnings: pendingEarnings + readyEarnings + paidEarnings + heldEarnings,
+    totalEarnings:
+      pendingEarnings + readyEarnings + paidEarnings + heldEarnings,
     pendingEarnings,
     readyEarnings,
     paidEarnings,
@@ -173,7 +172,7 @@ export async function getConsultantEarnings(
     status?: EarningStatus;
     limit?: number;
     offset?: number;
-  }
+  },
 ) {
   const { status, limit = 20, offset = 0 } = options || {};
 
@@ -241,7 +240,7 @@ export async function refundEarnings(paymentId: string): Promise<boolean> {
   // Can only refund if not yet paid out
   if (earnings.status === EarningStatus.PAID) {
     console.error(
-      `Cannot refund earnings ${earnings.id} - already paid out. Manual intervention required.`
+      `Cannot refund earnings ${earnings.id} - already paid out. Manual intervention required.`,
     );
     return false;
   }
@@ -270,7 +269,7 @@ export async function refundEarnings(paymentId: string): Promise<boolean> {
  */
 export async function holdEarnings(
   earningsId: string,
-  reason?: string
+  reason?: string,
 ): Promise<boolean> {
   const earnings = await prisma.consultantEarnings.findUnique({
     where: { id: earningsId },
@@ -287,7 +286,7 @@ export async function holdEarnings(
     earnings.status !== EarningStatus.READY
   ) {
     console.warn(
-      `Cannot hold earnings ${earningsId} - status is ${earnings.status}`
+      `Cannot hold earnings ${earningsId} - status is ${earnings.status}`,
     );
     return false;
   }
@@ -299,14 +298,18 @@ export async function holdEarnings(
     },
   });
 
-  console.log(`Earnings ${earningsId} held. Reason: ${reason || "Not specified"}`);
+  console.log(
+    `Earnings ${earningsId} held. Reason: ${reason || "Not specified"}`,
+  );
   return true;
 }
 
 /**
  * Release held earnings back to ready state
  */
-export async function releaseHeldEarnings(earningsId: string): Promise<boolean> {
+export async function releaseHeldEarnings(
+  earningsId: string,
+): Promise<boolean> {
   const earnings = await prisma.consultantEarnings.findUnique({
     where: { id: earningsId },
   });

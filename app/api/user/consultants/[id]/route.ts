@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import authOptions from "../../../auth/[...nextauth]/options";
 import { experienceValidation } from "@/schemas/shared";
+import { checkActiveAppointments } from "../utils/consultant-appointments";
 
 // Zod schema for UUID validation
 const uuidSchema = z.string().uuid();
@@ -46,8 +47,6 @@ const customSlotSchema = z.object({
 const updateConsultantSchema = z
   .object({
     description: z.string().optional(),
-    qualifications: z.string().optional(),
-    specialization: z.string().optional(),
     experience: experienceValidation,
     scheduleType: z.enum(["WEEKLY", "CUSTOM"]),
     domainId: uuidSchema,
@@ -55,16 +54,18 @@ const updateConsultantSchema = z
     tagIds: z.array(uuidSchema),
     slotsOfAvailabilityWeekly: z.array(weeklySlotSchema).optional(),
     slotsOfAvailabilityCustom: z.array(customSlotSchema).optional(),
-    // New fields
-    headline: z.string().max(120).optional(),
-    websiteUrl: z.string().url().optional().or(z.literal("")),
-    twitterUrl: z.string().url().optional().or(z.literal("")),
-    githubUrl: z.string().url().optional().or(z.literal("")),
-    videoIntroUrl: z.string().url().optional().or(z.literal("")),
-    languages: z.array(z.string()).optional(),
-    toolsAndTechnologies: z.array(z.string()).optional(),
-    mentoringStyle: z.string().optional(),
-    sessionTypes: z.array(z.nativeEnum(SessionType)).optional(),
+    // New fields - accept null values from frontend for optional fields
+    headline: z.string().max(120).nullable().optional(),
+    websiteUrl: z.string().url().nullable().optional().or(z.literal("")),
+    twitterUrl: z.string().url().nullable().optional().or(z.literal("")),
+    githubUrl: z.string().url().nullable().optional().or(z.literal("")),
+    videoIntroUrl: z.string().url().nullable().optional().or(z.literal("")),
+    languages: z.array(z.string()).nullable().optional(),
+    toolsAndTechnologies: z.array(z.string()).nullable().optional(),
+    mentoringStyle: z.string().nullable().optional(),
+    sessionTypes: z.array(z.nativeEnum(SessionType)).nullable().optional(),
+    // User-level field (stored on User model, not ConsultantProfile)
+    linkedinUrl: z.string().url().nullable().optional().or(z.literal("")),
   })
   .refine(
     (data) => {
@@ -109,7 +110,19 @@ export async function GET(
     const consultant = await prisma.consultantProfile.findUnique({
       where: { id },
       include: {
-        user: true,
+        user: {
+          include: {
+            workExperiences: {
+              orderBy: [{ isCurrent: "desc" }, { startDate: "desc" }],
+            },
+            education: {
+              orderBy: { endYear: "desc" },
+            },
+            certifications: {
+              orderBy: { issueDate: "desc" },
+            },
+          },
+        },
         domain: true,
         subDomains: true,
         tags: true,
@@ -119,9 +132,7 @@ export async function GET(
         subscriptionPlans: true,
         webinarPlans: true,
         classPlans: true,
-        workExperiences: true,
-        certifications: true,
-        education: true,
+        reviews: true,
       },
     });
 
@@ -170,8 +181,6 @@ export async function PUT(
     const data = validationResult.data;
     const {
       description,
-      qualifications,
-      specialization,
       experience,
       scheduleType,
       domainId,
@@ -189,15 +198,40 @@ export async function PUT(
       toolsAndTechnologies,
       mentoringStyle,
       sessionTypes,
+      // User-level field
+      linkedinUrl,
     } = data;
+
+    // Check if schedule type is being changed
+    const existingConsultant = await prisma.consultantProfile.findUnique({
+      where: { id },
+      select: { scheduleType: true },
+    });
+
+    if (
+      existingConsultant &&
+      existingConsultant.scheduleType !== scheduleType
+    ) {
+      // Validate that there are no active appointments before allowing switch
+      const activeAppointments = await checkActiveAppointments(id);
+
+      if (activeAppointments.hasActive) {
+        return NextResponse.json(
+          {
+            error: `Cannot switch schedule type while you have ${activeAppointments.total} active appointment(s). Please complete or cancel them first.`,
+            code: "SCHEDULE_SWITCH_BLOCKED",
+            breakdown: activeAppointments.breakdown,
+          },
+          { status: 400 },
+        );
+      }
+    }
 
     // Update consultant profile
     await prisma.consultantProfile.update({
       where: { id },
       data: {
         description,
-        qualifications,
-        specialization,
         experience,
         scheduleType,
         domain: {
@@ -221,6 +255,21 @@ export async function PUT(
         sessionTypes: sessionTypes ?? [],
       },
     });
+
+    // Update user's linkedinUrl if provided (linkedinUrl is stored on User model)
+    if (linkedinUrl !== undefined) {
+      const consultant = await prisma.consultantProfile.findUnique({
+        where: { id },
+        select: { userId: true },
+      });
+
+      if (consultant?.userId) {
+        await prisma.user.update({
+          where: { id: consultant.userId },
+          data: { linkedinUrl: linkedinUrl || null },
+        });
+      }
+    }
 
     // Update weekly slots if schedule type is WEEKLY
     if (scheduleType === ScheduleType.WEEKLY) {
@@ -272,7 +321,19 @@ export async function PUT(
     const updatedConsultant = await prisma.consultantProfile.findUnique({
       where: { id },
       include: {
-        user: true,
+        user: {
+          include: {
+            workExperiences: {
+              orderBy: [{ isCurrent: "desc" }, { startDate: "desc" }],
+            },
+            education: {
+              orderBy: { endYear: "desc" },
+            },
+            certifications: {
+              orderBy: { issueDate: "desc" },
+            },
+          },
+        },
         domain: true,
         subDomains: true,
         tags: true,
@@ -282,9 +343,7 @@ export async function PUT(
         subscriptionPlans: true,
         webinarPlans: true,
         classPlans: true,
-        workExperiences: true,
-        certifications: true,
-        education: true,
+        reviews: true,
       },
     });
 

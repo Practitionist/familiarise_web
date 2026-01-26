@@ -27,7 +27,7 @@ export function AboutSection({
           {consultantDetails.description || (
             <>
               {userDetails.name} is a seasoned{" "}
-              {consultantDetails.specialization} with{" "}
+              {consultantDetails.headline || consultantDetails.domain.name} expert with{" "}
               {consultantDetails.experience} of experience in the{" "}
               {consultantDetails.domain.name} sector. They specialize in helping
               professionals and businesses achieve their goals through expert
@@ -48,17 +48,13 @@ export function AboutSection({
           </h3>
         </div>
         <p className="text-zinc-600 leading-relaxed">
-          {consultantDetails.qualifications || (
-            <>
-              {userDetails.name} has extensive experience across multiple
-              industries, with a particular focus on{" "}
-              {consultantDetails?.subDomains
-                ?.map((domain: { name: string }) => domain.name)
-                .join(", ") || consultantDetails.domain.name}
-              . Their background includes working with diverse clients and
-              organizations to deliver measurable results.
-            </>
-          )}
+          {userDetails.name} has extensive experience across multiple
+          industries, with a particular focus on{" "}
+          {consultantDetails?.subDomains
+            ?.map((domain: { name: string }) => domain.name)
+            .join(", ") || consultantDetails.domain.name}
+          . Their background includes working with diverse clients and
+          organizations to deliver measurable results.
         </p>
       </div>
 
@@ -83,8 +79,7 @@ export function AboutSection({
           ))}
           {(!consultantDetails.tags || consultantDetails.tags.length === 0) && (
             <p className="text-zinc-500 text-sm">
-              Specializes in {consultantDetails.specialization} within{" "}
-              {consultantDetails.domain.name}
+              Specializes in {consultantDetails.headline || consultantDetails.domain.name}
             </p>
           )}
         </div>

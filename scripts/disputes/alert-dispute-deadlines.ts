@@ -58,7 +58,10 @@ export async function alertDisputeDeadlines(): Promise<DisputeDeadlineAlertResul
   const urgentDisputes = await prisma.dispute.findMany({
     where: {
       status: {
-        in: [DisputeStatus.NEEDS_RESPONSE, DisputeStatus.WARNING_NEEDS_RESPONSE],
+        in: [
+          DisputeStatus.NEEDS_RESPONSE,
+          DisputeStatus.WARNING_NEEDS_RESPONSE,
+        ],
       },
       dueBy: {
         gte: now, // Not past due yet
@@ -76,7 +79,9 @@ export async function alertDisputeDeadlines(): Promise<DisputeDeadlineAlertResul
     orderBy: { dueBy: "asc" }, // Most urgent first
   });
 
-  console.log(`Found ${urgentDisputes.length} disputes with deadlines within ${ALERT_THRESHOLD_HOURS} hours`);
+  console.log(
+    `Found ${urgentDisputes.length} disputes with deadlines within ${ALERT_THRESHOLD_HOURS} hours`,
+  );
 
   const disputes: DisputeAlert[] = [];
   let criticalCount = 0;
@@ -104,16 +109,24 @@ export async function alertDisputeDeadlines(): Promise<DisputeDeadlineAlertResul
 
     // Log appropriate alert level
     if (hoursRemaining <= 12) {
-      console.log(`\n🚨 CRITICAL: Dispute ${dispute.disputeId} due in ${hoursRemaining}h`);
+      console.log(
+        `\n🚨 CRITICAL: Dispute ${dispute.disputeId} due in ${hoursRemaining}h`,
+      );
       criticalCount++;
     } else if (hoursRemaining <= 24) {
-      console.log(`\n⚠️ URGENT: Dispute ${dispute.disputeId} due in ${hoursRemaining}h`);
+      console.log(
+        `\n⚠️ URGENT: Dispute ${dispute.disputeId} due in ${hoursRemaining}h`,
+      );
     } else {
-      console.log(`\n📋 ALERT: Dispute ${dispute.disputeId} due in ${hoursRemaining}h`);
+      console.log(
+        `\n📋 ALERT: Dispute ${dispute.disputeId} due in ${hoursRemaining}h`,
+      );
     }
 
     console.log(`   Status: ${dispute.status}`);
-    console.log(`   Amount: ${dispute.currency} ${(dispute.amount / 100).toFixed(2)}`);
+    console.log(
+      `   Amount: ${dispute.currency} ${(dispute.amount / 100).toFixed(2)}`,
+    );
     console.log(`   Reason: ${dispute.reason}`);
     console.log(`   Gateway: ${dispute.paymentGateway}`);
     console.log(`   Customer: ${dispute.payment.user?.email || "Unknown"}`);
@@ -125,7 +138,10 @@ export async function alertDisputeDeadlines(): Promise<DisputeDeadlineAlertResul
   const pastDueDisputes = await prisma.dispute.findMany({
     where: {
       status: {
-        in: [DisputeStatus.NEEDS_RESPONSE, DisputeStatus.WARNING_NEEDS_RESPONSE],
+        in: [
+          DisputeStatus.NEEDS_RESPONSE,
+          DisputeStatus.WARNING_NEEDS_RESPONSE,
+        ],
       },
       dueBy: {
         lt: now, // Past due
@@ -134,22 +150,30 @@ export async function alertDisputeDeadlines(): Promise<DisputeDeadlineAlertResul
   });
 
   if (pastDueDisputes.length > 0) {
-    console.log(`\n🚨🚨🚨 CRITICAL: ${pastDueDisputes.length} PAST DUE disputes found!`);
+    console.log(
+      `\n🚨🚨🚨 CRITICAL: ${pastDueDisputes.length} PAST DUE disputes found!`,
+    );
     for (const dispute of pastDueDisputes) {
-      console.log(`   - ${dispute.disputeId}: ${dispute.currency} ${(dispute.amount / 100).toFixed(2)} (was due ${dispute.dueBy?.toISOString()})`);
+      console.log(
+        `   - ${dispute.disputeId}: ${dispute.currency} ${(dispute.amount / 100).toFixed(2)} (was due ${dispute.dueBy?.toISOString()})`,
+      );
     }
     criticalCount += pastDueDisputes.length;
   }
 
   // Summary
   console.log("\n📊 Dispute Deadline Alert Summary:");
-  console.log(`   Urgent disputes (within ${ALERT_THRESHOLD_HOURS}h): ${urgentDisputes.length}`);
+  console.log(
+    `   Urgent disputes (within ${ALERT_THRESHOLD_HOURS}h): ${urgentDisputes.length}`,
+  );
   console.log(`   Critical (within 12h or past due): ${criticalCount}`);
   console.log(`   Past due: ${pastDueDisputes.length}`);
 
   if (criticalCount > 0) {
     console.log("\n🚨 CRITICAL ACTION REQUIRED:");
-    console.log("   Some disputes need IMMEDIATE attention to avoid financial loss!");
+    console.log(
+      "   Some disputes need IMMEDIATE attention to avoid financial loss!",
+    );
   }
 
   return {

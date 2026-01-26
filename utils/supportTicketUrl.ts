@@ -81,14 +81,19 @@ export type SupportContext =
  */
 export function generateSupportTicketUrl(
   consulteeId: string,
-  context: SupportContext
+  context: SupportContext,
 ): string {
   const params = new URLSearchParams();
   params.set("tab", "support");
 
   if (context.type === "appointment") {
-    const { appointmentId, appointmentType, status, consultantName, scheduledAt } =
-      context.context;
+    const {
+      appointmentId,
+      appointmentType,
+      status,
+      consultantName,
+      scheduledAt,
+    } = context.context;
     params.set("appointmentId", appointmentId);
     params.set("appointmentType", appointmentType);
     params.set("appointmentStatus", status);
@@ -109,7 +114,7 @@ export function generateSupportTicketUrl(
  */
 export function getFilteredIssueTypes(
   appointmentStatus?: AppointmentStatus,
-  isPayment?: boolean
+  isPayment?: boolean,
 ): SupportIssueType[] {
   if (isPayment) {
     return [...CONTEXTUAL_ISSUE_TYPES.PAYMENT];
@@ -205,7 +210,7 @@ export const ISSUE_TYPE_CATEGORIES = {
  */
 export function getGroupedIssueTypes(
   appointmentStatus?: AppointmentStatus,
-  isPayment?: boolean
+  isPayment?: boolean,
 ): Record<string, SupportIssueType[]> {
   const allowedTypes = getFilteredIssueTypes(appointmentStatus, isPayment);
   const result: Record<string, SupportIssueType[]> = {};

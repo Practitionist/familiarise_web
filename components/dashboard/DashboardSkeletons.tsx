@@ -262,7 +262,10 @@ export function HelpSkeleton() {
             {/* Category filters */}
             <div className="flex flex-wrap gap-1.5 sm:gap-2">
               {[1, 2, 3, 4, 5].map((i) => (
-                <Skeleton key={i} className="h-8 sm:h-10 w-20 sm:w-24 rounded-full" />
+                <Skeleton
+                  key={i}
+                  className="h-8 sm:h-10 w-20 sm:w-24 rounded-full"
+                />
               ))}
             </div>
           </div>
@@ -282,7 +285,10 @@ export function HelpSkeleton() {
               </div>
               <div className="space-y-1.5 sm:space-y-2">
                 {[1, 2].map((item) => (
-                  <Skeleton key={item} className="h-12 sm:h-14 w-full rounded-lg sm:rounded-xl" />
+                  <Skeleton
+                    key={item}
+                    className="h-12 sm:h-14 w-full rounded-lg sm:rounded-xl"
+                  />
                 ))}
               </div>
             </div>
@@ -336,7 +342,10 @@ export function PlannerSkeleton() {
         {/* Stats section */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
           {[1, 2, 3, 4].map((i) => (
-            <div key={i} className="bg-zinc-50/80 rounded-xl sm:rounded-2xl p-4 sm:p-5">
+            <div
+              key={i}
+              className="bg-zinc-50/80 rounded-xl sm:rounded-2xl p-4 sm:p-5"
+            >
               <Skeleton className="h-3 sm:h-4 w-20 sm:w-24 mb-2" />
               <Skeleton className="h-6 sm:h-8 w-12 sm:w-16" />
             </div>

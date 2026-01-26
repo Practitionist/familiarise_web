@@ -29,7 +29,7 @@ export async function POST(request: NextRequest) {
     if (!code || typeof code !== "string") {
       return NextResponse.json<DiscountCodeResponse>(
         { valid: false, message: "Discount code is required" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -40,7 +40,7 @@ export async function POST(request: NextRequest) {
     if (!discountCode) {
       return NextResponse.json<DiscountCodeResponse>(
         { valid: false, message: "Invalid discount code" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
@@ -48,7 +48,7 @@ export async function POST(request: NextRequest) {
     if (!discountCode.isActive) {
       return NextResponse.json<DiscountCodeResponse>(
         { valid: false, message: "This discount code is no longer active" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -56,7 +56,7 @@ export async function POST(request: NextRequest) {
     if (discountCode.expiresAt && new Date() > discountCode.expiresAt) {
       return NextResponse.json<DiscountCodeResponse>(
         { valid: false, message: "This discount code has expired" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -70,7 +70,7 @@ export async function POST(request: NextRequest) {
           valid: false,
           message: "This discount code has reached its maximum uses",
         },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -78,9 +78,14 @@ export async function POST(request: NextRequest) {
     let discountAmount: number | undefined;
     if (amount && amount > 0) {
       if (discountCode.discountType === DiscountType.PERCENTAGE) {
-        discountAmount = Math.round((amount * discountCode.discountValue) / 100);
+        discountAmount = Math.round(
+          (amount * discountCode.discountValue) / 100,
+        );
         // Apply max discount cap if set
-        if (discountCode.maxDiscount !== null && discountAmount > discountCode.maxDiscount) {
+        if (
+          discountCode.maxDiscount !== null &&
+          discountAmount > discountCode.maxDiscount
+        ) {
           discountAmount = discountCode.maxDiscount;
         }
       } else if (discountCode.discountType === DiscountType.FIXED_AMOUNT) {
@@ -101,7 +106,7 @@ export async function POST(request: NextRequest) {
     console.error("Error validating discount code:", error);
     return NextResponse.json<DiscountCodeResponse>(
       { valid: false, message: "Failed to validate discount code" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import authOptions from "@/app/api/auth/[...nextauth]/options";
 import { SubscriptionPlanSchema } from "@/schemas/plans";
+import { findOrCreateTopics, transformTopicsToStrings } from "@/lib/topics";
 
 export async function GET(request: NextRequest) {
   try {
@@ -19,6 +20,7 @@ export async function GET(request: NextRequest) {
         where,
         include: {
           consultantProfile: true,
+          topics: true,
         },
         skip,
         take: limit,
@@ -26,9 +28,12 @@ export async function GET(request: NextRequest) {
       prisma.subscriptionPlan.count({ where }),
     ]);
 
+    // Transform topics from objects to strings
+    const transformedPlans = subscriptionPlans.map(transformTopicsToStrings);
+
     return NextResponse.json(
       {
-        data: subscriptionPlans,
+        data: transformedPlans,
         meta: {
           total,
           page,
@@ -78,7 +83,10 @@ export async function POST(request: NextRequest) {
 
     if (!consultantProfile) {
       return NextResponse.json(
-        { error: "You do not have permission to create plans for this consultant profile" },
+        {
+          error:
+            "You do not have permission to create plans for this consultant profile",
+        },
         { status: 403 },
       );
     }
@@ -94,9 +102,13 @@ export async function POST(request: NextRequest) {
 
     const validatedData = validationResult.data;
 
+    // Find or create topics by name
+    const topicIds = await findOrCreateTopics(validatedData.topics ?? []);
+
     // Compute derived metrics
     const sessionDurationInHours = planData.sessionDurationInHours || 1.0;
-    const totalSessions = (validatedData.callsPerWeek || 1) * validatedData.durationInMonths * 4;
+    const totalSessions =
+      (validatedData.callsPerWeek || 1) * validatedData.durationInMonths * 4;
     const totalHours = totalSessions * sessionDurationInHours;
 
     const newSubscriptionPlan = await prisma.subscriptionPlan.create({
@@ -117,13 +129,22 @@ export async function POST(request: NextRequest) {
         materialProvided: validatedData.materialProvided,
         learningOutcomes: validatedData.learningOutcomes,
         consultantProfile: { connect: { id: consultantProfileId } },
+        topics:
+          topicIds.length > 0
+            ? { connect: topicIds.map((id) => ({ id })) }
+            : undefined,
       },
       include: {
         consultantProfile: true,
+        topics: true,
       },
     });
 
-    return NextResponse.json({ data: newSubscriptionPlan }, { status: 201 });
+    // Transform topics to strings in response
+    return NextResponse.json(
+      { data: transformTopicsToStrings(newSubscriptionPlan) },
+      { status: 201 },
+    );
   } catch (error) {
     console.error("Error creating subscription plan:", error);
     return NextResponse.json(

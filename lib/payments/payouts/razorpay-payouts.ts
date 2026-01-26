@@ -147,7 +147,7 @@ export class RazorpayPayoutsService {
 
     if (!config.keyId || !config.keySecret || !config.accountNumber) {
       throw new Error(
-        "RazorpayX credentials not configured. Required: keyId, keySecret, accountNumber"
+        "RazorpayX credentials not configured. Required: keyId, keySecret, accountNumber",
       );
     }
   }
@@ -170,10 +170,10 @@ export class RazorpayPayoutsService {
     method: "GET" | "POST" | "PATCH",
     endpoint: string,
     body?: Record<string, unknown>,
-    headers?: Record<string, string>
+    headers?: Record<string, string>,
   ): Promise<T> {
     const auth = Buffer.from(
-      `${this.config.keyId}:${this.config.keySecret}`
+      `${this.config.keyId}:${this.config.keySecret}`,
     ).toString("base64");
 
     const response = await fetch(`${this.baseUrl}${endpoint}`, {
@@ -189,7 +189,7 @@ export class RazorpayPayoutsService {
     if (!response.ok) {
       const error = await response.json().catch(() => ({}));
       throw new Error(
-        `RazorpayX API error: ${error.error?.description || response.statusText}`
+        `RazorpayX API error: ${error.error?.description || response.statusText}`,
       );
     }
 
@@ -226,7 +226,7 @@ export class RazorpayPayoutsService {
    */
   async updateContact(
     contactId: string,
-    updates: Partial<CreateContactRequest>
+    updates: Partial<CreateContactRequest>,
   ): Promise<Contact> {
     return this.apiRequest<Contact>("PATCH", `/contacts/${contactId}`, {
       name: updates.name,
@@ -246,7 +246,7 @@ export class RazorpayPayoutsService {
    * Create a fund account (bank account or UPI) for a contact
    */
   async createFundAccount(
-    request: CreateFundAccountRequest
+    request: CreateFundAccountRequest,
   ): Promise<FundAccount> {
     const payload: Record<string, unknown> = {
       contact_id: request.contactId,
@@ -274,7 +274,7 @@ export class RazorpayPayoutsService {
   async fetchFundAccount(fundAccountId: string): Promise<FundAccount> {
     return this.apiRequest<FundAccount>(
       "GET",
-      `/fund_accounts/${fundAccountId}`
+      `/fund_accounts/${fundAccountId}`,
     );
   }
 
@@ -326,7 +326,7 @@ export class RazorpayPayoutsService {
       },
       {
         "X-Payout-Idempotency": request.idempotencyKey,
-      }
+      },
     );
   }
 
@@ -343,7 +343,7 @@ export class RazorpayPayoutsService {
   async cancelPayout(payoutId: string): Promise<RazorpayPayout> {
     return this.apiRequest<RazorpayPayout>(
       "POST",
-      `/payouts/${payoutId}/cancel`
+      `/payouts/${payoutId}/cancel`,
     );
   }
 
@@ -398,7 +398,7 @@ export class RazorpayPayoutsService {
 
     return crypto.timingSafeEqual(
       Buffer.from(signature),
-      Buffer.from(expectedSignature)
+      Buffer.from(expectedSignature),
     );
   }
 
@@ -413,7 +413,7 @@ export class RazorpayPayoutsService {
    * Map RazorpayX payout status to our internal status
    */
   mapPayoutStatus(
-    status: RazorpayPayoutStatus
+    status: RazorpayPayoutStatus,
   ): "PENDING" | "PROCESSING" | "COMPLETED" | "FAILED" | "CANCELLED" {
     switch (status) {
       case "queued":
@@ -453,7 +453,7 @@ export class RazorpayPayoutsService {
    */
   determinePayoutMode(
     amount: number,
-    accountType: "bank_account" | "vpa"
+    accountType: "bank_account" | "vpa",
   ): "IMPS" | "NEFT" | "UPI" {
     if (accountType === "vpa") {
       return "UPI";

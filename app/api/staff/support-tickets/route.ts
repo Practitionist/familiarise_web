@@ -12,6 +12,7 @@ import {
   SupportPriority,
   SupportIssueType,
   UserRole,
+  Prisma,
 } from "@prisma/client";
 
 /**
@@ -47,8 +48,7 @@ export async function GET(req: NextRequest) {
     const offset = (page - 1) * limit;
 
     // Build where clause
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const where: any = {};
+    const where: Prisma.SupportTicketWhereInput = {};
 
     if (status) {
       where.status = status;
@@ -162,7 +162,7 @@ export async function GET(req: NextRequest) {
     console.error("Error fetching support tickets:", error);
     return NextResponse.json(
       { error: "Failed to fetch support tickets" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

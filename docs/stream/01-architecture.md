@@ -503,7 +503,7 @@ export async function tokenProvider(userId: string) {
 
 - ✅ Lower Stream API usage
 - ✅ No orphaned channels
-- ⚠️ Potential race conditions (see [Known Issues](./13-known-issues.md#medium-bug-3-channel-creation-race-conditions))
+- ⚠️ Potential race conditions (see [Troubleshooting - Channel Creation Race Conditions](./troubleshooting.md#channel-creation-race-conditions-medium))
 - ⚠️ First-access latency
 
 ### Why Daily User Sync Job?
@@ -540,7 +540,7 @@ export function mapRoleToStream(role: string): string {
 - All users can moderate channels
 - Potential data access issues
 
-**See:** [13. Known Issues - Bug #1](./13-known-issues.md#critical-bug-1-universal-admin-role)
+**See:** [Troubleshooting - Universal Admin Role](./troubleshooting.md#universal-admin-role-critical)
 
 ### Token Security
 
@@ -624,12 +624,12 @@ Promise.all([
 - [03. Provider & Authentication](./03-provider-authentication.md) - Deep dive into StreamProvider
 - [04. Chat Implementation](./04-chat-implementation.md) - Messaging features
 - [05. Video Implementation](./05-video-implementation.md) - Video calls
+- [13. Recording & Webhooks](./13-recording-webhooks.md) - Recording and webhooks
 
 **For troubleshooting:**
 
-- [13. Known Issues](./13-known-issues.md) - Current bugs
-- [14. Troubleshooting](./14-troubleshooting.md) - Common problems
+- [Troubleshooting](./troubleshooting.md) - Common problems and known issues
 
 ---
 
-← [README](./README.md) | [Next: Setup & Configuration](./02-setup-configuration.md) →
+← [Setup & Configuration](./02-setup-configuration.md) →

@@ -6,13 +6,13 @@
 
 ## Quick Navigation
 
-| I want to... | Go to |
-|-------------|-------|
-| Understand the system architecture | [01-architecture.md](./01-architecture.md) |
-| Learn how earnings work | [02-earnings-lifecycle.md](./02-earnings-lifecycle.md) |
-| Understand payout processing | [03-payout-processing.md](./03-payout-processing.md) |
-| Reference API endpoints | [04-api-reference.md](./04-api-reference.md) |
-| Configure the system | [05-configuration.md](./05-configuration.md) |
+| I want to...                       | Go to                                                  |
+| ---------------------------------- | ------------------------------------------------------ |
+| Understand the system architecture | [01-architecture.md](./01-architecture.md)             |
+| Learn how earnings work            | [02-earnings-lifecycle.md](./02-earnings-lifecycle.md) |
+| Understand payout processing       | [03-payout-processing.md](./03-payout-processing.md)   |
+| Reference API endpoints            | [04-api-reference.md](./04-api-reference.md)           |
+| Configure the system               | [05-configuration.md](./05-configuration.md)           |
 
 ---
 
@@ -33,13 +33,13 @@ The payout system handles the complete lifecycle of consultant earnings:
 
 ## Key Stats
 
-| Category | Count | Details |
-|----------|-------|---------|
-| **Database Models** | 4 | ConsultantEarnings, Payout, PayoutAccount, Invoice |
-| **Services** | 3 | EarningsService, PayoutService, InvoiceService |
-| **Provider Integrations** | 2 | RazorpayX (INR), Stripe Connect (International) |
-| **Cron Jobs** | 3 | Release earnings (hourly), Create batch (weekly), Process (weekly) |
-| **API Endpoints** | 12+ | Admin, Staff, Consultant routes |
+| Category                  | Count | Details                                                            |
+| ------------------------- | ----- | ------------------------------------------------------------------ |
+| **Database Models**       | 4     | ConsultantEarnings, Payout, PayoutAccount, Invoice                 |
+| **Services**              | 3     | EarningsService, PayoutService, InvoiceService                     |
+| **Provider Integrations** | 2     | RazorpayX (INR), Stripe Connect (International)                    |
+| **Cron Jobs**             | 3     | Release earnings (hourly), Create batch (weekly), Process (weekly) |
+| **API Endpoints**         | 12+   | Admin, Staff, Consultant routes                                    |
 
 ---
 
@@ -94,22 +94,22 @@ scripts/
 
 ## Key Constants
 
-| Constant | Value | Purpose |
-|----------|-------|---------|
-| Platform Fee | 20% | Deducted from each payment |
-| Consultant Share | 80% | Net amount to consultant |
-| Minimum Payout | ₹500 | Threshold for batch inclusion |
-| Auto-Approve Limit | ₹5000 | Below this, auto-approved |
-| Max Retries | 3 | Failed payout retry limit |
+| Constant           | Value | Purpose                       |
+| ------------------ | ----- | ----------------------------- |
+| Platform Fee       | 20%   | Deducted from each payment    |
+| Consultant Share   | 80%   | Net amount to consultant      |
+| Minimum Payout     | ₹500  | Threshold for batch inclusion |
+| Auto-Approve Limit | ₹5000 | Below this, auto-approved     |
+| Max Retries        | 3     | Failed payout retry limit     |
 
 ### Hold Periods by Appointment Type
 
-| Type | Hold Period | Rationale |
-|------|-------------|-----------|
-| Consultation | 24 hours | Short-term service |
-| Class | 24 hours | Similar to consultation |
-| Webinar | 48 hours | Allow participant feedback |
-| Subscription | 7 days | Longer commitment period |
+| Type         | Hold Period | Rationale                  |
+| ------------ | ----------- | -------------------------- |
+| Consultation | 24 hours    | Short-term service         |
+| Class        | 24 hours    | Similar to consultation    |
+| Webinar      | 48 hours    | Allow participant feedback |
+| Subscription | 7 days      | Longer commitment period   |
 
 ---
 
@@ -124,7 +124,7 @@ scripts/
 
 ## Changelog
 
-| Date | Change |
-|------|--------|
-| 2025-12-26 | Initial documentation created |
+| Date       | Change                                                    |
+| ---------- | --------------------------------------------------------- |
+| 2025-12-26 | Initial documentation created                             |
 | 2025-12-26 | Payout system implemented with RazorpayX + Stripe Connect |

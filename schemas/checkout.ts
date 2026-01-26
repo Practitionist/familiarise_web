@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { AppointmentsType, PaymentGateway } from "@prisma/client";
+import { validateSlotTiming } from "@/lib/payments/utils/slot-validation";
 
 // Base schemas for individual components
 export const appointmentTypeSchema = z.enum([
@@ -84,6 +85,7 @@ export const checkoutSchema = z
     discountCode: z.string().optional(),
     paymentGateway: paymentGatewaySchema,
     notes: z.string().optional(),
+    fromWaitlist: z.string().optional(), // Waitlist ID if coming from waitlist flow
   })
   .superRefine((data, ctx) => {
     // === CONSULTATION validation ===
@@ -171,6 +173,19 @@ export const checkoutSchema = z
           code: z.ZodIssueCode.custom,
           message: "Start time must be before end time",
           path: ["slotEndTimeInUTC"],
+        });
+      }
+    }
+
+    // Validate slot is not in the past or within minimum booking lead time
+    if (data.slotStartTimeInUTC) {
+      const slotStart = new Date(data.slotStartTimeInUTC);
+      const timingError = validateSlotTiming(slotStart);
+      if (timingError) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: timingError,
+          path: ["slotStartTimeInUTC"],
         });
       }
     }
@@ -284,6 +299,7 @@ export const createCheckoutData = (params: {
   schedulingPeriodEndsAt?: string;
   discountCode?: string;
   notes?: string;
+  fromWaitlist?: string;
 }): CheckoutInput => {
   return {
     appointmentType: params.appointmentType,
@@ -298,5 +314,6 @@ export const createCheckoutData = (params: {
     schedulingPeriodEndsAt: params.schedulingPeriodEndsAt,
     discountCode: params.discountCode,
     notes: params.notes,
+    fromWaitlist: params.fromWaitlist,
   };
 };

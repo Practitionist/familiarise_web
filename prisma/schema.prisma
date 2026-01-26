@@ -1,12 +1,10 @@
 generator client {
   provider = "prisma-client-js"
-  output   = "../node_modules/.prisma/client"
 }
 
 datasource db {
-  provider  = "postgresql"
-  url       = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL")
+  provider = "postgresql"
+  // Database URLs are now configured in prisma.config.ts (Prisma 7)
 }
 
 ////////////////////////////////////////// USER MODEL //////////////////////////////////////////
@@ -28,12 +26,18 @@ model User {
   role                 UserRole? @default(CONSULTEE)
 
   // New fields for enhanced user profile
-  dateOfBirth DateTime?
-  gender      Gender?
-  city        String?
-  country     String?
-  linkedinUrl String?
-  bio         String?   @db.VarChar(160) // Short tagline, max 160 chars
+  dateOfBirth         DateTime?
+  gender              Gender?
+  city                String?
+  country             String?
+  linkedinUrl         String?
+  bio                 String?   @db.VarChar(160) // Short tagline, max 160 chars
+  profileDisplayImage String? // Square profile image for Explore Experts page
+
+  // Professional background (consolidated from profile level)
+  workExperiences WorkExperience[]
+  certifications  Certification[]
+  education       Education[]
 
   cookiePreferences       CookiePreference?
   notificationPreferences NotificationPreference?
@@ -59,6 +63,11 @@ model User {
 
   accounts Account[] // NextAuth Accounts
   sessions Session[] // NextAuth Sessions
+
+  // Staff Dashboard Relations
+  reportsSubmitted  ModerationReport[] @relation("ReportsSubmitted")
+  reportsReceived   ModerationReport[] @relation("ReportsReceived")
+  moderationActions ModerationAction[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -238,12 +247,30 @@ enum SupportIssueType {
 }
 
 model CookiePreference {
-  id        String  @id @default(cuid())
-  user      User    @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  userId    String  @unique
+  id String @id @default(cuid())
+
+  // For authenticated users
+  user   User?   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  userId String? @unique
+
+  // For anonymous users (browser session identifier)
+  sessionId String? @unique
+
+  // Essential: Core functionality - auth, security, CSRF (cannot be disabled)
   essential Boolean @default(true)
+
+  // Analytics: Usage tracking - GA4, Hotjar, Mixpanel, PostHog
   analytics Boolean @default(false)
+
+  // Marketing: Advertising - Facebook Pixel, Google Ads, LinkedIn, TikTok
   marketing Boolean @default(false)
+
+  // Functional: Third-party features - chat widgets (Intercom), video embeds
+  functional Boolean @default(false)
+
+  // Consent timestamps for GDPR compliance
+  consentGivenAt   DateTime @default(now())
+  consentUpdatedAt DateTime @updatedAt
 
   @@map("cookie_preferences")
 }
@@ -310,24 +337,19 @@ model ConsultantProfile {
   rating      Float   @default(0)
 
   // New fields for enhanced consultant profile
-  headline                    String?       @db.VarChar(120) // Professional headline, max 120 chars
+  headline                    String?                      @db.VarChar(120) // Professional headline, max 120 chars
   websiteUrl                  String?
   twitterUrl                  String?
   githubUrl                   String?
   videoIntroUrl               String?
-  languages                   String[]      @default([])
-  toolsAndTechnologies        String[]      @default([])
-  mentoringStyle              String?       @db.Text
-  sessionTypes                SessionType[] @default([])
-  profileCompletionPercentage Int           @default(0)
-  isVerified                  Boolean       @default(false)
-  totalMenteesHelped          Int           @default(0)
-
-  // Deprecated fields - to be removed in Phase 6
-  // @deprecated Use Certification and Education models instead
-  qualifications String?
-  // @deprecated Use subDomains, tags, and headline instead
-  specialization String?
+  languages                   String[]                     @default([])
+  toolsAndTechnologies        String[]                     @default([])
+  mentoringStyle              String?                      @db.Text
+  sessionTypes                SessionType[]                @default([])
+  profileCompletionPercentage Int                          @default(0)
+  isVerified                  Boolean                      @default(false)
+  verificationStatus          ConsultantVerificationStatus @default(PENDING_VERIFICATION)
+  totalMenteesHelped          Int                          @default(0)
 
   domain     Domain      @relation(fields: [domainId], references: [id])
   domainId   String
@@ -345,10 +367,8 @@ model ConsultantProfile {
   webinarPlans      WebinarPlan[]
   classPlans        ClassPlan[]
 
-  // New relations for professional background
-  workExperiences WorkExperience[]
-  certifications  Certification[]
-  education       Education[]
+  // Note: Professional background (workExperiences, certifications, education)
+  // has been consolidated to User level for DRY principle
 
   user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   userId String @unique
@@ -357,6 +377,9 @@ model ConsultantProfile {
   earnings       ConsultantEarnings[]
   payouts        Payout[]
   payoutAccounts PayoutAccount[]
+
+  // Profile verification
+  verificationRequests ConsultantProfileVerification[]
 
   // Cached balances (in smallest currency unit, e.g., paise)
   totalRevenue   Int @default(0)
@@ -368,6 +391,7 @@ model ConsultantProfile {
   @@index([userId])
   @@index([domainId])
   @@index([isVerified])
+  @@index([verificationStatus])
 }
 
 model Domain {
@@ -442,16 +466,7 @@ model ConsulteeProfile {
   linkedinUrl      String?
   budgetPreference BudgetPreference?
 
-  // Deprecated fields - to be removed in Phase 6
-  // @deprecated Use Education model instead
-  education           String?
-  // @deprecated Merge into goals or aboutMe
-  specialRequirements String?
-  // @deprecated Use skillsToDevelop instead
-  interests           String?
-
-  // New relation for education background
-  educationHistory Education[]
+  // Note: Education has been consolidated to User level for DRY principle
 
   consultationRequests Consultation[]
   subscriptionRequests Subscription[]
@@ -527,13 +542,14 @@ model WorkExperience {
   isCurrent   Boolean   @default(false)
   description String?   @db.Text
 
-  consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  consultantProfileId String
+  // Consolidated to User level (was ConsultantProfile)
+  user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  userId String
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@index([consultantProfileId])
+  @@index([userId])
   @@index([isCurrent])
 }
 
@@ -546,13 +562,14 @@ model Certification {
   credentialId        String?
   credentialUrl       String?
 
-  consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  consultantProfileId String
+  // Consolidated to User level (was ConsultantProfile)
+  user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  userId String
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@index([consultantProfileId])
+  @@index([userId])
 }
 
 model Education {
@@ -566,19 +583,14 @@ model Education {
   activities   String?
   description  String? @db.Text
 
-  // NOTE: Application logic must ensure exactly one of consultantProfileId or
-  // consulteeProfileId is set, never both or neither (to prevent orphaned records).
-  consultantProfile   ConsultantProfile? @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  consultantProfileId String?
-
-  consulteeProfile   ConsulteeProfile? @relation(fields: [consulteeProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  consulteeProfileId String?
+  // Consolidated to User level (was ConsultantProfile/ConsulteeProfile)
+  user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  userId String
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@index([consultantProfileId])
-  @@index([consulteeProfileId])
+  @@index([userId])
 }
 
 //////////////////////////////////////////////////// AVAILABILITY SLOTS ////////////////////////////////////////////////////
@@ -628,11 +640,13 @@ model ConsultationPlan {
   prerequisites    String?  @default("None")
   materialProvided String?  @default("None")
   learningOutcomes String[] @default([])
+  topics           Topic[]  @relation("TopicToConsultationPlan")
 
   consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultantProfileId String
 
   consultations Consultation[]
+  materials     PlanMaterial[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -664,6 +678,13 @@ model Consultation {
 
   createdAt DateTime @default(now()) @db.Timestamptz()
   updatedAt DateTime @updatedAt @db.Timestamptz()
+
+  @@index([requestedById])
+  @@index([consultationPlanId])
+  @@index([requestStatus])
+  @@index([requestedById, requestStatus])
+  @@index([requestedAt])
+  @@index([cancelledAt])
 }
 
 model SubscriptionPlan {
@@ -683,11 +704,13 @@ model SubscriptionPlan {
   prerequisites          String?          @default("None")
   materialProvided       String?          @default("None")
   learningOutcomes       String[]         @default([])
+  topics                 Topic[]          @relation("TopicToSubscriptionPlan")
 
   consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultantProfileId String
 
   subscriptions Subscription[]
+  materials     PlanMaterial[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -723,6 +746,13 @@ model Subscription {
 
   createdAt DateTime @default(now()) @db.Timestamptz()
   updatedAt DateTime @updatedAt @db.Timestamptz()
+
+  @@index([requestedById])
+  @@index([subscriptionPlanId])
+  @@index([requestStatus])
+  @@index([requestedById, requestStatus])
+  @@index([requestedAt])
+  @@index([cancelledAt])
 }
 
 enum RequestStatus {
@@ -750,6 +780,7 @@ model WebinarPlan {
   price               Int
   priceCurrency       String   @default("INR")
   certificateProvided Boolean  @default(false)
+  recordingEnabled    Boolean  @default(false) // Allow consultant to record sessions
   durationInHours     Float    @default(1) // Duration in hours
   maxParticipants     Int      @default(100)
   language            String?  @default("English")
@@ -761,6 +792,7 @@ model WebinarPlan {
   consultantProfile   ConsultantProfile? @relation(fields: [consultantProfileId], references: [id])
   consultantProfileId String?
   webinars            Webinar[]
+  materials           PlanMaterial[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -795,11 +827,12 @@ model ClassPlan {
   id                     String           @id @default(cuid())
   title                  String
   description            String           @db.Text
-  topics                 Topic[]          @relation("ClassPlanToTopic")
+  topics                 Topic[]          @relation("TopicToClassPlan")
   classContents          ClassContent[]
   price                  Int
   priceCurrency          String           @default("INR")
   certificateProvided    Boolean          @default(false)
+  recordingEnabled       Boolean          @default(false) // Allow consultant to record sessions
   durationInMonths       Int              @default(1) // Duration in months
   meetingsPerWeek        Int              @default(1)
   sessionDurationInHours Float            @default(1.0) // Duration of each session in hours
@@ -816,6 +849,7 @@ model ClassPlan {
   consultantProfile   ConsultantProfile? @relation(fields: [consultantProfileId], references: [id])
   consultantProfileId String?
   classes             Class[]
+  materials           PlanMaterial[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -840,6 +874,7 @@ model Class {
   updatedAt DateTime @updatedAt @db.Timestamptz()
 
   @@index([classPlanId])
+  @@index([status])
 }
 
 model ClassContent {
@@ -856,6 +891,9 @@ model ClassContent {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([classPlanId])
+  @@index([classPlanId, order])
 }
 
 enum ClassStatus {
@@ -869,8 +907,10 @@ model Topic {
   id   String @id @default(cuid())
   name String @unique
 
-  webinarPlans WebinarPlan[] @relation("TopicToWebinarPlan")
-  classPlans   ClassPlan[]   @relation("ClassPlanToTopic")
+  webinarPlans      WebinarPlan[]      @relation("TopicToWebinarPlan")
+  classPlans        ClassPlan[]        @relation("TopicToClassPlan")
+  consultationPlans ConsultationPlan[] @relation("TopicToConsultationPlan")
+  subscriptionPlans SubscriptionPlan[] @relation("TopicToSubscriptionPlan")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -884,9 +924,34 @@ model Newsletter {
   updatedAt DateTime @updatedAt
 }
 
+// Waitlist status for tracking user position and notification state
+enum WaitlistStatus {
+  WAITING // In queue, waiting for spot
+  NOTIFIED // Spot available, awaiting user response
+  BOOKED // Successfully booked the spot
+  EXPIRED // Notification window expired (48h)
+  CANCELLED // User left waitlist voluntarily
+  SKIPPED // User declined spot, moved to back of queue
+}
+
 model Waitlist {
   id       String   @id @default(uuid())
   joinedAt DateTime @default(now())
+
+  // Queue management
+  position Int? // Calculated queue position (null until calculated)
+  status   WaitlistStatus @default(WAITING)
+  priority Int            @default(0) // Higher value = higher priority (for VIP/premium users)
+
+  // Notification tracking
+  notifiedAt     DateTime? // When user was notified of available spot
+  expiresAt      DateTime? // 48 hours after notifiedAt
+  reminderSentAt DateTime? // When 12-hour reminder was sent
+  bookedAt       DateTime? // When user successfully booked
+  respondedAt    DateTime? // When user responded to notification
+
+  // User preferences (for future enhancements)
+  preferences Json? // e.g., { preferredDates: [], maxPrice: 500 }
 
   user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   userId String
@@ -897,8 +962,19 @@ model Waitlist {
   class   Class?  @relation(fields: [classId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   classId String?
 
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
   @@unique([userId, webinarId])
   @@unique([userId, classId])
+  @@index([userId])
+  @@index([webinarId])
+  @@index([classId])
+  @@index([status])
+  @@index([status, webinarId])
+  @@index([status, classId])
+  @@index([expiresAt])
+  @@index([priority, joinedAt])
 }
 
 ////////////////////////////////////////////// APPOINTMENT ////////////////////////////////////////////////////
@@ -926,6 +1002,9 @@ model Appointment {
 
   createdAt DateTime @default(now()) @db.Timestamptz()
   updatedAt DateTime @updatedAt @db.Timestamptz()
+
+  @@index([subscriptionId])
+  @@index([classId])
 }
 
 enum AppointmentsType {
@@ -952,6 +1031,14 @@ model AppointmentDocument {
   reviewedAt   DateTime?
   reviewedBy   String? // Consultant user ID
 
+  // Upload role - who uploaded this document
+  uploadedByRole DocumentUploadRole @default(CONSULTEE)
+
+  // Response document linking - for consultant responses to consultee submissions
+  responseToDocumentId String?
+  responseToDocument   AppointmentDocument?  @relation("DocumentResponse", fields: [responseToDocumentId], references: [id], onUpdate: Cascade, onDelete: SetNull)
+  responseDocuments    AppointmentDocument[] @relation("DocumentResponse")
+
   // Relations
   appointment   Appointment @relation(fields: [appointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   appointmentId String
@@ -962,6 +1049,8 @@ model AppointmentDocument {
 
   @@index([appointmentId])
   @@index([reviewStatus])
+  @@index([uploadedByRole])
+  @@index([responseToDocumentId])
 }
 
 enum DocumentReviewStatus {
@@ -970,6 +1059,45 @@ enum DocumentReviewStatus {
   APPROVED
   REJECTED
   NEEDS_REVISION
+}
+
+enum DocumentUploadRole {
+  CONSULTEE
+  CONSULTANT
+}
+
+// Plan Materials - Consultant-uploaded materials at plan level (shared across all instances)
+model PlanMaterial {
+  id           String  @id @default(uuid())
+  fileName     String
+  originalName String
+  fileSize     Int
+  mimeType     String
+  fileUrl      String
+  storagePath  String
+  description  String? @db.Text
+  order        Int     @default(0) // For ordering materials in display
+
+  // Optional foreign keys - exactly one should be set
+  consultationPlanId String?
+  subscriptionPlanId String?
+  webinarPlanId      String?
+  classPlanId        String?
+
+  // Relations
+  consultationPlan ConsultationPlan? @relation(fields: [consultationPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  subscriptionPlan SubscriptionPlan? @relation(fields: [subscriptionPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  webinarPlan      WebinarPlan?      @relation(fields: [webinarPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  classPlan        ClassPlan?        @relation(fields: [classPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+
+  uploadedAt DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([consultationPlanId])
+  @@index([subscriptionPlanId])
+  @@index([webinarPlanId])
+  @@index([classPlanId])
+  @@index([order])
 }
 
 model SlotOfAppointment {
@@ -994,6 +1122,7 @@ model SlotOfAppointment {
   // OPT-3: Additional indexes for time range queries in validateSlotAvailability
   @@index([startsAt, endsAt])
   @@index([isTentative, startsAt, endsAt])
+  @@index([createdAt])
 }
 
 ////////////////////////////////////////////// MEETINGS FOR STREAM ////////////////////////////////////////////////////
@@ -1005,6 +1134,15 @@ model MeetingSession {
   passcode     String?
   hostKeys     String[]
 
+  // Recording state
+  isRecording        Boolean   @default(false)
+  recordingStartedAt DateTime?
+  recordingStartedBy String? // userId who started recording
+
+  // Session lifecycle
+  endedAt     DateTime? // When session actually ended
+  endedReason String? // "call_ended", "session_timeout", "error"
+
   recordings Recording[]
 
   slotOfAppointment   SlotOfAppointment @relation(fields: [slotOfAppointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
@@ -1012,15 +1150,60 @@ model MeetingSession {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([isRecording])
 }
 
-// New model for storing recording details
+// Recording storage types
+enum RecordingStorageType {
+  STREAM_S3 // Default: expires in 2 weeks
+  SUPABASE // Permanent storage
+}
+
+// Recording status lifecycle
+enum RecordingStatus {
+  RECORDING // Currently being recorded
+  PROCESSING // Stream is processing the recording
+  READY // Available on Stream S3
+  TRANSFERRING // Being transferred to Supabase
+  AVAILABLE // Available on Supabase (permanent)
+  FAILED // Recording failed
+  EXPIRED // Stream S3 URL expired
+}
+
+// Model for storing recording details with dual storage support
 model Recording {
   id                String   @id @default(cuid())
   title             String
   recordingUrl      String
   durationInMinutes Int
   recordedAt        DateTime
+
+  // Stream-specific identifiers
+  streamRecordingId String? @unique
+  streamCallId      String?
+
+  // Storage configuration
+  storageType RecordingStorageType @default(STREAM_S3)
+  status      RecordingStatus      @default(READY)
+
+  // Supabase permanent storage
+  supabaseUrl  String?
+  supabasePath String?
+
+  // Media metadata
+  thumbnailUrl String?
+  fileSize     BigInt? // File size in bytes
+  codec        String? // e.g., "h264", "vp9"
+  resolution   String? // e.g., "1920x1080", "1280x720"
+
+  // Preview clip (for explore pages)
+  previewClipUrl      String?
+  previewClipDuration Int? // Duration in seconds
+
+  // Expiration tracking
+  streamUrlExpiresAt DateTime? // When Stream S3 URL expires
+  transferredAt      DateTime? // When transferred to Supabase
 
   meetingSession   MeetingSession @relation(fields: [meetingSessionId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   meetingSessionId String
@@ -1029,6 +1212,10 @@ model Recording {
   updatedAt DateTime @updatedAt
 
   @@index([meetingSessionId])
+  @@index([streamRecordingId])
+  @@index([status])
+  @@index([storageType])
+  @@index([streamUrlExpiresAt])
 }
 
 enum Platform {
@@ -1074,6 +1261,8 @@ model Payment {
   @@unique([userId, appointmentId]) // Allow multiple users to pay for same appointment (webinars/classes)
   @@index([expiresAt, paymentStatus])
   @@index([isMockPayment])
+  @@index([paymentStatus])
+  @@index([createdAt])
 }
 
 enum PaymentGateway {
@@ -1109,6 +1298,7 @@ model Refund {
   @@index([paymentId])
   @@index([status])
   @@index([refundId])
+  @@index([paymentId, status])
 }
 
 enum RefundStatus {
@@ -1140,6 +1330,7 @@ model Dispute {
   @@index([status])
   @@index([disputeId])
   @@index([dueBy])
+  @@index([paymentId, status])
 }
 
 enum DisputeStatus {
@@ -1242,6 +1433,7 @@ model Payout {
   @@index([consultantProfileId, status])
   @@index([batchId])
   @@index([status])
+  @@index([createdAt])
 }
 
 model PayoutAccount {
@@ -1320,6 +1512,7 @@ model WebhookEvent {
   @@index([provider])
   @@index([processed])
   @@index([eventType])
+  @@index([receivedAt])
 }
 
 model DiscountCode {
@@ -1338,6 +1531,10 @@ model DiscountCode {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([isActive])
+  @@index([expiresAt])
+  @@index([isActive, expiresAt])
 }
 
 enum DiscountType {
@@ -1417,4 +1614,222 @@ enum SessionType {
   ONE_ON_ONE // 1:1 video/audio sessions
   GROUP // Group sessions
   ASYNC_REVIEW // Asynchronous document/code review
+}
+
+//////////////////////////////////////////////////// STAFF DASHBOARD MODELS ////////////////////////////////////////////////////
+
+// Content Moderation Enums
+enum ModerationReportType {
+  REVIEW
+  PROFILE
+  MESSAGE
+  DOCUMENT
+  OTHER
+}
+
+enum ModerationReportStatus {
+  PENDING
+  UNDER_REVIEW
+  DISMISSED
+  ACTION_TAKEN
+  ESCALATED
+}
+
+enum ModerationActionType {
+  WARNING_ISSUED
+  CONTENT_REMOVED
+  USER_SUSPENDED
+  USER_BANNED
+  PROFILE_UNVERIFIED
+  NO_ACTION
+}
+
+enum ProfileVerificationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  NEEDS_INFO
+}
+
+enum SystemJobStatus {
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+// Content Moderation Models
+model ModerationReport {
+  id          String                 @id @default(uuid())
+  type        ModerationReportType
+  status      ModerationReportStatus @default(PENDING)
+  reason      String
+  description String?                @db.Text
+  reportCount Int                    @default(1) // Aggregated count for duplicates
+
+  // Content reference - one of these will be set based on type
+  contentText String? @db.Text // For review text, message content, etc.
+  contentUrl  String? // For profile URLs, document URLs, etc.
+
+  // Reporter
+  reportedById String
+  reportedBy   User   @relation("ReportsSubmitted", fields: [reportedById], references: [id], onUpdate: Cascade, onDelete: Cascade)
+
+  // Target user (who is being reported)
+  targetUserId String
+  targetUser   User   @relation("ReportsReceived", fields: [targetUserId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+
+  // Optional entity references
+  reviewId String? // If reporting a ConsultantReview
+
+  // Staff assignment
+  assignedToId String?
+
+  // Resolution
+  resolvedAt DateTime?
+  resolvedBy String? // Staff user ID
+
+  actions ModerationAction[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([type])
+  @@index([reportedById])
+  @@index([targetUserId])
+  @@index([assignedToId])
+  @@index([createdAt])
+}
+
+model ModerationAction {
+  id         String               @id @default(uuid())
+  actionType ModerationActionType
+  notes      String?              @db.Text
+
+  report   ModerationReport @relation(fields: [reportId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  reportId String
+
+  // Staff who took the action
+  takenById String
+  takenBy   User   @relation(fields: [takenById], references: [id], onUpdate: Cascade, onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([reportId])
+  @@index([takenById])
+  @@index([actionType])
+}
+
+// Profile Verification Models
+model ConsultantProfileVerification {
+  id     String                    @id @default(uuid())
+  status ProfileVerificationStatus @default(PENDING)
+
+  consultantProfileId String
+  consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+
+  // Verification details
+  submittedAt DateTime @default(now())
+  notes       String?  @db.Text // Applicant notes when submitting
+
+  // Staff review
+  reviewedAt   DateTime?
+  reviewedById String?
+  reviewNotes  String?   @db.Text // Internal staff notes (not shown to consultant)
+
+  // Feedback to consultant (shown when rejected/needs revision)
+  rejectionReason String? @db.Text // Brief reason shown to consultant (e.g., "Documents unclear")
+  feedbackDetails String? @db.Text // Detailed feedback (e.g., "12th certificate appears to be forged")
+
+  documents ProfileVerificationDocument[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([consultantProfileId])
+  @@index([status])
+  @@index([reviewedById])
+  @@index([submittedAt])
+}
+
+model ProfileVerificationDocument {
+  id           String  @id @default(uuid())
+  fileName     String
+  originalName String
+  fileSize     Int
+  mimeType     String
+  fileUrl      String
+  storagePath  String
+  description  String? // Type of document (ID, degree, certificate, etc.)
+
+  // Document-specific review (for granular feedback)
+  isValid       Boolean? // null = not reviewed, true = valid, false = invalid
+  staffFeedback String? // Feedback on this specific document (e.g., "Certificate appears forged")
+
+  verification   ConsultantProfileVerification @relation(fields: [verificationId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  verificationId String
+
+  uploadedAt DateTime @default(now())
+
+  @@index([verificationId])
+}
+
+// System Jobs Models
+model SystemJobExecution {
+  id        String          @id @default(uuid())
+  jobId     String // Maps to job configuration ID
+  jobName   String
+  status    SystemJobStatus
+  startedAt DateTime        @default(now())
+  endedAt   DateTime?
+
+  // Execution details
+  triggeredBy String? // User ID if manual, null if cron
+  result      Json? // JSON result of the job
+  errorLog    String? @db.Text
+
+  // Performance metrics
+  itemsProcessed Int?
+  errorCount     Int?
+  durationMs     Int?
+
+  createdAt DateTime @default(now())
+
+  @@index([jobId])
+  @@index([status])
+  @@index([startedAt])
+  @@index([triggeredBy])
+}
+
+//////////////////////////////////////////////////// ANNOUNCEMENT SYSTEM ////////////////////////////////////////////////////
+
+model Announcement {
+  id              String    @id @default(cuid())
+  title           String
+  content         String    @db.Text
+  isActive        Boolean   @default(true)
+  startDate       DateTime?
+  endDate         DateTime?
+  backgroundColor String?   @default("#000000")
+  textColor       String?   @default("#FFFFFF")
+  linkUrl         String?
+  linkText        String?
+  createdBy       String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive])
+  @@index([startDate, endDate])
+  @@map("announcements")
+}
+
+//////////////////////////////////////////////////// CONSULTANT VERIFICATION ////////////////////////////////////////////////////
+
+enum ConsultantVerificationStatus {
+  PENDING_VERIFICATION // Onboarding complete, awaiting review
+  UNDER_REVIEW // Staff reviewing
+  VERIFIED // Approved
+  REJECTED // Needs resubmission
 }

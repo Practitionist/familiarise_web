@@ -34,17 +34,17 @@ const getGradient = (id: string, type: "class" | "webinar") => {
   const gradients =
     type === "class"
       ? [
-        "from-zinc-900 via-zinc-800 to-zinc-700",
-        "from-slate-900 via-slate-800 to-slate-700",
-        "from-neutral-900 via-neutral-800 to-neutral-700",
-        "from-stone-900 via-stone-800 to-stone-700",
-      ]
+          "from-zinc-900 via-zinc-800 to-zinc-700",
+          "from-slate-900 via-slate-800 to-slate-700",
+          "from-neutral-900 via-neutral-800 to-neutral-700",
+          "from-stone-900 via-stone-800 to-stone-700",
+        ]
       : [
-        "from-zinc-800 via-zinc-700 to-zinc-600",
-        "from-slate-800 via-slate-700 to-slate-600",
-        "from-neutral-800 via-neutral-700 to-neutral-600",
-        "from-stone-800 via-stone-700 to-stone-600",
-      ];
+          "from-zinc-800 via-zinc-700 to-zinc-600",
+          "from-slate-800 via-slate-700 to-slate-600",
+          "from-neutral-800 via-neutral-700 to-neutral-600",
+          "from-stone-800 via-stone-700 to-stone-600",
+        ];
   return gradients[hash % gradients.length];
 };
 
@@ -141,7 +141,9 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
               </div>
               <div className="flex items-center gap-1 sm:gap-1.5 text-[11px] sm:text-xs text-zinc-500">
                 <Users className="w-3 h-3 sm:w-3.5 sm:h-3.5 flex-shrink-0" />
-                <span className="whitespace-nowrap">{classPlan.maxParticipants} max</span>
+                <span className="whitespace-nowrap">
+                  {classPlan.maxParticipants} max
+                </span>
               </div>
               <div className="flex items-center gap-1 sm:gap-1.5 text-[11px] sm:text-xs text-zinc-500">
                 <GraduationCap className="w-3 h-3 sm:w-3.5 sm:h-3.5 flex-shrink-0" />
@@ -254,7 +256,9 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
               </div>
               <div className="flex items-center gap-1 sm:gap-1.5 text-[11px] sm:text-xs text-zinc-500">
                 <Users className="w-3 h-3 sm:w-3.5 sm:h-3.5 flex-shrink-0" />
-                <span className="whitespace-nowrap">{webinarPlan.maxParticipants} max</span>
+                <span className="whitespace-nowrap">
+                  {webinarPlan.maxParticipants} max
+                </span>
               </div>
               <div className="flex items-center gap-1 sm:gap-1.5 text-[11px] sm:text-xs text-zinc-500">
                 <GraduationCap className="w-3 h-3 sm:w-3.5 sm:h-3.5 flex-shrink-0" />
@@ -326,10 +330,11 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
               <div className="flex bg-zinc-100 rounded-xl p-1">
                 <button
                   onClick={() => setActiveTab("classes")}
-                  className={`relative px-4 py-2 text-sm font-medium rounded-lg transition-all ${activeTab === "classes"
-                    ? "text-zinc-900"
-                    : "text-zinc-500 hover:text-zinc-700"
-                    }`}
+                  className={`relative px-4 py-2 text-sm font-medium rounded-lg transition-all ${
+                    activeTab === "classes"
+                      ? "text-zinc-900"
+                      : "text-zinc-500 hover:text-zinc-700"
+                  }`}
                 >
                   {activeTab === "classes" && (
                     <motion.div
@@ -349,10 +354,11 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
                 </button>
                 <button
                   onClick={() => setActiveTab("webinars")}
-                  className={`relative px-4 py-2 text-sm font-medium rounded-lg transition-all ${activeTab === "webinars"
-                    ? "text-zinc-900"
-                    : "text-zinc-500 hover:text-zinc-700"
-                    }`}
+                  className={`relative px-4 py-2 text-sm font-medium rounded-lg transition-all ${
+                    activeTab === "webinars"
+                      ? "text-zinc-900"
+                      : "text-zinc-500 hover:text-zinc-700"
+                  }`}
                 >
                   {activeTab === "webinars" && (
                     <motion.div
@@ -411,25 +417,25 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
             {/* Empty State */}
             {((activeTab === "classes" && !hasClasses) ||
               (activeTab === "webinars" && !hasWebinars)) && (
-                <motion.div
-                  key="empty"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  className="text-center py-12"
-                >
-                  <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-zinc-100 flex items-center justify-center">
-                    {activeTab === "classes" ? (
-                      <BookOpen className="w-8 h-8 text-zinc-400" />
-                    ) : (
-                      <Video className="w-8 h-8 text-zinc-400" />
-                    )}
-                  </div>
-                  <p className="text-zinc-500">
-                    No {activeTab === "classes" ? "classes" : "webinars"}{" "}
-                    available yet
-                  </p>
-                </motion.div>
-              )}
+              <motion.div
+                key="empty"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                className="text-center py-12"
+              >
+                <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-zinc-100 flex items-center justify-center">
+                  {activeTab === "classes" ? (
+                    <BookOpen className="w-8 h-8 text-zinc-400" />
+                  ) : (
+                    <Video className="w-8 h-8 text-zinc-400" />
+                  )}
+                </div>
+                <p className="text-zinc-500">
+                  No {activeTab === "classes" ? "classes" : "webinars"}{" "}
+                  available yet
+                </p>
+              </motion.div>
+            )}
           </AnimatePresence>
         </div>
       </div>

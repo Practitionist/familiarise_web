@@ -142,12 +142,18 @@ export async function addUserToEventChannel(
     const allMembers = Array.from(new Set([consultantId, ...members, userId]));
 
     // Re-initialize channel with all required data for atomic creation
-    const channelWithData = client.channel(channelType, channelId, {
+    // Note: Explicitly typing channel data for stream-chat v9
+    const eventChannelData = {
       name,
       created_by_id: consultantId,
       [`${eventType}_id`]: eventId,
       members: allMembers,
-    });
+    };
+    const channelWithData = client.channel(
+      channelType,
+      channelId,
+      eventChannelData as Record<string, unknown>,
+    );
 
     await channelWithData.create();
 
@@ -329,7 +335,8 @@ export async function getUserEventChannels(userId: string) {
     return channels.map((channel) => ({
       id: channel.id,
       type: channel.type,
-      name: channel.data?.name as string | undefined,
+      // Access custom channel data with type assertion (stream-chat v9)
+      name: (channel.data as { name?: string } | undefined)?.name,
       memberCount: Object.keys(channel.state.members || {}).length,
     }));
   } catch (error) {

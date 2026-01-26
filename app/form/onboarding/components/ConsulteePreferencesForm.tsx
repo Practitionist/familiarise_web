@@ -21,12 +21,10 @@ type OnboardingFormData = PersonalInfoAndRole &
   Partial<ConsulteeProfile> &
   Partial<ConsulteePreferences> & {
     preferredCommunicationMethod: "VIDEO" | "AUDIO" | "IN_PERSON";
-    interests?: string[];
     goals?: string[];
   };
 
-interface FormValues extends Omit<OnboardingFormData, "interests" | "goals"> {
-  interests?: string;
+interface FormValues extends Omit<OnboardingFormData, "goals"> {
   goals?: string;
 }
 
@@ -57,18 +55,12 @@ const ConsulteePreferencesForm: React.FC<Props> = ({
       ...initialData,
       preferredCommunicationMethod:
         initialData.preferredCommunicationMethod || "VIDEO",
-      interests: initialData.interests?.join(", "),
       goals: initialData.goals?.join(", "),
     },
   });
 
   const onSubmit = (data: FormValues) => {
     // Convert comma-separated strings to arrays
-    const interests =
-      data.interests
-        ?.split(",")
-        .map((i) => i.trim())
-        .filter(Boolean) || [];
     const goals =
       data.goals
         ?.split(",")
@@ -77,7 +69,6 @@ const ConsulteePreferencesForm: React.FC<Props> = ({
 
     onNext({
       ...data,
-      interests,
       goals,
       preferredCommunicationMethod:
         data.preferredCommunicationMethod || "VIDEO",
@@ -142,32 +133,15 @@ const ConsulteePreferencesForm: React.FC<Props> = ({
         </div>
       </div>
 
-      {/* Interests & Goals */}
+      {/* Goals */}
       <div className="space-y-4">
         <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
-          Interests & Goals
+          Your Goals
         </h3>
 
         <div className="space-y-2">
-          <Label htmlFor="interests">
-            Areas of Interest{" "}
-            <span className="text-muted-foreground">(comma-separated)</span>
-          </Label>
-          <Input
-            id="interests"
-            {...register("interests")}
-            placeholder="e.g., Career Growth, Leadership, Technology"
-          />
-          {errors.interests && (
-            <p className="text-sm text-destructive">
-              {errors.interests.message}
-            </p>
-          )}
-        </div>
-
-        <div className="space-y-2">
           <Label htmlFor="goals">
-            Your Goals{" "}
+            What do you hope to achieve?{" "}
             <span className="text-muted-foreground">(comma-separated)</span>
           </Label>
           <Textarea
@@ -178,24 +152,6 @@ const ConsulteePreferencesForm: React.FC<Props> = ({
           />
           {errors.goals && (
             <p className="text-sm text-destructive">{errors.goals.message}</p>
-          )}
-        </div>
-
-        <div className="space-y-2">
-          <Label htmlFor="specialRequirements">
-            Special Requirements{" "}
-            <span className="text-muted-foreground">(Optional)</span>
-          </Label>
-          <Textarea
-            id="specialRequirements"
-            {...register("specialRequirements")}
-            placeholder="Any accessibility needs or special accommodations..."
-            rows={2}
-          />
-          {errors.specialRequirements && (
-            <p className="text-sm text-destructive">
-              {errors.specialRequirements.message}
-            </p>
           )}
         </div>
       </div>

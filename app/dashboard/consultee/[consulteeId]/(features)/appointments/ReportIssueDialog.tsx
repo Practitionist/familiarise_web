@@ -22,14 +22,7 @@ import {
 } from "@/components/ui/select";
 import { SupportPriority, SupportIssueType } from "@prisma/client";
 import { useToast } from "@/hooks/use-toast";
-import {
-  AlertCircle,
-  Calendar,
-  User,
-  Tag,
-  Loader2,
-  Send,
-} from "lucide-react";
+import { AlertCircle, Calendar, User, Tag, Loader2, Send } from "lucide-react";
 import {
   getFilteredIssueTypes,
   ISSUE_TYPE_LABELS,
@@ -63,10 +56,14 @@ export function ReportIssueDialog({
   const [isLoading, setIsLoading] = React.useState(false);
 
   // Form state
-  const [issueType, setIssueType] = React.useState<SupportIssueType | undefined>();
+  const [issueType, setIssueType] = React.useState<
+    SupportIssueType | undefined
+  >();
   const [title, setTitle] = React.useState("");
   const [description, setDescription] = React.useState("");
-  const [priority, setPriority] = React.useState<SupportPriority>(SupportPriority.MEDIUM);
+  const [priority, setPriority] = React.useState<SupportPriority>(
+    SupportPriority.MEDIUM,
+  );
 
   // Get filtered issue types based on appointment status
   const filteredIssueTypes = React.useMemo(() => {
@@ -125,12 +122,17 @@ export function ReportIssueDialog({
 
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.error || errorData.message || "Failed to create support ticket");
+        throw new Error(
+          errorData.error ||
+            errorData.message ||
+            "Failed to create support ticket",
+        );
       }
 
       toast({
         title: "Issue reported",
-        description: "Your support ticket has been created and linked to this appointment.",
+        description:
+          "Your support ticket has been created and linked to this appointment.",
       });
 
       onOpenChange(false);
@@ -150,8 +152,10 @@ export function ReportIssueDialog({
     }
   };
 
-  const typeLabel = appointmentType === "CONSULTATION" ? "Consultation" : "Subscription";
-  const statusLabel = appointmentStatus === "COMPLETED" ? "Completed" : "Upcoming";
+  const typeLabel =
+    appointmentType === "CONSULTATION" ? "Consultation" : "Subscription";
+  const statusLabel =
+    appointmentStatus === "COMPLETED" ? "Completed" : "Upcoming";
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -176,7 +180,9 @@ export function ReportIssueDialog({
             <div className="space-y-2">
               <div className="flex items-center gap-2">
                 <User className="h-4 w-4 text-zinc-400" />
-                <span className="font-medium text-zinc-800">{consultantName}</span>
+                <span className="font-medium text-zinc-800">
+                  {consultantName}
+                </span>
               </div>
               {formattedDate && (
                 <div className="flex items-center gap-2 text-sm text-zinc-600">
@@ -247,7 +253,9 @@ export function ReportIssueDialog({
 
           {/* Priority */}
           <div className="space-y-2">
-            <Label className="text-sm font-medium text-zinc-700">Priority</Label>
+            <Label className="text-sm font-medium text-zinc-700">
+              Priority
+            </Label>
             <Select
               value={priority}
               onValueChange={(value) => setPriority(value as SupportPriority)}

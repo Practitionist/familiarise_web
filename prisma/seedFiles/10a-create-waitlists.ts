@@ -1,8 +1,10 @@
 import { faker } from "@faker-js/faker";
 import prisma from "../../lib/prisma";
 import { UserWithProfiles } from "./1a-create-users";
+import { config } from "./config";
 
-const NUM_WAITLIST_ENTRIES = 75;
+// Waitlist volume - configurable via SEED_MODE environment variable
+const NUM_WAITLIST_ENTRIES = config.volumes.waitlistEntries;
 
 export async function createWaitlists(
   users: UserWithProfiles[],

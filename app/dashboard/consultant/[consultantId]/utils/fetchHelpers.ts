@@ -13,7 +13,9 @@ export async function fetchConsultantData(
   consultantId: string,
 ): Promise<TConsultantProfile> {
   try {
-    const response = await fetch(`/api/user/consultants/${consultantId}`);
+    const response = await fetch(`/api/user/consultants/${consultantId}`, {
+      cache: "no-store",
+    });
     if (!response.ok) {
       throw new Error(
         `Failed to fetch consultant data: ${response.statusText}`,
@@ -112,7 +114,9 @@ export async function fetchActivities(
   consultantId: string,
 ): Promise<IActivity[]> {
   try {
-    const response = await fetch(`/api/activities?consultantId=${consultantId}`);
+    const response = await fetch(
+      `/api/activities?consultantId=${consultantId}`,
+    );
     if (!response.ok) {
       throw new Error(`Failed to fetch activities: ${response.statusText}`);
     }

@@ -4,6 +4,8 @@ import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -12,19 +14,21 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/components/ui/use-toast";
 import {
   AlertTriangleIcon,
-  BanIcon,
+  BellIcon,
+  BellOffIcon,
   InfoIcon,
   Loader2Icon,
   Trash2Icon,
   UserMinusIcon,
   UserPlusIcon,
-  XIcon,
   UsersIcon,
+  XIcon,
 } from "lucide-react";
 import { useState } from "react";
 import { Channel } from "stream-chat";
 import { useChatContext } from "stream-chat-react";
 import { getChannelDisplayInfo } from "./utils/channelUtils";
+import { AddMembersDialog } from "./AddMembersDialog";
 
 interface ChannelInfoAndManageDialogProps {
   channel: Channel;
@@ -36,6 +40,8 @@ export const ChannelInfoAndManageDialog = ({
   const [open, setOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isLeavingChannel, setIsLeavingChannel] = useState(false);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [showAddMembers, setShowAddMembers] = useState(false);
   const { client, setActiveChannel } = useChatContext();
   const { toast } = useToast();
   const [members, setMembers] = useState<any[]>([]);
@@ -65,6 +71,17 @@ export const ChannelInfoAndManageDialog = ({
     channel.data?.created_by_id === client?.userID &&
     client?.user?.role === "CONSULTANT";
 
+  // Get the other user's ID for 1-on-1 DMs (for block/report)
+  const otherUserId =
+    isDirectMessage && !displayInfo.isGroupDM
+      ? Object.keys(channel.state.members || {}).find(
+          (id) => id !== client?.userID,
+        )
+      : null;
+
+  // Check if channel is muted
+  const isMuted = channel.muteStatus()?.muted ?? false;
+
   // Load members when dialog opens
   const handleOpenChange = (open: boolean) => {
     setOpen(open);
@@ -92,12 +109,26 @@ export const ChannelInfoAndManageDialog = ({
     }
   };
 
-  const handleAddMember = async () => {
-    // This would typically open another dialog to search and select users
-    toast({
-      title: "Info",
-      description: "Add member functionality would be implemented here",
-    });
+  const handleAddMember = () => {
+    setShowAddMembers(true);
+  };
+
+  const handleMembersAdded = async (userIds: string[]) => {
+    if (!channel.id) return;
+
+    try {
+      // Add members to channel
+      await channel.addMembers(userIds);
+      toast({
+        title: "Success",
+        description: `${userIds.length} member${userIds.length !== 1 ? "s" : ""} added successfully`,
+      });
+      // Refresh the member list
+      loadMembers();
+    } catch (error) {
+      console.error("Error adding members:", error);
+      throw error; // Re-throw so the dialog can show error state
+    }
   };
 
   const handleRemoveMember = async (memberId: string) => {
@@ -154,6 +185,80 @@ export const ChannelInfoAndManageDialog = ({
     } finally {
       setIsLoading(false);
       setIsLeavingChannel(false);
+    }
+  };
+
+  // Clear all messages from the channel
+  const handleClearChat = async () => {
+    setIsLoading(true);
+    try {
+      await channel.truncate();
+      toast({
+        title: "Chat cleared",
+        description: "All messages have been removed",
+      });
+      setShowClearConfirm(false);
+    } catch (error) {
+      console.error("Error clearing chat:", error);
+      toast({
+        title: "Error",
+        description: "Failed to clear chat",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Report the other user in a 1-on-1 DM
+  const handleReportUser = async () => {
+    if (!client || !otherUserId) return;
+
+    setIsLoading(true);
+    try {
+      await client.flagUser(otherUserId, { reason: "user_report" });
+      toast({
+        title: "User reported",
+        description: "Our team will review this report",
+      });
+    } catch (error) {
+      console.error("Error reporting user:", error);
+      toast({
+        title: "Error",
+        description: "Failed to report user",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Toggle mute/unmute for event channels
+  const handleMuteChannel = async () => {
+    setIsLoading(true);
+    try {
+      if (isMuted) {
+        await channel.unmute();
+        toast({
+          title: "Notifications enabled",
+          description: "You will receive notifications from this channel",
+        });
+      } else {
+        await channel.mute();
+        toast({
+          title: "Channel muted",
+          description: "You will no longer receive notifications",
+        });
+      }
+    } catch (error) {
+      console.error("Error toggling mute:", error);
+      toast({
+        title: "Error",
+        description: "Failed to update notification settings",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -228,13 +333,7 @@ export const ChannelInfoAndManageDialog = ({
                           variant="outline"
                           size="sm"
                           className="w-full flex items-center justify-center gap-2"
-                          onClick={() =>
-                            toast({
-                              title: "Info",
-                              description:
-                                "Add members functionality would be implemented here",
-                            })
-                          }
+                          onClick={handleAddMember}
                           disabled={isLoading}
                         >
                           <UserPlusIcon className="h-4 w-4" />
@@ -245,13 +344,7 @@ export const ChannelInfoAndManageDialog = ({
                           variant="outline"
                           size="sm"
                           className="w-full flex items-center justify-center gap-2"
-                          onClick={() =>
-                            toast({
-                              title: "Info",
-                              description:
-                                "Clear chat functionality would be implemented here",
-                            })
-                          }
+                          onClick={() => setShowClearConfirm(true)}
                           disabled={isLoading}
                         >
                           <Trash2Icon className="h-4 w-4" />
@@ -276,13 +369,7 @@ export const ChannelInfoAndManageDialog = ({
                           variant="outline"
                           size="sm"
                           className="w-full flex items-center justify-center gap-2"
-                          onClick={() =>
-                            toast({
-                              title: "Info",
-                              description:
-                                "Clear chat functionality would be implemented here",
-                            })
-                          }
+                          onClick={() => setShowClearConfirm(true)}
                           disabled={isLoading}
                         >
                           <Trash2Icon className="h-4 w-4" />
@@ -293,66 +380,48 @@ export const ChannelInfoAndManageDialog = ({
                           variant="outline"
                           size="sm"
                           className="w-full flex items-center justify-center gap-2"
-                          onClick={() =>
-                            toast({
-                              title: "Info",
-                              description:
-                                "Delete chat functionality would be implemented here",
-                            })
-                          }
-                          disabled={isLoading}
-                        >
-                          <XIcon className="h-4 w-4" />
-                          Delete Chat
-                        </Button>
-
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="w-full flex items-center justify-center gap-2"
-                          onClick={() =>
-                            toast({
-                              title: "Info",
-                              description:
-                                "Report user functionality would be implemented here",
-                            })
-                          }
-                          disabled={isLoading}
+                          onClick={handleReportUser}
+                          disabled={isLoading || !otherUserId}
                         >
                           <AlertTriangleIcon className="h-4 w-4" />
                           Report User
-                        </Button>
-
-                        <Button
-                          variant="destructive"
-                          size="sm"
-                          className="w-full flex items-center justify-center gap-2"
-                          onClick={() =>
-                            toast({
-                              title: "Info",
-                              description:
-                                "Block user functionality would be implemented here",
-                            })
-                          }
-                          disabled={isLoading}
-                        >
-                          <BanIcon className="h-4 w-4" />
-                          Block User
                         </Button>
                       </>
                     )
                   ) : (
                     // Team/Event Channel Actions
-                    <Button
-                      variant="destructive"
-                      size="sm"
-                      className="w-full flex items-center justify-center gap-2"
-                      onClick={handleLeaveChannel}
-                      disabled={isLoading}
-                    >
-                      <UserMinusIcon className="h-4 w-4" />
-                      Leave Channel
-                    </Button>
+                    <>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="w-full flex items-center justify-center gap-2"
+                        onClick={handleMuteChannel}
+                        disabled={isLoading}
+                      >
+                        {isMuted ? (
+                          <>
+                            <BellIcon className="h-4 w-4" />
+                            Unmute Channel
+                          </>
+                        ) : (
+                          <>
+                            <BellOffIcon className="h-4 w-4" />
+                            Mute Channel
+                          </>
+                        )}
+                      </Button>
+
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        className="w-full flex items-center justify-center gap-2"
+                        onClick={handleLeaveChannel}
+                        disabled={isLoading}
+                      >
+                        <UserMinusIcon className="h-4 w-4" />
+                        Leave Channel
+                      </Button>
+                    </>
                   )}
                 </div>
               </div>
@@ -432,6 +501,7 @@ export const ChannelInfoAndManageDialog = ({
         </DialogContent>
       </Dialog>
 
+      {/* Loading dialog for leaving channel */}
       <Dialog open={isLeavingChannel} onOpenChange={() => {}}>
         <DialogContent className="sm:max-w-[300px] [&>button]:hidden">
           <DialogHeader>
@@ -443,6 +513,46 @@ export const ChannelInfoAndManageDialog = ({
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Clear Chat Confirmation Dialog */}
+      <Dialog open={showClearConfirm} onOpenChange={setShowClearConfirm}>
+        <DialogContent className="sm:max-w-[400px]">
+          <DialogHeader>
+            <DialogTitle>Clear chat history?</DialogTitle>
+            <DialogDescription>
+              This will remove all messages from this conversation. This action
+              cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              variant="outline"
+              onClick={() => setShowClearConfirm(false)}
+              disabled={isLoading}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleClearChat}
+              disabled={isLoading}
+            >
+              {isLoading ? (
+                <Loader2Icon className="h-4 w-4 animate-spin mr-2" />
+              ) : null}
+              Clear Chat
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Add Members Dialog */}
+      <AddMembersDialog
+        open={showAddMembers}
+        onOpenChange={setShowAddMembers}
+        existingMemberIds={Object.keys(channel.state.members || {})}
+        onMembersAdded={handleMembersAdded}
+      />
     </>
   );
 };

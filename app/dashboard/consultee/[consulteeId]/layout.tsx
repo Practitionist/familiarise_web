@@ -5,7 +5,7 @@ import { getEffectiveUserId } from "@/utils/auth";
 import { Skeleton } from "@/components/ui/skeleton";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import StreamProvider from "@/providers/StreamProvider";
-import { DashboardSidebar, type NavItem } from "@/components/dashboard";
+import { DashboardSidebar, type NavItem } from "@/components/dashboard/DashboardSidebar";
 import { signOut, useSession } from "next-auth/react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -28,6 +28,8 @@ import {
   LogOut,
   Menu,
   X,
+  Clock,
+  Video,
 } from "lucide-react";
 import { useState } from "react";
 
@@ -36,10 +38,12 @@ const NAV_ITEMS: NavItem[] = [
   { name: "Home", path: "home" },
   { name: "Appointments", path: "appointments" },
   { name: "History", path: "history" },
+  { name: "Recordings", path: "recordings" },
   { name: "Messages", path: "messages" },
   { name: "Support", path: "feedback" },
   { name: "Settings", path: "settings" },
   { name: "Policy", path: "policy" },
+  { name: "Waitlists", path: "waitlists" },
 ];
 
 // Icon mapping
@@ -51,6 +55,8 @@ const iconMap: Record<string, typeof Home> = {
   feedback: Ticket,
   settings: Settings,
   policy: Shield,
+  recordings: Video,
+  waitlists: Clock,
 };
 
 interface PageProps {

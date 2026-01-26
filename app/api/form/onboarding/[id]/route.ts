@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { processOnboardingData } from "@/utils/onboarding";
+import { processOnboardingData } from "@/utils/onboarding-server";
 
 export async function PATCH(
   req: NextRequest,

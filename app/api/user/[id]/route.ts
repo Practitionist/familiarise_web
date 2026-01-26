@@ -18,12 +18,20 @@ export async function GET(
     const user = await prisma.user.findUnique({
       where: { id: id },
       include: {
+        // Professional background at User level
+        workExperiences: {
+          orderBy: [{ isCurrent: "desc" }, { startDate: "desc" }],
+        },
+        education: {
+          orderBy: { endYear: "desc" },
+        },
+        certifications: {
+          orderBy: { issueDate: "desc" },
+        },
         consultantProfile: {
           select: {
             id: true,
             description: true,
-            qualifications: true,
-            specialization: true,
             experience: true,
             rating: true,
             domainId: true,
@@ -45,13 +53,10 @@ export async function GET(
         consulteeProfile: {
           select: {
             id: true,
-            education: true,
             occupation: true,
             aboutMe: true,
             preferredCommunicationMethod: true,
             preferredLanguage: true,
-            specialRequirements: true,
-            interests: true,
             goals: true,
             // New fields
             careerStage: true,

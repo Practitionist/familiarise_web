@@ -7,11 +7,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import authOptions from "@/app/api/auth/[...nextauth]/options";
 import prisma from "@/lib/prisma";
-import {
-  SupportTicketStatus,
-  SupportPriority,
-  UserRole,
-} from "@prisma/client";
+import { SupportTicketStatus, SupportPriority, UserRole } from "@prisma/client";
 
 interface RouteParams {
   params: Promise<{ ticketId: string }>;
@@ -77,87 +73,91 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     }
 
     // Fetch linked entities in parallel for better performance
-    const [linkedConsultation, linkedSubscription, linkedPayment, linkedRefund] =
-      await Promise.all([
-        ticket.consultationId
-          ? prisma.consultation.findUnique({
-              where: { id: ticket.consultationId },
-              include: {
-                consultationPlan: {
-                  select: {
-                    title: true,
-                    price: true,
-                    priceCurrency: true,
-                    consultantProfile: {
-                      include: {
-                        user: { select: { name: true, email: true } },
-                      },
-                    },
-                  },
-                },
-                appointment: {
-                  select: {
-                    id: true,
-                    slotsOfAppointment: {
-                      select: {
-                        startsAt: true,
-                      },
-                      orderBy: {
-                        startsAt: "asc",
-                      },
-                      take: 1,
+    const [
+      linkedConsultation,
+      linkedSubscription,
+      linkedPayment,
+      linkedRefund,
+    ] = await Promise.all([
+      ticket.consultationId
+        ? prisma.consultation.findUnique({
+            where: { id: ticket.consultationId },
+            include: {
+              consultationPlan: {
+                select: {
+                  title: true,
+                  price: true,
+                  priceCurrency: true,
+                  consultantProfile: {
+                    include: {
+                      user: { select: { name: true, email: true } },
                     },
                   },
                 },
               },
-            })
-          : Promise.resolve(null),
-        ticket.subscriptionId
-          ? prisma.subscription.findUnique({
-              where: { id: ticket.subscriptionId },
-              include: {
-                subscriptionPlan: {
-                  select: {
-                    title: true,
-                    price: true,
-                    priceCurrency: true,
-                    consultantProfile: {
-                      include: {
-                        user: { select: { name: true, email: true } },
-                      },
+              appointment: {
+                select: {
+                  id: true,
+                  slotsOfAppointment: {
+                    select: {
+                      startsAt: true,
+                    },
+                    orderBy: {
+                      startsAt: "asc",
+                    },
+                    take: 1,
+                  },
+                },
+              },
+            },
+          })
+        : Promise.resolve(null),
+      ticket.subscriptionId
+        ? prisma.subscription.findUnique({
+            where: { id: ticket.subscriptionId },
+            include: {
+              subscriptionPlan: {
+                select: {
+                  title: true,
+                  price: true,
+                  priceCurrency: true,
+                  consultantProfile: {
+                    include: {
+                      user: { select: { name: true, email: true } },
                     },
                   },
                 },
               },
-            })
-          : Promise.resolve(null),
-        ticket.paymentId
-          ? prisma.payment.findUnique({
-              where: { id: ticket.paymentId },
-              select: {
-                id: true,
-                amount: true,
-                currency: true,
-                paymentStatus: true,
-                paymentGateway: true,
-                createdAt: true,
-              },
-            })
-          : Promise.resolve(null),
-        ticket.refundId
-          ? prisma.refund.findUnique({
-              where: { id: ticket.refundId },
-              select: {
-                id: true,
-                amount: true,
-                currency: true,
-                status: true,
-                reason: true,
-                createdAt: true,
-              },
-            })
-          : Promise.resolve(null),
-      ]);
+            },
+          })
+        : Promise.resolve(null),
+      ticket.paymentId
+        ? prisma.payment.findUnique({
+            where: { id: ticket.paymentId },
+            select: {
+              id: true,
+              amount: true,
+              currency: true,
+              paymentStatus: true,
+              paymentGateway: true,
+              createdAt: true,
+            },
+          })
+        : Promise.resolve(null),
+      ticket.refundId
+        ? prisma.refund.findUnique({
+            where: { id: ticket.refundId },
+            select: {
+              id: true,
+              amount: true,
+              currency: true,
+              status: true,
+              reason: true,
+              createdAt: true,
+            },
+          })
+        : Promise.resolve(null),
+    ]);
 
     return NextResponse.json({
       ...ticket,
@@ -170,7 +170,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     console.error("Error fetching support ticket:", error);
     return NextResponse.json(
       { error: "Failed to fetch support ticket" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -212,11 +212,17 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const updateData: any = {};
 
-    if (body.status && Object.values(SupportTicketStatus).includes(body.status)) {
+    if (
+      body.status &&
+      Object.values(SupportTicketStatus).includes(body.status)
+    ) {
       updateData.status = body.status;
     }
 
-    if (body.priority && Object.values(SupportPriority).includes(body.priority)) {
+    if (
+      body.priority &&
+      Object.values(SupportPriority).includes(body.priority)
+    ) {
       updateData.priority = body.priority;
     }
 
@@ -234,7 +240,7 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
         ) {
           return NextResponse.json(
             { error: "Invalid assignee - must be staff or admin" },
-            { status: 400 }
+            { status: 400 },
           );
         }
       }
@@ -265,7 +271,7 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
     console.error("Error updating support ticket:", error);
     return NextResponse.json(
       { error: "Failed to update support ticket" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

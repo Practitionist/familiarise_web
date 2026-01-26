@@ -126,7 +126,7 @@ export async function getPayoutById(payoutId: string) {
  * Check consultant's payout eligibility
  */
 export async function checkPayoutEligibility(
-  consultantProfileId: string
+  consultantProfileId: string,
 ): Promise<ConsultantPayoutEligibility> {
   // Get ready earnings amount
   const readyEarnings = await prisma.consultantEarnings.aggregate({
@@ -166,7 +166,7 @@ export async function checkPayoutEligibility(
  * Called weekly (every Monday)
  */
 export async function createPayoutBatch(
-  consultantProfileIds?: string[]
+  consultantProfileIds?: string[],
 ): Promise<string> {
   const batchId = `batch_${Date.now()}_${randomUUID().slice(0, 8)}`;
 
@@ -205,7 +205,7 @@ export async function createPayoutBatch(
 
     if (!account) {
       console.warn(
-        `No verified payout account for consultant ${consultantProfileId}`
+        `No verified payout account for consultant ${consultantProfileId}`,
       );
       continue;
     }
@@ -233,7 +233,9 @@ export async function createPayoutBatch(
         provider: account.provider,
         amount,
         currency: "INR",
-        status: shouldAutoApprove ? PayoutStatus.APPROVED : PayoutStatus.PENDING,
+        status: shouldAutoApprove
+          ? PayoutStatus.APPROVED
+          : PayoutStatus.PENDING,
         method,
         batchId,
         idempotencyKey: `payout_${consultantProfileId}_${batchId}`,
@@ -263,7 +265,7 @@ export async function createPayoutBatch(
  */
 export async function approvePayout(
   payoutId: string,
-  adminUserId: string
+  adminUserId: string,
 ): Promise<void> {
   await prisma.payout.update({
     where: { id: payoutId },
@@ -280,7 +282,7 @@ export async function approvePayout(
  */
 export async function rejectPayout(
   payoutId: string,
-  reason: string
+  reason: string,
 ): Promise<void> {
   const payout = await prisma.payout.findUnique({
     where: { id: payoutId },
@@ -432,7 +434,7 @@ async function processRazorpayPayout(
   account: {
     razorpayFundAccId: string | null;
     accountType: string;
-  }
+  },
 ): Promise<string> {
   if (!isRazorpayPayoutsConfigured()) {
     throw new Error("RazorpayX Payouts not configured");
@@ -447,7 +449,7 @@ async function processRazorpayPayout(
   // Determine payout mode
   const mode = razorpayPayouts.determinePayoutMode(
     payout.amount,
-    account.accountType === "UPI" ? "vpa" : "bank_account"
+    account.accountType === "UPI" ? "vpa" : "bank_account",
   );
 
   const result = await razorpayPayouts.createPayout({
@@ -480,7 +482,7 @@ async function processStripePayout(
   },
   account: {
     stripeAccountId: string | null;
-  }
+  },
 ): Promise<string> {
   if (!isStripeConnectConfigured()) {
     throw new Error("Stripe Connect not configured");
@@ -514,7 +516,7 @@ export async function handlePayoutWebhook(
   _provider: PaymentGateway,
   providerPayoutId: string,
   status: "PENDING" | "PROCESSING" | "COMPLETED" | "FAILED" | "CANCELLED",
-  failureReason?: string
+  failureReason?: string,
 ): Promise<void> {
   const payout = await prisma.payout.findFirst({
     where: { providerPayoutId },

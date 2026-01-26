@@ -13,7 +13,13 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { Wallet, TrendingUp, Clock, CheckCircle, AlertTriangle } from "lucide-react";
+import {
+  Wallet,
+  TrendingUp,
+  Clock,
+  CheckCircle,
+  AlertTriangle,
+} from "lucide-react";
 
 interface EarningsStats {
   pending: { count: number; consultantShare: number; platformFee: number };
@@ -99,7 +105,10 @@ export default function ConsultantEarningsPage() {
       HELD: { bg: "bg-orange-100", text: "text-orange-800" },
       REFUNDED: { bg: "bg-red-100", text: "text-red-800" },
     };
-    const badge = badges[status] || { bg: "bg-gray-100", text: "text-gray-800" };
+    const badge = badges[status] || {
+      bg: "bg-gray-100",
+      text: "text-gray-800",
+    };
     return (
       <span
         className={`px-2 py-1 rounded text-xs font-medium ${badge.bg} ${badge.text}`}
@@ -112,7 +121,9 @@ export default function ConsultantEarningsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold text-gray-900">Consultant Earnings</h1>
+        <h1 className="text-3xl font-bold text-gray-900">
+          Consultant Earnings
+        </h1>
         <p className="text-gray-600 mt-1">
           Overview of all consultant earnings and platform revenue
         </p>
@@ -279,7 +290,8 @@ export default function ConsultantEarningsPage() {
                         <td className="px-4 py-3">
                           <div>
                             <p className="text-sm font-medium text-gray-900">
-                              {earning.consultantProfile?.user?.name || "Unknown"}
+                              {earning.consultantProfile?.user?.name ||
+                                "Unknown"}
                             </p>
                             <p className="text-xs text-gray-500">
                               {earning.consultantProfile?.user?.email}

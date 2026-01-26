@@ -33,7 +33,7 @@ function ExpertCard({ expert }: { expert: TConsultantProfile }) {
                 {expert.user.name}
               </h4>
               <p className="text-sm text-zinc-500 truncate">
-                {expert.specialization || expert.domain.name}
+                {expert.headline || expert.domain.name}
               </p>
             </div>
           </div>

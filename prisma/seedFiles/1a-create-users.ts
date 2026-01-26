@@ -35,6 +35,7 @@ import {
   generateAccessScope,
   generateAssignedRegions,
 } from "./utils";
+import { config } from "./config";
 
 export type UserWithProfiles = User & {
   consultantProfile?: ConsultantProfile | null;
@@ -43,11 +44,11 @@ export type UserWithProfiles = User & {
   adminProfile?: AdminProfile | null;
 };
 
-// User distribution (Medium data volume - 155 total)
-const NUM_CONSULTANTS = 60;
-const NUM_CONSULTEES = 80;
-const NUM_STAFF = 8;
-const NUM_ADMINS = 7;
+// User distribution - configurable via SEED_MODE environment variable
+const NUM_CONSULTANTS = config.volumes.users.consultants;
+const NUM_CONSULTEES = config.volumes.users.consultees;
+const NUM_STAFF = config.volumes.users.staff;
+const NUM_ADMINS = config.volumes.users.admins;
 const NUM_USERS = NUM_CONSULTANTS + NUM_CONSULTEES + NUM_STAFF + NUM_ADMINS;
 
 // Gender enum values
@@ -300,7 +301,6 @@ async function createConsultantProfileData() {
 
   return {
     rating: faker.number.float({ min: 3.5, max: 5, multipleOf: 0.1 }),
-    specialization: sanitizeString(faker.person.jobArea()),
     experience,
     description: sanitizeString(faker.lorem.paragraph()),
     domain: { connect: { id: domain.id } },
@@ -314,9 +314,8 @@ async function createConsultantProfileData() {
       "WEEKLY",
       "CUSTOM",
     ]) as ScheduleType,
-    qualifications: sanitizeString(faker.lorem.sentence()),
 
-    // New fields for enhanced consultant profile
+    // Consultant profile fields
     headline: generateHeadline(domain.name),
     websiteUrl: faker.datatype.boolean({ probability: 0.6 })
       ? faker.internet.url()
@@ -346,12 +345,6 @@ function createConsulteeProfileData() {
   const budgetPreference = faker.helpers.arrayElement(BUDGET_PREFERENCES);
 
   return {
-    education: faker.helpers.arrayElement([
-      "High School",
-      "Bachelor's",
-      "Master's",
-      "PhD",
-    ]),
     occupation: sanitizeString(faker.person.jobTitle()),
     preferredCommunicationMethod: faker.helpers.arrayElement([
       ConsultationMode.VIDEO,
@@ -365,12 +358,10 @@ function createConsulteeProfileData() {
       "German",
       "Chinese",
     ]),
-    specialRequirements: sanitizeString(faker.lorem.sentence()),
-    interests: sanitizeString(faker.lorem.words(5)),
     aboutMe: sanitizeString(faker.lorem.paragraph()),
     goals: sanitizeString(faker.lorem.sentence()),
 
-    // New fields for enhanced consultee profile
+    // Enhanced consultee profile fields
     careerStage,
     currentCompany: faker.datatype.boolean({ probability: 0.7 })
       ? generateCompanyName()
@@ -529,6 +520,7 @@ export async function createUsers(): Promise<UserWithProfiles[]> {
             essential: true,
             analytics: faker.datatype.boolean(),
             marketing: faker.datatype.boolean(),
+            functional: faker.datatype.boolean(),
           },
         },
         notificationPreferences: {

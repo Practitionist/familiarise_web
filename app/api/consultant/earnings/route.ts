@@ -33,7 +33,7 @@ export async function GET(req: NextRequest) {
     if (!consultantProfile) {
       return NextResponse.json(
         { error: "Consultant profile not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
@@ -56,7 +56,7 @@ export async function GET(req: NextRequest) {
         status: status || undefined,
         limit,
         offset,
-      }
+      },
     );
 
     return NextResponse.json({
@@ -74,7 +74,7 @@ export async function GET(req: NextRequest) {
     console.error("Error fetching earnings:", error);
     return NextResponse.json(
       { error: "Failed to fetch earnings" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

@@ -89,19 +89,25 @@ export async function cleanupStalePendingConsultations(): Promise<StalePendingCo
       },
     });
 
-    console.log(`Found ${staleConsultations.length} stale pending consultations`);
+    console.log(
+      `Found ${staleConsultations.length} stale pending consultations`,
+    );
 
     for (const consultation of staleConsultations) {
       console.log(`\nProcessing consultation ${consultation.id}`);
       console.log(`   Status: ${consultation.requestStatus}`);
-      console.log(`   Consultee: ${consultation.requestedBy.user.name || "Unknown"}`);
-      console.log(`   Consultant: ${consultation.consultationPlan.consultantProfile.user.name || "Unknown"}`);
+      console.log(
+        `   Consultee: ${consultation.requestedBy.user.name || "Unknown"}`,
+      );
+      console.log(
+        `   Consultant: ${consultation.consultationPlan.consultantProfile.user.name || "Unknown"}`,
+      );
       console.log(`   Last updated: ${consultation.updatedAt.toISOString()}`);
 
       const appointment = consultation.appointment;
-      const tentativeSlotsCount = appointment?.slotsOfAppointment.filter(
-        (s) => s.isTentative,
-      ).length || 0;
+      const tentativeSlotsCount =
+        appointment?.slotsOfAppointment.filter((s) => s.isTentative).length ||
+        0;
 
       if (appointment) {
         console.log(`   Appointment ID: ${appointment.id}`);

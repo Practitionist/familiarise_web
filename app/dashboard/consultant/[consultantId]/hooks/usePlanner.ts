@@ -8,10 +8,7 @@ import {
   ConsultationPlanEvent,
   SubscriptionPlanEvent,
 } from "../(features)/planner/types/event";
-import {
-  ConsultationPlan,
-  SubscriptionPlan,
-} from "@/schemas/plans";
+import { ConsultationPlan, SubscriptionPlan } from "@/schemas/plans";
 
 interface PlannerData {
   webinars: WebinarEvent[];
@@ -22,18 +19,22 @@ interface PlannerData {
 }
 
 // Types for mutation inputs
-type ConsultationPlanInput = Partial<ConsultationPlan> & {
-  consultantProfileId?: string;
-} | undefined;
+type ConsultationPlanInput =
+  | (Partial<ConsultationPlan> & {
+      consultantProfileId?: string;
+    })
+  | undefined;
 
 type ConsultationPlanUpdateInput = {
   id: string;
   [key: string]: unknown;
 };
 
-type SubscriptionPlanInput = Partial<SubscriptionPlan> & {
-  consultantProfileId?: string;
-} | undefined;
+type SubscriptionPlanInput =
+  | (Partial<SubscriptionPlan> & {
+      consultantProfileId?: string;
+    })
+  | undefined;
 
 type SubscriptionPlanUpdateInput = {
   id: string;

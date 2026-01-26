@@ -35,6 +35,11 @@ import {
   Loader,
   ClipboardCheck,
   RotateCcw,
+  Video,
+  Megaphone,
+  LifeBuoy,
+  Timer,
+  Server,
 } from "lucide-react";
 import { ReactNode } from "react";
 
@@ -59,6 +64,7 @@ const iconMap: Record<string, typeof Home> = {
   messages: MessageSquare,
   feedback: Ticket,
   policy: Shield,
+  recordings: Video,
   // Payout related icons
   wallet: Wallet,
   "payouts/pending": ClipboardCheck,
@@ -67,6 +73,10 @@ const iconMap: Record<string, typeof Home> = {
   "payouts/earnings": Wallet,
   subscriptions: RefreshCw,
   invoices: FileText,
+  announcements: Megaphone,
+  tickets: LifeBuoy,
+  waitlists: Timer,
+  "system-jobs": Server,
 };
 
 export interface NavItem {
@@ -200,7 +210,9 @@ export function DashboardSidebar({
                 )}
                 <ul className="space-y-1">
                   {section.items.map((item) => {
-                    const isActive = relativePath === item.path || relativePath.startsWith(item.path + "/");
+                    const isActive =
+                      relativePath === item.path ||
+                      relativePath.startsWith(item.path + "/");
 
                     return (
                       <li key={item.path}>
@@ -251,7 +263,9 @@ export function DashboardSidebar({
           /* Render flat navigation for backward compatibility */
           <ul className="space-y-1">
             {navItems.map((item) => {
-              const isActive = relativePath === item.path || relativePath.startsWith(item.path + "/");
+              const isActive =
+                relativePath === item.path ||
+                relativePath.startsWith(item.path + "/");
 
               return (
                 <li key={item.path}>
@@ -311,7 +325,9 @@ export function DashboardSidebar({
         </Link>
 
         {bottomNavItems.map((item) => {
-          const isActive = relativePath === item.path || relativePath.startsWith(item.path + "/");
+          const isActive =
+            relativePath === item.path ||
+            relativePath.startsWith(item.path + "/");
 
           return (
             <Link

@@ -109,7 +109,7 @@ export async function GET(req: NextRequest) {
     console.error("Error fetching payouts:", error);
     return NextResponse.json(
       { error: "Failed to fetch payouts" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -168,7 +168,7 @@ export async function POST(req: NextRequest) {
     console.error("Error creating payout batch:", error);
     return NextResponse.json(
       { error: "Failed to create payout batch" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

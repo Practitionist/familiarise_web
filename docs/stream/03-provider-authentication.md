@@ -771,7 +771,7 @@ Time    Event                     Token State
    - Race conditions
 
 ⚠️ **Known Issue:** 10-minute buffer may not be enough for some edge cases.
-See: [Known Issues #2 - Token Expiry Race Condition](./13-known-issues.md#medium-bug-2-token-expiry-race-condition)
+See: [Troubleshooting - Token Expiry Race Condition](./troubleshooting.md#token-expiry-race-condition-medium)
 
 ### Cache Invalidation (Lines 276-298)
 
@@ -1266,7 +1266,7 @@ sudo ntpdate pool.ntp.org
 **Handle errors:**
 
 - [12. Error Handling](./12-error-handling.md) - Error boundaries and recovery
-- [13. Known Issues](./13-known-issues.md) - Known bugs and workarounds
+- [Troubleshooting](./troubleshooting.md) - Common issues and workarounds
 
 ---
 

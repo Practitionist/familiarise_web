@@ -153,7 +153,9 @@ export default function AdminFeedbackPage() {
   const [totalPages, setTotalPages] = useState(1);
 
   // Detail view state
-  const [selectedFeedback, setSelectedFeedback] = useState<Feedback | null>(null);
+  const [selectedFeedback, setSelectedFeedback] = useState<Feedback | null>(
+    null,
+  );
   const [updatingStatus, setUpdatingStatus] = useState(false);
 
   // Fetch feedbacks - uses same API as staff (already supports ADMIN role)
@@ -176,7 +178,11 @@ export default function AdminFeedbackPage() {
       setTotalPages(data.pagination.totalPages);
     } catch (error) {
       console.error("Error fetching feedbacks:", error);
-      toast({ title: "Error", description: "Failed to load feedbacks", variant: "destructive" });
+      toast({
+        title: "Error",
+        description: "Failed to load feedbacks",
+        variant: "destructive",
+      });
     } finally {
       setLoading(false);
     }
@@ -187,7 +193,10 @@ export default function AdminFeedbackPage() {
   }, [fetchFeedbacks]);
 
   // Update feedback status
-  const handleUpdateStatus = async (feedbackId: string, newStatus: FeedbackStatus) => {
+  const handleUpdateStatus = async (
+    feedbackId: string,
+    newStatus: FeedbackStatus,
+  ) => {
     setUpdatingStatus(true);
     try {
       const response = await fetch(`/api/staff/feedbacks/${feedbackId}`, {
@@ -205,7 +214,11 @@ export default function AdminFeedbackPage() {
       }
     } catch (error) {
       console.error("Error updating status:", error);
-      toast({ title: "Error", description: "Failed to update status", variant: "destructive" });
+      toast({
+        title: "Error",
+        description: "Failed to update status",
+        variant: "destructive",
+      });
     } finally {
       setUpdatingStatus(false);
     }
@@ -216,15 +229,15 @@ export default function AdminFeedbackPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-zinc-900">
-            User Feedback
-          </h1>
+          <h1 className="text-2xl font-bold text-zinc-900">User Feedback</h1>
           <p className="text-sm text-zinc-500 mt-1">
             Manage and respond to user feedback across the platform
           </p>
         </div>
         <Button onClick={fetchFeedbacks} variant="outline" size="sm">
-          <RefreshCw className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`} />
+          <RefreshCw
+            className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`}
+          />
           Refresh
         </Button>
       </div>
@@ -235,8 +248,12 @@ export default function AdminFeedbackPage() {
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs text-zinc-500 uppercase tracking-wide">Pending</p>
-                <p className="text-2xl font-bold text-amber-600">{counts.pending}</p>
+                <p className="text-xs text-zinc-500 uppercase tracking-wide">
+                  Pending
+                </p>
+                <p className="text-2xl font-bold text-amber-600">
+                  {counts.pending}
+                </p>
               </div>
               <AlertCircle className="h-8 w-8 text-amber-200" />
             </div>
@@ -246,8 +263,12 @@ export default function AdminFeedbackPage() {
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs text-zinc-500 uppercase tracking-wide">Acknowledged</p>
-                <p className="text-2xl font-bold text-blue-600">{counts.acknowledged}</p>
+                <p className="text-xs text-zinc-500 uppercase tracking-wide">
+                  Acknowledged
+                </p>
+                <p className="text-2xl font-bold text-blue-600">
+                  {counts.acknowledged}
+                </p>
               </div>
               <Eye className="h-8 w-8 text-blue-200" />
             </div>
@@ -257,8 +278,12 @@ export default function AdminFeedbackPage() {
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs text-zinc-500 uppercase tracking-wide">In Progress</p>
-                <p className="text-2xl font-bold text-purple-600">{counts.inProgress}</p>
+                <p className="text-xs text-zinc-500 uppercase tracking-wide">
+                  In Progress
+                </p>
+                <p className="text-2xl font-bold text-purple-600">
+                  {counts.inProgress}
+                </p>
               </div>
               <Clock className="h-8 w-8 text-purple-200" />
             </div>
@@ -268,8 +293,12 @@ export default function AdminFeedbackPage() {
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs text-zinc-500 uppercase tracking-wide">Resolved</p>
-                <p className="text-2xl font-bold text-green-600">{counts.resolved}</p>
+                <p className="text-xs text-zinc-500 uppercase tracking-wide">
+                  Resolved
+                </p>
+                <p className="text-2xl font-bold text-green-600">
+                  {counts.resolved}
+                </p>
               </div>
               <CheckCircle2 className="h-8 w-8 text-green-200" />
             </div>
@@ -279,8 +308,12 @@ export default function AdminFeedbackPage() {
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs text-zinc-500 uppercase tracking-wide">Total</p>
-                <p className="text-2xl font-bold text-zinc-900">{counts.total}</p>
+                <p className="text-xs text-zinc-500 uppercase tracking-wide">
+                  Total
+                </p>
+                <p className="text-2xl font-bold text-zinc-900">
+                  {counts.total}
+                </p>
               </div>
               <MessageSquare className="h-8 w-8 text-zinc-200" />
             </div>
@@ -368,7 +401,9 @@ export default function AdminFeedbackPage() {
                             {feedback.user.name?.charAt(0) || "U"}
                           </AvatarFallback>
                         </Avatar>
-                        <span className="text-sm">{feedback.user.name || "Unknown"}</span>
+                        <span className="text-sm">
+                          {feedback.user.name || "Unknown"}
+                        </span>
                       </div>
                     </TableCell>
                     <TableCell>
@@ -390,7 +425,10 @@ export default function AdminFeedbackPage() {
                       )}
                     </TableCell>
                     <TableCell>
-                      <Badge variant="outline" className={getStatusColor(feedback.status)}>
+                      <Badge
+                        variant="outline"
+                        className={getStatusColor(feedback.status)}
+                      >
                         {feedback.status.replace("_", " ")}
                       </Badge>
                     </TableCell>
@@ -399,22 +437,49 @@ export default function AdminFeedbackPage() {
                     </TableCell>
                     <TableCell>
                       <DropdownMenu>
-                        <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                          <Button variant="ghost" size="icon" className="h-8 w-8">
+                        <DropdownMenuTrigger
+                          asChild
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8"
+                          >
                             <MoreHorizontal className="h-4 w-4" />
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={(e) => { e.stopPropagation(); setSelectedFeedback(feedback); }}>
+                          <DropdownMenuItem
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedFeedback(feedback);
+                            }}
+                          >
                             View Details
                           </DropdownMenuItem>
-                          <DropdownMenuItem onClick={(e) => { e.stopPropagation(); handleUpdateStatus(feedback.id, "ACKNOWLEDGED"); }}>
+                          <DropdownMenuItem
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleUpdateStatus(feedback.id, "ACKNOWLEDGED");
+                            }}
+                          >
                             Mark Acknowledged
                           </DropdownMenuItem>
-                          <DropdownMenuItem onClick={(e) => { e.stopPropagation(); handleUpdateStatus(feedback.id, "RESOLVED"); }}>
+                          <DropdownMenuItem
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleUpdateStatus(feedback.id, "RESOLVED");
+                            }}
+                          >
                             Mark Resolved
                           </DropdownMenuItem>
-                          <DropdownMenuItem onClick={(e) => { e.stopPropagation(); handleUpdateStatus(feedback.id, "CLOSED"); }}>
+                          <DropdownMenuItem
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleUpdateStatus(feedback.id, "CLOSED");
+                            }}
+                          >
                             Close
                           </DropdownMenuItem>
                         </DropdownMenuContent>
@@ -454,7 +519,10 @@ export default function AdminFeedbackPage() {
       )}
 
       {/* Detail Dialog */}
-      <Dialog open={!!selectedFeedback} onOpenChange={(open) => !open && setSelectedFeedback(null)}>
+      <Dialog
+        open={!!selectedFeedback}
+        onOpenChange={(open) => !open && setSelectedFeedback(null)}
+      >
         <DialogContent className="max-w-lg">
           {selectedFeedback && (
             <>
@@ -478,7 +546,9 @@ export default function AdminFeedbackPage() {
                     </AvatarFallback>
                   </Avatar>
                   <div className="flex-1">
-                    <p className="font-medium">{selectedFeedback.user.name || "Unknown"}</p>
+                    <p className="font-medium">
+                      {selectedFeedback.user.name || "Unknown"}
+                    </p>
                     <div className="flex items-center gap-3 text-sm text-zinc-500">
                       {selectedFeedback.user.email && (
                         <span className="flex items-center gap-1">
@@ -493,7 +563,9 @@ export default function AdminFeedbackPage() {
                 {/* Rating */}
                 {selectedFeedback.rating && (
                   <div>
-                    <p className="text-xs text-zinc-500 uppercase tracking-wide mb-1">Rating</p>
+                    <p className="text-xs text-zinc-500 uppercase tracking-wide mb-1">
+                      Rating
+                    </p>
                     <div className="flex items-center gap-1">
                       {Array.from({ length: 5 }).map((_, i) => (
                         <Star
@@ -514,7 +586,9 @@ export default function AdminFeedbackPage() {
 
                 {/* Description */}
                 <div>
-                  <p className="text-xs text-zinc-500 uppercase tracking-wide mb-1">Description</p>
+                  <p className="text-xs text-zinc-500 uppercase tracking-wide mb-1">
+                    Description
+                  </p>
                   <p className="text-sm text-zinc-700 whitespace-pre-wrap">
                     {selectedFeedback.description}
                   </p>
@@ -522,10 +596,17 @@ export default function AdminFeedbackPage() {
 
                 {/* Status Update */}
                 <div>
-                  <p className="text-xs text-zinc-500 uppercase tracking-wide mb-2">Update Status</p>
+                  <p className="text-xs text-zinc-500 uppercase tracking-wide mb-2">
+                    Update Status
+                  </p>
                   <Select
                     value={selectedFeedback.status}
-                    onValueChange={(value) => handleUpdateStatus(selectedFeedback.id, value as FeedbackStatus)}
+                    onValueChange={(value) =>
+                      handleUpdateStatus(
+                        selectedFeedback.id,
+                        value as FeedbackStatus,
+                      )
+                    }
                     disabled={updatingStatus}
                   >
                     <SelectTrigger>

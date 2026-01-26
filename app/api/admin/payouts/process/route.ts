@@ -47,7 +47,7 @@ export async function POST(_req: NextRequest) {
     console.error("Error processing payouts:", error);
     return NextResponse.json(
       { error: "Failed to process payouts" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

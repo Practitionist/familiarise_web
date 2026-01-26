@@ -3,6 +3,13 @@
 import { ScheduleType, SessionType } from "@prisma/client";
 import { TrashIcon } from "assets/icons";
 import { Button } from "components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "components/ui/dialog";
+import ConsultantVerificationForm from "@/app/form/onboarding/components/ConsultantVerificationForm";
 import { Input } from "components/ui/input";
 import { Label } from "components/ui/label";
 import { RadioGroup, RadioGroupItem } from "components/ui/radio-group";
@@ -17,6 +24,18 @@ import { Separator } from "components/ui/separator";
 import { Textarea } from "components/ui/textarea";
 import { useToast } from "components/ui/use-toast";
 import { Checkbox } from "components/ui/checkbox";
+import { Alert, AlertDescription, AlertTitle } from "components/ui/alert";
+import {
+  XCircle,
+  ChevronDown,
+  ChevronUp,
+  FileText,
+  CheckCircle,
+  Loader2,
+  RefreshCw,
+  Clock,
+  Shield,
+} from "lucide-react";
 import React, { useCallback, useEffect, useState } from "react";
 import { TConsultantProfile } from "types/consultant";
 import { MultiSelect } from "../../components/MultiSelect";
@@ -56,6 +75,23 @@ interface SettingsTabProps {
   consultant: TConsultantProfile;
 }
 
+interface DocumentFeedback {
+  id: string;
+  fileName: string;
+  originalName?: string;
+  isValid: boolean | null;
+  staffFeedback?: string | null;
+}
+
+interface VerificationDetails {
+  id: string;
+  status: string;
+  rejectionReason?: string | null;
+  feedbackDetails?: string | null;
+  reviewedAt?: string;
+  documents: DocumentFeedback[];
+}
+
 export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
   const { toast } = useToast();
   const { timezone, isLoading: timezoneLoading } = useTimezone();
@@ -74,6 +110,18 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
   const [subDomains, setSubDomains] = useState<SubDomain[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
 
+  // Schedule type switching restriction state
+  const [canSwitchSchedule, setCanSwitchSchedule] = useState(true);
+  const [scheduleSwitchBlockedReason, setScheduleSwitchBlockedReason] =
+    useState<string | null>(null);
+
+  // Verification resubmission state
+  const [verificationDetails, setVerificationDetails] =
+    useState<VerificationDetails | null>(null);
+  const [isLoadingVerification, setIsLoadingVerification] = useState(false);
+  const [isResubmitting, setIsResubmitting] = useState(false);
+  const [showVerificationDetails, setShowVerificationDetails] = useState(false);
+
   // Initialize slots data when timezone is available
   useEffect(() => {
     if (!timezoneLoading && timezone) {
@@ -81,6 +129,66 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
       setCustomSlots(getInitialCustomSlots(consultant, timezone));
     }
   }, [consultant, timezone, timezoneLoading]);
+
+  // Check if schedule type switching is allowed
+  useEffect(() => {
+    async function checkScheduleSwitchEligibility() {
+      try {
+        const res = await fetch(
+          `/api/user/consultants/${consultant.id}/can-switch-schedule`,
+        );
+        const data = await res.json();
+        setCanSwitchSchedule(data.canSwitch);
+        if (!data.canSwitch) {
+          setScheduleSwitchBlockedReason(data.details || data.reason);
+        } else {
+          setScheduleSwitchBlockedReason(null);
+        }
+      } catch (error) {
+        console.error("Error checking schedule switch eligibility:", error);
+        // On error, allow switching (backend will validate anyway)
+        setCanSwitchSchedule(true);
+      }
+    }
+    checkScheduleSwitchEligibility();
+  }, [consultant.id]);
+
+  // Fetch verification details when status is REJECTED AND PENDING_VERIFICATION
+  useEffect(() => {
+    async function fetchVerificationDetails() {
+      // Fetch details if Rejected OR Pending (to show "Request Changes" feedback)
+      if (
+        consultant.verificationStatus !== "REJECTED" &&
+        consultant.verificationStatus !== "PENDING_VERIFICATION"
+      ) {
+        return;
+      }
+
+      setIsLoadingVerification(true);
+      try {
+        const res = await fetch("/api/verification/status");
+        if (res.ok) {
+          const responseData = await res.json();
+          if (responseData.success && responseData.data?.latestRequest) {
+            const latestVerification = responseData.data.latestRequest;
+            setVerificationDetails({
+              id: latestVerification.id,
+              status: latestVerification.status,
+              rejectionReason: latestVerification.rejectionReason,
+              feedbackDetails: latestVerification.feedbackDetails,
+              reviewedAt: latestVerification.reviewedAt,
+              documents: latestVerification.documents || [],
+            });
+          }
+        }
+      } catch (error) {
+        console.error("Error fetching verification details:", error);
+      } finally {
+        setIsLoadingVerification(false);
+      }
+    }
+    fetchVerificationDetails();
+  }, [consultant.verificationStatus]);
 
   // Convert subdomains and tags to options format with safety checks
   const subDomainOptions = React.useMemo<Option[]>(() => {
@@ -180,6 +288,68 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
     fetchDomainContent();
   }, [formData.domainId, toast]);
 
+  // Handle verification resubmission
+  /* New Verification Modal Logic */
+  const [isVerificationModalOpen, setIsVerificationModalOpen] = useState(false);
+
+  const handleVerificationSubmit = async (data: {
+    verificationLinkedinUrl?: string;
+    verificationNotes?: string;
+    verificationDocuments?: any[];
+  }) => {
+    setIsResubmitting(true);
+    try {
+      const documentIds =
+        data.verificationDocuments
+          ?.filter((doc) => doc.status === "completed")
+          .map((doc) => doc.id) || [];
+
+      const payload = {
+        linkedinUrl: data.verificationLinkedinUrl,
+        notes: data.verificationNotes,
+        documentIds,
+      };
+
+      const res = await fetch("/api/verification/submit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const result = await res.json();
+
+      if (!res.ok) {
+        throw new Error(result.error || "Failed to submit verification");
+      }
+
+      toast({
+        title: "Verification Submitted",
+        description: "Your profile has been submitted for review successfully.",
+      });
+
+      // Close modal and update status
+      setIsVerificationModalOpen(false);
+
+      // Ideally we should reload the consultant data here to reflect the new status immediately
+      window.location.reload();
+    } catch (error) {
+      console.error("Error submitting verification:", error);
+      toast({
+        title: "Submission Failed",
+        description:
+          error instanceof Error ? error.message : "Failed to submit verification",
+        variant: "destructive",
+      });
+    } finally {
+      setIsResubmitting(false);
+    }
+  };
+
+  const handleResubmitVerification = () => {
+    // Instead of direct API call, open the modal
+    setIsVerificationModalOpen(true);
+  };
+
   const handleInputChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
   ) => {
@@ -217,23 +387,39 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
   }, []);
 
   // Update schedule type and clear irrelevant slots
-  const handleScheduleTypeChange = useCallback((value: string) => {
-    const scheduleTypeValue = value as ScheduleType;
-    React.startTransition(() => {
-      setScheduleType(scheduleTypeValue);
-      setFormData((prev) => ({
-        ...prev,
-        scheduleType: scheduleTypeValue,
-      }));
+  const handleScheduleTypeChange = useCallback(
+    (value: string) => {
+      const scheduleTypeValue = value as ScheduleType;
 
-      // Clear slots for the inactive schedule type to prevent corruption
-      if (scheduleTypeValue === ScheduleType.WEEKLY) {
-        setCustomSlots({});
-      } else {
-        setWeeklySlots({});
+      // Check if trying to switch schedule type when blocked
+      if (!canSwitchSchedule && scheduleTypeValue !== scheduleType) {
+        toast({
+          title: "Cannot Switch Schedule Type",
+          description:
+            scheduleSwitchBlockedReason ||
+            "You have active appointments. Please complete or cancel them first.",
+          variant: "destructive",
+        });
+        return;
       }
-    });
-  }, []);
+
+      React.startTransition(() => {
+        setScheduleType(scheduleTypeValue);
+        setFormData((prev) => ({
+          ...prev,
+          scheduleType: scheduleTypeValue,
+        }));
+
+        // Clear slots for the inactive schedule type to prevent corruption
+        if (scheduleTypeValue === ScheduleType.WEEKLY) {
+          setCustomSlots({});
+        } else {
+          setWeeklySlots({});
+        }
+      });
+    },
+    [canSwitchSchedule, scheduleType, scheduleSwitchBlockedReason, toast],
+  );
 
   const handleAddSlot = useCallback(
     (day: string) => {
@@ -453,6 +639,7 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
         websiteUrl: formData.websiteUrl || null,
         twitterUrl: formData.twitterUrl || null,
         githubUrl: formData.githubUrl || null,
+        linkedinUrl: formData.linkedinUrl || null, // Saved to User model
         videoIntroUrl: formData.videoIntroUrl || null,
         languages: formData.languages || [],
         toolsAndTechnologies: formData.toolsAndTechnologies || [],
@@ -519,6 +706,13 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
     );
   }
 
+  // Computed values for verification display
+  const invalidDocuments =
+    verificationDetails?.documents?.filter((doc) => doc.isValid === false) ||
+    [];
+  const validDocuments =
+    verificationDetails?.documents?.filter((doc) => doc.isValid === true) || [];
+
   return (
     <form
       onSubmit={handleSubmit}
@@ -526,6 +720,263 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
       role="form"
       aria-label="Settings form"
     >
+      {/* Unified Verification Status UI */}
+      {consultant.verificationStatus && (
+        <div
+          className={`border-2 rounded-xl p-6 mb-8 ${consultant.verificationStatus === "VERIFIED"
+            ? "border-green-200 bg-green-50"
+            : consultant.verificationStatus === "PENDING_VERIFICATION"
+              ? "border-amber-200 bg-amber-50"
+              : consultant.verificationStatus === "UNDER_REVIEW"
+                ? "border-blue-200 bg-blue-50"
+                : "border-red-200 bg-red-50"
+            }`}
+        >
+          <div className="flex items-start gap-4">
+            <div
+              className={`flex-shrink-0 w-12 h-12 rounded-full flex items-center justify-center ${consultant.verificationStatus === "VERIFIED"
+                ? "bg-green-100"
+                : consultant.verificationStatus === "PENDING_VERIFICATION"
+                  ? "bg-amber-100"
+                  : consultant.verificationStatus === "UNDER_REVIEW"
+                    ? "bg-blue-100"
+                    : "bg-red-100"
+                }`}
+            >
+              {consultant.verificationStatus === "VERIFIED" ? (
+                <CheckCircle className="w-6 h-6 text-green-600" />
+              ) : consultant.verificationStatus === "PENDING_VERIFICATION" ? (
+                <Clock className="w-6 h-6 text-amber-600" />
+              ) : consultant.verificationStatus === "UNDER_REVIEW" ? (
+                <Shield className="w-6 h-6 text-blue-600" />
+              ) : (
+                <XCircle className="w-6 h-6 text-red-600" />
+              )}
+            </div>
+
+            <div className="flex-1">
+              <h2
+                className={`text-xl font-bold mb-2 ${consultant.verificationStatus === "VERIFIED"
+                  ? "text-green-900"
+                  : consultant.verificationStatus === "PENDING_VERIFICATION"
+                    ? "text-amber-900"
+                    : consultant.verificationStatus === "UNDER_REVIEW"
+                      ? "text-blue-900"
+                      : "text-red-900"
+                  }`}
+              >
+                {consultant.verificationStatus === "VERIFIED"
+                  ? "Profile Verified"
+                  : consultant.verificationStatus === "PENDING_VERIFICATION"
+                    ? "Verification Required"
+                    : consultant.verificationStatus === "UNDER_REVIEW"
+                      ? "Verification Under Review"
+                      : "Verification Not Approved"}
+              </h2>
+              <p
+                className={`text-sm mb-4 ${consultant.verificationStatus === "VERIFIED"
+                  ? "text-green-700"
+                  : consultant.verificationStatus === "PENDING_VERIFICATION"
+                    ? "text-amber-700"
+                    : consultant.verificationStatus === "UNDER_REVIEW"
+                      ? "text-blue-700"
+                      : "text-red-700"
+                  }`}
+              >
+                {consultant.verificationStatus === "VERIFIED"
+                  ? "Great job! Your profile has been verified. You are now visible in the consultant directory and can accept bookings."
+                  : consultant.verificationStatus === "PENDING_VERIFICATION"
+                    ? "Action is needed on your profile. Please review any feedback below, make necessary updates, and submit for verification."
+                    : consultant.verificationStatus === "UNDER_REVIEW"
+                      ? "Hold tight! Our team is currently reviewing your profile details and documents. This typically takes 1-2 business days."
+                      : "Your profile verification was not approved. Please review the feedback below, update your profile as needed, and resubmit for review."}
+              </p>
+
+              {/* Loading State */}
+              {isLoadingVerification ? (
+                <div
+                  className={`flex items-center gap-2 ${consultant.verificationStatus === "REJECTED"
+                    ? "text-red-600"
+                    : "text-amber-600"
+                    }`}
+                >
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span className="text-sm">Loading feedback...</span>
+                </div>
+              ) : verificationDetails ||
+                consultant.verificationStatus === "REJECTED" ? (
+                <>
+                  {/* Reuse Existing Feedback UI Logic */}
+                  {verificationDetails?.rejectionReason && (
+                    <div
+                      className={`border rounded-lg p-4 mb-4 ${consultant.verificationStatus === "REJECTED"
+                        ? "bg-red-100 border-red-200"
+                        : "bg-amber-100 border-amber-200"
+                        }`}
+                    >
+                      <p
+                        className={`text-sm font-medium mb-1 ${consultant.verificationStatus === "REJECTED"
+                          ? "text-red-800"
+                          : "text-amber-800"
+                          }`}
+                      >
+                        {consultant.verificationStatus === "REJECTED"
+                          ? "Reason for rejection:"
+                          : "Changes requested:"}
+                      </p>
+                      <p
+                        className={`text-sm ${consultant.verificationStatus === "REJECTED"
+                          ? "text-red-700"
+                          : "text-amber-700"
+                          }`}
+                      >
+                        {verificationDetails.rejectionReason}
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Expandable Details - Only show if there are details */}
+                  {(verificationDetails?.feedbackDetails ||
+                    invalidDocuments.length > 0 ||
+                    validDocuments.length > 0) && (
+                      <div className="mb-4">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setShowVerificationDetails(!showVerificationDetails)
+                          }
+                          className={`flex items-center gap-2 text-sm font-medium transition-colors ${consultant.verificationStatus === "REJECTED"
+                            ? "text-red-700 hover:text-red-900"
+                            : "text-amber-700 hover:text-amber-900"
+                            }`}
+                        >
+                          {showVerificationDetails ? (
+                            <>
+                              <ChevronUp className="w-4 h-4" />
+                              Hide detailed feedback
+                            </>
+                          ) : (
+                            <>
+                              <ChevronDown className="w-4 h-4" />
+                              View detailed feedback
+                            </>
+                          )}
+                        </button>
+
+                        {showVerificationDetails && (
+                          <div className="mt-3 space-y-3">
+                            {verificationDetails?.feedbackDetails && (
+                              <div className="bg-white border border-zinc-200 rounded-lg p-4">
+                                <p className="text-sm font-medium text-zinc-700 mb-2">
+                                  Additional feedback from reviewer:
+                                </p>
+                                <p className="text-sm text-zinc-600 whitespace-pre-wrap">
+                                  {verificationDetails.feedbackDetails}
+                                </p>
+                              </div>
+                            )}
+
+                            {invalidDocuments.length > 0 && (
+                              <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                                <p className="text-sm font-medium text-amber-800 mb-3">
+                                  Documents requiring attention:
+                                </p>
+                                <ul className="space-y-2">
+                                  {invalidDocuments.map((doc) => (
+                                    <li
+                                      key={doc.id}
+                                      className="flex items-start gap-3 text-sm"
+                                    >
+                                      <FileText className="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" />
+                                      <div>
+                                        <p className="font-medium text-amber-900">
+                                          {doc.originalName || doc.fileName}
+                                        </p>
+                                        {doc.staffFeedback && (
+                                          <p className="text-amber-700 mt-0.5">
+                                            {doc.staffFeedback}
+                                          </p>
+                                        )}
+                                      </div>
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+
+                            {validDocuments.length > 0 && (
+                              <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                                <p className="text-sm font-medium text-green-800 mb-2">
+                                  Verified documents:
+                                </p>
+                                <ul className="space-y-1">
+                                  {validDocuments.map((doc) => (
+                                    <li
+                                      key={doc.id}
+                                      className="flex items-center gap-2 text-sm text-green-700"
+                                    >
+                                      <CheckCircle className="w-4 h-4 flex-shrink-0" />
+                                      <span>
+                                        {doc.originalName || doc.fileName}
+                                      </span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                </>
+              ) : null}
+
+              {/* Action Buttons */}
+              {(consultant.verificationStatus === "REJECTED" ||
+                consultant.verificationStatus === "PENDING_VERIFICATION") && (
+                  <div className="flex items-center gap-4">
+                    <Button
+                      type="button"
+                      onClick={handleResubmitVerification}
+                      disabled={isResubmitting}
+                      className="gap-2"
+                      variant={
+                        consultant.verificationStatus === "REJECTED"
+                          ? "destructive"
+                          : "default"
+                      }
+                    >
+                      {isResubmitting ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          {consultant.verificationStatus === "REJECTED"
+                            ? "Resubmitting..."
+                            : "Submitting..."}
+                        </>
+                      ) : (
+                        <>
+                          <RefreshCw className="w-4 h-4" />
+                          {consultant.verificationStatus === "REJECTED"
+                            ? "Resubmit for Verification"
+                            : "Submit for Verification"}
+                        </>
+                      )}
+                    </Button>
+                    <p
+                      className={`text-xs ${consultant.verificationStatus === "REJECTED"
+                        ? "text-red-600"
+                        : "text-amber-600"
+                        }`}
+                    >
+                      Make sure to update your profile below before submitting
+                    </p>
+                  </div>
+                )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Professional Profile */}
       <div>
         <h2 className="text-2xl font-bold mb-3">Professional Profile</h2>
@@ -597,32 +1048,6 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
                 Professional Background
               </Label>
               <div className="space-y-4">
-                <div>
-                  <Label className="text-sm text-gray-600">
-                    Qualifications
-                  </Label>
-                  <Textarea
-                    name="qualifications"
-                    value={formData.qualifications}
-                    onChange={handleInputChange}
-                    placeholder="List your degrees, certifications, and relevant qualifications"
-                    className="mt-1 resize-none h-24"
-                  />
-                </div>
-
-                <div>
-                  <Label className="text-sm text-gray-600">
-                    Specialization
-                  </Label>
-                  <Input
-                    name="specialization"
-                    value={formData.specialization}
-                    onChange={handleInputChange}
-                    placeholder="Your core area of expertise"
-                    className="mt-1"
-                  />
-                </div>
-
                 <div>
                   <Label className="text-sm text-gray-600">
                     Years of Experience
@@ -745,8 +1170,8 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
                           sessionTypes: checked
                             ? [...(prev.sessionTypes || []), type]
                             : (prev.sessionTypes || []).filter(
-                                (t) => t !== type,
-                              ),
+                              (t) => t !== type,
+                            ),
                         }));
                       }}
                     />
@@ -803,6 +1228,18 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
                     value={formData.twitterUrl}
                     onChange={handleInputChange}
                     placeholder="https://twitter.com/username"
+                    className="mt-1"
+                    type="url"
+                  />
+                </div>
+
+                <div>
+                  <Label className="text-sm text-gray-600">LinkedIn</Label>
+                  <Input
+                    name="linkedinUrl"
+                    value={formData.linkedinUrl}
+                    onChange={handleInputChange}
+                    placeholder="https://linkedin.com/in/username"
                     className="mt-1"
                     type="url"
                   />
@@ -878,6 +1315,18 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
             appointments or "Custom Schedule" for specific dates only.
           </p>
         </div>
+
+        {!canSwitchSchedule && (
+          <Alert variant="destructive" className="mb-4">
+            <AlertTitle>Schedule Type Locked</AlertTitle>
+            <AlertDescription>
+              {scheduleSwitchBlockedReason ||
+                "You have active appointments that prevent schedule type changes."}{" "}
+              Please complete or cancel all pending appointments before
+              switching schedule types.
+            </AlertDescription>
+          </Alert>
+        )}
 
         <RadioGroup
           value={scheduleType}
@@ -1119,10 +1568,38 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
         >
           Cancel
         </Button>
-        <Button type="submit" disabled={isLoading}>
-          {isLoading ? "Saving..." : "Save Changes"}
-        </Button>
+        <div className="flex justify-end pt-4">
+          <Button
+            type="submit"
+            className="bg-primary hover:bg-primary/90 text-primary-foreground min-w-[200px]"
+            disabled={isLoading}
+          >
+            {isLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+            Or Save Changes
+          </Button>
+        </div>
       </div>
+
+      {/* Verification Resubmission Modal */}
+      <Dialog open={isVerificationModalOpen} onOpenChange={setIsVerificationModalOpen}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+          <DialogHeader>
+            <DialogTitle>Verification Details</DialogTitle>
+          </DialogHeader>
+          <div className="mt-4">
+            <ConsultantVerificationForm
+              onNext={handleVerificationSubmit}
+              onBack={() => setIsVerificationModalOpen(false)}
+              initialData={{
+                verificationLinkedinUrl: consultant.user.linkedinUrl || "",
+                verificationNotes: verificationDetails?.rejectionReason ? `Regarding your feedback: ` : "",
+                // Note: We can't easily pre-fill documents as UploadedDocument type differs from Prisma model
+                // But user can upload new ones.
+              }}
+            />
+          </div>
+        </DialogContent>
+      </Dialog>
     </form>
   );
 }

@@ -22,7 +22,7 @@ interface Payout {
 
 async function fetchProcessingPayouts() {
   const response = await fetch(
-    "/api/admin/payouts?status=PROCESSING&limit=100"
+    "/api/admin/payouts?status=PROCESSING&limit=100",
   );
   if (!response.ok) {
     throw new Error("Failed to fetch payouts");

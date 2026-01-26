@@ -12,6 +12,9 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { CheckCircle } from "lucide-react";
 import { formatCurrency } from "@/app/checkout/plans/math";
+import { JoinWaitlistButton } from "@/components/waitlist/JoinWaitlistButton";
+import { WaitlistBadge } from "@/components/waitlist/WaitlistBadge";
+import { countWebinarParticipants } from "@/lib/payments/utils/participants";
 
 // Redefine SessionStatus (or import if moved to a shared file)
 type SessionStatus =
@@ -30,6 +33,8 @@ type ClientWebinarRegistrationProps = {
   appointment?: {
     slotsOfAppointment?: Array<{ user?: Array<{ id: string }> }>;
   } | null;
+  maxParticipants?: number;
+  waitlist?: Array<{ userId: string; position?: number | null }>;
 };
 
 export function ClientWebinarRegistration({
@@ -40,6 +45,8 @@ export function ClientWebinarRegistration({
   nextSessionDate,
   sessionStatus,
   appointment,
+  maxParticipants = 100,
+  waitlist = [],
 }: ClientWebinarRegistrationProps) {
   const { data: session } = useSession();
   const isLoggedIn = !!session?.user;
@@ -51,6 +58,16 @@ export function ClientWebinarRegistration({
     appointment?.slotsOfAppointment?.some((slot) =>
       slot.user?.some((u) => u.id === userId),
     );
+
+  // Check capacity using shared utility
+  const currentParticipants = countWebinarParticipants(appointment ?? null);
+  const isFull = currentParticipants >= maxParticipants;
+
+  // Check if user is on the waitlist
+  const userWaitlistEntry = userId
+    ? waitlist.find((w) => w.userId === userId)
+    : null;
+  const isOnWaitlist = !!userWaitlistEntry;
 
   const handleRegistration = () => {
     if (!isLoggedIn) {
@@ -167,6 +184,49 @@ export function ClientWebinarRegistration({
             Check your email for webinar details and join link.
           </p>
         </CardContent>
+      </Card>
+    );
+  }
+
+  // Show waitlist UI when event is full
+  if (isFull && isLoggedIn && !isAlreadyRegistered) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Join Webinar</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-gray-600 mb-4">{sessionInfoText}</p>
+          <Badge
+            variant="secondary"
+            className="mb-4 bg-amber-100 text-amber-800"
+          >
+            Event is full ({currentParticipants}/{maxParticipants} spots)
+          </Badge>
+        </CardContent>
+        <CardFooter>
+          {isOnWaitlist ? (
+            <div className="w-full text-center">
+              <WaitlistBadge
+                position={userWaitlistEntry?.position ?? null}
+                variant="extended"
+              />
+              <p className="text-xs text-gray-500 mt-2">
+                We'll notify you when a spot opens up
+              </p>
+            </div>
+          ) : webinarId ? (
+            <JoinWaitlistButton
+              eventType="webinar"
+              eventId={webinarId}
+              className="w-full"
+            />
+          ) : (
+            <p className="text-sm text-gray-500 text-center">
+              No session available for waitlist
+            </p>
+          )}
+        </CardFooter>
       </Card>
     );
   }

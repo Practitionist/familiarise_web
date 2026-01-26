@@ -3,7 +3,7 @@
 import { useParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
-import { PlannerSkeleton } from "@/components/dashboard";
+import { PlannerSkeleton } from "@/components/dashboard/DashboardSkeletons";
 import { createConsultantQueries } from "@/hooks/useCosultantPrefetchDashboard";
 import { EventManagementDashboard } from "./components/EventManagementDashboard";
 

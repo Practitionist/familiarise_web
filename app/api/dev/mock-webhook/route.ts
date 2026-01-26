@@ -74,10 +74,14 @@ async function handleMockPaymentCaptured(
     appointment: {
       include: {
         consultation: {
-          include: { consultationPlan: { select: { consultantProfileId: true } } },
+          include: {
+            consultationPlan: { select: { consultantProfileId: true } },
+          },
         },
         subscription: {
-          include: { subscriptionPlan: { select: { consultantProfileId: true } } },
+          include: {
+            subscriptionPlan: { select: { consultantProfileId: true } },
+          },
         },
         webinar: {
           include: { webinarPlan: { select: { consultantProfileId: true } } },

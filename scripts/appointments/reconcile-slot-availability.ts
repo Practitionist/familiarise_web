@@ -71,12 +71,16 @@ async function clearTentativeOnSuccessfulPayments(): Promise<{
       },
     });
 
-    console.log(`Found ${slotsToFix.length} tentative slots with successful payments`);
+    console.log(
+      `Found ${slotsToFix.length} tentative slots with successful payments`,
+    );
 
     for (const slot of slotsToFix) {
       console.log(`\nFixing slot ${slot.id}`);
       console.log(`   Appointment: ${slot.appointmentId}`);
-      console.log(`   Time: ${slot.startsAt.toISOString()} - ${slot.endsAt.toISOString()}`);
+      console.log(
+        `   Time: ${slot.startsAt.toISOString()} - ${slot.endsAt.toISOString()}`,
+      );
     }
 
     if (slotsToFix.length > 0) {
@@ -176,7 +180,7 @@ async function detectDoubleBookings(): Promise<{
     const slotsByConsultant = new Map<
       string,
       Array<{
-        slot: typeof confirmedSlots[0];
+        slot: (typeof confirmedSlots)[0];
         consultantId: string;
         consultantName: string;
       }>
@@ -206,11 +210,13 @@ async function detectDoubleBookings(): Promise<{
     }
 
     // Check for overlaps within each consultant's slots
-    for (const [consultantId, slots] of Array.from(slotsByConsultant.entries())) {
+    for (const [consultantId, slots] of Array.from(
+      slotsByConsultant.entries(),
+    )) {
       // Sort by start time
       const sortedSlots = [...slots].sort(
         (a: { slot: { startsAt: Date } }, b: { slot: { startsAt: Date } }) =>
-          a.slot.startsAt.getTime() - b.slot.startsAt.getTime()
+          a.slot.startsAt.getTime() - b.slot.startsAt.getTime(),
       );
 
       for (let i = 0; i < sortedSlots.length - 1; i++) {
@@ -231,9 +237,15 @@ async function detectDoubleBookings(): Promise<{
 
           console.log(`\n🚨 DOUBLE BOOKING DETECTED:`);
           console.log(`   Consultant: ${current.consultantName}`);
-          console.log(`   Slot 1: ${current.slot.id} (${current.slot.startsAt.toISOString()} - ${current.slot.endsAt.toISOString()})`);
-          console.log(`   Slot 2: ${next.slot.id} (${next.slot.startsAt.toISOString()} - ${next.slot.endsAt.toISOString()})`);
-          console.log(`   Appointments: ${current.slot.appointmentId}, ${next.slot.appointmentId}`);
+          console.log(
+            `   Slot 1: ${current.slot.id} (${current.slot.startsAt.toISOString()} - ${current.slot.endsAt.toISOString()})`,
+          );
+          console.log(
+            `   Slot 2: ${next.slot.id} (${next.slot.startsAt.toISOString()} - ${next.slot.endsAt.toISOString()})`,
+          );
+          console.log(
+            `   Appointments: ${current.slot.appointmentId}, ${next.slot.appointmentId}`,
+          );
         }
       }
     }
@@ -241,10 +253,16 @@ async function detectDoubleBookings(): Promise<{
     if (doubleBookings.length === 0) {
       console.log("✅ No double bookings detected");
     } else {
-      console.log(`\n⚠️ Found ${doubleBookings.length} double booking conflicts`);
+      console.log(
+        `\n⚠️ Found ${doubleBookings.length} double booking conflicts`,
+      );
     }
 
-    return { detected: doubleBookings.length, bookings: doubleBookings, errors };
+    return {
+      detected: doubleBookings.length,
+      bookings: doubleBookings,
+      errors,
+    };
   } catch (error) {
     const msg = `Failed to detect double bookings: ${error}`;
     console.error(`❌ ${msg}`);

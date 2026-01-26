@@ -7,7 +7,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import authOptions from "@/app/api/auth/[...nextauth]/options";
 import prisma from "@/lib/prisma";
-import { PaymentStatus, UserRole } from "@prisma/client";
+import { PaymentStatus, UserRole, Prisma } from "@prisma/client";
 
 /**
  * GET /api/staff/invoices
@@ -38,7 +38,7 @@ export async function GET(req: NextRequest) {
     const offset = parseInt(searchParams.get("offset") || "0");
 
     // Build where clause
-    const where: any = {};
+    const where: Prisma.PaymentWhereInput = {};
     if (status) {
       where.paymentStatus = status;
     }
@@ -129,11 +129,15 @@ export async function GET(req: NextRequest) {
     ]);
 
     // Helper to extract consultant name from different appointment types
-    const getConsultantName = (appointment: typeof payments[0]["appointment"]) => {
+    const getConsultantName = (
+      appointment: (typeof payments)[0]["appointment"],
+    ) => {
       if (!appointment) return undefined;
       return (
-        appointment.consultation?.consultationPlan?.consultantProfile?.user?.name ||
-        appointment.subscription?.subscriptionPlan?.consultantProfile?.user?.name ||
+        appointment.consultation?.consultationPlan?.consultantProfile?.user
+          ?.name ||
+        appointment.subscription?.subscriptionPlan?.consultantProfile?.user
+          ?.name ||
         appointment.webinar?.webinarPlan?.consultantProfile?.user?.name ||
         appointment.class?.classPlan?.consultantProfile?.user?.name
       );
@@ -168,7 +172,7 @@ export async function GET(req: NextRequest) {
     console.error("Error fetching invoices:", error);
     return NextResponse.json(
       { error: "Failed to fetch invoices" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

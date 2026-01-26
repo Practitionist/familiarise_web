@@ -109,7 +109,9 @@ export async function POST(
             where: { subscriptionId: appointment.subscription.id },
             include: { slotsOfAppointment: { orderBy: { startsAt: "asc" } } },
           });
-          allSubscriptionSlots = allAppointments.flatMap(apt => apt.slotsOfAppointment);
+          allSubscriptionSlots = allAppointments.flatMap(
+            (apt) => apt.slotsOfAppointment,
+          );
         }
 
         // Determine which slots will be affected
@@ -159,19 +161,24 @@ export async function POST(
         ) {
           // Individual/multiple session reschedule - only mark the specific slots
           // Use validated slot IDs from slotsToReschedule (already verified to exist)
-          const validatedSlotIds = slotsToReschedule.map(s => s.id);
+          const validatedSlotIds = slotsToReschedule.map((s) => s.id);
           await tx.slotOfAppointment.updateMany({
             where: {
               id: { in: validatedSlotIds },
             },
             data: { isTentative: true },
           });
-        } else if (appointmentType === "SUBSCRIPTION" && appointment.subscription) {
+        } else if (
+          appointmentType === "SUBSCRIPTION" &&
+          appointment.subscription
+        ) {
           // Entire subscription reschedule - mark ALL slots in ALL appointments
-          const allAppointmentIds = (await tx.appointment.findMany({
-            where: { subscriptionId: appointment.subscription.id },
-            select: { id: true },
-          })).map(a => a.id);
+          const allAppointmentIds = (
+            await tx.appointment.findMany({
+              where: { subscriptionId: appointment.subscription.id },
+              select: { id: true },
+            })
+          ).map((a) => a.id);
 
           await tx.slotOfAppointment.updateMany({
             where: { appointmentId: { in: allAppointmentIds } },
@@ -210,7 +217,11 @@ export async function POST(
 
         // Determine reschedule type for response
         const getRescheduleType = () => {
-          if (appointmentType !== "SUBSCRIPTION" || !slotIds || slotIds.length === 0) {
+          if (
+            appointmentType !== "SUBSCRIPTION" ||
+            !slotIds ||
+            slotIds.length === 0
+          ) {
             return "entire_booking";
           }
           if (slotIds.length === 1) {

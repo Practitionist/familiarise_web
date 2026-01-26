@@ -14,15 +14,9 @@
  * Schedule: Runs weekly on Mondays at 1:30 AM IST (8:00 PM UTC Sunday)
  */
 
-import {
-  PrismaClient,
-  EarningStatus,
-  PayoutStatus,
-  PayoutMethod,
-} from "@prisma/client";
+import { EarningStatus, PayoutStatus, PayoutMethod } from "@prisma/client";
 import { randomUUID } from "crypto";
-
-const prisma = new PrismaClient();
+import prisma from "@/lib/prisma";
 
 // Configuration
 const MINIMUM_PAYOUT_AMOUNT = 50000; // ₹500 in paise
@@ -216,7 +210,9 @@ export async function createPayoutBatch(
     console.log(`\n📈 Batch Creation Summary:`);
     console.log(`   📦 Batch ID: ${batchId}`);
     console.log(`   ✅ Payouts created: ${result.payoutsCreated}`);
-    console.log(`   💰 Total amount: ₹${(result.totalAmount / 100).toFixed(2)}`);
+    console.log(
+      `   💰 Total amount: ₹${(result.totalAmount / 100).toFixed(2)}`,
+    );
     console.log(`   🤖 Auto-approved: ${result.autoApproved}`);
     console.log(`   ⏳ Pending approval: ${result.pendingApproval}`);
     console.log(`   ⚠️ Skipped (no account): ${result.skippedNoAccount}`);
@@ -228,7 +224,8 @@ export async function createPayoutBatch(
       });
     }
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown error";
     console.error("❌ Batch creation failed:", errorMessage);
     result.errors.push(`Job failed: ${errorMessage}`);
     result.success = false;
@@ -272,7 +269,10 @@ export async function getPayoutStats(): Promise<{
   return {
     pending: { count: pending._count, amount: pending._sum.amount || 0 },
     approved: { count: approved._count, amount: approved._sum.amount || 0 },
-    processing: { count: processing._count, amount: processing._sum.amount || 0 },
+    processing: {
+      count: processing._count,
+      amount: processing._sum.amount || 0,
+    },
     completed: { count: completed._count, amount: completed._sum.amount || 0 },
   };
 }
@@ -282,14 +282,20 @@ export async function getPayoutStats(): Promise<{
  */
 export async function runBatchCreationTask(): Promise<BatchResult> {
   const startTime = Date.now();
-  console.log(`🚀 Starting payout batch creation at ${new Date().toISOString()}`);
+  console.log(
+    `🚀 Starting payout batch creation at ${new Date().toISOString()}`,
+  );
 
   try {
     // Get pre-batch stats
     const preStats = await getPayoutStats();
     console.log(`\n📊 Pre-batch Stats:`);
-    console.log(`   ⏳ Pending: ${preStats.pending.count} (₹${(preStats.pending.amount / 100).toFixed(2)})`);
-    console.log(`   ✅ Approved: ${preStats.approved.count} (₹${(preStats.approved.amount / 100).toFixed(2)})`);
+    console.log(
+      `   ⏳ Pending: ${preStats.pending.count} (₹${(preStats.pending.amount / 100).toFixed(2)})`,
+    );
+    console.log(
+      `   ✅ Approved: ${preStats.approved.count} (₹${(preStats.approved.amount / 100).toFixed(2)})`,
+    );
 
     // Create batch
     const result = await createPayoutBatch();
@@ -297,8 +303,12 @@ export async function runBatchCreationTask(): Promise<BatchResult> {
     // Get post-batch stats
     const postStats = await getPayoutStats();
     console.log(`\n📊 Post-batch Stats:`);
-    console.log(`   ⏳ Pending: ${postStats.pending.count} (₹${(postStats.pending.amount / 100).toFixed(2)})`);
-    console.log(`   ✅ Approved: ${postStats.approved.count} (₹${(postStats.approved.amount / 100).toFixed(2)})`);
+    console.log(
+      `   ⏳ Pending: ${postStats.pending.count} (₹${(postStats.pending.amount / 100).toFixed(2)})`,
+    );
+    console.log(
+      `   ✅ Approved: ${postStats.approved.count} (₹${(postStats.approved.amount / 100).toFixed(2)})`,
+    );
 
     const duration = (Date.now() - startTime) / 1000;
     console.log(`\n⏱️ Job completed in ${duration.toFixed(2)} seconds`);

@@ -3,7 +3,7 @@
 import { use } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
-import { TableSkeleton } from "@/components/dashboard";
+import { TableSkeleton } from "@/components/dashboard/DashboardSkeletons";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { fetchDocuments } from "../../utils/fetchHelpers";
@@ -206,7 +206,7 @@ export default function DocumentsPage({
 
   return (
     <DashboardErrorBoundary>
-      <DocumentsTab documents={documents || []} />
+      <DocumentsTab documents={documents || []} onRefresh={refetch} />
     </DashboardErrorBoundary>
   );
 }

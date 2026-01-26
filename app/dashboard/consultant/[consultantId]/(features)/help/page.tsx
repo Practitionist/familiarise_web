@@ -2,7 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
-import { HelpSkeleton } from "@/components/dashboard";
+import { HelpSkeleton } from "@/components/dashboard/DashboardSkeletons";
 import { staticQueries } from "@/hooks/useCosultantPrefetchDashboard";
 import { HelpTab } from "./HelpTab";
 

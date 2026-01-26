@@ -10,6 +10,7 @@ import {
   Settings,
   GraduationCap,
   Calendar,
+  Upload,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -36,17 +37,16 @@ import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { WebinarPlanSchema } from "@/schemas/plans";
 
-import {
-  FormSection,
-  LearningOutcomesField,
-  PriceField,
-  LanguageLevelFields,
-  SubmitButton,
-  FormConfirmationDialog,
-} from "./form-fields";
+import { FormSection } from "./form-fields/FormSection";
+import { LearningOutcomesField } from "./form-fields/LearningOutcomesField";
+import { PriceField } from "./form-fields/PriceField";
+import { LanguageLevelFields } from "./form-fields/LanguageLevelFields";
+import { SubmitButton } from "./form-fields/SubmitButton";
+import { FormConfirmationDialog } from "./form-fields/FormConfirmationDialog";
 import { TopicsMultiSelect } from "./TopicsMultiSelect";
 import { PlannerService } from "../services/planner";
 import { WebinarEvent, WebinarPlannerProps } from "../types/event";
+import { PlanMaterialsUpload } from "./PlanMaterialsUpload";
 
 // Form-specific schema - all required fields explicitly defined
 const WebinarFormSchema = z.object({
@@ -65,6 +65,7 @@ const WebinarFormSchema = z.object({
   topics: z.array(z.string()).min(1, "At least one topic is required"),
   consultantProfileId: z.string().optional(),
   certificateProvided: z.boolean(),
+  recordingEnabled: z.boolean(),
   durationInHours: z.number().min(0.5, "Duration must be at least 30 minutes"),
   scheduledAt: z.string().min(1, "Start time is required"),
 });
@@ -81,6 +82,7 @@ export function EventPlannerForWebinar({
 }: Readonly<WebinarPlannerProps>) {
   const [internalIsSaving, setInternalIsSaving] = useState(false);
   const [showConfirmation, setShowConfirmation] = useState(false);
+  const [showMaterialsDialog, setShowMaterialsDialog] = useState(false);
   const [availableTopics, setAvailableTopics] = useState<
     { id: string; name: string; createdAt: Date; updatedAt: Date }[]
   >([]);
@@ -165,8 +167,8 @@ export function EventPlannerForWebinar({
       learningOutcomes: initialData?.webinarPlan?.learningOutcomes ?? [],
       certificateProvided:
         initialData?.webinarPlan?.certificateProvided ?? false,
-      topics:
-        initialData?.webinarPlan?.topics?.map((topic) => topic.name) ?? [],
+      recordingEnabled: initialData?.webinarPlan?.recordingEnabled ?? false,
+      topics: initialData?.webinarPlan?.topics ?? [],
       scheduledAt: getInitialScheduledAt(),
       consultantProfileId: consultantId,
     },
@@ -189,8 +191,8 @@ export function EventPlannerForWebinar({
         learningOutcomes: initialData.webinarPlan.learningOutcomes ?? [],
         certificateProvided:
           initialData.webinarPlan.certificateProvided ?? false,
-        topics:
-          initialData.webinarPlan.topics?.map((topic) => topic.name) ?? [],
+        recordingEnabled: initialData.webinarPlan.recordingEnabled ?? false,
+        topics: initialData.webinarPlan.topics ?? [],
         scheduledAt: getInitialScheduledAt(),
         consultantProfileId: consultantId,
       });
@@ -269,6 +271,7 @@ export function EventPlannerForWebinar({
           price: formData.price,
           priceCurrency: formData.priceCurrency ?? "INR",
           certificateProvided: formData.certificateProvided ?? false,
+          recordingEnabled: formData.recordingEnabled ?? false,
           durationInHours: formData.durationInHours,
           maxParticipants: formData.maxParticipants,
           language: formData.language ?? "English",
@@ -285,7 +288,8 @@ export function EventPlannerForWebinar({
         },
       };
 
-      onSave(webinarData, formData.scheduledAt);
+      // Await onSave to ensure API call completes before showing success
+      await onSave(webinarData, formData.scheduledAt);
 
       toast({
         title: "Success",
@@ -524,6 +528,30 @@ export function EventPlannerForWebinar({
                     </FormItem>
                   )}
                 />
+
+                <FormField
+                  control={form.control}
+                  name="recordingEnabled"
+                  render={({ field }) => (
+                    <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4 mt-4">
+                      <div className="space-y-0.5">
+                        <FormLabel className="text-base">
+                          Enable Recording
+                        </FormLabel>
+                        <FormDescription>
+                          Allow recording of this webinar for attendees to watch
+                          later
+                        </FormDescription>
+                      </div>
+                      <FormControl>
+                        <Switch
+                          checked={field.value}
+                          onCheckedChange={field.onChange}
+                        />
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
               </FormSection>
 
               {/* Learning Content Section */}
@@ -586,6 +614,25 @@ export function EventPlannerForWebinar({
                 />
               </FormSection>
 
+              {/* Materials Section - Only show when editing an existing plan */}
+              {initialData?.id && (
+                <FormSection
+                  title="Plan Materials"
+                  description="Upload materials for attendees"
+                  icon={Upload}
+                >
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setShowMaterialsDialog(true)}
+                    className="w-full"
+                  >
+                    <Upload className="mr-2 h-4 w-4" />
+                    Manage Materials
+                  </Button>
+                </FormSection>
+              )}
+
               <DialogFooter className="pt-6 border-t">
                 <Button
                   type="button"
@@ -603,6 +650,21 @@ export function EventPlannerForWebinar({
           </Form>
         </DialogContent>
       </Dialog>
+
+      {/* Materials Upload Dialog */}
+      {initialData?.id && (
+        <PlanMaterialsUpload
+          planType="webinar"
+          planId={initialData.id}
+          planTitle={
+            form.getValues("title") ||
+            initialData.webinarPlan?.title ||
+            "Webinar"
+          }
+          isOpen={showMaterialsDialog}
+          onClose={() => setShowMaterialsDialog(false)}
+        />
+      )}
 
       <FormConfirmationDialog
         isOpen={showConfirmation}

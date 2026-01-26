@@ -220,7 +220,11 @@ export default function AdminSupportTicketsPage() {
       setTotalPages(data.pagination.totalPages);
     } catch (error) {
       console.error("Error fetching tickets:", error);
-      toast({ title: "Error", description: "Failed to load support tickets", variant: "destructive" });
+      toast({
+        title: "Error",
+        description: "Failed to load support tickets",
+        variant: "destructive",
+      });
     } finally {
       setLoading(false);
     }
@@ -239,7 +243,11 @@ export default function AdminSupportTicketsPage() {
       setTicketDetail(data);
     } catch (error) {
       console.error("Error fetching ticket detail:", error);
-      toast({ title: "Error", description: "Failed to load ticket details", variant: "destructive" });
+      toast({
+        title: "Error",
+        description: "Failed to load ticket details",
+        variant: "destructive",
+      });
     } finally {
       setLoadingDetail(false);
     }
@@ -254,18 +262,25 @@ export default function AdminSupportTicketsPage() {
     if (!selectedTicket) return;
     setUpdatingStatus(true);
     try {
-      const response = await fetch(`/api/staff/support-tickets/${selectedTicket.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: newStatus }),
-      });
+      const response = await fetch(
+        `/api/staff/support-tickets/${selectedTicket.id}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: newStatus }),
+        },
+      );
       if (!response.ok) throw new Error("Failed to update status");
       toast({ title: "Success", description: "Status updated successfully" });
       fetchTickets();
       fetchTicketDetail(selectedTicket.id);
     } catch (error) {
       console.error("Error updating status:", error);
-      toast({ title: "Error", description: "Failed to update status", variant: "destructive" });
+      toast({
+        title: "Error",
+        description: "Failed to update status",
+        variant: "destructive",
+      });
     } finally {
       setUpdatingStatus(false);
     }
@@ -275,26 +290,43 @@ export default function AdminSupportTicketsPage() {
     if (!selectedTicket || !replyText.trim()) return;
     setSendingReply(true);
     try {
-      const response = await fetch(`/api/staff/support-tickets/${selectedTicket.id}/responses`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: replyText, isInternal: isInternalNote }),
-      });
+      const response = await fetch(
+        `/api/staff/support-tickets/${selectedTicket.id}/responses`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            message: replyText,
+            isInternal: isInternalNote,
+          }),
+        },
+      );
       if (!response.ok) throw new Error("Failed to send reply");
-      toast({ title: "Success", description: isInternalNote ? "Internal note added" : "Reply sent" });
+      toast({
+        title: "Success",
+        description: isInternalNote ? "Internal note added" : "Reply sent",
+      });
       setReplyText("");
       setIsInternalNote(false);
       fetchTicketDetail(selectedTicket.id);
       fetchTickets();
     } catch (error) {
       console.error("Error sending reply:", error);
-      toast({ title: "Error", description: "Failed to send reply", variant: "destructive" });
+      toast({
+        title: "Error",
+        description: "Failed to send reply",
+        variant: "destructive",
+      });
     } finally {
       setSendingReply(false);
     }
   };
 
-  const handleQuickAction = async (ticketId: string, action: string, e: React.MouseEvent) => {
+  const handleQuickAction = async (
+    ticketId: string,
+    action: string,
+    e: React.MouseEvent,
+  ) => {
     e.stopPropagation();
     try {
       if (action === "close") {
@@ -315,7 +347,11 @@ export default function AdminSupportTicketsPage() {
       fetchTickets();
     } catch (error) {
       console.error("Error:", error);
-      toast({ title: "Error", description: "Action failed", variant: "destructive" });
+      toast({
+        title: "Error",
+        description: "Action failed",
+        variant: "destructive",
+      });
     }
   };
 
@@ -324,13 +360,17 @@ export default function AdminSupportTicketsPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">Support Tickets</h1>
+          <h1 className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">
+            Support Tickets
+          </h1>
           <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-1">
             Manage all customer support tickets
           </p>
         </div>
         <Button onClick={fetchTickets} variant="outline" size="sm">
-          <RefreshCw className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`} />
+          <RefreshCw
+            className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`}
+          />
           Refresh
         </Button>
       </div>
@@ -339,15 +379,29 @@ export default function AdminSupportTicketsPage() {
       <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
         {[
           { label: "Open", value: counts.open, color: "text-blue-600" },
-          { label: "In Progress", value: counts.inProgress, color: "text-amber-600" },
+          {
+            label: "In Progress",
+            value: counts.inProgress,
+            color: "text-amber-600",
+          },
           { label: "On Hold", value: counts.onHold, color: "text-orange-600" },
-          { label: "Resolved", value: counts.resolved, color: "text-green-600" },
+          {
+            label: "Resolved",
+            value: counts.resolved,
+            color: "text-green-600",
+          },
           { label: "Closed", value: counts.closed, color: "text-zinc-500" },
-          { label: "Total", value: counts.total, color: "text-zinc-900 dark:text-zinc-100" },
+          {
+            label: "Total",
+            value: counts.total,
+            color: "text-zinc-900 dark:text-zinc-100",
+          },
         ].map((stat) => (
           <Card key={stat.label} className="border-0 shadow-sm">
             <CardContent className="p-4">
-              <p className="text-xs text-zinc-500 uppercase tracking-wide">{stat.label}</p>
+              <p className="text-xs text-zinc-500 uppercase tracking-wide">
+                {stat.label}
+              </p>
               <p className={`text-2xl font-bold ${stat.color}`}>{stat.value}</p>
             </CardContent>
           </Card>
@@ -435,7 +489,9 @@ export default function AdminSupportTicketsPage() {
                     <TableCell>
                       <div className="flex items-center gap-2">
                         {getStatusIcon(ticket.status)}
-                        <span className="font-medium truncate max-w-[200px]">{ticket.title}</span>
+                        <span className="font-medium truncate max-w-[200px]">
+                          {ticket.title}
+                        </span>
                         {ticket.responses?.length > 0 && (
                           <Badge variant="secondary" className="text-xs">
                             <MessageSquare className="h-3 w-3 mr-1" />
@@ -452,39 +508,69 @@ export default function AdminSupportTicketsPage() {
                             {ticket.user?.name?.charAt(0) || "U"}
                           </AvatarFallback>
                         </Avatar>
-                        <span className="text-sm">{ticket.user?.name || "Unknown"}</span>
+                        <span className="text-sm">
+                          {ticket.user?.name || "Unknown"}
+                        </span>
                       </div>
                     </TableCell>
                     <TableCell>
-                      <Badge variant="outline" className={getStatusColor(ticket.status)}>
+                      <Badge
+                        variant="outline"
+                        className={getStatusColor(ticket.status)}
+                      >
                         {ticket.status.replace("_", " ")}
                       </Badge>
                     </TableCell>
                     <TableCell>
-                      <Badge variant="outline" className={getPriorityColor(ticket.priority)}>
+                      <Badge
+                        variant="outline"
+                        className={getPriorityColor(ticket.priority)}
+                      >
                         {ticket.priority}
                       </Badge>
                     </TableCell>
                     <TableCell className="text-sm text-zinc-500">
                       {formatIssueType(ticket.issueType)}
                     </TableCell>
-                    <TableCell className="text-sm text-zinc-500">{formatDate(ticket.updatedAt)}</TableCell>
+                    <TableCell className="text-sm text-zinc-500">
+                      {formatDate(ticket.updatedAt)}
+                    </TableCell>
                     <TableCell>
                       <DropdownMenu>
-                        <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                          <Button variant="ghost" size="icon" className="h-8 w-8">
+                        <DropdownMenuTrigger
+                          asChild
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8"
+                          >
                             <MoreHorizontal className="h-4 w-4" />
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={(e) => { e.stopPropagation(); handleSelectTicket(ticket); }}>
+                          <DropdownMenuItem
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleSelectTicket(ticket);
+                            }}
+                          >
                             View Details
                           </DropdownMenuItem>
                           <DropdownMenuSeparator />
-                          <DropdownMenuItem onClick={(e) => handleQuickAction(ticket.id, "resolve", e)}>
+                          <DropdownMenuItem
+                            onClick={(e) =>
+                              handleQuickAction(ticket.id, "resolve", e)
+                            }
+                          >
                             Mark Resolved
                           </DropdownMenuItem>
-                          <DropdownMenuItem onClick={(e) => handleQuickAction(ticket.id, "close", e)}>
+                          <DropdownMenuItem
+                            onClick={(e) =>
+                              handleQuickAction(ticket.id, "close", e)
+                            }
+                          >
                             Close Ticket
                           </DropdownMenuItem>
                         </DropdownMenuContent>
@@ -501,131 +587,232 @@ export default function AdminSupportTicketsPage() {
       {/* Pagination */}
       {totalPages > 1 && (
         <div className="flex items-center justify-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            disabled={page === 1}
+          >
             Previous
           </Button>
-          <span className="text-sm text-zinc-500">Page {page} of {totalPages}</span>
-          <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page === totalPages}>
+          <span className="text-sm text-zinc-500">
+            Page {page} of {totalPages}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+            disabled={page === totalPages}
+          >
             Next
           </Button>
         </div>
       )}
 
       {/* Ticket Detail Dialog */}
-      <Dialog open={!!selectedTicket} onOpenChange={(open) => { if (!open) { setSelectedTicket(null); setTicketDetail(null); setReplyText(""); } }}>
+      <Dialog
+        open={!!selectedTicket}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSelectedTicket(null);
+            setTicketDetail(null);
+            setReplyText("");
+          }
+        }}
+      >
         <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col">
           {loadingDetail ? (
             <div className="flex items-center justify-center py-12">
               <Loader2 className="h-8 w-8 animate-spin text-zinc-400" />
             </div>
-          ) : ticketDetail && (
-            <>
-              <DialogHeader>
-                <DialogTitle className="flex items-center gap-2">
-                  {getStatusIcon(ticketDetail.status)}
-                  {ticketDetail.title}
-                </DialogTitle>
-                <DialogDescription>
-                  {ticketDetail.id.slice(0, 8).toUpperCase()} • Created {formatDate(ticketDetail.createdAt)}
-                  {ticketDetail.issueType && <> • {formatIssueType(ticketDetail.issueType)}</>}
-                </DialogDescription>
-              </DialogHeader>
+          ) : (
+            ticketDetail && (
+              <>
+                <DialogHeader>
+                  <DialogTitle className="flex items-center gap-2">
+                    {getStatusIcon(ticketDetail.status)}
+                    {ticketDetail.title}
+                  </DialogTitle>
+                  <DialogDescription>
+                    {ticketDetail.id.slice(0, 8).toUpperCase()} • Created{" "}
+                    {formatDate(ticketDetail.createdAt)}
+                    {ticketDetail.issueType && (
+                      <> • {formatIssueType(ticketDetail.issueType)}</>
+                    )}
+                  </DialogDescription>
+                </DialogHeader>
 
-              <div className="flex-1 overflow-y-auto max-h-[60vh] space-y-4 pb-4">
-                {/* User Info */}
-                <div className="flex items-center gap-3 p-3 rounded-lg bg-zinc-50 dark:bg-zinc-900">
-                  <Avatar>
-                    <AvatarImage src={ticketDetail.user?.image || ""} />
-                    <AvatarFallback>{ticketDetail.user?.name?.charAt(0) || "U"}</AvatarFallback>
-                  </Avatar>
+                <div className="flex-1 overflow-y-auto max-h-[60vh] space-y-4 pb-4">
+                  {/* User Info */}
+                  <div className="flex items-center gap-3 p-3 rounded-lg bg-zinc-50 dark:bg-zinc-900">
+                    <Avatar>
+                      <AvatarImage src={ticketDetail.user?.image || ""} />
+                      <AvatarFallback>
+                        {ticketDetail.user?.name?.charAt(0) || "U"}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div>
+                      <p className="font-medium">
+                        {ticketDetail.user?.name || "Unknown"}
+                      </p>
+                      <p className="text-sm text-zinc-500">
+                        {ticketDetail.user?.email}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Description */}
                   <div>
-                    <p className="font-medium">{ticketDetail.user?.name || "Unknown"}</p>
-                    <p className="text-sm text-zinc-500">{ticketDetail.user?.email}</p>
+                    <p className="text-xs text-zinc-500 uppercase tracking-wide mb-1">
+                      Description
+                    </p>
+                    <p className="text-sm text-zinc-700 dark:text-zinc-300 whitespace-pre-wrap">
+                      {ticketDetail.description}
+                    </p>
                   </div>
-                </div>
 
-                {/* Description */}
-                <div>
-                  <p className="text-xs text-zinc-500 uppercase tracking-wide mb-1">Description</p>
-                  <p className="text-sm text-zinc-700 dark:text-zinc-300 whitespace-pre-wrap">{ticketDetail.description}</p>
-                </div>
-
-                {/* Linked Entities */}
-                {(ticketDetail.linkedConsultation || ticketDetail.linkedPayment) && (
-                  <div className="p-3 rounded-lg border border-zinc-200 dark:border-zinc-700">
-                    <p className="text-xs text-zinc-500 uppercase tracking-wide mb-2">Linked Information</p>
-                    {ticketDetail.linkedPayment && (
-                      <div className="flex items-center gap-2 text-sm">
-                        <CreditCard className="h-4 w-4 text-zinc-400" />
-                        <span>Payment: {formatCurrency(ticketDetail.linkedPayment.amount, ticketDetail.linkedPayment.currency)}</span>
-                        <Badge variant="outline">{ticketDetail.linkedPayment.paymentStatus}</Badge>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Status Update */}
-                <div>
-                  <Label className="text-xs text-zinc-500 uppercase tracking-wide">Update Status</Label>
-                  <Select value={ticketDetail.status} onValueChange={handleUpdateStatus} disabled={updatingStatus}>
-                    <SelectTrigger className="mt-1">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="OPEN">Open</SelectItem>
-                      <SelectItem value="IN_PROGRESS">In Progress</SelectItem>
-                      <SelectItem value="ON_HOLD">On Hold</SelectItem>
-                      <SelectItem value="RESOLVED">Resolved</SelectItem>
-                      <SelectItem value="CLOSED">Closed</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <Separator />
-
-                {/* Responses */}
-                <div>
-                  <p className="text-xs text-zinc-500 uppercase tracking-wide mb-2">Conversation</p>
-                  <div className="space-y-3">
-                    {ticketDetail.responses?.map((response) => (
-                      <div key={response.id} className={`p-3 rounded-lg ${response.isInternal ? "bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800" : "bg-zinc-50 dark:bg-zinc-800"}`}>
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="text-xs font-medium">{response.user?.name || "Unknown"}</span>
-                          {response.isInternal && <Badge variant="outline" className="text-xs bg-amber-100 text-amber-700 border-amber-300">Internal</Badge>}
-                          <span className="text-xs text-zinc-400">{formatDate(response.createdAt)}</span>
+                  {/* Linked Entities */}
+                  {(ticketDetail.linkedConsultation ||
+                    ticketDetail.linkedPayment) && (
+                    <div className="p-3 rounded-lg border border-zinc-200 dark:border-zinc-700">
+                      <p className="text-xs text-zinc-500 uppercase tracking-wide mb-2">
+                        Linked Information
+                      </p>
+                      {ticketDetail.linkedPayment && (
+                        <div className="flex items-center gap-2 text-sm">
+                          <CreditCard className="h-4 w-4 text-zinc-400" />
+                          <span>
+                            Payment:{" "}
+                            {formatCurrency(
+                              ticketDetail.linkedPayment.amount,
+                              ticketDetail.linkedPayment.currency,
+                            )}
+                          </span>
+                          <Badge variant="outline">
+                            {ticketDetail.linkedPayment.paymentStatus}
+                          </Badge>
                         </div>
-                        <p className="text-sm text-zinc-700 dark:text-zinc-300">{response.message}</p>
-                      </div>
-                    ))}
-                    {(!ticketDetail.responses || ticketDetail.responses.length === 0) && (
-                      <p className="text-sm text-zinc-400 text-center py-4">No responses yet</p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Status Update */}
+                  <div>
+                    <Label className="text-xs text-zinc-500 uppercase tracking-wide">
+                      Update Status
+                    </Label>
+                    <Select
+                      value={ticketDetail.status}
+                      onValueChange={handleUpdateStatus}
+                      disabled={updatingStatus}
+                    >
+                      <SelectTrigger className="mt-1">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="OPEN">Open</SelectItem>
+                        <SelectItem value="IN_PROGRESS">In Progress</SelectItem>
+                        <SelectItem value="ON_HOLD">On Hold</SelectItem>
+                        <SelectItem value="RESOLVED">Resolved</SelectItem>
+                        <SelectItem value="CLOSED">Closed</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <Separator />
+
+                  {/* Responses */}
+                  <div>
+                    <p className="text-xs text-zinc-500 uppercase tracking-wide mb-2">
+                      Conversation
+                    </p>
+                    <div className="space-y-3">
+                      {ticketDetail.responses?.map((response) => (
+                        <div
+                          key={response.id}
+                          className={`p-3 rounded-lg ${response.isInternal ? "bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800" : "bg-zinc-50 dark:bg-zinc-800"}`}
+                        >
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="text-xs font-medium">
+                              {response.user?.name || "Unknown"}
+                            </span>
+                            {response.isInternal && (
+                              <Badge
+                                variant="outline"
+                                className="text-xs bg-amber-100 text-amber-700 border-amber-300"
+                              >
+                                Internal
+                              </Badge>
+                            )}
+                            <span className="text-xs text-zinc-400">
+                              {formatDate(response.createdAt)}
+                            </span>
+                          </div>
+                          <p className="text-sm text-zinc-700 dark:text-zinc-300">
+                            {response.message}
+                          </p>
+                        </div>
+                      ))}
+                      {(!ticketDetail.responses ||
+                        ticketDetail.responses.length === 0) && (
+                        <p className="text-sm text-zinc-400 text-center py-4">
+                          No responses yet
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Reply Form */}
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2">
+                      <Label>Reply</Label>
+                      <label className="flex items-center gap-1.5 text-xs">
+                        <input
+                          type="checkbox"
+                          checked={isInternalNote}
+                          onChange={(e) => setIsInternalNote(e.target.checked)}
+                          className="rounded"
+                        />
+                        Internal note
+                      </label>
+                    </div>
+                    <Textarea
+                      placeholder={
+                        isInternalNote
+                          ? "Add internal note..."
+                          : "Type your reply..."
+                      }
+                      value={replyText}
+                      onChange={(e) => setReplyText(e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                <DialogFooter className="mt-4">
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setSelectedTicket(null);
+                      setTicketDetail(null);
+                      setReplyText("");
+                    }}
+                  >
+                    Close
+                  </Button>
+                  <Button
+                    onClick={handleSendReply}
+                    disabled={sendingReply || !replyText.trim()}
+                  >
+                    {sendingReply ? (
+                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    ) : (
+                      <Send className="h-4 w-4 mr-2" />
                     )}
-                  </div>
-                </div>
-
-                {/* Reply Form */}
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2">
-                    <Label>Reply</Label>
-                    <label className="flex items-center gap-1.5 text-xs">
-                      <input type="checkbox" checked={isInternalNote} onChange={(e) => setIsInternalNote(e.target.checked)} className="rounded" />
-                      Internal note
-                    </label>
-                  </div>
-                  <Textarea placeholder={isInternalNote ? "Add internal note..." : "Type your reply..."} value={replyText} onChange={(e) => setReplyText(e.target.value)} />
-                </div>
-              </div>
-
-              <DialogFooter className="mt-4">
-                <Button variant="outline" onClick={() => { setSelectedTicket(null); setTicketDetail(null); setReplyText(""); }}>
-                  Close
-                </Button>
-                <Button onClick={handleSendReply} disabled={sendingReply || !replyText.trim()}>
-                  {sendingReply ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Send className="h-4 w-4 mr-2" />}
-                  {isInternalNote ? "Add Note" : "Send Reply"}
-                </Button>
-              </DialogFooter>
-            </>
+                    {isInternalNote ? "Add Note" : "Send Reply"}
+                  </Button>
+                </DialogFooter>
+              </>
+            )
           )}
         </DialogContent>
       </Dialog>

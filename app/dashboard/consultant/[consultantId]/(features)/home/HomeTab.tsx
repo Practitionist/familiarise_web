@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -12,12 +13,10 @@ import {
   DashboardHeader,
   DashboardContent,
   DashboardGrid,
-  StatCard,
-  DataCard,
-  ActivityItem,
-  EmptyState,
-  AppointmentCard,
-} from "@/components/dashboard";
+} from "@/components/dashboard/DashboardShell";
+import { StatCard } from "@/components/dashboard/StatCard";
+import { DataCard, ActivityItem, EmptyState } from "@/components/dashboard/DataCard";
+import { AppointmentCard } from "@/components/dashboard/AppointmentCard";
 import {
   Calendar,
   Clock,
@@ -142,11 +141,39 @@ export function HomeTab({
   const groupedAll = groupRecurringAppointments(allUpcomingAppointments);
   const upcomingGroups = Object.entries(groupedAll).slice(0, 5);
 
-  // Calculate stats
+  // Calculate stats from real data
   const totalToday = getTodayAppointments(expandedAppointments).length;
   const totalUpcoming = allUpcomingAppointments.length;
-  const pendingRequests = 3; // This would come from props
-  const completedThisWeek = 12; // This would come from props
+
+  // Calculate pending requests and completed this week with memoization
+  const { pendingRequests, completedThisWeek } = useMemo(() => {
+    // Calculate pending requests from appointments with PENDING status
+    const pending = (appointments || []).filter((appointment) => {
+      const consultation = appointment.consultation;
+      const subscription = appointment.subscription;
+      const status =
+        consultation?.requestStatus ?? subscription?.requestStatus ?? null;
+      return status === "PENDING" || status === "APPROVED_PENDING_PAYMENT";
+    }).length;
+
+    // Calculate completed this week
+    const now = new Date();
+    const startOfWeek = new Date(now);
+    startOfWeek.setDate(now.getDate() - now.getDay()); // Go to Sunday
+    startOfWeek.setHours(0, 0, 0, 0);
+
+    const completed = expandedAppointments.filter((appointment) => {
+      const status = getAppointmentStatus(appointment);
+      if (status !== "Completed") return false;
+
+      const startTime = getStartTime(appointment);
+      if (!startTime) return false;
+
+      return startTime >= startOfWeek && startTime <= now;
+    }).length;
+
+    return { pendingRequests: pending, completedThisWeek: completed };
+  }, [appointments, expandedAppointments]);
 
   return (
     <>

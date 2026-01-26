@@ -1,8 +1,10 @@
 import { faker } from "@faker-js/faker";
 import { Topic } from "@prisma/client";
 import prisma from "../../lib/prisma";
+import { config } from "./config";
 
-const NUM_TOPICS = 100;
+// Topic volume - configurable via SEED_MODE environment variable
+const NUM_TOPICS = config.volumes.topics;
 
 export async function createTopics() {
   console.log(`Creating ${NUM_TOPICS} topics...`);

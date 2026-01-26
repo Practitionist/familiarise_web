@@ -100,12 +100,14 @@ export class SlotAllocationService {
         // Count existing slots by tentative status
         const existingNonTentativeSlotCount = existingAppointments.reduce(
           (count: number, app: any) =>
-            count + app.slotsOfAppointment.filter((s: any) => !s.isTentative).length,
+            count +
+            app.slotsOfAppointment.filter((s: any) => !s.isTentative).length,
           0,
         );
         const tentativeSlotCount = existingAppointments.reduce(
           (count: number, app: any) =>
-            count + app.slotsOfAppointment.filter((s: any) => s.isTentative).length,
+            count +
+            app.slotsOfAppointment.filter((s: any) => s.isTentative).length,
           0,
         );
         const isReschedule = tentativeSlotCount > 0;
@@ -175,7 +177,12 @@ export class SlotAllocationService {
         // CRITICAL FIX: Delete existing appointments before creating new ones
         // For reschedules: only delete appointments with tentative slots (preserve confirmed ones)
         // For initial allocation: delete all (shouldn't be any, but safety measure)
-        await this.deleteExistingAppointments(tx, eventType, eventId, isReschedule);
+        await this.deleteExistingAppointments(
+          tx,
+          eventType,
+          eventId,
+          isReschedule,
+        );
 
         // Create appointments
         const appointments = await this.createAppointments(

@@ -641,7 +641,8 @@ export function useCalendarData(
     if (autoLoad && consultantId) {
       // FIX: Only show loading spinner on initial load, not on background refetches
       // This prevents "Loading calendar..." from showing when toast triggers re-render
-      const isInitialLoad = !consultantDetails && rawAvailabilitySlots.weekly.length === 0;
+      const isInitialLoad =
+        !consultantDetails && rawAvailabilitySlots.weekly.length === 0;
       if (isInitialLoad) {
         setLoading(true);
       }

@@ -47,19 +47,19 @@ Located in `lib/payments/payouts/constants.ts`:
 ```typescript
 export const PAYOUT_CONSTANTS = {
   // Revenue split
-  PLATFORM_FEE_PERCENTAGE: 20,      // Platform takes 20%
-  CONSULTANT_SHARE_PERCENTAGE: 80,  // Consultant gets 80%
+  PLATFORM_FEE_PERCENTAGE: 20, // Platform takes 20%
+  CONSULTANT_SHARE_PERCENTAGE: 80, // Consultant gets 80%
 
   // Thresholds (in paise)
-  MINIMUM_PAYOUT_AMOUNT: 50000,     // ₹500 minimum
-  AUTO_APPROVE_THRESHOLD: 500000,   // ₹5000 auto-approve limit
+  MINIMUM_PAYOUT_AMOUNT: 50000, // ₹500 minimum
+  AUTO_APPROVE_THRESHOLD: 500000, // ₹5000 auto-approve limit
 
   // Hold periods (hours)
   HOLD_PERIOD_HOURS: {
-    CONSULTATION: 24,   // 24 hours
-    WEBINAR: 48,        // 48 hours
-    SUBSCRIPTION: 168,  // 7 days
-    CLASS: 24,          // 24 hours
+    CONSULTATION: 24, // 24 hours
+    WEBINAR: 48, // 48 hours
+    SUBSCRIPTION: 168, // 7 days
+    CLASS: 24, // 24 hours
   },
 
   // Retry config
@@ -83,13 +83,13 @@ To change thresholds:
 
 ```typescript
 export const TAX_CONSTANTS = {
-  GST_RATE: 18,                    // 18% GST
-  SAC_CODE: "999293",              // Consulting services
+  GST_RATE: 18, // 18% GST
+  SAC_CODE: "999293", // Consulting services
 
   HSN_CODES: {
-    CONSULTING: "999293",          // SAC for consulting
-    EDUCATION: "999294",           // SAC for education
-    TRAINING: "999295",            // SAC for training
+    CONSULTING: "999293", // SAC for consulting
+    EDUCATION: "999294", // SAC for education
+    TRAINING: "999295", // SAC for training
   },
 };
 ```
@@ -100,17 +100,17 @@ export const TAX_CONSTANTS = {
 
 ```typescript
 export const PAYOUT_MODES = {
-  IMPS_LIMIT: 50000000,   // ₹5 Lakh - instant transfer
-  RTGS_MIN: 20000000,     // ₹2 Lakh - RTGS minimum
+  IMPS_LIMIT: 50000000, // ₹5 Lakh - instant transfer
+  RTGS_MIN: 20000000, // ₹2 Lakh - RTGS minimum
 };
 ```
 
-| Mode | Amount Range | Speed | Availability |
-|------|--------------|-------|--------------|
-| IMPS | Up to ₹5 Lakh | < 5 minutes | 24x7 |
-| NEFT | Any amount | 2-4 hours | Bank hours |
-| RTGS | ₹2 Lakh+ | 30 minutes | Bank hours |
-| UPI | Up to ₹1 Lakh | Instant | 24x7 |
+| Mode | Amount Range  | Speed       | Availability |
+| ---- | ------------- | ----------- | ------------ |
+| IMPS | Up to ₹5 Lakh | < 5 minutes | 24x7         |
+| NEFT | Any amount    | 2-4 hours   | Bank hours   |
+| RTGS | ₹2 Lakh+      | 30 minutes  | Bank hours   |
+| UPI  | Up to ₹1 Lakh | Instant     | 24x7         |
 
 ---
 
@@ -124,24 +124,24 @@ Set these in GitHub repository settings:
 Settings → Secrets and Variables → Actions → New repository secret
 ```
 
-| Secret | Description |
-|--------|-------------|
-| `DATABASE_URL` | Production database connection string |
-| `RAZORPAY_KEY_ID` | RazorpayX API key ID |
-| `RAZORPAY_KEY_SECRET` | RazorpayX API secret |
-| `RAZORPAYX_ACCOUNT_NUMBER` | RazorpayX account number |
-| `STRIPE_SECRET_KEY` | Stripe secret key |
-| `PAYOUT_CRON_SECRET` | Secret for cron job auth |
+| Secret                     | Description                           |
+| -------------------------- | ------------------------------------- |
+| `DATABASE_URL`             | Production database connection string |
+| `RAZORPAY_KEY_ID`          | RazorpayX API key ID                  |
+| `RAZORPAY_KEY_SECRET`      | RazorpayX API secret                  |
+| `RAZORPAYX_ACCOUNT_NUMBER` | RazorpayX account number              |
+| `STRIPE_SECRET_KEY`        | Stripe secret key                     |
+| `PAYOUT_CRON_SECRET`       | Secret for cron job auth              |
 
 ### Workflow Schedules
 
 Located in `.github/workflows/`:
 
-| Workflow | File | Schedule (UTC) | Schedule (IST) |
-|----------|------|----------------|----------------|
-| Release Earnings | `release-earnings.yml` | `0 * * * *` (hourly) | Every hour |
-| Create Batch | `create-payout-batch.yml` | `0 20 * * 0` | Monday 1:30 AM |
-| Process Payouts | `process-payouts.yml` | `0 21 * * 0` | Monday 2:30 AM |
+| Workflow         | File                      | Schedule (UTC)       | Schedule (IST) |
+| ---------------- | ------------------------- | -------------------- | -------------- |
+| Release Earnings | `release-earnings.yml`    | `0 * * * *` (hourly) | Every hour     |
+| Create Batch     | `create-payout-batch.yml` | `0 20 * * 0`         | Monday 1:30 AM |
+| Process Payouts  | `process-payouts.yml`     | `0 21 * * 0`         | Monday 2:30 AM |
 
 ### Modifying Schedules
 
@@ -150,8 +150,8 @@ Edit the cron expression in workflow files:
 ```yaml
 on:
   schedule:
-    - cron: '0 20 * * 0'  # Sunday 8PM UTC = Monday 1:30 AM IST
-  workflow_dispatch:  # Allow manual trigger
+    - cron: "0 20 * * 0" # Sunday 8PM UTC = Monday 1:30 AM IST
+  workflow_dispatch: # Allow manual trigger
 ```
 
 **Cron Format:** `minute hour day month weekday`
@@ -266,7 +266,7 @@ Enable mock mode to skip gateway calls:
 const payment = await prisma.payment.create({
   data: {
     ...paymentData,
-    isMockPayment: true,  // Skip gateway
+    isMockPayment: true, // Skip gateway
   },
 });
 ```
@@ -339,12 +339,12 @@ Configure in workflow files:
 
 ### Common Issues
 
-| Issue | Cause | Solution |
-|-------|-------|----------|
-| Payouts not processing | Missing API keys | Check environment variables |
-| Webhook not received | Wrong endpoint URL | Verify webhook configuration |
-| Earnings not releasing | Cron not running | Check GitHub Actions status |
-| Bank transfer failed | Invalid IFSC | Verify account details |
+| Issue                  | Cause              | Solution                     |
+| ---------------------- | ------------------ | ---------------------------- |
+| Payouts not processing | Missing API keys   | Check environment variables  |
+| Webhook not received   | Wrong endpoint URL | Verify webhook configuration |
+| Earnings not releasing | Cron not running   | Check GitHub Actions status  |
+| Bank transfer failed   | Invalid IFSC       | Verify account details       |
 
 ### Debug Steps
 

@@ -42,19 +42,19 @@ import type {
 // Define a type for the fetched WebinarPlan data
 export type CheckoutWebinarPlanData = WebinarPlan & {
   consultantProfile:
-  | (ConsultantProfile & {
-    user: User;
-    domain: Domain | null;
-    subDomains: SubDomain[];
-    tags: PrismaTag[];
-  })
-  | null;
+    | (ConsultantProfile & {
+        user: User;
+        domain: Domain | null;
+        subDomains: SubDomain[];
+        tags: PrismaTag[];
+      })
+    | null;
   webinars: (PrismaWebinar & {
     appointment:
-    | (Appointment & {
-      slotsOfAppointment: SlotOfAppointment[];
-    })
-    | null;
+      | (Appointment & {
+          slotsOfAppointment: SlotOfAppointment[];
+        })
+      | null;
   })[];
   topics: PrismaTopic[];
   type: "webinar";
@@ -173,12 +173,17 @@ export default function WebinarCheckoutPage({
         }
 
         // Create checkout data using the shared utility
+        const fromWaitlist =
+          typeof resolvedSearchParams.fromWaitlist === "string"
+            ? resolvedSearchParams.fromWaitlist
+            : undefined;
         const checkoutData = createCheckoutData({
           appointmentType: "WEBINAR",
           planId: planData.data.id,
           eventId: searchParamsValidation.data.eventId,
           discountCode: appliedDiscount?.code,
           paymentGateway: gateway,
+          fromWaitlist,
         });
 
         // Handle unified checkout flow using the utility
@@ -295,7 +300,7 @@ export default function WebinarCheckoutPage({
     }
     return calculatePricing(basePrice, {
       discountPercent: discountAmount > 0 ? 0 : discountPercent,
-      discountAmount
+      discountAmount,
     });
   }, [planData?.data?.price, appliedDiscount]);
 
@@ -359,7 +364,7 @@ export default function WebinarCheckoutPage({
                 {userDetails?.name || "Consultant Name"}
               </div>
               <div className="text-sm text-muted-foreground">
-                {consultantDetails?.specialization || "Consultant"}
+                {consultantDetails?.headline || consultantDetails?.domain?.name || "Consultant"}
               </div>
             </div>
           </div>
@@ -635,7 +640,7 @@ export default function WebinarCheckoutPage({
                         disabled={isCheckoutProcessing}
                       >
                         {isCheckoutProcessing &&
-                          processingGateway === `${gateway.gateway}-mock` ? (
+                        processingGateway === `${gateway.gateway}-mock` ? (
                           <>
                             <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-current mr-2"></div>
                             Processing...

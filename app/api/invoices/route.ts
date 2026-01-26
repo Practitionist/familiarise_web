@@ -32,7 +32,7 @@ export async function GET(req: NextRequest) {
         status: status || undefined,
         limit,
         offset,
-      }
+      },
     );
 
     return NextResponse.json({
@@ -48,7 +48,7 @@ export async function GET(req: NextRequest) {
     console.error("Error fetching invoices:", error);
     return NextResponse.json(
       { error: "Failed to fetch invoices" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

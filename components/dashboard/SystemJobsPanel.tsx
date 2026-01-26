@@ -1,10 +1,18 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { cn } from "@/utils/tailwind";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import {
   CreditCard,
   Clock,
@@ -18,6 +26,9 @@ import {
   Trash2,
   Database,
   Bell,
+  History,
+  CheckCircle2,
+  XCircle,
 } from "lucide-react";
 
 // Job configuration
@@ -26,7 +37,16 @@ export interface SystemJob {
   name: string;
   description: string;
   schedule: string;
-  category: "Payments" | "Refunds" | "Disputes" | "Earnings" | "Appointments" | "Payouts" | "Cleanup" | "Reconciliation" | "Alerts";
+  category:
+    | "Payments"
+    | "Refunds"
+    | "Disputes"
+    | "Earnings"
+    | "Appointments"
+    | "Payouts"
+    | "Cleanup"
+    | "Reconciliation"
+    | "Alerts";
 }
 
 const SYSTEM_JOBS: SystemJob[] = [
@@ -64,7 +84,8 @@ const SYSTEM_JOBS: SystemJob[] = [
   {
     id: "handle-lost-disputes",
     name: "Handle Lost Disputes",
-    description: "Reverse earnings on lost disputes (CRITICAL alerts if already paid)",
+    description:
+      "Reverse earnings on lost disputes (CRITICAL alerts if already paid)",
     schedule: "Every 6 hours",
     category: "Disputes",
   },
@@ -94,7 +115,8 @@ const SYSTEM_JOBS: SystemJob[] = [
   {
     id: "cleanup-invalid-appointments",
     name: "Cleanup Invalid Appointments",
-    description: "Cancel duplicate and invalid-duration consultations/subscriptions",
+    description:
+      "Cancel duplicate and invalid-duration consultations/subscriptions",
     schedule: "Hourly",
     category: "Appointments",
   },
@@ -146,7 +168,8 @@ const SYSTEM_JOBS: SystemJob[] = [
   {
     id: "auth-tokens",
     name: "Auth Token Cleanup",
-    description: "Delete expired sessions, verification tokens, password reset tokens",
+    description:
+      "Delete expired sessions, verification tokens, password reset tokens",
     schedule: "Daily",
     category: "Cleanup",
   },
@@ -167,7 +190,8 @@ const SYSTEM_JOBS: SystemJob[] = [
   {
     id: "expire-stale-requests",
     name: "Expire Stale Requests",
-    description: "Auto-expire PENDING requests >30 days, APPROVED_PENDING_PAYMENT >7 days",
+    description:
+      "Auto-expire PENDING requests >30 days, APPROVED_PENDING_PAYMENT >7 days",
     schedule: "Daily",
     category: "Cleanup",
   },
@@ -189,7 +213,8 @@ const SYSTEM_JOBS: SystemJob[] = [
   {
     id: "reconcile-payment-status",
     name: "Reconcile Payment Status",
-    description: "Query Stripe/Razorpay for actual status on stale PENDING payments",
+    description:
+      "Query Stripe/Razorpay for actual status on stale PENDING payments",
     schedule: "Every 30 minutes",
     category: "Reconciliation",
   },
@@ -217,7 +242,10 @@ const SYSTEM_JOBS: SystemJob[] = [
   },
 ];
 
-const CATEGORY_CONFIG: Record<SystemJob["category"], { icon: typeof CreditCard; color: string }> = {
+const CATEGORY_CONFIG: Record<
+  SystemJob["category"],
+  { icon: typeof CreditCard; color: string }
+> = {
   Payments: { icon: CreditCard, color: "blue" },
   Refunds: { icon: RefreshCw, color: "purple" },
   Disputes: { icon: AlertTriangle, color: "amber" },
@@ -239,16 +267,55 @@ function JobCard({ job, isRunning, onRun }: JobCardProps) {
   const config = CATEGORY_CONFIG[job.category];
   const Icon = config.icon;
 
-  const colorClasses: Record<string, { bg: string; text: string; badge: string }> = {
-    blue: { bg: "bg-blue-50", text: "text-blue-600", badge: "bg-blue-100 text-blue-700" },
-    purple: { bg: "bg-purple-50", text: "text-purple-600", badge: "bg-purple-100 text-purple-700" },
-    amber: { bg: "bg-amber-50", text: "text-amber-600", badge: "bg-amber-100 text-amber-700" },
-    emerald: { bg: "bg-emerald-50", text: "text-emerald-600", badge: "bg-emerald-100 text-emerald-700" },
-    indigo: { bg: "bg-indigo-50", text: "text-indigo-600", badge: "bg-indigo-100 text-indigo-700" },
-    pink: { bg: "bg-pink-50", text: "text-pink-600", badge: "bg-pink-100 text-pink-700" },
-    gray: { bg: "bg-zinc-50", text: "text-zinc-600", badge: "bg-zinc-100 text-zinc-700" },
-    cyan: { bg: "bg-cyan-50", text: "text-cyan-600", badge: "bg-cyan-100 text-cyan-700" },
-    red: { bg: "bg-red-50", text: "text-red-600", badge: "bg-red-100 text-red-700" },
+  const colorClasses: Record<
+    string,
+    { bg: string; text: string; badge: string }
+  > = {
+    blue: {
+      bg: "bg-blue-50",
+      text: "text-blue-600",
+      badge: "bg-blue-100 text-blue-700",
+    },
+    purple: {
+      bg: "bg-purple-50",
+      text: "text-purple-600",
+      badge: "bg-purple-100 text-purple-700",
+    },
+    amber: {
+      bg: "bg-amber-50",
+      text: "text-amber-600",
+      badge: "bg-amber-100 text-amber-700",
+    },
+    emerald: {
+      bg: "bg-emerald-50",
+      text: "text-emerald-600",
+      badge: "bg-emerald-100 text-emerald-700",
+    },
+    indigo: {
+      bg: "bg-indigo-50",
+      text: "text-indigo-600",
+      badge: "bg-indigo-100 text-indigo-700",
+    },
+    pink: {
+      bg: "bg-pink-50",
+      text: "text-pink-600",
+      badge: "bg-pink-100 text-pink-700",
+    },
+    gray: {
+      bg: "bg-zinc-50",
+      text: "text-zinc-600",
+      badge: "bg-zinc-100 text-zinc-700",
+    },
+    cyan: {
+      bg: "bg-cyan-50",
+      text: "text-cyan-600",
+      badge: "bg-cyan-100 text-cyan-700",
+    },
+    red: {
+      bg: "bg-red-50",
+      text: "text-red-600",
+      badge: "bg-red-100 text-red-700",
+    },
   };
 
   const colors = colorClasses[config.color];
@@ -262,12 +329,24 @@ function JobCard({ job, isRunning, onRun }: JobCardProps) {
       <div className="flex items-start justify-between gap-4">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-3 mb-2">
-            <div className={cn("flex h-10 w-10 items-center justify-center rounded-lg", colors.bg)}>
+            <div
+              className={cn(
+                "flex h-10 w-10 items-center justify-center rounded-lg",
+                colors.bg,
+              )}
+            >
               <Icon className={cn("h-5 w-5", colors.text)} />
             </div>
             <div>
-              <h3 className="font-semibold text-zinc-900 text-sm">{job.name}</h3>
-              <span className={cn("inline-block mt-0.5 px-2 py-0.5 rounded text-xs font-medium", colors.badge)}>
+              <h3 className="font-semibold text-zinc-900 text-sm">
+                {job.name}
+              </h3>
+              <span
+                className={cn(
+                  "inline-block mt-0.5 px-2 py-0.5 rounded text-xs font-medium",
+                  colors.badge,
+                )}
+              >
                 {job.category}
               </span>
             </div>
@@ -305,13 +384,50 @@ function JobCard({ job, isRunning, onRun }: JobCardProps) {
   );
 }
 
+interface JobExecution {
+  id: string;
+  jobId: string;
+  jobName: string;
+  status: "RUNNING" | "COMPLETED" | "FAILED";
+  startedAt: string;
+  completedAt: string | null;
+  result: Record<string, unknown> | null;
+  errorMessage: string | null;
+  triggeredBy: {
+    name: string | null;
+  };
+}
+
 interface SystemJobsPanelProps {
   className?: string;
 }
 
 export function SystemJobsPanel({ className }: SystemJobsPanelProps) {
   const [runningJobs, setRunningJobs] = useState<Set<string>>(new Set());
+  const [executions, setExecutions] = useState<JobExecution[]>([]);
+  const [loadingExecutions, setLoadingExecutions] = useState(true);
   const { toast } = useToast();
+
+  // Fetch recent executions
+  const fetchExecutions = async () => {
+    try {
+      setLoadingExecutions(true);
+      const response = await fetch(
+        "/api/staff/system-jobs/executions?limit=10",
+      );
+      if (!response.ok) throw new Error("Failed to fetch executions");
+      const data = await response.json();
+      setExecutions(data.executions || []);
+    } catch (error) {
+      console.error("Error fetching executions:", error);
+    } finally {
+      setLoadingExecutions(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchExecutions();
+  }, []);
 
   const handleRunJob = async (job: SystemJob) => {
     setRunningJobs((prev) => new Set(prev).add(job.id));
@@ -331,19 +447,28 @@ export function SystemJobsPanel({ className }: SystemJobsPanelProps) {
 
       // Format result message
       const stats = [];
-      if (result.totalProcessed !== undefined) stats.push(`Processed: ${result.totalProcessed}`);
-      if (result.cleanedCount !== undefined) stats.push(`Cleaned: ${result.cleanedCount}`);
-      if (result.updatedCount !== undefined) stats.push(`Updated: ${result.updatedCount}`);
-      if (result.createdCount !== undefined) stats.push(`Created: ${result.createdCount}`);
-      if (result.reconciledCount !== undefined) stats.push(`Reconciled: ${result.reconciledCount}`);
-      if (result.releasedCount !== undefined) stats.push(`Released: ${result.releasedCount}`);
+      if (result.totalProcessed !== undefined)
+        stats.push(`Processed: ${result.totalProcessed}`);
+      if (result.cleanedCount !== undefined)
+        stats.push(`Cleaned: ${result.cleanedCount}`);
+      if (result.updatedCount !== undefined)
+        stats.push(`Updated: ${result.updatedCount}`);
+      if (result.createdCount !== undefined)
+        stats.push(`Created: ${result.createdCount}`);
+      if (result.reconciledCount !== undefined)
+        stats.push(`Reconciled: ${result.reconciledCount}`);
+      if (result.releasedCount !== undefined)
+        stats.push(`Released: ${result.releasedCount}`);
       if (result.errorCount !== undefined || result.errors?.length) {
-        stats.push(`Errors: ${result.errorCount || result.errors?.length || 0}`);
+        stats.push(
+          `Errors: ${result.errorCount || result.errors?.length || 0}`,
+        );
       }
 
       toast({
         title: `✅ ${job.name} completed`,
-        description: stats.length > 0 ? stats.join(" | ") : "Job completed successfully",
+        description:
+          stats.length > 0 ? stats.join(" | ") : "Job completed successfully",
         variant: "default",
       });
 
@@ -358,9 +483,12 @@ export function SystemJobsPanel({ className }: SystemJobsPanelProps) {
     } catch (error) {
       toast({
         title: `❌ ${job.name} failed`,
-        description: error instanceof Error ? error.message : "An error occurred",
+        description:
+          error instanceof Error ? error.message : "An error occurred",
         variant: "destructive",
       });
+      // Refresh executions after job runs
+      fetchExecutions();
     } finally {
       setRunningJobs((prev) => {
         const next = new Set(prev);
@@ -382,8 +510,113 @@ export function SystemJobsPanel({ className }: SystemJobsPanelProps) {
 
   const categories = Object.keys(jobsByCategory) as SystemJob["category"][];
 
+  const formatExecutionTime = (dateString: string) => {
+    const date = new Date(dateString);
+    return date.toLocaleString("en-IN", {
+      day: "numeric",
+      month: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  };
+
+  const getExecutionStatusBadge = (status: JobExecution["status"]) => {
+    switch (status) {
+      case "COMPLETED":
+        return (
+          <Badge className="bg-green-100 text-green-700 gap-1">
+            <CheckCircle2 className="h-3 w-3" />
+            Completed
+          </Badge>
+        );
+      case "FAILED":
+        return (
+          <Badge className="bg-red-100 text-red-700 gap-1">
+            <XCircle className="h-3 w-3" />
+            Failed
+          </Badge>
+        );
+      case "RUNNING":
+        return (
+          <Badge className="bg-blue-100 text-blue-700 gap-1">
+            <Loader2 className="h-3 w-3 animate-spin" />
+            Running
+          </Badge>
+        );
+    }
+  };
+
   return (
     <div className={cn("space-y-8", className)}>
+      {/* Recent Executions */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <History className="h-5 w-5" />
+                Recent Executions
+              </CardTitle>
+              <CardDescription>Last 10 job executions</CardDescription>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={fetchExecutions}
+              disabled={loadingExecutions}
+            >
+              <RefreshCw
+                className={`h-4 w-4 ${loadingExecutions ? "animate-spin" : ""}`}
+              />
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {loadingExecutions ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-6 w-6 animate-spin text-zinc-400" />
+            </div>
+          ) : executions.length === 0 ? (
+            <p className="text-center text-zinc-500 py-8">
+              No recent executions
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {executions.map((execution) => (
+                <div
+                  key={execution.id}
+                  className="flex items-center justify-between p-3 rounded-lg border border-zinc-200 dark:border-zinc-800"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="min-w-0">
+                      <p className="font-medium text-sm truncate">
+                        {execution.jobName}
+                      </p>
+                      <p className="text-xs text-zinc-500">
+                        by {execution.triggeredBy.name || "System"} •{" "}
+                        {formatExecutionTime(execution.startedAt)}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {execution.result && (
+                      <span className="text-xs text-zinc-400">
+                        {Object.entries(execution.result)
+                          .slice(0, 2)
+                          .map(([k, v]) => `${k}: ${v}`)
+                          .join(", ")}
+                      </span>
+                    )}
+                    {getExecutionStatusBadge(execution.status)}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Job Categories */}
       {categories.map((category) => (
         <div key={category}>
           <div className="flex items-center gap-2 mb-4">
@@ -392,7 +625,9 @@ export function SystemJobsPanel({ className }: SystemJobsPanelProps) {
               return <Icon className="h-5 w-5 text-zinc-400" />;
             })()}
             <h2 className="text-lg font-semibold text-zinc-900">{category}</h2>
-            <span className="text-sm text-zinc-400">({jobsByCategory[category].length} jobs)</span>
+            <span className="text-sm text-zinc-400">
+              ({jobsByCategory[category].length} jobs)
+            </span>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {jobsByCategory[category].map((job) => (

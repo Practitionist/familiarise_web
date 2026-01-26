@@ -38,7 +38,9 @@ function outputToGitHubActions(result: BatchResult): void {
 
   if (!result.success) {
     const allErrors = result.errors.join("; ");
-    console.log(`::error::Create payout batch job completed with errors: ${allErrors}`);
+    console.log(
+      `::error::Create payout batch job completed with errors: ${allErrors}`,
+    );
   }
 }
 
@@ -47,7 +49,9 @@ function outputToGitHubActions(result: BatchResult): void {
  */
 async function main(): Promise<void> {
   const startTime = Date.now();
-  console.log(`🚀 Starting payout batch creation job at ${new Date().toISOString()}`);
+  console.log(
+    `🚀 Starting payout batch creation job at ${new Date().toISOString()}`,
+  );
 
   try {
     // Run batch creation
@@ -60,7 +64,9 @@ async function main(): Promise<void> {
     console.log(`\n📊 Batch Creation Summary:`);
     console.log(`   📦 Batch ID: ${result.batchId}`);
     console.log(`   ✅ Payouts created: ${result.payoutsCreated}`);
-    console.log(`   💰 Total amount: ₹${(result.totalAmount / 100).toFixed(2)}`);
+    console.log(
+      `   💰 Total amount: ₹${(result.totalAmount / 100).toFixed(2)}`,
+    );
     console.log(`   🤖 Auto-approved: ${result.autoApproved}`);
     console.log(`   ⏳ Pending approval: ${result.pendingApproval}`);
     console.log(`   ⚠️ Skipped (no account): ${result.skippedNoAccount}`);

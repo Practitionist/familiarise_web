@@ -3,10 +3,11 @@
 import { use } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
-import { HomeSkeleton } from "@/components/dashboard";
+import { HomeSkeleton } from "@/components/dashboard/DashboardSkeletons";
 import { createConsultantQueries } from "@/hooks/useCosultantPrefetchDashboard";
 import { BADGE_STYLES } from "../../types";
 import { HomeTab } from "./HomeTab";
+import type { TConsultantDashboardResponse } from "@/types/consultant-events";
 
 export default function HomePage({
   params,
@@ -27,7 +28,7 @@ export default function HomePage({
     isLoading,
     error,
     isStale,
-  } = useQuery(dashboardQuery);
+  } = useQuery<TConsultantDashboardResponse>(dashboardQuery);
 
   // Show skeleton only for initial load when no data exists
   if (isLoading && !dashboardData) {

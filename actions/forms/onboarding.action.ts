@@ -1,6 +1,6 @@
 "use server";
 
-import { processOnboardingData } from "@/utils/onboarding";
+import { processOnboardingData } from "@/utils/onboarding-server";
 
 // #region Main Server Action
 export async function updateOnboardingInformationAction(

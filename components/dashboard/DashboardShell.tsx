@@ -13,7 +13,9 @@ interface MobileSidebarContextType {
   toggle: () => void;
 }
 
-const MobileSidebarContext = createContext<MobileSidebarContextType | null>(null);
+const MobileSidebarContext = createContext<MobileSidebarContextType | null>(
+  null,
+);
 
 export function useMobileSidebar() {
   const context = useContext(MobileSidebarContext);
@@ -44,7 +46,7 @@ export function DashboardShell({
 
   return (
     <MobileSidebarContext.Provider value={contextValue}>
-      <div className={cn("flex h-screen bg-zinc-100", className)}>
+      <div className={cn("flex min-h-screen bg-zinc-100", className)}>
         {/* Desktop Sidebar */}
         <aside className="fixed left-0 top-0 z-40 hidden h-screen w-64 lg:block">
           {sidebar}
@@ -88,7 +90,7 @@ export function DashboardShell({
         </AnimatePresence>
 
         {/* Main Content */}
-        <main className="flex-1 lg:ml-64 flex flex-col h-screen overflow-y-auto bg-white">
+        <main className="flex-1 lg:ml-64 min-h-screen bg-zinc-100">
           {/* Mobile Header Bar */}
           <div className="sticky top-0 z-30 flex items-center gap-3 px-4 py-3 bg-white border-b border-zinc-200 lg:hidden">
             <Button
@@ -109,7 +111,7 @@ export function DashboardShell({
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -8 }}
               transition={{ duration: 0.2, ease: "easeOut" }}
-              className="flex-1 flex flex-col min-h-0 p-6 lg:p-8"
+              className="min-h-0 p-6 lg:p-8 bg-zinc-100"
             >
               {children}
             </motion.div>
@@ -129,10 +131,7 @@ export function MobileMenuButton({ className }: { className?: string }) {
       variant="ghost"
       size="icon"
       onClick={toggle}
-      className={cn(
-        "lg:hidden h-9 w-9 shrink-0",
-        className
-      )}
+      className={cn("lg:hidden h-9 w-9 shrink-0", className)}
     >
       <Menu className="h-5 w-5" />
       <span className="sr-only">Toggle menu</span>
@@ -178,12 +177,20 @@ export function DashboardHeader({
 
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
-            <h1 className="text-xl sm:text-2xl font-bold text-zinc-900 truncate">{title}</h1>
+            <h1 className="text-xl sm:text-2xl font-bold text-zinc-900 truncate">
+              {title}
+            </h1>
             {subtitle && (
-              <p className="text-xs sm:text-sm text-zinc-500 mt-0.5 truncate">{subtitle}</p>
+              <p className="text-xs sm:text-sm text-zinc-500 mt-0.5 truncate">
+                {subtitle}
+              </p>
             )}
           </div>
-          {actions && <div className="flex items-center gap-2 sm:gap-3 shrink-0">{actions}</div>}
+          {actions && (
+            <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+              {actions}
+            </div>
+          )}
         </div>
       </div>
     </div>

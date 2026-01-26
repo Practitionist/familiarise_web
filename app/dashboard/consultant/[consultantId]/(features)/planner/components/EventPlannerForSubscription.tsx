@@ -9,6 +9,7 @@ import {
   Settings,
   GraduationCap,
   Headphones,
+  Upload,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -41,19 +42,19 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { SubscriptionPlanSchema } from "@/schemas/plans";
 
-import {
-  FormSection,
-  LearningOutcomesField,
-  PriceField,
-  LanguageLevelFields,
-  SubmitButton,
-  FormConfirmationDialog,
-} from "./form-fields";
+import { FormSection } from "./form-fields/FormSection";
+import { LearningOutcomesField } from "./form-fields/LearningOutcomesField";
+import { PriceField } from "./form-fields/PriceField";
+import { LanguageLevelFields } from "./form-fields/LanguageLevelFields";
+import { SubmitButton } from "./form-fields/SubmitButton";
+import { FormConfirmationDialog } from "./form-fields/FormConfirmationDialog";
+import { TopicsMultiSelect } from "./TopicsMultiSelect";
 import {
   SubscriptionPlanEvent,
   SubscriptionPlannerProps,
 } from "../types/event";
 import { PlannerService } from "../services/planner";
+import { PlanMaterialsUpload } from "./PlanMaterialsUpload";
 
 export function EventPlannerForSubscription({
   isOpen,
@@ -65,9 +66,35 @@ export function EventPlannerForSubscription({
 }: Readonly<SubscriptionPlannerProps>) {
   const [internalIsSaving, setInternalIsSaving] = useState(false);
   const [showConfirmation, setShowConfirmation] = useState(false);
+  const [showMaterialsDialog, setShowMaterialsDialog] = useState(false);
+  const [availableTopics, setAvailableTopics] = useState<
+    { id: string; name: string; createdAt?: Date; updatedAt?: Date }[]
+  >([]);
+  const [isLoadingTopics, setIsLoadingTopics] = useState(false);
   const { toast } = useToast();
 
   const isSaving = externalIsSaving ?? internalIsSaving;
+
+  // Fetch available topics
+  useEffect(() => {
+    const fetchTopics = async () => {
+      try {
+        setIsLoadingTopics(true);
+        const fetchedTopics = await PlannerService.getTopics("");
+        setAvailableTopics(fetchedTopics);
+      } catch (error) {
+        console.error("Failed to fetch topics:", error);
+        toast({
+          title: "Error",
+          description: "Failed to load topics. Please try again.",
+          variant: "destructive",
+        });
+      } finally {
+        setIsLoadingTopics(false);
+      }
+    };
+    fetchTopics();
+  }, [toast]);
 
   const form = useForm({
     resolver: zodResolver(SubscriptionPlanSchema),
@@ -85,10 +112,9 @@ export function EventPlannerForSubscription({
           language: initialData.subscriptionPlan.language ?? "English",
           level: initialData.subscriptionPlan.level ?? "Beginner",
           prerequisites: initialData.subscriptionPlan.prerequisites ?? "",
-          materialProvided:
-            initialData.subscriptionPlan.materialProvided ?? "",
-          learningOutcomes:
-            initialData.subscriptionPlan.learningOutcomes ?? [],
+          materialProvided: initialData.subscriptionPlan.materialProvided ?? "",
+          learningOutcomes: initialData.subscriptionPlan.learningOutcomes ?? [],
+          topics: initialData.subscriptionPlan.topics ?? [],
         }
       : {
           title: "",
@@ -104,6 +130,7 @@ export function EventPlannerForSubscription({
           prerequisites: "",
           materialProvided: "",
           learningOutcomes: [],
+          topics: [],
         },
     mode: "onBlur",
   });
@@ -125,6 +152,7 @@ export function EventPlannerForSubscription({
         prerequisites: initialData.subscriptionPlan.prerequisites ?? "",
         materialProvided: initialData.subscriptionPlan.materialProvided ?? "",
         learningOutcomes: initialData.subscriptionPlan.learningOutcomes ?? [],
+        topics: initialData.subscriptionPlan.topics ?? [],
       });
     }
   }, [initialData, form]);
@@ -188,6 +216,7 @@ export function EventPlannerForSubscription({
           prerequisites: formData.prerequisites ?? undefined,
           materialProvided: formData.materialProvided ?? undefined,
           learningOutcomes: formData.learningOutcomes,
+          topics: formData.topics ?? [],
           consultantProfileId: consultantId,
           consultantProfile: null,
           subscriptions: initialData?.subscriptionPlan?.subscriptions ?? [],
@@ -520,7 +549,46 @@ export function EventPlannerForSubscription({
                   placeholder="e.g., Master advanced techniques in your field"
                   description="What subscribers will achieve during the subscription"
                 />
+
+                <FormField
+                  control={form.control}
+                  name="topics"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormControl>
+                        <TopicsMultiSelect
+                          initialTopics={field.value}
+                          onTopicsChange={(topics) => field.onChange(topics)}
+                          availableTopics={availableTopics}
+                          isLoading={isLoadingTopics}
+                          label="Topics"
+                          error={form.formState.errors.topics?.message}
+                          helpText="Select from existing topics or create new ones (optional)"
+                        />
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
               </FormSection>
+
+              {/* Materials Section - Only show when editing an existing plan */}
+              {initialData?.id && (
+                <FormSection
+                  title="Plan Materials"
+                  description="Upload materials for subscribers"
+                  icon={Upload}
+                >
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setShowMaterialsDialog(true)}
+                    className="w-full"
+                  >
+                    <Upload className="mr-2 h-4 w-4" />
+                    Manage Materials
+                  </Button>
+                </FormSection>
+              )}
 
               <DialogFooter className="pt-6 border-t">
                 <Button
@@ -539,6 +607,21 @@ export function EventPlannerForSubscription({
           </Form>
         </DialogContent>
       </Dialog>
+
+      {/* Materials Upload Dialog */}
+      {initialData?.id && (
+        <PlanMaterialsUpload
+          planType="subscription"
+          planId={initialData.id}
+          planTitle={
+            form.getValues("title") ||
+            initialData.subscriptionPlan?.title ||
+            "Subscription Plan"
+          }
+          isOpen={showMaterialsDialog}
+          onClose={() => setShowMaterialsDialog(false)}
+        />
+      )}
 
       <FormConfirmationDialog
         isOpen={showConfirmation}

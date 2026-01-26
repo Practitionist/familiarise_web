@@ -2,6 +2,13 @@ import { Button } from "@/components/ui/button";
 import { formatDate, formatTime } from "@/utils/dateTimeUtils";
 import { OnboardingFormData } from "@/utils/onboarding";
 import React from "react";
+import {
+  Briefcase,
+  GraduationCap,
+  Award,
+  Shield,
+  ExternalLink,
+} from "lucide-react";
 
 interface Props {
   onSubmit: (data: OnboardingFormData) => void;
@@ -172,8 +179,7 @@ const ConsultantReviewForm: React.FC<Props> = ({
         "Professional Details",
         <div className="bg-muted/50 rounded-lg p-4">
           {renderField("Description", formData.description)}
-          {renderField("Qualifications", formData.qualifications)}
-          {renderField("Specialization", formData.specialization)}
+          {renderField("Headline", formData.headline)}
           {renderField(
             "Experience",
             formData.experience ? `${formData.experience} years` : undefined,
@@ -197,6 +203,156 @@ const ConsultantReviewForm: React.FC<Props> = ({
       )}
 
       {renderSchedule()}
+
+      {/* Professional Background */}
+      {(formData.workExperiences?.length ||
+        formData.educationHistory?.length ||
+        formData.certificationsList?.length) && (
+        <div className="space-y-4">
+          <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
+            Professional Background
+          </h3>
+
+          {/* Work Experience */}
+          {formData.workExperiences && formData.workExperiences.length > 0 && (
+            <div className="bg-muted/50 rounded-lg p-4 space-y-3">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <Briefcase className="h-4 w-4" />
+                Work Experience
+              </div>
+              {formData.workExperiences.map((exp, index) => (
+                <div
+                  key={index}
+                  className="px-3 py-2 bg-background border rounded-lg text-sm"
+                >
+                  <p className="font-medium">{exp.title}</p>
+                  <p className="text-muted-foreground">
+                    {exp.company}
+                    {exp.location && ` • ${exp.location}`}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {new Date(exp.startDate).getFullYear()} -{" "}
+                    {exp.isCurrent
+                      ? "Present"
+                      : exp.endDate
+                        ? new Date(exp.endDate).getFullYear()
+                        : ""}
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Education */}
+          {formData.educationHistory && formData.educationHistory.length > 0 && (
+            <div className="bg-muted/50 rounded-lg p-4 space-y-3">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <GraduationCap className="h-4 w-4" />
+                Education
+              </div>
+              {formData.educationHistory.map((edu, index) => (
+                <div
+                  key={index}
+                  className="px-3 py-2 bg-background border rounded-lg text-sm"
+                >
+                  <p className="font-medium">{edu.degree}</p>
+                  <p className="text-muted-foreground">
+                    {edu.institution}
+                    {edu.fieldOfStudy && ` • ${edu.fieldOfStudy}`}
+                  </p>
+                  {(edu.startYear || edu.endYear) && (
+                    <p className="text-xs text-muted-foreground">
+                      {edu.startYear || ""} - {edu.endYear || ""}
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Certifications */}
+          {formData.certificationsList &&
+            formData.certificationsList.length > 0 && (
+              <div className="bg-muted/50 rounded-lg p-4 space-y-3">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <Award className="h-4 w-4" />
+                  Certifications
+                </div>
+                {formData.certificationsList.map((cert, index) => (
+                  <div
+                    key={index}
+                    className="px-3 py-2 bg-background border rounded-lg text-sm"
+                  >
+                    <p className="font-medium">{cert.name}</p>
+                    <p className="text-muted-foreground">
+                      {cert.issuingOrganization}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Issued{" "}
+                      {new Date(cert.issueDate).toLocaleDateString("en-US", {
+                        month: "short",
+                        year: "numeric",
+                      })}
+                      {cert.expiryDate &&
+                        ` • Expires ${new Date(cert.expiryDate).toLocaleDateString("en-US", { month: "short", year: "numeric" })}`}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
+        </div>
+      )}
+
+      {/* Verification */}
+      {(formData.verificationLinkedinUrl ||
+        (formData.verificationDocuments &&
+          formData.verificationDocuments.length > 0)) && (
+        <div className="space-y-3">
+          <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
+            Verification
+          </h3>
+          <div className="bg-muted/50 rounded-lg p-4 space-y-3">
+            <div className="flex items-center gap-2 text-sm font-medium">
+              <Shield className="h-4 w-4" />
+              Verification Details
+            </div>
+            {formData.verificationLinkedinUrl && (
+              <div className="flex justify-between py-2 border-b">
+                <span className="text-sm text-muted-foreground">
+                  LinkedIn Profile
+                </span>
+                <a
+                  href={formData.verificationLinkedinUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-sm text-primary flex items-center gap-1 hover:underline"
+                >
+                  View Profile <ExternalLink className="h-3 w-3" />
+                </a>
+              </div>
+            )}
+            {formData.verificationDocuments &&
+              formData.verificationDocuments.length > 0 && (
+                <div className="flex justify-between py-2">
+                  <span className="text-sm text-muted-foreground">
+                    Documents Uploaded
+                  </span>
+                  <span className="text-sm">
+                    {formData.verificationDocuments.length} file(s)
+                  </span>
+                </div>
+              )}
+            {formData.verificationNotes && (
+              <div className="py-2">
+                <span className="text-sm text-muted-foreground block mb-1">
+                  Additional Notes
+                </span>
+                <p className="text-sm">{formData.verificationNotes}</p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Navigation */}
       <div className="flex gap-4 pt-4">

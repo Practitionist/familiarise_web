@@ -74,7 +74,10 @@ export const ConsultantSkeletonLoader: React.FC = () => {
                 </div>
                 <div className="grid grid-cols-7 gap-2">
                   {Array.from({ length: 35 }).map((_, i) => (
-                    <Skeleton key={i} className="h-10 w-10 rounded-full mx-auto" />
+                    <Skeleton
+                      key={i}
+                      className="h-10 w-10 rounded-full mx-auto"
+                    />
                   ))}
                 </div>
               </div>

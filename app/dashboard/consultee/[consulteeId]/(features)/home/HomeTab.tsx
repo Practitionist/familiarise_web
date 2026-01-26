@@ -4,28 +4,33 @@ import { motion } from "framer-motion";
 import { useRouter } from "next/navigation";
 import {
   Calendar,
-  Clock,
   ChevronRight,
   ChevronLeft,
   Video,
   Users,
-  Sparkles,
   Check,
   Crown,
   Zap,
+  Loader2,
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/utils/tailwind";
 import { PendingPaymentsWidget } from "./PendingPaymentsWidget";
-import {
-  format,
-  isSameMonth,
-  differenceInHours,
-  differenceInDays,
-} from "date-fns";
+import { format, differenceInHours, differenceInDays } from "date-fns";
 import { useState, useMemo, useRef } from "react";
+import { useStreamVideoClient } from "@stream-io/video-react-sdk";
+import { useToast } from "@/hooks/use-toast";
+import { getOrCreateAppointmentMeeting } from "@/lib/meeting";
+import type { TConsulteeEventsResponse } from "@/types/consultee-events";
+import {
+  type ProcessedEvent,
+  processAllEvents,
+  getUpcomingEvents,
+  getMonthlyEvents,
+} from "./event-processor";
+import { WaitlistStatusBadge } from "@/components/ui/waitlist-status-badge";
 
 interface HomeTabProps {
   userDetails: {
@@ -34,27 +39,9 @@ interface HomeTabProps {
     email: string;
     image?: string;
   };
-  eventsData: {
-    consultations: any[];
-    subscriptions: any[];
-    classes: any[];
-    webinars: any[];
-  };
+  eventsData: TConsulteeEventsResponse;
   isRefreshing?: boolean;
   consulteeId: string;
-}
-
-interface ProcessedEvent {
-  id: string;
-  type: "consultation" | "subscription" | "class" | "webinar";
-  title: string;
-  consultantName: string;
-  consultantImage?: string;
-  startsAt: Date;
-  endsAt: Date;
-  status: string;
-  slots: Array<{ startsAt: Date; endsAt: Date }>;
-  appointmentId?: string;
 }
 
 const staggerChildren = {
@@ -93,9 +80,13 @@ function getTimeAway(date: Date): { text: string; urgent: boolean } {
 function UpcomingSessionCard({
   event,
   onClick,
+  onJoin,
+  isJoining,
 }: {
   event: ProcessedEvent;
   onClick?: () => void;
+  onJoin?: () => void;
+  isJoining?: boolean;
 }) {
   const timeAway = getTimeAway(event.startsAt);
 
@@ -130,7 +121,10 @@ function UpcomingSessionCard({
       {/* Row 1: Avatar + Title/Name + Time Badge - Fixed height 48px */}
       <div className="flex items-center gap-3 h-12 shrink-0">
         <Avatar className="h-10 w-10 ring-2 ring-zinc-700 shrink-0">
-          <AvatarImage src={event.consultantImage} alt={event.consultantName} />
+          <AvatarImage
+            src={event.consultantImage ?? undefined}
+            alt={event.consultantName}
+          />
           <AvatarFallback className="bg-zinc-700 text-zinc-300 text-xs font-semibold">
             {event.consultantName
               .split(" ")
@@ -178,22 +172,50 @@ function UpcomingSessionCard({
           <Badge className="text-[10px] font-medium px-2 py-0.5 bg-transparent border border-zinc-600 text-zinc-300 shrink-0 rounded-md">
             {typeLabel}
           </Badge>
-          <Badge
-            className={cn(
-              "text-[10px] font-semibold px-2 py-0.5 border-0 shrink-0",
-              statusStyle.bg,
-              statusStyle.text,
+          {/* Show booking status badge for webinars and classes */}
+          {(event.type === "webinar" || event.type === "class") &&
+            event.bookingStatus && (
+              <WaitlistStatusBadge
+                bookingStatus={event.bookingStatus}
+                waitlistPosition={event.waitlistPosition}
+                size="sm"
+                showIcon={false}
+                className="shrink-0 border-0"
+              />
             )}
-          >
-            {event.status.replace(/_/g, " ")}
-          </Badge>
+          {/* Only show event status if not showing booking status */}
+          {!(
+            (event.type === "webinar" || event.type === "class") &&
+            event.bookingStatus
+          ) && (
+            <Badge
+              className={cn(
+                "text-[10px] font-semibold px-2 py-0.5 border-0 shrink-0",
+                statusStyle.bg,
+                statusStyle.text,
+              )}
+            >
+              {event.status.replace(/_/g, " ")}
+            </Badge>
+          )}
         </div>
         <Button
           size="sm"
           className="h-7 px-3 text-xs bg-white hover:bg-zinc-100 text-zinc-900 font-semibold rounded-md shrink-0"
+          onClick={(e) => {
+            e.stopPropagation();
+            onJoin?.();
+          }}
+          disabled={
+            isJoining || !event.joinableAppointment || !event.joinableSlot
+          }
         >
-          <Video className="h-3 w-3 mr-1" />
-          Join
+          {isJoining ? (
+            <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+          ) : (
+            <Video className="h-3 w-3 mr-1" />
+          )}
+          {isJoining ? "Joining..." : "Join"}
         </Button>
       </div>
     </motion.div>
@@ -239,7 +261,10 @@ function MonthlyEventItem({
         className="flex items-center gap-4 p-4 cursor-pointer hover:bg-zinc-50/50 transition-colors"
       >
         <Avatar className="h-10 w-10 ring-1 ring-zinc-200 flex-shrink-0">
-          <AvatarImage src={event.consultantImage} alt={event.consultantName} />
+          <AvatarImage
+            src={event.consultantImage ?? undefined}
+            alt={event.consultantName}
+          />
           <AvatarFallback className="bg-zinc-100 text-zinc-600 text-xs font-medium">
             {event.consultantName
               .split(" ")
@@ -251,22 +276,42 @@ function MonthlyEventItem({
           {/* Desktop: single row layout */}
           <div className="hidden lg:flex items-center justify-between gap-3">
             <div className="min-w-0 flex-1">
-              <h4 className="font-medium text-zinc-900 text-sm truncate">{event.title}</h4>
-              <p className="text-xs text-zinc-500 truncate">{event.consultantName}</p>
+              <h4 className="font-medium text-zinc-900 text-sm truncate">
+                {event.title}
+              </h4>
+              <p className="text-xs text-zinc-500 truncate">
+                {event.consultantName}
+              </p>
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
               <Badge className="text-[10px] font-medium bg-transparent border border-zinc-300 text-zinc-600 rounded-md">
                 {typeLabel}
               </Badge>
-              <Badge
-                className={cn(
-                  "text-[10px] font-medium border-0",
-                  statusStyle.bg,
-                  statusStyle.text,
+              {/* Show booking status badge for webinars and classes */}
+              {(event.type === "webinar" || event.type === "class") &&
+                event.bookingStatus && (
+                  <WaitlistStatusBadge
+                    bookingStatus={event.bookingStatus}
+                    waitlistPosition={event.waitlistPosition}
+                    size="sm"
+                    showIcon={false}
+                  />
                 )}
-              >
-                {event.status.replace(/_/g, " ")}
-              </Badge>
+              {/* Only show event status if not showing booking status */}
+              {!(
+                (event.type === "webinar" || event.type === "class") &&
+                event.bookingStatus
+              ) && (
+                <Badge
+                  className={cn(
+                    "text-[10px] font-medium border-0",
+                    statusStyle.bg,
+                    statusStyle.text,
+                  )}
+                >
+                  {event.status.replace(/_/g, " ")}
+                </Badge>
+              )}
               <ChevronRight
                 className={cn(
                   "h-4 w-4 text-zinc-400 transition-transform duration-200",
@@ -279,8 +324,12 @@ function MonthlyEventItem({
           <div className="lg:hidden">
             <div className="flex items-start justify-between gap-2 mb-1">
               <div className="min-w-0 flex-1">
-                <h4 className="font-medium text-zinc-900 text-sm truncate">{event.title}</h4>
-                <p className="text-xs text-zinc-500 truncate">{event.consultantName}</p>
+                <h4 className="font-medium text-zinc-900 text-sm truncate">
+                  {event.title}
+                </h4>
+                <p className="text-xs text-zinc-500 truncate">
+                  {event.consultantName}
+                </p>
               </div>
               <ChevronRight
                 className={cn(
@@ -293,15 +342,31 @@ function MonthlyEventItem({
               <Badge className="text-[10px] font-medium bg-transparent border border-zinc-300 text-zinc-600 rounded-md">
                 {typeLabel}
               </Badge>
-              <Badge
-                className={cn(
-                  "text-[10px] font-medium border-0",
-                  statusStyle.bg,
-                  statusStyle.text,
+              {/* Show booking status badge for webinars and classes (mobile) */}
+              {(event.type === "webinar" || event.type === "class") &&
+                event.bookingStatus && (
+                  <WaitlistStatusBadge
+                    bookingStatus={event.bookingStatus}
+                    waitlistPosition={event.waitlistPosition}
+                    size="sm"
+                    showIcon={false}
+                  />
                 )}
-              >
-                {event.status.replace(/_/g, " ")}
-              </Badge>
+              {/* Only show event status if not showing booking status (mobile) */}
+              {!(
+                (event.type === "webinar" || event.type === "class") &&
+                event.bookingStatus
+              ) && (
+                <Badge
+                  className={cn(
+                    "text-[10px] font-medium border-0",
+                    statusStyle.bg,
+                    statusStyle.text,
+                  )}
+                >
+                  {event.status.replace(/_/g, " ")}
+                </Badge>
+              )}
             </div>
           </div>
         </div>
@@ -398,156 +463,72 @@ export default function HomeTab({
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [expandedEvents, setExpandedEvents] = useState<Set<string>>(new Set());
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const [joiningEventId, setJoiningEventId] = useState<string | null>(null);
+  const client = useStreamVideoClient();
+  const { toast } = useToast();
 
-  // Process events into unified format
-  const processedEvents = useMemo(() => {
-    const events: ProcessedEvent[] = [];
-
-    // Process consultations
-    eventsData.consultations?.forEach((c: any) => {
-      const slots = c.appointment?.slotsOfAppointment || [];
-      if (slots.length > 0) {
-        const firstSlot = slots[0];
-        events.push({
-          id: c.id,
-          type: "consultation",
-          title: c.consultationPlan?.title || "Consultation",
-          consultantName:
-            c.consultationPlan?.consultantProfile?.user?.name || "Expert",
-          consultantImage: c.consultationPlan?.consultantProfile?.user?.image,
-          startsAt: new Date(firstSlot.startsAt),
-          endsAt: new Date(firstSlot.endsAt),
-          status: c.requestStatus || "PENDING",
-          slots: slots.map((s: any) => ({
-            startsAt: new Date(s.startsAt),
-            endsAt: new Date(s.endsAt),
-          })),
-          appointmentId: c.appointment?.id,
-        });
-      }
-    });
-
-    // Process subscriptions
-    eventsData.subscriptions?.forEach((s: any) => {
-      const allSlots: Array<{ startsAt: Date; endsAt: Date }> = [];
-      s.appointments?.forEach((a: any) => {
-        a.slotsOfAppointment?.forEach((slot: any) => {
-          allSlots.push({
-            startsAt: new Date(slot.startsAt),
-            endsAt: new Date(slot.endsAt),
-          });
-        });
+  // Handle joining a meeting
+  const handleJoinMeeting = async (event: ProcessedEvent) => {
+    if (!event.joinableAppointment || !event.joinableSlot) {
+      toast({
+        title: "Unable to join",
+        description: "Meeting data is not available.",
+        variant: "destructive",
       });
+      return;
+    }
 
-      if (allSlots.length > 0) {
-        allSlots.sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime());
-        const nextSlot =
-          allSlots.find((slot) => slot.startsAt > new Date()) || allSlots[0];
-
-        events.push({
-          id: s.id,
-          type: "subscription",
-          title: s.subscriptionPlan?.title || "Subscription",
-          consultantName:
-            s.subscriptionPlan?.consultantProfile?.user?.name || "Expert",
-          consultantImage: s.subscriptionPlan?.consultantProfile?.user?.image,
-          startsAt: nextSlot.startsAt,
-          endsAt: nextSlot.endsAt,
-          status: s.requestStatus || "PENDING",
-          slots: allSlots,
-          appointmentId: s.appointments?.[0]?.id,
-        });
-      }
-    });
-
-    // Process webinars
-    eventsData.webinars?.forEach((w: any) => {
-      const webinarData = w.webinar || w;
-      const slots: Array<{ startsAt: Date; endsAt: Date }> = [];
-
-      webinarData.appointments?.forEach((a: any) => {
-        a.slotsOfAppointment?.forEach((slot: any) => {
-          slots.push({
-            startsAt: new Date(slot.startsAt),
-            endsAt: new Date(slot.endsAt),
-          });
-        });
+    if (!client) {
+      toast({
+        title: "Not signed in",
+        description: "Video client not initialized. Please sign in to join.",
+        variant: "warning",
       });
+      return;
+    }
 
-      if (slots.length > 0) {
-        slots.sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime());
-        const nextSlot =
-          slots.find((slot) => slot.startsAt > new Date()) || slots[0];
-
-        events.push({
-          id: w.id,
-          type: "webinar",
-          title: webinarData.webinarPlan?.title || "Webinar",
-          consultantName:
-            webinarData.webinarPlan?.consultantProfile?.user?.name || "Expert",
-          consultantImage:
-            webinarData.webinarPlan?.consultantProfile?.user?.image,
-          startsAt: nextSlot.startsAt,
-          endsAt: nextSlot.endsAt,
-          status: w.status || "APPROVED",
-          slots,
-          appointmentId: webinarData.appointments?.[0]?.id,
-        });
-      }
-    });
-
-    // Process classes
-    eventsData.classes?.forEach((c: any) => {
-      const classData = c.class || c;
-      const slots: Array<{ startsAt: Date; endsAt: Date }> = [];
-
-      classData.appointments?.forEach((a: any) => {
-        a.slotsOfAppointment?.forEach((slot: any) => {
-          slots.push({
-            startsAt: new Date(slot.startsAt),
-            endsAt: new Date(slot.endsAt),
-          });
-        });
+    setJoiningEventId(event.id);
+    try {
+      const meetingId = await getOrCreateAppointmentMeeting(
+        client,
+        event.joinableAppointment,
+        event.joinableSlot,
+      );
+      router.push(`/meetings/${meetingId}`);
+      toast({
+        title: "Joining meeting",
+        description: "You will now be redirected to the meeting",
+        variant: "success",
       });
+    } catch (error) {
+      console.error("Error joining meeting:", error);
+      toast({
+        title: "Error joining meeting",
+        description: error instanceof Error ? error.message : "Unknown error",
+        variant: "destructive",
+      });
+    } finally {
+      setJoiningEventId(null);
+    }
+  };
 
-      if (slots.length > 0) {
-        slots.sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime());
-        const nextSlot =
-          slots.find((slot) => slot.startsAt > new Date()) || slots[0];
-
-        events.push({
-          id: c.id,
-          type: "class",
-          title: classData.classPlan?.title || "Class",
-          consultantName:
-            classData.classPlan?.consultantProfile?.user?.name || "Expert",
-          consultantImage: classData.classPlan?.consultantProfile?.user?.image,
-          startsAt: nextSlot.startsAt,
-          endsAt: nextSlot.endsAt,
-          status: c.status || "APPROVED",
-          slots,
-          appointmentId: classData.appointments?.[0]?.id,
-        });
-      }
-    });
-
-    return events;
-  }, [eventsData]);
+  // Process events into unified format using the utility function
+  const processedEvents = useMemo(
+    () => processAllEvents(eventsData),
+    [eventsData],
+  );
 
   // Get upcoming events
-  const upcomingEvents = useMemo(() => {
-    const now = new Date();
-    return processedEvents
-      .filter((e) => e.startsAt > now || e.slots.some((s) => s.startsAt > now))
-      .sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime());
-  }, [processedEvents]);
+  const upcomingEvents = useMemo(
+    () => getUpcomingEvents(processedEvents),
+    [processedEvents],
+  );
 
   // Get events for current month
-  const monthlyEvents = useMemo(() => {
-    return processedEvents.filter((e) =>
-      e.slots.some((s) => isSameMonth(s.startsAt, currentMonth)),
-    );
-  }, [processedEvents, currentMonth]);
+  const monthlyEvents = useMemo(
+    () => getMonthlyEvents(processedEvents, currentMonth),
+    [processedEvents, currentMonth],
+  );
 
   // Scroll handlers
   const scrollLeft = () => {
@@ -661,9 +642,8 @@ export default function HomeTab({
                   <UpcomingSessionCard
                     key={event.id}
                     event={event}
-                  // onClick={() =>
-                  //   router.push(`/dashboard/consultee/${consulteeId}/appointments`)
-                  // }
+                    onJoin={() => handleJoinMeeting(event)}
+                    isJoining={joiningEventId === event.id}
                   />
                 ))}
               </div>

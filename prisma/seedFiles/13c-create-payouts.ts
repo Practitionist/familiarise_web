@@ -46,7 +46,11 @@ function getCurrency(provider: PaymentGateway): string {
  * Group earnings by consultant
  */
 function groupEarningsByConsultant(
-  earnings: Array<{ id: string; consultantProfileId: string; consultantShare: number }>,
+  earnings: Array<{
+    id: string;
+    consultantProfileId: string;
+    consultantShare: number;
+  }>,
 ): Map<string, typeof earnings> {
   const grouped = new Map<string, typeof earnings>();
 
@@ -111,7 +115,9 @@ export async function createPayouts(): Promise<void> {
       );
 
       // Determine provider and related fields
-      const provider = weightedRandom(PAYOUT_PROVIDER_WEIGHTS) as PaymentGateway;
+      const provider = weightedRandom(
+        PAYOUT_PROVIDER_WEIGHTS,
+      ) as PaymentGateway;
       const method = getPayoutMethod(provider);
       const currency = getCurrency(provider);
       const status = weightedRandom(PAYOUT_STATUS_WEIGHTS) as PayoutStatus;
@@ -129,28 +135,32 @@ export async function createPayouts(): Promise<void> {
         case "COMPLETED":
           approvedAt = new Date(createdAt.getTime() + 1000 * 60 * 60); // 1 hour after creation
           processedAt = new Date(approvedAt.getTime() + 1000 * 60 * 60 * 2); // 2 hours after approval
-          approvedBy = adminUsers.length > 0
-            ? faker.helpers.arrayElement(adminUsers).id
-            : null;
+          approvedBy =
+            adminUsers.length > 0
+              ? faker.helpers.arrayElement(adminUsers).id
+              : null;
           break;
         case "PROCESSING":
           approvedAt = new Date(createdAt.getTime() + 1000 * 60 * 60);
-          approvedBy = adminUsers.length > 0
-            ? faker.helpers.arrayElement(adminUsers).id
-            : null;
+          approvedBy =
+            adminUsers.length > 0
+              ? faker.helpers.arrayElement(adminUsers).id
+              : null;
           break;
         case "APPROVED":
           approvedAt = new Date(createdAt.getTime() + 1000 * 60 * 60);
-          approvedBy = adminUsers.length > 0
-            ? faker.helpers.arrayElement(adminUsers).id
-            : null;
+          approvedBy =
+            adminUsers.length > 0
+              ? faker.helpers.arrayElement(adminUsers).id
+              : null;
           break;
         case "FAILED":
           approvedAt = new Date(createdAt.getTime() + 1000 * 60 * 60);
           processedAt = new Date(approvedAt.getTime() + 1000 * 60 * 60);
-          approvedBy = adminUsers.length > 0
-            ? faker.helpers.arrayElement(adminUsers).id
-            : null;
+          approvedBy =
+            adminUsers.length > 0
+              ? faker.helpers.arrayElement(adminUsers).id
+              : null;
           failureReason = generatePayoutFailureReason();
           retryCount = faker.number.int({ min: 1, max: 3 });
           break;
@@ -163,7 +173,9 @@ export async function createPayouts(): Promise<void> {
           consultantProfileId,
           provider,
           providerPayoutId:
-            status === "COMPLETED" || status === "PROCESSING" || status === "FAILED"
+            status === "COMPLETED" ||
+            status === "PROCESSING" ||
+            status === "FAILED"
               ? generateProviderPayoutId(provider)
               : null,
           amount: totalAmount,

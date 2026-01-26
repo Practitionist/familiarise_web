@@ -41,7 +41,8 @@ export async function POST(req: NextRequest) {
     const { event: eventType } = razorpayBaseEventSchema.parse(event);
 
     // Log webhook event for audit trail (idempotency check)
-    const eventId = event.payload?.payment?.entity?.id ||
+    const eventId =
+      event.payload?.payment?.entity?.id ||
       event.payload?.order?.entity?.id ||
       event.payload?.refund?.entity?.id ||
       event.payload?.dispute?.entity?.id ||
@@ -87,7 +88,9 @@ export async function POST(req: NextRequest) {
 
         case "payment.failed":
           const failedEvent = razorpayPaymentFailedEventSchema.parse(event);
-          await handlePaymentFailure(failedEvent.payload.payment.entity.order_id);
+          await handlePaymentFailure(
+            failedEvent.payload.payment.entity.order_id,
+          );
           break;
 
         // Refund events
@@ -178,9 +181,10 @@ export async function POST(req: NextRequest) {
           console.log(`📄 Unhandled Razorpay event type: ${eventType}`);
       }
     } catch (handlerError) {
-      processingError = handlerError instanceof Error
-        ? handlerError.message
-        : String(handlerError);
+      processingError =
+        handlerError instanceof Error
+          ? handlerError.message
+          : String(handlerError);
       throw handlerError;
     } finally {
       // Mark event as processed

@@ -21,10 +21,13 @@ import {
   unlockEventCheckout,
   ApprovalLock,
 } from "@/utils/appointmentlock";
+import { validateSlotTiming } from "@/lib/payments/utils/slot-validation";
 import {
   countUniqueParticipants,
   isUserEnrolled,
+  countWebinarParticipants,
 } from "@/lib/payments/utils/participants";
+import { markWaitlistAsBooked } from "@/lib/waitlist/slot-handler";
 
 // Re-export for backward compatibility
 export const unifiedCheckoutSchema = checkoutSchema;
@@ -65,7 +68,7 @@ type SubscriptionCheckoutResult = {
 function buildPaymentMetadata(
   data: CheckoutInput,
   userId: string,
-): { appointmentId: string; appointmentType: string;[key: string]: string } {
+): { appointmentId: string; appointmentType: string; [key: string]: string } {
   return {
     appointmentId: "pending",
     appointmentType: data.appointmentType,
@@ -80,6 +83,7 @@ function buildPaymentMetadata(
     discountCode: data.discountCode || "",
     notes: data.notes || "",
     ...(data.eventId && { eventId: data.eventId }),
+    ...(data.fromWaitlist && { fromWaitlist: data.fromWaitlist }),
   };
 }
 
@@ -234,10 +238,18 @@ export async function calculateAmountAndValidate(
         const webinar = await tx.webinar.findUnique({
           where: { id: validatedData.eventId },
           include: {
-            webinarPlan: true,
+            webinarPlan: {
+              include: {
+                consultantProfile: true,
+              },
+            },
             appointment: {
               include: {
-                slotsOfAppointment: true,
+                slotsOfAppointment: {
+                  include: {
+                    user: { select: { id: true } },
+                  },
+                },
               },
             },
           },
@@ -248,8 +260,11 @@ export async function calculateAmountAndValidate(
         }
 
         plan = webinar.webinarPlan;
-        const currentWebinarParticipants =
-          webinar.appointment?.slotsOfAppointment?.length || 0;
+        const consultantUserId = plan.consultantProfile?.userId;
+        const currentWebinarParticipants = countWebinarParticipants(
+          webinar.appointment,
+          [consultantUserId || ""],
+        );
 
         if (currentWebinarParticipants >= plan.maxParticipants) {
           throw new Error("Webinar is full");
@@ -269,7 +284,11 @@ export async function calculateAmountAndValidate(
             classPlan: true,
             appointments: {
               include: {
-                slotsOfAppointment: true,
+                slotsOfAppointment: {
+                  include: {
+                    user: true,
+                  },
+                },
               },
             },
           },
@@ -280,10 +299,10 @@ export async function calculateAmountAndValidate(
         }
 
         plan = classInstance.classPlan;
-        const currentClassParticipants = classInstance.appointments.reduce(
-          (total: number, apt: { slotsOfAppointment: unknown[] }) =>
-            total + apt.slotsOfAppointment.length,
-          0,
+        // FIX: Count unique participants, not total slots
+        // A user enrolled in a class with 8 sessions should count as 1 participant, not 8
+        const currentClassParticipants = countUniqueParticipants(
+          classInstance.appointments,
         );
 
         if (currentClassParticipants >= plan.maxParticipants) {
@@ -389,6 +408,12 @@ export async function validateSlotAvailability(
   const slotStart = new Date(data.slotStartTimeInUTC);
   const slotEnd = new Date(data.slotEndTimeInUTC);
 
+  // 0. Validate slot is not in the past or too soon (minimum lead time check)
+  const timingError = validateSlotTiming(slotStart);
+  if (timingError) {
+    throw new Error(timingError);
+  }
+
   // 1. Check for confirmed overlapping appointments FOR THIS CONSULTANT ONLY
   // FIX: Previously checked ALL consultants globally, now filters by specific consultant
   const existingBooking = await tx.slotOfAppointment.findFirst({
@@ -414,14 +439,14 @@ export async function validateSlotAvailability(
         // FIX: Filter by consultant - only check slots belonging to this consultant
         ...(consultantUserId
           ? [
-            {
-              user: {
-                some: {
-                  id: consultantUserId,
+              {
+                user: {
+                  some: {
+                    id: consultantUserId,
+                  },
                 },
               },
-            },
-          ]
+            ]
           : []),
       ],
     },
@@ -456,14 +481,14 @@ export async function validateSlotAvailability(
           // FIX: Filter by consultant - only check tentative slots for this consultant
           ...(consultantUserId
             ? [
-              {
-                user: {
-                  some: {
-                    id: consultantUserId,
+                {
+                  user: {
+                    some: {
+                      id: consultantUserId,
+                    },
                   },
                 },
-              },
-            ]
+              ]
             : []),
           {
             appointment: {
@@ -527,14 +552,14 @@ export async function validateSlotAvailability(
         // FIX: Filter by consultant - only count tentative slots for this consultant
         ...(consultantUserId
           ? [
-            {
-              user: {
-                some: {
-                  id: consultantUserId,
+              {
+                user: {
+                  some: {
+                    id: consultantUserId,
+                  },
                 },
               },
-            },
-          ]
+            ]
           : []),
         {
           appointment: {
@@ -843,7 +868,11 @@ async function revalidateInsideLock(
         const webinar = await tx.webinar.findUnique({
           where: { id: data.eventId },
           include: {
-            webinarPlan: true,
+            webinarPlan: {
+              include: {
+                consultantProfile: true,
+              },
+            },
             appointment: {
               include: { slotsOfAppointment: true },
             },
@@ -852,8 +881,12 @@ async function revalidateInsideLock(
 
         if (!webinar) throw new Error("Webinar not found");
 
-        const currentParticipants =
-          webinar.appointment?.slotsOfAppointment?.length || 0;
+        const plan = webinar.webinarPlan;
+        const consultantUserId = plan.consultantProfile?.userId;
+        const currentParticipants = countWebinarParticipants(
+          webinar.appointment,
+          [consultantUserId || ""],
+        );
 
         if (currentParticipants >= webinar.webinarPlan.maxParticipants) {
           throw new Error("Webinar is full");
@@ -869,17 +902,22 @@ async function revalidateInsideLock(
           include: {
             classPlan: true,
             appointments: {
-              include: { slotsOfAppointment: true },
+              include: {
+                slotsOfAppointment: {
+                  include: {
+                    user: true,
+                  },
+                },
+              },
             },
           },
         });
 
         if (!classInstance) throw new Error("Class not found");
 
-        const currentParticipants = classInstance.appointments.reduce(
-          (total: number, apt: { slotsOfAppointment: unknown[] }) =>
-            total + apt.slotsOfAppointment.length,
-          0,
+        // FIX: Count unique participants, not total slots
+        const currentParticipants = countUniqueParticipants(
+          classInstance.appointments,
         );
 
         if (currentParticipants >= classInstance.classPlan.maxParticipants) {
@@ -961,7 +999,7 @@ export async function handleSubscriptionCheckout(
   tx: Prisma.TransactionClient,
   data: CheckoutInput,
   consulteeProfileId: string,
-  skipPayment: boolean,
+  _skipPayment: boolean,
 ): Promise<SubscriptionCheckoutResult> {
   const plan = await tx.subscriptionPlan.findUnique({
     where: { id: data.planId },
@@ -1060,7 +1098,11 @@ export async function handleWebinarCheckout(
   const webinar = await tx.webinar.findUnique({
     where: { id: data.eventId },
     include: {
-      webinarPlan: true,
+      webinarPlan: {
+        include: {
+          consultantProfile: true,
+        },
+      },
       waitlist: true,
       appointment: {
         include: {
@@ -1079,8 +1121,10 @@ export async function handleWebinarCheckout(
   }
 
   const plan = webinar.webinarPlan;
-  const currentParticipants =
-    webinar.appointment?.slotsOfAppointment?.length || 0;
+  const consultantUserId = plan.consultantProfile?.userId;
+  const currentParticipants = countWebinarParticipants(webinar.appointment, [
+    consultantUserId || "",
+  ]);
 
   // Check if max participants reached
   if (currentParticipants >= plan.maxParticipants) {
@@ -1229,6 +1273,7 @@ export async function handleClassCheckout(
     // Get timing from the first existing slot or use appointment times
     const existingSlot = appointment.slotsOfAppointment[0];
 
+    // Step 1: Create the slot without user connection
     const slot = await tx.slotOfAppointment.create({
       data: {
         appointmentId: appointment.id,
@@ -1241,11 +1286,19 @@ export async function handleClassCheckout(
           appointment.slotsOfAppointment[0]?.endsAt ||
           new Date(),
         isTentative: !skipPayment,
+      },
+    });
+
+    // Step 2: Connect user to slot in a separate update (fixes FK constraint issue)
+    await tx.slotOfAppointment.update({
+      where: { id: slot.id },
+      data: {
         user: {
           connect: { id: userId },
         },
       },
     });
+
     createdSlots.push(slot);
   }
 
@@ -1338,102 +1391,105 @@ export async function handleCheckout(
     // STEP 5: Create tentative appointment + payment record (INSIDE LOCK)
     // This prevents race conditions by making validation see tentative bookings
     try {
-      const result = await prisma.$transaction(async (tx) => {
-        let createdAppointment;
+      const result = await prisma.$transaction(
+        async (tx) => {
+          let createdAppointment;
 
-        // Create appointment based on type (with isTentative flag)
-        switch (validatedData.appointmentType) {
-          case "CONSULTATION": {
-            const consultationResult = await handleConsultationCheckout(
-              tx,
-              validatedData,
-              consulteeProfileId,
-              isMockPayment, // skipPayment = isMockPayment
-            );
-            createdAppointment = consultationResult.appointment;
-            break;
+          // Create appointment based on type (with isTentative flag)
+          switch (validatedData.appointmentType) {
+            case "CONSULTATION": {
+              const consultationResult = await handleConsultationCheckout(
+                tx,
+                validatedData,
+                consulteeProfileId,
+                isMockPayment, // skipPayment = isMockPayment
+              );
+              createdAppointment = consultationResult.appointment;
+              break;
+            }
+
+            case "SUBSCRIPTION": {
+              const subscriptionResult = await handleSubscriptionCheckout(
+                tx,
+                validatedData,
+                consulteeProfileId,
+                isMockPayment,
+              );
+              // Use placeholder appointment for payment linkage
+              // This ensures webhook uses NEW FLOW (confirm) not LEGACY FLOW (create duplicate)
+              createdAppointment = subscriptionResult.appointment;
+              break;
+            }
+
+            case "WEBINAR": {
+              const webinarResult = await handleWebinarCheckout(
+                tx,
+                validatedData,
+                userId,
+                isMockPayment,
+              );
+              createdAppointment = webinarResult.appointment;
+              break;
+            }
+
+            case "CLASS": {
+              const classResult = await handleClassCheckout(
+                tx,
+                validatedData,
+                userId,
+                isMockPayment,
+              );
+              // Class creates slots across multiple appointments
+              // Use first appointment for payment linkage
+              createdAppointment = classResult.appointment || null;
+              break;
+            }
+
+            default:
+              throw new Error(
+                `Unsupported appointment type: ${validatedData.appointmentType}`,
+              );
           }
 
-          case "SUBSCRIPTION": {
-            const subscriptionResult = await handleSubscriptionCheckout(
-              tx,
-              validatedData,
-              consulteeProfileId,
+          // Create payment record linked to appointment (if created)
+          // paymentResponse is guaranteed to be set at this point (we'd have thrown in the try-catch above)
+          const payment = await tx.payment.create({
+            data: {
+              amount,
+              currency,
+              paymentMethod: "CARD",
+              paymentIntent: paymentResponse!.id,
+              paymentGateway: validatedData.paymentGateway,
+              paymentStatus: PaymentStatus.PENDING,
               isMockPayment,
-            );
-            // Use placeholder appointment for payment linkage
-            // This ensures webhook uses NEW FLOW (confirm) not LEGACY FLOW (create duplicate)
-            createdAppointment = subscriptionResult.appointment;
-            break;
-          }
-
-          case "WEBINAR": {
-            const webinarResult = await handleWebinarCheckout(
-              tx,
-              validatedData,
-              userId,
-              isMockPayment,
-            );
-            createdAppointment = webinarResult.appointment;
-            break;
-          }
-
-          case "CLASS": {
-            const classResult = await handleClassCheckout(
-              tx,
-              validatedData,
-              userId,
-              isMockPayment,
-            );
-            // Class creates slots across multiple appointments
-            // Use first appointment for payment linkage
-            createdAppointment = classResult.appointment || null;
-            break;
-          }
-
-          default:
-            throw new Error(
-              `Unsupported appointment type: ${validatedData.appointmentType}`,
-            );
-        }
-
-        // Create payment record linked to appointment (if created)
-        // paymentResponse is guaranteed to be set at this point (we'd have thrown in the try-catch above)
-        const payment = await tx.payment.create({
-          data: {
-            amount,
-            currency,
-            paymentMethod: "CARD",
-            paymentIntent: paymentResponse!.id,
-            paymentGateway: validatedData.paymentGateway,
-            paymentStatus: PaymentStatus.PENDING,
-            isMockPayment,
-            userId: userId,
-            appointmentId: createdAppointment?.id || null,
-            discountCodeId,
-            expiresAt: new Date(Date.now() + 30 * 60 * 1000), // 30 minutes
-          },
-        });
-
-        // FIX Issue #6: Update mock payment status directly (no webhook for mock payments)
-        if (isMockPayment) {
-          await tx.payment.update({
-            where: { id: payment.id },
-            data: { paymentStatus: PaymentStatus.SUCCEEDED },
+              userId: userId,
+              appointmentId: createdAppointment?.id || null,
+              discountCodeId,
+              expiresAt: new Date(Date.now() + 30 * 60 * 1000), // 30 minutes
+            },
           });
-        }
 
-        // Increment discount code usage count atomically (only after payment is created)
-        // This ensures count only increases when payment is successfully created
-        if (discountCodeId) {
-          await tx.discountCode.update({
-            where: { id: discountCodeId },
-            data: { currentUses: { increment: 1 } },
-          });
-        }
+          // FIX Issue #6: Update mock payment status directly (no webhook for mock payments)
+          if (isMockPayment) {
+            await tx.payment.update({
+              where: { id: payment.id },
+              data: { paymentStatus: PaymentStatus.SUCCEEDED },
+            });
+          }
 
-        return { appointmentId: createdAppointment?.id };
-      });
+          // Increment discount code usage count atomically (only after payment is created)
+          // This ensures count only increases when payment is successfully created
+          if (discountCodeId) {
+            await tx.discountCode.update({
+              where: { id: discountCodeId },
+              data: { currentUses: { increment: 1 } },
+            });
+          }
+
+          return { appointmentId: createdAppointment?.id };
+        },
+        { timeout: 25000 },
+      );
 
       const logMessage = isMockPayment
         ? `🎭 Mock payment + tentative appointment created: ${paymentResponse.id}`
@@ -1449,6 +1505,23 @@ export async function handleCheckout(
           timestamp: new Date().toISOString(),
         }),
       );
+
+      // Update waitlist status if coming from waitlist flow
+      if (isMockPayment && validatedData.fromWaitlist) {
+        try {
+          await markWaitlistAsBooked(validatedData.fromWaitlist);
+          console.log(
+            JSON.stringify({
+              event: "waitlist_booking_completed",
+              waitlistId: validatedData.fromWaitlist,
+              timestamp: new Date().toISOString(),
+            }),
+          );
+        } catch (waitlistError) {
+          // Log but don't fail the checkout - payment was successful
+          console.error("Failed to update waitlist status:", waitlistError);
+        }
+      }
 
       return {
         success: true,

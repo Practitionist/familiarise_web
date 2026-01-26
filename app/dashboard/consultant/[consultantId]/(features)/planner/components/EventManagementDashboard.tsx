@@ -13,6 +13,7 @@ import {
   Event,
 } from "../types/event";
 import { PlannerService } from "../services/planner";
+import type { ConsultationPlan, SubscriptionPlan } from "@/schemas/plans";
 import { useToast } from "@/hooks/use-toast";
 import {
   useWebinarMutations,
@@ -35,8 +36,8 @@ import {
 import { cn } from "@/utils/tailwind";
 
 interface PlannerData {
-  webinars: any[];
-  classes: any[];
+  webinars: WebinarEvent[];
+  classes: ClassEvent[];
   participantCounts: Record<string, number>;
 }
 import { addMonths, startOfMonth, endOfMonth } from "date-fns";
@@ -107,9 +108,9 @@ export function EventManagementDashboard({
         const startDate = startOfMonth(currentDate);
         const endDate = endOfMonth(currentDate);
 
-        // Use the service to fetch data
+        // Use the service to fetch data with consistent date filtering
         const [fetchedWebinars, fetchedClasses] = await Promise.all([
-          PlannerService.fetchWebinars(consultantId),
+          PlannerService.fetchWebinars(consultantId, startDate, endDate),
           PlannerService.fetchClasses(consultantId, startDate, endDate),
         ]);
 
@@ -159,13 +160,21 @@ export function EventManagementDashboard({
   };
 
   // Handle class saved event
-  const handleClassSaved = async (data: Partial<ClassEvent>) => {
+  const handleClassSaved = async (
+    data: Partial<ClassEvent>,
+    startDate?: string,
+  ) => {
     try {
       setIsSaving(true);
       console.log("EventManagementDashboard - Saving class:", data);
+      console.log("EventManagementDashboard - Class startDate:", startDate);
 
-      // First save the class
-      const savedClass = await PlannerService.saveClass(data, consultantId);
+      // First save the class with startDate
+      const savedClass = await PlannerService.saveClass(
+        data,
+        consultantId,
+        startDate,
+      );
       console.log("Class saved successfully:", savedClass);
 
       // Refresh planner data with React Query
@@ -210,15 +219,21 @@ export function EventManagementDashboard({
       setIsSaving(true);
       console.log("EventManagementDashboard - Saving consultation plan:", data);
 
+      // Transform topics to string[] for API compatibility
+      const planData = {
+        ...data.consultationPlan,
+        topics: data.consultationPlan?.topics ?? [],
+      };
+
       if (data.consultationPlan?.id) {
         // Update existing plan - use mutateAsync to return a Promise
         await updateConsultationPlan.mutateAsync({
           id: data.consultationPlan.id,
-          ...data.consultationPlan,
+          ...planData,
         });
       } else {
         // Create new plan - use mutateAsync to return a Promise
-        await createConsultationPlan.mutateAsync(data.consultationPlan);
+        await createConsultationPlan.mutateAsync(planData);
       }
 
       // Dialog closing is handled by the form component after awaiting this Promise
@@ -239,15 +254,21 @@ export function EventManagementDashboard({
       setIsSaving(true);
       console.log("EventManagementDashboard - Saving subscription plan:", data);
 
+      // Transform topics to string[] for API compatibility
+      const planData = {
+        ...data.subscriptionPlan,
+        topics: data.subscriptionPlan?.topics ?? [],
+      };
+
       if (data.subscriptionPlan?.id) {
         // Update existing plan - use mutateAsync to return a Promise
         await updateSubscriptionPlan.mutateAsync({
           id: data.subscriptionPlan.id,
-          ...data.subscriptionPlan,
+          ...planData,
         });
       } else {
         // Create new plan - use mutateAsync to return a Promise
-        await createSubscriptionPlan.mutateAsync(data.subscriptionPlan);
+        await createSubscriptionPlan.mutateAsync(planData);
       }
 
       // Dialog closing is handled by the form component after awaiting this Promise
@@ -332,7 +353,10 @@ export function EventManagementDashboard({
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-4 sm:gap-5 lg:gap-6">
                 {[...Array(4)].map((_, i) => (
-                  <div key={i} className="h-56 sm:h-64 bg-zinc-200 rounded-xl"></div>
+                  <div
+                    key={i}
+                    className="h-56 sm:h-64 bg-zinc-200 rounded-xl"
+                  ></div>
                 ))}
               </div>
             </div>
@@ -348,7 +372,10 @@ export function EventManagementDashboard({
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-4 sm:gap-5 lg:gap-6">
                 {[...Array(4)].map((_, i) => (
-                  <div key={i} className="h-56 sm:h-64 bg-zinc-200 rounded-xl"></div>
+                  <div
+                    key={i}
+                    className="h-56 sm:h-64 bg-zinc-200 rounded-xl"
+                  ></div>
                 ))}
               </div>
             </div>
@@ -359,7 +386,8 @@ export function EventManagementDashboard({
   }
 
   // Calculate stats
-  const totalPlans = (consultationPlans?.length ?? 0) + (subscriptionPlans?.length ?? 0);
+  const totalPlans =
+    (consultationPlans?.length ?? 0) + (subscriptionPlans?.length ?? 0);
   const totalSessions = webinars.length + classes.length;
 
   return (
@@ -383,11 +411,15 @@ export function EventManagementDashboard({
           <div className="mt-4 sm:mt-6 flex flex-wrap items-center gap-2 sm:gap-3">
             <div className="flex items-center gap-2 px-3 sm:px-4 py-1.5 sm:py-2 rounded-full bg-zinc-100 border border-zinc-200/60">
               <LayoutTemplate className="h-4 w-4 text-zinc-600" />
-              <span className="text-xs sm:text-sm font-medium text-zinc-700">{totalPlans} Plans</span>
+              <span className="text-xs sm:text-sm font-medium text-zinc-700">
+                {totalPlans} Plans
+              </span>
             </div>
             <div className="flex items-center gap-2 px-3 sm:px-4 py-1.5 sm:py-2 rounded-full bg-zinc-100 border border-zinc-200/60">
               <Radio className="h-4 w-4 text-zinc-600" />
-              <span className="text-xs sm:text-sm font-medium text-zinc-700">{totalSessions} Live Sessions</span>
+              <span className="text-xs sm:text-sm font-medium text-zinc-700">
+                {totalSessions} Live Sessions
+              </span>
             </div>
           </div>
         </motion.div>
@@ -405,8 +437,12 @@ export function EventManagementDashboard({
               <LayoutTemplate className="h-5 w-5 sm:h-6 sm:w-6 text-white" />
             </div>
             <div className="min-w-0">
-              <h2 className="text-xl sm:text-2xl font-bold text-zinc-900">Plan Templates</h2>
-              <p className="text-xs sm:text-sm text-zinc-500">Create reusable service templates</p>
+              <h2 className="text-xl sm:text-2xl font-bold text-zinc-900">
+                Plan Templates
+              </h2>
+              <p className="text-xs sm:text-sm text-zinc-500">
+                Create reusable service templates
+              </p>
             </div>
             <div className="flex-1 h-px bg-gradient-to-r from-zinc-200 to-transparent hidden sm:block" />
           </div>
@@ -419,8 +455,12 @@ export function EventManagementDashboard({
                   <MessageSquare className="h-4 w-4 sm:h-5 sm:w-5 text-blue-600" />
                 </div>
                 <div>
-                  <h3 className="text-base sm:text-lg font-semibold text-zinc-900">Consultation Plans</h3>
-                  <p className="text-xs sm:text-sm text-zinc-500">One-on-one session templates</p>
+                  <h3 className="text-base sm:text-lg font-semibold text-zinc-900">
+                    Consultation Plans
+                  </h3>
+                  <p className="text-xs sm:text-sm text-zinc-500">
+                    One-on-one session templates
+                  </p>
                 </div>
               </div>
               <Button
@@ -434,17 +474,22 @@ export function EventManagementDashboard({
             {consultationPlansLoading ? (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-4 sm:gap-5 lg:gap-6">
                 {[...Array(4)].map((_, i) => (
-                  <div key={i} className="h-56 sm:h-64 bg-zinc-200 rounded-xl animate-pulse"></div>
+                  <div
+                    key={i}
+                    className="h-56 sm:h-64 bg-zinc-200 rounded-xl animate-pulse"
+                  ></div>
                 ))}
               </div>
             ) : (
               <EventCarousel
                 events={
-                  consultationPlans?.map((plan: any) => ({
-                    type: "consultation" as const,
-                    id: plan.id,
-                    consultationPlan: plan,
-                  })) || []
+                  consultationPlans?.map(
+                    (plan: ConsultationPlan & { id: string }) => ({
+                      type: "consultation" as const,
+                      id: plan.id,
+                      consultationPlan: plan,
+                    }),
+                  ) || []
                 }
                 onEdit={handleEditConsultationPlan}
                 onDelete={handleConsultationPlanDelete}
@@ -462,8 +507,12 @@ export function EventManagementDashboard({
                   <CalendarRange className="h-4 w-4 sm:h-5 sm:w-5 text-purple-600" />
                 </div>
                 <div>
-                  <h3 className="text-base sm:text-lg font-semibold text-zinc-900">Subscription Plans</h3>
-                  <p className="text-xs sm:text-sm text-zinc-500">Recurring mentorship offerings</p>
+                  <h3 className="text-base sm:text-lg font-semibold text-zinc-900">
+                    Subscription Plans
+                  </h3>
+                  <p className="text-xs sm:text-sm text-zinc-500">
+                    Recurring mentorship offerings
+                  </p>
                 </div>
               </div>
               <Button
@@ -477,17 +526,22 @@ export function EventManagementDashboard({
             {subscriptionPlansLoading ? (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-4 sm:gap-5 lg:gap-6">
                 {[...Array(4)].map((_, i) => (
-                  <div key={i} className="h-56 sm:h-64 bg-zinc-200 rounded-xl animate-pulse"></div>
+                  <div
+                    key={i}
+                    className="h-56 sm:h-64 bg-zinc-200 rounded-xl animate-pulse"
+                  ></div>
                 ))}
               </div>
             ) : (
               <EventCarousel
                 events={
-                  subscriptionPlans?.map((plan: any) => ({
-                    type: "subscription" as const,
-                    id: plan.id,
-                    subscriptionPlan: plan,
-                  })) || []
+                  subscriptionPlans?.map(
+                    (plan: SubscriptionPlan & { id: string }) => ({
+                      type: "subscription" as const,
+                      id: plan.id,
+                      subscriptionPlan: plan,
+                    }),
+                  ) || []
                 }
                 onEdit={handleEditSubscriptionPlan}
                 onDelete={handleSubscriptionPlanDelete}
@@ -511,8 +565,12 @@ export function EventManagementDashboard({
               <Radio className="h-5 w-5 sm:h-6 sm:w-6 text-white" />
             </div>
             <div className="min-w-0">
-              <h2 className="text-xl sm:text-2xl font-bold text-zinc-900">Live Sessions</h2>
-              <p className="text-xs sm:text-sm text-zinc-500">Schedule and manage your live events</p>
+              <h2 className="text-xl sm:text-2xl font-bold text-zinc-900">
+                Live Sessions
+              </h2>
+              <p className="text-xs sm:text-sm text-zinc-500">
+                Schedule and manage your live events
+              </p>
             </div>
             <div className="flex-1 h-px bg-gradient-to-r from-zinc-200 to-transparent hidden sm:block" />
           </div>
@@ -525,8 +583,12 @@ export function EventManagementDashboard({
                   <Video className="h-4 w-4 sm:h-5 sm:w-5 text-emerald-600" />
                 </div>
                 <div>
-                  <h3 className="text-base sm:text-lg font-semibold text-zinc-900">Webinar Events</h3>
-                  <p className="text-xs sm:text-sm text-zinc-500">Live sessions with multiple participants</p>
+                  <h3 className="text-base sm:text-lg font-semibold text-zinc-900">
+                    Webinar Events
+                  </h3>
+                  <p className="text-xs sm:text-sm text-zinc-500">
+                    Live sessions with multiple participants
+                  </p>
                 </div>
               </div>
               <Button
@@ -554,8 +616,12 @@ export function EventManagementDashboard({
                   <GraduationCap className="h-4 w-4 sm:h-5 sm:w-5 text-amber-600" />
                 </div>
                 <div>
-                  <h3 className="text-base sm:text-lg font-semibold text-zinc-900">Class Events</h3>
-                  <p className="text-xs sm:text-sm text-zinc-500">Multi-session structured learning</p>
+                  <h3 className="text-base sm:text-lg font-semibold text-zinc-900">
+                    Class Events
+                  </h3>
+                  <p className="text-xs sm:text-sm text-zinc-500">
+                    Multi-session structured learning
+                  </p>
                 </div>
               </div>
               <Button

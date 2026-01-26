@@ -10,6 +10,8 @@
  * 5. Prefetch strategies for predictive loading
  */
 
+import type { TConsultantDashboardResponse } from "@/types/consultant-events";
+
 // =============================================================================
 // Types
 // =============================================================================
@@ -65,7 +67,7 @@ interface ConsultantDetailsData {
 // Consultant fetchers
 export const consultantFetchers = {
   dashboard: (consultantId: string) =>
-    fetchWithErrorHandling<Record<string, unknown>>(
+    fetchWithErrorHandling<TConsultantDashboardResponse>(
       `/api/dashboard/consultant/${consultantId}`,
       "Dashboard fetch failed",
     ),

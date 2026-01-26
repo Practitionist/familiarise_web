@@ -5,17 +5,22 @@ import { WebinarPlanSchema } from "@/schemas/plans";
 import { WebinarStatus } from "@prisma/client";
 import { getServerSession } from "next-auth";
 import authOptions from "@/app/api/auth/[...nextauth]/options";
+import { findOrCreateTopics, transformNestedPlanTopics } from "@/lib/topics";
+import { handleSlotOpening } from "@/lib/waitlist/slot-handler";
+import { checkConsultantVerification } from "@/lib/verification";
 
 // Schema for POST request body based on WebinarPlanSchema
+// Topics are now accepted as names (strings) - API handles finding/creating
 const PostWebinarWithPlanBodySchema = WebinarPlanSchema.omit({
-  consultantProfile: true, // We use consultantProfileId
-  topics: true, // We redefine below with min(1) requirement
-  scheduledAt: true, // We redefine below
-  // priceCurrency is inherited from WebinarPlanSchema (which inherits from BaseEventPlanSchema)
+  consultantProfile: true,
+  topics: true,
+  scheduledAt: true,
 }).extend({
   consultantProfileId: z.string().min(1, "Consultant profile ID is required"),
-  topics: z.array(z.string()).min(1, "At least one topic ID is required"),
-  // scheduledAt: Allow string, null, or undefined. Validate string if provided.
+  // Topics as names - API will find or create them
+  topics: z
+    .array(z.string().min(1, "Topic name cannot be empty"))
+    .min(1, "At least one topic is required"),
   scheduledAt: z
     .string()
     .optional()
@@ -23,26 +28,21 @@ const PostWebinarWithPlanBodySchema = WebinarPlanSchema.omit({
     .refine((val) => !val || !isNaN(Date.parse(val)), {
       message: "Invalid date format for scheduledAt",
     }),
-  // Fields for the webinar instance
   status: z
     .nativeEnum(WebinarStatus)
     .optional()
     .default(WebinarStatus.SCHEDULED),
-  // DO NOT define priceCurrency here, it's inherited and has default in base
 });
 
 // Schema for PATCH request body
-// Inherits from corrected PostWebinarWithPlanBodySchema
 const PatchWebinarWithPlanBodySchema = PostWebinarWithPlanBodySchema.omit({
-  topics: true, // Make topics optional separately
+  topics: true,
 })
   .partial()
   .extend({
-    id: z.string().min(1, "Webinar Plan ID is required for update"), // Plan ID is required
-    webinarId: z.string().optional().nullable(), // Webinar Instance ID is optional
-    topics: z.array(z.string()).optional(), // topics is optional for PATCH
-    // scheduledAt is already optional via partial()
-    // priceCurrency is already optional via partial() inherited from base
+    id: z.string().min(1, "Webinar Plan ID is required for update"),
+    webinarId: z.string().optional().nullable(),
+    topics: z.array(z.string()).optional(),
   });
 
 export async function POST(request: NextRequest) {
@@ -61,6 +61,23 @@ export async function POST(request: NextRequest) {
       "Received webinar creation request body:",
       JSON.stringify(body, null, 2),
     );
+
+    // Verification check - consultant must be verified to create webinars
+    if (body.consultantProfileId) {
+      const verification = await checkConsultantVerification(
+        body.consultantProfileId
+      );
+      if (!verification.isVerified) {
+        return NextResponse.json(
+          {
+            error: "Verification required",
+            message: verification.message,
+            verificationStatus: verification.status,
+          },
+          { status: 403 }
+        );
+      }
+    }
 
     // --- Zod Validation ---
     const validationResult = PostWebinarWithPlanBodySchema.safeParse(body);
@@ -86,11 +103,10 @@ export async function POST(request: NextRequest) {
       learningOutcomes,
       priceCurrency,
       consultantProfileId,
-      topics,
+      topics: topicNames,
       scheduledAt,
       status,
     } = validatedData;
-    // --- End Zod Validation ---
 
     // Verify ownership - user must own this consultant profile
     const consultantProfile = await prisma.consultantProfile.findFirst({
@@ -102,12 +118,17 @@ export async function POST(request: NextRequest) {
 
     if (!consultantProfile) {
       return NextResponse.json(
-        { error: "You do not have permission to create webinars for this consultant profile" },
+        {
+          error:
+            "You do not have permission to create webinars for this consultant profile",
+        },
         { status: 403 },
       );
     }
 
-    // Log validated fields
+    // Find or create topics by name
+    const topicIds = await findOrCreateTopics(topicNames);
+
     console.log("Validated fields:", {
       title,
       durationInHours,
@@ -115,7 +136,7 @@ export async function POST(request: NextRequest) {
       maxParticipants,
       consultantProfileId,
       scheduledAt,
-      topics,
+      topicNames,
       status,
     });
 
@@ -155,22 +176,7 @@ export async function POST(request: NextRequest) {
     // Create webinar plan, instance, and appointment in a transaction
     const result = await prisma.$transaction(
       async (tx) => {
-        // Verify all topics exist (still useful within transaction)
-        if (topics && topics.length > 0) {
-          const existingTopics = await tx.topic.findMany({
-            where: { id: { in: topics } },
-            select: { id: true }, // Only select ID for verification
-          });
-
-          if (existingTopics.length !== topics.length) {
-            const missingIds = topics.filter(
-              (reqId) => !existingTopics.some((dbTopic) => dbTopic.id === reqId),
-            );
-            throw new Error(
-              `The following topic IDs do not exist: ${missingIds.join(", ")}`,
-            );
-          }
-        }
+        // Topics are already created/found by findOrCreateTopics, no verification needed
 
         // 1. Create the webinar plan using validated data
         console.log("Creating webinar plan with validated data:", {
@@ -180,7 +186,7 @@ export async function POST(request: NextRequest) {
           price,
           maxParticipants,
           consultantProfileId,
-          topics, // Log topics
+          topicIds,
         });
 
         const webinarPlan = await tx.webinarPlan.create({
@@ -197,10 +203,13 @@ export async function POST(request: NextRequest) {
             prerequisites,
             materialProvided,
             learningOutcomes,
+            certificateProvided: validatedData.certificateProvided,
+            recordingEnabled: validatedData.recordingEnabled,
             consultantProfile: { connect: { id: consultantProfileId } },
-            topics: topics
-              ? { connect: topics.map((id: string) => ({ id })) }
-              : undefined,
+            topics:
+              topicIds.length > 0
+                ? { connect: topicIds.map((id: string) => ({ id })) }
+                : undefined,
           },
           include: {
             consultantProfile: true,
@@ -277,7 +286,12 @@ export async function POST(request: NextRequest) {
     );
 
     console.log("Transaction completed successfully. Returning webinar data.");
-    return NextResponse.json({ data: result.webinar }, { status: 201 });
+    // Transform topics to strings in response
+    const transformedWebinar = transformNestedPlanTopics(
+      result.webinar,
+      "webinarPlan",
+    );
+    return NextResponse.json({ data: transformedWebinar }, { status: 201 });
   } catch (error) {
     // --- Zod Error Handling ---
     if (error instanceof z.ZodError) {
@@ -352,23 +366,28 @@ export async function PATCH(request: NextRequest) {
       materialProvided,
       learningOutcomes,
       consultantProfileId,
-      topics, // Use validated topics directly
+      topics: topicNames,
       status,
-      scheduledAt, // Optional string date
+      scheduledAt,
       priceCurrency,
+      certificateProvided,
+      recordingEnabled,
     } = validatedData;
-    // --- End Zod Validation ---
 
-    // Log validated fields
+    // Find or create topics by name if provided
+    let topicIds: string[] | undefined;
+    if (topicNames !== undefined) {
+      topicIds = await findOrCreateTopics(topicNames);
+    }
+
     console.log("Validated fields for update:", {
       id,
       webinarId,
-      title, // May be undefined
-      durationInHours, // May be undefined
-      // ... other fields if needed for logging ...
-      topics: topics ? `[${topics.length} topics]` : "undefined",
-      status, // May be undefined
-      scheduledAt, // May be undefined
+      title,
+      durationInHours,
+      topicIds: topicIds ? `[${topicIds.length} topics]` : "undefined",
+      status,
+      scheduledAt,
     });
 
     // Remove old manual validation
@@ -401,8 +420,10 @@ export async function PATCH(request: NextRequest) {
     }
 
     // Verify ownership - user must own this webinar plan
-    if (!existingPlan.consultantProfile ||
-        existingPlan.consultantProfile.userId !== session.user.id) {
+    if (
+      !existingPlan.consultantProfile ||
+      existingPlan.consultantProfile.userId !== session.user.id
+    ) {
       return NextResponse.json(
         { error: "You do not have permission to update this webinar" },
         { status: 403 },
@@ -518,6 +539,10 @@ export async function PATCH(request: NextRequest) {
           updateData.prerequisites = prerequisites;
         if (materialProvided !== undefined)
           updateData.materialProvided = materialProvided;
+        if (certificateProvided !== undefined)
+          updateData.certificateProvided = certificateProvided;
+        if (recordingEnabled !== undefined)
+          updateData.recordingEnabled = recordingEnabled;
         if (learningOutcomes !== undefined)
           updateData.learningOutcomes = learningOutcomes;
         if (consultantProfileId !== undefined)
@@ -525,44 +550,15 @@ export async function PATCH(request: NextRequest) {
             connect: { id: consultantProfileId },
           };
 
-        // Determine how to handle topics (using validated 'topics')
-        if (topics !== undefined) {
-          // If topics are provided (can be empty array for removal), use set to sync
-          if (!Array.isArray(topics)) {
-            // This case should be caught by Zod validation, but double-check defensively
-            console.error(
-              "topics was provided but is not an array:",
-              topics,
-            );
-            throw new Error("Invalid format for topics");
-          }
-          // Verify provided topics actually exist (important!)
-          const existingTopics = await tx.topic.findMany({
-            where: { id: { in: topics } },
-            select: { id: true }, // Only need IDs
-          });
-          if (existingTopics.length !== topics.length) {
-            const missingIds = topics.filter(
-              (reqId) => !existingTopics.some((dbTopic) => dbTopic.id === reqId),
-            );
-            console.error(
-              "Attempted to set non-existent topic IDs:",
-              missingIds,
-            );
-            throw new Error(
-              `The following topic IDs do not exist: ${missingIds.join(", ")}`,
-            );
-          }
-
+        // Handle topics: topicIds are already validated/created by findOrCreateTopics
+        if (topicIds !== undefined) {
           updateData.topics = {
-            set: topics.map((topicId: string) => ({ id: topicId })),
+            set: topicIds.map((topicId: string) => ({ id: topicId })),
           };
           console.log(
-            `Syncing topics with provided IDs: [${topics.join(", ")}]`,
+            `Syncing topics with provided IDs: [${topicIds.join(", ")}]`,
           );
         } else {
-          // If topics is undefined in the validated PATCH data, do *not* include the topics key
-          // This leaves the existing topic relations untouched.
           console.log(
             "topics is undefined in PATCH request. Existing topics will not be modified.",
           );
@@ -570,7 +566,7 @@ export async function PATCH(request: NextRequest) {
 
         // Execute the plan update only if there are changes
         let updatedWebinarPlan = existingPlan;
-        if (Object.keys(updateData).length > 0 || topics !== undefined) {
+        if (Object.keys(updateData).length > 0 || topicIds !== undefined) {
           // Check topics for changes
           updatedWebinarPlan = await tx.webinarPlan.update({
             where: { id },
@@ -738,11 +734,49 @@ export async function PATCH(request: NextRequest) {
       "Update transaction completed successfully. Returning updated webinar data.",
     );
 
-    // Return the appropriate response based on whether we had a webinar instance
-    // Ensure topics are included in the response if only the plan was updated
-    const responseData = result.webinar
-      ? result.webinar // Includes nested plan with topics
-      : { ...result.webinarPlan, topics: result.webinarPlan.topics }; // Add topics if only plan returned
+    // Notify waitlist if capacity was increased
+    const oldMaxParticipants = existingPlan.maxParticipants;
+    const newMaxParticipants = result.webinarPlan.maxParticipants;
+
+    if (newMaxParticipants > oldMaxParticipants && result.webinar?.id) {
+      const newSlotsAvailable = newMaxParticipants - oldMaxParticipants;
+
+      try {
+        await handleSlotOpening({
+          webinarId: result.webinar.id,
+          slotsAvailable: newSlotsAvailable,
+          reason: "capacity_increase",
+        });
+
+        console.log(
+          JSON.stringify({
+            event: "waitlist_notified_after_capacity_increase",
+            webinarId: result.webinar.id,
+            oldMaxParticipants,
+            newMaxParticipants,
+            newSlotsAvailable,
+            timestamp: new Date().toISOString(),
+          }),
+        );
+      } catch (waitlistError) {
+        // Log but don't fail the update - waitlist notification is best-effort
+        console.error(
+          "Failed to notify waitlist after capacity increase:",
+          waitlistError,
+        );
+      }
+    }
+
+    // Transform topics to strings in response
+    let responseData;
+    if (result.webinar) {
+      responseData = transformNestedPlanTopics(result.webinar, "webinarPlan");
+    } else {
+      responseData = {
+        ...result.webinarPlan,
+        topics: result.webinarPlan.topics.map((t) => t.name),
+      };
+    }
 
     return NextResponse.json({ data: responseData }, { status: 200 });
   } catch (error) {
@@ -757,17 +791,6 @@ export async function PATCH(request: NextRequest) {
     // --- End Zod Error Handling ---
 
     console.error("Error updating webinar with plan:", error);
-
-    // If error indicates topics don't exist
-    if (
-      error instanceof Error &&
-      error.message.includes("The following topic IDs do not exist:") // More specific check
-    ) {
-      return NextResponse.json(
-        { error: `Invalid topics provided: ${error.message}` },
-        { status: 400 },
-      );
-    }
 
     return NextResponse.json(
       { error: "An error occurred while updating the webinar" },

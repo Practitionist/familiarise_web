@@ -72,8 +72,12 @@ async function expirePendingConsultations(): Promise<{
 
     for (const consultation of staleConsultations) {
       console.log(`\nExpiring consultation ${consultation.id}`);
-      console.log(`   Requested by: ${consultation.requestedBy.user.name || "Unknown"}`);
-      console.log(`   Consultant: ${consultation.consultationPlan.consultantProfile.user.name || "Unknown"}`);
+      console.log(
+        `   Requested by: ${consultation.requestedBy.user.name || "Unknown"}`,
+      );
+      console.log(
+        `   Consultant: ${consultation.consultationPlan.consultantProfile.user.name || "Unknown"}`,
+      );
       console.log(`   Requested at: ${consultation.requestedAt.toISOString()}`);
     }
 
@@ -137,8 +141,12 @@ async function expirePendingSubscriptions(): Promise<{
 
     for (const subscription of staleSubscriptions) {
       console.log(`\nExpiring subscription ${subscription.id}`);
-      console.log(`   Requested by: ${subscription.requestedBy.user.name || "Unknown"}`);
-      console.log(`   Consultant: ${subscription.subscriptionPlan.consultantProfile.user.name || "Unknown"}`);
+      console.log(
+        `   Requested by: ${subscription.requestedBy.user.name || "Unknown"}`,
+      );
+      console.log(
+        `   Consultant: ${subscription.subscriptionPlan.consultantProfile.user.name || "Unknown"}`,
+      );
       console.log(`   Requested at: ${subscription.requestedAt.toISOString()}`);
     }
 
@@ -189,7 +197,9 @@ async function expirePaymentPendingRequests(): Promise<{
       },
     });
 
-    console.log(`✅ Expired ${consultationResult.count} consultations awaiting payment`);
+    console.log(
+      `✅ Expired ${consultationResult.count} consultations awaiting payment`,
+    );
 
     // Expire subscriptions awaiting payment
     const subscriptionResult = await prisma.subscription.updateMany({
@@ -203,7 +213,9 @@ async function expirePaymentPendingRequests(): Promise<{
       },
     });
 
-    console.log(`✅ Expired ${subscriptionResult.count} subscriptions awaiting payment`);
+    console.log(
+      `✅ Expired ${subscriptionResult.count} subscriptions awaiting payment`,
+    );
 
     return {
       consultationsExpired: consultationResult.count,
@@ -225,8 +237,12 @@ export async function expireStaleRequests(): Promise<ExpireStaleRequestsResult> 
   const allErrors: string[] = [];
 
   console.log("🕐 Starting stale request expiration...");
-  console.log(`   PENDING expiration threshold: ${PENDING_EXPIRATION_DAYS} days`);
-  console.log(`   APPROVED_PENDING_PAYMENT expiration: ${PAYMENT_PENDING_EXPIRATION_DAYS} days`);
+  console.log(
+    `   PENDING expiration threshold: ${PENDING_EXPIRATION_DAYS} days`,
+  );
+  console.log(
+    `   APPROVED_PENDING_PAYMENT expiration: ${PAYMENT_PENDING_EXPIRATION_DAYS} days`,
+  );
 
   // Expire PENDING consultations
   const consultationResult = await expirePendingConsultations();
@@ -246,8 +262,12 @@ export async function expireStaleRequests(): Promise<ExpireStaleRequestsResult> 
 
   // Summary
   console.log("\n📊 Stale Request Expiration Summary:");
-  console.log(`   Consultations expired (PENDING): ${consultationResult.expired}`);
-  console.log(`   Subscriptions expired (PENDING): ${subscriptionResult.expired}`);
+  console.log(
+    `   Consultations expired (PENDING): ${consultationResult.expired}`,
+  );
+  console.log(
+    `   Subscriptions expired (PENDING): ${subscriptionResult.expired}`,
+  );
   console.log(`   Payment pending expired: ${totalPaymentPending}`);
 
   if (allErrors.length > 0) {

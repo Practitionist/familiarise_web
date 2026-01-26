@@ -136,6 +136,18 @@ export const ConsultationPlanSchema = z.object({
       profanityFreeArrayRefinement,
       "Learning outcomes contain inappropriate language",
     ),
+  topics: z
+    .array(z.string().min(1, "Topic cannot be empty"))
+    .default([])
+    .refine(noDuplicatesRefinement, "Duplicate topics are not allowed")
+    .refine(
+      meaningfulArrayContentRefinement,
+      "Topics contain nonsensical text or gibberish",
+    )
+    .refine(
+      profanityFreeArrayRefinement,
+      "Topics contain inappropriate language",
+    ),
 });
 
 export const SubscriptionPlanSchema = z.object({
@@ -216,6 +228,18 @@ export const SubscriptionPlanSchema = z.object({
     .refine(
       profanityFreeArrayRefinement,
       "Learning outcomes contain inappropriate language",
+    ),
+  topics: z
+    .array(z.string().min(1, "Topic cannot be empty"))
+    .default([])
+    .refine(noDuplicatesRefinement, "Duplicate topics are not allowed")
+    .refine(
+      meaningfulArrayContentRefinement,
+      "Topics contain nonsensical text or gibberish",
+    )
+    .refine(
+      profanityFreeArrayRefinement,
+      "Topics contain inappropriate language",
     ),
 });
 
@@ -344,6 +368,7 @@ export const createUniqueTitleValidator = (
 // Webinar specific schema
 export const WebinarPlanSchema = BaseEventPlanSchema.extend({
   certificateProvided: z.boolean().default(false),
+  recordingEnabled: z.boolean().default(false),
   durationInHours: z
     .number()
     .min(0.5, "Duration must be at least 30 minutes")
@@ -412,20 +437,21 @@ export const ClassContentSchema = z.object({
       (val) => !val || profanityFreeRefinement(val),
       "URL contains inappropriate language",
     ),
-  order: z.number().min(1, "Order must be a positive number"),
+  order: z.number().optional(),
   hoursAllotted: z
     .number()
     .min(0.5, "Hours allotted must be at least 30 minutes"),
   // Optional fields for Prisma compatibility
-  createdAt: z.date().optional(),
-  updatedAt: z.date().optional(),
+  createdAt: z.union([z.date(), z.string()]).optional(),
+  updatedAt: z.union([z.date(), z.string()]).optional(),
   classPlanId: z.string().optional(),
 });
 
 export const ClassPlanSchema = BaseEventPlanSchema.extend({
   planType: z.literal("class"),
-  durationInMonths: z.number().min(0.25, "Duration must be at least 1 week"),
+  durationInMonths: z.number().min(1, "Duration must be at least 1 month"),
   certificateProvided: z.boolean().default(false),
+  recordingEnabled: z.boolean().default(false),
   meetingsPerWeek: z.number().min(0, "Meetings per week must be non-negative"),
   emailSupport: z.enum(["GENERAL", "PRIORITY", "DEDICATED"]).default("GENERAL"),
   classContents: z

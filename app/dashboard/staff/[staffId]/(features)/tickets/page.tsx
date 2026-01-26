@@ -1,10 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import {
-  Card,
-  CardContent,
-} from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -300,7 +297,11 @@ export default function SupportTicketsPage() {
       setTotalPages(data.pagination.totalPages);
     } catch (error) {
       console.error("Error fetching tickets:", error);
-      toast({ title: "Error", description: "Failed to load support tickets", variant: "destructive" });
+      toast({
+        title: "Error",
+        description: "Failed to load support tickets",
+        variant: "destructive",
+      });
     } finally {
       setLoading(false);
     }
@@ -321,7 +322,11 @@ export default function SupportTicketsPage() {
       setTicketDetail(data);
     } catch (error) {
       console.error("Error fetching ticket detail:", error);
-      toast({ title: "Error", description: "Failed to load ticket details", variant: "destructive" });
+      toast({
+        title: "Error",
+        description: "Failed to load ticket details",
+        variant: "destructive",
+      });
     } finally {
       setLoadingDetail(false);
     }
@@ -344,7 +349,7 @@ export default function SupportTicketsPage() {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ status: newStatus }),
-        }
+        },
       );
 
       if (!response.ok) throw new Error("Failed to update status");
@@ -354,7 +359,11 @@ export default function SupportTicketsPage() {
       fetchTicketDetail(selectedTicket.id);
     } catch (error) {
       console.error("Error updating status:", error);
-      toast({ title: "Error", description: "Failed to update status", variant: "destructive" });
+      toast({
+        title: "Error",
+        description: "Failed to update status",
+        variant: "destructive",
+      });
     } finally {
       setUpdatingStatus(false);
     }
@@ -374,19 +383,26 @@ export default function SupportTicketsPage() {
             message: replyText,
             isInternal: isInternalNote,
           }),
-        }
+        },
       );
 
       if (!response.ok) throw new Error("Failed to send reply");
 
-      toast({ title: "Success", description: isInternalNote ? "Internal note added" : "Reply sent" });
+      toast({
+        title: "Success",
+        description: isInternalNote ? "Internal note added" : "Reply sent",
+      });
       setReplyText("");
       setIsInternalNote(false);
       fetchTicketDetail(selectedTicket.id);
       fetchTickets();
     } catch (error) {
       console.error("Error sending reply:", error);
-      toast({ title: "Error", description: "Failed to send reply", variant: "destructive" });
+      toast({
+        title: "Error",
+        description: "Failed to send reply",
+        variant: "destructive",
+      });
     } finally {
       setSendingReply(false);
     }
@@ -426,8 +442,9 @@ export default function SupportTicketsPage() {
       console.error("Error initiating refund:", error);
       toast({
         title: "Error",
-        description: error instanceof Error ? error.message : "Failed to initiate refund",
-        variant: "destructive"
+        description:
+          error instanceof Error ? error.message : "Failed to initiate refund",
+        variant: "destructive",
       });
     } finally {
       setInitiatingRefund(false);
@@ -438,7 +455,7 @@ export default function SupportTicketsPage() {
   const handleQuickAction = async (
     ticketId: string,
     action: string,
-    e: React.MouseEvent
+    e: React.MouseEvent,
   ) => {
     e.stopPropagation();
     try {
@@ -460,7 +477,11 @@ export default function SupportTicketsPage() {
       fetchTickets();
     } catch (error) {
       console.error("Error:", error);
-      toast({ title: "Error", description: "Action failed", variant: "destructive" });
+      toast({
+        title: "Error",
+        description: "Action failed",
+        variant: "destructive",
+      });
     }
   };
 
@@ -477,7 +498,9 @@ export default function SupportTicketsPage() {
           </p>
         </div>
         <Button variant="outline" onClick={fetchTickets} disabled={loading}>
-          <RefreshCw className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`} />
+          <RefreshCw
+            className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`}
+          />
           Refresh
         </Button>
       </div>
@@ -641,7 +664,9 @@ export default function SupportTicketsPage() {
                               .join("") || "?"}
                           </AvatarFallback>
                         </Avatar>
-                        <span className="text-sm">{ticket.user.name || "Unknown"}</span>
+                        <span className="text-sm">
+                          {ticket.user.name || "Unknown"}
+                        </span>
                       </div>
                     </TableCell>
                     <TableCell>
@@ -661,7 +686,9 @@ export default function SupportTicketsPage() {
                       </Badge>
                     </TableCell>
                     <TableCell className="text-sm text-zinc-600 dark:text-zinc-400">
-                      {ticket.issueType?.replace(/_/g, " ") || ticket.category || "-"}
+                      {ticket.issueType?.replace(/_/g, " ") ||
+                        ticket.category ||
+                        "-"}
                     </TableCell>
                     <TableCell className="text-sm text-zinc-500">
                       {formatDate(ticket.updatedAt)}
@@ -672,7 +699,11 @@ export default function SupportTicketsPage() {
                           asChild
                           onClick={(e) => e.stopPropagation()}
                         >
-                          <Button variant="ghost" size="icon" className="h-8 w-8">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8"
+                          >
                             <MoreHorizontal className="h-4 w-4" />
                           </Button>
                         </DropdownMenuTrigger>
@@ -749,7 +780,9 @@ export default function SupportTicketsPage() {
                 <div className="flex items-center justify-between">
                   <DialogTitle className="flex items-center gap-2">
                     {getStatusIcon(ticketDetail.status)}
-                    <span className="truncate max-w-[400px]">{ticketDetail.title}</span>
+                    <span className="truncate max-w-[400px]">
+                      {ticketDetail.title}
+                    </span>
                   </DialogTitle>
                   <div className="flex gap-2">
                     <Badge
@@ -789,10 +822,13 @@ export default function SupportTicketsPage() {
                       </AvatarFallback>
                     </Avatar>
                     <div>
-                      <p className="font-medium">{ticketDetail.user.name || "Unknown"}</p>
+                      <p className="font-medium">
+                        {ticketDetail.user.name || "Unknown"}
+                      </p>
                       <p className="text-sm text-zinc-500">
                         {ticketDetail.user.email}
-                        {ticketDetail.user.phone && ` • ${ticketDetail.user.phone}`}
+                        {ticketDetail.user.phone &&
+                          ` • ${ticketDetail.user.phone}`}
                       </p>
                     </div>
                   </div>
@@ -809,11 +845,17 @@ export default function SupportTicketsPage() {
                       <div className="text-sm space-y-1">
                         <p>
                           <strong>Plan:</strong>{" "}
-                          {ticketDetail.linkedConsultation.consultationPlan.title}
+                          {
+                            ticketDetail.linkedConsultation.consultationPlan
+                              .title
+                          }
                         </p>
                         <p>
                           <strong>Consultant:</strong>{" "}
-                          {ticketDetail.linkedConsultation.consultationPlan.consultantProfile.user.name}
+                          {
+                            ticketDetail.linkedConsultation.consultationPlan
+                              .consultantProfile.user.name
+                          }
                         </p>
                         <p>
                           <strong>Status:</strong>{" "}
@@ -823,7 +865,8 @@ export default function SupportTicketsPage() {
                           <p>
                             <strong>Scheduled:</strong>{" "}
                             {new Date(
-                              ticketDetail.linkedConsultation.appointment.scheduledAt
+                              ticketDetail.linkedConsultation.appointment
+                                .scheduledAt,
                             ).toLocaleString()}
                           </p>
                         )}
@@ -841,7 +884,8 @@ export default function SupportTicketsPage() {
                             Linked Payment
                           </span>
                         </div>
-                        {ticketDetail.linkedPayment.paymentStatus === "SUCCEEDED" &&
+                        {ticketDetail.linkedPayment.paymentStatus ===
+                          "SUCCEEDED" &&
                           !ticketDetail.linkedRefund && (
                             <Button
                               size="sm"
@@ -863,7 +907,7 @@ export default function SupportTicketsPage() {
                           <strong>Amount:</strong>{" "}
                           {formatCurrency(
                             ticketDetail.linkedPayment.amount,
-                            ticketDetail.linkedPayment.currency
+                            ticketDetail.linkedPayment.currency,
                           )}
                         </p>
                         <p>
@@ -871,7 +915,8 @@ export default function SupportTicketsPage() {
                           <Badge
                             variant="outline"
                             className={
-                              ticketDetail.linkedPayment.paymentStatus === "SUCCEEDED"
+                              ticketDetail.linkedPayment.paymentStatus ===
+                              "SUCCEEDED"
                                 ? "text-green-600"
                                 : "text-yellow-600"
                             }
@@ -901,7 +946,7 @@ export default function SupportTicketsPage() {
                           <strong>Amount:</strong>{" "}
                           {formatCurrency(
                             ticketDetail.linkedRefund.amount,
-                            ticketDetail.linkedRefund.currency
+                            ticketDetail.linkedRefund.currency,
                           )}
                         </p>
                         <p>
@@ -919,7 +964,8 @@ export default function SupportTicketsPage() {
                         </p>
                         {ticketDetail.linkedRefund.reason && (
                           <p>
-                            <strong>Reason:</strong> {ticketDetail.linkedRefund.reason}
+                            <strong>Reason:</strong>{" "}
+                            {ticketDetail.linkedRefund.reason}
                           </p>
                         )}
                       </div>
@@ -935,31 +981,34 @@ export default function SupportTicketsPage() {
                   </div>
 
                   {/* Attachments */}
-                  {ticketDetail.attachments && ticketDetail.attachments.length > 0 && (
-                    <div>
-                      <Label className="text-sm font-medium">Attachments</Label>
-                      <div className="mt-2 space-y-2">
-                        {ticketDetail.attachments.map((attachment) => (
-                          <a
-                            key={attachment.id}
-                            href={attachment.fileUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="flex items-center gap-2 p-2 border rounded hover:bg-zinc-50 dark:hover:bg-zinc-900"
-                          >
-                            <FileText className="h-4 w-4 text-zinc-500" />
-                            <span className="flex-1 text-sm truncate">
-                              {attachment.originalName}
-                            </span>
-                            <span className="text-xs text-zinc-400">
-                              {formatFileSize(attachment.fileSize)}
-                            </span>
-                            <ExternalLink className="h-3 w-3 text-zinc-400" />
-                          </a>
-                        ))}
+                  {ticketDetail.attachments &&
+                    ticketDetail.attachments.length > 0 && (
+                      <div>
+                        <Label className="text-sm font-medium">
+                          Attachments
+                        </Label>
+                        <div className="mt-2 space-y-2">
+                          {ticketDetail.attachments.map((attachment) => (
+                            <a
+                              key={attachment.id}
+                              href={attachment.fileUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="flex items-center gap-2 p-2 border rounded hover:bg-zinc-50 dark:hover:bg-zinc-900"
+                            >
+                              <FileText className="h-4 w-4 text-zinc-500" />
+                              <span className="flex-1 text-sm truncate">
+                                {attachment.originalName}
+                              </span>
+                              <span className="text-xs text-zinc-400">
+                                {formatFileSize(attachment.fileSize)}
+                              </span>
+                              <ExternalLink className="h-3 w-3 text-zinc-400" />
+                            </a>
+                          ))}
+                        </div>
                       </div>
-                    </div>
-                  )}
+                    )}
 
                   <Separator />
 
@@ -989,59 +1038,62 @@ export default function SupportTicketsPage() {
                   <Separator />
 
                   {/* Response Thread */}
-                  {ticketDetail.responses && ticketDetail.responses.length > 0 && (
-                    <div>
-                      <Label className="text-sm font-medium mb-2 block">
-                        Conversation ({ticketDetail.responses.length})
-                      </Label>
-                      <div className="space-y-3 max-h-[200px] overflow-y-auto">
-                        {ticketDetail.responses.map((response) => (
-                          <div
-                            key={response.id}
-                            className={`p-3 rounded-lg ${
-                              response.user.role === "STAFF" ||
-                              response.user.role === "ADMIN"
-                                ? response.isInternal
-                                  ? "bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800"
-                                  : "bg-blue-50 dark:bg-blue-950"
-                                : "bg-zinc-100 dark:bg-zinc-800"
-                            }`}
-                          >
-                            <div className="flex items-center gap-2 mb-1">
-                              <Avatar className="h-5 w-5">
-                                <AvatarImage src={response.user.image || ""} />
-                                <AvatarFallback className="text-xs">
-                                  {response.user.name?.[0] || "?"}
-                                </AvatarFallback>
-                              </Avatar>
-                              <span className="text-sm font-medium">
-                                {response.user.name}
-                              </span>
-                              {response.user.role && (
-                                <Badge variant="outline" className="text-xs">
-                                  {response.user.role}
-                                </Badge>
-                              )}
-                              {response.isInternal && (
-                                <Badge
-                                  variant="outline"
-                                  className="text-xs text-amber-600"
-                                >
-                                  Internal
-                                </Badge>
-                              )}
-                              <span className="text-xs text-zinc-400 ml-auto">
-                                {formatDate(response.createdAt)}
-                              </span>
+                  {ticketDetail.responses &&
+                    ticketDetail.responses.length > 0 && (
+                      <div>
+                        <Label className="text-sm font-medium mb-2 block">
+                          Conversation ({ticketDetail.responses.length})
+                        </Label>
+                        <div className="space-y-3 max-h-[200px] overflow-y-auto">
+                          {ticketDetail.responses.map((response) => (
+                            <div
+                              key={response.id}
+                              className={`p-3 rounded-lg ${
+                                response.user.role === "STAFF" ||
+                                response.user.role === "ADMIN"
+                                  ? response.isInternal
+                                    ? "bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800"
+                                    : "bg-blue-50 dark:bg-blue-950"
+                                  : "bg-zinc-100 dark:bg-zinc-800"
+                              }`}
+                            >
+                              <div className="flex items-center gap-2 mb-1">
+                                <Avatar className="h-5 w-5">
+                                  <AvatarImage
+                                    src={response.user.image || ""}
+                                  />
+                                  <AvatarFallback className="text-xs">
+                                    {response.user.name?.[0] || "?"}
+                                  </AvatarFallback>
+                                </Avatar>
+                                <span className="text-sm font-medium">
+                                  {response.user.name}
+                                </span>
+                                {response.user.role && (
+                                  <Badge variant="outline" className="text-xs">
+                                    {response.user.role}
+                                  </Badge>
+                                )}
+                                {response.isInternal && (
+                                  <Badge
+                                    variant="outline"
+                                    className="text-xs text-amber-600"
+                                  >
+                                    Internal
+                                  </Badge>
+                                )}
+                                <span className="text-xs text-zinc-400 ml-auto">
+                                  {formatDate(response.createdAt)}
+                                </span>
+                              </div>
+                              <p className="text-sm whitespace-pre-wrap">
+                                {response.message}
+                              </p>
                             </div>
-                            <p className="text-sm whitespace-pre-wrap">
-                              {response.message}
-                            </p>
-                          </div>
-                        ))}
+                          ))}
+                        </div>
                       </div>
-                    </div>
-                  )}
+                    )}
 
                   {/* Reply Box */}
                   <div>

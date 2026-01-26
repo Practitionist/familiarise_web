@@ -33,7 +33,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
     // Return 207 if double bookings detected (needs attention)
     // Return 500 if errors occurred
-    const status = result.doubleBookingsDetected > 0 ? 207 : result.success ? 200 : 500;
+    const status =
+      result.doubleBookingsDetected > 0 ? 207 : result.success ? 200 : 500;
 
     return NextResponse.json(result, { status });
   } catch (error) {

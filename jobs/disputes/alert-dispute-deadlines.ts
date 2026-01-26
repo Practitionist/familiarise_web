@@ -59,7 +59,9 @@ async function main(): Promise<void> {
     if (result.disputes.length > 0) {
       console.log("\n📋 Dispute Details:");
       result.disputes.forEach((d) => {
-        console.log(`   - ${d.disputeId}: ${d.currency} ${(d.amount / 100).toFixed(2)} (${d.hoursRemaining}h remaining)`);
+        console.log(
+          `   - ${d.disputeId}: ${d.currency} ${(d.amount / 100).toFixed(2)} (${d.hoursRemaining}h remaining)`,
+        );
       });
     }
 

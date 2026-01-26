@@ -852,12 +852,14 @@ export function UnifiedCalendar({
             return (
               <div
                 key={date.toISOString()}
-                className={`min-h-[100px] border p-1 flex flex-col ${isCurrentDay ? "ring-2 ring-primary" : ""
-                  } ${isPastDay ? "bg-gray-100 text-gray-400" : "bg-white"}`}
+                className={`min-h-[100px] border p-1 flex flex-col ${
+                  isCurrentDay ? "ring-2 ring-primary" : ""
+                } ${isPastDay ? "bg-gray-100 text-gray-400" : "bg-white"}`}
               >
                 <div
-                  className={`font-bold mb-1 text-xs ${isCurrentDay ? "text-primary" : ""
-                    } ${isPastDay ? "" : "text-gray-700"}`}
+                  className={`font-bold mb-1 text-xs ${
+                    isCurrentDay ? "text-primary" : ""
+                  } ${isPastDay ? "" : "text-gray-700"}`}
                 >
                   {i + 1}
                 </div>
@@ -1032,12 +1034,14 @@ export function UnifiedCalendar({
               return (
                 <div
                   key={DAYS[index]}
-                  className={`text-center p-1 md:p-2 ${isInPeriod ? "bg-blue-50 border-x-2 border-blue-200" : ""
-                    }`}
+                  className={`text-center p-1 md:p-2 ${
+                    isInPeriod ? "bg-blue-50 border-x-2 border-blue-200" : ""
+                  }`}
                 >
                   <div
-                    className={`font-bold text-xs md:text-base ${isToday ? "text-primary" : ""
-                      }`}
+                    className={`font-bold text-xs md:text-base ${
+                      isToday ? "text-primary" : ""
+                    }`}
                   >
                     {DAYS[index].slice(0, 3)}
                   </div>
@@ -1138,7 +1142,8 @@ export function UnifiedCalendar({
           {/* Only show weekly limit for subscriptions - other event types don't need secondary info */}
           {eventType === "subscription" && (
             <div className="text-xs text-muted-foreground">
-              Max {callsPerWeek || 1} session{(callsPerWeek || 1) > 1 ? "s" : ""} per week
+              Max {callsPerWeek || 1} session
+              {(callsPerWeek || 1) > 1 ? "s" : ""} per week
             </div>
           )}
           {allocationError && (

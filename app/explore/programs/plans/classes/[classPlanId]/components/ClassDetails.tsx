@@ -33,6 +33,7 @@ type ClassSessionWithSchedule = PrismaClass & {
   appointments: (PrismaAppointment & {
     slotsOfAppointment: PrismaSlotOfAppointment[];
   })[];
+  waitlist?: Array<{ userId: string; position: number | null; status: string }>;
 };
 
 export type ClassPlanDetailsData = Omit<
@@ -424,7 +425,11 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
               </Card>
 
               {/* Registration Card */}
-              <ClientClassRegistration plan={plan} />
+              <ClientClassRegistration
+                plan={plan}
+                maxParticipants={plan.maxParticipants ?? undefined}
+                waitlist={plan.classes?.[0]?.waitlist ?? []}
+              />
             </div>
           </motion.div>
         </div>

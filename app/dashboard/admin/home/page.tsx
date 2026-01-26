@@ -7,11 +7,9 @@ import {
   DashboardHeader,
   DashboardContent,
   DashboardGrid,
-  StatCard,
-  StatCardSkeleton,
-  DataCard,
-  EmptyState,
-} from "@/components/dashboard";
+} from "@/components/dashboard/DashboardShell";
+import { StatCard, StatCardSkeleton } from "@/components/dashboard/StatCard";
+import { DataCard, EmptyState } from "@/components/dashboard/DataCard";
 import {
   CreditCard,
   Clock,

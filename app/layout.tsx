@@ -1,4 +1,5 @@
 import AnnouncementBar from "@/components/AnnouncementBar";
+import CookieConsentBanner from "@/components/CookieConsent";
 import Footer from "@/components/Footer";
 import HeaderSpacer from "@/components/HeaderSpacer";
 import Navbar from "@/components/Navbar";
@@ -51,10 +52,9 @@ export default async function RootLayout({
             <AnnouncementBar />
             <Navbar />
             <HeaderSpacer />
-            <div className="flex-1 w-full">
-              {children}
-            </div>
+            <div className="flex-1 w-full">{children}</div>
             <Footer />
+            <CookieConsentBanner />
           </NextAuthProvider>
         </ReactQueryProvider>
       </body>

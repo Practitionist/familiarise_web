@@ -29,7 +29,11 @@ export async function GET(
     const userId = session.user.id;
 
     // Build access control for the appointment first
-    const isDevelopment = process.env.NODE_ENV === "development";
+    // In development mode with explicit bypass flag, allow access to any document for testing
+    // Requires both NODE_ENV=development AND DEV_BYPASS_AUTH=true for safety
+    const isDevelopment =
+      process.env.NODE_ENV === "development" &&
+      process.env.DEV_BYPASS_AUTH === "true";
 
     // Build appointment access control - same as in the documents API
     const appointmentWhereClause: Prisma.AppointmentWhereInput = {

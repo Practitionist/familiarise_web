@@ -1,8 +1,10 @@
 import { faker } from "@faker-js/faker";
 import { DiscountType } from "@prisma/client";
 import prisma from "../../lib/prisma";
+import { config } from "./config";
 
-const NUM_DISCOUNT_CODES = 10;
+// Discount code volume - configurable via SEED_MODE environment variable
+const NUM_DISCOUNT_CODES = config.volumes.discountCodes;
 
 export async function createDiscountCodes() {
   console.log(`Creating ${NUM_DISCOUNT_CODES} discount codes...`);

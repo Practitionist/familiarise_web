@@ -67,10 +67,6 @@ const ConsulteeProfileForm: React.FC<Props> = ({
       skillsToDevelop: [],
       linkedinUrl: "",
       budgetPreference: null,
-      // Deprecated fields - kept for backward compatibility
-      education: "",
-      specialRequirements: "",
-      interests: [],
       ...initialData,
     },
   });
@@ -174,17 +170,6 @@ const ConsulteeProfileForm: React.FC<Props> = ({
           )}
         </div>
 
-        <div className="space-y-2">
-          <Label htmlFor="education">Educational Background</Label>
-          <Input
-            id="education"
-            {...register("education")}
-            placeholder="e.g., BS Computer Science, MBA, Self-taught"
-          />
-          <p className="text-xs text-muted-foreground">
-            Your highest degree or relevant certifications
-          </p>
-        </div>
       </div>
 
       {/* Goals & Preferences */}

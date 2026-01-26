@@ -34,9 +34,10 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const statusParam = searchParams.get("status");
     const validStatuses = Object.values(EarningStatus);
-    const status = statusParam && validStatuses.includes(statusParam as EarningStatus)
-      ? (statusParam as EarningStatus)
-      : null;
+    const status =
+      statusParam && validStatuses.includes(statusParam as EarningStatus)
+        ? (statusParam as EarningStatus)
+        : null;
     const limit = parseInt(searchParams.get("limit") || "20");
     const offset = parseInt(searchParams.get("offset") || "0");
 
@@ -87,7 +88,7 @@ export async function GET(req: NextRequest) {
     console.error("Error fetching earnings:", error);
     return NextResponse.json(
       { error: "Failed to fetch earnings" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

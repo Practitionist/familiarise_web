@@ -54,8 +54,10 @@ export async function DELETE(
         }
 
         // Verify ownership - user must own this class
-        if (!classInstance.classPlan.consultantProfile ||
-            classInstance.classPlan.consultantProfile.userId !== session.user.id) {
+        if (
+          !classInstance.classPlan.consultantProfile ||
+          classInstance.classPlan.consultantProfile.userId !== session.user.id
+        ) {
           throw new Error("You do not have permission to delete this class");
         }
 

@@ -52,7 +52,9 @@ export async function cleanupAuthTokens(): Promise<AuthTokenCleanupResult> {
       },
     });
     verificationTokensDeleted = verificationResult.count;
-    console.log(`   Deleted ${verificationTokensDeleted} expired verification tokens`);
+    console.log(
+      `   Deleted ${verificationTokensDeleted} expired verification tokens`,
+    );
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     errors.push(`Verification token cleanup: ${errorMessage}`);
@@ -89,7 +91,9 @@ export async function cleanupAuthTokens(): Promise<AuthTokenCleanupResult> {
       },
     });
     passwordResetTokensCleared = passwordResetResult.count;
-    console.log(`   Cleared ${passwordResetTokensCleared} expired password reset tokens`);
+    console.log(
+      `   Cleared ${passwordResetTokensCleared} expired password reset tokens`,
+    );
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     errors.push(`Password reset token cleanup: ${errorMessage}`);

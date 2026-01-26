@@ -7,7 +7,6 @@ import {
   MessageInput,
   MessageList,
   VirtualizedMessageList,
-  Thread,
   Window,
   useChatContext,
 } from "stream-chat-react";
@@ -98,7 +97,6 @@ export const ChatContainer = () => {
             <MessageListComponent {...messageListProps} />
             <MessageInput focus />
           </Window>
-          <Thread />
         </Channel>
       </div>
     </StreamChatErrorBoundary>

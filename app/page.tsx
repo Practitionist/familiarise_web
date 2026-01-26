@@ -2,22 +2,20 @@
 
 import { useQuery } from "@tanstack/react-query";
 
-import {
-  HeroSection,
-  TrustedBySection,
-  FeaturesSection,
-  CategoriesSection,
-  BenefitsSection,
-  SuccessStoriesSection,
-  FeaturedExpertsSection,
-  PlatformFeaturesSection,
-  TestimonialsSection,
-  UpcomingEventsSection,
-  TrustBadgesSection,
-  HowItWorksSection,
-  BecomeExpertSection,
-  FAQSection,
-} from "@/components/home";
+import { HeroSection } from "@/components/home/HeroSection";
+import { TrustedBySection } from "@/components/home/TrustedBySection";
+import { FeaturesSection } from "@/components/home/FeaturesSection";
+import { CategoriesSection } from "@/components/home/CategoriesSection";
+import { BenefitsSection } from "@/components/home/BenefitsSection";
+import { SuccessStoriesSection } from "@/components/home/SuccessStoriesSection";
+import { FeaturedExpertsSection } from "@/components/home/FeaturedExpertsSection";
+import { PlatformFeaturesSection } from "@/components/home/PlatformFeaturesSection";
+import { TestimonialsSection } from "@/components/home/TestimonialsSection";
+import { UpcomingEventsSection } from "@/components/home/UpcomingEventsSection";
+import { TrustBadgesSection } from "@/components/home/TrustBadgesSection";
+import { HowItWorksSection } from "@/components/home/HowItWorksSection";
+import { BecomeExpertSection } from "@/components/home/BecomeExpertSection";
+import { FAQSection } from "@/components/home/FAQSection";
 
 import type { SupabaseImageFile } from "@/lib/supabase";
 import { fetchImagesFromSupabaseStorage } from "@/lib/supabase";

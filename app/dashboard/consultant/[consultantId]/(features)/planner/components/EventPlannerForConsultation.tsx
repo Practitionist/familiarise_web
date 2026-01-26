@@ -3,7 +3,13 @@
 import { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { FileText, DollarSign, Settings, GraduationCap } from "lucide-react";
+import {
+  FileText,
+  DollarSign,
+  Settings,
+  GraduationCap,
+  Upload,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -28,19 +34,19 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { ConsultationPlanSchema } from "@/schemas/plans";
 
-import {
-  FormSection,
-  LearningOutcomesField,
-  PriceField,
-  LanguageLevelFields,
-  SubmitButton,
-  FormConfirmationDialog,
-} from "./form-fields";
+import { FormSection } from "./form-fields/FormSection";
+import { LearningOutcomesField } from "./form-fields/LearningOutcomesField";
+import { PriceField } from "./form-fields/PriceField";
+import { LanguageLevelFields } from "./form-fields/LanguageLevelFields";
+import { SubmitButton } from "./form-fields/SubmitButton";
+import { FormConfirmationDialog } from "./form-fields/FormConfirmationDialog";
+import { TopicsMultiSelect } from "./TopicsMultiSelect";
 import {
   ConsultationPlanEvent,
   ConsultationPlannerProps,
 } from "../types/event";
 import { PlannerService } from "../services/planner";
+import { PlanMaterialsUpload } from "./PlanMaterialsUpload";
 
 export function EventPlannerForConsultation({
   isOpen,
@@ -52,9 +58,35 @@ export function EventPlannerForConsultation({
 }: Readonly<ConsultationPlannerProps>) {
   const [internalIsSaving, setInternalIsSaving] = useState(false);
   const [showConfirmation, setShowConfirmation] = useState(false);
+  const [showMaterialsDialog, setShowMaterialsDialog] = useState(false);
+  const [availableTopics, setAvailableTopics] = useState<
+    { id: string; name: string; createdAt?: Date; updatedAt?: Date }[]
+  >([]);
+  const [isLoadingTopics, setIsLoadingTopics] = useState(false);
   const { toast } = useToast();
 
   const isSaving = externalIsSaving ?? internalIsSaving;
+
+  // Fetch available topics
+  useEffect(() => {
+    const fetchTopics = async () => {
+      try {
+        setIsLoadingTopics(true);
+        const fetchedTopics = await PlannerService.getTopics("");
+        setAvailableTopics(fetchedTopics);
+      } catch (error) {
+        console.error("Failed to fetch topics:", error);
+        toast({
+          title: "Error",
+          description: "Failed to load topics. Please try again.",
+          variant: "destructive",
+        });
+      } finally {
+        setIsLoadingTopics(false);
+      }
+    };
+    fetchTopics();
+  }, [toast]);
 
   const form = useForm({
     resolver: zodResolver(ConsultationPlanSchema),
@@ -70,6 +102,7 @@ export function EventPlannerForConsultation({
           prerequisites: initialData.consultationPlan.prerequisites ?? "",
           materialProvided: initialData.consultationPlan.materialProvided ?? "",
           learningOutcomes: initialData.consultationPlan.learningOutcomes ?? [],
+          topics: initialData.consultationPlan.topics ?? [],
         }
       : {
           title: "",
@@ -82,6 +115,7 @@ export function EventPlannerForConsultation({
           prerequisites: "",
           materialProvided: "",
           learningOutcomes: [],
+          topics: [],
         },
     mode: "onBlur",
   });
@@ -99,6 +133,7 @@ export function EventPlannerForConsultation({
         prerequisites: initialData.consultationPlan.prerequisites ?? "",
         materialProvided: initialData.consultationPlan.materialProvided ?? "",
         learningOutcomes: initialData.consultationPlan.learningOutcomes ?? [],
+        topics: initialData.consultationPlan.topics ?? [],
       });
     }
   }, [initialData, form]);
@@ -160,6 +195,7 @@ export function EventPlannerForConsultation({
           prerequisites: formData.prerequisites ?? undefined,
           materialProvided: formData.materialProvided ?? undefined,
           learningOutcomes: formData.learningOutcomes,
+          topics: formData.topics ?? [],
           consultantProfileId: consultantId,
           consultantProfile: null,
           consultations: initialData?.consultationPlan?.consultations ?? [],
@@ -389,7 +425,46 @@ export function EventPlannerForConsultation({
                   placeholder="e.g., Create a personalized career roadmap"
                   description="What participants will achieve after the consultation"
                 />
+
+                <FormField
+                  control={form.control}
+                  name="topics"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormControl>
+                        <TopicsMultiSelect
+                          initialTopics={field.value}
+                          onTopicsChange={(topics) => field.onChange(topics)}
+                          availableTopics={availableTopics}
+                          isLoading={isLoadingTopics}
+                          label="Topics"
+                          error={form.formState.errors.topics?.message}
+                          helpText="Select from existing topics or create new ones (optional)"
+                        />
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
               </FormSection>
+
+              {/* Materials Section - Only show when editing an existing plan */}
+              {initialData?.id && (
+                <FormSection
+                  title="Plan Materials"
+                  description="Upload materials for participants"
+                  icon={Upload}
+                >
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setShowMaterialsDialog(true)}
+                    className="w-full"
+                  >
+                    <Upload className="mr-2 h-4 w-4" />
+                    Manage Materials
+                  </Button>
+                </FormSection>
+              )}
 
               <DialogFooter className="pt-6 border-t">
                 <Button
@@ -408,6 +483,21 @@ export function EventPlannerForConsultation({
           </Form>
         </DialogContent>
       </Dialog>
+
+      {/* Materials Upload Dialog */}
+      {initialData?.id && (
+        <PlanMaterialsUpload
+          planType="consultation"
+          planId={initialData.id}
+          planTitle={
+            form.getValues("title") ||
+            initialData.consultationPlan?.title ||
+            "Consultation Plan"
+          }
+          isOpen={showMaterialsDialog}
+          onClose={() => setShowMaterialsDialog(false)}
+        />
+      )}
 
       <FormConfirmationDialog
         isOpen={showConfirmation}

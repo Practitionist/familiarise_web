@@ -1,6 +1,8 @@
 import { TConsultantProfile } from "@/types/consultant";
 import { TAppointment } from "@/types/appointment";
 
+export type DocumentUploadRole = "CONSULTEE" | "CONSULTANT";
+
 export interface IDocument {
   id: string;
   appointmentId: string;
@@ -9,6 +11,7 @@ export interface IDocument {
   fileSize: number;
   mimeType: string;
   fileUrl: string;
+  storagePath?: string;
   description: string | null;
   reviewStatus:
     | "PENDING"
@@ -18,7 +21,19 @@ export interface IDocument {
     | "NEEDS_REVISION";
   reviewNotes: string | null;
   reviewedAt: Date | null;
+  reviewedBy?: string | null;
   uploadedAt: Date;
+  // Upload role - who uploaded this document
+  uploadedByRole: DocumentUploadRole;
+  // Response document linking
+  responseToDocumentId?: string | null;
+  responseToDocument?: {
+    id: string;
+    originalName: string;
+    uploadedByRole: DocumentUploadRole;
+  } | null;
+  responseDocuments?: IDocument[];
+  // Client/appointment context
   clientName: string;
   clientId: string;
   appointmentTitle: string;
@@ -27,6 +42,25 @@ export interface IDocument {
   title: string;
   invoiceNo: string;
   tag: string;
+}
+
+export interface IPlanMaterial {
+  id: string;
+  fileName: string;
+  originalName: string;
+  fileSize: number;
+  mimeType: string;
+  fileUrl: string;
+  storagePath: string;
+  description: string | null;
+  order: number;
+  // Plan references (one will be set)
+  consultationPlanId?: string | null;
+  subscriptionPlanId?: string | null;
+  webinarPlanId?: string | null;
+  classPlanId?: string | null;
+  uploadedAt: Date;
+  updatedAt?: Date;
 }
 
 export interface IActivity {

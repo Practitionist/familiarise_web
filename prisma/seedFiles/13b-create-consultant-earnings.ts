@@ -116,7 +116,9 @@ export async function createConsultantEarnings(): Promise<void> {
     },
   });
 
-  console.log(`Found ${succeededPayments.length} SUCCEEDED payments to process`);
+  console.log(
+    `Found ${succeededPayments.length} SUCCEEDED payments to process`,
+  );
 
   if (succeededPayments.length === 0) {
     console.warn("No eligible payments found for earnings creation");
@@ -173,7 +175,10 @@ export async function createConsultantEarnings(): Promise<void> {
         console.log(`Created ${created} earnings records...`);
       }
     } catch (error) {
-      console.error(`Failed to create earnings for payment ${payment.id}:`, error);
+      console.error(
+        `Failed to create earnings for payment ${payment.id}:`,
+        error,
+      );
       skipped++;
     }
   }

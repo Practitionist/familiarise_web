@@ -74,7 +74,10 @@ async function generateInvoiceNumber(): Promise<string> {
 
   let sequence = 1;
   if (latestInvoice) {
-    const lastSequence = parseInt(latestInvoice.invoiceNumber.split("-")[2], 10);
+    const lastSequence = parseInt(
+      latestInvoice.invoiceNumber.split("-")[2],
+      10,
+    );
     sequence = lastSequence + 1;
   }
 
@@ -89,7 +92,7 @@ async function generateInvoiceNumber(): Promise<string> {
  * Create invoice for a payment
  */
 export async function createInvoice(
-  params: CreateInvoiceParams
+  params: CreateInvoiceParams,
 ): Promise<InvoiceData> {
   const { paymentId, customerName, customerEmail, items, notes } = params;
 
@@ -148,7 +151,8 @@ export async function createInvoice(
       taxAmount,
       taxRate,
       hsnCode,
-      paidAt: payment.paymentStatus === PaymentStatus.SUCCEEDED ? new Date() : null,
+      paidAt:
+        payment.paymentStatus === PaymentStatus.SUCCEEDED ? new Date() : null,
     },
   });
 
@@ -178,7 +182,9 @@ export async function createInvoice(
  * Auto-create invoice from payment
  * Called from payment success webhook
  */
-export async function createInvoiceFromPayment(paymentId: string): Promise<string | null> {
+export async function createInvoiceFromPayment(
+  paymentId: string,
+): Promise<string | null> {
   try {
     // Get payment with user details
     const payment = await prisma.payment.findUnique({
@@ -258,7 +264,8 @@ export async function createInvoiceFromPayment(paymentId: string): Promise<strin
         taxAmount,
         taxRate,
         hsnCode,
-        paidAt: payment.paymentStatus === PaymentStatus.SUCCEEDED ? new Date() : null,
+        paidAt:
+          payment.paymentStatus === PaymentStatus.SUCCEEDED ? new Date() : null,
       },
     });
 
@@ -315,7 +322,7 @@ export async function getUserInvoices(
     limit?: number;
     offset?: number;
     status?: PaymentStatus;
-  }
+  },
 ) {
   const { limit = 20, offset = 0, status } = options || {};
 

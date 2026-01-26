@@ -354,7 +354,13 @@ export default function ConsultationCheckoutPage({
         setProcessingGateway(null);
       }
     },
-    [resolvedParams, resolvedSearchParams, toast, isCheckoutProcessing, appliedDiscount],
+    [
+      resolvedParams,
+      resolvedSearchParams,
+      toast,
+      isCheckoutProcessing,
+      appliedDiscount,
+    ],
   );
 
   useEffect(() => {
@@ -494,7 +500,7 @@ export default function ConsultationCheckoutPage({
                 {userDetails?.name || "Consultant Name"}
               </div>
               <div className="text-sm text-muted-foreground">
-                {consultantDetails?.specialization || "Consultant"}
+                {consultantDetails?.headline || "Consultant"}
               </div>
             </div>
           </div>
@@ -566,13 +572,19 @@ export default function ConsultationCheckoutPage({
               placeholder="Enter discount code"
               className="flex-1"
               value={discountCodeInput}
-              onChange={(e) => setDiscountCodeInput(e.target.value.toUpperCase())}
+              onChange={(e) =>
+                setDiscountCodeInput(e.target.value.toUpperCase())
+              }
               disabled={isApplyingDiscount || !!appliedDiscount}
             />
             <Button
               variant="outline"
               onClick={() => handleApplyDiscount()}
-              disabled={isApplyingDiscount || !!appliedDiscount || !discountCodeInput.trim()}
+              disabled={
+                isApplyingDiscount ||
+                !!appliedDiscount ||
+                !discountCodeInput.trim()
+              }
             >
               {isApplyingDiscount ? "Applying..." : "Apply"}
             </Button>
@@ -583,7 +595,9 @@ export default function ConsultationCheckoutPage({
           {appliedDiscount && (
             <div className="flex items-center justify-between bg-green-50 p-3 rounded-lg border border-green-200">
               <div>
-                <div className="font-medium text-green-700">{appliedDiscount.code}</div>
+                <div className="font-medium text-green-700">
+                  {appliedDiscount.code}
+                </div>
                 <div className="text-sm text-green-600">
                   {appliedDiscount.discountType === "PERCENTAGE"
                     ? `${appliedDiscount.discountValue}% off`
@@ -737,13 +751,13 @@ export default function ConsultationCheckoutPage({
                               resolvedSearchParams.slotOfAvailabilityWeeklyId,
                             )
                               ? resolvedSearchParams
-                                .slotOfAvailabilityWeeklyId[0]
+                                  .slotOfAvailabilityWeeklyId[0]
                               : resolvedSearchParams.slotOfAvailabilityWeeklyId,
                             slotOfAvailabilityCustomId: Array.isArray(
                               resolvedSearchParams.slotOfAvailabilityCustomId,
                             )
                               ? resolvedSearchParams
-                                .slotOfAvailabilityCustomId[0]
+                                  .slotOfAvailabilityCustomId[0]
                               : resolvedSearchParams.slotOfAvailabilityCustomId,
                             discountCode: appliedDiscount?.code,
                             notes: Array.isArray(resolvedSearchParams.notes)
@@ -789,13 +803,13 @@ export default function ConsultationCheckoutPage({
                               resolvedSearchParams.slotOfAvailabilityWeeklyId,
                             )
                               ? resolvedSearchParams
-                                .slotOfAvailabilityWeeklyId[0]
+                                  .slotOfAvailabilityWeeklyId[0]
                               : resolvedSearchParams.slotOfAvailabilityWeeklyId,
                             slotOfAvailabilityCustomId: Array.isArray(
                               resolvedSearchParams.slotOfAvailabilityCustomId,
                             )
                               ? resolvedSearchParams
-                                .slotOfAvailabilityCustomId[0]
+                                  .slotOfAvailabilityCustomId[0]
                               : resolvedSearchParams.slotOfAvailabilityCustomId,
                             discountCode: appliedDiscount?.code,
                             notes: Array.isArray(resolvedSearchParams.notes)
@@ -830,7 +844,7 @@ export default function ConsultationCheckoutPage({
                         disabled={isCheckoutProcessing}
                       >
                         {isCheckoutProcessing &&
-                          processingGateway === `${gateway.gateway}-mock` ? (
+                        processingGateway === `${gateway.gateway}-mock` ? (
                           <>
                             <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-current mr-2"></div>
                             Processing...

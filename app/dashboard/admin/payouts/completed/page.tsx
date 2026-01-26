@@ -22,7 +22,11 @@ interface Payout {
   createdAt: string;
 }
 
-async function fetchCompletedPayouts(page: number, limit: number, search: string) {
+async function fetchCompletedPayouts(
+  page: number,
+  limit: number,
+  search: string,
+) {
   const offset = (page - 1) * limit;
   const params = new URLSearchParams({
     status: "COMPLETED",
@@ -89,9 +93,10 @@ export default function CompletedPayoutsPage() {
       p.processedAt ? new Date(p.processedAt).toISOString() : "",
     ]);
 
-    const csvContent = [headers.join(","), ...rows.map((r: string[]) => r.join(","))].join(
-      "\n"
-    );
+    const csvContent = [
+      headers.join(","),
+      ...rows.map((r: string[]) => r.join(",")),
+    ].join("\n");
     const blob = new Blob([csvContent], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -124,7 +129,9 @@ export default function CompletedPayoutsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Completed Payouts</h1>
+          <h1 className="text-3xl font-bold text-gray-900">
+            Completed Payouts
+          </h1>
           <p className="text-gray-600 mt-1">
             Successfully completed payout history
           </p>
@@ -258,7 +265,9 @@ export default function CompletedPayoutsPage() {
           ) : (
             <div className="text-center py-12">
               <p className="text-gray-500">
-                {search ? "No payouts match your search" : "No completed payouts"}
+                {search
+                  ? "No payouts match your search"
+                  : "No completed payouts"}
               </p>
             </div>
           )}

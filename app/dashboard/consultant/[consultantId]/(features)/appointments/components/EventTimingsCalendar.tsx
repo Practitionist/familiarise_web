@@ -129,7 +129,8 @@ export function EventTimingsCalendar({
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-7xl">
+      {/* FIX: Added max-h-[90vh] + overflow-y-auto to prevent footer cutoff on small screens */}
+      <DialogContent className="max-w-7xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>
             {appointment.appointmentType === "CLASS"

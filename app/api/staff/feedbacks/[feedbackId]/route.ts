@@ -6,7 +6,7 @@ import { FeedbackStatus } from "@prisma/client";
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: Promise<{ feedbackId: string }> }
+  { params }: { params: Promise<{ feedbackId: string }> },
 ) {
   try {
     const session = await getServerSession(authOptions);
@@ -42,7 +42,10 @@ export async function GET(
     });
 
     if (!feedback) {
-      return NextResponse.json({ error: "Feedback not found" }, { status: 404 });
+      return NextResponse.json(
+        { error: "Feedback not found" },
+        { status: 404 },
+      );
     }
 
     return NextResponse.json(feedback);
@@ -50,14 +53,14 @@ export async function GET(
     console.error("Error fetching feedback:", error);
     return NextResponse.json(
       { error: "Failed to fetch feedback" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
 
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: Promise<{ feedbackId: string }> }
+  { params }: { params: Promise<{ feedbackId: string }> },
 ) {
   try {
     const session = await getServerSession(authOptions);
@@ -104,7 +107,7 @@ export async function PATCH(
     console.error("Error updating feedback:", error);
     return NextResponse.json(
       { error: "Failed to update feedback" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

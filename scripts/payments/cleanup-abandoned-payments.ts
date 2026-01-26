@@ -16,16 +16,10 @@
  * - Issue #10: Re-check payment status before cleanup to handle webhooks
  */
 
-import {
-  PrismaClient,
-  PaymentStatus,
-  PaymentGateway,
-  RequestStatus,
-} from "@prisma/client";
+import { PaymentStatus, PaymentGateway, RequestStatus } from "@prisma/client";
 import Stripe from "stripe";
 import { cancelRazorpayOrder } from "../../lib/payments/core/razorpay";
-
-const prisma = new PrismaClient();
+import prisma from "@/lib/prisma";
 
 /**
  * Result structure for cleanup operations

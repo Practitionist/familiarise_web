@@ -6,18 +6,18 @@
 
 ## Endpoint Overview
 
-| Category | Endpoint | Method | Access |
-|----------|----------|--------|--------|
-| **Admin** | `/api/admin/payouts` | GET, POST | Admin only |
-| **Admin** | `/api/admin/payouts/{id}` | GET, POST | Admin only |
-| **Admin** | `/api/admin/payouts/process` | POST | Admin only |
-| **Admin** | `/api/admin/earnings` | GET | Admin only |
-| **Admin** | `/api/admin/earnings/stats` | GET | Admin only |
-| **Staff** | `/api/staff/payouts` | GET | Staff, Admin |
-| **Staff** | `/api/staff/invoices` | GET | Staff, Admin |
-| **Consultant** | `/api/consultant/earnings` | GET | Consultant |
-| **Consultant** | `/api/consultant/payout-accounts` | GET, POST | Consultant |
-| **Consultant** | `/api/consultant/payout-accounts/{id}` | GET, PUT, DELETE | Consultant |
+| Category       | Endpoint                               | Method           | Access       |
+| -------------- | -------------------------------------- | ---------------- | ------------ |
+| **Admin**      | `/api/admin/payouts`                   | GET, POST        | Admin only   |
+| **Admin**      | `/api/admin/payouts/{id}`              | GET, POST        | Admin only   |
+| **Admin**      | `/api/admin/payouts/process`           | POST             | Admin only   |
+| **Admin**      | `/api/admin/earnings`                  | GET              | Admin only   |
+| **Admin**      | `/api/admin/earnings/stats`            | GET              | Admin only   |
+| **Staff**      | `/api/staff/payouts`                   | GET              | Staff, Admin |
+| **Staff**      | `/api/staff/invoices`                  | GET              | Staff, Admin |
+| **Consultant** | `/api/consultant/earnings`             | GET              | Consultant   |
+| **Consultant** | `/api/consultant/payout-accounts`      | GET, POST        | Consultant   |
+| **Consultant** | `/api/consultant/payout-accounts/{id}` | GET, PUT, DELETE | Consultant   |
 
 ---
 
@@ -31,13 +31,13 @@ GET /api/admin/payouts
 
 **Query Parameters:**
 
-| Param | Type | Description |
-|-------|------|-------------|
-| `status` | string | Filter by status: PENDING, APPROVED, PROCESSING, COMPLETED, FAILED, CANCELLED |
-| `provider` | string | Filter by provider: RAZORPAY, STRIPE |
-| `search` | string | Search by consultant name |
-| `limit` | number | Results per page (default: 20) |
-| `offset` | number | Pagination offset (default: 0) |
+| Param      | Type   | Description                                                                   |
+| ---------- | ------ | ----------------------------------------------------------------------------- |
+| `status`   | string | Filter by status: PENDING, APPROVED, PROCESSING, COMPLETED, FAILED, CANCELLED |
+| `provider` | string | Filter by provider: RAZORPAY, STRIPE                                          |
+| `search`   | string | Search by consultant name                                                     |
+| `limit`    | number | Results per page (default: 20)                                                |
+| `offset`   | number | Pagination offset (default: 0)                                                |
 
 **Response:**
 
@@ -252,12 +252,12 @@ GET /api/admin/earnings
 
 **Query Parameters:**
 
-| Param | Type | Description |
-|-------|------|-------------|
-| `status` | string | PENDING, READY, HELD, PAID, REFUNDED |
-| `consultantId` | string | Filter by consultant |
-| `limit` | number | Results per page |
-| `offset` | number | Pagination offset |
+| Param          | Type   | Description                          |
+| -------------- | ------ | ------------------------------------ |
+| `status`       | string | PENDING, READY, HELD, PAID, REFUNDED |
+| `consultantId` | string | Filter by consultant                 |
+| `limit`        | number | Results per page                     |
+| `offset`       | number | Pagination offset                    |
 
 **Response:**
 
@@ -336,12 +336,12 @@ GET /api/staff/invoices
 
 **Query Parameters:**
 
-| Param | Type | Description |
-|-------|------|-------------|
-| `status` | string | PENDING, SUCCEEDED, FAILED |
+| Param    | Type   | Description                           |
+| -------- | ------ | ------------------------------------- |
+| `status` | string | PENDING, SUCCEEDED, FAILED            |
 | `search` | string | Search by invoice number, name, email |
-| `limit` | number | Results per page |
-| `offset` | number | Pagination offset |
+| `limit`  | number | Results per page                      |
+| `offset` | number | Pagination offset                     |
 
 **Response:**
 
@@ -602,14 +602,14 @@ All endpoints return consistent error formats:
 
 ### Common Error Codes
 
-| Code | HTTP Status | Description |
-|------|-------------|-------------|
-| `UNAUTHORIZED` | 401 | Not authenticated |
-| `FORBIDDEN` | 403 | Insufficient permissions |
-| `NOT_FOUND` | 404 | Resource not found |
-| `VALIDATION_ERROR` | 400 | Invalid request data |
-| `INVALID_STATUS` | 400 | Cannot perform action in current status |
-| `PROVIDER_ERROR` | 500 | Payment provider error |
+| Code               | HTTP Status | Description                             |
+| ------------------ | ----------- | --------------------------------------- |
+| `UNAUTHORIZED`     | 401         | Not authenticated                       |
+| `FORBIDDEN`        | 403         | Insufficient permissions                |
+| `NOT_FOUND`        | 404         | Resource not found                      |
+| `VALIDATION_ERROR` | 400         | Invalid request data                    |
+| `INVALID_STATUS`   | 400         | Cannot perform action in current status |
+| `PROVIDER_ERROR`   | 500         | Payment provider error                  |
 
 ---
 

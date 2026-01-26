@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import { NextRequest, NextResponse } from "next/server";
 import authOptions from "@/app/api/auth/[...nextauth]/options";
 import { CancellationReason } from "@prisma/client";
+import { handleSlotOpening } from "@/lib/waitlist/slot-handler";
 
 interface CancelRequestBody {
   reason?: CancellationReason;
@@ -11,7 +12,7 @@ interface CancelRequestBody {
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ appointmentId: string }> }
+  { params }: { params: Promise<{ appointmentId: string }> },
 ) {
   try {
     const session = await getServerSession(authOptions);
@@ -39,7 +40,7 @@ export async function POST(
     ) {
       return NextResponse.json(
         { error: "Invalid cancellation reason" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -106,8 +107,37 @@ export async function POST(
         success: true,
         cancellationReason: body.reason,
         cancelledAt: cancellationData.cancelledAt,
+        webinarId: appointment.webinar?.id,
+        classId: appointment.class?.id,
       };
     });
+
+    // Notify waitlist if a webinar or class appointment was cancelled
+    if (result.webinarId || result.classId) {
+      try {
+        await handleSlotOpening({
+          webinarId: result.webinarId ?? undefined,
+          classId: result.classId ?? undefined,
+          slotsAvailable: 1,
+          reason: "cancellation",
+        });
+
+        console.log(
+          JSON.stringify({
+            event: "waitlist_notified_after_cancellation",
+            webinarId: result.webinarId,
+            classId: result.classId,
+            timestamp: new Date().toISOString(),
+          }),
+        );
+      } catch (waitlistError) {
+        // Log but don't fail the cancellation - waitlist notification is best-effort
+        console.error(
+          "Failed to notify waitlist after cancellation:",
+          waitlistError,
+        );
+      }
+    }
 
     return NextResponse.json(result);
   } catch (error) {
@@ -116,13 +146,13 @@ export async function POST(
     if (error instanceof Error && error.message === "Appointment not found") {
       return NextResponse.json(
         { error: "Appointment not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
     return NextResponse.json(
       { error: "Failed to cancel appointment" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

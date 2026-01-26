@@ -1,0 +1,322 @@
+import prisma from "@/lib/prisma";
+import { Prisma } from "@prisma/client";
+import { NextRequest, NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
+import authOptions from "@/app/api/auth/[...nextauth]/options";
+import { SubscriptionPlanSchema } from "@/schemas/plans";
+import { findOrCreateTopics, transformTopicsToStrings } from "@/lib/topics";
+
+export async function GET(
+  request: NextRequest,
+  { params }: { params: Promise<{ subscriptionPlanId: string }> },
+) {
+  try {
+    const { subscriptionPlanId } = await params;
+    const subscriptionPlan = await prisma.subscriptionPlan.findUniqueOrThrow({
+      where: { id: subscriptionPlanId },
+      include: {
+        consultantProfile: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                image: true,
+              },
+            },
+          },
+        },
+        subscriptions: {
+          include: {
+            requestedBy: {
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    image: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+        topics: true,
+      },
+    });
+
+    return NextResponse.json(
+      { data: transformTopicsToStrings(subscriptionPlan) },
+      { status: 200 },
+    );
+  } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2025"
+    ) {
+      return NextResponse.json(
+        { error: "Subscription plan not found" },
+        { status: 404 },
+      );
+    }
+    console.error("Error fetching subscription plan:", error);
+    return NextResponse.json(
+      { error: "An error occurred while fetching the subscription plan" },
+      { status: 500 },
+    );
+  }
+}
+
+export async function PUT(
+  request: NextRequest,
+  { params }: { params: Promise<{ subscriptionPlanId: string }> },
+) {
+  try {
+    // Authentication check
+    const session = await getServerSession(authOptions);
+    if (!session?.user?.id) {
+      return NextResponse.json(
+        { error: "Authentication required" },
+        { status: 401 },
+      );
+    }
+
+    const { subscriptionPlanId } = await params;
+
+    // Verify ownership - user must own this subscription plan
+    const existingPlan = await prisma.subscriptionPlan.findUnique({
+      where: { id: subscriptionPlanId },
+      include: { consultantProfile: true },
+    });
+
+    if (!existingPlan) {
+      return NextResponse.json(
+        { error: "Subscription plan not found" },
+        { status: 404 },
+      );
+    }
+
+    if (existingPlan.consultantProfile.userId !== session.user.id) {
+      return NextResponse.json(
+        {
+          error: "You do not have permission to update this subscription plan",
+        },
+        { status: 403 },
+      );
+    }
+
+    const body = await request.json();
+
+    // Validate input with Zod schema (partial for updates)
+    const validationResult = SubscriptionPlanSchema.partial().safeParse(body);
+    if (!validationResult.success) {
+      return NextResponse.json(
+        { error: "Validation failed", details: validationResult.error.issues },
+        { status: 400 },
+      );
+    }
+
+    const validatedData = validationResult.data;
+
+    // Recompute derived metrics if base fields are being updated
+    let totalSessions: number | undefined;
+    let totalHours: number | undefined;
+
+    if (
+      validatedData.callsPerWeek !== undefined ||
+      validatedData.durationInMonths !== undefined ||
+      body.sessionDurationInHours !== undefined
+    ) {
+      const callsPerWeek =
+        validatedData.callsPerWeek ?? existingPlan.callsPerWeek;
+      const durationInMonths =
+        validatedData.durationInMonths ?? existingPlan.durationInMonths;
+      const sessionDurationInHours =
+        body.sessionDurationInHours ?? existingPlan.sessionDurationInHours;
+
+      totalSessions = callsPerWeek * durationInMonths * 4;
+      totalHours = totalSessions * sessionDurationInHours;
+    }
+
+    // Handle topics if provided
+    let topicsUpdate = {};
+    if (validatedData.topics !== undefined) {
+      const topicIds = await findOrCreateTopics(validatedData.topics);
+      topicsUpdate = {
+        topics: { set: topicIds.map((id) => ({ id })) },
+      };
+    }
+
+    const subscriptionPlan = await prisma.subscriptionPlan.update({
+      where: { id: subscriptionPlanId },
+      data: {
+        title: validatedData.title,
+        description: validatedData.description,
+        durationInMonths: validatedData.durationInMonths,
+        price:
+          validatedData.price !== undefined
+            ? Math.round(validatedData.price)
+            : undefined,
+        priceCurrency: validatedData.priceCurrency,
+        callsPerWeek: validatedData.callsPerWeek,
+        sessionDurationInHours: body.sessionDurationInHours,
+        totalSessions,
+        totalHours,
+        emailSupport: validatedData.emailSupport,
+        language: validatedData.language,
+        level: validatedData.level,
+        prerequisites: validatedData.prerequisites,
+        materialProvided: validatedData.materialProvided,
+        learningOutcomes: validatedData.learningOutcomes,
+        ...topicsUpdate,
+      },
+      include: {
+        consultantProfile: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                image: true,
+              },
+            },
+          },
+        },
+        subscriptions: {
+          include: {
+            requestedBy: {
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    image: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+        topics: true,
+      },
+    });
+
+    return NextResponse.json(
+      { data: transformTopicsToStrings(subscriptionPlan) },
+      { status: 200 },
+    );
+  } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2025"
+    ) {
+      return NextResponse.json(
+        { error: "Subscription plan not found" },
+        { status: 404 },
+      );
+    }
+    console.error("Error updating subscription plan:", error);
+    return NextResponse.json(
+      { error: "An error occurred while updating the subscription plan" },
+      { status: 500 },
+    );
+  }
+}
+
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ subscriptionPlanId: string }> },
+) {
+  try {
+    // Authentication check
+    const session = await getServerSession(authOptions);
+    if (!session?.user?.id) {
+      return NextResponse.json(
+        { error: "Authentication required" },
+        { status: 401 },
+      );
+    }
+
+    const { subscriptionPlanId } = await params;
+
+    // Verify ownership - user must own this subscription plan
+    const existingPlan = await prisma.subscriptionPlan.findUnique({
+      where: { id: subscriptionPlanId },
+      include: { consultantProfile: true },
+    });
+
+    if (!existingPlan) {
+      return NextResponse.json(
+        { error: "Subscription plan not found" },
+        { status: 404 },
+      );
+    }
+
+    if (existingPlan.consultantProfile.userId !== session.user.id) {
+      return NextResponse.json(
+        {
+          error: "You do not have permission to delete this subscription plan",
+        },
+        { status: 403 },
+      );
+    }
+
+    // Check if there are any associated subscriptions
+    const associatedSubscriptions = await prisma.subscription.findMany({
+      where: { subscriptionPlanId },
+    });
+
+    if (associatedSubscriptions.length > 0) {
+      return NextResponse.json(
+        {
+          error:
+            "Cannot delete subscription plan with associated subscriptions",
+        },
+        { status: 400 },
+      );
+    }
+
+    const subscriptionPlan = await prisma.subscriptionPlan.delete({
+      where: { id: subscriptionPlanId },
+      include: {
+        consultantProfile: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                image: true,
+              },
+            },
+          },
+        },
+        topics: true,
+      },
+    });
+
+    return NextResponse.json(
+      { data: transformTopicsToStrings(subscriptionPlan) },
+      { status: 200 },
+    );
+  } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2025"
+    ) {
+      return NextResponse.json(
+        { error: "Subscription plan not found" },
+        { status: 404 },
+      );
+    }
+    console.error("Error deleting subscription plan:", error);
+    return NextResponse.json(
+      { error: "An error occurred while deleting the subscription plan" },
+      { status: 500 },
+    );
+  }
+}

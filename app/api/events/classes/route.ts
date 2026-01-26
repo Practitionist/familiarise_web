@@ -1,5 +1,6 @@
 import prisma from "@/lib/prisma";
 import { NextResponse } from "next/server";
+import { transformNestedPlanTopics } from "@/lib/topics";
 
 export async function GET(request: Request) {
   try {
@@ -145,13 +146,22 @@ export async function GET(request: Request) {
       classes = await prisma.class.findMany({
         where: { ...dateFilter },
         include: {
-          classPlan: true,
+          classPlan: {
+            include: {
+              topics: true,
+            },
+          },
           appointments: true,
         },
       });
     }
 
-    return NextResponse.json({ data: classes }, { status: 200 });
+    // Transform topics from objects to strings in nested classPlan
+    const transformedClasses = classes.map((c) =>
+      transformNestedPlanTopics(c, "classPlan"),
+    );
+
+    return NextResponse.json({ data: transformedClasses }, { status: 200 });
   } catch (error) {
     console.error("Error fetching classes:", error);
     return NextResponse.json(
