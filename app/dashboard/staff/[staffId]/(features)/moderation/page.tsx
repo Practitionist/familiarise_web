@@ -77,14 +77,14 @@ interface ProfileVerification {
   submittedAt: string;
   profile: {
     id: string;
-    displayName: string | null;
-    bio: string | null;
+    description: string | null;
     headline: string | null;
-    yearsOfExperience: number | null;
+    experience: number | null;
     user: {
       id: string;
       name: string | null;
       email: string;
+      bio?: string | null;
     };
   };
   documents: {
@@ -627,20 +627,15 @@ export default function ContentModerationPage() {
                       <div className="flex items-center gap-4">
                         <Avatar className="h-12 w-12">
                           <AvatarFallback>
-                            {(
-                              profile.profile.displayName ||
-                              profile.profile.user.name ||
-                              "?"
-                            )
+                            {(profile.profile.user.name || "?")
                               .split(" ")
-                              .map((n) => n[0])
+                              .map((n: string) => n[0])
                               .join("")}
                           </AvatarFallback>
                         </Avatar>
                         <div>
                           <p className="font-medium">
-                            {profile.profile.displayName ||
-                              profile.profile.user.name}
+                            {profile.profile.user.name || "Unnamed"}
                           </p>
                           <p className="text-sm text-zinc-500">
                             {profile.profile.user.email}
@@ -651,9 +646,9 @@ export default function ContentModerationPage() {
                                 {profile.profile.headline}
                               </span>
                             )}
-                            {profile.profile.yearsOfExperience && (
+                            {profile.profile.experience && (
                               <span className="text-xs text-zinc-500">
-                                • {profile.profile.yearsOfExperience} years
+                                • {profile.profile.experience} years
                                 experience
                               </span>
                             )}
@@ -888,20 +883,15 @@ export default function ContentModerationPage() {
                 <div className="flex items-center gap-4 p-4 rounded-lg bg-zinc-50 dark:bg-zinc-900">
                   <Avatar className="h-16 w-16">
                     <AvatarFallback className="text-lg">
-                      {(
-                        selectedProfile.profile.displayName ||
-                        selectedProfile.profile.user.name ||
-                        "?"
-                      )
+                      {(selectedProfile.profile.user.name || "?")
                         .split(" ")
-                        .map((n) => n[0])
+                        .map((n: string) => n[0])
                         .join("")}
                     </AvatarFallback>
                   </Avatar>
                   <div>
                     <h3 className="text-lg font-semibold">
-                      {selectedProfile.profile.displayName ||
-                        selectedProfile.profile.user.name}
+                      {selectedProfile.profile.user.name || "Unnamed"}
                     </h3>
                     <p className="text-sm text-zinc-500">
                       {selectedProfile.profile.user.email}
@@ -918,17 +908,17 @@ export default function ContentModerationPage() {
                   <div>
                     <Label className="text-sm font-medium">Experience</Label>
                     <p className="text-sm text-zinc-600">
-                      {selectedProfile.profile.yearsOfExperience
-                        ? `${selectedProfile.profile.yearsOfExperience} years`
+                      {selectedProfile.profile.experience
+                        ? `${selectedProfile.profile.experience} years`
                         : "Not specified"}
                     </p>
                   </div>
                 </div>
-                {selectedProfile.profile.bio && (
+                {selectedProfile.profile.user.bio && (
                   <div>
                     <Label className="text-sm font-medium">Bio</Label>
                     <p className="text-sm text-zinc-600">
-                      {selectedProfile.profile.bio}
+                      {selectedProfile.profile.user.bio}
                     </p>
                   </div>
                 )}

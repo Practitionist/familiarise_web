@@ -57,20 +57,16 @@ interface ProfileVerification {
   submittedAt: string;
   consultantProfile: {
     id: string;
-    displayName: string | null;
-    description: string | null; // Professional Summary
-    headline: string | null; // Professional Headline
-    // bio: string | null; // Removed, bio is on User
-    specialization: string | null;
-    yearsOfExperience: number | null;
-    hourlyRate?: number | null;
+    description: string | null;
+    headline: string | null;
+    experience: number | null;
     user: {
       id: string;
       name: string | null;
       email: string;
       image?: string | null;
       linkedinUrl?: string | null;
-      bio?: string | null; // Short Bio
+      bio?: string | null;
     };
     domain?: { id: string; name: string } | null;
     subDomains?: { id: string; name: string }[];
@@ -261,9 +257,9 @@ export function VerificationReviewModal({
             <Avatar className="h-16 w-16">
               <AvatarImage src={user.image || ""} />
               <AvatarFallback className="text-lg">
-                {(profile.displayName || user.name || "?")
+                {(user.name || "?")
                   .split(" ")
-                  .map((n) => n[0])
+                  .map((n: string) => n[0])
                   .join("")
                   .toUpperCase()
                   .slice(0, 2)}
@@ -271,7 +267,7 @@ export function VerificationReviewModal({
             </Avatar>
             <div className="flex-1">
               <h3 className="text-lg font-semibold">
-                {profile.displayName || user.name || "Unnamed"}
+                {user.name || "Unnamed"}
               </h3>
               <p className="text-sm text-zinc-500">{user.email}</p>
               {user.linkedinUrl && (
@@ -294,14 +290,9 @@ export function VerificationReviewModal({
                 {profile.domain && (
                   <Badge variant="secondary">{profile.domain.name}</Badge>
                 )}
-                {profile.yearsOfExperience && (
+                {profile.experience && (
                   <span className="text-xs text-zinc-500">
-                    {profile.yearsOfExperience} years exp.
-                  </span>
-                )}
-                {profile.hourlyRate && (
-                  <span className="text-xs text-zinc-500">
-                    ${profile.hourlyRate}/hr
+                    {profile.experience} years exp.
                   </span>
                 )}
               </div>
@@ -362,14 +353,14 @@ export function VerificationReviewModal({
             </div>
           )}
 
-          {/* Specializations */}
-          {profile.specialization && (
+          {/* Specializations (Sub-domains) */}
+          {profile.subDomains && profile.subDomains.length > 0 && (
             <div>
               <Label className="text-sm font-medium">Specializations</Label>
               <div className="flex flex-wrap gap-2 mt-1">
-                {profile.specialization.split(',').map((s) => s.trim()).filter(Boolean).map((spec, idx) => (
+                {profile.subDomains.map((subDomain, idx) => (
                   <Badge key={idx} variant="outline">
-                    {spec}
+                    {subDomain.name}
                   </Badge>
                 ))}
               </div>

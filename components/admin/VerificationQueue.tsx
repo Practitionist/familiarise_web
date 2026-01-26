@@ -21,24 +21,29 @@ interface Document {
   documentType: string;
   documentUrl: string;
   status: string;
+  isValid?: boolean | null;
+  staffFeedback?: string | null;
 }
 
 interface ProfileVerification {
   id: string;
   status: string;
   notes: string | null;
+  rejectionReason?: string | null;
+  feedbackDetails?: string | null;
   submittedAt: string;
   consultantProfile: {
     id: string;
-    displayName: string | null;
-    bio: string | null;
-    specialization: string | null;
-    yearsOfExperience: number | null;
+    description: string | null;
+    headline: string | null;
+    experience: number | null;
     user: {
       id: string;
       name: string | null;
       email: string;
       image?: string | null;
+      linkedinUrl?: string | null;
+      bio?: string | null;
     };
     domain?: { id: string; name: string } | null;
     subDomains?: { id: string; name: string }[];
@@ -201,10 +206,8 @@ export function VerificationQueue({
           const profile = verification.consultantProfile;
           const user = profile.user;
 
-          // Handle specialization string splitting
-          const specializations = profile.specialization
-            ? profile.specialization.split(',').map(s => s.trim()).filter(Boolean)
-            : [];
+          // Use subDomains for specialization display
+          const subDomainNames = profile.subDomains?.map((s: { name: string }) => s.name) || [];
 
           return (
             <Card
@@ -218,9 +221,9 @@ export function VerificationQueue({
                     <Avatar className="h-12 w-12">
                       <AvatarImage src={user.image || ""} />
                       <AvatarFallback>
-                        {(profile.displayName || user.name || "?")
+                        {(user.name || "?")
                           .split(" ")
-                          .map((n) => n[0])
+                          .map((n: string) => n[0])
                           .join("")
                           .toUpperCase()
                           .slice(0, 2)}
@@ -228,7 +231,7 @@ export function VerificationQueue({
                     </Avatar>
                     <div>
                       <p className="font-medium">
-                        {profile.displayName || user.name || "Unnamed"}
+                        {user.name || "Unnamed"}
                       </p>
                       <p className="text-sm text-zinc-500">{user.email}</p>
                       <div className="flex items-center gap-2 mt-1 flex-wrap">
@@ -237,7 +240,7 @@ export function VerificationQueue({
                             {profile.domain.name}
                           </Badge>
                         )}
-                        {specializations.slice(0, 2).map((s, idx) => (
+                        {subDomainNames.slice(0, 2).map((s: string, idx: number) => (
                           <Badge
                             key={idx}
                             variant="secondary"
@@ -246,9 +249,9 @@ export function VerificationQueue({
                             {s}
                           </Badge>
                         ))}
-                        {specializations.length > 2 && (
+                        {subDomainNames.length > 2 && (
                           <span className="text-xs text-zinc-400">
-                            +{specializations.length - 2} more
+                            +{subDomainNames.length - 2} more
                           </span>
                         )}
                       </div>
@@ -268,8 +271,8 @@ export function VerificationQueue({
                 <div className="mt-3 flex items-center gap-4 text-sm text-zinc-500">
                   <div className="flex items-center gap-1">
                     <User className="h-4 w-4" />
-                    {profile.yearsOfExperience
-                      ? `${profile.yearsOfExperience} yrs exp`
+                    {profile.experience
+                      ? `${profile.experience} yrs exp`
                       : "No exp listed"}
                   </div>
                   <div className="flex items-center gap-1">

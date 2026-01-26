@@ -43,14 +43,13 @@ interface UserDetail {
   country: string | null;
   consultantProfile?: {
     id: string;
-    displayName: string | null;
-    bio: string | null;
+    description: string | null;
+    headline: string | null;
+    experience: number | null;
     isVerified: boolean;
     verificationStatus: string | null;
     domain?: { name: string } | null;
-    specialization: string[];
-    yearsOfExperience: number | null;
-    hourlyRate: number | null;
+    subDomains?: { id: string; name: string }[];
   } | null;
   consulteeProfile?: {
     id: string;
@@ -326,31 +325,29 @@ export function UserDetailModal({
                     <CardContent className="p-3">
                       <p className="text-xs text-zinc-500">Experience</p>
                       <p className="font-medium mt-1">
-                        {user.consultantProfile.yearsOfExperience
-                          ? `${user.consultantProfile.yearsOfExperience} years`
+                        {user.consultantProfile.experience
+                          ? `${user.consultantProfile.experience} years`
                           : "Not set"}
                       </p>
                     </CardContent>
                   </Card>
                   <Card>
                     <CardContent className="p-3">
-                      <p className="text-xs text-zinc-500">Hourly Rate</p>
+                      <p className="text-xs text-zinc-500">Headline</p>
                       <p className="font-medium mt-1">
-                        {user.consultantProfile.hourlyRate
-                          ? `$${user.consultantProfile.hourlyRate}`
-                          : "Not set"}
+                        {user.consultantProfile.headline || "Not set"}
                       </p>
                     </CardContent>
                   </Card>
                 </div>
-                {user.consultantProfile.specialization &&
-                  user.consultantProfile.specialization.length > 0 && (
+                {user.consultantProfile.subDomains &&
+                  user.consultantProfile.subDomains.length > 0 && (
                     <div>
                       <p className="text-xs text-zinc-500 mb-2">Specializations</p>
                       <div className="flex flex-wrap gap-2">
-                        {user.consultantProfile.specialization.map((s, idx) => (
-                          <Badge key={idx} variant="outline">
-                            {s}
+                        {user.consultantProfile.subDomains.map((s) => (
+                          <Badge key={s.id} variant="outline">
+                            {s.name}
                           </Badge>
                         ))}
                       </div>
