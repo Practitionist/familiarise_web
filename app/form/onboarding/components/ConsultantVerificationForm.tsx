@@ -55,6 +55,8 @@ export default function ConsultantVerificationForm({
       try {
         const formData = new FormData();
         formData.append("file", file);
+        // Flag this as an onboarding upload - profile doesn't exist yet
+        formData.append("onboarding", "true");
 
         const response = await fetch("/api/verification/documents", {
           method: "POST",

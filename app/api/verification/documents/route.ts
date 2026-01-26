@@ -16,6 +16,11 @@ const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 /**
  * POST /api/verification/documents
  * Upload a verification document
+ *
+ * Supports two modes:
+ * 1. Normal mode: Requires existing consultant profile
+ * 2. Onboarding mode (onboarding=true): Allows upload before profile exists
+ *    Documents are stored with userId reference and linked during onboarding completion
  */
 export async function POST(request: NextRequest) {
   try {
@@ -32,6 +37,7 @@ export async function POST(request: NextRequest) {
     const file = formData.get("file") as File;
     const description = formData.get("description") as string | null;
     const verificationId = formData.get("verificationId") as string | null;
+    const isOnboarding = formData.get("onboarding") === "true";
 
     if (!file) {
       return NextResponse.json(
@@ -59,7 +65,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Get the consultant profile
+    // Get the consultant profile (may not exist during onboarding)
     const consultantProfile = await prisma.consultantProfile.findUnique({
       where: { userId: session.user.id },
       include: {
@@ -71,40 +77,48 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    if (!consultantProfile) {
+    // In onboarding mode, allow uploads without a profile
+    // Documents will be linked during onboarding completion
+    if (!consultantProfile && !isOnboarding) {
       return NextResponse.json(
         { success: false, error: "Consultant profile not found" },
         { status: 404 }
       );
     }
 
-    // Create or get verification request
-    let verification = consultantProfile.verificationRequests[0] ?? null;
+    let verification = null;
 
-    if (!verification && verificationId) {
-      const found = await prisma.consultantProfileVerification.findUnique({
-        where: { id: verificationId },
-      });
-      if (found) {
-        verification = found;
+    // Only try to get/create verification if we have a consultant profile
+    if (consultantProfile) {
+      verification = consultantProfile.verificationRequests[0] ?? null;
+
+      if (!verification && verificationId) {
+        const found = await prisma.consultantProfileVerification.findUnique({
+          where: { id: verificationId },
+        });
+        if (found) {
+          verification = found;
+        }
+      }
+
+      if (!verification) {
+        // Create a new verification request if none exists
+        verification = await prisma.consultantProfileVerification.create({
+          data: {
+            consultantProfileId: consultantProfile.id,
+            status: "PENDING",
+          },
+        });
       }
     }
 
-    if (!verification) {
-      // Create a new verification request if none exists
-      verification = await prisma.consultantProfileVerification.create({
-        data: {
-          consultantProfileId: consultantProfile.id,
-          status: "PENDING",
-        },
-      });
-    }
-
     // Upload file to Supabase
+    // Use userId for onboarding mode when consultantProfile doesn't exist yet
     const fileBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(fileBuffer);
     const ext = file.name.split(".").pop() || "pdf";
-    const fileName = `verification-${consultantProfile.id}-${Date.now()}.${ext}`;
+    const fileIdentifier = consultantProfile?.id || `onboarding-${session.user.id}`;
+    const fileName = `verification-${fileIdentifier}-${Date.now()}.${ext}`;
     const storagePath = `verification-documents/${fileName}`;
 
     const { url: fileUrl, error: uploadError } = await uploadToSupabase(
@@ -120,10 +134,30 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Create document record
+    // In onboarding mode, skip DB record creation - just return file info
+    // The onboarding completion will create the records
+    if (isOnboarding && !verification) {
+      return NextResponse.json({
+        success: true,
+        data: {
+          // No database ID yet - will be created during onboarding completion
+          fileName,
+          originalName: file.name,
+          fileSize: file.size,
+          mimeType: file.type,
+          fileUrl,
+          storagePath,
+          description: description || undefined,
+          status: "uploaded",
+          isOnboardingUpload: true,
+        },
+      });
+    }
+
+    // Normal mode: Create document record in database
     const document = await prisma.profileVerificationDocument.create({
       data: {
-        verificationId: verification.id,
+        verificationId: verification!.id,
         fileName,
         originalName: file.name,
         fileSize: file.size,

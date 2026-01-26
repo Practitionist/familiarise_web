@@ -409,16 +409,36 @@ export async function processOnboardingData(
           },
         });
 
-        // Connect any uploaded documents to the verification
+        // Connect or create uploaded documents for the verification
         if (verificationDocuments && verificationDocuments.length > 0) {
-          const documentIds = verificationDocuments
-            .filter((doc: any) => doc.id)
-            .map((doc: any) => doc.id);
-
-          if (documentIds.length > 0) {
+          // Handle documents that have IDs (created before profile existed - legacy)
+          const existingDocuments = verificationDocuments.filter(
+            (doc: any) => doc.id && !doc.isOnboardingUpload
+          );
+          if (existingDocuments.length > 0) {
+            const documentIds = existingDocuments.map((doc: any) => doc.id);
             await prisma.profileVerificationDocument.updateMany({
               where: { id: { in: documentIds } },
               data: { verificationId: verification.id },
+            });
+          }
+
+          // Handle documents uploaded during onboarding (no ID yet, have file info)
+          const onboardingDocuments = verificationDocuments.filter(
+            (doc: any) => doc.isOnboardingUpload || (!doc.id && doc.fileUrl)
+          );
+          if (onboardingDocuments.length > 0) {
+            await prisma.profileVerificationDocument.createMany({
+              data: onboardingDocuments.map((doc: any) => ({
+                verificationId: verification.id,
+                fileName: doc.fileName,
+                originalName: doc.originalName,
+                fileSize: doc.fileSize,
+                mimeType: doc.mimeType,
+                fileUrl: doc.fileUrl,
+                storagePath: doc.storagePath,
+                description: doc.description || null,
+              })),
             });
           }
         }

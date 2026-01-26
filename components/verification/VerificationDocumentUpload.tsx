@@ -21,10 +21,12 @@ export interface UploadedDocument {
   fileSize: number;
   mimeType: string;
   fileUrl?: string;
+  storagePath?: string;
   description?: string;
   status: "uploading" | "uploaded" | "error";
   progress?: number;
   error?: string;
+  isOnboardingUpload?: boolean;
 }
 
 interface VerificationDocumentUploadProps {
@@ -302,7 +304,8 @@ export function VerificationDocumentUpload({
       {/* File count indicator */}
       {documents.length > 0 && (
         <p className="text-xs text-zinc-500 text-right">
-          {documents.length} of {maxFiles} files uploaded
+          {documents.filter((d) => d.status === "uploaded").length} of {maxFiles}{" "}
+          files uploaded
         </p>
       )}
     </div>
