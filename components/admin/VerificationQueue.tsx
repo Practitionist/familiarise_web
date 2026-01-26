@@ -114,7 +114,7 @@ export function VerificationQueue({
       setLoading(true);
       const response = await fetch(`${apiBasePath}?status=PENDING`);
       if (!response.ok) throw new Error("Failed to fetch verifications");
-      const data = await response.json();
+      const data: { verifications?: ProfileVerification[] } = await response.json();
       setVerifications(data.verifications || []);
     } catch (error) {
       console.error("Error fetching verifications:", error);
@@ -204,6 +204,11 @@ export function VerificationQueue({
 
         {verifications.map((verification) => {
           const profile = verification.consultantProfile;
+          // Skip verifications with missing profile or user data
+          if (!profile || !profile.user) {
+            console.warn("Skipping verification with missing profile data:", verification.id);
+            return null;
+          }
           const user = profile.user;
 
           // Use subDomains for specialization display
