@@ -439,9 +439,9 @@ export function HomeTab({
                     {activities.slice(0, 5).map((activity) => (
                       <ActivityItem
                         key={activity.id}
-                        name={activity.name}
-                        action={activity.action}
-                        time={activity.time}
+                        name={activity.actorName}
+                        action={activity.description}
+                        time={activity.timeAgo}
                       />
                     ))}
                   </div>

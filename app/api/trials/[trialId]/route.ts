@@ -1,7 +1,8 @@
 import prisma from "@/lib/prisma";
 import { TrialSessionStatus, AppointmentsType } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
-import { logTrialCompleted, logTrialConverted } from "@/lib/activity/log-activity";
+import { logTrialCompleted, logTrialScheduled } from "@/lib/activity/log-activity";
+import { lockTrialSlot, unlockTrialSlot, ApprovalLock } from "@/utils/appointmentlock";
 
 interface RouteContext {
   params: Promise<{ trialId: string }>;
@@ -73,10 +74,82 @@ export async function GET(request: NextRequest, context: RouteContext) {
   }
 }
 
+interface SlotData {
+  startsAt: string;
+  endsAt: string;
+  slotOfAvailabilityId: string;
+  slotType: "WEEKLY" | "CUSTOM";
+}
+
 interface UpdateTrialRequest {
   status?: TrialSessionStatus;
-  scheduledTime?: string; // ISO date string for scheduling
+  scheduledTime?: string; // Legacy: ISO date string for scheduling
+  slotData?: SlotData; // New: Slot data from calendar selection
   notes?: string;
+}
+
+/**
+ * Validates that a time slot is still available (no overlapping appointments)
+ */
+async function validateSlotAvailability(
+  consultantProfileId: string,
+  startsAt: string,
+  endsAt: string
+): Promise<boolean> {
+  const startTime = new Date(startsAt);
+  const endTime = new Date(endsAt);
+
+  // Check for overlapping appointments across all appointment types
+  const overlapping = await prisma.slotOfAppointment.findFirst({
+    where: {
+      appointment: {
+        OR: [
+          // Approved consultations
+          {
+            consultation: {
+              consultationPlan: { consultantProfileId },
+              requestStatus: "APPROVED",
+            },
+          },
+          // Approved subscriptions
+          {
+            subscription: {
+              subscriptionPlan: { consultantProfileId },
+              requestStatus: "APPROVED",
+            },
+          },
+          // Scheduled webinars
+          {
+            webinar: {
+              webinarPlan: { consultantProfileId },
+              status: "SCHEDULED",
+            },
+          },
+          // Scheduled classes
+          {
+            class: {
+              classPlan: { consultantProfileId },
+              status: "SCHEDULED",
+            },
+          },
+          // Scheduled trials
+          {
+            trialSession: {
+              consultantProfileId,
+              status: "SCHEDULED",
+            },
+          },
+        ],
+      },
+      // Check for time overlap
+      AND: [
+        { startsAt: { lt: endTime } },
+        { endsAt: { gt: startTime } },
+      ],
+    },
+  });
+
+  return !overlapping;
 }
 
 /**
@@ -88,7 +161,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 
   try {
     const body = (await request.json()) as UpdateTrialRequest;
-    const { status, scheduledTime, notes } = body;
+    const { status, scheduledTime, slotData, notes } = body;
 
     // Fetch the existing trial session
     const existingTrial = await prisma.trialSession.findUnique({
@@ -125,7 +198,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     // Handle status transitions
     if (status) {
       const validTransitions: Record<TrialSessionStatus, TrialSessionStatus[]> = {
-        PENDING: ["APPROVED", "CANCELLED", "EXPIRED"],
+        PENDING: ["APPROVED", "SCHEDULED", "CANCELLED", "EXPIRED"], // Allow PENDING → SCHEDULED for calendar flow
         APPROVED: ["SCHEDULED", "CANCELLED", "EXPIRED"],
         SCHEDULED: ["COMPLETED", "CANCELLED"],
         COMPLETED: ["CONVERTED"],
@@ -144,43 +217,159 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 
       updateData.status = status;
 
-      // Handle scheduling
+      // Handle scheduling with distributed locking
       if (status === TrialSessionStatus.SCHEDULED) {
-        if (!scheduledTime) {
+        // Support both new slotData and legacy scheduledTime
+        if (!slotData && !scheduledTime) {
           return NextResponse.json(
-            { error: "scheduledTime is required when scheduling a trial" },
+            { error: "slotData or scheduledTime is required when scheduling a trial" },
             { status: 400 }
           );
         }
 
-        const startTime = new Date(scheduledTime);
-        const durationMinutes = existingTrial.subscriptionPlan.freeTrialDurationMinutes;
-        const endTime = new Date(startTime.getTime() + durationMinutes * 60 * 1000);
+        let startTime: Date;
+        let endTime: Date;
 
-        // Create an appointment for the trial
-        const appointment = await prisma.appointment.create({
-          data: {
-            appointmentType: AppointmentsType.TRIAL,
-            slotsOfAppointment: {
-              create: {
-                startsAt: startTime,
-                endsAt: endTime,
-                isTentative: false,
-                user: {
-                  connect: [
-                    { id: existingTrial.consulteeProfile.user.id },
-                    { id: existingTrial.consultantProfile.user.id },
-                  ],
+        if (slotData) {
+          startTime = new Date(slotData.startsAt);
+          endTime = new Date(slotData.endsAt);
+        } else {
+          startTime = new Date(scheduledTime!);
+          const durationMinutes = existingTrial.subscriptionPlan.freeTrialDurationMinutes;
+          endTime = new Date(startTime.getTime() + durationMinutes * 60 * 1000);
+        }
+
+        // 1. Acquire distributed lock to prevent race conditions
+        let lock: ApprovalLock | null = null;
+        try {
+          lock = await lockTrialSlot(
+            existingTrial.consultantProfileId,
+            startTime.toISOString()
+          );
+        } catch {
+          return NextResponse.json(
+            { error: "This time slot is currently being processed. Please try again." },
+            { status: 423 } // Locked
+          );
+        }
+
+        try {
+          // 2. Validate slot availability (within lock)
+          const isAvailable = await validateSlotAvailability(
+            existingTrial.consultantProfileId,
+            startTime.toISOString(),
+            endTime.toISOString()
+          );
+
+          if (!isAvailable) {
+            return NextResponse.json(
+              { error: "Selected slot is no longer available. Please choose a different time." },
+              { status: 409 }
+            );
+          }
+
+          // 3. Create appointment + update trial atomically using transaction
+          const result = await prisma.$transaction(async (tx) => {
+            // If trial is PENDING, first transition to APPROVED
+            if (existingTrial.status === TrialSessionStatus.PENDING) {
+              await tx.trialSession.update({
+                where: { id: trialId },
+                data: { status: TrialSessionStatus.APPROVED },
+              });
+            }
+
+            // Create an appointment for the trial
+            const appointment = await tx.appointment.create({
+              data: {
+                appointmentType: AppointmentsType.TRIAL,
+                slotsOfAppointment: {
+                  create: {
+                    startsAt: startTime,
+                    endsAt: endTime,
+                    isTentative: false,
+                    user: {
+                      connect: [
+                        { id: existingTrial.consulteeProfile.user.id },
+                        { id: existingTrial.consultantProfile.user.id },
+                      ],
+                    },
+                  },
                 },
               },
-            },
-          },
-          include: {
-            slotsOfAppointment: true,
-          },
-        });
+              include: {
+                slotsOfAppointment: true,
+              },
+            });
 
-        updateData.appointmentId = appointment.id;
+            // Update trial with appointment link and scheduled status
+            const updatedTrial = await tx.trialSession.update({
+              where: { id: trialId },
+              data: {
+                status: TrialSessionStatus.SCHEDULED,
+                appointmentId: appointment.id,
+              },
+              include: {
+                consulteeProfile: {
+                  include: {
+                    user: {
+                      select: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        image: true,
+                      },
+                    },
+                  },
+                },
+                consultantProfile: {
+                  include: {
+                    user: {
+                      select: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        image: true,
+                      },
+                    },
+                  },
+                },
+                subscriptionPlan: true,
+                appointment: {
+                  include: {
+                    slotsOfAppointment: {
+                      include: {
+                        meetingSession: true,
+                      },
+                    },
+                  },
+                },
+                convertedToSubscription: true,
+              },
+            });
+
+            return updatedTrial;
+          });
+
+          // 4. Log activity (outside transaction for non-critical operation)
+          await logTrialScheduled(
+            existingTrial.consultantProfileId,
+            trialId,
+            {
+              id: existingTrial.consulteeProfile.user.id,
+              name: existingTrial.consulteeProfile.user.name,
+              image: existingTrial.consulteeProfile.user.image,
+            },
+            existingTrial.subscriptionPlan.title,
+            startTime
+          );
+
+          return NextResponse.json({ data: result });
+        } finally {
+          // 5. Always release lock
+          if (lock) {
+            await unlockTrialSlot(lock);
+          }
+        }
       }
 
       // Handle completion

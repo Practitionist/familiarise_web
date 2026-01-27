@@ -65,9 +65,14 @@ export interface IPlanMaterial {
 
 export interface IActivity {
   id: string;
-  name: string;
-  action: string;
-  time: string;
+  type: string;
+  description: string;
+  actorId: string;
+  actorName: string;
+  actorImage: string | null;
+  metadata: Record<string, unknown> | null;
+  createdAt: string;
+  timeAgo: string;
 }
 
 export interface IApproval {

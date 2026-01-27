@@ -249,6 +249,28 @@ export async function logTrialRequested(
 }
 
 /**
+ * Log trial session scheduled activity
+ */
+export async function logTrialScheduled(
+  consultantProfileId: string,
+  trialSessionId: string,
+  actor: { id: string; name: string; image?: string | null },
+  planTitle: string,
+  scheduledTime: Date
+) {
+  return logActivity({
+    activityType: "TRIAL_SCHEDULED",
+    description: `Scheduled trial session with ${actor.name}: ${planTitle}`,
+    actorId: actor.id,
+    actorName: actor.name,
+    actorImage: actor.image,
+    consultantProfileId,
+    trialSessionId,
+    metadata: { planTitle, scheduledTime: scheduledTime.toISOString() },
+  });
+}
+
+/**
  * Log trial session completed activity
  */
 export async function logTrialCompleted(

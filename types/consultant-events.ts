@@ -8,11 +8,17 @@ import { TAppointment } from "@/types/appointment";
  */
 
 // Activity type for recent client activities
+// Matches the API response from /api/dashboard/consultant/[consultantId]/route.ts
 export interface TConsultantActivity {
   id: string;
-  name: string;
-  action: string;
-  time: string;
+  type: string;
+  description: string;
+  actorId: string;
+  actorName: string;
+  actorImage: string | null;
+  metadata: Record<string, unknown> | null;
+  createdAt: string;
+  timeAgo: string;
 }
 
 // Approval type for pending consultation/subscription requests

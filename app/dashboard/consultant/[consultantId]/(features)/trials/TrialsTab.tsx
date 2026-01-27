@@ -21,13 +21,7 @@ import {
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import {
   Gift,
@@ -39,6 +33,10 @@ import {
   Loader2,
   RefreshCw,
 } from "lucide-react";
+import {
+  TrialScheduleCalendar,
+  SelectedSlot,
+} from "./components/TrialScheduleCalendar";
 
 interface TrialSession {
   id: string;
@@ -90,7 +88,6 @@ export function TrialsTab() {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [selectedTrial, setSelectedTrial] = useState<TrialSession | null>(null);
   const [showScheduleDialog, setShowScheduleDialog] = useState(false);
-  const [scheduledTime, setScheduledTime] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
 
   const fetchTrials = useCallback(async () => {
@@ -131,42 +128,29 @@ export function TrialsTab() {
     setShowScheduleDialog(true);
   };
 
-  const handleScheduleConfirm = async () => {
-    if (!selectedTrial || !scheduledTime) {
-      toast({
-        title: "Error",
-        description: "Please select a date and time",
-        variant: "destructive",
-      });
-      return;
-    }
+  const handleSlotSelected = async (slot: SelectedSlot) => {
+    if (!selectedTrial) return;
+    setIsProcessing(true);
 
     try {
-      setIsProcessing(true);
-
-      // First approve the trial
-      let response = await fetch(`/api/trials/${selectedTrial.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "APPROVED" }),
-      });
-
-      if (!response.ok) {
-        throw new Error("Failed to approve trial");
-      }
-
-      // Then schedule it
-      response = await fetch(`/api/trials/${selectedTrial.id}`, {
+      // Single API call: PENDING → SCHEDULED with slot data
+      const response = await fetch(`/api/trials/${selectedTrial.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           status: "SCHEDULED",
-          scheduledTime,
+          slotData: {
+            startsAt: slot.startsAt.toISOString(),
+            endsAt: slot.endsAt.toISOString(),
+            slotOfAvailabilityId: slot.slotOfAvailabilityId,
+            slotType: slot.slotType,
+          },
         }),
       });
 
       if (!response.ok) {
-        throw new Error("Failed to schedule trial");
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Failed to schedule trial");
       }
 
       toast({
@@ -176,7 +160,6 @@ export function TrialsTab() {
 
       setShowScheduleDialog(false);
       setSelectedTrial(null);
-      setScheduledTime("");
       fetchTrials();
     } catch (error) {
       console.error("Error scheduling trial:", error);
@@ -265,12 +248,6 @@ export function TrialsTab() {
       minute: "2-digit",
       hour12: true,
     });
-  };
-
-  const getMinDateTime = () => {
-    const now = new Date();
-    now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
-    return now.toISOString().slice(0, 16);
   };
 
   if (loading) {
@@ -451,61 +428,24 @@ export function TrialsTab() {
         </div>
       )}
 
-      {/* Schedule Dialog */}
+      {/* Schedule Dialog with Calendar */}
       <Dialog open={showScheduleDialog} onOpenChange={setShowScheduleDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Schedule Trial Session</DialogTitle>
-            <DialogDescription>
-              Select a date and time for the trial session with{" "}
-              {selectedTrial?.consulteeProfile.user.name}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label htmlFor="scheduledTime">Date & Time</Label>
-              <Input
-                id="scheduledTime"
-                type="datetime-local"
-                value={scheduledTime}
-                onChange={(e) => setScheduledTime(e.target.value)}
-                min={getMinDateTime()}
-              />
-            </div>
-            {selectedTrial && (
-              <div className="text-sm text-gray-600">
-                <p>
-                  <span className="font-medium">Plan: </span>
-                  {selectedTrial.subscriptionPlan.title}
-                </p>
-                <p>
-                  <span className="font-medium">Duration: </span>
-                  {selectedTrial.subscriptionPlan.freeTrialDurationMinutes} minutes
-                </p>
-              </div>
-            )}
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => {
+        <DialogContent className="max-w-4xl">
+          {selectedTrial && (
+            <TrialScheduleCalendar
+              consultantId={consultantId}
+              trialDurationMinutes={
+                selectedTrial.subscriptionPlan.freeTrialDurationMinutes
+              }
+              onSlotSelect={handleSlotSelected}
+              onCancel={() => {
                 setShowScheduleDialog(false);
                 setSelectedTrial(null);
-                setScheduledTime("");
               }}
-              disabled={isProcessing}
-            >
-              Cancel
-            </Button>
-            <Button onClick={handleScheduleConfirm} disabled={isProcessing}>
-              {isProcessing ? (
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              ) : (
-                <CheckCircle className="h-4 w-4 mr-2" />
-              )}
-              Confirm Schedule
-            </Button>
-          </DialogFooter>
+              isProcessing={isProcessing}
+              consulteeUserName={selectedTrial.consulteeProfile.user.name}
+            />
+          )}
         </DialogContent>
       </Dialog>
     </div>
