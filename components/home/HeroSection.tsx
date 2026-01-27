@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useCallback } from "react";
+import { useCallback } from "react";
 import { motion, useInView } from "framer-motion";
 import { ArrowRight, Play, Sparkles } from "lucide-react";
 import Link from "next/link";
@@ -9,7 +9,7 @@ import { useRef, useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { STATS } from "./data";
 
-const AnimatedNumber = memo(function AnimatedNumber({
+function AnimatedNumber({
   value,
   suffix = "",
 }: {
@@ -54,7 +54,7 @@ const AnimatedNumber = memo(function AnimatedNumber({
       {suffix}
     </motion.span>
   );
-});
+}
 
 export function HeroSection() {
   return (

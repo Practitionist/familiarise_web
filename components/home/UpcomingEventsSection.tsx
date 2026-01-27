@@ -1,6 +1,5 @@
 "use client";
 
-import { memo, useMemo } from "react";
 import { motion } from "framer-motion";
 import { Calendar, ChevronRight, Clock, Star } from "lucide-react";
 import Link from "next/link";
@@ -12,7 +11,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import type { ReviewWithProfiles } from "@/types/review";
 import { UPCOMING_EVENTS } from "./data";
 
-const EventCard = memo(function EventCard({
+function EventCard({
   event,
   index,
 }: {
@@ -57,14 +56,14 @@ const EventCard = memo(function EventCard({
       </Card>
     </motion.div>
   );
-});
+}
 
 interface UpcomingEventsSectionProps {
   reviews: ReviewWithProfiles[];
 }
 
 export function UpcomingEventsSection({ reviews }: UpcomingEventsSectionProps) {
-  const slicedReviews = useMemo(() => reviews.slice(0, 3), [reviews]);
+  const slicedReviews = reviews.slice(0, 3);
 
   return (
     <section className="py-20 md:py-32 bg-gradient-to-b from-black via-zinc-950 to-zinc-900 overflow-hidden relative">

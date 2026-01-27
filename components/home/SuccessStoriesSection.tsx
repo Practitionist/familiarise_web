@@ -1,6 +1,5 @@
 "use client";
 
-import { memo } from "react";
 import { motion } from "framer-motion";
 import { Rocket } from "lucide-react";
 
@@ -9,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { SUCCESS_STORIES } from "./data";
 
-const SuccessStoryCard = memo(function SuccessStoryCard({
+function SuccessStoryCard({
   story,
   index,
 }: {
@@ -49,7 +48,7 @@ const SuccessStoryCard = memo(function SuccessStoryCard({
       </Card>
     </motion.div>
   );
-});
+}
 
 export function SuccessStoriesSection() {
   return (

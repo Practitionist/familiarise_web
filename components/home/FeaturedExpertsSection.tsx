@@ -1,6 +1,5 @@
 "use client";
 
-import { memo } from "react";
 import { motion } from "framer-motion";
 import { ChevronRight, Star } from "lucide-react";
 import Link from "next/link";
@@ -11,11 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import type { TConsultantProfile } from "@/types/consultant";
 
-const ExpertCard = memo(function ExpertCard({
-  expert,
-}: {
-  expert: TConsultantProfile;
-}) {
+function ExpertCard({ expert }: { expert: TConsultantProfile }) {
   return (
     <Link
       href={`/explore/experts/${expert.id}`}
@@ -69,15 +64,15 @@ const ExpertCard = memo(function ExpertCard({
       </Card>
     </Link>
   );
-});
+}
 
-const ExpertLoadingSkeleton = memo(function ExpertLoadingSkeleton() {
+function ExpertLoadingSkeleton() {
   return (
     <div className="flex-shrink-0 w-[300px] mx-3">
       <Card className="h-[200px] animate-pulse bg-zinc-100 border-0" />
     </div>
   );
-});
+}
 
 interface FeaturedExpertsSectionProps {
   experts: TConsultantProfile[];
