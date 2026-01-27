@@ -32,7 +32,12 @@ import {
   XCircle,
   Loader2,
   RefreshCw,
+  Video,
 } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { useStreamVideoClient } from "@stream-io/video-react-sdk";
+import { getOrCreateAppointmentMeeting } from "@/lib/meeting";
+import type { TAppointment } from "@/types/appointment";
 import {
   TrialScheduleCalendar,
   SelectedSlot,
@@ -70,18 +75,19 @@ interface TrialSession {
 
 const statusColors: Record<string, string> = {
   PENDING: "bg-yellow-100 text-yellow-800",
-  APPROVED: "bg-blue-100 text-blue-800",
   SCHEDULED: "bg-purple-100 text-purple-800",
   COMPLETED: "bg-green-100 text-green-800",
   CONVERTED: "bg-emerald-100 text-emerald-800",
-  CANCELLED: "bg-red-100 text-red-800",
-  EXPIRED: "bg-gray-100 text-gray-800",
+  CANCELLED: "bg-gray-100 text-gray-800",
+  REJECTED: "bg-red-100 text-red-800",
 };
 
 export function TrialsTab() {
   const params = useParams();
   const consultantId = params.consultantId as string;
   const { toast } = useToast();
+  const router = useRouter();
+  const client = useStreamVideoClient();
 
   const [trials, setTrials] = useState<TrialSession[]>([]);
   const [loading, setLoading] = useState(true);
@@ -89,6 +95,7 @@ export function TrialsTab() {
   const [selectedTrial, setSelectedTrial] = useState<TrialSession | null>(null);
   const [showScheduleDialog, setShowScheduleDialog] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isJoining, setIsJoining] = useState<string | null>(null);
 
   const fetchTrials = useCallback(async () => {
     try {
@@ -177,25 +184,58 @@ export function TrialsTab() {
   const handleReject = async (trialId: string) => {
     try {
       setIsProcessing(true);
+      // Use PATCH to set status to REJECTED (consultant declining)
+      const response = await fetch(`/api/trials/${trialId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "REJECTED" }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to decline trial");
+      }
+
+      toast({
+        title: "Success",
+        description: "Trial request declined",
+      });
+
+      fetchTrials();
+    } catch (error) {
+      console.error("Error declining trial:", error);
+      toast({
+        title: "Error",
+        description: "Failed to decline trial request",
+        variant: "destructive",
+      });
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleCancel = async (trialId: string) => {
+    try {
+      setIsProcessing(true);
+      // Use DELETE for cancellation of scheduled trials
       const response = await fetch(`/api/trials/${trialId}`, {
         method: "DELETE",
       });
 
       if (!response.ok) {
-        throw new Error("Failed to reject trial");
+        throw new Error("Failed to cancel trial");
       }
 
       toast({
         title: "Success",
-        description: "Trial request cancelled",
+        description: "Trial session cancelled",
       });
 
       fetchTrials();
     } catch (error) {
-      console.error("Error rejecting trial:", error);
+      console.error("Error cancelling trial:", error);
       toast({
         title: "Error",
-        description: "Failed to cancel trial request",
+        description: "Failed to cancel trial",
         variant: "destructive",
       });
     } finally {
@@ -250,6 +290,73 @@ export function TrialsTab() {
     });
   };
 
+  // Check if a trial session is joinable (within 10 mins before start and before end time)
+  const isTrialJoinable = (trial: TrialSession): boolean => {
+    if (trial.status !== "SCHEDULED" || !trial.appointment?.slotsOfAppointment?.[0]) {
+      return false;
+    }
+
+    const slot = trial.appointment.slotsOfAppointment[0];
+    const now = new Date();
+    const startTime = new Date(slot.startsAt);
+    const endTime = new Date(slot.endsAt);
+    const joinWindowStart = new Date(startTime.getTime() - 10 * 60 * 1000); // 10 mins before
+
+    return now >= joinWindowStart && now <= endTime;
+  };
+
+  const handleJoinMeeting = async (trial: TrialSession) => {
+    if (!client) {
+      toast({
+        title: "Not signed in",
+        description: "Video client not initialized. Please sign in to join the meeting.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!trial.appointment?.slotsOfAppointment?.[0]) {
+      toast({
+        title: "Unable to join",
+        description: "Meeting information is not available.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsJoining(trial.id);
+    try {
+      const slot = trial.appointment.slotsOfAppointment[0];
+      // Create a minimal appointment object for the meeting helper
+      const appointmentForMeeting = {
+        id: trial.appointment.id,
+        appointmentType: "TRIAL" as const,
+        slotsOfAppointment: trial.appointment.slotsOfAppointment,
+      } as unknown as TAppointment;
+
+      const meetingId = await getOrCreateAppointmentMeeting(
+        client,
+        appointmentForMeeting,
+        slot as any,
+      );
+
+      toast({
+        title: "Joining meeting",
+        description: "You will now be redirected to the meeting room.",
+      });
+
+      router.push(`/meetings/${meetingId}`);
+    } catch (error) {
+      console.error("Error joining meeting:", error);
+      toast({
+        title: "Error joining meeting",
+        description: error instanceof Error ? error.message : "Unknown error occurred",
+        variant: "destructive",
+      });
+      setIsJoining(null);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -284,11 +391,11 @@ export function TrialsTab() {
             <SelectContent>
               <SelectItem value="all">All Statuses</SelectItem>
               <SelectItem value="PENDING">Pending</SelectItem>
-              <SelectItem value="APPROVED">Approved</SelectItem>
               <SelectItem value="SCHEDULED">Scheduled</SelectItem>
               <SelectItem value="COMPLETED">Completed</SelectItem>
               <SelectItem value="CONVERTED">Converted</SelectItem>
               <SelectItem value="CANCELLED">Cancelled</SelectItem>
+              <SelectItem value="REJECTED">Declined</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -406,15 +513,34 @@ export function TrialsTab() {
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => handleReject(trial.id)}
-                        disabled={isProcessing}
+                        onClick={() => handleCancel(trial.id)}
+                        disabled={isProcessing || isJoining === trial.id}
                       >
                         Cancel
                       </Button>
                       <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleJoinMeeting(trial)}
+                        disabled={isProcessing || isJoining === trial.id || !isTrialJoinable(trial)}
+                        className={isTrialJoinable(trial) ? "bg-blue-50 text-blue-700 hover:bg-blue-100 border-blue-200" : ""}
+                      >
+                        {isJoining === trial.id ? (
+                          <>
+                            <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                            Joining...
+                          </>
+                        ) : (
+                          <>
+                            <Video className="h-4 w-4 mr-1" />
+                            Join Meeting
+                          </>
+                        )}
+                      </Button>
+                      <Button
                         size="sm"
                         onClick={() => handleComplete(trial.id)}
-                        disabled={isProcessing}
+                        disabled={isProcessing || isJoining === trial.id}
                       >
                         <CheckCircle className="h-4 w-4 mr-1" />
                         Mark Completed

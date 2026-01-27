@@ -61,7 +61,7 @@ interface EventCardProps {
     startTime: Date;
     endTime: Date;
   }>;
-  type?: "Subscription" | "Class" | "Consultation" | "Webinar";
+  type?: "Subscription" | "Class" | "Consultation" | "Webinar" | "Trial";
   isTentative?: boolean;
   appointmentId?: string;
   className?: string;

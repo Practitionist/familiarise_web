@@ -818,13 +818,12 @@ model TrialSession {
 }
 
 enum TrialSessionStatus {
-  PENDING // Requested, awaiting consultant approval
-  APPROVED // Approved, awaiting scheduling
+  PENDING // Requested, awaiting consultant action
   SCHEDULED // Time slot confirmed
   COMPLETED // Trial session completed
   CONVERTED // Consultee subscribed after trial
-  CANCELLED // Cancelled by either party
-  EXPIRED // Not scheduled within time limit
+  CANCELLED // Cancelled by consultee
+  REJECTED // Declined by consultant
 }
 
 // Activity tracking for consultant dashboard

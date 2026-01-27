@@ -6,6 +6,7 @@ import {
   ConsultationWithPlan,
   SubscriptionWithPlan,
   WebinarWithPlan,
+  TrialWithPlan,
 } from "@/hooks/useEvents";
 import { EventWithType } from "../../utils/getMetadata";
 import {
@@ -23,6 +24,7 @@ import {
   Video,
   Users,
   BookOpen,
+  Gift,
 } from "lucide-react";
 import { motion } from "framer-motion";
 import type { BookingStatus } from "@/components/ui/waitlist-status-badge";
@@ -32,6 +34,7 @@ interface OverviewProps {
   subscriptions: SubscriptionWithPlan[];
   webinars: WebinarWithPlan[];
   classes: ClassWithPlan[];
+  trials: TrialWithPlan[];
 }
 
 interface DashboardCardProps {
@@ -45,7 +48,7 @@ interface DashboardCardProps {
     date: string;
     image?: string | null;
     status: string;
-    type: "Subscription" | "Class" | "Consultation" | "Webinar";
+    type: "Subscription" | "Class" | "Consultation" | "Webinar" | "Trial";
     isTentative: boolean;
     actualSlots?: Array<{
       startTime: Date;
@@ -117,6 +120,7 @@ export function Overview({
   subscriptions,
   classes,
   webinars,
+  trials,
 }: Readonly<OverviewProps>) {
   return (
     <motion.div
@@ -344,6 +348,43 @@ export function Overview({
           )}
         />
       </motion.div>
+
+      <motion.div variants={fadeInUp}>
+        <DashboardCard
+          title="Free Trials"
+          icon={Gift}
+          accentColor="rose"
+          items={sortEventItems(
+            trials.map((trial) => {
+              // Get slot info from trial appointment
+              const rawSlots = trial.appointment?.slotsOfAppointment ?? [];
+              const firstSlot = rawSlots[0];
+
+              return {
+                id: trial.id,
+                title: `Free Trial: ${trial.subscriptionPlan.title}`,
+                consultant:
+                  trial.subscriptionPlan.consultantProfile?.user?.name ??
+                  "Unknown Consultant",
+                date: firstSlot
+                  ? formatDateFromSlot(firstSlot as SlotOfAppointment)
+                  : "Awaiting schedule",
+                image: trial.subscriptionPlan.consultantProfile?.user?.image,
+                status: trial.status,
+                type: "Trial" as const,
+                isTentative: false,
+                actualSlots: rawSlots.map((slot) => ({
+                  startTime: new Date(slot.startsAt),
+                  endTime: new Date(slot.endsAt),
+                })),
+                appointmentId: trial.appointment?.id,
+                appointment: trial.appointment as TAppointment | undefined,
+                rawSlots: rawSlots as SlotOfAppointment[],
+              };
+            }),
+          )}
+        />
+      </motion.div>
     </motion.div>
   );
 }
@@ -384,6 +425,11 @@ function DashboardCard({
       bg: "bg-emerald-50",
       text: "text-emerald-600",
       border: "border-emerald-100",
+    },
+    rose: {
+      bg: "bg-rose-50",
+      text: "text-rose-600",
+      border: "border-rose-100",
     },
   };
 

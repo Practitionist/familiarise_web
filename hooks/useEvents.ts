@@ -24,6 +24,30 @@ export type ClassWithPlan = TClass & {
   appointment: TAppointment[];
 };
 
+// Trial session type for consultee dashboard
+export type TrialWithPlan = {
+  id: string;
+  status: string;
+  notes: string | null;
+  requestedAt: string;
+  completedAt: string | null;
+  subscriptionPlan: {
+    id: string;
+    title: string;
+    freeTrialDurationMinutes: number;
+    consultantProfile: {
+      id: string;
+      user: {
+        id: string;
+        name: string;
+        image: string | null;
+        email: string;
+      };
+    };
+  };
+  appointment: TAppointment | null;
+};
+
 // Original hook for consultee events
 // TODO: Replace with useEventsByConsultee
 export const useEvents = (consulteeProfileId: string) => {

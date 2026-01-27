@@ -197,14 +197,15 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 
     // Handle status transitions
     if (status) {
+      // Simplified state machine: PENDING → SCHEDULED → COMPLETED → CONVERTED
+      // REJECTED = consultant declines, CANCELLED = consultee cancels
       const validTransitions: Record<TrialSessionStatus, TrialSessionStatus[]> = {
-        PENDING: ["APPROVED", "SCHEDULED", "CANCELLED", "EXPIRED"], // Allow PENDING → SCHEDULED for calendar flow
-        APPROVED: ["SCHEDULED", "CANCELLED", "EXPIRED"],
+        PENDING: ["SCHEDULED", "CANCELLED", "REJECTED"],
         SCHEDULED: ["COMPLETED", "CANCELLED"],
         COMPLETED: ["CONVERTED"],
         CONVERTED: [],
         CANCELLED: [],
-        EXPIRED: [],
+        REJECTED: [],
       };
 
       const currentStatus = existingTrial.status;
@@ -270,14 +271,6 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 
           // 3. Create appointment + update trial atomically using transaction
           const result = await prisma.$transaction(async (tx) => {
-            // If trial is PENDING, first transition to APPROVED
-            if (existingTrial.status === TrialSessionStatus.PENDING) {
-              await tx.trialSession.update({
-                where: { id: trialId },
-                data: { status: TrialSessionStatus.APPROVED },
-              });
-            }
-
             // Create an appointment for the trial
             const appointment = await tx.appointment.create({
               data: {
@@ -462,10 +455,9 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
       );
     }
 
-    // Only allow cancellation of PENDING, APPROVED, or SCHEDULED trials
+    // Only allow cancellation of PENDING or SCHEDULED trials
     const cancellableStatuses: TrialSessionStatus[] = [
       TrialSessionStatus.PENDING,
-      TrialSessionStatus.APPROVED,
       TrialSessionStatus.SCHEDULED,
     ];
 
