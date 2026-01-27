@@ -8,6 +8,7 @@ export const appointmentTypeSchema = z.enum([
   "SUBSCRIPTION",
   "WEBINAR",
   "CLASS",
+  "TRIAL",
 ]);
 
 export const paymentGatewaySchema = z.enum([

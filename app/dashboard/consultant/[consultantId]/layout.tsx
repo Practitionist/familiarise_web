@@ -26,6 +26,7 @@ const NAV_ITEMS: NavItem[] = [
   { name: "Recordings", path: "recordings" },
   { name: "Event Planner", path: "planner" },
   { name: "Requests", path: "requests" },
+  { name: "Free Trials", path: "trials" },
   { name: "Documents", path: "documents" },
   { name: "Help", path: "help" },
 ];

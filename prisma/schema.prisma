@@ -371,6 +371,10 @@ model ConsultantProfile {
   webinarPlans      WebinarPlan[]
   classPlans        ClassPlan[]
 
+  // Trial sessions and activity logs
+  trialSessions TrialSession[]
+  activityLogs  ActivityLog[]
+
   // Note: Professional background (workExperiences, certifications, education)
   // has been consolidated to User level for DRY principle
 
@@ -475,6 +479,7 @@ model ConsulteeProfile {
   consultationRequests Consultation[]
   subscriptionRequests Subscription[]
   consultantReviews    ConsultantReview[]
+  trialSessions        TrialSession[]
 
   user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   userId String @unique
@@ -710,11 +715,17 @@ model SubscriptionPlan {
   learningOutcomes       String[]         @default([])
   topics                 Topic[]          @relation("TopicToSubscriptionPlan")
 
+  // Free trial fields
+  freeTrialEnabled         Boolean @default(false)
+  freeTrialDurationMinutes Int     @default(30) // 30 or 60 minutes
+
   consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultantProfileId String
 
-  subscriptions Subscription[]
-  materials     PlanMaterial[]
+  subscriptions        Subscription[]
+  subscriptionContents SubscriptionContent[]
+  trialSessions        TrialSession[]
+  materials            PlanMaterial[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -746,7 +757,8 @@ model Subscription {
   subscriptionPlan   SubscriptionPlan @relation(fields: [subscriptionPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   subscriptionPlanId String
 
-  appointments Appointment[]
+  appointments       Appointment[]
+  convertedFromTrial TrialSession?
 
   createdAt DateTime @default(now()) @db.Timestamptz()
   updatedAt DateTime @updatedAt @db.Timestamptz()
@@ -768,6 +780,95 @@ enum RequestStatus {
   REJECTED
   CANCELLED
   EXPIRED
+}
+
+// Free trial session tracking for subscriptions
+model TrialSession {
+  id     String             @id @default(cuid())
+  status TrialSessionStatus @default(PENDING)
+  notes  String?            @db.Text // Consultee's questions/goals
+
+  // One trial per consultant per consultee
+  consulteeProfile   ConsulteeProfile @relation(fields: [consulteeProfileId], references: [id])
+  consulteeProfileId String
+
+  consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id])
+  consultantProfileId String
+
+  subscriptionPlan   SubscriptionPlan @relation(fields: [subscriptionPlanId], references: [id])
+  subscriptionPlanId String
+
+  // Session scheduling
+  appointment   Appointment? @relation(fields: [appointmentId], references: [id])
+  appointmentId String?      @unique
+
+  // Outcome tracking
+  convertedToSubscription   Subscription? @relation(fields: [convertedToSubscriptionId], references: [id])
+  convertedToSubscriptionId String?       @unique
+
+  requestedAt DateTime  @default(now())
+  completedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([consulteeProfileId, consultantProfileId]) // One trial per consultant
+  @@index([consultantProfileId])
+  @@index([subscriptionPlanId])
+}
+
+enum TrialSessionStatus {
+  PENDING // Requested, awaiting consultant approval
+  APPROVED // Approved, awaiting scheduling
+  SCHEDULED // Time slot confirmed
+  COMPLETED // Trial session completed
+  CONVERTED // Consultee subscribed after trial
+  CANCELLED // Cancelled by either party
+  EXPIRED // Not scheduled within time limit
+}
+
+// Activity tracking for consultant dashboard
+model ActivityLog {
+  id           String       @id @default(cuid())
+  activityType ActivityType
+  description  String
+  metadata     Json? // Additional context (e.g., plan name, amount)
+
+  // Actor (who performed the action)
+  actorId    String
+  actorName  String
+  actorImage String?
+
+  // Target consultant
+  consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id])
+  consultantProfileId String
+
+  // Optional references
+  consultationId String?
+  subscriptionId String?
+  webinarId      String?
+  classId        String?
+  trialSessionId String?
+
+  createdAt DateTime @default(now())
+
+  @@index([consultantProfileId, createdAt(sort: Desc)])
+}
+
+enum ActivityType {
+  CONSULTATION_BOOKED
+  CONSULTATION_COMPLETED
+  CONSULTATION_CANCELLED
+  SUBSCRIPTION_REQUESTED
+  SUBSCRIPTION_APPROVED
+  SUBSCRIPTION_CANCELLED
+  WEBINAR_REGISTERED
+  CLASS_ENROLLED
+  TRIAL_REQUESTED
+  TRIAL_COMPLETED
+  TRIAL_CONVERTED
+  REVIEW_SUBMITTED
+  MESSAGE_RECEIVED
 }
 
 enum BookingSource {
@@ -905,6 +1006,26 @@ model ClassContent {
   @@index([classPlanId, order])
 }
 
+// Session-by-session curriculum for subscriptions (similar to ClassContent)
+model SubscriptionContent {
+  id            String  @id @default(cuid())
+  title         String
+  description   String  @db.Text
+  contentType   String? // e.g., "Video Call", "Review Session", "Q&A"
+  contentUrl    String? // Optional link to resources
+  order         Int     // Session sequence (1, 2, 3...)
+  hoursAllotted Float   @default(1.0)
+
+  subscriptionPlan   SubscriptionPlan @relation(fields: [subscriptionPlanId], references: [id], onDelete: Cascade)
+  subscriptionPlanId String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([subscriptionPlanId])
+  @@index([subscriptionPlanId, order])
+}
+
 enum ClassStatus {
   SCHEDULED
   IN_PROGRESS
@@ -1006,6 +1127,8 @@ model Appointment {
   class   Class?  @relation(fields: [classId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   classId String?
 
+  trialSession TrialSession?
+
   payment   Payment[]
   documents AppointmentDocument[]
 
@@ -1024,6 +1147,7 @@ enum AppointmentsType {
   SUBSCRIPTION
   WEBINAR
   CLASS
+  TRIAL
 }
 
 // Document Review Models

@@ -44,6 +44,9 @@ export async function GET(
           },
         },
         topics: true,
+        subscriptionContents: {
+          orderBy: { order: "asc" },
+        },
       },
     });
 
@@ -149,6 +152,27 @@ export async function PUT(
       };
     }
 
+    // Handle subscription contents (roadmap) if provided
+    const subscriptionContents = body.subscriptionContents as
+      | Array<{
+          id?: string;
+          title: string;
+          description: string;
+          contentType?: string;
+          contentUrl?: string;
+          order: number;
+          hoursAllotted?: number;
+        }>
+      | undefined;
+
+    // If subscriptionContents is provided, we need to handle the update
+    // Strategy: Delete all existing and create new ones
+    if (subscriptionContents !== undefined) {
+      await prisma.subscriptionContent.deleteMany({
+        where: { subscriptionPlanId },
+      });
+    }
+
     const subscriptionPlan = await prisma.subscriptionPlan.update({
       where: { id: subscriptionPlanId },
       data: {
@@ -170,7 +194,22 @@ export async function PUT(
         prerequisites: validatedData.prerequisites,
         materialProvided: validatedData.materialProvided,
         learningOutcomes: validatedData.learningOutcomes,
+        freeTrialEnabled: body.freeTrialEnabled,
+        freeTrialDurationMinutes: body.freeTrialDurationMinutes,
         ...topicsUpdate,
+        subscriptionContents:
+          subscriptionContents !== undefined
+            ? {
+                create: subscriptionContents.map((content) => ({
+                  title: content.title,
+                  description: content.description,
+                  contentType: content.contentType,
+                  contentUrl: content.contentUrl,
+                  order: content.order,
+                  hoursAllotted: content.hoursAllotted ?? 1.0,
+                })),
+              }
+            : undefined,
       },
       include: {
         consultantProfile: {
@@ -202,6 +241,9 @@ export async function PUT(
           },
         },
         topics: true,
+        subscriptionContents: {
+          orderBy: { order: "asc" },
+        },
       },
     });
 

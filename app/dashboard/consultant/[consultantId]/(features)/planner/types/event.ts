@@ -61,6 +61,9 @@ export type SubscriptionPlanEvent = {
     consultantProfile?: ConsultantProfileSummary | null;
     subscriptions?: TSubscription[];
     sessionDurationInHours?: number;
+    freeTrialEnabled?: boolean;
+    freeTrialDurationMinutes?: number;
+    subscriptionContents?: SubscriptionContentInput[];
     createdAt?: Date;
     updatedAt?: Date;
   };
@@ -168,6 +171,20 @@ export type ClassContentInput = {
   order: number;
   hoursAllotted: number;
   classPlanId?: string;
+  createdAt?: string | Date;
+  updatedAt?: string | Date;
+};
+
+// Define input type for SubscriptionContent (session roadmap)
+export type SubscriptionContentInput = {
+  id?: string; // Optional for new content
+  title: string;
+  description: string;
+  contentType?: string | null;
+  contentUrl?: string | null;
+  order: number;
+  hoursAllotted: number;
+  subscriptionPlanId?: string;
   createdAt?: string | Date;
   updatedAt?: string | Date;
 };

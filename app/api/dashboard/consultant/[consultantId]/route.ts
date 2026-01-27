@@ -214,6 +214,29 @@ function formatTime(dateString?: string | Date | null): string {
   });
 }
 
+function getRelativeTime(date: Date): string {
+  const now = new Date();
+  const diffMs = now.getTime() - new Date(date).getTime();
+  const diffSeconds = Math.floor(diffMs / 1000);
+  const diffMinutes = Math.floor(diffSeconds / 60);
+  const diffHours = Math.floor(diffMinutes / 60);
+  const diffDays = Math.floor(diffHours / 24);
+
+  if (diffSeconds < 60) {
+    return "just now";
+  } else if (diffMinutes < 60) {
+    return `${diffMinutes}m ago`;
+  } else if (diffHours < 24) {
+    return `${diffHours}h ago`;
+  } else if (diffDays === 1) {
+    return "1d ago";
+  } else if (diffDays < 7) {
+    return `${diffDays}d ago`;
+  } else {
+    return formatDate(date);
+  }
+}
+
 // =============================================================================
 // Route Handler
 // =============================================================================
@@ -238,69 +261,83 @@ export async function GET(
 
     // PERFORMANCE FIX #364: Use direct Prisma queries instead of internal HTTP fetches
     // This eliminates network overhead and reduces response time significantly
-    const [appointmentsRaw, pendingConsultations, pendingSubscriptions] =
-      await Promise.all([
-        // Fetch approved appointments for consultations, subscriptions, webinars, and classes
-        prisma.appointment.findMany({
-          where: {
-            OR: [
-              {
-                consultation: {
-                  consultationPlan: { consultantProfileId },
-                  requestStatus: "APPROVED",
-                },
-              },
-              {
-                subscription: {
-                  subscriptionPlan: { consultantProfileId },
-                  requestStatus: "APPROVED",
-                },
-              },
-              {
-                webinar: {
-                  webinarPlan: { consultantProfileId },
-                  status: "SCHEDULED",
-                },
-              },
-              {
-                class: {
-                  classPlan: { consultantProfileId },
-                  status: "SCHEDULED",
-                },
-              },
-            ],
-          },
-          include: appointmentInclude,
-        }),
-        // Fetch pending consultations
-        prisma.consultation.findMany({
-          where: {
-            consultationPlan: {
-              consultantProfile: {
-                id: consultantProfileId,
+    const [
+      appointmentsRaw,
+      pendingConsultations,
+      pendingSubscriptions,
+      recentActivities,
+    ] = await Promise.all([
+      // Fetch approved appointments for consultations, subscriptions, webinars, and classes
+      prisma.appointment.findMany({
+        where: {
+          OR: [
+            {
+              consultation: {
+                consultationPlan: { consultantProfileId },
+                requestStatus: "APPROVED",
               },
             },
-            requestStatus: "PENDING",
-          },
-          include: consultationInclude,
-          orderBy: {
-            requestedAt: "desc",
-          },
-        }),
-        // Fetch pending subscriptions
-        prisma.subscription.findMany({
-          where: {
-            subscriptionPlan: {
-              consultantProfileId,
+            {
+              subscription: {
+                subscriptionPlan: { consultantProfileId },
+                requestStatus: "APPROVED",
+              },
             },
-            requestStatus: "PENDING",
+            {
+              webinar: {
+                webinarPlan: { consultantProfileId },
+                status: "SCHEDULED",
+              },
+            },
+            {
+              class: {
+                classPlan: { consultantProfileId },
+                status: "SCHEDULED",
+              },
+            },
+          ],
+        },
+        include: appointmentInclude,
+      }),
+      // Fetch pending consultations
+      prisma.consultation.findMany({
+        where: {
+          consultationPlan: {
+            consultantProfile: {
+              id: consultantProfileId,
+            },
           },
-          include: subscriptionInclude,
-          orderBy: {
-            requestedAt: "desc",
+          requestStatus: "PENDING",
+        },
+        include: consultationInclude,
+        orderBy: {
+          requestedAt: "desc",
+        },
+      }),
+      // Fetch pending subscriptions
+      prisma.subscription.findMany({
+        where: {
+          subscriptionPlan: {
+            consultantProfileId,
           },
-        }),
-      ]);
+          requestStatus: "PENDING",
+        },
+        include: subscriptionInclude,
+        orderBy: {
+          requestedAt: "desc",
+        },
+      }),
+      // Fetch recent activities
+      prisma.activityLog.findMany({
+        where: {
+          consultantProfileId,
+        },
+        orderBy: {
+          createdAt: "desc",
+        },
+        take: 10,
+      }),
+    ]);
 
     // Sort appointments by slot start time (matching original API behavior)
     const sortedAppointments = appointmentsRaw.sort((a, b) => {
@@ -441,8 +478,19 @@ export async function GET(
       time: formatTime(approval.requestedAt),
     }));
 
-    // Activities are empty for now (as in original)
-    const activities: unknown[] = [];
+    // Transform activities for display
+    const activities = recentActivities.map((activity) => ({
+      id: activity.id,
+      type: activity.activityType,
+      description: activity.description,
+      actorId: activity.actorId,
+      actorName: activity.actorName,
+      actorImage: activity.actorImage,
+      metadata: activity.metadata,
+      createdAt: activity.createdAt,
+      // Formatted time for display
+      timeAgo: getRelativeTime(activity.createdAt),
+    }));
 
     // Return consolidated response
     return NextResponse.json({

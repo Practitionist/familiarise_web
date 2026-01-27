@@ -11,13 +11,14 @@ import {
 } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { motion } from "framer-motion";
-import { CalendarIcon, CheckCircle2 } from "lucide-react";
+import { CalendarIcon, CheckCircle2, Gift, BookOpen, Clock, ChevronRight } from "lucide-react";
 import { useSession } from "next-auth/react";
 import { useState, useMemo } from "react";
 import { PricingOption } from "../defaults";
 import { useToast } from "@/hooks/use-toast";
 import { addMonths, differenceInDays, format } from "date-fns";
 import { formatCurrency } from "@/app/checkout/plans/math";
+import { TrialBookingModal } from "./TrialBookingModal";
 
 interface SubscriptionPricingToggleProps {
   subscriptionOptions: PricingOption[];
@@ -47,6 +48,13 @@ export default function SubscriptionPricingToggle({
     null,
   );
   const [schedulingEndDate, setSchedulingEndDate] = useState<Date | null>(null);
+  const [isTrialModalOpen, setIsTrialModalOpen] = useState(false);
+  const [isRoadmapModalOpen, setIsRoadmapModalOpen] = useState(false);
+  const [selectedTrialPlan, setSelectedTrialPlan] = useState<{
+    id: string;
+    title: string;
+    freeTrialDurationMinutes: number;
+  } | null>(null);
 
   const selectedOption = useMemo(() => {
     return subscriptionOptions.find(
@@ -54,6 +62,15 @@ export default function SubscriptionPricingToggle({
         opt.title.toLowerCase().replace(" ", "-") === activeSubscriptionOption,
     );
   }, [activeSubscriptionOption, subscriptionOptions]);
+
+  // Find the subscription plan with free trial enabled for the current selection
+  const selectedPlanDetails = useMemo(() => {
+    if (!selectedOption?.durationInMonths) return null;
+    const plan = consultantDetails?.subscriptionPlans?.find(
+      (p: any) => p.durationInMonths === selectedOption.durationInMonths
+    );
+    return plan;
+  }, [selectedOption, consultantDetails]);
 
   const suggestedDates = useMemo(() => {
     if (!selectedOption?.durationInMonths) {
@@ -232,6 +249,37 @@ export default function SubscriptionPricingToggle({
                 </div>
               )}
 
+              {/* Free Trial Button */}
+              {selectedPlanDetails?.freeTrialEnabled && (
+                <Button
+                  variant="outline"
+                  className="w-full mb-3 border-emerald-500/50 text-emerald-400 hover:bg-emerald-500/10 hover:text-emerald-300 font-medium rounded-xl h-11"
+                  onClick={() => {
+                    setSelectedTrialPlan({
+                      id: selectedPlanDetails.id,
+                      title: selectedPlanDetails.title,
+                      freeTrialDurationMinutes: selectedPlanDetails.freeTrialDurationMinutes,
+                    });
+                    setIsTrialModalOpen(true);
+                  }}
+                >
+                  <Gift className="w-4 h-4 mr-2" />
+                  Book Free Trial ({selectedPlanDetails.freeTrialDurationMinutes} min)
+                </Button>
+              )}
+
+              {/* View Roadmap Button - Only show if plan has curriculum */}
+              {selectedPlanDetails?.subscriptionContents?.length > 0 && (
+                <Button
+                  variant="outline"
+                  className="w-full mb-3 border-zinc-600 text-zinc-300 hover:bg-zinc-800 hover:text-white font-medium rounded-xl h-11"
+                  onClick={() => setIsRoadmapModalOpen(true)}
+                >
+                  <BookOpen className="w-4 h-4 mr-2" />
+                  View Session Roadmap
+                </Button>
+              )}
+
               <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
                 <DialogTrigger asChild>
                   <Button
@@ -371,6 +419,125 @@ export default function SubscriptionPricingToggle({
           </motion.div>
         ))}
       </div>
+
+      {/* Trial Booking Modal */}
+      {selectedTrialPlan && (
+        <TrialBookingModal
+          isOpen={isTrialModalOpen}
+          onClose={() => {
+            setIsTrialModalOpen(false);
+            setSelectedTrialPlan(null);
+          }}
+          consultantProfileId={consultantDetails?.id || ""}
+          consultantName={consultantDetails?.user?.name || "Consultant"}
+          subscriptionPlanId={selectedTrialPlan.id}
+          planTitle={selectedTrialPlan.title}
+          trialDurationMinutes={selectedTrialPlan.freeTrialDurationMinutes}
+        />
+      )}
+
+      {/* Session Roadmap Modal */}
+      <Dialog open={isRoadmapModalOpen} onOpenChange={setIsRoadmapModalOpen}>
+        <DialogContent className="sm:max-w-[600px] max-h-[80vh] overflow-hidden bg-zinc-950 text-white p-0 border border-zinc-800 rounded-2xl shadow-2xl">
+          <DialogHeader className="p-6 pb-4 border-b border-zinc-800/50">
+            <DialogTitle className="text-xl font-semibold flex items-center gap-2">
+              <BookOpen className="w-5 h-5 text-zinc-400" />
+              Session Roadmap
+            </DialogTitle>
+            <DialogDescription className="text-zinc-400">
+              {selectedPlanDetails?.title || selectedOption?.title} - What you&apos;ll learn
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="overflow-y-auto max-h-[calc(80vh-140px)] p-6">
+            {selectedPlanDetails?.subscriptionContents?.length > 0 ? (
+              <div className="relative">
+                {/* Timeline line */}
+                <div className="absolute left-[19px] top-8 bottom-8 w-0.5 bg-gradient-to-b from-zinc-700 via-zinc-600 to-zinc-700" />
+
+                <div className="space-y-6">
+                  {selectedPlanDetails.subscriptionContents.map((content: any, index: number) => (
+                    <motion.div
+                      key={content.id || index}
+                      initial={{ opacity: 0, x: -20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: index * 0.1, duration: 0.3 }}
+                      className="relative flex gap-4"
+                    >
+                      {/* Session number badge */}
+                      <div className="relative z-10 flex-shrink-0 w-10 h-10 rounded-full bg-zinc-800 border-2 border-zinc-700 flex items-center justify-center text-sm font-bold text-white shadow-lg">
+                        {content.order || index + 1}
+                      </div>
+
+                      {/* Content card */}
+                      <div className="flex-1 bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-4 hover:bg-zinc-800/30 transition-colors">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex-1 min-w-0">
+                            <h4 className="font-semibold text-white text-base mb-1 truncate">
+                              {content.title}
+                            </h4>
+                            {content.description && (
+                              <p className="text-sm text-zinc-400 line-clamp-2">
+                                {content.description}
+                              </p>
+                            )}
+                          </div>
+                          <ChevronRight className="w-4 h-4 text-zinc-600 flex-shrink-0 mt-1" />
+                        </div>
+
+                        {/* Meta info */}
+                        <div className="flex items-center gap-4 mt-3 text-xs text-zinc-500">
+                          {content.hoursAllotted && (
+                            <span className="flex items-center gap-1">
+                              <Clock className="w-3 h-3" />
+                              {content.hoursAllotted}h
+                            </span>
+                          )}
+                          {content.contentType && (
+                            <span className="px-2 py-0.5 bg-zinc-800 rounded-full">
+                              {content.contentType}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </motion.div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="text-center py-12 text-zinc-500">
+                <BookOpen className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                <p>No detailed roadmap available for this plan.</p>
+              </div>
+            )}
+          </div>
+
+          {/* Summary footer */}
+          {selectedPlanDetails?.subscriptionContents?.length > 0 && (
+            <div className="p-4 border-t border-zinc-800/50 bg-zinc-900/50">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-zinc-400">
+                  {selectedPlanDetails.subscriptionContents.length} session{selectedPlanDetails.subscriptionContents.length > 1 ? "s" : ""} •
+                  {selectedPlanDetails.subscriptionContents.reduce(
+                    (acc: number, c: any) => acc + (c.hoursAllotted || 0),
+                    0
+                  )}h total
+                </span>
+                <Button
+                  size="sm"
+                  className="bg-white text-zinc-900 hover:bg-zinc-100"
+                  onClick={() => {
+                    setIsRoadmapModalOpen(false);
+                    handleChoosePlan();
+                  }}
+                >
+                  Choose This Plan
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </Tabs>
   );
 }

@@ -9,6 +9,7 @@ import {
   HelpCircle,
   LogOut,
   Settings,
+  Gift,
 } from "lucide-react";
 
 const getIcon = (section: DashboardSection) => {
@@ -21,6 +22,8 @@ const getIcon = (section: DashboardSection) => {
       return Calendar;
     case DashboardSection.Requests:
       return ClipboardList;
+    case DashboardSection.Trials:
+      return Gift;
     case DashboardSection.Documents:
       return FileText;
     case DashboardSection.Help:
@@ -42,6 +45,7 @@ export function Sidebar({
     DashboardSection.Chats,
     DashboardSection.Appointments,
     DashboardSection.Requests,
+    DashboardSection.Trials,
     DashboardSection.Documents,
     DashboardSection.Help,
   ];

@@ -1,0 +1,245 @@
+"use client";
+
+import { useState } from "react";
+import { useSession, signIn } from "next-auth/react";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import { useToast } from "@/hooks/use-toast";
+import { Gift, Clock, Loader2, CheckCircle } from "lucide-react";
+
+interface TrialBookingModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  consultantProfileId: string;
+  consultantName: string;
+  subscriptionPlanId: string;
+  planTitle: string;
+  trialDurationMinutes: number;
+}
+
+export function TrialBookingModal({
+  isOpen,
+  onClose,
+  consultantProfileId,
+  consultantName,
+  subscriptionPlanId,
+  planTitle,
+  trialDurationMinutes,
+}: Readonly<TrialBookingModalProps>) {
+  const { data: session } = useSession();
+  const { toast } = useToast();
+  const [notes, setNotes] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSuccess, setIsSuccess] = useState(false);
+
+  const handleSubmit = async () => {
+    if (!session?.user?.id) {
+      signIn();
+      return;
+    }
+
+    try {
+      setIsSubmitting(true);
+
+      // First, get the consultee profile ID
+      const profileResponse = await fetch(
+        `/api/profiles/consultee?userId=${session.user.id}`
+      );
+      if (!profileResponse.ok) {
+        throw new Error("Failed to get your profile. Please try again.");
+      }
+      const { data: consulteeProfile } = await profileResponse.json();
+
+      if (!consulteeProfile?.id) {
+        throw new Error(
+          "You need a consultee profile to request a trial. Please complete your profile setup."
+        );
+      }
+
+      // Check eligibility
+      const eligibilityResponse = await fetch(
+        `/api/trials/check-eligibility?consulteeProfileId=${consulteeProfile.id}&consultantProfileId=${consultantProfileId}&subscriptionPlanId=${subscriptionPlanId}`
+      );
+      if (!eligibilityResponse.ok) {
+        throw new Error("Failed to check eligibility");
+      }
+      const { data: eligibility } = await eligibilityResponse.json();
+
+      if (!eligibility.isEligible) {
+        toast({
+          title: "Not Eligible",
+          description:
+            eligibility.reason ||
+            "You are not eligible for a free trial with this consultant",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      // Submit trial request
+      const response = await fetch("/api/trials", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          consulteeProfileId: consulteeProfile.id,
+          consultantProfileId,
+          subscriptionPlanId,
+          notes: notes.trim() || null,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Failed to submit trial request");
+      }
+
+      setIsSuccess(true);
+      toast({
+        title: "Trial Requested!",
+        description: `Your trial request has been sent to ${consultantName}. They will contact you to schedule the session.`,
+      });
+
+      // Auto close after success
+      setTimeout(() => {
+        onClose();
+        setIsSuccess(false);
+        setNotes("");
+      }, 2000);
+    } catch (error) {
+      console.error("Error requesting trial:", error);
+      toast({
+        title: "Error",
+        description:
+          error instanceof Error ? error.message : "Failed to request trial",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  if (!session?.user?.id) {
+    return (
+      <Dialog open={isOpen} onOpenChange={onClose}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Gift className="h-5 w-5 text-emerald-500" />
+              Book Free Trial
+            </DialogTitle>
+            <DialogDescription>
+              Sign in to request a free trial session
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-6 text-center">
+            <p className="text-gray-600 mb-4">
+              Please sign in to request a free trial with {consultantName}
+            </p>
+            <Button onClick={() => signIn()}>Sign In to Continue</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    );
+  }
+
+  if (isSuccess) {
+    return (
+      <Dialog open={isOpen} onOpenChange={onClose}>
+        <DialogContent className="sm:max-w-[425px]">
+          <div className="py-8 text-center">
+            <div className="mx-auto w-16 h-16 bg-emerald-100 rounded-full flex items-center justify-center mb-4">
+              <CheckCircle className="h-8 w-8 text-emerald-600" />
+            </div>
+            <h3 className="text-xl font-semibold text-gray-900 mb-2">
+              Trial Requested!
+            </h3>
+            <p className="text-gray-600">
+              {consultantName} will review your request and get back to you soon.
+            </p>
+          </div>
+        </DialogContent>
+      </Dialog>
+    );
+  }
+
+  return (
+    <Dialog open={isOpen} onOpenChange={onClose}>
+      <DialogContent className="sm:max-w-[500px]">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Gift className="h-5 w-5 text-emerald-500" />
+            Book Free Trial Session
+          </DialogTitle>
+          <DialogDescription>
+            Request a free {trialDurationMinutes}-minute trial with{" "}
+            {consultantName}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4 py-4">
+          {/* Plan Info */}
+          <div className="bg-gray-50 rounded-lg p-4">
+            <p className="text-sm font-medium text-gray-900">{planTitle}</p>
+            <div className="flex items-center gap-2 mt-2 text-sm text-gray-600">
+              <Clock className="h-4 w-4" />
+              <span>{trialDurationMinutes} minute free trial</span>
+            </div>
+          </div>
+
+          {/* Notes */}
+          <div className="space-y-2">
+            <Label htmlFor="notes">
+              What would you like to discuss? (Optional)
+            </Label>
+            <Textarea
+              id="notes"
+              placeholder="Share your goals, questions, or topics you'd like to cover in the trial session..."
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              className="min-h-[100px]"
+            />
+            <p className="text-xs text-gray-500">
+              This helps the consultant prepare for your session
+            </p>
+          </div>
+
+          {/* Info */}
+          <div className="bg-blue-50 rounded-lg p-4 text-sm text-blue-700">
+            <p>
+              After submitting, the consultant will review your request and
+              contact you to schedule a time that works for both of you.
+            </p>
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={isSubmitting}>
+            Cancel
+          </Button>
+          <Button onClick={handleSubmit} disabled={isSubmitting}>
+            {isSubmitting ? (
+              <>
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                Requesting...
+              </>
+            ) : (
+              <>
+                <Gift className="h-4 w-4 mr-2" />
+                Request Free Trial
+              </>
+            )}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
