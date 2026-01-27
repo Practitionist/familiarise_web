@@ -216,7 +216,8 @@ function formatTime(dateString?: string | Date | null): string {
 
 function getRelativeTime(date: Date): string {
   const now = new Date();
-  const diffMs = now.getTime() - new Date(date).getTime();
+  // Use Math.max to handle potential future dates (e.g., clock skew)
+  const diffMs = Math.max(0, now.getTime() - new Date(date).getTime());
   const diffSeconds = Math.floor(diffMs / 1000);
   const diffMinutes = Math.floor(diffSeconds / 60);
   const diffHours = Math.floor(diffMinutes / 60);
