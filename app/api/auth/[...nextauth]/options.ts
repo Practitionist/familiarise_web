@@ -143,7 +143,7 @@ const authOptions: NextAuthOptions = {
                 // Only update image if not already set
                 image: existingUser.image || user.image,
                 // Only update name if not already set
-                name: existingUser.name || user.name,
+                name: existingUser.name || user.name || "User",
               },
             });
           }

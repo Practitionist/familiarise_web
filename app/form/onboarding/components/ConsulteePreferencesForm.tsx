@@ -21,12 +21,8 @@ type OnboardingFormData = PersonalInfoAndRole &
   Partial<ConsulteeProfile> &
   Partial<ConsulteePreferences> & {
     preferredCommunicationMethod: "VIDEO" | "AUDIO" | "IN_PERSON";
-    goals?: string[];
+    goals?: string;
   };
-
-interface FormValues extends Omit<OnboardingFormData, "goals"> {
-  goals?: string;
-}
 
 interface Props {
   onNext: (data: Partial<OnboardingFormData>) => void;
@@ -51,12 +47,12 @@ const ConsulteePreferencesForm: React.FC<Props> = ({
     formState: { errors },
     control,
     reset,
-  } = useForm<FormValues>({
+  } = useForm<OnboardingFormData>({
     defaultValues: {
       ...initialData,
       preferredCommunicationMethod:
         initialData.preferredCommunicationMethod || "VIDEO",
-      goals: initialData.goals?.join(", "),
+      goals: initialData.goals,
     },
   });
 
@@ -67,22 +63,14 @@ const ConsulteePreferencesForm: React.FC<Props> = ({
         ...initialData,
         preferredCommunicationMethod:
           initialData.preferredCommunicationMethod || "VIDEO",
-        goals: initialData.goals?.join(", "),
+        goals: initialData.goals,
       });
     }
   }, [initialData, reset]);
 
-  const onSubmit = (data: FormValues) => {
-    // Convert comma-separated strings to arrays
-    const goals =
-      data.goals
-        ?.split(",")
-        .map((g) => g.trim())
-        .filter(Boolean) || [];
-
+  const onSubmit = (data: OnboardingFormData) => {
     onNext({
       ...data,
-      goals,
       preferredCommunicationMethod:
         data.preferredCommunicationMethod || "VIDEO",
     });
@@ -153,10 +141,7 @@ const ConsulteePreferencesForm: React.FC<Props> = ({
         </h3>
 
         <div className="space-y-2">
-          <Label htmlFor="goals">
-            What do you hope to achieve?{" "}
-            <span className="text-muted-foreground">(comma-separated)</span>
-          </Label>
+          <Label htmlFor="goals">What do you hope to achieve?</Label>
           <Textarea
             id="goals"
             {...register("goals")}

@@ -79,7 +79,7 @@ export const BaseConsulteeProfileCreateInputSchema = z.object({
     .nativeEnum(ConsultationMode)
     .default(ConsultationMode.VIDEO),
   preferredLanguage: z.string().optional(),
-  goals: z.array(z.string()).optional(),
+  goals: z.string().optional(),
   // New fields
   careerStage: z.nativeEnum(CareerStage).optional().nullable(),
   currentCompany: z.string().optional(),
@@ -230,7 +230,7 @@ export const FrontendConsulteeProfileSchema = z.object({
     .nativeEnum(ConsultationMode)
     .default(ConsultationMode.VIDEO),
   preferredLanguage: z.string().optional(),
-  goals: z.array(z.string()).optional(),
+  goals: z.string().optional(),
   // New fields
   careerStage: z.nativeEnum(CareerStage).optional().nullable(),
   currentCompany: z.string().optional(),
@@ -389,7 +389,7 @@ export const ConsulteeProfileFormSchema = z.object({
   aboutMe: z.string().min(1, "About me is required"),
   preferredCommunicationMethod: z.nativeEnum(ConsultationMode),
   preferredLanguage: z.string().optional(),
-  goals: z.array(z.string()).optional(),
+  goals: z.string().optional(),
   // New fields
   careerStage: z.nativeEnum(CareerStage).optional().nullable(),
   currentCompany: z.string().optional(),
@@ -490,7 +490,7 @@ export const OnboardingFormDataSchema = PersonalInfoAndRoleFormSchema.extend({
   occupation: z.string().optional(),
   aboutMe: z.string().optional(),
   preferredLanguage: z.string().optional(),
-  goals: z.array(z.string()).optional(),
+  goals: z.string().optional(),
   // New consultee fields
   careerStage: z.nativeEnum(CareerStage).optional().nullable(),
   currentCompany: z.string().optional(),
