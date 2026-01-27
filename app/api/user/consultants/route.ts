@@ -135,7 +135,16 @@ export async function GET(request: NextRequest) {
           take: 10,
         },
         subscriptionPlans: {
-          select: { id: true, title: true, price: true },
+          select: {
+            id: true,
+            title: true,
+            price: true,
+            priceCurrency: true,
+            durationInMonths: true,
+            callsPerWeek: true,
+            emailSupport: true,
+            totalSessions: true,
+          },
           take: 5,
         },
       },

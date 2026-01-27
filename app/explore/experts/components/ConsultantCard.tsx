@@ -86,7 +86,7 @@ const SubscriptionPlanCard = ({ plan }: { plan: any }) => {
         <div className="flex items-center gap-2 text-sm">
           <CheckCircle2 className="w-4 h-4 text-emerald-500" />
           <span className="text-zinc-600">
-            {plan.videoMeetings} video meetings/month
+            {plan.totalSessions} sessions total
           </span>
         </div>
       </div>
