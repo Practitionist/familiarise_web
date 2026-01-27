@@ -63,6 +63,8 @@ interface UpcomingEventsSectionProps {
 }
 
 export function UpcomingEventsSection({ reviews }: UpcomingEventsSectionProps) {
+  const slicedReviews = reviews.slice(0, 3);
+
   return (
     <section className="py-20 md:py-32 bg-gradient-to-b from-black via-zinc-950 to-zinc-900 overflow-hidden relative">
       <div className="absolute inset-0 grid-pattern opacity-20" />
@@ -94,7 +96,7 @@ export function UpcomingEventsSection({ reviews }: UpcomingEventsSectionProps) {
             </motion.div>
 
             <div className="space-y-4">
-              {reviews.slice(0, 3).map((review, i) => (
+              {slicedReviews.map((review, i) => (
                 <motion.div
                   key={review.id}
                   initial={{ opacity: 0, x: -20 }}

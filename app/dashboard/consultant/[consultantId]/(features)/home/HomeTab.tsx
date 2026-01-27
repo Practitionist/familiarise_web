@@ -119,34 +119,51 @@ export function HomeTab({
     return badgeStyles[status] || badgeStyles.default;
   };
 
-  // Process appointments
-  const expandedAppointments = (appointments || []).flatMap((appointment) => {
-    if (
-      !appointment.slotsOfAppointment ||
-      appointment.slotsOfAppointment.length === 0
-    ) {
-      return [appointment];
-    }
-    return appointment.slotsOfAppointment.map((slot) => ({
-      ...appointment,
-      id: `${appointment.id}-${slot.id}`,
-      slotsOfAppointment: [slot],
-    }));
-  });
-
-  const todayAppointments = getTodayAppointments(expandedAppointments)
-    .filter((appointment) => getAppointmentStatus(appointment) !== "Completed")
-    .slice(0, 4);
-
-  const allUpcomingAppointments = sortAppointmentsByStartTime(
-    getUpcomingAppointments(expandedAppointments),
+  // Process appointments - memoize expensive computations
+  const expandedAppointments = useMemo(
+    () =>
+      (appointments || []).flatMap((appointment) => {
+        if (
+          !appointment.slotsOfAppointment ||
+          appointment.slotsOfAppointment.length === 0
+        ) {
+          return [appointment];
+        }
+        return appointment.slotsOfAppointment.map((slot) => ({
+          ...appointment,
+          id: `${appointment.id}-${slot.id}`,
+          slotsOfAppointment: [slot],
+        }));
+      }),
+    [appointments]
   );
 
-  const groupedAll = groupRecurringAppointments(allUpcomingAppointments);
-  const upcomingGroups = Object.entries(groupedAll).slice(0, 5);
+  const todayAppointments = useMemo(
+    () =>
+      getTodayAppointments(expandedAppointments)
+        .filter(
+          (appointment) => getAppointmentStatus(appointment) !== "Completed"
+        )
+        .slice(0, 4),
+    [expandedAppointments]
+  );
+
+  const allUpcomingAppointments = useMemo(
+    () =>
+      sortAppointmentsByStartTime(getUpcomingAppointments(expandedAppointments)),
+    [expandedAppointments]
+  );
+
+  const upcomingGroups = useMemo(() => {
+    const groupedAll = groupRecurringAppointments(allUpcomingAppointments);
+    return Object.entries(groupedAll).slice(0, 5);
+  }, [allUpcomingAppointments]);
 
   // Calculate stats from real data
-  const totalToday = getTodayAppointments(expandedAppointments).length;
+  const totalToday = useMemo(
+    () => getTodayAppointments(expandedAppointments).length,
+    [expandedAppointments]
+  );
   const totalUpcoming = allUpcomingAppointments.length;
 
   // Calculate pending requests and completed this week with memoization

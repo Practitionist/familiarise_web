@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -57,6 +57,30 @@ export default function ProfessionalBackgroundForm({
         id: cert.id || `cert_init_${i}`,
       })) as Certification[],
   );
+
+  // Sync state when initialData changes (for back navigation)
+  useEffect(() => {
+    if (initialData) {
+      setWorkExperiences(
+        (initialData.workExperiences || []).map((exp, i) => ({
+          ...exp,
+          id: exp.id || `work_init_${i}`,
+        })) as WorkExperience[]
+      );
+      setEducation(
+        (initialData.educationHistory || []).map((edu, i) => ({
+          ...edu,
+          id: edu.id || `edu_init_${i}`,
+        })) as Education[]
+      );
+      setCertifications(
+        (initialData.certificationsList || []).map((cert, i) => ({
+          ...cert,
+          id: cert.id || `cert_init_${i}`,
+        })) as Certification[]
+      );
+    }
+  }, [initialData]);
 
   const handleSubmit = () => {
     onNext({

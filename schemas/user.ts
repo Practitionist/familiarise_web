@@ -254,7 +254,7 @@ export const ConsulteeProfileSchema = z.object({
   aboutMe: z.string().optional(),
   preferredCommunicationMethod: ConsultationModeEnum.default("VIDEO"),
   preferredLanguage: z.string().optional(),
-  goals: z.array(z.string()).optional(),
+  goals: z.string().optional(),
 
   // New fields
   careerStage: CareerStageEnum.optional().nullable(),
@@ -282,7 +282,7 @@ export const ConsulteePreferencesSchema = z.object({
   // Deprecated
   specialRequirements: z.string().optional(),
   interests: z.array(z.string()).optional(),
-  goals: z.array(z.string()).optional(),
+  goals: z.string().optional(),
 });
 
 export type ConsulteePreferences = z.infer<typeof ConsulteePreferencesSchema>;

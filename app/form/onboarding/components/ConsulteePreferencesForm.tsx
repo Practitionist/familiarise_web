@@ -14,19 +14,15 @@ import {
   ConsulteePreferences,
   PersonalInfoAndRole,
 } from "@/schemas/user";
-import React from "react";
+import React, { useEffect } from "react";
 import { useForm, Controller } from "react-hook-form";
 
 type OnboardingFormData = PersonalInfoAndRole &
   Partial<ConsulteeProfile> &
   Partial<ConsulteePreferences> & {
     preferredCommunicationMethod: "VIDEO" | "AUDIO" | "IN_PERSON";
-    goals?: string[];
+    goals?: string;
   };
-
-interface FormValues extends Omit<OnboardingFormData, "goals"> {
-  goals?: string;
-}
 
 interface Props {
   onNext: (data: Partial<OnboardingFormData>) => void;
@@ -50,26 +46,31 @@ const ConsulteePreferencesForm: React.FC<Props> = ({
     handleSubmit,
     formState: { errors },
     control,
-  } = useForm<FormValues>({
+    reset,
+  } = useForm<OnboardingFormData>({
     defaultValues: {
       ...initialData,
       preferredCommunicationMethod:
         initialData.preferredCommunicationMethod || "VIDEO",
-      goals: initialData.goals?.join(", "),
+      goals: initialData.goals,
     },
   });
 
-  const onSubmit = (data: FormValues) => {
-    // Convert comma-separated strings to arrays
-    const goals =
-      data.goals
-        ?.split(",")
-        .map((g) => g.trim())
-        .filter(Boolean) || [];
+  // Sync form values when initialData changes (for back navigation)
+  useEffect(() => {
+    if (initialData && Object.keys(initialData).length > 0) {
+      reset({
+        ...initialData,
+        preferredCommunicationMethod:
+          initialData.preferredCommunicationMethod || "VIDEO",
+        goals: initialData.goals,
+      });
+    }
+  }, [initialData, reset]);
 
+  const onSubmit = (data: OnboardingFormData) => {
     onNext({
       ...data,
-      goals,
       preferredCommunicationMethod:
         data.preferredCommunicationMethod || "VIDEO",
     });
@@ -140,10 +141,7 @@ const ConsulteePreferencesForm: React.FC<Props> = ({
         </h3>
 
         <div className="space-y-2">
-          <Label htmlFor="goals">
-            What do you hope to achieve?{" "}
-            <span className="text-muted-foreground">(comma-separated)</span>
-          </Label>
+          <Label htmlFor="goals">What do you hope to achieve?</Label>
           <Textarea
             id="goals"
             {...register("goals")}

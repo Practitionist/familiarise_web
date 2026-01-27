@@ -1,5 +1,6 @@
 "use client";
 
+import { memo, useCallback } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { isDevelopmentEnvironment } from "@/utils/env";
 import type { SlotOfAppointment } from "@prisma/client";
@@ -30,7 +31,7 @@ interface SlotCardProps {
   isFirst?: boolean;
 }
 
-export function SlotCard({
+export const SlotCard = memo(function SlotCard({
   appointment,
   slot,
   isTentative,
@@ -225,14 +226,14 @@ export function SlotCard({
       </div>
     </Card>
   );
-}
+});
 
 interface MonthlyEventCardProps {
   event: EventWithType;
   slots: (SlotOfAppointment & { isPast?: boolean; isCancelled?: boolean })[];
 }
 
-export function MonthlyEventCard({
+export const MonthlyEventCard = memo(function MonthlyEventCard({
   event,
   slots,
 }: Readonly<MonthlyEventCardProps>) {
@@ -337,4 +338,4 @@ export function MonthlyEventCard({
       </div>
     </div>
   );
-}
+});

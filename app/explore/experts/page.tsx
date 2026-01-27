@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useMemo } from "react";
 import { motion } from "framer-motion";
 import { Search, Sparkles, Users, Star, TrendingUp } from "lucide-react";
 import { TConsultantProfile } from "@/types/consultant";
@@ -70,7 +70,10 @@ function FindExperts() {
     [isLoadingMore, hasMore, loadMore],
   );
 
-  const groupedConsultants = groupConsultantsByDomain(consultants);
+  const groupedConsultants = useMemo(
+    () => groupConsultantsByDomain(consultants),
+    [consultants]
+  );
 
   if (isLoadingMetadata) {
     return (

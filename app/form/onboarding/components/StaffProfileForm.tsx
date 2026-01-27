@@ -27,6 +27,7 @@ const StaffProfileForm: React.FC<Props> = ({ onNext, onBack, initialData }) => {
     handleSubmit,
     watch,
     setValue,
+    reset,
     formState: { errors },
   } = useForm<StaffProfile & PersonalInfoAndRole>({
     defaultValues: {
@@ -36,6 +37,16 @@ const StaffProfileForm: React.FC<Props> = ({ onNext, onBack, initialData }) => {
   });
 
   const watchDepartment = watch("department");
+
+  // Sync form values when initialData changes (for back navigation)
+  useEffect(() => {
+    if (initialData && Object.keys(initialData).length > 0) {
+      reset({
+        department: initialData.department || "",
+        position: initialData.position || "",
+      });
+    }
+  }, [initialData, reset]);
 
   useEffect(() => {
     // Initialize departments from the schema

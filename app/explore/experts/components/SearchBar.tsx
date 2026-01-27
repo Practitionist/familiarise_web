@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+import { useDebouncedCallback } from "use-debounce";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -19,6 +21,11 @@ interface SearchBarProps {
 }
 
 export function SearchBar({ onSearch, onSort, sortBy }: SearchBarProps) {
+  const [localValue, setLocalValue] = useState("");
+  const debouncedSearch = useDebouncedCallback((value: string) => {
+    onSearch(value);
+  }, 300);
+
   return (
     <div className="flex flex-col sm:flex-row gap-4">
       {/* Search Input */}
@@ -30,7 +37,11 @@ export function SearchBar({ onSearch, onSort, sortBy }: SearchBarProps) {
           className="w-full h-12 pl-12 pr-4 bg-white border-zinc-200 rounded-xl focus:border-zinc-400 focus:ring-zinc-400 placeholder:text-zinc-400"
           placeholder="Search experts by name, skill, or specialty..."
           type="search"
-          onChange={(e) => onSearch(e.target.value)}
+          value={localValue}
+          onChange={(e) => {
+            setLocalValue(e.target.value);
+            debouncedSearch(e.target.value);
+          }}
         />
       </div>
 

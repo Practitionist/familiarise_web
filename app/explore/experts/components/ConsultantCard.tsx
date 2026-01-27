@@ -1,5 +1,6 @@
 "use client";
 
+import { memo } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -93,7 +94,10 @@ const SubscriptionPlanCard = ({ plan }: { plan: any }) => {
   );
 };
 
-export function ConsultantCard({ consultant, metadata }: ConsultantCardProps) {
+export const ConsultantCard = memo(function ConsultantCard({
+  consultant,
+  metadata,
+}: ConsultantCardProps) {
   const router = useRouter();
 
   const sortedPlans =
@@ -258,4 +262,4 @@ export function ConsultantCard({ consultant, metadata }: ConsultantCardProps) {
       </div>
     </div>
   );
-}
+});

@@ -7,6 +7,7 @@ import {
   transformOnboardingFormToServerData,
 } from "@/utils/onboarding";
 import { Progress } from "@/components/ui/progress";
+import { LogOut } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { signOut, useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
@@ -383,10 +384,8 @@ const MultiStepForm: React.FC = () => {
     STEP_LABELS[currentRole as keyof typeof STEP_LABELS] ||
     STEP_LABELS.CONSULTEE;
   const totalSteps = stepLabels.length;
-  const progressValue = Math.min(
-    100,
-    Math.max(0, ((step + 1) / totalSteps) * 100),
-  );
+  // Progress aligns with dot positions (0%, 25%, 50%, 75%, 100% for 5 steps)
+  const progressValue = totalSteps > 1 ? (step / (totalSteps - 1)) * 100 : 0;
 
   return (
     <FormProvider {...methods}>
@@ -412,8 +411,18 @@ const MultiStepForm: React.FC = () => {
               </div>
               <span className="text-xl font-semibold">Familiarise</span>
             </div>
-            <div className="text-sm text-muted-foreground">
-              Step {step + 1} of {totalSteps}
+            <div className="flex items-center gap-4">
+              <span className="text-sm text-muted-foreground">
+                Step {step + 1} of {totalSteps}
+              </span>
+              <button
+                onClick={() => signOut({ callbackUrl: "/" })}
+                className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
+                title="Sign out"
+              >
+                <LogOut className="w-4 h-4" />
+                <span className="hidden sm:inline">Sign out</span>
+              </button>
             </div>
           </div>
         </header>
@@ -426,11 +435,11 @@ const MultiStepForm: React.FC = () => {
               {stepLabels.map((label, index) => (
                 <div
                   key={label}
-                  className={`text-xs font-medium transition-colors ${
+                  className={`text-xs font-medium transition-colors text-center min-w-0 ${
                     index <= step ? "text-primary" : "text-muted-foreground"
                   }`}
                 >
-                  {index === step ? label : ""}
+                  {index === step ? label : "\u00A0"}
                 </div>
               ))}
             </div>
@@ -439,14 +448,18 @@ const MultiStepForm: React.FC = () => {
               {stepLabels.map((label, index) => (
                 <div
                   key={`dot-${label}`}
-                  className={`w-3 h-3 rounded-full transition-colors ${
-                    index < step
-                      ? "bg-primary"
-                      : index === step
-                        ? "bg-primary ring-4 ring-primary/20"
-                        : "bg-muted"
-                  }`}
-                />
+                  className="flex justify-center min-w-0"
+                >
+                  <div
+                    className={`w-3 h-3 rounded-full transition-colors ${
+                      index < step
+                        ? "bg-primary"
+                        : index === step
+                          ? "bg-primary ring-4 ring-primary/20"
+                          : "bg-muted"
+                    }`}
+                  />
+                </div>
               ))}
             </div>
           </div>

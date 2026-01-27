@@ -11,7 +11,7 @@ type OnboardingFormData = PersonalInfoAndRole &
   Partial<ConsulteePreferences> & {
     preferredCommunicationMethod: "VIDEO" | "AUDIO" | "IN_PERSON";
     interests?: string[];
-    goals?: string[];
+    goals?: string;
   };
 
 interface Props {
@@ -88,7 +88,7 @@ const ConsulteeReviewForm: React.FC<Props> = ({
         </div>,
       )}
 
-      {(formData.interests?.length || formData.goals?.length) &&
+      {(formData.interests?.length || formData.goals) &&
         renderSection(
           "Interests & Goals",
           <div className="bg-muted/50 rounded-lg p-4 space-y-4">
@@ -107,16 +107,10 @@ const ConsulteeReviewForm: React.FC<Props> = ({
                 </div>
               </div>
             )}
-            {formData.goals && formData.goals.length > 0 && (
+            {formData.goals && (
               <div>
                 <p className="text-sm text-muted-foreground mb-2">Goals</p>
-                <ul className="list-disc pl-5 space-y-1">
-                  {formData.goals.map((goal, index) => (
-                    <li key={index} className="text-sm">
-                      {goal}
-                    </li>
-                  ))}
-                </ul>
+                <p className="text-sm">{formData.goals}</p>
               </div>
             )}
           </div>,

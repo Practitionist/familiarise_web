@@ -14,7 +14,7 @@ type OnboardingFormData = PersonalInfoAndRole &
     privacyAccepted?: boolean;
     preferredCommunicationMethod: "VIDEO" | "AUDIO" | "IN_PERSON";
     interests?: string[];
-    goals?: string[];
+    goals?: string;
   };
 
 interface Props {
