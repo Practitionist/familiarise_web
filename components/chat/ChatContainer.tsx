@@ -16,7 +16,7 @@ import { StreamChatErrorBoundary } from "@/components/stream/StreamErrorBoundary
 
 // Empty state component for when no channel is selected
 const EmptyChannelState = () => (
-  <div className="flex flex-col items-center justify-center flex-1 h-full w-full p-8 text-center bg-zinc-50">
+  <div className="flex flex-col items-center justify-center h-full w-full p-8 text-center bg-zinc-50">
     <div className="flex flex-col items-center">
       <div className="h-20 w-20 rounded-full bg-zinc-100 flex items-center justify-center mb-6">
         <MessageSquareIcon className="w-10 h-10 text-zinc-400" />

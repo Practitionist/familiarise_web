@@ -11,6 +11,8 @@ const userSelectFields = {
   name: true,
   email: true,
   image: true,
+  role: true,
+  phone: true,
 } as const;
 
 const consultationInclude = {
