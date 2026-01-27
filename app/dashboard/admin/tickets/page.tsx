@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
+import { useDebouncedCallback } from "use-debounce";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -186,7 +187,6 @@ export default function AdminSupportTicketsPage() {
     closed: 0,
   });
   const [loading, setLoading] = useState(true);
-  const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [priorityFilter, setPriorityFilter] = useState("all");
   const [page, setPage] = useState(1);
@@ -200,6 +200,20 @@ export default function AdminSupportTicketsPage() {
   const [sendingReply, setSendingReply] = useState(false);
   const [updatingStatus, setUpdatingStatus] = useState(false);
 
+  // Debounced search
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [localSearchValue, setLocalSearchValue] = useState("");
+
+  const debouncedSetSearch = useDebouncedCallback((value: string) => {
+    setDebouncedSearch(value);
+    setPage(1);
+  }, 300);
+
+  const handleSearchChange = (value: string) => {
+    setLocalSearchValue(value);
+    debouncedSetSearch(value);
+  };
+
   const fetchTickets = useCallback(async () => {
     setLoading(true);
     try {
@@ -208,7 +222,7 @@ export default function AdminSupportTicketsPage() {
         limit: "20",
         ...(statusFilter !== "all" && { status: statusFilter }),
         ...(priorityFilter !== "all" && { priority: priorityFilter }),
-        ...(searchQuery && { search: searchQuery }),
+        ...(debouncedSearch && { search: debouncedSearch }),
       });
 
       const response = await fetch(`/api/staff/support-tickets?${params}`);
@@ -228,7 +242,7 @@ export default function AdminSupportTicketsPage() {
     } finally {
       setLoading(false);
     }
-  }, [page, statusFilter, priorityFilter, searchQuery, toast]);
+  }, [page, statusFilter, priorityFilter, debouncedSearch, toast]);
 
   useEffect(() => {
     fetchTickets();
@@ -416,8 +430,8 @@ export default function AdminSupportTicketsPage() {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
               <Input
                 placeholder="Search tickets..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                value={localSearchValue}
+                onChange={(e) => handleSearchChange(e.target.value)}
                 className="pl-10"
               />
             </div>

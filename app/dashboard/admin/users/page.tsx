@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -183,12 +183,15 @@ export default function AdminUsersPage() {
   }, [fetchPendingCount]);
 
   // Calculate user counts from current data
-  const userCounts = {
-    total: total,
-    consultants: users.filter((u) => u.role === "CONSULTANT").length,
-    consultees: users.filter((u) => u.role === "CONSULTEE").length,
-    pending: users.filter((u) => u.onboardingCompleted === false).length,
-  };
+  const userCounts = useMemo(
+    () => ({
+      total: total,
+      consultants: users.filter((u) => u.role === "CONSULTANT").length,
+      consultees: users.filter((u) => u.role === "CONSULTEE").length,
+      pending: users.filter((u) => u.onboardingCompleted === false).length,
+    }),
+    [users, total]
+  );
 
   const handleViewUser = (userId: string, e: React.MouseEvent) => {
     e.stopPropagation();
