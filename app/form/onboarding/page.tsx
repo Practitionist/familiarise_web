@@ -387,6 +387,10 @@ const MultiStepForm: React.FC = () => {
   // Progress aligns with dot positions (0%, 25%, 50%, 75%, 100% for 5 steps)
   const progressValue = totalSteps > 1 ? (step / (totalSteps - 1)) * 100 : 0;
 
+  // Use wider layout for steps that need more horizontal space
+  const wideLayoutSteps = ["Availability"];
+  const useWideLayout = wideLayoutSteps.includes(stepLabels[step]);
+
   return (
     <FormProvider {...methods}>
       <div className="min-h-screen bg-gradient-to-b from-gray-50 to-gray-100 dark:from-gray-900 dark:to-gray-950">
@@ -428,7 +432,9 @@ const MultiStepForm: React.FC = () => {
         </header>
 
         {/* Main Content */}
-        <main className="container mx-auto px-4 py-8 max-w-3xl">
+        <main
+          className={`container mx-auto px-4 py-8 ${useWideLayout ? "max-w-[80%]" : "max-w-3xl"}`}
+        >
           {/* Progress Section */}
           <div className="mb-8">
             <div className="flex justify-between mb-2">

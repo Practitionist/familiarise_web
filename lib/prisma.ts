@@ -15,8 +15,28 @@ const prisma =
   globalForPrisma.prisma ??
   new PrismaClient({
     adapter,
-    log: process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"],
+    log:
+      process.env.NODE_ENV === "development"
+        ? [
+            { level: "query", emit: "event" },
+            { level: "error", emit: "stdout" },
+            { level: "warn", emit: "stdout" },
+          ]
+        : ["error"],
   });
+
+// Slow query detection in development
+// Threshold set to 200ms to account for remote database latency
+if (process.env.NODE_ENV === "development") {
+  prisma.$on("query" as never, (e: { duration: number; query: string }) => {
+    if (e.duration > 200) {
+      console.warn(
+        `🐌 Slow query (${e.duration}ms):`,
+        e.query.substring(0, 100),
+      );
+    }
+  });
+}
 
 export default prisma;
 

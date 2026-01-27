@@ -127,11 +127,17 @@ export async function GET(request: NextRequest) {
             image: true,
           },
         },
-        domain: true,
-        subDomains: true,
-        tags: true,
-        reviews: true,
-        subscriptionPlans: true,
+        domain: { select: { id: true, name: true } },
+        subDomains: { select: { id: true, name: true } },
+        tags: { select: { id: true, name: true } },
+        reviews: {
+          select: { rating: true },
+          take: 10,
+        },
+        subscriptionPlans: {
+          select: { id: true, title: true, price: true },
+          take: 5,
+        },
       },
     });
 

@@ -6,10 +6,19 @@ import { Prisma } from "@prisma/client";
 // Prisma Query Types - Derived from actual query shape for type safety
 // =============================================================================
 
+const userSelectFields = {
+  id: true,
+  name: true,
+  email: true,
+  image: true,
+} as const;
+
 const appointmentInclude = {
   slotsOfAppointment: {
     include: {
-      user: true,
+      user: {
+        select: userSelectFields,
+      },
     },
   },
   consultation: {
@@ -18,14 +27,18 @@ const appointmentInclude = {
         include: {
           consultantProfile: {
             include: {
-              user: true,
+              user: {
+                select: userSelectFields,
+              },
             },
           },
         },
       },
       requestedBy: {
         include: {
-          user: true,
+          user: {
+            select: userSelectFields,
+          },
         },
       },
     },
@@ -37,14 +50,18 @@ const appointmentInclude = {
         include: {
           consultantProfile: {
             include: {
-              user: true,
+              user: {
+                select: userSelectFields,
+              },
             },
           },
         },
       },
       requestedBy: {
         include: {
-          user: true,
+          user: {
+            select: userSelectFields,
+          },
         },
       },
       schedulingPeriodStartsAt: true,
@@ -58,7 +75,9 @@ const appointmentInclude = {
         include: {
           consultantProfile: {
             include: {
-              user: true,
+              user: {
+                select: userSelectFields,
+              },
             },
           },
         },
@@ -71,7 +90,9 @@ const appointmentInclude = {
         include: {
           consultantProfile: {
             include: {
-              user: true,
+              user: {
+                select: userSelectFields,
+              },
             },
           },
         },
@@ -85,21 +106,27 @@ const consultationInclude = {
     include: {
       consultantProfile: {
         include: {
-          user: true,
+          user: {
+            select: userSelectFields,
+          },
         },
       },
     },
   },
   requestedBy: {
     include: {
-      user: true,
+      user: {
+        select: userSelectFields,
+      },
     },
   },
   appointment: {
     include: {
       slotsOfAppointment: {
         include: {
-          user: true,
+          user: {
+            select: userSelectFields,
+          },
         },
         orderBy: {
           startsAt: "asc" as const,
@@ -115,7 +142,9 @@ const subscriptionInclude = {
     include: {
       consultantProfile: {
         include: {
-          user: true,
+          user: {
+            select: userSelectFields,
+          },
           domain: true,
           subDomains: true,
           tags: true,
@@ -126,12 +155,7 @@ const subscriptionInclude = {
   requestedBy: {
     include: {
       user: {
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          image: true,
-        },
+        select: userSelectFields,
       },
     },
   },
@@ -139,7 +163,9 @@ const subscriptionInclude = {
     include: {
       slotsOfAppointment: {
         include: {
-          user: true,
+          user: {
+            select: userSelectFields,
+          },
         },
       },
       payment: true,
@@ -302,18 +328,6 @@ export async function GET(
                 name: u.name,
                 email: u.email,
                 image: u.image,
-                phone: u.phone || null,
-                address: u.address || null,
-                password: u.password || null,
-                passwordResetToken: u.passwordResetToken || null,
-                passwordResetExpires: u.passwordResetExpires || null,
-                onlineStatus: u.onlineStatus,
-                currentTimezone: u.timezone || null,
-                onboardingCompleted: u.onboardingCompleted,
-                role: u.role,
-                consultantProfileId: u.consultantProfileId,
-                consulteeProfileId: u.consulteeProfileId,
-                staffProfileId: u.staffProfileId,
               }))
             : [],
         })),
