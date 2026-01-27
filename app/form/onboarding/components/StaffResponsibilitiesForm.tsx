@@ -29,6 +29,7 @@ const StaffResponsibilitiesForm: React.FC<Props> = ({
   const {
     setValue,
     watch,
+    reset,
     formState: { errors },
     handleSubmit: localHandleSubmit,
   } = useForm({
@@ -40,6 +41,16 @@ const StaffResponsibilitiesForm: React.FC<Props> = ({
 
   const responsibilities = watch("responsibilities");
   const permissions = watch("permissions");
+
+  // Sync form values when initialData changes (for back navigation)
+  useEffect(() => {
+    if (initialData && Object.keys(initialData).length > 0) {
+      reset({
+        responsibilities: initialData.responsibilities || {},
+        permissions: initialData.permissions || {},
+      });
+    }
+  }, [initialData, reset]);
 
   useEffect(() => {
     if (initialData.department && initialData.position) {

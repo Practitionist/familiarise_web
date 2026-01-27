@@ -14,7 +14,7 @@ import {
   ConsulteePreferences,
   PersonalInfoAndRole,
 } from "@/schemas/user";
-import React from "react";
+import React, { useEffect } from "react";
 import { useForm, Controller } from "react-hook-form";
 
 type OnboardingFormData = PersonalInfoAndRole &
@@ -50,6 +50,7 @@ const ConsulteePreferencesForm: React.FC<Props> = ({
     handleSubmit,
     formState: { errors },
     control,
+    reset,
   } = useForm<FormValues>({
     defaultValues: {
       ...initialData,
@@ -58,6 +59,18 @@ const ConsulteePreferencesForm: React.FC<Props> = ({
       goals: initialData.goals?.join(", "),
     },
   });
+
+  // Sync form values when initialData changes (for back navigation)
+  useEffect(() => {
+    if (initialData && Object.keys(initialData).length > 0) {
+      reset({
+        ...initialData,
+        preferredCommunicationMethod:
+          initialData.preferredCommunicationMethod || "VIDEO",
+        goals: initialData.goals?.join(", "),
+      });
+    }
+  }, [initialData, reset]);
 
   const onSubmit = (data: FormValues) => {
     // Convert comma-separated strings to arrays

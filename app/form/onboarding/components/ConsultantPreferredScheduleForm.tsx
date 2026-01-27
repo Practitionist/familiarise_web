@@ -69,7 +69,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
   initialData,
 }) => {
   const { timezone, isLoading: timezoneLoading } = useTimezone();
-  const { handleSubmit, watch, setValue, control } = useForm({
+  const { handleSubmit, watch, setValue, control, reset } = useForm({
     resolver: zodResolver(PreferredScheduleFormSchema),
     defaultValues: {
       ...initialData,
@@ -80,6 +80,16 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
 
   const [weeklySlots, setWeeklySlots] = useState<SlotsType>({});
   const [customSlots, setCustomSlots] = useState<SlotsType>({});
+
+  // Sync form values when initialData changes (for back navigation)
+  useEffect(() => {
+    if (initialData && Object.keys(initialData).length > 0) {
+      reset({
+        ...initialData,
+        scheduleType: initialData.scheduleType || "WEEKLY",
+      });
+    }
+  }, [initialData, reset]);
 
   // Initialize slots from initialData with timezone awareness
   useEffect(() => {

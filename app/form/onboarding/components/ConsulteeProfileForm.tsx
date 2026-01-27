@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect } from "react";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@/components/ui/button";
@@ -51,6 +51,7 @@ const ConsulteeProfileForm: React.FC<Props> = ({
     register,
     handleSubmit,
     control,
+    reset,
     formState: { errors },
   } = useForm<FormData>({
     resolver: zodResolver(ConsulteeProfileFormSchema),
@@ -65,11 +66,29 @@ const ConsulteeProfileForm: React.FC<Props> = ({
       currentCompany: "",
       industry: "",
       skillsToDevelop: [],
-      linkedinUrl: "",
       budgetPreference: null,
       ...initialData,
     },
   });
+
+  // Sync form values when initialData changes (for back navigation)
+  useEffect(() => {
+    if (initialData && Object.keys(initialData).length > 0) {
+      reset({
+        occupation: "",
+        aboutMe: "",
+        preferredCommunicationMethod: "VIDEO",
+        preferredLanguage: "English",
+        goals: [],
+        careerStage: null,
+        currentCompany: "",
+        industry: "",
+        skillsToDevelop: [],
+        budgetPreference: null,
+        ...initialData,
+      });
+    }
+  }, [initialData, reset]);
 
   const onSubmit = (data: FormData) => {
     onNext(data);
@@ -213,23 +232,6 @@ const ConsulteeProfileForm: React.FC<Props> = ({
               )}
             />
           </div>
-        </div>
-
-        <div className="space-y-2">
-          <Label htmlFor="linkedinUrl">
-            LinkedIn Profile{" "}
-            <span className="text-muted-foreground">(Optional)</span>
-          </Label>
-          <Input
-            id="linkedinUrl"
-            {...register("linkedinUrl")}
-            placeholder="https://linkedin.com/in/yourprofile"
-          />
-          {errors.linkedinUrl && (
-            <p className="text-sm text-destructive">
-              {errors.linkedinUrl.message}
-            </p>
-          )}
         </div>
       </div>
 
