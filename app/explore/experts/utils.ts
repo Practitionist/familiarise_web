@@ -2,7 +2,7 @@ import { useQuery, useInfiniteQuery } from "@tanstack/react-query";
 import { Domain, SubDomain, Tag } from "@prisma/client";
 import { TConsultantProfile } from "@/types/consultant";
 import { SortOption } from "./components/SearchBar";
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 
 export const CONSULTANTS_PER_PAGE = 10;
 
@@ -149,9 +149,10 @@ export function useConsultants({
     retryDelay: 3000,
   });
 
-  const consultants: TConsultantProfile[] = data
-    ? data.pages.flatMap((page) => page.data)
-    : [];
+  const consultants: TConsultantProfile[] = useMemo(
+    () => (data ? data.pages.flatMap((page) => page.data) : []),
+    [data]
+  );
 
   const hasMore = hasNextPage;
   const isLoadingMore = isFetchingNextPage;
