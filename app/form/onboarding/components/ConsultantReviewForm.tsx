@@ -1,13 +1,14 @@
 import { Button } from "@/components/ui/button";
 import { formatDate, formatTime } from "@/utils/dateTimeUtils";
 import { OnboardingFormData } from "@/utils/onboarding";
-import React from "react";
+import React, { useState } from "react";
 import {
   Briefcase,
   GraduationCap,
   Award,
   Shield,
   ExternalLink,
+  Loader2,
 } from "lucide-react";
 
 interface Props {
@@ -21,7 +22,11 @@ const ConsultantReviewForm: React.FC<Props> = ({
   onBack,
   formData,
 }) => {
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
   const handleSubmit = () => {
+    if (isSubmitting) return;
+    setIsSubmitting(true);
     onSubmit({
       ...formData,
       preferredCommunicationMethod:
@@ -244,31 +249,32 @@ const ConsultantReviewForm: React.FC<Props> = ({
           )}
 
           {/* Education */}
-          {formData.educationHistory && formData.educationHistory.length > 0 && (
-            <div className="bg-muted/50 rounded-lg p-4 space-y-3">
-              <div className="flex items-center gap-2 text-sm font-medium">
-                <GraduationCap className="h-4 w-4" />
-                Education
-              </div>
-              {formData.educationHistory.map((edu, index) => (
-                <div
-                  key={index}
-                  className="px-3 py-2 bg-background border rounded-lg text-sm"
-                >
-                  <p className="font-medium">{edu.degree}</p>
-                  <p className="text-muted-foreground">
-                    {edu.institution}
-                    {edu.fieldOfStudy && ` • ${edu.fieldOfStudy}`}
-                  </p>
-                  {(edu.startYear || edu.endYear) && (
-                    <p className="text-xs text-muted-foreground">
-                      {edu.startYear || ""} - {edu.endYear || ""}
-                    </p>
-                  )}
+          {formData.educationHistory &&
+            formData.educationHistory.length > 0 && (
+              <div className="bg-muted/50 rounded-lg p-4 space-y-3">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <GraduationCap className="h-4 w-4" />
+                  Education
                 </div>
-              ))}
-            </div>
-          )}
+                {formData.educationHistory.map((edu, index) => (
+                  <div
+                    key={index}
+                    className="px-3 py-2 bg-background border rounded-lg text-sm"
+                  >
+                    <p className="font-medium">{edu.degree}</p>
+                    <p className="text-muted-foreground">
+                      {edu.institution}
+                      {edu.fieldOfStudy && ` • ${edu.fieldOfStudy}`}
+                    </p>
+                    {(edu.startYear || edu.endYear) && (
+                      <p className="text-xs text-muted-foreground">
+                        {edu.startYear || ""} - {edu.endYear || ""}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
 
           {/* Certifications */}
           {formData.certificationsList &&
@@ -361,11 +367,24 @@ const ConsultantReviewForm: React.FC<Props> = ({
           onClick={onBack}
           variant="outline"
           className="flex-1"
+          disabled={isSubmitting}
         >
           Back
         </Button>
-        <Button type="button" onClick={handleSubmit} className="flex-1">
-          Complete Registration
+        <Button
+          type="button"
+          onClick={handleSubmit}
+          className="flex-1"
+          disabled={isSubmitting}
+        >
+          {isSubmitting ? (
+            <>
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              Submitting...
+            </>
+          ) : (
+            "Complete Registration"
+          )}
         </Button>
       </div>
     </div>

@@ -1,13 +1,7 @@
 "use client";
 
 import { cn } from "@/lib/utils";
-import {
-  CheckCircle,
-  Clock,
-  XCircle,
-  AlertCircle,
-  Shield,
-} from "lucide-react";
+import { CheckCircle, Clock, XCircle, AlertCircle, Shield } from "lucide-react";
 import {
   Tooltip,
   TooltipContent,
@@ -107,7 +101,7 @@ export function VerificationStatusBadge({
               config.colorClass,
               sizes.padding,
               sizes.text,
-              className
+              className,
             )}
           >
             <Icon className={sizes.icon} />
@@ -137,10 +131,7 @@ export function VerifiedBadge({
       <Tooltip>
         <TooltipTrigger asChild>
           <div
-            className={cn(
-              "inline-flex items-center text-blue-600",
-              className
-            )}
+            className={cn("inline-flex items-center text-blue-600", className)}
           >
             <Shield className={cn(sizes.icon, "fill-current")} />
           </div>

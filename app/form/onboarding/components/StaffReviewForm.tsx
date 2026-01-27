@@ -4,15 +4,14 @@ import { StaffProfile, PersonalInfoAndRole } from "@/schemas/user";
 import { responsibilitiesAndPermissions } from "@/schemas/responsibbilities-permissions";
 import React from "react";
 
-
 interface Props {
   onSubmit: (data: any) => void; // Match parent component's type
   onBack: () => void;
   formData: PersonalInfoAndRole &
-  Partial<StaffProfile> & {
-    termsAccepted?: boolean;
-    privacyAccepted?: boolean;
-  };
+    Partial<StaffProfile> & {
+      termsAccepted?: boolean;
+      privacyAccepted?: boolean;
+    };
 }
 
 const StaffReviewForm: React.FC<Props> = ({ onSubmit, onBack, formData }) => {
@@ -73,7 +72,9 @@ const StaffReviewForm: React.FC<Props> = ({ onSubmit, onBack, formData }) => {
     <div className="space-y-6">
       <div className="space-y-6">
         <div className="space-y-2">
-          <h3 className="font-semibold text-lg border-b pb-2">Personal Information</h3>
+          <h3 className="font-semibold text-lg border-b pb-2">
+            Personal Information
+          </h3>
           <div className="grid grid-cols-2 gap-2 text-sm">
             <p className="text-muted-foreground">Name:</p>
             <p>{formData.name}</p>

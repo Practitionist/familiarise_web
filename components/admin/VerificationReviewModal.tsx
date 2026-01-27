@@ -159,15 +159,19 @@ export function VerificationReviewModal({
   };
 
   const handleVerification = async (
-    status: "APPROVED" | "REJECTED" | "NEEDS_INFO"
+    status: "APPROVED" | "REJECTED" | "NEEDS_INFO",
   ) => {
     if (!verification) return;
 
     // Validate required fields for rejection
-    if ((status === "REJECTED" || status === "NEEDS_INFO") && !rejectionReason.trim()) {
+    if (
+      (status === "REJECTED" || status === "NEEDS_INFO") &&
+      !rejectionReason.trim()
+    ) {
       toast({
         title: "Reason Required",
-        description: "Please provide a brief reason for rejection or requesting changes.",
+        description:
+          "Please provide a brief reason for rejection or requesting changes.",
         variant: "destructive",
       });
       return;
@@ -189,7 +193,7 @@ export function VerificationReviewModal({
 
       // Include document feedback if any
       const docFeedbackArray = Object.values(documentFeedback).filter(
-        (df) => df.documentId
+        (df) => df.documentId,
       );
       if (docFeedbackArray.length > 0) {
         payload.documentFeedback = docFeedbackArray;
@@ -327,7 +331,9 @@ export function VerificationReviewModal({
           {/* Professional Headline */}
           {profile.headline && (
             <div>
-              <Label className="text-sm font-medium">Professional Headline</Label>
+              <Label className="text-sm font-medium">
+                Professional Headline
+              </Label>
               <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100 mt-1">
                 {profile.headline}
               </p>
@@ -347,7 +353,9 @@ export function VerificationReviewModal({
           {/* Professional Summary (Description) */}
           {profile.description && (
             <div>
-              <Label className="text-sm font-medium">Professional Summary</Label>
+              <Label className="text-sm font-medium">
+                Professional Summary
+              </Label>
               <p className="text-sm text-zinc-600 dark:text-zinc-400 mt-1 whitespace-pre-wrap">
                 {profile.description}
               </p>
@@ -462,7 +470,9 @@ export function VerificationReviewModal({
                     <div className="flex items-start justify-between gap-4">
                       <div className="flex-1">
                         <div className="flex items-center gap-2">
-                          <p className="font-medium text-sm">{doc.description || doc.fileName || "Document"}</p>
+                          <p className="font-medium text-sm">
+                            {doc.description || doc.fileName || "Document"}
+                          </p>
                           <Button
                             variant="ghost"
                             size="sm"
@@ -471,9 +481,16 @@ export function VerificationReviewModal({
                               e.preventDefault();
                               e.stopPropagation();
                               if (doc.fileUrl) {
-                                window.open(doc.fileUrl, "_blank", "noopener,noreferrer");
+                                window.open(
+                                  doc.fileUrl,
+                                  "_blank",
+                                  "noopener,noreferrer",
+                                );
                               } else {
-                                console.error("No document URL found for document", doc.id);
+                                console.error(
+                                  "No document URL found for document",
+                                  doc.id,
+                                );
                               }
                             }}
                           >
@@ -485,9 +502,14 @@ export function VerificationReviewModal({
                         <div className="mt-2">
                           <Input
                             placeholder="Add feedback for this document..."
-                            value={documentFeedback[doc.id]?.staffFeedback || ""}
+                            value={
+                              documentFeedback[doc.id]?.staffFeedback || ""
+                            }
                             onChange={(e) =>
-                              handleDocumentFeedbackChange(doc.id, e.target.value)
+                              handleDocumentFeedbackChange(
+                                doc.id,
+                                e.target.value,
+                              )
                             }
                             className="text-sm h-8"
                           />
@@ -520,7 +542,10 @@ export function VerificationReviewModal({
           {/* Feedback Section */}
           <div className="space-y-4">
             <div>
-              <Label htmlFor="rejectionReason" className="flex items-center gap-1">
+              <Label
+                htmlFor="rejectionReason"
+                className="flex items-center gap-1"
+              >
                 Brief Reason
                 <span className="text-xs text-zinc-400">
                   (Required for reject/request changes)

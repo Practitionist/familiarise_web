@@ -47,6 +47,7 @@ const ConsultantProfileForm: React.FC<Props> = ({
     handleSubmit,
     control,
     watch,
+    reset,
     formState: { errors },
   } = useForm<FormData>({
     resolver: zodResolver(ConsultantProfileFormSchema) as any,
@@ -75,6 +76,24 @@ const ConsultantProfileForm: React.FC<Props> = ({
   const filteredTags = useMemo(() => {
     return tags.filter((tag) => tag.domainId === selectedDomain?.id);
   }, [tags, selectedDomain]);
+
+  // Sync form values when initialData changes (for back navigation)
+  useEffect(() => {
+    if (initialData && Object.keys(initialData).length > 0) {
+      reset({
+        description: "",
+        headline: "",
+        experience: 0,
+        scheduleType: "WEEKLY",
+        domain: { id: "", name: "" },
+        subDomains: [],
+        tags: [],
+        weeklySlots: [],
+        customSlots: [],
+        ...initialData,
+      });
+    }
+  }, [initialData, reset]);
 
   useEffect(() => {
     const fetchMetadata = async () => {

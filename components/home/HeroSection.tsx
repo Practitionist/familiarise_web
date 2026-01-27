@@ -1,5 +1,6 @@
 "use client";
 
+import { useCallback } from "react";
 import { motion, useInView } from "framer-motion";
 import { ArrowRight, Play, Sparkles } from "lucide-react";
 import Link from "next/link";
@@ -19,24 +20,28 @@ function AnimatedNumber({
   const isInView = useInView(ref, { once: true });
   const [displayValue, setDisplayValue] = useState(0);
 
+  const animate = useCallback(() => {
+    const duration = 2000;
+    const steps = 60;
+    const increment = value / steps;
+    let current = 0;
+    const timer = setInterval(() => {
+      current += increment;
+      if (current >= value) {
+        setDisplayValue(value);
+        clearInterval(timer);
+      } else {
+        setDisplayValue(Math.floor(current));
+      }
+    }, duration / steps);
+    return () => clearInterval(timer);
+  }, [value]);
+
   useEffect(() => {
     if (isInView) {
-      const duration = 2000;
-      const steps = 60;
-      const increment = value / steps;
-      let current = 0;
-      const timer = setInterval(() => {
-        current += increment;
-        if (current >= value) {
-          setDisplayValue(value);
-          clearInterval(timer);
-        } else {
-          setDisplayValue(Math.floor(current));
-        }
-      }, duration / steps);
-      return () => clearInterval(timer);
+      return animate();
     }
-  }, [isInView, value]);
+  }, [isInView, animate]);
 
   return (
     <motion.span

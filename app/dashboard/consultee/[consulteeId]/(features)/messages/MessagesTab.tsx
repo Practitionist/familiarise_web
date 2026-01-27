@@ -6,7 +6,7 @@ export default function MessagesTab() {
   return (
     <div
       className="w-full bg-white rounded-xl border border-zinc-200 shadow-sm overflow-hidden"
-      style={{ height: "calc(100vh - 140px)" }}
+      style={{ height: "calc(100vh - 100px)" }}
     >
       <ChatLayout />
     </div>

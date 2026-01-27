@@ -32,11 +32,11 @@ export default function ConsultantVerificationForm({
   initialData,
 }: ConsultantVerificationFormProps) {
   const [linkedinUrl, setLinkedinUrl] = useState(
-    initialData?.verificationLinkedinUrl || ""
+    initialData?.verificationLinkedinUrl || "",
   );
   const [notes, setNotes] = useState(initialData?.verificationNotes || "");
   const [documents, setDocuments] = useState<UploadedDocument[]>(
-    initialData?.verificationDocuments || []
+    initialData?.verificationDocuments || [],
   );
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -74,7 +74,7 @@ export default function ConsultantVerificationForm({
         setIsUploading(false);
       }
     },
-    []
+    [],
   );
 
   const handleRemove = useCallback(async (documentId: string) => {
@@ -103,6 +103,15 @@ export default function ConsultantVerificationForm({
       return;
     }
 
+    // At least one document is required
+    const completedDocuments = documents.filter((d) => d.status === "uploaded");
+    if (completedDocuments.length === 0) {
+      setError(
+        "Please upload at least one supporting document (certification, degree, license, or ID)",
+      );
+      return;
+    }
+
     onNext({
       verificationLinkedinUrl: linkedinUrl,
       verificationNotes: notes,
@@ -120,9 +129,8 @@ export default function ConsultantVerificationForm({
         <AlertTitle className="text-blue-800">Profile Verification</AlertTitle>
         <AlertDescription className="text-blue-700">
           To maintain the quality of our platform, we verify all consultant
-          profiles. Your LinkedIn profile is required, and you can optionally
-          upload supporting documents like certifications, degrees, or
-          professional IDs.
+          profiles. Your LinkedIn profile and at least one supporting document
+          (certification, degree, license, or ID) are required.
         </AlertDescription>
       </Alert>
 
@@ -157,16 +165,15 @@ export default function ConsultantVerificationForm({
       {/* Document Upload */}
       <div className="space-y-2">
         <Label className="flex items-center gap-1">
-          Supporting Documents{" "}
-          <span className="text-zinc-400 text-xs font-normal">(Optional)</span>
+          Supporting Documents <span className="text-red-500">*</span>
         </Label>
         <div className="bg-zinc-50 p-1 rounded-lg border border-zinc-200 mb-2">
           <div className="flex items-start gap-2 p-2 text-xs text-zinc-600">
             <Info className="w-4 h-4 flex-shrink-0 mt-0.5" />
             <p>
-              Upload any relevant documents that verify your expertise:
+              Upload at least one document that verifies your expertise:
               professional certifications, degrees, licenses, or government ID.
-              This helps speed up the verification process.
+              This is required to complete verification.
             </p>
           </div>
         </div>

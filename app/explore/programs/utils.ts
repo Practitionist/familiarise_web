@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import {
   ClassPlan as PrismaClassPlan,
@@ -269,7 +270,10 @@ export function usePrograms(
     retry: 2,
   });
 
-  const programs = data ? data.pages.map((d) => d.programs).flat() : [];
+  const programs = useMemo(
+    () => (data ? data.pages.map((d) => d.programs).flat() : []),
+    [data]
+  );
   const hasMore = hasNextPage;
 
   return {

@@ -112,7 +112,9 @@ export function AddCertificationModal({
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="issuingOrganization">Issuing Organization *</Label>
+              <Label htmlFor="issuingOrganization">
+                Issuing Organization *
+              </Label>
               <Input
                 id="issuingOrganization"
                 value={formData.issuingOrganization}

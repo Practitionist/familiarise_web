@@ -77,10 +77,11 @@ export function ProfileHeader({
               {[...Array(5)].map((_, i) => (
                 <Star
                   key={i}
-                  className={`w-5 h-5 ${i < Math.floor(consultantDetails.rating)
+                  className={`w-5 h-5 ${
+                    i < Math.floor(consultantDetails.rating)
                       ? "fill-amber-400 text-amber-400"
                       : "fill-zinc-200 text-zinc-200"
-                    }`}
+                  }`}
                 />
               ))}
             </div>

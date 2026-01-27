@@ -27,7 +27,8 @@ import { motion } from "framer-motion";
 import { useSession } from "next-auth/react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
+import { useDebouncedCallback } from "use-debounce";
 import {
   filterAndSortPrograms,
   getUniqueLevels,
@@ -49,11 +50,16 @@ export default function Programs() {
   const userId = session?.user?.id;
 
   const [searchTerm, setSearchTerm] = useState("");
+  const [localSearchValue, setLocalSearchValue] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [sortBy, setSortBy] = useState("");
   const [viewMode, setViewMode] = useState<"list" | "grid">("grid");
   const [programType, setProgramType] = useState<ProgramType>("all");
   const observer = useRef<IntersectionObserver>();
+
+  const debouncedSetSearch = useDebouncedCallback((value: string) => {
+    setSearchTerm(value);
+  }, 300);
 
   const { programs, isLoading, hasMore, loadMore } = usePrograms(programType, {
     userId,
@@ -81,14 +87,12 @@ export default function Programs() {
     }
   };
 
-  const filteredAndSortedPrograms = filterAndSortPrograms(
-    programs,
-    searchTerm,
-    selectedCategory,
-    sortBy,
+  const filteredAndSortedPrograms = useMemo(
+    () => filterAndSortPrograms(programs, searchTerm, selectedCategory, sortBy),
+    [programs, searchTerm, selectedCategory, sortBy]
   );
 
-  const uniqueLevels = getUniqueLevels(programs);
+  const uniqueLevels = useMemo(() => getUniqueLevels(programs), [programs]);
 
   return (
     <main className="min-h-screen bg-white">
@@ -270,8 +274,11 @@ export default function Programs() {
                   <Input
                     type="text"
                     placeholder="Search..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
+                    value={localSearchValue}
+                    onChange={(e) => {
+                      setLocalSearchValue(e.target.value);
+                      debouncedSetSearch(e.target.value);
+                    }}
                     className="h-11 pl-10 bg-white border-zinc-200 rounded-xl focus:ring-zinc-900"
                   />
                 </div>

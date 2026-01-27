@@ -44,6 +44,7 @@ export const impossibleCases: ValidationTestCase[] = [
       // Create first user
       await prisma.user.create({
         data: {
+          name: "Test User",
           email,
           role: "CONSULTEE",
         },
@@ -52,6 +53,7 @@ export const impossibleCases: ValidationTestCase[] = [
       // Try to create duplicate
       await prisma.user.create({
         data: {
+          name: "Test User Duplicate",
           email, // Same email - should fail
           role: "CONSULTEE",
         },
@@ -72,6 +74,7 @@ export const impossibleCases: ValidationTestCase[] = [
     execute: async () => {
       const user = await prisma.user.create({
         data: {
+          name: "Test Consultant",
           email: `test-fk-${Date.now()}@example.com`,
           role: "CONSULTANT",
         },
@@ -123,6 +126,7 @@ export const impossibleCases: ValidationTestCase[] = [
     execute: async () => {
       const user = await prisma.user.create({
         data: {
+          name: "Test User",
           email: `test-neg-${Date.now()}@example.com`,
           role: "CONSULTEE",
         },
@@ -156,6 +160,7 @@ export const impossibleCases: ValidationTestCase[] = [
       // This would require creating a payment first, then a refund > payment
       const user = await prisma.user.create({
         data: {
+          name: "Test User",
           email: `test-refund-${Date.now()}@example.com`,
           role: "CONSULTEE",
         },
@@ -209,6 +214,7 @@ export const impossibleCases: ValidationTestCase[] = [
 
       const user = await prisma.user.create({
         data: {
+          name: "Test Consultant",
           email: `test-rating-${Date.now()}@example.com`,
           role: "CONSULTANT",
         },

@@ -413,7 +413,7 @@ export async function processOnboardingData(
         if (verificationDocuments && verificationDocuments.length > 0) {
           // Handle documents that have IDs (created before profile existed - legacy)
           const existingDocuments = verificationDocuments.filter(
-            (doc: any) => doc.id && !doc.isOnboardingUpload
+            (doc: any) => doc.id && !doc.isOnboardingUpload,
           );
           if (existingDocuments.length > 0) {
             const documentIds = existingDocuments.map((doc: any) => doc.id);
@@ -425,7 +425,7 @@ export async function processOnboardingData(
 
           // Handle documents uploaded during onboarding (no ID yet, have file info)
           const onboardingDocuments = verificationDocuments.filter(
-            (doc: any) => doc.isOnboardingUpload || (!doc.id && doc.fileUrl)
+            (doc: any) => doc.isOnboardingUpload || (!doc.id && doc.fileUrl),
           );
           if (onboardingDocuments.length > 0) {
             await prisma.profileVerificationDocument.createMany({
@@ -454,11 +454,14 @@ export async function processOnboardingData(
 
         console.log(
           "Verification request created for consultant:",
-          updatedUser.consultantProfileId
+          updatedUser.consultantProfileId,
         );
       } catch (verificationError) {
         // Log but don't fail the entire onboarding if verification submission fails
-        console.error("Failed to create verification request:", verificationError);
+        console.error(
+          "Failed to create verification request:",
+          verificationError,
+        );
       }
     }
 

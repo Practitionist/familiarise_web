@@ -3,7 +3,12 @@
  * Validates and calculates completion percentages for user professional background
  */
 
-import { UserRole, WorkExperience, Education, Certification } from "@prisma/client";
+import {
+  UserRole,
+  WorkExperience,
+  Education,
+  Certification,
+} from "@prisma/client";
 
 export interface ProfessionalBackgroundData {
   workExperiences: WorkExperience[];
@@ -27,7 +32,10 @@ export interface ProfessionalBackgroundValidation {
 }
 
 // Requirements per role
-const ROLE_REQUIREMENTS: Record<string, { workExp: number; education: number; certifications: number }> = {
+const ROLE_REQUIREMENTS: Record<
+  string,
+  { workExp: number; education: number; certifications: number }
+> = {
   CONSULTANT: { workExp: 1, education: 1, certifications: 1 },
   CONSULTEE: { workExp: 0, education: 1, certifications: 0 },
   STAFF: { workExp: 0, education: 0, certifications: 0 },
@@ -46,7 +54,7 @@ const FIELD_WEIGHTS = {
  */
 export function validateProfessionalBackground(
   role: UserRole | string,
-  data: ProfessionalBackgroundData
+  data: ProfessionalBackgroundData,
 ): ProfessionalBackgroundValidation {
   const requirements = ROLE_REQUIREMENTS[role] || ROLE_REQUIREMENTS.CONSULTEE;
 
@@ -97,7 +105,9 @@ export function validateProfessionalBackground(
       met: certMet,
     });
     if (!certMet) {
-      missingFields.push(`Certification (at least ${requirements.certifications})`);
+      missingFields.push(
+        `Certification (at least ${requirements.certifications})`,
+      );
     }
   }
 
@@ -117,7 +127,7 @@ export function validateProfessionalBackground(
  */
 export function calculateCompletionPercentage(
   role: UserRole | string,
-  data: ProfessionalBackgroundData
+  data: ProfessionalBackgroundData,
 ): number {
   const requirements = ROLE_REQUIREMENTS[role] || ROLE_REQUIREMENTS.CONSULTEE;
 
@@ -136,7 +146,10 @@ export function calculateCompletionPercentage(
   if (requirements.education > 0) {
     totalWeight += FIELD_WEIGHTS.education;
     const educationCount = data.education?.length || 0;
-    const educationProgress = Math.min(educationCount / requirements.education, 1);
+    const educationProgress = Math.min(
+      educationCount / requirements.education,
+      1,
+    );
     earnedWeight += FIELD_WEIGHTS.education * educationProgress;
   }
 
@@ -157,18 +170,26 @@ export function calculateCompletionPercentage(
 /**
  * Gets human-readable requirements description for a role
  */
-export function getRoleRequirementsDescription(role: UserRole | string): string[] {
+export function getRoleRequirementsDescription(
+  role: UserRole | string,
+): string[] {
   const requirements = ROLE_REQUIREMENTS[role] || ROLE_REQUIREMENTS.CONSULTEE;
   const descriptions: string[] = [];
 
   if (requirements.workExp > 0) {
-    descriptions.push(`At least ${requirements.workExp} work experience${requirements.workExp > 1 ? "s" : ""}`);
+    descriptions.push(
+      `At least ${requirements.workExp} work experience${requirements.workExp > 1 ? "s" : ""}`,
+    );
   }
   if (requirements.education > 0) {
-    descriptions.push(`At least ${requirements.education} education entr${requirements.education > 1 ? "ies" : "y"}`);
+    descriptions.push(
+      `At least ${requirements.education} education entr${requirements.education > 1 ? "ies" : "y"}`,
+    );
   }
   if (requirements.certifications > 0) {
-    descriptions.push(`At least ${requirements.certifications} certification${requirements.certifications > 1 ? "s" : ""}`);
+    descriptions.push(
+      `At least ${requirements.certifications} certification${requirements.certifications > 1 ? "s" : ""}`,
+    );
   }
 
   return descriptions;
@@ -179,7 +200,7 @@ export function getRoleRequirementsDescription(role: UserRole | string): string[
  */
 export function isFieldRequired(
   role: UserRole | string,
-  field: "workExp" | "education" | "certifications"
+  field: "workExp" | "education" | "certifications",
 ): boolean {
   const requirements = ROLE_REQUIREMENTS[role] || ROLE_REQUIREMENTS.CONSULTEE;
   return requirements[field] > 0;
@@ -190,7 +211,7 @@ export function isFieldRequired(
  */
 export function getMinimumCount(
   role: UserRole | string,
-  field: "workExp" | "education" | "certifications"
+  field: "workExp" | "education" | "certifications",
 ): number {
   const requirements = ROLE_REQUIREMENTS[role] || ROLE_REQUIREMENTS.CONSULTEE;
   return requirements[field];

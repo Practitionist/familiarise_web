@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
+import { useDebouncedCallback } from "use-debounce";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -147,7 +148,6 @@ export default function AdminFeedbackPage() {
     closed: 0,
   });
   const [loading, setLoading] = useState(true);
-  const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
@@ -158,6 +158,20 @@ export default function AdminFeedbackPage() {
   );
   const [updatingStatus, setUpdatingStatus] = useState(false);
 
+  // Debounced search
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [localSearchValue, setLocalSearchValue] = useState("");
+
+  const debouncedSetSearch = useDebouncedCallback((value: string) => {
+    setDebouncedSearch(value);
+    setPage(1);
+  }, 300);
+
+  const handleSearchChange = (value: string) => {
+    setLocalSearchValue(value);
+    debouncedSetSearch(value);
+  };
+
   // Fetch feedbacks - uses same API as staff (already supports ADMIN role)
   const fetchFeedbacks = useCallback(async () => {
     setLoading(true);
@@ -166,7 +180,7 @@ export default function AdminFeedbackPage() {
         page: page.toString(),
         limit: "20",
         ...(statusFilter !== "all" && { status: statusFilter }),
-        ...(searchQuery && { search: searchQuery }),
+        ...(debouncedSearch && { search: debouncedSearch }),
       });
 
       const response = await fetch(`/api/staff/feedbacks?${params}`);
@@ -186,7 +200,7 @@ export default function AdminFeedbackPage() {
     } finally {
       setLoading(false);
     }
-  }, [page, statusFilter, searchQuery, toast]);
+  }, [page, statusFilter, debouncedSearch, toast]);
 
   useEffect(() => {
     fetchFeedbacks();
@@ -329,8 +343,8 @@ export default function AdminFeedbackPage() {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
               <Input
                 placeholder="Search by title, description, or user..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                value={localSearchValue}
+                onChange={(e) => handleSearchChange(e.target.value)}
                 className="pl-10"
               />
             </div>

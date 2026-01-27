@@ -6,26 +6,41 @@ import { Prisma } from "@prisma/client";
 // Prisma Query Types - Derived from actual query shape for type safety
 // =============================================================================
 
+const userSelectFields = {
+  id: true,
+  name: true,
+  email: true,
+  image: true,
+  role: true,
+  phone: true,
+} as const;
+
 const consultationInclude = {
   consultationPlan: {
     include: {
       consultantProfile: {
         include: {
-          user: true,
+          user: {
+            select: userSelectFields,
+          },
         },
       },
     },
   },
   requestedBy: {
     include: {
-      user: true,
+      user: {
+        select: userSelectFields,
+      },
     },
   },
   appointment: {
     include: {
       slotsOfAppointment: {
         include: {
-          user: true,
+          user: {
+            select: userSelectFields,
+          },
         },
         orderBy: {
           startsAt: "asc" as const,
@@ -41,7 +56,9 @@ const subscriptionInclude = {
     include: {
       consultantProfile: {
         include: {
-          user: true,
+          user: {
+            select: userSelectFields,
+          },
           domain: true,
           subDomains: true,
           tags: true,
@@ -52,12 +69,7 @@ const subscriptionInclude = {
   requestedBy: {
     include: {
       user: {
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          image: true,
-        },
+        select: userSelectFields,
       },
     },
   },
@@ -65,7 +77,9 @@ const subscriptionInclude = {
     include: {
       slotsOfAppointment: {
         include: {
-          user: true,
+          user: {
+            select: userSelectFields,
+          },
         },
       },
       payment: true,

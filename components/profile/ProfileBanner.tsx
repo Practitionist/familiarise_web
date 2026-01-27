@@ -43,10 +43,7 @@ export function ProfileBanner({
         />
       ) : (
         <div
-          className={cn(
-            "absolute inset-0 bg-gradient-to-r",
-            fallbackGradient,
-          )}
+          className={cn("absolute inset-0 bg-gradient-to-r", fallbackGradient)}
         />
       )}
 

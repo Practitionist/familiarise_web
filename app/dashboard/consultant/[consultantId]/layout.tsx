@@ -5,7 +5,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import StreamProvider from "@/providers/StreamProvider";
 import { DashboardShell } from "@/components/dashboard/DashboardShell";
-import { DashboardSidebar, type NavItem } from "@/components/dashboard/DashboardSidebar";
+import {
+  DashboardSidebar,
+  type NavItem,
+} from "@/components/dashboard/DashboardSidebar";
 import { useSession } from "next-auth/react";
 import { usePathname, useRouter } from "next/navigation";
 import { use, useEffect, useMemo } from "react";

@@ -5,9 +5,9 @@ import { ChatContainer } from "./ChatContainer";
 
 export const ChatLayout = () => {
   return (
-    <div className="flex h-full w-full min-h-0">
+    <div className="flex h-full w-full">
       <ChatSidebar />
-      <div className="flex-1 flex flex-col min-h-0 h-full">
+      <div className="flex-1 flex flex-col h-full">
         <ChatContainer />
       </div>
     </div>

@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import { motion } from "framer-motion";
 import { Star } from "lucide-react";
 
@@ -65,8 +66,10 @@ export function TestimonialsSection({
   isLoading,
 }: TestimonialsSectionProps) {
   // Ensure enough items for smooth marquee
-  const displayReviews =
-    reviews.length >= 3 ? reviews : [...reviews, ...reviews, ...reviews];
+  const displayReviews = useMemo(
+    () => (reviews.length >= 3 ? reviews : [...reviews, ...reviews, ...reviews]),
+    [reviews]
+  );
 
   return (
     <section className="py-20 md:py-32 bg-gradient-to-b from-zinc-900 via-zinc-950 to-black overflow-hidden relative">

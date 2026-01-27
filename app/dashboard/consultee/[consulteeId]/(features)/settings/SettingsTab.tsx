@@ -34,7 +34,6 @@ type ProfileFormData = Omit<
     | "aboutMe"
     | "preferredCommunicationMethod"
     | "preferredLanguage"
-    | "goals"
     | "careerStage"
     | "currentCompany"
     | "industry"
@@ -47,6 +46,7 @@ type ProfileFormData = Omit<
   preferredCommunicationMethod: ConsultationMode;
   careerStage: CareerStage | null;
   budgetPreference: BudgetPreference | null;
+  goals: string | null;
 };
 
 export default function SettingsTab({ consulteeId }: SettingsTabProps) {

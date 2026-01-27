@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -183,12 +183,15 @@ export default function UserManagementPage() {
   }, [fetchPendingCount]);
 
   // Calculate user counts from current data
-  const userCounts = {
-    total: total,
-    consultants: users.filter((u) => u.role === "CONSULTANT").length,
-    consultees: users.filter((u) => u.role === "CONSULTEE").length,
-    pending: users.filter((u) => u.onboardingCompleted === false).length,
-  };
+  const userCounts = useMemo(
+    () => ({
+      total: total,
+      consultants: users.filter((u) => u.role === "CONSULTANT").length,
+      consultees: users.filter((u) => u.role === "CONSULTEE").length,
+      pending: users.filter((u) => u.onboardingCompleted === false).length,
+    }),
+    [users, total]
+  );
 
   const handleViewUser = (userId: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -274,7 +277,10 @@ export default function UserManagementPage() {
             <ShieldCheck className="h-4 w-4" />
             Pending Verification
             {pendingCount > 0 && (
-              <Badge variant="secondary" className="ml-1 bg-amber-100 text-amber-700">
+              <Badge
+                variant="secondary"
+                className="ml-1 bg-amber-100 text-amber-700"
+              >
                 {pendingCount}
               </Badge>
             )}
@@ -368,7 +374,9 @@ export default function UserManagementPage() {
                                   <CheckCircle className="h-3.5 w-3.5 text-blue-500" />
                                 )}
                               </p>
-                              <p className="text-sm text-zinc-500">{user.email}</p>
+                              <p className="text-sm text-zinc-500">
+                                {user.email}
+                              </p>
                             </div>
                           </div>
                         </TableCell>

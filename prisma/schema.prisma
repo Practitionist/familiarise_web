@@ -11,8 +11,8 @@ datasource db {
 
 model User {
   id                   String    @id @default(cuid())
-  name                 String?
-  email                String?   @unique
+  name                 String
+  email                String    @unique
   emailVerified        DateTime?
   image                String?
   phone                String?   @unique
@@ -75,6 +75,8 @@ model User {
   @@index([consultantProfileId])
   @@index([consulteeProfileId])
   @@index([adminProfileId])
+  @@index([role])
+  @@index([staffProfileId])
   @@map("users")
 }
 
@@ -127,6 +129,8 @@ model SupportTicket {
   @@index([assignedToId])
   @@index([consultationId])
   @@index([paymentId])
+  @@index([createdAt])
+  @@index([assignedToId, status])
 }
 
 model SupportResponse {
@@ -796,6 +800,8 @@ model WebinarPlan {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([consultantProfileId])
 }
 
 model Webinar {
@@ -813,6 +819,7 @@ model Webinar {
   updatedAt DateTime @updatedAt
 
   @@index([webinarPlanId])
+  @@index([status])
 }
 
 enum WebinarStatus {
@@ -853,6 +860,8 @@ model ClassPlan {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([consultantProfileId])
 }
 
 model Class {
@@ -1005,6 +1014,9 @@ model Appointment {
 
   @@index([subscriptionId])
   @@index([classId])
+  @@index([consultationId])
+  @@index([webinarId])
+  @@index([appointmentType])
 }
 
 enum AppointmentsType {
@@ -1263,6 +1275,9 @@ model Payment {
   @@index([isMockPayment])
   @@index([paymentStatus])
   @@index([createdAt])
+  @@index([userId])
+  @@index([appointmentId])
+  @@index([paymentStatus, createdAt])
 }
 
 enum PaymentGateway {

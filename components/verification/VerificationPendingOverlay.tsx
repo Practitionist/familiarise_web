@@ -87,21 +87,23 @@ export function VerificationPendingOverlay({
 
   const content = statusContent[status];
   const Icon = content.icon;
-  const hasDetailedFeedback = feedbackDetails || (documentFeedback && documentFeedback.length > 0);
-  const invalidDocuments = documentFeedback?.filter((doc) => doc.isValid === false) || [];
+  const hasDetailedFeedback =
+    feedbackDetails || (documentFeedback && documentFeedback.length > 0);
+  const invalidDocuments =
+    documentFeedback?.filter((doc) => doc.isValid === false) || [];
 
   return (
     <div
       className={cn(
         "fixed inset-0 z-50 flex items-center justify-center bg-white/95 backdrop-blur-sm overflow-y-auto py-8",
-        className
+        className,
       )}
     >
       <div className="max-w-lg mx-auto p-8 text-center">
         <div
           className={cn(
             "w-16 h-16 mx-auto mb-6 rounded-full flex items-center justify-center",
-            content.iconBg
+            content.iconBg,
           )}
         >
           <Icon className={cn("w-8 h-8", content.iconColor)} />
@@ -186,26 +188,28 @@ export function VerificationPendingOverlay({
                 )}
 
                 {/* Valid documents */}
-                {documentFeedback && documentFeedback.filter((doc) => doc.isValid === true).length > 0 && (
-                  <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                    <p className="text-sm font-medium text-green-800 mb-2">
-                      Verified documents:
-                    </p>
-                    <ul className="space-y-2">
-                      {documentFeedback
-                        .filter((doc) => doc.isValid === true)
-                        .map((doc) => (
-                          <li
-                            key={doc.documentId}
-                            className="flex items-center gap-2 text-sm text-green-700"
-                          >
-                            <CheckCircle className="w-4 h-4 flex-shrink-0" />
-                            <span>{doc.originalName || doc.fileName}</span>
-                          </li>
-                        ))}
-                    </ul>
-                  </div>
-                )}
+                {documentFeedback &&
+                  documentFeedback.filter((doc) => doc.isValid === true)
+                    .length > 0 && (
+                    <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                      <p className="text-sm font-medium text-green-800 mb-2">
+                        Verified documents:
+                      </p>
+                      <ul className="space-y-2">
+                        {documentFeedback
+                          .filter((doc) => doc.isValid === true)
+                          .map((doc) => (
+                            <li
+                              key={doc.documentId}
+                              className="flex items-center gap-2 text-sm text-green-700"
+                            >
+                              <CheckCircle className="w-4 h-4 flex-shrink-0" />
+                              <span>{doc.originalName || doc.fileName}</span>
+                            </li>
+                          ))}
+                      </ul>
+                    </div>
+                  )}
               </div>
             )}
           </div>
@@ -215,7 +219,9 @@ export function VerificationPendingOverlay({
           <div className="space-y-4">
             <div className="flex items-center justify-center gap-2 text-sm text-zinc-500">
               <AlertCircle className="w-4 h-4" />
-              <span>You&apos;ll receive an email once the review is complete</span>
+              <span>
+                You&apos;ll receive an email once the review is complete
+              </span>
             </div>
             <Button asChild className="gap-2">
               <Link href={resubmitUrl}>
@@ -256,8 +262,10 @@ export function VerificationPendingCard({
 
   const content = statusContent[status];
   const Icon = content.icon;
-  const hasDetailedFeedback = feedbackDetails || (documentFeedback && documentFeedback.length > 0);
-  const invalidDocuments = documentFeedback?.filter((doc) => doc.isValid === false) || [];
+  const hasDetailedFeedback =
+    feedbackDetails || (documentFeedback && documentFeedback.length > 0);
+  const invalidDocuments =
+    documentFeedback?.filter((doc) => doc.isValid === false) || [];
 
   return (
     <div
@@ -266,14 +274,14 @@ export function VerificationPendingCard({
         status === "PENDING_VERIFICATION" && "border-amber-300 bg-amber-50",
         status === "UNDER_REVIEW" && "border-blue-300 bg-blue-50",
         status === "REJECTED" && "border-red-300 bg-red-50",
-        className
+        className,
       )}
     >
       <div className="flex items-start gap-4">
         <div
           className={cn(
             "flex-shrink-0 w-12 h-12 rounded-full flex items-center justify-center",
-            content.iconBg
+            content.iconBg,
           )}
         >
           <Icon className={cn("w-6 h-6", content.iconColor)} />
@@ -285,9 +293,7 @@ export function VerificationPendingCard({
 
           {status === "REJECTED" && rejectionReason && (
             <div className="bg-red-100 border border-red-200 rounded-lg p-3 mb-3 text-left">
-              <p className="text-xs font-medium text-red-800 mb-0.5">
-                Reason:
-              </p>
+              <p className="text-xs font-medium text-red-800 mb-0.5">Reason:</p>
               <p className="text-sm text-red-700">{rejectionReason}</p>
             </div>
           )}

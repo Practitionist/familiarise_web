@@ -5,7 +5,10 @@ import { getEffectiveUserId } from "@/utils/auth";
 import { Skeleton } from "@/components/ui/skeleton";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import StreamProvider from "@/providers/StreamProvider";
-import { DashboardSidebar, type NavItem } from "@/components/dashboard/DashboardSidebar";
+import {
+  DashboardSidebar,
+  type NavItem,
+} from "@/components/dashboard/DashboardSidebar";
 import { signOut, useSession } from "next-auth/react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";

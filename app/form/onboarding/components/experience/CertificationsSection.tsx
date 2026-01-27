@@ -2,7 +2,14 @@
 
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Plus, Pencil, Trash2, Award, Calendar, ExternalLink } from "lucide-react";
+import {
+  Plus,
+  Pencil,
+  Trash2,
+  Award,
+  Calendar,
+  ExternalLink,
+} from "lucide-react";
 import { AddCertificationModal } from "./AddCertificationModal";
 import { format } from "date-fns";
 
@@ -29,11 +36,15 @@ export function CertificationsSection({
   const [editingCertification, setEditingCertification] =
     useState<Certification | null>(null);
 
-  const handleSave = (certification: Certification | Omit<Certification, "id">) => {
+  const handleSave = (
+    certification: Certification | Omit<Certification, "id">,
+  ) => {
     if ("id" in certification && certification.id) {
       // Editing existing certification
       onUpdate(
-        certifications.map((c) => (c.id === certification.id ? certification as Certification : c)),
+        certifications.map((c) =>
+          c.id === certification.id ? (certification as Certification) : c,
+        ),
       );
       setEditingCertification(null);
     } else {
@@ -106,7 +117,8 @@ export function CertificationsSection({
                   <span className="flex items-center gap-1">
                     <Calendar className="w-3 h-3" />
                     Issued {formatDate(cert.issueDate)}
-                    {cert.expiryDate && ` · Expires ${formatDate(cert.expiryDate)}`}
+                    {cert.expiryDate &&
+                      ` · Expires ${formatDate(cert.expiryDate)}`}
                   </span>
                 </div>
                 {cert.credentialId && (

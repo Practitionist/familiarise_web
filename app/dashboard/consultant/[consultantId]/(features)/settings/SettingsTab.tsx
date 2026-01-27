@@ -337,7 +337,9 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
       toast({
         title: "Submission Failed",
         description:
-          error instanceof Error ? error.message : "Failed to submit verification",
+          error instanceof Error
+            ? error.message
+            : "Failed to submit verification",
         variant: "destructive",
       });
     } finally {
@@ -723,25 +725,27 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
       {/* Unified Verification Status UI */}
       {consultant.verificationStatus && (
         <div
-          className={`border-2 rounded-xl p-6 mb-8 ${consultant.verificationStatus === "VERIFIED"
-            ? "border-green-200 bg-green-50"
-            : consultant.verificationStatus === "PENDING_VERIFICATION"
-              ? "border-amber-200 bg-amber-50"
-              : consultant.verificationStatus === "UNDER_REVIEW"
-                ? "border-blue-200 bg-blue-50"
-                : "border-red-200 bg-red-50"
-            }`}
+          className={`border-2 rounded-xl p-6 mb-8 ${
+            consultant.verificationStatus === "VERIFIED"
+              ? "border-green-200 bg-green-50"
+              : consultant.verificationStatus === "PENDING_VERIFICATION"
+                ? "border-amber-200 bg-amber-50"
+                : consultant.verificationStatus === "UNDER_REVIEW"
+                  ? "border-blue-200 bg-blue-50"
+                  : "border-red-200 bg-red-50"
+          }`}
         >
           <div className="flex items-start gap-4">
             <div
-              className={`flex-shrink-0 w-12 h-12 rounded-full flex items-center justify-center ${consultant.verificationStatus === "VERIFIED"
-                ? "bg-green-100"
-                : consultant.verificationStatus === "PENDING_VERIFICATION"
-                  ? "bg-amber-100"
-                  : consultant.verificationStatus === "UNDER_REVIEW"
-                    ? "bg-blue-100"
-                    : "bg-red-100"
-                }`}
+              className={`flex-shrink-0 w-12 h-12 rounded-full flex items-center justify-center ${
+                consultant.verificationStatus === "VERIFIED"
+                  ? "bg-green-100"
+                  : consultant.verificationStatus === "PENDING_VERIFICATION"
+                    ? "bg-amber-100"
+                    : consultant.verificationStatus === "UNDER_REVIEW"
+                      ? "bg-blue-100"
+                      : "bg-red-100"
+              }`}
             >
               {consultant.verificationStatus === "VERIFIED" ? (
                 <CheckCircle className="w-6 h-6 text-green-600" />
@@ -756,14 +760,15 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
 
             <div className="flex-1">
               <h2
-                className={`text-xl font-bold mb-2 ${consultant.verificationStatus === "VERIFIED"
-                  ? "text-green-900"
-                  : consultant.verificationStatus === "PENDING_VERIFICATION"
-                    ? "text-amber-900"
-                    : consultant.verificationStatus === "UNDER_REVIEW"
-                      ? "text-blue-900"
-                      : "text-red-900"
-                  }`}
+                className={`text-xl font-bold mb-2 ${
+                  consultant.verificationStatus === "VERIFIED"
+                    ? "text-green-900"
+                    : consultant.verificationStatus === "PENDING_VERIFICATION"
+                      ? "text-amber-900"
+                      : consultant.verificationStatus === "UNDER_REVIEW"
+                        ? "text-blue-900"
+                        : "text-red-900"
+                }`}
               >
                 {consultant.verificationStatus === "VERIFIED"
                   ? "Profile Verified"
@@ -774,14 +779,15 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
                       : "Verification Not Approved"}
               </h2>
               <p
-                className={`text-sm mb-4 ${consultant.verificationStatus === "VERIFIED"
-                  ? "text-green-700"
-                  : consultant.verificationStatus === "PENDING_VERIFICATION"
-                    ? "text-amber-700"
-                    : consultant.verificationStatus === "UNDER_REVIEW"
-                      ? "text-blue-700"
-                      : "text-red-700"
-                  }`}
+                className={`text-sm mb-4 ${
+                  consultant.verificationStatus === "VERIFIED"
+                    ? "text-green-700"
+                    : consultant.verificationStatus === "PENDING_VERIFICATION"
+                      ? "text-amber-700"
+                      : consultant.verificationStatus === "UNDER_REVIEW"
+                        ? "text-blue-700"
+                        : "text-red-700"
+                }`}
               >
                 {consultant.verificationStatus === "VERIFIED"
                   ? "Great job! Your profile has been verified. You are now visible in the consultant directory and can accept bookings."
@@ -795,10 +801,11 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
               {/* Loading State */}
               {isLoadingVerification ? (
                 <div
-                  className={`flex items-center gap-2 ${consultant.verificationStatus === "REJECTED"
-                    ? "text-red-600"
-                    : "text-amber-600"
-                    }`}
+                  className={`flex items-center gap-2 ${
+                    consultant.verificationStatus === "REJECTED"
+                      ? "text-red-600"
+                      : "text-amber-600"
+                  }`}
                 >
                   <Loader2 className="w-4 h-4 animate-spin" />
                   <span className="text-sm">Loading feedback...</span>
@@ -809,26 +816,29 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
                   {/* Reuse Existing Feedback UI Logic */}
                   {verificationDetails?.rejectionReason && (
                     <div
-                      className={`border rounded-lg p-4 mb-4 ${consultant.verificationStatus === "REJECTED"
-                        ? "bg-red-100 border-red-200"
-                        : "bg-amber-100 border-amber-200"
-                        }`}
+                      className={`border rounded-lg p-4 mb-4 ${
+                        consultant.verificationStatus === "REJECTED"
+                          ? "bg-red-100 border-red-200"
+                          : "bg-amber-100 border-amber-200"
+                      }`}
                     >
                       <p
-                        className={`text-sm font-medium mb-1 ${consultant.verificationStatus === "REJECTED"
-                          ? "text-red-800"
-                          : "text-amber-800"
-                          }`}
+                        className={`text-sm font-medium mb-1 ${
+                          consultant.verificationStatus === "REJECTED"
+                            ? "text-red-800"
+                            : "text-amber-800"
+                        }`}
                       >
                         {consultant.verificationStatus === "REJECTED"
                           ? "Reason for rejection:"
                           : "Changes requested:"}
                       </p>
                       <p
-                        className={`text-sm ${consultant.verificationStatus === "REJECTED"
-                          ? "text-red-700"
-                          : "text-amber-700"
-                          }`}
+                        className={`text-sm ${
+                          consultant.verificationStatus === "REJECTED"
+                            ? "text-red-700"
+                            : "text-amber-700"
+                        }`}
                       >
                         {verificationDetails.rejectionReason}
                       </p>
@@ -839,139 +849,141 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
                   {(verificationDetails?.feedbackDetails ||
                     invalidDocuments.length > 0 ||
                     validDocuments.length > 0) && (
-                      <div className="mb-4">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setShowVerificationDetails(!showVerificationDetails)
-                          }
-                          className={`flex items-center gap-2 text-sm font-medium transition-colors ${consultant.verificationStatus === "REJECTED"
+                    <div className="mb-4">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setShowVerificationDetails(!showVerificationDetails)
+                        }
+                        className={`flex items-center gap-2 text-sm font-medium transition-colors ${
+                          consultant.verificationStatus === "REJECTED"
                             ? "text-red-700 hover:text-red-900"
                             : "text-amber-700 hover:text-amber-900"
-                            }`}
-                        >
-                          {showVerificationDetails ? (
-                            <>
-                              <ChevronUp className="w-4 h-4" />
-                              Hide detailed feedback
-                            </>
-                          ) : (
-                            <>
-                              <ChevronDown className="w-4 h-4" />
-                              View detailed feedback
-                            </>
-                          )}
-                        </button>
-
-                        {showVerificationDetails && (
-                          <div className="mt-3 space-y-3">
-                            {verificationDetails?.feedbackDetails && (
-                              <div className="bg-white border border-zinc-200 rounded-lg p-4">
-                                <p className="text-sm font-medium text-zinc-700 mb-2">
-                                  Additional feedback from reviewer:
-                                </p>
-                                <p className="text-sm text-zinc-600 whitespace-pre-wrap">
-                                  {verificationDetails.feedbackDetails}
-                                </p>
-                              </div>
-                            )}
-
-                            {invalidDocuments.length > 0 && (
-                              <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
-                                <p className="text-sm font-medium text-amber-800 mb-3">
-                                  Documents requiring attention:
-                                </p>
-                                <ul className="space-y-2">
-                                  {invalidDocuments.map((doc) => (
-                                    <li
-                                      key={doc.id}
-                                      className="flex items-start gap-3 text-sm"
-                                    >
-                                      <FileText className="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" />
-                                      <div>
-                                        <p className="font-medium text-amber-900">
-                                          {doc.originalName || doc.fileName}
-                                        </p>
-                                        {doc.staffFeedback && (
-                                          <p className="text-amber-700 mt-0.5">
-                                            {doc.staffFeedback}
-                                          </p>
-                                        )}
-                                      </div>
-                                    </li>
-                                  ))}
-                                </ul>
-                              </div>
-                            )}
-
-                            {validDocuments.length > 0 && (
-                              <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                                <p className="text-sm font-medium text-green-800 mb-2">
-                                  Verified documents:
-                                </p>
-                                <ul className="space-y-1">
-                                  {validDocuments.map((doc) => (
-                                    <li
-                                      key={doc.id}
-                                      className="flex items-center gap-2 text-sm text-green-700"
-                                    >
-                                      <CheckCircle className="w-4 h-4 flex-shrink-0" />
-                                      <span>
-                                        {doc.originalName || doc.fileName}
-                                      </span>
-                                    </li>
-                                  ))}
-                                </ul>
-                              </div>
-                            )}
-                          </div>
+                        }`}
+                      >
+                        {showVerificationDetails ? (
+                          <>
+                            <ChevronUp className="w-4 h-4" />
+                            Hide detailed feedback
+                          </>
+                        ) : (
+                          <>
+                            <ChevronDown className="w-4 h-4" />
+                            View detailed feedback
+                          </>
                         )}
-                      </div>
-                    )}
+                      </button>
+
+                      {showVerificationDetails && (
+                        <div className="mt-3 space-y-3">
+                          {verificationDetails?.feedbackDetails && (
+                            <div className="bg-white border border-zinc-200 rounded-lg p-4">
+                              <p className="text-sm font-medium text-zinc-700 mb-2">
+                                Additional feedback from reviewer:
+                              </p>
+                              <p className="text-sm text-zinc-600 whitespace-pre-wrap">
+                                {verificationDetails.feedbackDetails}
+                              </p>
+                            </div>
+                          )}
+
+                          {invalidDocuments.length > 0 && (
+                            <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                              <p className="text-sm font-medium text-amber-800 mb-3">
+                                Documents requiring attention:
+                              </p>
+                              <ul className="space-y-2">
+                                {invalidDocuments.map((doc) => (
+                                  <li
+                                    key={doc.id}
+                                    className="flex items-start gap-3 text-sm"
+                                  >
+                                    <FileText className="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" />
+                                    <div>
+                                      <p className="font-medium text-amber-900">
+                                        {doc.originalName || doc.fileName}
+                                      </p>
+                                      {doc.staffFeedback && (
+                                        <p className="text-amber-700 mt-0.5">
+                                          {doc.staffFeedback}
+                                        </p>
+                                      )}
+                                    </div>
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+
+                          {validDocuments.length > 0 && (
+                            <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                              <p className="text-sm font-medium text-green-800 mb-2">
+                                Verified documents:
+                              </p>
+                              <ul className="space-y-1">
+                                {validDocuments.map((doc) => (
+                                  <li
+                                    key={doc.id}
+                                    className="flex items-center gap-2 text-sm text-green-700"
+                                  >
+                                    <CheckCircle className="w-4 h-4 flex-shrink-0" />
+                                    <span>
+                                      {doc.originalName || doc.fileName}
+                                    </span>
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </>
               ) : null}
 
               {/* Action Buttons */}
               {(consultant.verificationStatus === "REJECTED" ||
                 consultant.verificationStatus === "PENDING_VERIFICATION") && (
-                  <div className="flex items-center gap-4">
-                    <Button
-                      type="button"
-                      onClick={handleResubmitVerification}
-                      disabled={isResubmitting}
-                      className="gap-2"
-                      variant={
-                        consultant.verificationStatus === "REJECTED"
-                          ? "destructive"
-                          : "default"
-                      }
-                    >
-                      {isResubmitting ? (
-                        <>
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                          {consultant.verificationStatus === "REJECTED"
-                            ? "Resubmitting..."
-                            : "Submitting..."}
-                        </>
-                      ) : (
-                        <>
-                          <RefreshCw className="w-4 h-4" />
-                          {consultant.verificationStatus === "REJECTED"
-                            ? "Resubmit for Verification"
-                            : "Submit for Verification"}
-                        </>
-                      )}
-                    </Button>
-                    <p
-                      className={`text-xs ${consultant.verificationStatus === "REJECTED"
+                <div className="flex items-center gap-4">
+                  <Button
+                    type="button"
+                    onClick={handleResubmitVerification}
+                    disabled={isResubmitting}
+                    className="gap-2"
+                    variant={
+                      consultant.verificationStatus === "REJECTED"
+                        ? "destructive"
+                        : "default"
+                    }
+                  >
+                    {isResubmitting ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        {consultant.verificationStatus === "REJECTED"
+                          ? "Resubmitting..."
+                          : "Submitting..."}
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCw className="w-4 h-4" />
+                        {consultant.verificationStatus === "REJECTED"
+                          ? "Resubmit for Verification"
+                          : "Submit for Verification"}
+                      </>
+                    )}
+                  </Button>
+                  <p
+                    className={`text-xs ${
+                      consultant.verificationStatus === "REJECTED"
                         ? "text-red-600"
                         : "text-amber-600"
-                        }`}
-                    >
-                      Make sure to update your profile below before submitting
-                    </p>
-                  </div>
-                )}
+                    }`}
+                  >
+                    Make sure to update your profile below before submitting
+                  </p>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -1170,8 +1182,8 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
                           sessionTypes: checked
                             ? [...(prev.sessionTypes || []), type]
                             : (prev.sessionTypes || []).filter(
-                              (t) => t !== type,
-                            ),
+                                (t) => t !== type,
+                              ),
                         }));
                       }}
                     />
@@ -1581,7 +1593,10 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
       </div>
 
       {/* Verification Resubmission Modal */}
-      <Dialog open={isVerificationModalOpen} onOpenChange={setIsVerificationModalOpen}>
+      <Dialog
+        open={isVerificationModalOpen}
+        onOpenChange={setIsVerificationModalOpen}
+      >
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
           <DialogHeader>
             <DialogTitle>Verification Details</DialogTitle>
@@ -1592,7 +1607,9 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
               onBack={() => setIsVerificationModalOpen(false)}
               initialData={{
                 verificationLinkedinUrl: consultant.user.linkedinUrl || "",
-                verificationNotes: verificationDetails?.rejectionReason ? `Regarding your feedback: ` : "",
+                verificationNotes: verificationDetails?.rejectionReason
+                  ? `Regarding your feedback: `
+                  : "",
                 // Note: We can't easily pre-fill documents as UploadedDocument type differs from Prisma model
                 // But user can upload new ones.
               }}

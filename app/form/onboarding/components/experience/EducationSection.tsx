@@ -22,14 +22,21 @@ interface EducationSectionProps {
   onUpdate: (education: Education[]) => void;
 }
 
-export function EducationSection({ education, onUpdate }: EducationSectionProps) {
+export function EducationSection({
+  education,
+  onUpdate,
+}: EducationSectionProps) {
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingEducation, setEditingEducation] = useState<Education | null>(null);
+  const [editingEducation, setEditingEducation] = useState<Education | null>(
+    null,
+  );
 
   const handleSave = (edu: Education | Omit<Education, "id">) => {
     if ("id" in edu && edu.id) {
       // Editing existing education
-      onUpdate(education.map((e) => (e.id === edu.id ? edu as Education : e)));
+      onUpdate(
+        education.map((e) => (e.id === edu.id ? (edu as Education) : e)),
+      );
       setEditingEducation(null);
     } else {
       // Adding new education
@@ -82,7 +89,9 @@ export function EducationSection({ education, onUpdate }: EducationSectionProps)
                 <GraduationCap className="w-5 h-5 text-primary" />
               </div>
               <div className="flex-1 min-w-0">
-                <h4 className="font-medium text-foreground">{edu.institution}</h4>
+                <h4 className="font-medium text-foreground">
+                  {edu.institution}
+                </h4>
                 <p className="text-sm text-muted-foreground">
                   {edu.degree}
                   {edu.fieldOfStudy && ` in ${edu.fieldOfStudy}`}

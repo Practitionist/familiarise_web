@@ -33,7 +33,7 @@ export async function GET() {
     console.error("Get announcements error:", error);
     return NextResponse.json(
       { success: false, error: "Failed to fetch announcements" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -49,14 +49,14 @@ export async function POST(request: NextRequest) {
     if (!session?.user?.id) {
       return NextResponse.json(
         { success: false, error: "Unauthorized" },
-        { status: 401 }
+        { status: 401 },
       );
     }
 
     if (!["STAFF", "ADMIN"].includes(session.user.role)) {
       return NextResponse.json(
         { success: false, error: "Forbidden" },
-        { status: 403 }
+        { status: 403 },
       );
     }
 
@@ -76,7 +76,7 @@ export async function POST(request: NextRequest) {
     if (!title || !content) {
       return NextResponse.json(
         { success: false, error: "Title and content are required" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -109,7 +109,7 @@ export async function POST(request: NextRequest) {
     console.error("Create announcement error:", error);
     return NextResponse.json(
       { success: false, error: "Failed to create announcement" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

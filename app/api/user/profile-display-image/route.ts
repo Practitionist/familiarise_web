@@ -94,7 +94,9 @@ export async function POST(request: NextRequest) {
       {
         success: false,
         error:
-          error instanceof Error ? error.message : "Failed to upload profile display image",
+          error instanceof Error
+            ? error.message
+            : "Failed to upload profile display image",
       },
       { status: 500 },
     );
@@ -164,7 +166,9 @@ export async function DELETE(request: NextRequest) {
       {
         success: false,
         error:
-          error instanceof Error ? error.message : "Failed to delete profile display image",
+          error instanceof Error
+            ? error.message
+            : "Failed to delete profile display image",
       },
       { status: 500 },
     );
@@ -209,7 +213,9 @@ export async function GET(request: NextRequest) {
       {
         success: false,
         error:
-          error instanceof Error ? error.message : "Failed to get profile display image",
+          error instanceof Error
+            ? error.message
+            : "Failed to get profile display image",
       },
       { status: 500 },
     );

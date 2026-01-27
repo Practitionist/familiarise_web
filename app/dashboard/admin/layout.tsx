@@ -3,7 +3,10 @@
 import { Skeleton } from "@/components/ui/skeleton";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { DashboardShell } from "@/components/dashboard/DashboardShell";
-import { DashboardSidebar, type NavSection } from "@/components/dashboard/DashboardSidebar";
+import {
+  DashboardSidebar,
+  type NavSection,
+} from "@/components/dashboard/DashboardSidebar";
 import { useSession } from "next-auth/react";
 import { usePathname, useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";

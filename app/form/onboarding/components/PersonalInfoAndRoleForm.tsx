@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect } from "react";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@/components/ui/button";
@@ -57,6 +57,7 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
     handleSubmit,
     control,
     watch,
+    reset,
     formState: { errors },
   } = useForm<FormData>({
     resolver: zodResolver(PersonalInfoAndRoleFormSchema),
@@ -75,6 +76,25 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
       ...initialData,
     },
   });
+
+  // Sync form values when initialData changes (for back navigation)
+  useEffect(() => {
+    if (initialData && Object.keys(initialData).length > 0) {
+      reset({
+        name: "",
+        email: session?.user?.email || "",
+        onlineStatus: false,
+        onboardingCompleted: false,
+        role: "CONSULTEE" as UserRole,
+        gender: null,
+        city: "",
+        country: "",
+        linkedinUrl: "",
+        bio: "",
+        ...initialData,
+      });
+    }
+  }, [initialData, reset, session?.user?.email]);
 
   const selectedRole = watch("role");
   const bioLength = watch("bio")?.length || 0;

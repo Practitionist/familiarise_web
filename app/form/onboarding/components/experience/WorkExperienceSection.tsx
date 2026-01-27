@@ -2,7 +2,14 @@
 
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Plus, Pencil, Trash2, Building2, MapPin, Calendar } from "lucide-react";
+import {
+  Plus,
+  Pencil,
+  Trash2,
+  Building2,
+  MapPin,
+  Calendar,
+} from "lucide-react";
 import { AddWorkExperienceModal } from "./AddWorkExperienceModal";
 import { format } from "date-fns";
 
@@ -30,10 +37,16 @@ export function WorkExperienceSection({
   const [editingExperience, setEditingExperience] =
     useState<WorkExperience | null>(null);
 
-  const handleSave = (experience: WorkExperience | Omit<WorkExperience, "id">) => {
+  const handleSave = (
+    experience: WorkExperience | Omit<WorkExperience, "id">,
+  ) => {
     if ("id" in experience && experience.id) {
       // Editing existing experience
-      onUpdate(experiences.map((e) => (e.id === experience.id ? experience as WorkExperience : e)));
+      onUpdate(
+        experiences.map((e) =>
+          e.id === experience.id ? (experience as WorkExperience) : e,
+        ),
+      );
       setEditingExperience(null);
     } else {
       // Adding new experience
