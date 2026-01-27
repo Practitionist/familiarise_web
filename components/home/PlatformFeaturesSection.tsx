@@ -1,12 +1,13 @@
 "use client";
 
+import { memo } from "react";
 import { motion } from "framer-motion";
 import { LucideIcon } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { PLATFORM_FEATURES } from "./data";
 
-function PlatformFeatureCard({
+const PlatformFeatureCard = memo(function PlatformFeatureCard({
   feature,
   index,
 }: {
@@ -30,7 +31,7 @@ function PlatformFeatureCard({
       <p className="text-sm text-zinc-600">{feature.description}</p>
     </motion.div>
   );
-}
+});
 
 export function PlatformFeaturesSection() {
   return (

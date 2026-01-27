@@ -1,5 +1,6 @@
 "use client";
 
+import { memo } from "react";
 import { motion } from "framer-motion";
 import { LucideIcon } from "lucide-react";
 
@@ -7,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { FEATURES } from "./data";
 
-function FeatureCard({
+const FeatureCard = memo(function FeatureCard({
   feature,
   index,
 }: {
@@ -45,7 +46,7 @@ function FeatureCard({
       </Card>
     </motion.div>
   );
-}
+});
 
 export function FeaturesSection() {
   return (

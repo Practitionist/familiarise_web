@@ -126,6 +126,7 @@
     "tailwindcss-animate": "^1.0.7",
     "tweetnacl": "^1.0.3",
     "tweetnacl-util": "^0.15.1",
+    "use-debounce": "^10.1.0",
     "zod": "^3.25.67"
   },
   "devDependencies": {

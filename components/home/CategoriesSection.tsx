@@ -1,5 +1,6 @@
 "use client";
 
+import { memo } from "react";
 import { motion } from "framer-motion";
 import { ChevronRight, LucideIcon } from "lucide-react";
 import Link from "next/link";
@@ -9,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { CATEGORIES } from "./data";
 
-function CategoryCard({
+const CategoryCard = memo(function CategoryCard({
   category,
   index,
 }: {
@@ -43,7 +44,7 @@ function CategoryCard({
       </Link>
     </motion.div>
   );
-}
+});
 
 export function CategoriesSection() {
   return (

@@ -1,5 +1,6 @@
 "use client";
 
+import { memo, useMemo } from "react";
 import { motion } from "framer-motion";
 import { Star } from "lucide-react";
 
@@ -8,7 +9,11 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import type { ReviewWithProfiles } from "@/types/review";
 
-function TestimonialCard({ review }: { review: ReviewWithProfiles }) {
+const TestimonialCard = memo(function TestimonialCard({
+  review,
+}: {
+  review: ReviewWithProfiles;
+}) {
   return (
     <Card className="w-[350px] flex-shrink-0 mx-3 border border-zinc-800 bg-zinc-900/50 backdrop-blur-sm">
       <CardContent className="p-6">
@@ -45,15 +50,15 @@ function TestimonialCard({ review }: { review: ReviewWithProfiles }) {
       </CardContent>
     </Card>
   );
-}
+});
 
-function TestimonialLoadingSkeleton() {
+const TestimonialLoadingSkeleton = memo(function TestimonialLoadingSkeleton() {
   return (
     <div className="flex-shrink-0 w-[350px] mx-3">
       <Card className="h-[200px] animate-pulse bg-zinc-800 border-0" />
     </div>
   );
-}
+});
 
 interface TestimonialsSectionProps {
   reviews: ReviewWithProfiles[];
@@ -65,8 +70,10 @@ export function TestimonialsSection({
   isLoading,
 }: TestimonialsSectionProps) {
   // Ensure enough items for smooth marquee
-  const displayReviews =
-    reviews.length >= 3 ? reviews : [...reviews, ...reviews, ...reviews];
+  const displayReviews = useMemo(
+    () => (reviews.length >= 3 ? reviews : [...reviews, ...reviews, ...reviews]),
+    [reviews]
+  );
 
   return (
     <section className="py-20 md:py-32 bg-gradient-to-b from-zinc-900 via-zinc-950 to-black overflow-hidden relative">
