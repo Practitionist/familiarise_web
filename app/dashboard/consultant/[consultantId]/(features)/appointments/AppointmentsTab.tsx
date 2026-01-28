@@ -10,7 +10,7 @@ import { getOrCreateAppointmentMeeting, MeetingAppointment, MeetingSlot } from "
 import { useStreamVideoClient } from "@stream-io/video-react-sdk";
 import { useRouter } from "next/navigation";
 import { ChevronLeft, ChevronRight, Clock, Users, Gift, Video, Loader2 } from "lucide-react";
-import { AppointmentsTabProps, ScheduledTrial } from "../../types";
+import { AppointmentsTabProps, ScheduledTrial, getBadgeStyle } from "../../types";
 import { TAppointment } from "@/types/appointment";
 import {
   calculateSessionProgress,
@@ -93,7 +93,7 @@ export function AppointmentsTab({
     setGroupPagination((prev) => {
       const newMap = new Map(prev);
       const current = prev.get(groupKey) || { currentPage: 1, showAll: false };
-      newMap.set(groupKey, { ...current, showAll: !current.showAll });
+      newMap.set(groupKey, { currentPage: 1, showAll: !current.showAll });
       return newMap;
     });
   };
@@ -121,7 +121,7 @@ export function AppointmentsTab({
   };
 
   const getStyleFromBadgeData = (status: string): string => {
-    return badgeStyles[status] || badgeStyles.default;
+    return getBadgeStyle(status);
   };
 
   const handleJoinMeeting = async (appointment: TAppointment) => {
@@ -173,7 +173,10 @@ export function AppointmentsTab({
     const slot = trial.appointment.slotsOfAppointment[0];
     const now = new Date();
     const startTime = new Date(slot.startsAt);
-    const endTime = new Date(slot.endsAt);
+    const endTime = slot.endsAt
+      ? new Date(slot.endsAt)
+      : new Date(startTime.getTime() + 60 * 60 * 1000);
+    if (isNaN(startTime.getTime()) || isNaN(endTime.getTime())) return false;
     const joinWindowStart = new Date(startTime.getTime() - 10 * 60 * 1000);
     return now >= joinWindowStart && now <= endTime;
   };

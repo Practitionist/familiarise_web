@@ -50,6 +50,7 @@ import {
   WaitlistStatusBadge,
   type BookingStatus,
 } from "@/components/ui/waitlist-status-badge";
+import { STATUS_CONFIG } from "../../utils/statusConfig";
 
 interface EventCardProps {
   title: string;
@@ -86,45 +87,7 @@ function formatSlotTime(date: Date | string): string {
 // Default meeting duration in milliseconds (1 hour)
 const DEFAULT_MEETING_DURATION_MS = 60 * 60 * 1000;
 
-// Status configuration - refined professional colors
-const statusConfig: Record<
-  string,
-  { bg: string; text: string; dot: string; label?: string }
-> = {
-  APPROVED: { bg: "bg-teal-50", text: "text-teal-600", dot: "bg-teal-500" }, // Teal - sophisticated success
-  PENDING: {
-    bg: "bg-orange-50",
-    text: "text-orange-600",
-    dot: "bg-orange-500",
-  }, // Orange - warm urgency
-  APPROVED_PENDING_PAYMENT: {
-    bg: "bg-amber-50",
-    text: "text-amber-700",
-    dot: "bg-amber-500",
-    label: "PAYMENT REQUIRED",
-  }, // Amber - payment action needed
-  SCHEDULED: {
-    bg: "bg-indigo-50",
-    text: "text-indigo-600",
-    dot: "bg-indigo-500",
-  }, // Indigo - elegant upcoming
-  IN_PROGRESS: {
-    bg: "bg-cyan-50",
-    text: "text-cyan-600",
-    dot: "bg-cyan-500",
-  }, // Cyan - bright active
-  COMPLETED: {
-    bg: "bg-slate-100",
-    text: "text-slate-500",
-    dot: "bg-slate-400",
-  }, // Slate - warm done
-  CANCELLED: {
-    bg: "bg-stone-100",
-    text: "text-stone-400",
-    dot: "bg-stone-400",
-  }, // Stone - neutral inactive
-  REJECTED: { bg: "bg-red-50", text: "text-red-600", dot: "bg-red-500" }, // Red - clear negative
-};
+// Status configuration imported from shared statusConfig
 
 export function EventCard({
   title,
@@ -209,7 +172,9 @@ export function EventCard({
       if (i === 0) {
         currentSessionSlots.push(slot);
       } else {
-        const prevEnd = new Date(prevSlot.endsAt).getTime();
+        const prevEnd = prevSlot.endsAt
+          ? new Date(prevSlot.endsAt).getTime()
+          : new Date(prevSlot.startsAt).getTime() + DEFAULT_MEETING_DURATION_MS;
         const currStart = new Date(slot.startsAt).getTime();
 
         if (currStart === prevEnd) {
@@ -250,7 +215,7 @@ export function EventCard({
 
   // Check if this is a subscription with multiple sessions (for reschedule options)
   const isMultiSessionSubscription =
-    type === "Subscription" && rawSlots.length > 1;
+    type === "Subscription" && groupedSessions.length > 1;
 
   // Handle reschedule button click - show dialog for subscriptions with multiple sessions
   const handleRescheduleClick = () => {
@@ -485,9 +450,9 @@ export function EventCard({
     (type === "Consultation" || type === "Subscription") && appointmentId;
 
   const statusStyle =
-    statusConfig[status?.toUpperCase()] || statusConfig.PENDING;
+    STATUS_CONFIG[status?.toUpperCase()] || STATUS_CONFIG.PENDING;
   const displayStatus = isTentative ? "PENDING" : status?.toUpperCase();
-  const displayStatusStyle = isTentative ? statusConfig.PENDING : statusStyle;
+  const displayStatusStyle = isTentative ? STATUS_CONFIG.PENDING : statusStyle;
 
   return (
     <motion.div
@@ -658,7 +623,11 @@ export function EventCard({
             <div className="mt-4 pt-4 border-t border-zinc-100">
               <Button
                 size="sm"
-                onClick={() => window.open(pendingPaymentUrl, "_blank")}
+                onClick={() => {
+                  if (pendingPaymentUrl && /^https?:\/\//.test(pendingPaymentUrl)) {
+                    window.open(pendingPaymentUrl, "_blank", "noopener,noreferrer");
+                  }
+                }}
                 className="w-full h-9 text-sm font-medium bg-amber-500 hover:bg-amber-600 text-white"
               >
                 <CreditCard className="h-4 w-4 mr-2" />

@@ -3,7 +3,7 @@
 import { useMemo } from "react";
 import { usePagination } from "@/hooks/usePagination";
 import { Pagination } from "@/components/Pagination";
-import { BADGE_STYLES } from "../../types";
+import { BADGE_STYLES, getBadgeStyle } from "../../types";
 import { TAppointment } from "@/types/appointment";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -65,7 +65,7 @@ export function PaginatedAppointments({
   } = usePagination(expandedAppointments, { pageSize: 6 }); // Show 6 appointments per page
 
   const getBadgeStyleFromData = (status: string): string => {
-    return badgeStyles[status] || badgeStyles.default;
+    return getBadgeStyle(status);
   };
 
   if (expandedAppointments.length === 0) {

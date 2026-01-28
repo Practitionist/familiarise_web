@@ -200,6 +200,11 @@ export async function GET(
               include: {
                 slotsOfAppointment: {
                   orderBy: { startsAt: "asc" },
+                  include: {
+                    user: {
+                      select: { id: true, name: true, email: true, image: true },
+                    },
+                  },
                 },
               },
             },

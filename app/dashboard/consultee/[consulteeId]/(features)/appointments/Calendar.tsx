@@ -73,7 +73,9 @@ export function Calendar({
               id: `${c.id}-${startTime.getTime()}`,
               title: c.consultationPlan.title,
               start: startTime,
-              end: new Date(startTime.getTime() + 60 * 60 * 1000),
+              end: slot.endsAt
+                ? new Date(slot.endsAt)
+                : new Date(startTime.getTime() + 60 * 60 * 1000),
               type: "Consultation" as const,
               status: c.requestStatus,
               consultant:
@@ -95,7 +97,9 @@ export function Calendar({
               id: `${s.id}-${startTime.getTime()}`,
               title: s.subscriptionPlan.title,
               start: startTime,
-              end: new Date(startTime.getTime() + 60 * 60 * 1000),
+              end: slot.endsAt
+                ? new Date(slot.endsAt)
+                : new Date(startTime.getTime() + 60 * 60 * 1000),
               type: "Subscription" as const,
               status: s.requestStatus,
               consultant:
@@ -117,7 +121,9 @@ export function Calendar({
               id: `${c.id}-${startTime.getTime()}`,
               title: c.classPlan.title,
               start: startTime,
-              end: new Date(startTime.getTime() + 60 * 60 * 1000),
+              end: slot.endsAt
+                ? new Date(slot.endsAt)
+                : new Date(startTime.getTime() + 60 * 60 * 1000),
               type: "Class" as const,
               status: c.status,
               consultant:
@@ -138,7 +144,9 @@ export function Calendar({
               id: `${w.id}-${startTime.getTime()}`,
               title: w.webinarPlan.title,
               start: startTime,
-              end: new Date(startTime.getTime() + 60 * 60 * 1000),
+              end: slot.endsAt
+                ? new Date(slot.endsAt)
+                : new Date(startTime.getTime() + 60 * 60 * 1000),
               type: "Webinar" as const,
               status: w.status,
               consultant:

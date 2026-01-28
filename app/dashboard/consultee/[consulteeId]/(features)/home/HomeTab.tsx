@@ -31,6 +31,7 @@ import {
   getMonthlyEvents,
 } from "./event-processor";
 import { WaitlistStatusBadge } from "@/components/ui/waitlist-status-badge";
+import { getStatusStyle } from "../../utils/statusConfig";
 
 interface HomeTabProps {
   userDetails: {
@@ -98,19 +99,8 @@ function UpcomingSessionCard({
     webinar: "WEBINAR",
   };
 
-  // Status badges - refined professional colors
-  const statusConfig: Record<string, { bg: string; text: string }> = {
-    APPROVED: { bg: "bg-teal-500/15", text: "text-teal-400" }, // Teal - sophisticated success
-    PENDING: { bg: "bg-orange-500/15", text: "text-orange-400" }, // Orange - warm urgency
-    SCHEDULED: { bg: "bg-indigo-500/15", text: "text-indigo-400" }, // Indigo - elegant upcoming
-    IN_PROGRESS: { bg: "bg-cyan-500/15", text: "text-cyan-400" }, // Cyan - bright active
-    COMPLETED: { bg: "bg-slate-500/15", text: "text-slate-400" }, // Slate - warm done
-    CANCELLED: { bg: "bg-stone-500/15", text: "text-stone-400" }, // Stone - neutral inactive
-    REJECTED: { bg: "bg-red-500/15", text: "text-red-400" }, // Red - clear negative
-  };
-
   const typeLabel = typeLabels[event.type] || "EVENT";
-  const statusStyle = statusConfig[event.status] || statusConfig.PENDING;
+  const statusStyle = getStatusStyle(event.status, "dark");
 
   return (
     <motion.div
@@ -240,19 +230,8 @@ function MonthlyEventItem({
     webinar: "Webinar",
   };
 
-  // Status badges - refined professional colors for light background
-  const statusConfig: Record<string, { bg: string; text: string }> = {
-    APPROVED: { bg: "bg-teal-50", text: "text-teal-600" }, // Teal - sophisticated success
-    PENDING: { bg: "bg-orange-50", text: "text-orange-600" }, // Orange - warm urgency
-    SCHEDULED: { bg: "bg-indigo-50", text: "text-indigo-600" }, // Indigo - elegant upcoming
-    IN_PROGRESS: { bg: "bg-cyan-50", text: "text-cyan-600" }, // Cyan - bright active
-    COMPLETED: { bg: "bg-slate-100", text: "text-slate-500" }, // Slate - warm done
-    CANCELLED: { bg: "bg-stone-100", text: "text-stone-400" }, // Stone - neutral inactive
-    REJECTED: { bg: "bg-red-50", text: "text-red-600" }, // Red - clear negative
-  };
-
   const typeLabel = typeLabels[event.type] || "Event";
-  const statusStyle = statusConfig[event.status] || statusConfig.PENDING;
+  const statusStyle = getStatusStyle(event.status, "light");
 
   return (
     <div className="border-b border-zinc-100 last:border-0">

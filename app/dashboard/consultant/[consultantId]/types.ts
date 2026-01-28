@@ -159,8 +159,8 @@ export type BadgeStyleMap = { [key: string]: string };
 // Constants for badge styles
 export const BADGE_STYLES: BadgeStyleMap = {
   Completed: "bg-gray-400 text-white",
+  Cancelled: "bg-stone-400 text-white",
   "Meeting in 5 min": "bg-red-500 text-white",
-  "Meeting in 2 hours": "bg-blue-500 text-white",
   Today: "bg-blue-600 text-white",
   Tomorrow: "bg-purple-500 text-white",
   "In week": "bg-green-500 text-white",
@@ -168,6 +168,20 @@ export const BADGE_STYLES: BadgeStyleMap = {
   "In year": "bg-orange-500 text-white",
   "Not Scheduled": "bg-orange-600 text-white",
   default: "bg-gray-500 text-white",
+};
+
+/**
+ * Gets the badge style for a status string with pattern matching.
+ * Handles dynamic statuses like "In 3 days", "In 2 weeks" that don't
+ * have exact keys in BADGE_STYLES.
+ */
+export const getBadgeStyle = (status: string): string => {
+  if (BADGE_STYLES[status]) return BADGE_STYLES[status];
+  if (status.startsWith("In ") && status.includes("day"))
+    return "bg-green-500 text-white";
+  if (status.startsWith("In ") && status.includes("week"))
+    return "bg-green-500 text-white";
+  return BADGE_STYLES.default;
 };
 
 // Constants for time calculations

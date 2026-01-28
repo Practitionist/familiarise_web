@@ -48,7 +48,7 @@ import {
   sortAppointmentsByStartTime,
 } from "../../utils/appointmentHelpers";
 
-import { IActivity, IApproval, BADGE_STYLES } from "../../types";
+import { IActivity, IApproval, BADGE_STYLES, getBadgeStyle } from "../../types";
 import { TAppointment } from "@/types/appointment";
 import { RequestSlotAllocationTabMini } from "../requests/RequestSlotAllocationTabMini";
 
@@ -113,10 +113,6 @@ export function HomeTab({
         variant: "destructive",
       });
     }
-  };
-
-  const getBadgeStyle = (status: string): string => {
-    return badgeStyles[status] || badgeStyles.default;
   };
 
   // Process appointments - memoize expensive computations
@@ -410,7 +406,6 @@ export function HomeTab({
 
                           <Badge
                             className={getBadgeStyle(status)}
-                            variant="outline"
                           >
                             {status}
                           </Badge>
