@@ -147,6 +147,11 @@ function formatWeeklySlot(
     slot.startTime, // startTimeStr for overnight detection
   );
 
+  // If conversion failed, return null to filter out this slot
+  if (!startTimeUtc || !endTimeUtc) {
+    return null;
+  }
+
   // Determine if this is an overnight slot
   const [startHour, startMinute] = slot.startTime.split(":").map(Number);
   const [endHour, endMinute] = slot.endTime.split(":").map(Number);
@@ -158,8 +163,8 @@ function formatWeeklySlot(
   return {
     dayOfWeekforStartTimeInUTC: dayOfWeek,
     dayOfWeekforEndTimeInUTC: endDayOfWeek,
-    slotStartTimeInUTC: startTimeUtc || `${baseDate}T${slot.startTime}:00.000Z`,
-    slotEndTimeInUTC: endTimeUtc || `${baseDate}T${slot.endTime}:00.000Z`,
+    slotStartTimeInUTC: startTimeUtc,
+    slotEndTimeInUTC: endTimeUtc,
   };
 }
 
@@ -191,10 +196,13 @@ function formatCustomSlot(
     slot.startTime, // startTimeStr for overnight detection
   );
 
+  // If conversion failed, return null to filter out this slot
+  if (!startTimeUtc || !endTimeUtc) {
+    return null;
+  }
+
   return {
-    slotStartTimeInUTC:
-      startTimeUtc || new Date(`${dateKey}T${slot.startTime}:00`).toISOString(),
-    slotEndTimeInUTC:
-      endTimeUtc || new Date(`${dateKey}T${slot.endTime}:00`).toISOString(),
+    slotStartTimeInUTC: startTimeUtc,
+    slotEndTimeInUTC: endTimeUtc,
   };
 }
