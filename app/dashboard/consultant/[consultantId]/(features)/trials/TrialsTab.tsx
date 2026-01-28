@@ -21,7 +21,9 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogTitle,
 } from "@/components/ui/dialog";
+import { VisuallyHidden } from "@radix-ui/react-visually-hidden";
 import { useToast } from "@/hooks/use-toast";
 import { Input } from "@/components/ui/input";
 import {
@@ -29,7 +31,6 @@ import {
   Calendar,
   Clock,
   User,
-  CheckCircle,
   XCircle,
   Loader2,
   RefreshCw,
@@ -696,8 +697,8 @@ export function TrialsTab() {
                         onClick={() => handleApprove(trial)}
                         disabled={isProcessing}
                       >
-                        <CheckCircle className="h-4 w-4 mr-1" />
-                        Approve & Schedule
+                        <Calendar className="h-4 w-4 mr-1" />
+                        Schedule
                       </Button>
                     </>
                   )}
@@ -772,6 +773,9 @@ export function TrialsTab() {
       {/* Schedule Dialog with Calendar */}
       <Dialog open={showScheduleDialog} onOpenChange={setShowScheduleDialog}>
         <DialogContent className="max-w-4xl">
+          <VisuallyHidden>
+            <DialogTitle>Schedule Trial Session</DialogTitle>
+          </VisuallyHidden>
           {selectedTrial && (
             <TrialScheduleCalendar
               consultantId={consultantId}
