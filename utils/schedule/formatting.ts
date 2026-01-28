@@ -5,6 +5,7 @@
 
 import {
   convertTimezoneToUtcWithOvernight,
+  isOvernight,
   sortSlotsByTime,
 } from "@/utils/dateTimeUtils";
 import { isValidTimeRange } from "@/utils/timeSlotValidation";
@@ -152,13 +153,9 @@ function formatWeeklySlot(
     return null;
   }
 
-  // Determine if this is an overnight slot
-  const [startHour, startMinute] = slot.startTime.split(":").map(Number);
-  const [endHour, endMinute] = slot.endTime.split(":").map(Number);
-  const isOvernightSlot =
-    endHour * 60 + endMinute < startHour * 60 + startMinute;
-
-  const endDayOfWeek = isOvernightSlot ? getNextDayOfWeek(dayOfWeek) : dayOfWeek;
+  const endDayOfWeek = isOvernight(slot.startTime, slot.endTime)
+    ? getNextDayOfWeek(dayOfWeek)
+    : dayOfWeek;
 
   return {
     dayOfWeekforStartTimeInUTC: dayOfWeek,

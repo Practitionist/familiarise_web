@@ -50,14 +50,3 @@ export interface ValidationResult {
  * Schedule type enum matching Prisma schema
  */
 export type ScheduleTypeValue = "WEEKLY" | "CUSTOM";
-
-/**
- * Validation configuration constants
- */
-export const VALIDATION_CONFIG = {
-  MIN_DURATION_MINUTES: 30,
-  MAX_DURATION_MINUTES: 12 * 60, // 12 hours max
-  BUFFER_MINUTES: 0, // No enforced break - back-to-back slots allowed
-  TIME_INCREMENT_MINUTES: 15,
-  SESSION_INCREMENT_MINUTES: 30,
-} as const;
