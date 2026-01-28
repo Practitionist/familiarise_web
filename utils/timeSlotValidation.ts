@@ -1,15 +1,9 @@
-interface SlotType {
-  startTime: string;
-  endTime: string;
-  isValid: boolean;
-  errorMessage?: string;
-}
+import type { SlotType } from "@/utils/schedule/types";
 
 // Configuration constants
 const VALIDATION_CONFIG = {
   MIN_DURATION_MINUTES: 30,
   MAX_DURATION_MINUTES: 12 * 60, // 12 hours max
-  BUFFER_MINUTES: 0, // No enforced break - back-to-back slots allowed
   TIME_INCREMENT_MINUTES: 15,
   SESSION_INCREMENT_MINUTES: 30,
 } as const;
@@ -43,27 +37,11 @@ const calculateSlotDuration = (
     : endMinutes - startMinutes;
 };
 
-const getNextDay = (day: string): string => {
-  const days = [
-    "monday",
-    "tuesday",
-    "wednesday",
-    "thursday",
-    "friday",
-    "saturday",
-    "sunday",
-  ];
-  const currentIndex = days.indexOf(day.toLowerCase());
-  return days[(currentIndex + 1) % 7];
-};
-
-const getNextDate = (dateString: string): string => {
-  const date = new Date(dateString);
-  date.setDate(date.getDate() + 1);
-  return date.toISOString().split("T")[0];
-};
-
-// Validate basic time range requirements
+/**
+ * Validates that a time range meets basic requirements:
+ * non-empty, distinct start/end, no overnight (except midnight-ending),
+ * and duration within 30 min – 12 hour bounds.
+ */
 export const isValidTimeRange = (
   startTime: string,
   endTime: string,
@@ -204,31 +182,24 @@ const validateSlotOverlaps = (
   return null;
 };
 
-// Validation result interface for better type safety
-interface ValidationResult {
-  slot: SlotType;
-  needsSplitting?: {
-    currentDaySlot: SlotType;
-    nextDaySlot: SlotType;
-    nextKey: string;
-  };
-}
-
-// Main validation function - now pure without side effects
+/**
+ * Validates a single time slot against all rules (format, duration, increments,
+ * overnight, overlap) and returns an updated SlotType with isValid/errorMessage set.
+ * Pure function with no side effects. Back-to-back slots are allowed.
+ *
+ * @param slot - The slot to validate
+ * @param otherSlots - Existing slots to check for overlaps against
+ */
 export const validateTimeSlot = (
   slot: SlotType,
   otherSlots: SlotType[],
-  key: string,
-  isWeekly: boolean = false,
-): ValidationResult => {
+): SlotType => {
   // Early return for empty slots
   if (!slot.startTime || !slot.endTime) {
     return {
-      slot: {
-        ...slot,
-        isValid: false,
-        errorMessage: "Please select both start and end time",
-      },
+      ...slot,
+      isValid: false,
+      errorMessage: "Please select both start and end time",
     };
   }
 
@@ -236,109 +207,58 @@ export const validateTimeSlot = (
   const endMinutes = getMinutes(slot.endTime);
 
   if (startMinutes === null || endMinutes === null) {
-    return {
-      slot: {
-        ...slot,
-        isValid: false,
-        errorMessage: "Invalid time format",
-      },
-    };
+    return { ...slot, isValid: false, errorMessage: "Invalid time format" };
   }
 
   // Start and end cannot be the same
   if (startMinutes === endMinutes) {
     return {
-      slot: {
-        ...slot,
-        isValid: false,
-        errorMessage: "Start and end time cannot be the same",
-      },
+      ...slot,
+      isValid: false,
+      errorMessage: "Start and end time cannot be the same",
     };
   }
 
   // Disallow overnight slots – end time must be after start time on the same day, except when it ends exactly at midnight (00:00)
   if (endMinutes <= startMinutes && endMinutes !== 0) {
     return {
-      slot: {
-        ...slot,
-        isValid: false,
-        errorMessage:
-          "Overnight slots are not allowed. Please create a slot on the next day.",
-      },
+      ...slot,
+      isValid: false,
+      errorMessage:
+        "Overnight slots are not allowed. Please create a slot on the next day.",
     };
   }
 
   // Validate basic time range (duration constraints etc.)
   if (!isValidTimeRange(slot.startTime, slot.endTime)) {
-    return {
-      slot: {
-        ...slot,
-        isValid: false,
-        errorMessage: "Invalid time range",
-      },
-    };
+    return { ...slot, isValid: false, errorMessage: "Invalid time range" };
   }
 
   // Validate time increments
   const incrementError = validateTimeIncrements(startMinutes, endMinutes);
   if (incrementError) {
-    return {
-      slot: { ...slot, isValid: false, errorMessage: incrementError },
-    };
+    return { ...slot, isValid: false, errorMessage: incrementError };
   }
 
   // Validate duration
   const durationError = validateDuration(startMinutes, endMinutes);
   if (durationError) {
-    return {
-      slot: { ...slot, isValid: false, errorMessage: durationError },
-    };
+    return { ...slot, isValid: false, errorMessage: durationError };
   }
 
   // Check for overlaps
   const overlapError = validateSlotOverlaps(slot, otherSlots);
   if (overlapError) {
-    return {
-      slot: { ...slot, isValid: false, errorMessage: overlapError },
-    };
+    return { ...slot, isValid: false, errorMessage: overlapError };
   }
 
-  // Handle overnight slot splitting only for spans that cross midnight and do NOT end exactly at 00:00
-  const isOvernight = isOvernightSlot(startMinutes, endMinutes);
-  if (isOvernight && endMinutes !== 0) {
-    const nextKey = isWeekly ? getNextDay(key) : getNextDate(key);
-    return {
-      slot: {
-        startTime: slot.startTime,
-        endTime: "00:00",
-        isValid: true,
-        errorMessage: undefined,
-      },
-      needsSplitting: {
-        currentDaySlot: {
-          startTime: slot.startTime,
-          endTime: "00:00",
-          isValid: true,
-        },
-        nextDaySlot: {
-          startTime: "00:00",
-          endTime: slot.endTime,
-          isValid: true,
-        },
-        nextKey,
-      },
-    };
-  }
-
-  return {
-    slot: { ...slot, isValid: true, errorMessage: undefined },
-  };
+  return { ...slot, isValid: true, errorMessage: undefined };
 };
 
-// Backward compatibility alias - now returns validation result instead of mutating state
-export const validateSlot = validateTimeSlot;
-
-// Enhanced validation for all slots with detailed feedback
+/**
+ * Validates all slots across all days/dates, collecting per-slot error messages.
+ * Returns overall validity and a list of human-readable error strings.
+ */
 export const validateAllSlotsDetailed = (
   slots: Record<string, SlotType[]>,
 ): { isValid: boolean; errors: string[] } => {
@@ -347,7 +267,6 @@ export const validateAllSlotsDetailed = (
 
   Object.entries(slots).forEach(([day, daySlots]) => {
     daySlots.forEach((slot, index) => {
-      // Count any invalid slot, regardless of whether it has an error message
       if (!slot.isValid) {
         const errorMsg =
           slot.errorMessage ?? "Please complete both start and end time";
@@ -360,15 +279,10 @@ export const validateAllSlotsDetailed = (
   return { isValid, errors };
 };
 
-// Backward compatibility alias
-export const validateAllSlots = validateAllSlotsDetailed;
-
-// Quick boolean check for backward compatibility
-export const allSlotsValid = (slots: Record<string, SlotType[]>): boolean => {
-  return validateAllSlots(slots).isValid;
-};
-
-// Get slot statistics for debugging/optimization
+/**
+ * Computes aggregate statistics for a set of slots: total/valid/invalid counts,
+ * overnight count, total duration in hours, and average duration in minutes.
+ */
 export const getSlotStatistics = (slots: Record<string, SlotType[]>) => {
   let totalSlots = 0;
   let validSlots = 0;

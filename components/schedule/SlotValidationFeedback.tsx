@@ -9,21 +9,17 @@ import type { SlotsType, ValidationFeedback } from "@/utils/schedule/types";
 
 interface SlotValidationFeedbackProps {
   slots: SlotsType;
-  /** Schedule type for future use (e.g., different UI for weekly vs custom) */
-  scheduleType?: "WEEKLY" | "CUSTOM";
   className?: string;
-  /** Maximum number of errors to show before truncating */
   maxErrorsToShow?: number;
 }
 
 /**
- * Shared validation feedback component for schedule forms.
- * Shows slot count, total hours, overnight slots, and validation errors.
- * Used in both Onboarding and Dashboard Settings forms.
+ * Displays a summary banner with slot count, total duration, and any validation
+ * errors. Renders nothing when no slots exist. Used in both the onboarding
+ * schedule form and the dashboard settings form.
  */
 export function SlotValidationFeedback({
   slots,
-  scheduleType: _scheduleType,
   className = "",
   maxErrorsToShow = 3,
 }: SlotValidationFeedbackProps) {

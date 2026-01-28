@@ -55,10 +55,7 @@ export const DAYS_OF_WEEK: DayOfWeek[] = [
   DayOfWeek.SUNDAY,
 ];
 
-// formatDayDisplay is now imported from timeUtils
-
-// formatTimeFromDate removed - using convertToLocalTime from timeUtils
-
+/** Extracts editable form fields from a consultant profile into initial form state. */
 export const getInitialFormData = (
   consultant: TConsultantProfile,
 ): FormData => ({
@@ -81,6 +78,10 @@ export const getInitialFormData = (
   sessionTypes: consultant?.sessionTypes ?? [],
 });
 
+/**
+ * Converts a consultant's persisted weekly availability (UTC) into local-time
+ * SlotType entries grouped by lowercase day-of-week key.
+ */
 export const getInitialWeeklySlots = (
   consultant: TConsultantProfile,
   timezone: string = "UTC",
@@ -144,6 +145,10 @@ export const getInitialWeeklySlots = (
   return formattedWeeklySlots;
 };
 
+/**
+ * Converts a consultant's persisted custom availability (UTC) into local-time
+ * SlotType entries grouped by YYYY-MM-DD date key.
+ */
 export const getInitialCustomSlots = (
   consultant: TConsultantProfile,
   timezone: string = "UTC",
@@ -221,12 +226,7 @@ export const getInitialCustomSlots = (
   return formattedCustomSlots;
 };
 
-// Calendar utilities - using centralized functions from timeUtils
-export const getCurrentDate = () => {
-  const date = new Date();
-  return date.toISOString().split("T")[0];
-};
-
+/** Returns a human-readable "Month Year" string (e.g., "January 2025") for the calendar header. */
 export const getMonthYearString = (date: Date) => {
   return date.toLocaleString("default", {
     month: "long",

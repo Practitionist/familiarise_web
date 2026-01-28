@@ -355,10 +355,8 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
         const validationResult = validateTimeSlot(
           updatedSlots[day][index],
           updatedSlots[day].filter((_, i) => i !== index),
-          day,
-          scheduleType === "WEEKLY",
         );
-        updatedSlots[day][index] = validationResult.slot;
+        updatedSlots[day][index] = validationResult;
 
         if (updatedSlots[day]) {
           updatedSlots[day] = sortSlotsByTime(updatedSlots[day]);
@@ -476,28 +474,19 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
   // Use shared validation feedback hook
   const currentSlots = scheduleType === "WEEKLY" ? weeklySlots : customSlots;
   const validationFeedback = useSlotValidationFeedback(currentSlots);
-
-  const allSlotsValid = useCallback(() => {
-    return validationFeedback.isValid && validationFeedback.hasSlots;
-  }, [validationFeedback]);
-
-  const getValidationFeedback = useCallback(() => {
-    return validationFeedback;
-  }, [validationFeedback]);
+  const allSlotsValid = validationFeedback.isValid && validationFeedback.hasSlots;
 
   const onSubmitForm = useCallback(
     (data: PreferredSchedule) => {
-      const feedback = getValidationFeedback();
-
-      if (!feedback.hasSlots) {
+      if (!validationFeedback.hasSlots) {
         alert("Please add at least one time slot before proceeding.");
         return;
       }
 
-      if (!feedback.isValid) {
+      if (!validationFeedback.isValid) {
         const errorMessage =
-          feedback.errors.length > 0
-            ? `Please fix the following issues:\n${feedback.errors.join("\n")}`
+          validationFeedback.errors.length > 0
+            ? `Please fix the following issues:\n${validationFeedback.errors.join("\n")}`
             : "Please fix all validation errors before proceeding.";
         alert(errorMessage);
         return;
@@ -505,7 +494,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
 
       onNext(data);
     },
-    [getValidationFeedback, onNext],
+    [validationFeedback, onNext],
   );
 
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -802,10 +791,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
       />
 
       {/* Validation Feedback - using shared component */}
-      <SlotValidationFeedback
-        slots={currentSlots}
-        scheduleType={scheduleType as "WEEKLY" | "CUSTOM"}
-      />
+      <SlotValidationFeedback slots={currentSlots} />
 
       {/* Navigation */}
       <div className="flex gap-4 pt-4">
@@ -817,7 +803,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
         >
           Back
         </Button>
-        <Button type="submit" disabled={!allSlotsValid()} className="flex-1">
+        <Button type="submit" disabled={!allSlotsValid} className="flex-1">
           Continue
         </Button>
       </div>

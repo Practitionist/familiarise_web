@@ -470,36 +470,16 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
         const validationResult = validateTimeSlot(
           updatedSlot,
           currentSlots[day]?.filter((_, i) => i !== index) || [],
-          day,
-          scheduleType === ScheduleType.WEEKLY,
         );
 
-        // Handle overnight slot splitting if needed
-        if (validationResult.needsSplitting) {
-          setSlots((prev) => {
-            const { currentDaySlot, nextDaySlot, nextKey } =
-              validationResult.needsSplitting!;
-            return {
-              ...prev,
-              [day]: [
-                ...(prev[day] || []).slice(0, index),
-                currentDaySlot,
-                ...(prev[day] || []).slice(index + 1),
-              ],
-              [nextKey]: [...(prev[nextKey] || []), nextDaySlot],
-            };
-          });
-        } else {
-          // Regular slot update
-          setSlots((prev) => ({
-            ...prev,
-            [day]: [
-              ...(prev[day] || []).slice(0, index),
-              validationResult.slot,
-              ...(prev[day] || []).slice(index + 1),
-            ],
-          }));
-        }
+        setSlots((prev) => ({
+          ...prev,
+          [day]: [
+            ...(prev[day] || []).slice(0, index),
+            validationResult,
+            ...(prev[day] || []).slice(index + 1),
+          ],
+        }));
       });
     },
     [scheduleType, weeklySlots, customSlots],
@@ -1563,7 +1543,6 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
       {/* Slot Validation Feedback - shared component */}
       <SlotValidationFeedback
         slots={scheduleType === ScheduleType.WEEKLY ? weeklySlots : customSlots}
-        scheduleType={scheduleType === ScheduleType.WEEKLY ? "WEEKLY" : "CUSTOM"}
         className="mt-4"
       />
 

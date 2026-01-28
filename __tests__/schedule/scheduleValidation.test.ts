@@ -58,62 +58,50 @@ describe("Schedule Validation", () => {
       const result = validateTimeSlot(
         { startTime: "09:00", endTime: "09:30", isValid: false },
         [],
-        "monday",
-        true,
       );
-      expect(result.slot.isValid).toBe(true);
+      expect(result.isValid).toBe(true);
     });
 
     it("should reject 45 minutes (not multiple of 30)", () => {
       const result = validateTimeSlot(
         { startTime: "09:00", endTime: "09:45", isValid: false },
         [],
-        "monday",
-        true,
       );
-      expect(result.slot.isValid).toBe(false);
-      expect(result.slot.errorMessage).toContain("multiples of 30 minutes");
+      expect(result.isValid).toBe(false);
+      expect(result.errorMessage).toContain("multiples of 30 minutes");
     });
 
     it("should accept 60 minutes", () => {
       const result = validateTimeSlot(
         { startTime: "09:00", endTime: "10:00", isValid: false },
         [],
-        "monday",
-        true,
       );
-      expect(result.slot.isValid).toBe(true);
+      expect(result.isValid).toBe(true);
     });
 
     it("should reject 75 minutes (not multiple of 30)", () => {
       const result = validateTimeSlot(
         { startTime: "09:00", endTime: "10:15", isValid: false },
         [],
-        "monday",
-        true,
       );
-      expect(result.slot.isValid).toBe(false);
-      expect(result.slot.errorMessage).toContain("multiples of 30 minutes");
+      expect(result.isValid).toBe(false);
+      expect(result.errorMessage).toContain("multiples of 30 minutes");
     });
 
     it("should accept 90 minutes", () => {
       const result = validateTimeSlot(
         { startTime: "09:00", endTime: "10:30", isValid: false },
         [],
-        "monday",
-        true,
       );
-      expect(result.slot.isValid).toBe(true);
+      expect(result.isValid).toBe(true);
     });
 
     it("should accept 2 hours", () => {
       const result = validateTimeSlot(
         { startTime: "09:00", endTime: "11:00", isValid: false },
         [],
-        "monday",
-        true,
       );
-      expect(result.slot.isValid).toBe(true);
+      expect(result.isValid).toBe(true);
     });
   });
 
@@ -126,36 +114,28 @@ describe("Schedule Validation", () => {
         validateTimeSlot(
           { startTime: "09:00", endTime: "10:00", isValid: false },
           [],
-          "monday",
-          true,
-        ).slot.isValid,
+        ).isValid,
       ).toBe(true);
 
       expect(
         validateTimeSlot(
           { startTime: "09:15", endTime: "10:15", isValid: false },
           [],
-          "monday",
-          true,
-        ).slot.isValid,
+        ).isValid,
       ).toBe(true);
 
       expect(
         validateTimeSlot(
           { startTime: "09:30", endTime: "10:30", isValid: false },
           [],
-          "monday",
-          true,
-        ).slot.isValid,
+        ).isValid,
       ).toBe(true);
 
       expect(
         validateTimeSlot(
           { startTime: "09:45", endTime: "10:45", isValid: false },
           [],
-          "monday",
-          true,
-        ).slot.isValid,
+        ).isValid,
       ).toBe(true);
     });
 
@@ -163,22 +143,18 @@ describe("Schedule Validation", () => {
       const result = validateTimeSlot(
         { startTime: "09:05", endTime: "10:05", isValid: false },
         [],
-        "monday",
-        true,
       );
-      expect(result.slot.isValid).toBe(false);
-      expect(result.slot.errorMessage).toContain("multiples of 15 minutes");
+      expect(result.isValid).toBe(false);
+      expect(result.errorMessage).toContain("multiples of 15 minutes");
     });
 
     it("should reject invalid 10-min increment", () => {
       const result = validateTimeSlot(
         { startTime: "09:10", endTime: "10:10", isValid: false },
         [],
-        "monday",
-        true,
       );
-      expect(result.slot.isValid).toBe(false);
-      expect(result.slot.errorMessage).toContain("multiples of 15 minutes");
+      expect(result.isValid).toBe(false);
+      expect(result.errorMessage).toContain("multiples of 15 minutes");
     });
   });
 
@@ -194,12 +170,10 @@ describe("Schedule Validation", () => {
       const result = validateTimeSlot(
         { startTime: "10:00", endTime: "11:00", isValid: false },
         existingSlots,
-        "monday",
-        true,
       );
 
       // Back-to-back should now be VALID (buffer removed)
-      expect(result.slot.isValid).toBe(true);
+      expect(result.isValid).toBe(true);
     });
 
     it("should allow small gap between slots", () => {
@@ -210,11 +184,9 @@ describe("Schedule Validation", () => {
       const result = validateTimeSlot(
         { startTime: "10:15", endTime: "11:15", isValid: false },
         existingSlots,
-        "monday",
-        true,
       );
 
-      expect(result.slot.isValid).toBe(true);
+      expect(result.isValid).toBe(true);
     });
 
     it("should reject true overlap (partial)", () => {
@@ -225,12 +197,10 @@ describe("Schedule Validation", () => {
       const result = validateTimeSlot(
         { startTime: "09:30", endTime: "10:30", isValid: false },
         existingSlots,
-        "monday",
-        true,
       );
 
-      expect(result.slot.isValid).toBe(false);
-      expect(result.slot.errorMessage).toBe("Slots cannot overlap");
+      expect(result.isValid).toBe(false);
+      expect(result.errorMessage).toBe("Slots cannot overlap");
     });
 
     it("should reject contained slot (one inside another)", () => {
@@ -241,12 +211,10 @@ describe("Schedule Validation", () => {
       const result = validateTimeSlot(
         { startTime: "09:00", endTime: "10:00", isValid: false },
         existingSlots,
-        "monday",
-        true,
       );
 
-      expect(result.slot.isValid).toBe(false);
-      expect(result.slot.errorMessage).toBe("Slots cannot overlap");
+      expect(result.isValid).toBe(false);
+      expect(result.errorMessage).toBe("Slots cannot overlap");
     });
 
     it("should reject identical slots", () => {
@@ -257,12 +225,10 @@ describe("Schedule Validation", () => {
       const result = validateTimeSlot(
         { startTime: "09:00", endTime: "10:00", isValid: false },
         existingSlots,
-        "monday",
-        true,
       );
 
-      expect(result.slot.isValid).toBe(false);
-      expect(result.slot.errorMessage).toBe("Slots cannot overlap");
+      expect(result.isValid).toBe(false);
+      expect(result.errorMessage).toBe("Slots cannot overlap");
     });
 
     it("should allow multiple back-to-back slots", () => {
@@ -274,11 +240,9 @@ describe("Schedule Validation", () => {
       const result = validateTimeSlot(
         { startTime: "11:00", endTime: "12:00", isValid: false },
         existingSlots,
-        "monday",
-        true,
       );
 
-      expect(result.slot.isValid).toBe(true);
+      expect(result.isValid).toBe(true);
     });
   });
 
@@ -290,35 +254,29 @@ describe("Schedule Validation", () => {
       const result = validateTimeSlot(
         { startTime: "20:00", endTime: "00:00", isValid: false },
         [],
-        "monday",
-        true,
       );
       // Ending at midnight is a special case that's allowed
-      expect(result.slot.isValid).toBe(true);
+      expect(result.isValid).toBe(true);
     });
 
     it("should reject true overnight slots (end before start, not midnight)", () => {
       const result = validateTimeSlot(
         { startTime: "22:00", endTime: "06:00", isValid: false },
         [],
-        "monday",
-        true,
       );
 
-      expect(result.slot.isValid).toBe(false);
-      expect(result.slot.errorMessage).toContain("Overnight slots are not allowed");
+      expect(result.isValid).toBe(false);
+      expect(result.errorMessage).toContain("Overnight slots are not allowed");
     });
 
     it("should reject same start and end time", () => {
       const result = validateTimeSlot(
         { startTime: "10:00", endTime: "10:00", isValid: false },
         [],
-        "monday",
-        true,
       );
 
-      expect(result.slot.isValid).toBe(false);
-      expect(result.slot.errorMessage).toBe(
+      expect(result.isValid).toBe(false);
+      expect(result.errorMessage).toBe(
         "Start and end time cannot be the same",
       );
     });
@@ -332,12 +290,10 @@ describe("Schedule Validation", () => {
       const result = validateTimeSlot(
         { startTime: "", endTime: "10:00", isValid: false },
         [],
-        "monday",
-        true,
       );
 
-      expect(result.slot.isValid).toBe(false);
-      expect(result.slot.errorMessage).toBe(
+      expect(result.isValid).toBe(false);
+      expect(result.errorMessage).toBe(
         "Please select both start and end time",
       );
     });
@@ -346,12 +302,10 @@ describe("Schedule Validation", () => {
       const result = validateTimeSlot(
         { startTime: "09:00", endTime: "", isValid: false },
         [],
-        "monday",
-        true,
       );
 
-      expect(result.slot.isValid).toBe(false);
-      expect(result.slot.errorMessage).toBe(
+      expect(result.isValid).toBe(false);
+      expect(result.errorMessage).toBe(
         "Please select both start and end time",
       );
     });
@@ -360,22 +314,18 @@ describe("Schedule Validation", () => {
       const result = validateTimeSlot(
         { startTime: "", endTime: "", isValid: false },
         [],
-        "monday",
-        true,
       );
 
-      expect(result.slot.isValid).toBe(false);
+      expect(result.isValid).toBe(false);
     });
 
     it("should handle invalid time format", () => {
       const result = validateTimeSlot(
         { startTime: "25:00", endTime: "26:00", isValid: false },
         [],
-        "monday",
-        true,
       );
 
-      expect(result.slot.isValid).toBe(false);
+      expect(result.isValid).toBe(false);
     });
   });
 
@@ -475,11 +425,9 @@ describe("Schedule Validation", () => {
       const result = validateTimeSlot(
         { startTime: "09:00", endTime: "10:00", isValid: false },
         [],
-        "2024-01-15",
-        false, // not weekly
       );
 
-      expect(result.slot.isValid).toBe(true);
+      expect(result.isValid).toBe(true);
     });
 
     it("should detect overlaps in custom schedule", () => {
@@ -490,12 +438,10 @@ describe("Schedule Validation", () => {
       const result = validateTimeSlot(
         { startTime: "10:00", endTime: "12:00", isValid: false },
         existingSlots,
-        "2024-01-15",
-        false,
       );
 
-      expect(result.slot.isValid).toBe(false);
-      expect(result.slot.errorMessage).toBe("Slots cannot overlap");
+      expect(result.isValid).toBe(false);
+      expect(result.errorMessage).toBe("Slots cannot overlap");
     });
   });
 });
