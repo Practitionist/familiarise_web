@@ -1,20 +1,12 @@
 import { TConsultantProfile } from "@/types/consultant";
 import {
-  convertTimezoneToUtcWithOvernight,
   convertUtcToTimezone,
   extractTimeFromUtcSlot,
   sortSlotsByTime,
 } from "@/utils/dateTimeUtils";
 import { isValidTimeRange } from "@/utils/timeSlotValidation";
+import type { SlotsType } from "@/utils/schedule/types";
 import { DayOfWeek, ScheduleType, SessionType } from "@prisma/client";
-export interface SlotType {
-  startTime: string;
-  endTime: string;
-  isValid: boolean;
-  errorMessage?: string;
-}
-
-export type SlotsType = Record<string, SlotType[]>;
 
 export interface FormData {
   description: string;
@@ -63,10 +55,7 @@ export const DAYS_OF_WEEK: DayOfWeek[] = [
   DayOfWeek.SUNDAY,
 ];
 
-// formatDayDisplay is now imported from timeUtils
-
-// formatTimeFromDate removed - using convertToLocalTime from timeUtils
-
+/** Extracts editable form fields from a consultant profile into initial form state. */
 export const getInitialFormData = (
   consultant: TConsultantProfile,
 ): FormData => ({
@@ -89,6 +78,10 @@ export const getInitialFormData = (
   sessionTypes: consultant?.sessionTypes ?? [],
 });
 
+/**
+ * Converts a consultant's persisted weekly availability (UTC) into local-time
+ * SlotType entries grouped by lowercase day-of-week key.
+ */
 export const getInitialWeeklySlots = (
   consultant: TConsultantProfile,
   timezone: string = "UTC",
@@ -152,6 +145,10 @@ export const getInitialWeeklySlots = (
   return formattedWeeklySlots;
 };
 
+/**
+ * Converts a consultant's persisted custom availability (UTC) into local-time
+ * SlotType entries grouped by YYYY-MM-DD date key.
+ */
 export const getInitialCustomSlots = (
   consultant: TConsultantProfile,
   timezone: string = "UTC",
@@ -229,160 +226,7 @@ export const getInitialCustomSlots = (
   return formattedCustomSlots;
 };
 
-export const formatSlotsForApi = (
-  slots: SlotsType,
-  isWeekly: boolean,
-  timezone: string = "UTC",
-) => {
-  try {
-    return Object.entries(slots)
-      .filter(([key, daySlots]) => {
-        // Ensure we have valid key and slots array
-        return key && Array.isArray(daySlots) && daySlots.length > 0;
-      })
-      .flatMap(([key, daySlots]) => {
-        // Sort slots chronologically before processing
-        const sortedSlots = sortSlotsByTime(daySlots);
-
-        return sortedSlots
-          .filter((slot) => {
-            // Comprehensive slot validation
-            return (
-              slot &&
-              typeof slot === "object" &&
-              slot.isValid === true &&
-              slot.startTime &&
-              slot.endTime &&
-              typeof slot.startTime === "string" &&
-              typeof slot.endTime === "string" &&
-              isValidTimeRange(slot.startTime, slot.endTime)
-            );
-          })
-          .map((slot) => {
-            try {
-              if (isWeekly) {
-                // Validate day of week for weekly slots
-                const dayOfWeek = key.toUpperCase();
-                const validDays = [
-                  "MONDAY",
-                  "TUESDAY",
-                  "WEDNESDAY",
-                  "THURSDAY",
-                  "FRIDAY",
-                  "SATURDAY",
-                  "SUNDAY",
-                ];
-                if (!validDays.includes(dayOfWeek)) {
-                  throw new Error(`Invalid day of week: ${dayOfWeek}`);
-                }
-
-                // For weekly slots, use the enhanced timezone conversion that handles overnight slots
-                const baseDate = "1970-01-01";
-                const startTimeUtc = convertTimezoneToUtcWithOvernight(
-                  slot.startTime,
-                  baseDate,
-                  timezone,
-                  false, // isEndTime
-                );
-                const endTimeUtc = convertTimezoneToUtcWithOvernight(
-                  slot.endTime,
-                  baseDate,
-                  timezone,
-                  true, // isEndTime
-                  slot.startTime, // startTimeStr for overnight detection
-                );
-
-                // Determine the correct day of week for the end time
-                // If it's an overnight slot, the end day is the next day
-                const [startHour, startMinute] = slot.startTime
-                  .split(":")
-                  .map(Number);
-                const [endHour, endMinute] = slot.endTime
-                  .split(":")
-                  .map(Number);
-                const isOvernightSlot =
-                  endHour * 60 + endMinute < startHour * 60 + startMinute;
-
-                const endDayOfWeek = isOvernightSlot
-                  ? getNextDayOfWeek(dayOfWeek)
-                  : dayOfWeek;
-
-                return {
-                  dayOfWeekforStartTimeInUTC: dayOfWeek,
-                  dayOfWeekforEndTimeInUTC: endDayOfWeek,
-                  slotStartTimeInUTC:
-                    startTimeUtc || `${baseDate}T${slot.startTime}:00.000Z`,
-                  slotEndTimeInUTC:
-                    endTimeUtc || `${baseDate}T${slot.endTime}:00.000Z`,
-                };
-              } else {
-                // Validate date format for custom slots
-                const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
-                if (!dateRegex.test(key)) {
-                  throw new Error(`Invalid date format: ${key}`);
-                }
-
-                // For custom slots, use the enhanced timezone conversion
-                const startTimeUtc = convertTimezoneToUtcWithOvernight(
-                  slot.startTime,
-                  key,
-                  timezone,
-                  false, // isEndTime
-                );
-                const endTimeUtc = convertTimezoneToUtcWithOvernight(
-                  slot.endTime,
-                  key,
-                  timezone,
-                  true, // isEndTime
-                  slot.startTime, // startTimeStr for overnight detection
-                );
-
-                return {
-                  slotStartTimeInUTC:
-                    startTimeUtc ||
-                    new Date(`${key}T${slot.startTime}:00`).toISOString(),
-                  slotEndTimeInUTC:
-                    endTimeUtc ||
-                    new Date(`${key}T${slot.endTime}:00`).toISOString(),
-                };
-              }
-            } catch (error) {
-              console.error("Error formatting slot for API:", error, {
-                key,
-                slot,
-              });
-              return null; // Filter out invalid slots
-            }
-          })
-          .filter(Boolean); // Remove null entries
-      });
-  } catch (error) {
-    console.error("Error in formatSlotsForApi:", error, { slots, isWeekly });
-    return []; // Return empty array on error to prevent API failures
-  }
-};
-
-// Helper function to get the next day of the week
-const getNextDayOfWeek = (dayOfWeek: string): string => {
-  const days = [
-    "MONDAY",
-    "TUESDAY",
-    "WEDNESDAY",
-    "THURSDAY",
-    "FRIDAY",
-    "SATURDAY",
-    "SUNDAY",
-  ];
-  const currentIndex = days.indexOf(dayOfWeek);
-  return days[(currentIndex + 1) % days.length];
-};
-
-// Calendar utilities - using centralized functions from timeUtils
-export const getCurrentDate = () => {
-  const date = new Date();
-  return date.toISOString().split("T")[0];
-};
-
+/** Returns a human-readable "Month Year" string (e.g., "January 2025") for the calendar header. */
 export const getMonthYearString = (date: Date) => {
   return date.toLocaleString("default", {
     month: "long",
