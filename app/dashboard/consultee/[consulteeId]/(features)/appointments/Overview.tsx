@@ -24,7 +24,6 @@ import {
   Video,
   Users,
   BookOpen,
-  Gift,
 } from "lucide-react";
 import { motion } from "framer-motion";
 import type { BookingStatus } from "@/components/ui/waitlist-status-badge";
@@ -179,8 +178,9 @@ export function Overview({
           title="Subscriptions"
           icon={Calendar}
           accentColor="violet"
-          items={sortEventItems(
-            subscriptions.map((subscription) => {
+          items={sortEventItems([
+            // Regular subscriptions
+            ...subscriptions.map((subscription) => {
               const slotInfo = getActualNextSlotTime({
                 ...subscription,
                 type: "Subscription",
@@ -215,7 +215,33 @@ export function Overview({
                 pendingPaymentUrl: subscription.pendingPaymentUrl,
               };
             }),
-          )}
+            // Free trials (grouped under subscriptions)
+            ...trials.map((trial) => {
+              const rawSlots = trial.appointment?.slotsOfAppointment ?? [];
+              const firstSlot = rawSlots[0];
+              return {
+                id: trial.id,
+                title: `Free Trial: ${trial.subscriptionPlan.title}`,
+                consultant:
+                  trial.subscriptionPlan.consultantProfile?.user?.name ??
+                  "Unknown Consultant",
+                date: firstSlot
+                  ? formatDateFromSlot(firstSlot as SlotOfAppointment)
+                  : "Awaiting schedule",
+                image: trial.subscriptionPlan.consultantProfile?.user?.image,
+                status: trial.status,
+                type: "Trial" as const,
+                isTentative: false,
+                actualSlots: rawSlots.map((slot) => ({
+                  startTime: new Date(slot.startsAt),
+                  endTime: new Date(slot.endsAt),
+                })),
+                appointmentId: trial.appointment?.id,
+                appointment: trial.appointment as TAppointment | undefined,
+                rawSlots: rawSlots as SlotOfAppointment[],
+              };
+            }),
+          ])}
         />
       </motion.div>
 
@@ -343,43 +369,6 @@ export function Overview({
                 rawSlots,
                 bookingStatus,
                 waitlistPosition,
-              };
-            }),
-          )}
-        />
-      </motion.div>
-
-      <motion.div variants={fadeInUp}>
-        <DashboardCard
-          title="Free Trials"
-          icon={Gift}
-          accentColor="rose"
-          items={sortEventItems(
-            trials.map((trial) => {
-              // Get slot info from trial appointment
-              const rawSlots = trial.appointment?.slotsOfAppointment ?? [];
-              const firstSlot = rawSlots[0];
-
-              return {
-                id: trial.id,
-                title: `Free Trial: ${trial.subscriptionPlan.title}`,
-                consultant:
-                  trial.subscriptionPlan.consultantProfile?.user?.name ??
-                  "Unknown Consultant",
-                date: firstSlot
-                  ? formatDateFromSlot(firstSlot as SlotOfAppointment)
-                  : "Awaiting schedule",
-                image: trial.subscriptionPlan.consultantProfile?.user?.image,
-                status: trial.status,
-                type: "Trial" as const,
-                isTentative: false,
-                actualSlots: rawSlots.map((slot) => ({
-                  startTime: new Date(slot.startsAt),
-                  endTime: new Date(slot.endsAt),
-                })),
-                appointmentId: trial.appointment?.id,
-                appointment: trial.appointment as TAppointment | undefined,
-                rawSlots: rawSlots as SlotOfAppointment[],
               };
             }),
           )}

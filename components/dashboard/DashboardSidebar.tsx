@@ -40,6 +40,7 @@ import {
   LifeBuoy,
   Timer,
   Server,
+  Gift,
 } from "lucide-react";
 import { ReactNode } from "react";
 
@@ -77,6 +78,7 @@ const iconMap: Record<string, typeof Home> = {
   tickets: LifeBuoy,
   waitlists: Timer,
   "system-jobs": Server,
+  trials: Gift,
 };
 
 export interface NavItem {

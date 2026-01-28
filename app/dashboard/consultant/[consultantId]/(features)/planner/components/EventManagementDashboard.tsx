@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
+import { useRouter } from "next/navigation";
 import { EventCarousel } from "./EventCarousel";
 import { EventPlanner } from "./EventPlanner";
 import {
@@ -90,6 +91,51 @@ export function EventManagementDashboard({
   } = useSubscriptionPlanMutations(consultantId);
   const { refreshPlanner } = usePlannerRefresh(consultantId);
   const [currentDate, setCurrentDate] = useState(new Date());
+  const router = useRouter();
+
+  // Trial management state - just counts for badge display
+  const [pendingTrialCounts, setPendingTrialCounts] = useState<
+    Record<string, number>
+  >({});
+
+  // Fetch pending trial counts for subscription plans
+  const fetchTrialCounts = useCallback(async () => {
+    if (!consultantId) return;
+
+    try {
+      const response = await fetch(
+        `/api/trials?consultantProfileId=${consultantId}&status=PENDING`
+      );
+      if (!response.ok) return;
+
+      const { data } = await response.json();
+      // Group by subscriptionPlanId
+      const counts = data.reduce(
+        (
+          acc: Record<string, number>,
+          trial: { subscriptionPlanId: string }
+        ) => {
+          acc[trial.subscriptionPlanId] =
+            (acc[trial.subscriptionPlanId] || 0) + 1;
+          return acc;
+        },
+        {}
+      );
+      setPendingTrialCounts(counts);
+    } catch (error) {
+      console.error("Error fetching trial counts:", error);
+    }
+  }, [consultantId]);
+
+  // Fetch trial counts on mount and when subscription plans change
+  useEffect(() => {
+    fetchTrialCounts();
+  }, [fetchTrialCounts, subscriptionPlans]);
+
+  // Redirect to Free Trials tab when clicking trial button
+  const handleTrialsClick = () => {
+    router.push(`/dashboard/consultant/${consultantId}/trials`);
+  };
 
   // Fetch events on load only if no initial data
   useEffect(() => {
@@ -547,6 +593,8 @@ export function EventManagementDashboard({
                 onDelete={handleSubscriptionPlanDelete}
                 eventType="subscription"
                 participantCounts={{}}
+                pendingTrialCounts={pendingTrialCounts}
+                onTrialsClick={handleTrialsClick}
               />
             )}
           </div>

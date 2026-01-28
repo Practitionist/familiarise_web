@@ -1,5 +1,5 @@
 import prisma from "@/lib/prisma";
-import { Prisma, TrialSessionStatus, AppointmentsType } from "@prisma/client";
+import { Prisma, TrialSessionStatus } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { logTrialRequested } from "@/lib/activity/log-activity";
 
@@ -11,11 +11,36 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const consultantProfileId = searchParams.get("consultantProfileId");
   const consulteeProfileId = searchParams.get("consulteeProfileId");
+  const subscriptionPlanId = searchParams.get("subscriptionPlanId");
   const status = searchParams.get("status") as TrialSessionStatus | null;
   const page = parseInt(searchParams.get("page") || "1");
   const limit = parseInt(searchParams.get("limit") || "10");
+  const search = searchParams.get("search");
+  const sortBy = searchParams.get("sortBy") || "requestedAt";
+  const sortOrder = searchParams.get("sortOrder") || "desc";
 
   try {
+    // Auto-complete scheduled trials whose end time has passed
+    const now = new Date();
+    await prisma.trialSession.updateMany({
+      where: {
+        status: TrialSessionStatus.SCHEDULED,
+        appointment: {
+          slotsOfAppointment: {
+            some: {
+              endsAt: {
+                lt: now,
+              },
+            },
+          },
+        },
+      },
+      data: {
+        status: TrialSessionStatus.COMPLETED,
+        completedAt: now,
+      },
+    });
+
     const whereClause: Prisma.TrialSessionWhereInput = {};
 
     if (consultantProfileId) {
@@ -26,9 +51,29 @@ export async function GET(request: NextRequest) {
       whereClause.consulteeProfileId = consulteeProfileId;
     }
 
+    if (subscriptionPlanId) {
+      whereClause.subscriptionPlanId = subscriptionPlanId;
+    }
+
     if (status) {
       whereClause.status = status;
     }
+
+    if (search) {
+      whereClause.OR = [
+        { consulteeProfile: { user: { name: { contains: search, mode: "insensitive" } } } },
+        { consulteeProfile: { user: { email: { contains: search, mode: "insensitive" } } } },
+      ];
+    }
+
+    // Dynamic orderBy mapping
+    const orderByMap: Record<string, Prisma.TrialSessionOrderByWithRelationInput> = {
+      requestedAt: { requestedAt: sortOrder as "asc" | "desc" },
+      status: { status: sortOrder as "asc" | "desc" },
+      name: { consulteeProfile: { user: { name: sortOrder as "asc" | "desc" } } },
+      plan: { subscriptionPlan: { title: sortOrder as "asc" | "desc" } },
+    };
+    const orderBy = orderByMap[sortBy] || orderByMap.requestedAt;
 
     const [trialSessions, total] = await Promise.all([
       prisma.trialSession.findMany({
@@ -66,9 +111,7 @@ export async function GET(request: NextRequest) {
           },
           convertedToSubscription: true,
         },
-        orderBy: {
-          requestedAt: "desc",
-        },
+        orderBy,
         skip: (page - 1) * limit,
         take: limit,
       }),

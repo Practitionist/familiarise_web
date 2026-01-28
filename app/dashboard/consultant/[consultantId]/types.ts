@@ -97,9 +97,40 @@ export interface HomeTabProps {
   onUpdate?: () => void;
 }
 
+// Trial session type for appointments tab
+export interface ScheduledTrial {
+  id: string;
+  status: string;
+  notes: string | null;
+  requestedAt: string;
+  consulteeProfile: {
+    id: string;
+    user: {
+      id: string;
+      name: string;
+      email: string;
+      image: string | null;
+    };
+  };
+  subscriptionPlan: {
+    id: string;
+    title: string;
+    freeTrialDurationMinutes: number;
+  };
+  appointment: {
+    id: string;
+    slotsOfAppointment: Array<{
+      id: string;
+      startsAt: string;
+      endsAt: string;
+    }>;
+  } | null;
+}
+
 export interface AppointmentsTabProps {
   appointments: TAppointment[];
   badgeStyles: BadgeStyleMap;
+  scheduledTrials?: ScheduledTrial[];
   onUpdate?: () => void;
 }
 

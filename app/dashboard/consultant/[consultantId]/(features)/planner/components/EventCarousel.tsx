@@ -51,6 +51,8 @@ interface SubscriptionCarouselProps {
   onDelete: (eventId: string) => Promise<void>;
   eventType: "subscription";
   participantCounts: Record<string, number>;
+  pendingTrialCounts?: Record<string, number>;
+  onTrialsClick?: () => void;
 }
 
 type EventCarouselProps =
@@ -140,7 +142,17 @@ export function EventCarousel({
   onDelete,
   eventType,
   participantCounts,
+  ...props
 }: EventCarouselProps) {
+  // Extract subscription-specific props
+  const pendingTrialCounts =
+    eventType === "subscription"
+      ? (props as SubscriptionCarouselProps).pendingTrialCounts
+      : undefined;
+  const onTrialsClick =
+    eventType === "subscription"
+      ? (props as SubscriptionCarouselProps).onTrialsClick
+      : undefined;
   const [currentPage, setCurrentPage] = React.useState(1);
   const itemsPerPage = 8;
 
@@ -255,8 +267,20 @@ export function EventCarousel({
               event={event}
               eventType={eventType}
               participantCount={participantCounts[event.id ?? ""] ?? 0}
+              pendingTrialCount={
+                eventType === "subscription" && pendingTrialCounts
+                  ? pendingTrialCounts[event.id ?? ""]
+                  : undefined
+              }
               onEdit={() => handleEdit(event)}
               onDelete={() => handleDeleteClick(event)}
+              onTrialsClick={
+                eventType === "subscription" &&
+                onTrialsClick &&
+                isSubscriptionPlanEvent(event)
+                  ? onTrialsClick
+                  : undefined
+              }
             />
           </motion.div>
         ))}
