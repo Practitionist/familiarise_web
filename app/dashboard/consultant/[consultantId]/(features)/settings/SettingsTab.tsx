@@ -1568,7 +1568,7 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
       />
 
       {/* Action Buttons */}
-      <div className="flex justify-end space-x-4 pt-6">
+      <div className="flex justify-end items-center space-x-4 pt-6">
         <Button
           type="button"
           variant="outline"
@@ -1588,16 +1588,14 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
         >
           Cancel
         </Button>
-        <div className="flex justify-end pt-4">
-          <Button
-            type="submit"
-            className="bg-primary hover:bg-primary/90 text-primary-foreground min-w-[200px]"
-            disabled={isLoading}
-          >
-            {isLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-            Save Changes
-          </Button>
-        </div>
+        <Button
+          type="submit"
+          className="bg-primary hover:bg-primary/90 text-primary-foreground min-w-[200px]"
+          disabled={isLoading}
+        >
+          {isLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+          Save Changes
+        </Button>
       </div>
 
       {/* Verification Resubmission Modal */}
