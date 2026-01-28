@@ -73,9 +73,7 @@ export function Calendar({
               id: `${c.id}-${startTime.getTime()}`,
               title: c.consultationPlan.title,
               start: startTime,
-              end: slot.endsAt
-                ? new Date(slot.endsAt)
-                : new Date(startTime.getTime() + 60 * 60 * 1000),
+              end: new Date(slot.endsAt ?? slot.startsAt),
               type: "Consultation" as const,
               status: c.requestStatus,
               consultant:
@@ -97,9 +95,7 @@ export function Calendar({
               id: `${s.id}-${startTime.getTime()}`,
               title: s.subscriptionPlan.title,
               start: startTime,
-              end: slot.endsAt
-                ? new Date(slot.endsAt)
-                : new Date(startTime.getTime() + 60 * 60 * 1000),
+              end: new Date(slot.endsAt ?? slot.startsAt),
               type: "Subscription" as const,
               status: s.requestStatus,
               consultant:
@@ -121,9 +117,7 @@ export function Calendar({
               id: `${c.id}-${startTime.getTime()}`,
               title: c.classPlan.title,
               start: startTime,
-              end: slot.endsAt
-                ? new Date(slot.endsAt)
-                : new Date(startTime.getTime() + 60 * 60 * 1000),
+              end: new Date(slot.endsAt ?? slot.startsAt),
               type: "Class" as const,
               status: c.status,
               consultant:
@@ -144,9 +138,7 @@ export function Calendar({
               id: `${w.id}-${startTime.getTime()}`,
               title: w.webinarPlan.title,
               start: startTime,
-              end: slot.endsAt
-                ? new Date(slot.endsAt)
-                : new Date(startTime.getTime() + 60 * 60 * 1000),
+              end: new Date(slot.endsAt ?? slot.startsAt),
               type: "Webinar" as const,
               status: w.status,
               consultant:
@@ -185,12 +177,10 @@ export function Calendar({
       ].filter((event) => {
         const startTime = event.start.getTime();
         if (isNaN(startTime)) {
-          console.log("Invalid date for event:", event.title);
           return false;
         }
         // Skip dates from 1970 (Unix epoch)
         if (event.start.getFullYear() === 1970) {
-          console.log("Skipping 1970 date for event:", event.title);
           return false;
         }
         return true;
@@ -216,18 +206,8 @@ export function Calendar({
     return getStatusColor(event.status);
   };
 
-  const handleEventClick = (event: Event) => {
-    console.log("Calendar event clicked:", {
-      id: event.id,
-      title: event.title,
-      type: event.type,
-      status: event.status,
-      consultant: event.consultant,
-      start: event.start,
-      end: event.end,
-      isTentative: event.isTentative,
-    });
-  };
+  const handleEventClick = (_event: Event) => {};
+
 
   return (
     <div className="space-y-4">
