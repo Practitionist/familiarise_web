@@ -41,14 +41,12 @@ import { TConsultantProfile } from "types/consultant";
 import { MultiSelect } from "../../components/MultiSelect";
 import {
   DAYS_OF_WEEK,
-  formatSlotsForApi,
   getInitialCustomSlots,
   getInitialFormData,
   getInitialWeeklySlots,
   getMonthYearString,
   type Domain,
   type FormData,
-  type SlotsType,
   type SubDomain,
   type Tag,
 } from "./settings";
@@ -59,12 +57,15 @@ import {
   getDaysInMonth,
   getFirstDayOfMonth,
   getLocalDateString,
-  sortSlotsByTime,
 } from "@/utils/dateTimeUtils";
 import {
   validateTimeSlot,
   validateAllSlotsDetailed,
 } from "@/utils/timeSlotValidation";
+// Import shared schedule components and utilities
+import { SlotValidationFeedback } from "@/components/schedule/SlotValidationFeedback";
+import { formatSlotsForApi } from "@/utils/schedule/formatting";
+import type { SlotsType } from "@/utils/schedule/types";
 
 interface Option {
   value: string;
@@ -1559,6 +1560,13 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
         </RadioGroup>
       </div>
 
+      {/* Slot Validation Feedback - shared component */}
+      <SlotValidationFeedback
+        slots={scheduleType === ScheduleType.WEEKLY ? weeklySlots : customSlots}
+        scheduleType={scheduleType === ScheduleType.WEEKLY ? "WEEKLY" : "CUSTOM"}
+        className="mt-4"
+      />
+
       {/* Action Buttons */}
       <div className="flex justify-end space-x-4 pt-6">
         <Button
@@ -1587,7 +1595,7 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
             disabled={isLoading}
           >
             {isLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-            Or Save Changes
+            Save Changes
           </Button>
         </div>
       </div>

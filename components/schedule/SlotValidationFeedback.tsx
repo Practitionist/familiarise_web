@@ -1,0 +1,101 @@
+"use client";
+
+import React, { useMemo } from "react";
+import {
+  validateAllSlotsDetailed,
+  getSlotStatistics,
+} from "@/utils/timeSlotValidation";
+import type { SlotsType, ValidationFeedback } from "@/utils/schedule/types";
+
+interface SlotValidationFeedbackProps {
+  slots: SlotsType;
+  /** Schedule type for future use (e.g., different UI for weekly vs custom) */
+  scheduleType?: "WEEKLY" | "CUSTOM";
+  className?: string;
+  /** Maximum number of errors to show before truncating */
+  maxErrorsToShow?: number;
+}
+
+/**
+ * Shared validation feedback component for schedule forms.
+ * Shows slot count, total hours, overnight slots, and validation errors.
+ * Used in both Onboarding and Dashboard Settings forms.
+ */
+export function SlotValidationFeedback({
+  slots,
+  scheduleType: _scheduleType,
+  className = "",
+  maxErrorsToShow = 3,
+}: SlotValidationFeedbackProps) {
+  const feedback = useMemo((): ValidationFeedback => {
+    const validation = validateAllSlotsDetailed(slots);
+    const stats = getSlotStatistics(slots);
+
+    return {
+      ...validation,
+      ...stats,
+      hasSlots: Object.keys(slots).length > 0,
+    };
+  }, [slots]);
+
+  // Don't render if no slots have been added
+  if (!feedback.hasSlots) {
+    return null;
+  }
+
+  return (
+    <div className={`p-3 rounded-lg bg-muted/50 border ${className}`}>
+      <div className="flex items-center justify-between">
+        <div className="text-sm text-muted-foreground">
+          {feedback.validSlots} valid slot
+          {feedback.validSlots !== 1 ? "s" : ""}
+          {feedback.totalDurationHours > 0 &&
+            ` (${feedback.totalDurationHours}h total)`}
+          {feedback.overnightSlots > 0 &&
+            `, ${feedback.overnightSlots} overnight`}
+        </div>
+        {feedback.isValid ? (
+          <span className="text-sm text-green-600 dark:text-green-400">
+            Ready to proceed
+          </span>
+        ) : (
+          <span className="text-sm text-destructive">
+            {feedback.errors.length} error
+            {feedback.errors.length !== 1 ? "s" : ""}
+          </span>
+        )}
+      </div>
+      {!feedback.isValid && feedback.errors.length > 0 && (
+        <div className="mt-2 space-y-1">
+          {feedback.errors.slice(0, maxErrorsToShow).map((error, index) => (
+            <div key={index} className="text-xs text-destructive">
+              • {error}
+            </div>
+          ))}
+          {feedback.errors.length > maxErrorsToShow && (
+            <div className="text-xs text-muted-foreground">
+              ...and {feedback.errors.length - maxErrorsToShow} more
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Hook to get validation feedback for slots.
+ * Useful when you need the feedback data without rendering the component.
+ */
+export function useSlotValidationFeedback(slots: SlotsType): ValidationFeedback {
+  return useMemo(() => {
+    const validation = validateAllSlotsDetailed(slots);
+    const stats = getSlotStatistics(slots);
+
+    return {
+      ...validation,
+      ...stats,
+      hasSlots: Object.keys(slots).length > 0,
+    };
+  }, [slots]);
+}

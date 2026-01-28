@@ -9,7 +9,7 @@ interface SlotType {
 const VALIDATION_CONFIG = {
   MIN_DURATION_MINUTES: 30,
   MAX_DURATION_MINUTES: 12 * 60, // 12 hours max
-  BUFFER_MINUTES: 15,
+  BUFFER_MINUTES: 0, // No enforced break - back-to-back slots allowed
   TIME_INCREMENT_MINUTES: 15,
   SESSION_INCREMENT_MINUTES: 30,
 } as const;
@@ -134,7 +134,7 @@ const validateDuration = (
   return null;
 };
 
-// Check for overlaps between two time slots
+// Check for overlaps between two time slots (back-to-back allowed, true overlaps rejected)
 const checkSlotOverlap = (
   slot1Start: number,
   slot1End: number,
@@ -159,15 +159,12 @@ const checkSlotOverlap = (
       ]
     : [[slot2Start, slot2End]];
 
-  // Check if any ranges overlap with buffer
+  // Check if any ranges truly overlap (back-to-back is allowed: end1 === start2)
   for (const [start1, end1] of slot1Ranges) {
     for (const [start2, end2] of slot2Ranges) {
-      if (
-        !(
-          end1 + VALIDATION_CONFIG.BUFFER_MINUTES <= start2 ||
-          start1 >= end2 + VALIDATION_CONFIG.BUFFER_MINUTES
-        )
-      ) {
+      // Overlap exists if: start1 < end2 AND start2 < end1
+      // Back-to-back (end1 === start2) is NOT an overlap
+      if (start1 < end2 && start2 < end1) {
         return true;
       }
     }
@@ -200,7 +197,7 @@ const validateSlotOverlaps = (
     if (otherStart === null || otherEnd === null) continue;
 
     if (checkSlotOverlap(startMinutes, endMinutes, otherStart, otherEnd)) {
-      return `Must have at least a ${VALIDATION_CONFIG.BUFFER_MINUTES}-minute break between sessions`;
+      return "Slots cannot overlap";
     }
   }
 

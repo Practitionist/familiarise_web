@@ -23,23 +23,15 @@ import {
   OnboardingFormData,
   PreferredScheduleFormSchema,
 } from "@/utils/onboarding";
+import { validateTimeSlot } from "@/utils/timeSlotValidation";
 import {
-  getSlotStatistics,
-  validateAllSlots,
-  validateTimeSlot,
-} from "@/utils/timeSlotValidation";
+  SlotValidationFeedback,
+  useSlotValidationFeedback,
+} from "@/components/schedule/SlotValidationFeedback";
+import type { SlotType, SlotsType } from "@/utils/schedule/types";
 import { zodResolver } from "@hookform/resolvers/zod";
 import React, { useCallback, useEffect, useState } from "react";
 import { Controller, useForm } from "react-hook-form";
-
-interface SlotType {
-  startTime: string;
-  endTime: string;
-  isValid: boolean;
-  errorMessage?: string;
-}
-
-type SlotsType = Record<string, SlotType[]>;
 
 interface Props {
   onNext: (data: Partial<OnboardingFormData>) => void;
@@ -481,24 +473,17 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
     [handleAddSlot, handleUpdateSlot, handleDeleteSlot],
   );
 
+  // Use shared validation feedback hook
+  const currentSlots = scheduleType === "WEEKLY" ? weeklySlots : customSlots;
+  const validationFeedback = useSlotValidationFeedback(currentSlots);
+
   const allSlotsValid = useCallback(() => {
-    const currentSlots = scheduleType === "WEEKLY" ? weeklySlots : customSlots;
-    const { isValid } = validateAllSlots(currentSlots);
-    const hasSlots = Object.keys(currentSlots).length > 0;
-    return isValid && hasSlots;
-  }, [weeklySlots, customSlots, scheduleType]);
+    return validationFeedback.isValid && validationFeedback.hasSlots;
+  }, [validationFeedback]);
 
   const getValidationFeedback = useCallback(() => {
-    const currentSlots = scheduleType === "WEEKLY" ? weeklySlots : customSlots;
-    const validation = validateAllSlots(currentSlots);
-    const stats = getSlotStatistics(currentSlots);
-
-    return {
-      ...validation,
-      ...stats,
-      hasSlots: Object.keys(currentSlots).length > 0,
-    };
-  }, [weeklySlots, customSlots, scheduleType]);
+    return validationFeedback;
+  }, [validationFeedback]);
 
   const onSubmitForm = useCallback(
     (data: PreferredSchedule) => {
@@ -816,50 +801,11 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
         )}
       />
 
-      {/* Validation Feedback */}
-      {(() => {
-        const feedback = getValidationFeedback();
-        if (!feedback.hasSlots) return null;
-
-        return (
-          <div className="p-3 rounded-lg bg-muted/50 border">
-            <div className="flex items-center justify-between">
-              <div className="text-sm text-muted-foreground">
-                {feedback.validSlots} valid slot
-                {feedback.validSlots !== 1 ? "s" : ""}
-                {feedback.totalDurationHours > 0 &&
-                  ` (${feedback.totalDurationHours}h total)`}
-                {feedback.overnightSlots > 0 &&
-                  `, ${feedback.overnightSlots} overnight`}
-              </div>
-              {feedback.isValid ? (
-                <span className="text-sm text-green-600 dark:text-green-400">
-                  Ready to proceed
-                </span>
-              ) : (
-                <span className="text-sm text-destructive">
-                  {feedback.errors.length} error
-                  {feedback.errors.length !== 1 ? "s" : ""}
-                </span>
-              )}
-            </div>
-            {!feedback.isValid && feedback.errors.length > 0 && (
-              <div className="mt-2 space-y-1">
-                {feedback.errors.slice(0, 3).map((error, index) => (
-                  <div key={index} className="text-xs text-destructive">
-                    • {error}
-                  </div>
-                ))}
-                {feedback.errors.length > 3 && (
-                  <div className="text-xs text-muted-foreground">
-                    ...and {feedback.errors.length - 3} more
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        );
-      })()}
+      {/* Validation Feedback - using shared component */}
+      <SlotValidationFeedback
+        slots={currentSlots}
+        scheduleType={scheduleType as "WEEKLY" | "CUSTOM"}
+      />
 
       {/* Navigation */}
       <div className="flex gap-4 pt-4">
