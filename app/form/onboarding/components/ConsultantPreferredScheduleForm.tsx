@@ -29,6 +29,7 @@ import {
   useSlotValidationFeedback,
 } from "@/components/schedule/SlotValidationFeedback";
 import type { SlotType, SlotsType } from "@/utils/schedule/types";
+import { useToast } from "@/hooks/use-toast";
 import { zodResolver } from "@hookform/resolvers/zod";
 import React, { useCallback, useEffect, useState } from "react";
 import { Controller, useForm } from "react-hook-form";
@@ -61,6 +62,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
   initialData,
 }) => {
   const { timezone, isLoading: timezoneLoading } = useTimezone();
+  const { toast } = useToast();
   const { handleSubmit, watch, setValue, control, reset } = useForm({
     resolver: zodResolver(PreferredScheduleFormSchema),
     defaultValues: {
@@ -479,22 +481,30 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
   const onSubmitForm = useCallback(
     (data: PreferredSchedule) => {
       if (!validationFeedback.hasSlots) {
-        alert("Please add at least one time slot before proceeding.");
+        toast({
+          title: "No Time Slots",
+          description: "Please add at least one time slot before proceeding.",
+          variant: "destructive",
+        });
         return;
       }
 
       if (!validationFeedback.isValid) {
-        const errorMessage =
-          validationFeedback.errors.length > 0
-            ? `Please fix the following issues:\n${validationFeedback.errors.join("\n")}`
-            : "Please fix all validation errors before proceeding.";
-        alert(errorMessage);
+        console.error("[Schedule Validation] Submission blocked:", {
+          errorCount: validationFeedback.errors.length,
+          errors: validationFeedback.errors,
+        });
+        toast({
+          title: "Schedule Has Errors",
+          description: "Please fix the highlighted issues before proceeding.",
+          variant: "destructive",
+        });
         return;
       }
 
       onNext(data);
     },
-    [validationFeedback, onNext],
+    [validationFeedback, onNext, toast],
   );
 
   const [currentDate, setCurrentDate] = useState(new Date());
