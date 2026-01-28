@@ -221,7 +221,7 @@ export function Overview({
               const firstSlot = rawSlots[0];
               return {
                 id: trial.id,
-                title: `Free Trial: ${trial.subscriptionPlan.title}`,
+                title: trial.subscriptionPlan.title,
                 consultant:
                   trial.subscriptionPlan.consultantProfile?.user?.name ??
                   "Unknown Consultant",

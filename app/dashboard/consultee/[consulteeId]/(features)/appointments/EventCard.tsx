@@ -529,8 +529,13 @@ export function EventCard({
         {/* Badges */}
         <div className="flex items-center gap-2 mb-4 flex-wrap">
           <Badge className="text-[10px] font-medium px-2 py-0.5 bg-transparent border border-zinc-300 text-zinc-600 rounded-md">
-            {type}
+            {type === "Trial" ? "Subscription" : type}
           </Badge>
+          {type === "Trial" && (
+            <Badge className="text-[10px] font-semibold px-2 py-0.5 bg-emerald-50 text-emerald-700 border-0 rounded-md">
+              Free Trial
+            </Badge>
+          )}
           {/* Show booking status badge for webinars and classes */}
           {(type === "Webinar" || type === "Class") && bookingStatus ? (
             <WaitlistStatusBadge

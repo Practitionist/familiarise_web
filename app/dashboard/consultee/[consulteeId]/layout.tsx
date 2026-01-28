@@ -27,7 +27,6 @@ import {
   MessageSquare,
   Ticket,
   Settings,
-  Shield,
   LogOut,
   Menu,
   X,
@@ -40,13 +39,12 @@ import { useState } from "react";
 const NAV_ITEMS: NavItem[] = [
   { name: "Home", path: "home" },
   { name: "Appointments", path: "appointments" },
+  { name: "Waitlists", path: "waitlists" },
   { name: "History", path: "history" },
   { name: "Recordings", path: "recordings" },
   { name: "Messages", path: "messages" },
   { name: "Support", path: "feedback" },
   { name: "Settings", path: "settings" },
-  { name: "Policy", path: "policy" },
-  { name: "Waitlists", path: "waitlists" },
 ];
 
 // Icon mapping
@@ -57,7 +55,6 @@ const iconMap: Record<string, typeof Home> = {
   messages: MessageSquare,
   feedback: Ticket,
   settings: Settings,
-  policy: Shield,
   recordings: Video,
   waitlists: Clock,
 };
