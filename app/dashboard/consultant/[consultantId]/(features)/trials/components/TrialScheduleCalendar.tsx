@@ -141,11 +141,12 @@ export function TrialScheduleCalendar({
       timezone
     );
 
-    // Filter out slots in the past
+    // Filter out slots in the past AND allocated slots
     const now = new Date();
     return brokenDownSlots.filter((slot) => {
       const slotStart = new Date(slot.slotStartTimeInUTC);
-      return slotStart > now;
+      // Exclude past slots and allocated (booked) slots
+      return slotStart > now && !slot.isAllocated;
     });
   }, [slotTimings, durationInHours, timezone, selectedDate]);
 
