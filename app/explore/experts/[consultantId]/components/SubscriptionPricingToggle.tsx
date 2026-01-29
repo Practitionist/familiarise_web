@@ -185,12 +185,11 @@ export default function SubscriptionPricingToggle({
           <TabsTrigger
             key={option.durationInMonths}
             value={option.title.toLowerCase().replace(" ", "-")}
-            className={`${
-              activeSubscriptionOption ===
+            className={`${activeSubscriptionOption ===
               option.title.toLowerCase().replace(" ", "-")
-                ? "bg-white text-zinc-900 shadow-sm"
-                : "text-zinc-400 hover:text-white hover:bg-zinc-700/50"
-            } flex-1 px-2 sm:px-4 py-2 rounded-lg font-medium text-xs sm:text-sm transition-all duration-200 whitespace-nowrap`}
+              ? "bg-white text-zinc-900 shadow-sm"
+              : "text-zinc-400 hover:text-white hover:bg-zinc-700/50"
+              } flex-1 px-2 sm:px-4 py-2 rounded-lg font-medium text-xs sm:text-sm transition-all duration-200 whitespace-nowrap`}
           >
             {option.title}
           </TabsTrigger>
@@ -205,7 +204,7 @@ export default function SubscriptionPricingToggle({
             animate={{
               opacity:
                 activeSubscriptionOption ===
-                option.title.toLowerCase().replace(" ", "-")
+                  option.title.toLowerCase().replace(" ", "-")
                   ? 1
                   : 0,
               y: 0,
@@ -213,7 +212,7 @@ export default function SubscriptionPricingToggle({
             transition={{ duration: 0.2 }}
             className={
               activeSubscriptionOption ===
-              option.title.toLowerCase().replace(" ", "-")
+                option.title.toLowerCase().replace(" ", "-")
                 ? "block"
                 : "hidden"
             }
@@ -291,7 +290,7 @@ export default function SubscriptionPricingToggle({
 
       {/* Scheduling Period Dialog - Outside the loop to prevent duplicates */}
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent className="sm:max-w-[550px] lg:max-w-[650px] max-h-[85vh] overflow-y-auto bg-zinc-900 text-white p-0 border border-zinc-800 rounded-2xl shadow-2xl">
+        <DialogContent className="sm:max-w-[550px] lg:max-w-[650px] max-h-[90vh] overflow-y-auto bg-zinc-900 text-white p-0 border border-zinc-800 rounded-2xl shadow-2xl z-[1002] scrollbar-hide">
           <DialogHeader className="p-6 border-b border-zinc-800">
             <DialogTitle className="text-xl font-semibold">
               Select Scheduling Period
@@ -301,6 +300,7 @@ export default function SubscriptionPricingToggle({
               month subscription to run
             </DialogDescription>
           </DialogHeader>
+
           <div className="p-8 space-y-6">
             {/* Date Inputs */}
             <div className="space-y-5">
@@ -398,6 +398,7 @@ export default function SubscriptionPricingToggle({
               </p>
             </div>
           </div>
+
           <div className="bg-zinc-800/50 px-6 py-4 flex justify-center gap-3 rounded-b-2xl border-t border-zinc-800">
             <Button
               onClick={handleContinueToCheckout}
