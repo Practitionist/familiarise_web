@@ -303,8 +303,8 @@ export default function SubscriptionPricingToggle({
               {selectedPlanDetails?.freeTrialEnabled && (
                 <Button
                   className={`w-full mb-3 font-medium rounded-xl h-11 ${trialEligibility.isEligible && !trialEligibility.isLoading
-                      ? "bg-emerald-600 text-white hover:bg-emerald-500"
-                      : "bg-zinc-600 text-zinc-400 cursor-not-allowed"
+                    ? "bg-emerald-600 text-white hover:bg-emerald-500"
+                    : "bg-zinc-600 text-zinc-400 cursor-not-allowed"
                     }`}
                   disabled={!trialEligibility.isEligible || trialEligibility.isLoading}
                   onClick={() => {
@@ -498,7 +498,7 @@ export default function SubscriptionPricingToggle({
 
       {/* Session Roadmap Modal */}
       <Dialog open={isRoadmapModalOpen} onOpenChange={setIsRoadmapModalOpen}>
-        <DialogContent className="sm:max-w-[600px] max-h-[80vh] flex flex-col bg-zinc-950 text-white p-0 border border-zinc-800 rounded-2xl shadow-2xl">
+        <DialogContent className="sm:max-w-[600px] max-h-[80vh] flex flex-col bg-zinc-950 text-white p-0 border border-zinc-800 rounded-2xl shadow-2xl z-[1002]">
           <DialogHeader className="p-6 pb-4 border-b border-zinc-800/50 flex-shrink-0">
             <DialogTitle className="text-xl font-semibold flex items-center gap-2">
               <BookOpen className="w-5 h-5 text-zinc-400" />
@@ -509,7 +509,7 @@ export default function SubscriptionPricingToggle({
             </DialogDescription>
           </DialogHeader>
 
-          <div className="flex-1 overflow-y-auto p-6 min-h-0">
+          <div className="flex-1 overflow-y-auto p-6 min-h-0 scrollbar-hide">
             {selectedPlanDetails?.subscriptionContents?.length > 0 ? (
               <div className="relative">
                 {/* Timeline line */}
