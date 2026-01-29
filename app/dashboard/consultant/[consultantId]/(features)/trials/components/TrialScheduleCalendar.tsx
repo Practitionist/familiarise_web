@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { TSlotTiming } from "@/types/slots";
-import { breakDownSlotsByDuration } from "@/utils/timeSlotsProcessing";
+import { breakDownSlotsByDuration, mergeConsecutiveSlots } from "@/utils/timeSlotsProcessing";
 import { useToast } from "@/hooks/use-toast";
 import { format as formatTz } from "date-fns-tz";
 import { Calendar, Clock, Loader2, Check } from "lucide-react";
@@ -84,9 +84,9 @@ export function TrialScheduleCalendar({
 
         const response = await fetch(
           `/api/slots/availability-with-allocation/${consultantId}?` +
-            `startDateInUtc=${startDateInUtc.toISOString()}&` +
-            `endDateInUtc=${endDateInUtc.toISOString()}&` +
-            `timezone=${timezone}`
+          `startDateInUtc=${startDateInUtc.toISOString()}&` +
+          `endDateInUtc=${endDateInUtc.toISOString()}&` +
+          `timezone=${timezone}`
         );
 
         if (!response.ok) {
@@ -130,8 +130,12 @@ export function TrialScheduleCalendar({
       isAllocated: slot.isAllocated || false,
     }));
 
+    // Merge consecutive available slots into contiguous blocks
+    // This allows longer durations (45min, 60min) to be scheduled across multiple adjacent 30-min slots
+    const mergedSlots = mergeConsecutiveSlots(slotsWithAllocation);
+
     const brokenDownSlots = breakDownSlotsByDuration(
-      slotsWithAllocation,
+      mergedSlots,
       durationInHours,
       [],
       timezone
@@ -188,12 +192,11 @@ export function TrialScheduleCalendar({
           key={i}
           disabled={isPast}
           className={`w-10 h-10 lg:w-11 lg:h-11 rounded-full text-base font-medium transition-all duration-200 flex items-center justify-center
-            ${
-              isSelected
-                ? "bg-gray-900 text-white shadow-md"
-                : isPast
-                  ? "text-gray-300 cursor-not-allowed"
-                  : "text-gray-700 hover:bg-gray-100"
+            ${isSelected
+              ? "bg-gray-900 text-white shadow-md"
+              : isPast
+                ? "text-gray-300 cursor-not-allowed"
+                : "text-gray-700 hover:bg-gray-100"
             }`}
           onClick={() => {
             if (!isPast) {
