@@ -12,7 +12,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { motion } from "framer-motion";
 import { CalendarIcon, CheckCircle2, Gift, BookOpen, Clock, ChevronRight } from "lucide-react";
 import { useSession } from "next-auth/react";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { PricingOption } from "../defaults";
 import { useToast } from "@/hooks/use-toast";
 import { addMonths, differenceInDays, format } from "date-fns";
@@ -54,6 +54,11 @@ export default function SubscriptionPricingToggle({
     title: string;
     freeTrialDurationMinutes: number;
   } | null>(null);
+  const [trialEligibility, setTrialEligibility] = useState<{
+    isEligible: boolean;
+    reason?: string;
+    isLoading: boolean;
+  }>({ isEligible: true, isLoading: false });
 
   const selectedOption = useMemo(() => {
     return subscriptionOptions.find(
@@ -70,6 +75,53 @@ export default function SubscriptionPricingToggle({
     );
     return plan;
   }, [selectedOption, consultantDetails]);
+
+  // Check trial eligibility when plan changes
+  useEffect(() => {
+    const checkEligibility = async () => {
+      if (!session?.user?.id || !selectedPlanDetails?.id || !selectedPlanDetails?.freeTrialEnabled) {
+        return;
+      }
+
+      setTrialEligibility(prev => ({ ...prev, isLoading: true }));
+
+      try {
+        // First get consultee profile
+        const profileResponse = await fetch(`/api/profiles/consultee?userId=${session.user.id}`);
+        if (!profileResponse.ok) {
+          setTrialEligibility({ isEligible: false, reason: "Could not verify profile", isLoading: false });
+          return;
+        }
+        const { data: consulteeProfile } = await profileResponse.json();
+
+        if (!consulteeProfile?.id) {
+          setTrialEligibility({ isEligible: true, isLoading: false }); // No profile yet, eligible
+          return;
+        }
+
+        // Check eligibility
+        const eligibilityResponse = await fetch(
+          `/api/trials/check-eligibility?consulteeProfileId=${consulteeProfile.id}&consultantProfileId=${consultantDetails?.id}&subscriptionPlanId=${selectedPlanDetails.id}`
+        );
+
+        if (eligibilityResponse.ok) {
+          const { data } = await eligibilityResponse.json();
+          setTrialEligibility({
+            isEligible: data.isEligible,
+            reason: data.reason,
+            isLoading: false
+          });
+        } else {
+          setTrialEligibility({ isEligible: true, isLoading: false });
+        }
+      } catch (error) {
+        console.error("Error checking trial eligibility:", error);
+        setTrialEligibility({ isEligible: true, isLoading: false });
+      }
+    };
+
+    checkEligibility();
+  }, [session?.user?.id, selectedPlanDetails?.id, selectedPlanDetails?.freeTrialEnabled, consultantDetails?.id]);
 
   const suggestedDates = useMemo(() => {
     if (!selectedOption?.durationInMonths) {
@@ -250,8 +302,20 @@ export default function SubscriptionPricingToggle({
               {/* Free Trial Button */}
               {selectedPlanDetails?.freeTrialEnabled && (
                 <Button
-                  className="w-full mb-3 bg-emerald-600 text-white hover:bg-emerald-500 font-medium rounded-xl h-11"
+                  className={`w-full mb-3 font-medium rounded-xl h-11 ${trialEligibility.isEligible && !trialEligibility.isLoading
+                      ? "bg-emerald-600 text-white hover:bg-emerald-500"
+                      : "bg-zinc-600 text-zinc-400 cursor-not-allowed"
+                    }`}
+                  disabled={!trialEligibility.isEligible || trialEligibility.isLoading}
                   onClick={() => {
+                    if (!trialEligibility.isEligible) {
+                      toast({
+                        title: "Not Eligible",
+                        description: trialEligibility.reason || "You have already requested a trial with this consultant",
+                        variant: "destructive",
+                      });
+                      return;
+                    }
                     setSelectedTrialPlan({
                       id: selectedPlanDetails.id,
                       title: selectedPlanDetails.title,
@@ -261,7 +325,12 @@ export default function SubscriptionPricingToggle({
                   }}
                 >
                   <Gift className="w-4 h-4 mr-2" />
-                  Book Free Trial ({selectedPlanDetails.freeTrialDurationMinutes} min)
+                  {trialEligibility.isLoading
+                    ? "Checking eligibility..."
+                    : trialEligibility.isEligible
+                      ? `Book Free Trial (${selectedPlanDetails.freeTrialDurationMinutes} min)`
+                      : "Trial Already Requested"
+                  }
                 </Button>
               )}
 
