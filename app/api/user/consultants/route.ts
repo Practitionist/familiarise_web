@@ -13,6 +13,16 @@ export async function GET(request: NextRequest) {
     const search = searchParams.get("search");
     const sort = searchParams.get("sort") || "nameAsc";
 
+    // New filter params with NaN guards
+    const rawMinPrice = searchParams.get("minPrice");
+    const rawMaxPrice = searchParams.get("maxPrice");
+    const rawMinRating = searchParams.get("minRating");
+    const language = searchParams.get("language");
+
+    const minPrice = rawMinPrice ? parseFloat(rawMinPrice) : undefined;
+    const maxPrice = rawMaxPrice ? parseFloat(rawMaxPrice) : undefined;
+    const minRating = rawMinRating ? parseFloat(rawMinRating) : undefined;
+
     // Calculate offset
     const skip = (page - 1) * limit;
 
@@ -67,6 +77,28 @@ export async function GET(request: NextRequest) {
       });
     }
 
+    // Price filter (via subscription plans)
+    if (minPrice !== undefined && !isNaN(minPrice)) {
+      where.AND.push({
+        subscriptionPlans: { some: { price: { gte: minPrice } } },
+      });
+    }
+    if (maxPrice !== undefined && !isNaN(maxPrice)) {
+      where.AND.push({
+        subscriptionPlans: { some: { price: { lte: maxPrice } } },
+      });
+    }
+
+    // Rating filter
+    if (minRating !== undefined && !isNaN(minRating)) {
+      where.AND.push({ rating: { gte: minRating } });
+    }
+
+    // Language filter
+    if (language) {
+      where.AND.push({ languages: { has: language } });
+    }
+
     // Search filter
     if (search) {
       where.AND.push({
@@ -107,6 +139,12 @@ export async function GET(request: NextRequest) {
         break;
       case "rating":
         orderBy = { rating: "desc" };
+        break;
+      case "trending":
+        orderBy = { reviews: { _count: "desc" } };
+        break;
+      case "newest":
+        orderBy = { createdAt: "desc" };
         break;
       default:
         orderBy = { user: { name: "asc" } };

@@ -99,15 +99,15 @@ export function isWebinarProgram(
 export function filterAndSortPrograms(
   programs: Program[],
   searchTerm: string,
-  selectedCategory: string,
+  selectedLevel: string,
 ): Program[] {
   return programs.filter((program) => {
     const matchesSearch =
       !searchTerm ||
       program.title.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesCategory =
-      selectedCategory === "all" || program.level === selectedCategory;
-    return matchesSearch && matchesCategory;
+    const matchesLevel =
+      selectedLevel === "all" || program.level === selectedLevel;
+    return matchesSearch && matchesLevel;
   });
 }
 

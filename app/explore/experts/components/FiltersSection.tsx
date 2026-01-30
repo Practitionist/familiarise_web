@@ -9,13 +9,23 @@ import {
 } from "@/components/ui/select";
 import { Domain, SubDomain, Tag } from "@prisma/client";
 import { useState } from "react";
-import { X, Filter, Layers, Tag as TagIcon, Clock } from "lucide-react";
+import {
+  X,
+  Filter,
+  Layers,
+  Tag as TagIcon,
+  Clock,
+  DollarSign,
+  Star,
+  Globe,
+} from "lucide-react";
 
 interface FiltersSectionProps {
   metadata: {
     domains: Domain[];
     subdomains: SubDomain[];
     tags: Tag[];
+    availableLanguages?: string[];
   } | null;
   selectedDomain: string | null;
   setSelectedDomain: (value: string | null) => void;
@@ -25,7 +35,31 @@ interface FiltersSectionProps {
   setSelectedTags: (tags: string[]) => void;
   experienceYears: number;
   setExperienceYears: (years: number) => void;
+  minPrice?: number;
+  onMinPriceChange?: (value: number | undefined) => void;
+  maxPrice?: number;
+  onMaxPriceChange?: (value: number | undefined) => void;
+  minRating?: number;
+  onMinRatingChange?: (value: number | undefined) => void;
+  language?: string;
+  onLanguageChange?: (value: string | undefined) => void;
 }
+
+const PRICE_RANGES = [
+  { label: "Any Price", value: "all" },
+  { label: "Free", value: "0-0" },
+  { label: "Under $50", value: "0-50" },
+  { label: "$50 - $100", value: "50-100" },
+  { label: "$100 - $200", value: "100-200" },
+  { label: "$200+", value: "200-" },
+];
+
+const RATING_OPTIONS = [
+  { label: "Any Rating", value: "all" },
+  { label: "3+ Stars", value: "3" },
+  { label: "4+ Stars", value: "4" },
+  { label: "4.5+ Stars", value: "4.5" },
+];
 
 export function FiltersSection({
   metadata,
@@ -37,6 +71,14 @@ export function FiltersSection({
   setSelectedTags,
   experienceYears,
   setExperienceYears,
+  minPrice,
+  onMinPriceChange,
+  maxPrice,
+  onMaxPriceChange,
+  minRating,
+  onMinRatingChange,
+  language,
+  onLanguageChange,
 }: FiltersSectionProps) {
   const [searchTerm, setSearchTerm] = useState("");
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
@@ -68,6 +110,34 @@ export function FiltersSection({
     setSearchTerm(e.target.value);
     setIsDropdownOpen(true);
   };
+
+  const handlePriceRangeChange = (value: string) => {
+    if (value === "all") {
+      onMinPriceChange?.(undefined);
+      onMaxPriceChange?.(undefined);
+      return;
+    }
+    const [min, max] = value.split("-");
+    onMinPriceChange?.(min ? parseInt(min) : undefined);
+    onMaxPriceChange?.(max ? parseInt(max) : undefined);
+  };
+
+  const handleRatingChange = (value: string) => {
+    onMinRatingChange?.(value === "all" ? undefined : parseFloat(value));
+  };
+
+  const handleLanguageChange = (value: string) => {
+    onLanguageChange?.(value === "all" ? undefined : value);
+  };
+
+  // Derive current price range value for select
+  const currentPriceRange = (() => {
+    if (minPrice === undefined && maxPrice === undefined) return "all";
+    if (minPrice === 0 && maxPrice === 0) return "0-0";
+    const min = minPrice ?? 0;
+    const max = maxPrice !== undefined ? String(maxPrice) : "";
+    return `${min}-${max}`;
+  })();
 
   const filteredTags =
     metadata?.tags.filter((tag) => {
@@ -243,6 +313,93 @@ export function FiltersSection({
                 </span>
               </div>
             </div>
+          </div>
+        </div>
+
+        {/* Price Range */}
+        <div className="bg-white rounded-xl p-4 border border-zinc-200">
+          <div className="flex items-center gap-2 mb-4">
+            <DollarSign className="w-4 h-4 text-zinc-500" />
+            <span className="text-sm font-medium text-zinc-700">
+              Price Range
+            </span>
+          </div>
+          <div>
+            <label className="block mb-1.5 text-xs font-medium text-zinc-500 uppercase tracking-wide">
+              Subscription Price
+            </label>
+            <Select
+              value={currentPriceRange}
+              onValueChange={handlePriceRangeChange}
+            >
+              <SelectTrigger className="w-full h-11 bg-zinc-50 border-zinc-200 rounded-lg focus:ring-zinc-900">
+                <SelectValue placeholder="Any Price" />
+              </SelectTrigger>
+              <SelectContent>
+                {PRICE_RANGES.map((range) => (
+                  <SelectItem key={range.value} value={range.value}>
+                    {range.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+
+        {/* Rating */}
+        <div className="bg-white rounded-xl p-4 border border-zinc-200">
+          <div className="flex items-center gap-2 mb-4">
+            <Star className="w-4 h-4 text-zinc-500" />
+            <span className="text-sm font-medium text-zinc-700">Rating</span>
+          </div>
+          <div>
+            <label className="block mb-1.5 text-xs font-medium text-zinc-500 uppercase tracking-wide">
+              Minimum Rating
+            </label>
+            <Select
+              value={minRating !== undefined ? String(minRating) : "all"}
+              onValueChange={handleRatingChange}
+            >
+              <SelectTrigger className="w-full h-11 bg-zinc-50 border-zinc-200 rounded-lg focus:ring-zinc-900">
+                <SelectValue placeholder="Any Rating" />
+              </SelectTrigger>
+              <SelectContent>
+                {RATING_OPTIONS.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+
+        {/* Language */}
+        <div className="bg-white rounded-xl p-4 border border-zinc-200">
+          <div className="flex items-center gap-2 mb-4">
+            <Globe className="w-4 h-4 text-zinc-500" />
+            <span className="text-sm font-medium text-zinc-700">Language</span>
+          </div>
+          <div>
+            <label className="block mb-1.5 text-xs font-medium text-zinc-500 uppercase tracking-wide">
+              Expert Language
+            </label>
+            <Select
+              value={language || "all"}
+              onValueChange={handleLanguageChange}
+            >
+              <SelectTrigger className="w-full h-11 bg-zinc-50 border-zinc-200 rounded-lg focus:ring-zinc-900">
+                <SelectValue placeholder="Any Language" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Any Language</SelectItem>
+                {metadata?.availableLanguages?.map((lang) => (
+                  <SelectItem key={lang} value={lang}>
+                    {lang}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
         </div>
       </div>

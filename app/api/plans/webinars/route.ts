@@ -1,65 +1,26 @@
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
+import {
+  parsePlanFilters,
+  buildPlanWhereClause,
+  buildPlanOrderBy,
+  paginatedResponse,
+  rankAndPaginate,
+} from "../shared/plan-filters";
 
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
-    const consultantId = searchParams.get("consultantId");
-    const page = parseInt(searchParams.get("page") || "1");
-    const limit = parseInt(searchParams.get("limit") || "10");
     const includeRegistration =
       searchParams.get("includeRegistration") === "true";
-    const skip = (page - 1) * limit;
 
-    // New filter params
-    const topicIds = searchParams.get("topicIds");
-    const language = searchParams.get("language");
-    const domainId = searchParams.get("domainId");
-    const sort = searchParams.get("sort");
-    const minPrice = searchParams.get("minPrice");
-    const maxPrice = searchParams.get("maxPrice");
-    const search = searchParams.get("search");
-
-    // Build where clause
-    const where: Prisma.WebinarPlanWhereInput = {};
-    if (consultantId) {
-      where.consultantProfileId = consultantId;
-    }
-    if (language) {
-      where.language = language;
-    }
-    if (minPrice || maxPrice) {
-      where.price = {};
-      if (minPrice) where.price.gte = parseInt(minPrice);
-      if (maxPrice) where.price.lte = parseInt(maxPrice);
-    }
-    if (search) {
-      where.title = { contains: search, mode: "insensitive" };
-    }
-    if (topicIds) {
-      const ids = topicIds.split(",").filter(Boolean);
-      if (ids.length > 0) {
-        where.topics = { some: { id: { in: ids } } };
-      }
-    }
-    if (domainId) {
-      where.consultantProfile = { domainId };
-    }
-
-    // Build orderBy clause
-    let orderBy: Prisma.WebinarPlanOrderByWithRelationInput | undefined;
-    if (sort === "newest") {
-      orderBy = { createdAt: "desc" };
-    } else if (sort === "price-asc") {
-      orderBy = { price: "asc" };
-    } else if (sort === "price-desc") {
-      orderBy = { price: "desc" };
-    } else if (sort === "title-asc") {
-      orderBy = { title: "asc" };
-    } else if (sort === "title-desc") {
-      orderBy = { title: "desc" };
-    }
+    const filters = parsePlanFilters(searchParams);
+    const { sort, page, limit, skip } = filters;
+    const where = buildPlanWhereClause(filters) as Prisma.WebinarPlanWhereInput;
+    const orderBy = buildPlanOrderBy(sort) as
+      | Prisma.WebinarPlanOrderByWithRelationInput
+      | undefined;
 
     // Build include object based on whether registration data is requested
     const include: Record<string, unknown> = {
@@ -90,7 +51,6 @@ export async function GET(request: NextRequest) {
       const thirtyDaysAgo = new Date();
       thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-      // Step 1: Fetch only IDs and minimal nested data for counting
       const plansForRanking = await prisma.webinarPlan.findMany({
         where,
         select: {
@@ -110,7 +70,6 @@ export async function GET(request: NextRequest) {
         },
       });
 
-      // Rank by recent enrollment count
       const ranked = plansForRanking
         .map((p) => ({
           id: p.id,
@@ -122,30 +81,16 @@ export async function GET(request: NextRequest) {
         }))
         .sort((a, b) => b.count - a.count);
 
-      const total = ranked.length;
-      const paginatedIds = ranked.slice(skip, skip + limit).map((r) => r.id);
-
-      // Step 2: Fetch full data only for the paginated IDs
-      const webinarPlans =
-        paginatedIds.length > 0
-          ? await prisma.webinarPlan.findMany({
-              where: { ...where, id: { in: paginatedIds } },
-              include,
-            })
-          : [];
-
-      // Re-sort to match the ranking order
-      const idOrder = new Map(paginatedIds.map((id, i) => [id, i]));
-      webinarPlans.sort(
-        (a, b) => (idOrder.get(a.id) ?? 0) - (idOrder.get(b.id) ?? 0),
-      );
-
-      return NextResponse.json(
-        {
-          data: webinarPlans,
-          meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
-        },
-        { status: 200 },
+      return rankAndPaginate(
+        ranked,
+        (ids) =>
+          prisma.webinarPlan.findMany({
+            where: { ...where, id: { in: ids } },
+            include,
+          }),
+        skip,
+        limit,
+        page,
       );
     }
 
@@ -160,18 +105,7 @@ export async function GET(request: NextRequest) {
       prisma.webinarPlan.count({ where }),
     ]);
 
-    return NextResponse.json(
-      {
-        data: webinarPlans,
-        meta: {
-          total,
-          page,
-          limit,
-          totalPages: Math.ceil(total / limit),
-        },
-      },
-      { status: 200 },
-    );
+    return paginatedResponse(webinarPlans, total, page, limit);
   } catch (error) {
     console.error("Error fetching webinar plans:", error);
     return NextResponse.json(
