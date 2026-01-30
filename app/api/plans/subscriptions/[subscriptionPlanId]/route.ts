@@ -44,6 +44,9 @@ export async function GET(
           },
         },
         topics: true,
+        subscriptionContents: {
+          orderBy: { order: "asc" },
+        },
       },
     });
 
@@ -149,60 +152,102 @@ export async function PUT(
       };
     }
 
-    const subscriptionPlan = await prisma.subscriptionPlan.update({
-      where: { id: subscriptionPlanId },
-      data: {
-        title: validatedData.title,
-        description: validatedData.description,
-        durationInMonths: validatedData.durationInMonths,
-        price:
-          validatedData.price !== undefined
-            ? Math.round(validatedData.price)
-            : undefined,
-        priceCurrency: validatedData.priceCurrency,
-        callsPerWeek: validatedData.callsPerWeek,
-        sessionDurationInHours: body.sessionDurationInHours,
-        totalSessions,
-        totalHours,
-        emailSupport: validatedData.emailSupport,
-        language: validatedData.language,
-        level: validatedData.level,
-        prerequisites: validatedData.prerequisites,
-        materialProvided: validatedData.materialProvided,
-        learningOutcomes: validatedData.learningOutcomes,
-        ...topicsUpdate,
-      },
-      include: {
-        consultantProfile: {
-          include: {
-            user: {
-              select: {
-                id: true,
-                name: true,
-                email: true,
-                image: true,
+    // Handle subscription contents (roadmap) if provided
+    const subscriptionContents = body.subscriptionContents as
+      | Array<{
+          id?: string;
+          title: string;
+          description: string;
+          contentType?: string;
+          contentUrl?: string;
+          order: number;
+          hoursAllotted?: number;
+        }>
+      | undefined;
+
+    // Use transaction to ensure atomicity when updating subscription contents
+    // This prevents data loss if the update fails after deleting old contents
+    const subscriptionPlan = await prisma.$transaction(async (tx) => {
+      // If subscriptionContents is provided, delete existing and create new ones
+      if (subscriptionContents !== undefined) {
+        await tx.subscriptionContent.deleteMany({
+          where: { subscriptionPlanId },
+        });
+      }
+
+      return tx.subscriptionPlan.update({
+        where: { id: subscriptionPlanId },
+        data: {
+          title: validatedData.title,
+          description: validatedData.description,
+          durationInMonths: validatedData.durationInMonths,
+          price:
+            validatedData.price !== undefined
+              ? Math.round(validatedData.price)
+              : undefined,
+          priceCurrency: validatedData.priceCurrency,
+          callsPerWeek: validatedData.callsPerWeek,
+          sessionDurationInHours: body.sessionDurationInHours,
+          totalSessions,
+          totalHours,
+          emailSupport: validatedData.emailSupport,
+          language: validatedData.language,
+          level: validatedData.level,
+          prerequisites: validatedData.prerequisites,
+          materialProvided: validatedData.materialProvided,
+          learningOutcomes: validatedData.learningOutcomes,
+          freeTrialEnabled: body.freeTrialEnabled,
+          freeTrialDurationMinutes: body.freeTrialDurationMinutes,
+          ...topicsUpdate,
+          subscriptionContents:
+            subscriptionContents !== undefined
+              ? {
+                  create: subscriptionContents.map((content) => ({
+                    title: content.title,
+                    description: content.description,
+                    contentType: content.contentType,
+                    contentUrl: content.contentUrl,
+                    order: content.order,
+                    hoursAllotted: content.hoursAllotted ?? 1.0,
+                  })),
+                }
+              : undefined,
+        },
+        include: {
+          consultantProfile: {
+            include: {
+              user: {
+                select: {
+                  id: true,
+                  name: true,
+                  email: true,
+                  image: true,
+                },
               },
             },
           },
-        },
-        subscriptions: {
-          include: {
-            requestedBy: {
-              include: {
-                user: {
-                  select: {
-                    id: true,
-                    name: true,
-                    email: true,
-                    image: true,
+          subscriptions: {
+            include: {
+              requestedBy: {
+                include: {
+                  user: {
+                    select: {
+                      id: true,
+                      name: true,
+                      email: true,
+                      image: true,
+                    },
                   },
                 },
               },
             },
           },
+          topics: true,
+          subscriptionContents: {
+            orderBy: { order: "asc" },
+          },
         },
-        topics: true,
-      },
+      });
     });
 
     return NextResponse.json(

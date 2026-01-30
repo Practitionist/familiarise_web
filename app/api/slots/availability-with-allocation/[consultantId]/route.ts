@@ -146,6 +146,13 @@ export async function GET(
               status: "SCHEDULED", // Only scheduled classes (not COMPLETED, CANCELLED)
             },
           },
+          // Include trial sessions that are SCHEDULED
+          {
+            trialSession: {
+              consultantProfileId: consultantId,
+              status: "SCHEDULED", // Only scheduled trials (not COMPLETED, CANCELLED)
+            },
+          },
         ],
         slotsOfAppointment: {
           some: {

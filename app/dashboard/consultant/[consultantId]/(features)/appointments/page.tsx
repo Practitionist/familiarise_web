@@ -19,7 +19,23 @@ export default function AppointmentsPage({
   const appointmentsQuery = createConsultantQueries(consultantId).appointments;
   const { data: appointments, isLoading, error } = useQuery(appointmentsQuery);
 
-  if (isLoading) {
+  // Fetch scheduled trials for this consultant
+  const {
+    data: trialsData,
+    isLoading: trialsLoading,
+  } = useQuery({
+    queryKey: ["trials", consultantId, "SCHEDULED"],
+    queryFn: async () => {
+      const res = await fetch(
+        `/api/trials?consultantProfileId=${consultantId}&status=SCHEDULED`
+      );
+      if (!res.ok) throw new Error("Failed to fetch trials");
+      const { data } = await res.json();
+      return data;
+    },
+  });
+
+  if (isLoading || trialsLoading) {
     return <PageSkeleton />;
   }
 
@@ -50,6 +66,7 @@ export default function AppointmentsPage({
       <AppointmentsTab
         appointments={appointments || []}
         badgeStyles={BADGE_STYLES}
+        scheduledTrials={trialsData || []}
       />
     </DashboardErrorBoundary>
   );

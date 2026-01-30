@@ -58,8 +58,8 @@ function findNextSlot(slots: SlotWithContext[]): SlotWithContext | null {
     (a, b) => a.startsAt.getTime() - b.startsAt.getTime(),
   );
 
-  // Find first upcoming slot, or fall back to most recent
-  return sortedSlots.find((s) => s.startsAt > now) ?? sortedSlots[0];
+  // Find first upcoming slot, or fall back to most recent past slot
+  return sortedSlots.find((s) => s.startsAt > now) ?? sortedSlots[sortedSlots.length - 1];
 }
 
 /**
@@ -115,11 +115,11 @@ export function processConsultation(
     consultantImage:
       consultation.consultationPlan?.consultantProfile?.user?.image,
     startsAt: new Date(firstSlot.startsAt),
-    endsAt: new Date(firstSlot.endsAt),
+    endsAt: new Date(firstSlot.endsAt ?? firstSlot.startsAt),
     status: consultation.requestStatus ?? "PENDING",
     slots: slots.map((s) => ({
       startsAt: new Date(s.startsAt),
-      endsAt: new Date(s.endsAt),
+      endsAt: new Date(s.endsAt ?? s.startsAt),
     })),
     appointmentId,
     joinableAppointment,
@@ -139,7 +139,7 @@ export function processSubscription(
     appointment.slotsOfAppointment?.forEach((slot) => {
       allSlots.push({
         startsAt: new Date(slot.startsAt),
-        endsAt: new Date(slot.endsAt),
+        endsAt: new Date(slot.endsAt ?? slot.startsAt),
         rawSlot: {
           id: slot.id,
           startsAt: slot.startsAt,
@@ -217,7 +217,7 @@ export function processWebinar(
   webinar.appointment?.slotsOfAppointment?.forEach((slot) => {
     allSlots.push({
       startsAt: new Date(slot.startsAt),
-      endsAt: new Date(slot.endsAt),
+      endsAt: new Date(slot.endsAt ?? slot.startsAt),
       rawSlot: {
         id: slot.id,
         startsAt: slot.startsAt,
@@ -305,7 +305,7 @@ export function processClass(
     appointment.slotsOfAppointment?.forEach((slot) => {
       allSlots.push({
         startsAt: new Date(slot.startsAt),
-        endsAt: new Date(slot.endsAt),
+        endsAt: new Date(slot.endsAt ?? slot.startsAt),
         rawSlot: {
           id: slot.id,
           startsAt: slot.startsAt,

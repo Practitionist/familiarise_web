@@ -129,7 +129,13 @@ export async function GET(
         slotsOfAvailabilityWeekly: true,
         slotsOfAvailabilityCustom: true,
         consultationPlans: true,
-        subscriptionPlans: true,
+        subscriptionPlans: {
+          include: {
+            subscriptionContents: {
+              orderBy: { order: "asc" },
+            },
+          },
+        },
         webinarPlans: true,
         classPlans: true,
         reviews: true,
@@ -340,7 +346,13 @@ export async function PUT(
         slotsOfAvailabilityWeekly: true,
         slotsOfAvailabilityCustom: true,
         consultationPlans: true,
-        subscriptionPlans: true,
+        subscriptionPlans: {
+          include: {
+            subscriptionContents: {
+              orderBy: { order: "asc" },
+            },
+          },
+        },
         webinarPlans: true,
         classPlans: true,
         reviews: true,

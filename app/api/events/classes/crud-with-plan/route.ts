@@ -154,8 +154,8 @@ export async function POST(request: NextRequest) {
     // Find or create topics by name
     const topicIds = await findOrCreateTopics(topicNames);
 
-    // Compute derived metrics
-    const sessionDurationInHours = 1.0; // Default session duration for classes
+    // Compute derived metrics using validated session duration from the plan
+    const sessionDurationInHours = validatedData.sessionDurationInHours ?? 1.0;
     const totalSessions = meetingsPerWeek * durationInMonths * 4;
     const totalHours = totalSessions * sessionDurationInHours;
 
@@ -247,7 +247,7 @@ export async function POST(request: NextRequest) {
                     );
                     const slotStart = new Date(appointmentDate);
                     const slotEnd = new Date(appointmentDate);
-                    slotEnd.setHours(slotEnd.getHours() + 1); // Default 1-hour slots
+                    slotEnd.setTime(slotEnd.getTime() + sessionDurationInHours * 60 * 60 * 1000);
 
                     return {
                       appointmentType: "CLASS",
@@ -381,6 +381,7 @@ export async function PATCH(request: NextRequest) {
       startDate: startDateString,
       endDate: endDateString,
       recordingEnabled,
+      sessionDurationInHours: patchSessionDuration,
     } = validatedData;
 
     // Find or create topics by name if provided
@@ -507,14 +508,18 @@ export async function PATCH(request: NextRequest) {
           updateData.meetingsPerWeek = meetingsPerWeek;
         if (emailSupport !== undefined) updateData.emailSupport = emailSupport;
 
+        // Allow updating sessionDurationInHours
+        if (patchSessionDuration !== undefined)
+          updateData.sessionDurationInHours = patchSessionDuration;
+
         // Recompute derived metrics if base fields are being updated
-        if (meetingsPerWeek !== undefined || durationInMonths !== undefined) {
+        if (meetingsPerWeek !== undefined || durationInMonths !== undefined || patchSessionDuration !== undefined) {
           const finalMeetingsPerWeek =
             meetingsPerWeek ?? existingPlan.meetingsPerWeek;
           const finalDurationInMonths =
             durationInMonths ?? existingPlan.durationInMonths;
           const finalSessionDurationInHours =
-            existingPlan.sessionDurationInHours ?? 1.0;
+            patchSessionDuration ?? existingPlan.sessionDurationInHours ?? 1.0;
 
           updateData.totalSessions =
             finalMeetingsPerWeek * finalDurationInMonths * 4;

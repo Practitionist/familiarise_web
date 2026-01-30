@@ -475,6 +475,68 @@ export function convertToSlotTimings(
 }
 
 /**
+ * Merge consecutive availability slots into contiguous blocks.
+ * This allows longer durations to be scheduled across multiple adjacent slots.
+ * 
+ * For example, if slots are 2:30-3:00 and 3:00-3:30, this will merge them into 2:30-3:30.
+ * Only merges slots that are NOT allocated (available).
+ */
+export function mergeConsecutiveSlots(
+  slots: (TSlotTiming & {
+    isAllocated: boolean;
+    bookingStatus?: BookingStatus;
+  })[]
+): (TSlotTiming & {
+  isAllocated: boolean;
+  bookingStatus?: BookingStatus;
+})[] {
+  if (!slots || slots.length === 0) return [];
+
+  // Sort slots by start time
+  const sortedSlots = [...slots].sort(
+    (a, b) =>
+      new Date(a.slotStartTimeInUTC).getTime() -
+      new Date(b.slotStartTimeInUTC).getTime()
+  );
+
+  const mergedSlots: (TSlotTiming & {
+    isAllocated: boolean;
+    bookingStatus?: BookingStatus;
+  })[] = [];
+
+  let currentMerged = { ...sortedSlots[0] };
+
+  for (let i = 1; i < sortedSlots.length; i++) {
+    const currentSlot = sortedSlots[i];
+    const currentMergedEnd = new Date(currentMerged.slotEndTimeInUTC).getTime();
+    const nextSlotStart = new Date(currentSlot.slotStartTimeInUTC).getTime();
+
+    // Check if slots are consecutive (end time equals start time) and both are available
+    // Allow a small tolerance of 1 minute for edge cases
+    const isConsecutive = Math.abs(currentMergedEnd - nextSlotStart) <= 60000;
+    const bothAvailable = !currentMerged.isAllocated && !currentSlot.isAllocated;
+
+    if (isConsecutive && bothAvailable) {
+      // Extend the current merged slot
+      currentMerged = {
+        ...currentMerged,
+        slotEndTimeInUTC: currentSlot.slotEndTimeInUTC,
+        localEndTime: currentSlot.localEndTime,
+      };
+    } else {
+      // Push the current merged slot and start a new one
+      mergedSlots.push(currentMerged);
+      currentMerged = { ...currentSlot };
+    }
+  }
+
+  // Don't forget the last slot
+  mergedSlots.push(currentMerged);
+
+  return mergedSlots;
+}
+
+/**
  * Break down slots by duration using sliding windows while preserving allocation information
  */
 export function breakDownSlotsByDuration(
@@ -510,11 +572,11 @@ export function breakDownSlotsByDuration(
     while (currentStart.getTime() + durationInMillis <= end.getTime()) {
       const currentEnd = new Date(currentStart.getTime() + durationInMillis);
 
-      // If the original slot is allocated, all segments within it should be allocated
-      // Otherwise, check if this specific segment is allocated by appointments
-      const isSegmentAllocated =
-        slot.isAllocated ||
-        isSlotAllocated(currentStart, currentEnd, appointmentSlots);
+      // FIX: Check ONLY this specific segment's overlap with appointments
+      // Previously, this inherited slot.isAllocated from the parent slot,
+      // which caused ALL segments to be marked allocated if ANY part of the
+      // original availability slot overlapped with an appointment
+      const isSegmentAllocated = isSlotAllocated(currentStart, currentEnd, appointmentSlots);
 
       // Calculate booking status for this specific segment
       const segmentBookingStatus = getSlotBookingStatus(

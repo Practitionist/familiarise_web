@@ -10,6 +10,10 @@ import {
   GraduationCap,
   Headphones,
   Upload,
+  BookOpen,
+  Trash2,
+  Plus,
+  Gift,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -39,6 +43,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { SubscriptionPlanSchema } from "@/schemas/plans";
 
@@ -95,6 +100,27 @@ export function EventPlannerForSubscription({
     };
     fetchTopics();
   }, [toast]);
+
+  // State for free trial (not in the Zod schema, handled separately)
+  const [freeTrialEnabled, setFreeTrialEnabled] = useState(
+    initialData?.subscriptionPlan?.freeTrialEnabled ?? false
+  );
+  const [freeTrialDurationMinutes, setFreeTrialDurationMinutes] = useState(
+    initialData?.subscriptionPlan?.freeTrialDurationMinutes ?? 30
+  );
+
+  // State for subscription contents/roadmap (not in Zod schema)
+  const [subscriptionContents, setSubscriptionContents] = useState<
+    Array<{
+      id?: string;
+      title: string;
+      description: string;
+      contentType?: string | null;
+      contentUrl?: string | null;
+      order: number;
+      hoursAllotted: number;
+    }>
+  >(initialData?.subscriptionPlan?.subscriptionContents ?? []);
 
   const form = useForm({
     resolver: zodResolver(SubscriptionPlanSchema),
@@ -154,6 +180,10 @@ export function EventPlannerForSubscription({
         learningOutcomes: initialData.subscriptionPlan.learningOutcomes ?? [],
         topics: initialData.subscriptionPlan.topics ?? [],
       });
+      // Reset free trial and subscription contents state
+      setFreeTrialEnabled(initialData.subscriptionPlan.freeTrialEnabled ?? false);
+      setFreeTrialDurationMinutes(initialData.subscriptionPlan.freeTrialDurationMinutes ?? 30);
+      setSubscriptionContents(initialData.subscriptionPlan.subscriptionContents ?? []);
     }
   }, [initialData, form]);
 
@@ -221,6 +251,12 @@ export function EventPlannerForSubscription({
           consultantProfile: null,
           subscriptions: initialData?.subscriptionPlan?.subscriptions ?? [],
           sessionDurationInHours: formData.sessionDurationInHours ?? 1,
+          freeTrialEnabled,
+          freeTrialDurationMinutes,
+          subscriptionContents: subscriptionContents.map((content, index) => ({
+            ...content,
+            order: index + 1,
+          })),
           createdAt: initialData?.subscriptionPlan?.createdAt ?? now,
           updatedAt: now,
         },
@@ -252,6 +288,39 @@ export function EventPlannerForSubscription({
 
   const activeSubscriptionsCount =
     initialData?.subscriptionPlan?.subscriptions?.length ?? 0;
+
+  // Helper functions for subscription contents/roadmap
+  const addSubscriptionContent = () => {
+    const newContent = {
+      title: "",
+      description: "",
+      contentType: null,
+      contentUrl: null,
+      order: subscriptionContents.length + 1,
+      hoursAllotted: 1,
+    };
+    setSubscriptionContents([...subscriptionContents, newContent]);
+  };
+
+  const removeSubscriptionContent = (index: number) => {
+    const newContents = subscriptionContents.filter((_, i) => i !== index);
+    // Re-order remaining contents
+    const reorderedContents = newContents.map((content, i) => ({
+      ...content,
+      order: i + 1,
+    }));
+    setSubscriptionContents(reorderedContents);
+  };
+
+  const updateSubscriptionContent = (
+    index: number,
+    field: string,
+    value: string | number | null
+  ) => {
+    const newContents = [...subscriptionContents];
+    newContents[index] = { ...newContents[index], [field]: value };
+    setSubscriptionContents(newContents);
+  };
 
   return (
     <>
@@ -482,6 +551,52 @@ export function EventPlannerForSubscription({
                 </div>
               </FormSection>
 
+              {/* Free Trial Section */}
+              <FormSection
+                title="Free Trial"
+                description="Offer a free trial session to potential subscribers"
+                icon={Gift}
+              >
+                <div className="flex flex-row items-center justify-between rounded-lg border p-4">
+                  <div className="space-y-0.5">
+                    <FormLabel className="text-base">
+                      Enable Free Trial
+                    </FormLabel>
+                    <FormDescription>
+                      Allow potential subscribers to book a free trial session
+                    </FormDescription>
+                  </div>
+                  <Switch
+                    checked={freeTrialEnabled}
+                    onCheckedChange={setFreeTrialEnabled}
+                  />
+                </div>
+
+                {freeTrialEnabled && (
+                  <div className="mt-4">
+                    <FormLabel>Trial Duration</FormLabel>
+                    <Select
+                      value={freeTrialDurationMinutes.toString()}
+                      onValueChange={(value) =>
+                        setFreeTrialDurationMinutes(Number.parseInt(value))
+                      }
+                    >
+                      <SelectTrigger className="mt-2">
+                        <SelectValue placeholder="Select duration" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="30">30 minutes</SelectItem>
+                        <SelectItem value="45">45 minutes</SelectItem>
+                        <SelectItem value="60">60 minutes</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <FormDescription className="mt-2">
+                      Duration of the free trial session
+                    </FormDescription>
+                  </div>
+                )}
+              </FormSection>
+
               {/* Session Details Section */}
               <FormSection
                 title="Session Details"
@@ -569,6 +684,142 @@ export function EventPlannerForSubscription({
                     </FormItem>
                   )}
                 />
+              </FormSection>
+
+              {/* Session Roadmap Section */}
+              <FormSection
+                title="Session Roadmap"
+                description="Define the structure and content of each session"
+                icon={BookOpen}
+              >
+                <div className="space-y-4">
+                  {subscriptionContents.map((content, index) => (
+                    <div
+                      key={content.id || `content-${index}`}
+                      className="p-4 border rounded-lg bg-background"
+                    >
+                      <div className="flex items-center justify-between mb-4">
+                        <span className="text-sm font-medium text-muted-foreground">
+                          Session {content.order || index + 1}
+                        </span>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                          onClick={() => removeSubscriptionContent(index)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <FormLabel>
+                            Title <span className="text-destructive">*</span>
+                          </FormLabel>
+                          <Input
+                            placeholder="e.g., Introduction & Goal Setting"
+                            value={content.title}
+                            onChange={(e) =>
+                              updateSubscriptionContent(
+                                index,
+                                "title",
+                                e.target.value
+                              )
+                            }
+                            className="mt-2"
+                          />
+                        </div>
+
+                        <div>
+                          <FormLabel>Hours</FormLabel>
+                          <Input
+                            type="number"
+                            step="0.5"
+                            min="0.5"
+                            placeholder="1"
+                            value={content.hoursAllotted}
+                            onChange={(e) =>
+                              updateSubscriptionContent(
+                                index,
+                                "hoursAllotted",
+                                Number.parseFloat(e.target.value) || 1
+                              )
+                            }
+                            className="mt-2"
+                          />
+                        </div>
+
+                        <div className="md:col-span-2">
+                          <FormLabel>
+                            Description{" "}
+                            <span className="text-destructive">*</span>
+                          </FormLabel>
+                          <Textarea
+                            placeholder="Describe what will be covered in this session..."
+                            value={content.description}
+                            onChange={(e) =>
+                              updateSubscriptionContent(
+                                index,
+                                "description",
+                                e.target.value
+                              )
+                            }
+                            className="mt-2 min-h-[60px] resize-none"
+                          />
+                        </div>
+
+                        <div>
+                          <FormLabel>Session Type</FormLabel>
+                          <Input
+                            placeholder="e.g., Video Call, Review Session"
+                            value={content.contentType ?? ""}
+                            onChange={(e) =>
+                              updateSubscriptionContent(
+                                index,
+                                "contentType",
+                                e.target.value || null
+                              )
+                            }
+                            className="mt-2"
+                          />
+                        </div>
+
+                        <div>
+                          <FormLabel>Resource URL</FormLabel>
+                          <Input
+                            placeholder="https://..."
+                            value={content.contentUrl ?? ""}
+                            onChange={(e) =>
+                              updateSubscriptionContent(
+                                index,
+                                "contentUrl",
+                                e.target.value || null
+                              )
+                            }
+                            className="mt-2"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full"
+                    onClick={addSubscriptionContent}
+                  >
+                    <Plus className="h-4 w-4 mr-2" />
+                    Add Session
+                  </Button>
+
+                  <FormDescription>
+                    Define the curriculum for each session of the subscription.
+                    This helps subscribers understand what they will learn.
+                  </FormDescription>
+                </div>
               </FormSection>
 
               {/* Materials Section - Only show when editing an existing plan */}

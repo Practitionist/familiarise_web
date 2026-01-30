@@ -9,6 +9,7 @@ import {
   SubscriptionWithPlan,
   WebinarWithPlan,
   ClassWithPlan,
+  TrialWithPlan,
 } from "@/hooks/useEvents";
 import { getStatusColor } from "../../utils/getMetadata";
 import { getActualSlots } from "../../utils/scheduleHelpers";
@@ -18,6 +19,7 @@ interface CalendarProps {
   subscriptions: SubscriptionWithPlan[];
   webinars: WebinarWithPlan[];
   classes: ClassWithPlan[];
+  trials: TrialWithPlan[];
 }
 
 type Event = {
@@ -25,7 +27,7 @@ type Event = {
   title: string;
   start: Date;
   end: Date;
-  type: "Consultation" | "Subscription" | "Webinar" | "Class";
+  type: "Consultation" | "Subscription" | "Webinar" | "Class" | "Trial";
   status: string;
   consultant: string;
   subscriptionId?: string | null;
@@ -38,6 +40,7 @@ export function Calendar({
   subscriptions,
   webinars,
   classes,
+  trials,
 }: Readonly<CalendarProps>) {
   const [currentDate, setCurrentDate] = useState(new Date());
 
@@ -70,7 +73,7 @@ export function Calendar({
               id: `${c.id}-${startTime.getTime()}`,
               title: c.consultationPlan.title,
               start: startTime,
-              end: new Date(startTime.getTime() + 60 * 60 * 1000),
+              end: new Date(slot.endsAt ?? slot.startsAt),
               type: "Consultation" as const,
               status: c.requestStatus,
               consultant:
@@ -92,7 +95,7 @@ export function Calendar({
               id: `${s.id}-${startTime.getTime()}`,
               title: s.subscriptionPlan.title,
               start: startTime,
-              end: new Date(startTime.getTime() + 60 * 60 * 1000),
+              end: new Date(slot.endsAt ?? slot.startsAt),
               type: "Subscription" as const,
               status: s.requestStatus,
               consultant:
@@ -114,7 +117,7 @@ export function Calendar({
               id: `${c.id}-${startTime.getTime()}`,
               title: c.classPlan.title,
               start: startTime,
-              end: new Date(startTime.getTime() + 60 * 60 * 1000),
+              end: new Date(slot.endsAt ?? slot.startsAt),
               type: "Class" as const,
               status: c.status,
               consultant:
@@ -135,7 +138,7 @@ export function Calendar({
               id: `${w.id}-${startTime.getTime()}`,
               title: w.webinarPlan.title,
               start: startTime,
-              end: new Date(startTime.getTime() + 60 * 60 * 1000),
+              end: new Date(slot.endsAt ?? slot.startsAt),
               type: "Webinar" as const,
               status: w.status,
               consultant:
@@ -148,20 +151,41 @@ export function Calendar({
             };
           });
         }),
+        // Trial sessions
+        ...trials.flatMap((t) => {
+          const slots = t.appointment?.slotsOfAppointment ?? [];
+          return slots.map((slot) => {
+            const startTime = new Date(slot.startsAt);
+            const durationMs = (t.subscriptionPlan.freeTrialDurationMinutes || 30) * 60 * 1000;
+            return {
+              id: `${t.id}-${startTime.getTime()}`,
+              title: `Free Trial: ${t.subscriptionPlan.title}`,
+              start: startTime,
+              end: new Date(startTime.getTime() + durationMs),
+              type: "Trial" as const,
+              status: t.status,
+              consultant:
+                t.subscriptionPlan.consultantProfile?.user?.name || "Unknown",
+              time: startTime.toLocaleTimeString(undefined, {
+                hour: "2-digit",
+                minute: "2-digit",
+              }),
+              isTentative: false,
+            };
+          });
+        }),
       ].filter((event) => {
         const startTime = event.start.getTime();
         if (isNaN(startTime)) {
-          console.log("Invalid date for event:", event.title);
           return false;
         }
         // Skip dates from 1970 (Unix epoch)
         if (event.start.getFullYear() === 1970) {
-          console.log("Skipping 1970 date for event:", event.title);
           return false;
         }
         return true;
       }),
-    [consultations, subscriptions, webinars, classes],
+    [consultations, subscriptions, webinars, classes, trials],
   );
 
   const getEventsForDay = (day: number) => {
@@ -182,18 +206,8 @@ export function Calendar({
     return getStatusColor(event.status);
   };
 
-  const handleEventClick = (event: Event) => {
-    console.log("Calendar event clicked:", {
-      id: event.id,
-      title: event.title,
-      type: event.type,
-      status: event.status,
-      consultant: event.consultant,
-      start: event.start,
-      end: event.end,
-      isTentative: event.isTentative,
-    });
-  };
+  const handleEventClick = (_event: Event) => {};
+
 
   return (
     <div className="space-y-4">

@@ -109,6 +109,8 @@ const getNumSlots = (appointmentType: AppointmentsType): number => {
       return 1;
     case AppointmentsType.CLASS:
       return faker.number.int({ min: 4, max: 8 });
+    case AppointmentsType.TRIAL:
+      return 1;
   }
 };
 

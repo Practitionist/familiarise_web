@@ -20,14 +20,15 @@ import type { VerificationStatus } from "@/components/verification/VerificationS
 
 // Navigation configuration
 const NAV_ITEMS: NavItem[] = [
-  { name: "Home", path: "home" },
-  { name: "Chats", path: "chats" },
-  { name: "Appointments", path: "appointments" },
-  { name: "Recordings", path: "recordings" },
-  { name: "Event Planner", path: "planner" },
-  { name: "Requests", path: "requests" },
-  { name: "Documents", path: "documents" },
-  { name: "Help", path: "help" },
+  { name: "Home", path: "home", icon: "home" },
+  { name: "Chats", path: "chats", icon: "chats" },
+  { name: "Appointments", path: "appointments", icon: "appointments" },
+  { name: "Recordings", path: "recordings", icon: "recordings" },
+  { name: "Event Planner", path: "planner", icon: "planner" },
+  { name: "Requests", path: "requests", icon: "requests" },
+  { name: "Free Trials", path: "trials", icon: "trials" },
+  { name: "Documents", path: "documents", icon: "documents" },
+  { name: "Help", path: "help", icon: "help" },
 ];
 
 const BOTTOM_NAV_ITEMS: NavItem[] = [{ name: "Settings", path: "settings" }];

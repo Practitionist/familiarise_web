@@ -21,6 +21,9 @@ export async function GET(request: NextRequest) {
         include: {
           consultantProfile: true,
           topics: true,
+          subscriptionContents: {
+            orderBy: { order: "asc" },
+          },
         },
         skip,
         take: limit,
@@ -111,6 +114,22 @@ export async function POST(request: NextRequest) {
       (validatedData.callsPerWeek || 1) * validatedData.durationInMonths * 4;
     const totalHours = totalSessions * sessionDurationInHours;
 
+    // Handle free trial fields
+    const freeTrialEnabled = body.freeTrialEnabled ?? false;
+    const freeTrialDurationMinutes = body.freeTrialDurationMinutes ?? 30;
+
+    // Handle subscription contents (roadmap)
+    const subscriptionContents = body.subscriptionContents as
+      | Array<{
+          title: string;
+          description: string;
+          contentType?: string;
+          contentUrl?: string;
+          order: number;
+          hoursAllotted?: number;
+        }>
+      | undefined;
+
     const newSubscriptionPlan = await prisma.subscriptionPlan.create({
       data: {
         title: validatedData.title,
@@ -128,15 +147,33 @@ export async function POST(request: NextRequest) {
         prerequisites: validatedData.prerequisites,
         materialProvided: validatedData.materialProvided,
         learningOutcomes: validatedData.learningOutcomes,
+        freeTrialEnabled,
+        freeTrialDurationMinutes,
         consultantProfile: { connect: { id: consultantProfileId } },
         topics:
           topicIds.length > 0
             ? { connect: topicIds.map((id) => ({ id })) }
             : undefined,
+        subscriptionContents:
+          subscriptionContents && subscriptionContents.length > 0
+            ? {
+                create: subscriptionContents.map((content) => ({
+                  title: content.title,
+                  description: content.description,
+                  contentType: content.contentType,
+                  contentUrl: content.contentUrl,
+                  order: content.order,
+                  hoursAllotted: content.hoursAllotted ?? 1.0,
+                })),
+              }
+            : undefined,
       },
       include: {
         consultantProfile: true,
         topics: true,
+        subscriptionContents: {
+          orderBy: { order: "asc" },
+        },
       },
     });
 

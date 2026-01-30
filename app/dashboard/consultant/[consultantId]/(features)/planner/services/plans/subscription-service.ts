@@ -110,6 +110,9 @@ export class SubscriptionService {
         materialProvided: plan.materialProvided,
         learningOutcomes: plan.learningOutcomes,
         topics: plan.topics ?? [],
+        freeTrialEnabled: plan.freeTrialEnabled ?? false,
+        freeTrialDurationMinutes: plan.freeTrialDurationMinutes ?? 30,
+        subscriptionContents: plan.subscriptionContents ?? [],
         consultantProfileId: consultantId,
         ...(isUpdate && plan.id ? { id: plan.id } : {}),
       };

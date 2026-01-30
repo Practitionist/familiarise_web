@@ -450,6 +450,11 @@ export const ClassContentSchema = z.object({
 export const ClassPlanSchema = BaseEventPlanSchema.extend({
   planType: z.literal("class"),
   durationInMonths: z.number().min(1, "Duration must be at least 1 month"),
+  sessionDurationInHours: z
+    .number()
+    .min(0.5, "Session duration must be at least 30 minutes")
+    .max(4, "Session duration cannot exceed 4 hours")
+    .default(1),
   certificateProvided: z.boolean().default(false),
   recordingEnabled: z.boolean().default(false),
   meetingsPerWeek: z.number().min(0, "Meetings per week must be non-negative"),

@@ -183,7 +183,6 @@ export type TAppointment = Prisma.AppointmentGetPayload<{
                 user: true;
               };
             };
-            name: true;
           };
         };
       };

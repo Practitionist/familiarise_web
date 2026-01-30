@@ -86,7 +86,6 @@ export const createMeeting = async (
       },
     });
 
-    console.log("Created generic meeting:", id);
     return id;
   } catch (error) {
     console.error("Error creating meeting:", error);
@@ -124,15 +123,9 @@ export const getOrCreateAppointmentMeeting = async (
     if (existingMeetingSession) {
       // 2a. Found existing session, use its Stream Call ID
       streamCallId = existingMeetingSession.streamCallId;
-      console.log(
-        `Using existing meeting session for slot ${slot.id}: ${streamCallId}`,
-      );
     } else {
       // 2b. No existing session found, create a new one
       streamCallId = crypto.randomUUID();
-      console.log(
-        `Creating new Stream call and DB session for slot ${slot.id}: ${streamCallId}`,
-      );
 
       // 3. Create the Stream call
       const call: Call = client.call("default", streamCallId);
@@ -168,7 +161,6 @@ export const getOrCreateAppointmentMeeting = async (
           },
         },
       });
-      console.log(`Stream call ${streamCallId} created or retrieved.`);
 
       // 4. Create the corresponding record in the database via server action
       await createDbMeetingSession(slot, streamCallId);

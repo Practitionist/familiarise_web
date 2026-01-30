@@ -19,7 +19,7 @@
  */
 
 import prisma from "../../lib/prisma";
-import { WebinarStatus, ClassStatus, RequestStatus } from "@prisma/client";
+import { WebinarStatus, ClassStatus, RequestStatus, TrialSessionStatus } from "@prisma/client";
 
 // Only complete appointments that ended at least 1 hour ago
 // This gives buffer time for any post-session activities
@@ -31,6 +31,7 @@ export interface AutoCompleteResult {
   classesCompleted: number;
   consultationsCompleted: number;
   subscriptionsCompleted: number;
+  trialsCompleted: number;
   errors: string[];
   timestamp: string;
 }
@@ -332,6 +333,103 @@ async function completeSubscriptions(): Promise<{
 }
 
 /**
+ * Auto-complete trial sessions that have ended
+ */
+async function completeTrials(): Promise<{
+  completed: number;
+  errors: string[];
+}> {
+  const errors: string[] = [];
+  let completed = 0;
+
+  const bufferTime = new Date(
+    Date.now() - COMPLETION_BUFFER_HOURS * 60 * 60 * 1000,
+  );
+
+  // Find SCHEDULED trials where the appointment slot has ended
+  const trialsToComplete = await prisma.trialSession.findMany({
+    where: {
+      status: TrialSessionStatus.SCHEDULED,
+      appointment: {
+        slotsOfAppointment: {
+          every: {
+            endsAt: { lt: bufferTime },
+          },
+        },
+      },
+    },
+    include: {
+      subscriptionPlan: { select: { title: true } },
+      consulteeProfile: {
+        include: {
+          user: {
+            select: { id: true, name: true, image: true },
+          },
+        },
+      },
+      appointment: {
+        include: {
+          slotsOfAppointment: {
+            orderBy: { endsAt: "desc" },
+            take: 1,
+          },
+        },
+      },
+    },
+  });
+
+  console.log(`Found ${trialsToComplete.length} trials to auto-complete`);
+
+  for (const trial of trialsToComplete) {
+    try {
+      const lastSlot = trial.appointment?.slotsOfAppointment[0];
+      console.log(`\nCompleting trial ${trial.id}`);
+      console.log(`   Plan: ${trial.subscriptionPlan.title}`);
+      console.log(`   Consultee: ${trial.consulteeProfile.user.name}`);
+      console.log(`   Previous status: ${trial.status}`);
+      console.log(
+        `   Last slot ended: ${lastSlot?.endsAt?.toISOString() || "Unknown"}`,
+      );
+
+      await prisma.trialSession.update({
+        where: { id: trial.id },
+        data: {
+          status: TrialSessionStatus.COMPLETED,
+          completedAt: new Date(),
+        },
+      });
+
+      // Log activity for trial completion
+      try {
+        await prisma.activityLog.create({
+          data: {
+            activityType: "TRIAL_COMPLETED",
+            description: `Completed trial session with ${trial.consulteeProfile.user.name}: ${trial.subscriptionPlan.title}`,
+            actorId: trial.consulteeProfile.user.id,
+            actorName: trial.consulteeProfile.user.name,
+            actorImage: trial.consulteeProfile.user.image,
+            consultantProfileId: trial.consultantProfileId,
+            trialSessionId: trial.id,
+            metadata: { planTitle: trial.subscriptionPlan.title, autoCompleted: true },
+          },
+        });
+      } catch (activityError) {
+        console.warn(`   ⚠️ Failed to log activity: ${activityError}`);
+      }
+
+      console.log(`   ✅ Marked as COMPLETED`);
+      completed++;
+    } catch (error) {
+      const msg = `Failed to complete trial ${trial.id}: ${error}`;
+      console.error(`   ❌ ${msg}`);
+      errors.push(msg);
+    }
+  }
+
+  return { completed, errors };
+}
+
+/**
  * Main function to auto-complete all eligible appointments
  */
 export async function autoCompleteAppointments(): Promise<AutoCompleteResult> {
@@ -358,12 +456,17 @@ export async function autoCompleteAppointments(): Promise<AutoCompleteResult> {
   const subscriptionResult = await completeSubscriptions();
   allErrors.push(...subscriptionResult.errors);
 
+  // Complete trial sessions
+  const trialResult = await completeTrials();
+  allErrors.push(...trialResult.errors);
+
   // Summary
   console.log("\n📊 Auto-Complete Summary:");
   console.log(`   Webinars completed: ${webinarResult.completed}`);
   console.log(`   Classes completed: ${classResult.completed}`);
   console.log(`   Consultations completed: ${consultationResult.completed}`);
   console.log(`   Subscriptions completed: ${subscriptionResult.completed}`);
+  console.log(`   Trials completed: ${trialResult.completed}`);
 
   if (allErrors.length > 0) {
     console.log("\n⚠️ Errors encountered:");
@@ -376,6 +479,7 @@ export async function autoCompleteAppointments(): Promise<AutoCompleteResult> {
     classesCompleted: classResult.completed,
     consultationsCompleted: consultationResult.completed,
     subscriptionsCompleted: subscriptionResult.completed,
+    trialsCompleted: trialResult.completed,
     errors: allErrors,
     timestamp: new Date().toISOString(),
   };

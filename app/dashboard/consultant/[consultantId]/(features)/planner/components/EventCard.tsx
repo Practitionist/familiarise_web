@@ -12,6 +12,7 @@ import {
   Video,
   GraduationCap,
   Users,
+  Gift,
 } from "lucide-react";
 import { cn } from "@/utils/tailwind";
 import { WebinarStatus, ClassStatus } from "@prisma/client";
@@ -29,8 +30,10 @@ interface EventCardProps {
   event: Event;
   eventType: EventType;
   participantCount: number;
+  pendingTrialCount?: number;
   onEdit: () => void;
   onDelete: () => void;
+  onTrialsClick?: () => void;
 }
 
 // Type guards
@@ -219,8 +222,10 @@ export function EventCard({
   event,
   eventType,
   participantCount,
+  pendingTrialCount,
   onEdit,
   onDelete,
+  onTrialsClick,
 }: Readonly<EventCardProps>) {
   const config = eventTypeConfig[eventType];
   const Icon = config.icon;
@@ -237,6 +242,10 @@ export function EventCard({
   const isLiveSession = eventType === "webinar" || eventType === "class";
   const durationSuffix =
     eventType === "subscription" || eventType === "class" ? "/mo" : "";
+
+  // Check if subscription plan has free trial enabled
+  const hasFreeTrialEnabled =
+    isSubscriptionPlanEvent(event) && event.subscriptionPlan.freeTrialEnabled;
 
   return (
     <motion.div
@@ -324,6 +333,26 @@ export function EventCard({
           {participantCount}/{maxParticipants} participants
         </span>
       </div>
+
+      {/* Free Trial Button (subscription plans with trial enabled) */}
+      {hasFreeTrialEnabled && onTrialsClick && (
+        <div className="mt-3">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={(e) => {
+              e.stopPropagation();
+              onTrialsClick();
+            }}
+            className="w-full gap-2 border-purple-200 text-purple-700 hover:bg-purple-50 hover:border-purple-300"
+          >
+            <Gift className="h-4 w-4" />
+            {pendingTrialCount && pendingTrialCount > 0
+              ? `${pendingTrialCount} Trial Request${pendingTrialCount > 1 ? "s" : ""}`
+              : "Free Trials"}
+          </Button>
+        </div>
+      )}
 
       {/* Price/Duration row */}
       <div className="mt-4 pt-4 border-t border-zinc-100 flex items-center justify-between">
