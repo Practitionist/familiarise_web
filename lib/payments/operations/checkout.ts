@@ -12,6 +12,7 @@ import {
   PaymentStatus,
   Prisma,
   RequestStatus,
+  TrialSessionStatus,
 } from "@prisma/client";
 import { cancelPaymentIntent, createPaymentIntent } from "../index";
 import {
@@ -1073,9 +1074,9 @@ export async function handleSubscriptionCheckout(
   // Find a completed trial from the same consultee for this consultant
   const completedTrial = await tx.trialSession.findFirst({
     where: {
-      consulteeProfileId: consulteeProfileId,
+      consulteeProfileId,
       consultantProfileId: plan.consultantProfileId,
-      status: "COMPLETED", // Only link completed trials, not pending/scheduled
+      status: TrialSessionStatus.COMPLETED, // Only link completed trials, not pending/scheduled
       convertedToSubscriptionId: null, // Not already linked to another subscription
     },
   });
@@ -1085,7 +1086,7 @@ export async function handleSubscriptionCheckout(
     await tx.trialSession.update({
       where: { id: completedTrial.id },
       data: {
-        status: "CONVERTED",
+        status: TrialSessionStatus.CONVERTED,
         convertedToSubscriptionId: subscription.id,
       },
     });
