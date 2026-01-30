@@ -1,42 +1,29 @@
 "use client";
 
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { RegistrationBadge } from "@/components/ui/registration-badge";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
-  LayoutGrid,
-  List,
-  Search,
-  GraduationCap,
-  Video,
-  Users,
-  Clock,
-  ArrowRight,
-  Filter,
-  Sparkles,
-} from "lucide-react";
+import { GraduationCap, Video, Users, Sparkles, Search, Flame, Clock, Hash } from "lucide-react";
 import { motion } from "framer-motion";
 import { useSession } from "next-auth/react";
-import Image from "next/image";
-import { useRouter } from "next/navigation";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useCallback, useMemo, useRef, useState, Suspense } from "react";
 import { useDebouncedCallback } from "use-debounce";
 import {
   filterAndSortPrograms,
   getUniqueLevels,
-  isClassProgram,
   Program,
   ProgramType,
+  ProgramFilters,
   usePrograms,
+  useCuratedPrograms,
+  useTopicsWithCount,
 } from "./utils";
+import ProgramCard from "./components/ProgramCard";
+import ProgramTabs from "./components/ProgramTabs";
+import SectionHeader from "./components/SectionHeader";
+import FeaturedCarousel from "./components/FeaturedCarousel";
+import ProgramRow from "./components/ProgramRow";
+import CategoryGrid from "./components/CategoryGrid";
+import AdvancedFilters from "./components/AdvancedFilters";
+import FilterChips, { ActiveFilter } from "./components/FilterChips";
 
 const STATS = [
   { icon: GraduationCap, value: "500+", label: "Classes Available" },
@@ -44,26 +31,171 @@ const STATS = [
   { icon: Users, value: "25K+", label: "Students Enrolled" },
 ];
 
-export default function Programs() {
+function ProgramsContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { data: session } = useSession();
   const userId = session?.user?.id;
 
+  // Tab state from URL
+  const tabParam = searchParams.get("tab");
+  const [programType, setProgramType] = useState<ProgramType>(
+    (tabParam as ProgramType) || "all",
+  );
+
+  // Filter state
   const [searchTerm, setSearchTerm] = useState("");
   const [localSearchValue, setLocalSearchValue] = useState("");
-  const [selectedCategory, setSelectedCategory] = useState("all");
-  const [sortBy, setSortBy] = useState("");
+  const [selectedLevel, setSelectedLevel] = useState("all");
   const [viewMode, setViewMode] = useState<"list" | "grid">("grid");
-  const [programType, setProgramType] = useState<ProgramType>("all");
+  const [filters, setFilters] = useState<ProgramFilters>({});
   const observer = useRef<IntersectionObserver>();
 
   const debouncedSetSearch = useDebouncedCallback((value: string) => {
     setSearchTerm(value);
   }, 300);
 
+  // Update URL when tab changes
+  const handleTabChange = useCallback(
+    (tab: ProgramType) => {
+      setProgramType(tab);
+      const params = new URLSearchParams(searchParams.toString());
+      if (tab === "all") {
+        params.delete("tab");
+      } else {
+        params.set("tab", tab);
+      }
+      const qs = params.toString();
+      router.replace(`/explore/programs${qs ? `?${qs}` : ""}`, {
+        scroll: false,
+      });
+    },
+    [router, searchParams],
+  );
+
+  const handleFiltersChange = useCallback(
+    (partial: Partial<ProgramFilters>) => {
+      setFilters((prev) => ({ ...prev, ...partial }));
+    },
+    [],
+  );
+
+  // Data hooks — stagger curated sections so they don't all fire on mount
   const { programs, isLoading, hasMore, loadMore } = usePrograms(programType, {
     userId,
+    filters,
   });
+
+  const { programs: trendingPrograms, isLoading: trendingLoading } =
+    useCuratedPrograms(programType, "trending", 8);
+
+  const { programs: newPrograms, isLoading: newLoading } =
+    useCuratedPrograms(programType, "newest", 8);
+
+  const { topics: topicsWithCount, isLoading: topicsLoading } =
+    useTopicsWithCount(programType);
+
+  // Build active filter chips (reuse topicsWithCount, no duplicate hook)
+  const activeFilterChips = useMemo(() => {
+    const chips: ActiveFilter[] = [];
+    if (filters.topicIds && filters.topicIds.length > 0) {
+      filters.topicIds.forEach((id) => {
+        const topic = topicsWithCount.find((t) => t.id === id);
+        if (topic) {
+          chips.push({
+            key: `topic-${id}`,
+            label: "Topic",
+            value: topic.name,
+          });
+        }
+      });
+    }
+    if (filters.language) {
+      chips.push({ key: "language", label: "Language", value: filters.language });
+    }
+    if (filters.minPrice !== undefined || filters.maxPrice !== undefined) {
+      const min = filters.minPrice ?? 0;
+      const max = filters.maxPrice;
+      const label =
+        min === 0 && max === 0
+          ? "Free"
+          : max === undefined
+            ? `$${min}+`
+            : `$${min} - $${max}`;
+      chips.push({ key: "price", label: "Price", value: label });
+    }
+    if (filters.sort) {
+      const sortLabels: Record<string, string> = {
+        trending: "Most Popular",
+        newest: "Newest",
+        "price-asc": "Price Low-High",
+        "price-desc": "Price High-Low",
+        "title-asc": "Title A-Z",
+        "title-desc": "Title Z-A",
+      };
+      chips.push({
+        key: "sort",
+        label: "Sort",
+        value: sortLabels[filters.sort] || filters.sort,
+      });
+    }
+    if (selectedLevel !== "all") {
+      chips.push({ key: "level", label: "Level", value: selectedLevel });
+    }
+    if (searchTerm) {
+      chips.push({ key: "search", label: "Search", value: searchTerm });
+    }
+    return chips;
+  }, [filters, topicsWithCount, selectedLevel, searchTerm]);
+
+  const handleRemoveFilter = useCallback(
+    (key: string) => {
+      if (key.startsWith("topic-")) {
+        const topicId = key.replace("topic-", "");
+        setFilters((prev) => ({
+          ...prev,
+          topicIds: prev.topicIds?.filter((id) => id !== topicId),
+        }));
+      } else if (key === "language") {
+        setFilters((prev) => ({ ...prev, language: undefined }));
+      } else if (key === "price") {
+        setFilters((prev) => ({
+          ...prev,
+          minPrice: undefined,
+          maxPrice: undefined,
+        }));
+      } else if (key === "sort") {
+        setFilters((prev) => ({ ...prev, sort: undefined }));
+      } else if (key === "level") {
+        setSelectedLevel("all");
+      } else if (key === "search") {
+        setSearchTerm("");
+        setLocalSearchValue("");
+      }
+    },
+    [],
+  );
+
+  const handleClearAll = useCallback(() => {
+    setFilters({});
+    setSelectedLevel("all");
+    setSearchTerm("");
+    setLocalSearchValue("");
+  }, []);
+
+  // Handle topic selection from category grid
+  const handleTopicSelect = useCallback((topicId: string) => {
+    setFilters((prev) => {
+      const current = prev.topicIds || [];
+      if (current.includes(topicId)) return prev;
+      return { ...prev, topicIds: [...current, topicId] };
+    });
+    // Scroll to filter section
+    document.getElementById("all-programs")?.scrollIntoView({ behavior: "smooth" });
+  }, []);
+
+  // Use trending programs as featured (proxy until admin-flagged feature exists)
+  const featuredPrograms = trendingPrograms.slice(0, 5);
 
   const lastElementRef = useCallback(
     (node: HTMLDivElement) => {
@@ -79,17 +211,9 @@ export default function Programs() {
     [isLoading, hasMore, loadMore],
   );
 
-  const handleProgramClick = (item: Program) => {
-    if (isClassProgram(item)) {
-      router.push(`/explore/programs/plans/classes/${item.id}`);
-    } else {
-      router.push(`/explore/programs/plans/webinars/${item.id}`);
-    }
-  };
-
   const filteredAndSortedPrograms = useMemo(
-    () => filterAndSortPrograms(programs, searchTerm, selectedCategory, sortBy),
-    [programs, searchTerm, selectedCategory, sortBy]
+    () => filterAndSortPrograms(programs, searchTerm, selectedLevel),
+    [programs, searchTerm, selectedLevel],
   );
 
   const uniqueLevels = useMemo(() => getUniqueLevels(programs), [programs]);
@@ -98,7 +222,6 @@ export default function Programs() {
     <main className="min-h-screen bg-white">
       {/* Hero Section */}
       <section className="relative pt-32 pb-20 bg-zinc-950 overflow-hidden">
-        {/* Background Effects */}
         <div className="absolute inset-0">
           <div className="absolute top-1/4 left-1/4 w-[600px] h-[600px] bg-zinc-800/30 rounded-full blur-[120px] animate-blob" />
           <div className="absolute bottom-1/4 right-1/4 w-[500px] h-[500px] bg-zinc-700/20 rounded-full blur-[100px] animate-blob animation-delay-2000" />
@@ -128,7 +251,6 @@ export default function Programs() {
               Learn at your own pace or join interactive sessions.
             </p>
 
-            {/* Stats */}
             <div className="flex flex-wrap justify-center gap-8 md:gap-16">
               {STATS.map((stat, index) => (
                 <motion.div
@@ -152,344 +274,201 @@ export default function Programs() {
         </div>
       </section>
 
-      {/* Programs Section */}
-      <section className="py-16 md:py-20">
+      {/* Content Section */}
+      <section className="py-10 md:py-16">
         <div className="max-w-[1600px] mx-auto px-4 md:px-8 lg:px-12">
-          {/* Filters Card */}
-          <motion.div
-            className="bg-zinc-50 rounded-2xl p-6 border border-zinc-200 mb-12"
-            initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
-            transition={{ duration: 0.5 }}
-          >
-            <div className="flex items-center gap-2 mb-6">
-              <div className="w-10 h-10 rounded-xl bg-zinc-900 flex items-center justify-center">
-                <Filter className="w-5 h-5 text-white" />
-              </div>
-              <div>
-                <h3 className="font-semibold text-zinc-900">Filter Programs</h3>
-                <p className="text-sm text-zinc-500">
-                  Find the perfect program for you
-                </p>
-              </div>
-            </div>
+          {/* Tabs */}
+          <div className="mb-10">
+            <ProgramTabs activeTab={programType} onTabChange={handleTabChange} />
+          </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-              {/* Type Filter */}
-              <div>
-                <Label className="text-xs font-medium text-zinc-500 uppercase tracking-wide mb-1.5 block">
-                  Type
-                </Label>
-                <Select
-                  value={programType}
-                  onValueChange={(value: ProgramType) => setProgramType(value)}
-                >
-                  <SelectTrigger className="h-11 bg-white border-zinc-200 rounded-xl focus:ring-zinc-900">
-                    <SelectValue placeholder="Select type" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Programs</SelectItem>
-                    <SelectItem value="class">Classes Only</SelectItem>
-                    <SelectItem value="webinar">Webinars Only</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+          {/* Featured Carousel */}
+          <div className="mb-14">
+            <SectionHeader
+              title="Featured Programs"
+              icon={<Sparkles className="w-5 h-5 text-white" />}
+            />
+            <FeaturedCarousel
+              programs={featuredPrograms}
+              isLoading={trendingLoading}
+            />
+          </div>
 
-              {/* Level Filter */}
-              <div>
-                <Label className="text-xs font-medium text-zinc-500 uppercase tracking-wide mb-1.5 block">
-                  Level
-                </Label>
-                <Select
-                  value={selectedCategory}
-                  onValueChange={setSelectedCategory}
-                >
-                  <SelectTrigger className="h-11 bg-white border-zinc-200 rounded-xl focus:ring-zinc-900">
-                    <SelectValue placeholder="All Levels" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Levels</SelectItem>
-                    {uniqueLevels.map((level) => (
-                      <SelectItem key={level} value={level?.toString() ?? ""}>
-                        {level ?? "Unknown Level"}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+          {/* Trending Now */}
+          <div className="mb-14">
+            <SectionHeader
+              title="Trending Now"
+              icon={<Flame className="w-5 h-5 text-white" />}
+              seeAllHref="/explore/programs?sort=trending"
+            />
+            <ProgramRow
+              programs={trendingPrograms}
+              badge="trending"
+              isLoading={trendingLoading}
+            />
+          </div>
 
-              {/* Sort Filter */}
-              <div>
-                <Label className="text-xs font-medium text-zinc-500 uppercase tracking-wide mb-1.5 block">
-                  Sort By
-                </Label>
-                <Select value={sortBy} onValueChange={setSortBy}>
-                  <SelectTrigger className="h-11 bg-white border-zinc-200 rounded-xl focus:ring-zinc-900">
-                    <SelectValue placeholder="Select sorting" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="price-asc">
-                      Price: Low to High
-                    </SelectItem>
-                    <SelectItem value="price-desc">
-                      Price: High to Low
-                    </SelectItem>
-                    <SelectItem value="title-asc">Title: A to Z</SelectItem>
-                    <SelectItem value="title-desc">Title: Z to A</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+          {/* Newly Added */}
+          <div className="mb-14">
+            <SectionHeader
+              title="Newly Added"
+              icon={<Clock className="w-5 h-5 text-white" />}
+              seeAllHref="/explore/programs?sort=newest"
+            />
+            <ProgramRow
+              programs={newPrograms}
+              badge="new"
+              isLoading={newLoading}
+            />
+          </div>
 
-              {/* View Mode */}
-              <div>
-                <Label className="text-xs font-medium text-zinc-500 uppercase tracking-wide mb-1.5 block">
-                  View
-                </Label>
-                <div className="flex gap-2">
-                  <Button
-                    variant={viewMode === "grid" ? "default" : "outline"}
-                    className={`flex-1 h-11 rounded-xl ${viewMode === "grid" ? "bg-zinc-900 hover:bg-zinc-800" : "border-zinc-200"}`}
-                    onClick={() => setViewMode("grid")}
-                  >
-                    <LayoutGrid className="h-4 w-4" />
-                  </Button>
-                  <Button
-                    variant={viewMode === "list" ? "default" : "outline"}
-                    className={`flex-1 h-11 rounded-xl ${viewMode === "list" ? "bg-zinc-900 hover:bg-zinc-800" : "border-zinc-200"}`}
-                    onClick={() => setViewMode("list")}
-                  >
-                    <List className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
+          {/* Browse by Category */}
+          <div className="mb-14">
+            <SectionHeader
+              title="Browse by Category"
+              icon={<Hash className="w-5 h-5 text-white" />}
+            />
+            <CategoryGrid
+              topics={topicsWithCount}
+              isLoading={topicsLoading}
+              onTopicSelect={handleTopicSelect}
+            />
+          </div>
 
-              {/* Search */}
-              <div className="sm:col-span-2 lg:col-span-1">
-                <Label className="text-xs font-medium text-zinc-500 uppercase tracking-wide mb-1.5 block">
-                  Search
-                </Label>
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
-                  <Input
-                    type="text"
-                    placeholder="Search..."
-                    value={localSearchValue}
-                    onChange={(e) => {
-                      setLocalSearchValue(e.target.value);
-                      debouncedSetSearch(e.target.value);
-                    }}
-                    className="h-11 pl-10 bg-white border-zinc-200 rounded-xl focus:ring-zinc-900"
-                  />
-                </div>
-              </div>
-            </div>
-          </motion.div>
+          {/* All Programs Section */}
+          <div id="all-programs">
+            <SectionHeader title="All Programs" />
 
-          {/* Programs Grid/List */}
-          {viewMode === "grid" ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-              {filteredAndSortedPrograms.map((item: Program, index: number) => (
-                <motion.div
-                  key={item.id}
-                  ref={
-                    index === filteredAndSortedPrograms.length - 1
-                      ? lastElementRef
-                      : null
-                  }
-                  initial={{ opacity: 0, y: 20 }}
-                  whileInView={{ opacity: 1, y: 0 }}
-                  viewport={{ once: true }}
-                  transition={{ duration: 0.4, delay: index * 0.05 }}
-                >
-                  <div
-                    className="group bg-white rounded-2xl overflow-hidden border border-zinc-200 hover:border-zinc-300 hover:shadow-xl transition-all duration-300 cursor-pointer h-full flex flex-col"
-                    onClick={() => handleProgramClick(item)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") {
-                        e.preventDefault();
-                        handleProgramClick(item);
-                      }
-                    }}
-                    tabIndex={0}
-                    role="button"
-                    aria-label={`View details for ${item.title}`}
-                  >
-                    {/* Image */}
-                    <div className="relative aspect-[16/10] overflow-hidden">
-                      <Image
-                        src={item.imageUrl}
-                        alt={item.title}
-                        fill
-                        className="object-cover group-hover:scale-105 transition-transform duration-500"
-                        sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
-                      />
-                      <div className="absolute top-3 left-3 flex gap-2">
-                        <span
-                          className={`px-3 py-1 rounded-full text-xs font-medium ${
-                            item.type === "class"
-                              ? "bg-zinc-900 text-white"
-                              : "bg-white text-zinc-900"
-                          }`}
-                        >
-                          {item.type === "class" ? "Class" : "Webinar"}
-                        </span>
-                        {item.isRegistered && (
-                          <RegistrationBadge
-                            type={isClassProgram(item) ? "class" : "webinar"}
-                            compact
-                          />
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Content */}
-                    <div className="p-5 flex-1 flex flex-col">
-                      <h3 className="text-lg font-semibold text-zinc-900 mb-2 line-clamp-1 group-hover:text-zinc-700 transition-colors">
-                        {item.title}
-                      </h3>
-                      <p className="text-sm text-zinc-500 mb-4 line-clamp-2 flex-1">
-                        {item.description}
-                      </p>
-
-                      <div className="flex items-center justify-between pt-4 border-t border-zinc-100">
-                        <div className="text-xl font-bold text-zinc-900">
-                          ${item.price}
-                        </div>
-                        <div className="flex items-center gap-1 text-sm font-medium text-zinc-500 group-hover:text-zinc-900 transition-colors">
-                          <span>View Details</span>
-                          <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </motion.div>
-              ))}
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {filteredAndSortedPrograms.map((item: Program, index: number) => (
-                <motion.div
-                  key={item.id}
-                  ref={
-                    index === filteredAndSortedPrograms.length - 1
-                      ? lastElementRef
-                      : null
-                  }
-                  initial={{ opacity: 0, y: 20 }}
-                  whileInView={{ opacity: 1, y: 0 }}
-                  viewport={{ once: true }}
-                  transition={{ duration: 0.4, delay: index * 0.05 }}
-                >
-                  <div
-                    className="group bg-white rounded-2xl overflow-hidden border border-zinc-200 hover:border-zinc-300 hover:shadow-xl transition-all duration-300 cursor-pointer flex"
-                    onClick={() => handleProgramClick(item)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") {
-                        e.preventDefault();
-                        handleProgramClick(item);
-                      }
-                    }}
-                    tabIndex={0}
-                    role="button"
-                    aria-label={`View details for ${item.title}`}
-                  >
-                    {/* Image */}
-                    <div className="relative w-48 md:w-64 flex-shrink-0">
-                      <Image
-                        src={item.imageUrl}
-                        alt={item.title}
-                        fill
-                        className="object-cover"
-                        sizes="256px"
-                      />
-                      <div className="absolute top-3 left-3">
-                        <span
-                          className={`px-3 py-1 rounded-full text-xs font-medium ${
-                            item.type === "class"
-                              ? "bg-zinc-900 text-white"
-                              : "bg-white text-zinc-900"
-                          }`}
-                        >
-                          {item.type === "class" ? "Class" : "Webinar"}
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Content */}
-                    <div className="p-6 flex-1 flex flex-col justify-between">
-                      <div>
-                        <div className="flex items-start justify-between gap-4 mb-2">
-                          <h3 className="text-lg font-semibold text-zinc-900 group-hover:text-zinc-700 transition-colors">
-                            {item.title}
-                          </h3>
-                          {item.isRegistered && (
-                            <RegistrationBadge
-                              type={isClassProgram(item) ? "class" : "webinar"}
-                              compact
-                            />
-                          )}
-                        </div>
-                        <p className="text-sm text-zinc-500 line-clamp-2">
-                          {item.description}
-                        </p>
-                      </div>
-
-                      <div className="flex items-center justify-between mt-4">
-                        <div className="text-xl font-bold text-zinc-900">
-                          ${item.price}
-                        </div>
-                        <Button
-                          variant="outline"
-                          className="rounded-xl border-zinc-300 hover:bg-zinc-50"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleProgramClick(item);
-                          }}
-                        >
-                          View Details
-                          <ArrowRight className="w-4 h-4 ml-2" />
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
-                </motion.div>
-              ))}
-            </div>
-          )}
-
-          {/* Empty State */}
-          {filteredAndSortedPrograms.length === 0 && !isLoading && (
+            {/* Advanced Filters */}
             <motion.div
-              className="text-center py-16"
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ duration: 0.3 }}
+              className="mb-8"
+              initial={{ opacity: 0, y: 20 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true }}
+              transition={{ duration: 0.5 }}
             >
-              <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-zinc-100 flex items-center justify-center">
-                <Search className="w-10 h-10 text-zinc-400" />
-              </div>
-              <h3 className="text-xl font-semibold text-zinc-900 mb-2">
-                No programs found
-              </h3>
-              <p className="text-zinc-500 max-w-md mx-auto">
-                Try adjusting your filters or search terms to discover more
-                programs
-              </p>
+              <AdvancedFilters
+                filters={filters}
+                onFiltersChange={handleFiltersChange}
+                localSearch={localSearchValue}
+                onLocalSearchChange={(value) => {
+                  setLocalSearchValue(value);
+                  debouncedSetSearch(value);
+                }}
+                selectedLevel={selectedLevel}
+                onLevelChange={setSelectedLevel}
+                uniqueLevels={uniqueLevels}
+                viewMode={viewMode}
+                onViewModeChange={setViewMode}
+                topics={topicsWithCount}
+              />
             </motion.div>
-          )}
 
-          {/* Loading State */}
-          {isLoading && (
-            <div className="flex items-center justify-center py-12">
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 border-3 border-zinc-200 border-t-zinc-900 rounded-full animate-spin" />
-                <span className="text-zinc-500">Loading programs...</span>
+            {/* Active Filter Chips */}
+            {activeFilterChips.length > 0 && (
+              <div className="mb-6">
+                <FilterChips
+                  filters={activeFilterChips}
+                  onRemove={handleRemoveFilter}
+                  onClearAll={handleClearAll}
+                />
               </div>
-            </div>
-          )}
+            )}
+
+            {/* Programs Grid/List */}
+            {viewMode === "grid" ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                {filteredAndSortedPrograms.map(
+                  (item: Program, index: number) => (
+                    <motion.div
+                      key={item.id}
+                      ref={
+                        index === filteredAndSortedPrograms.length - 1
+                          ? lastElementRef
+                          : undefined
+                      }
+                      initial={{ opacity: 0, y: 20 }}
+                      whileInView={{ opacity: 1, y: 0 }}
+                      viewport={{ once: true }}
+                      transition={{ duration: 0.4, delay: Math.min(index * 0.05, 0.6) }}
+                    >
+                      <ProgramCard program={item} variant="grid" />
+                    </motion.div>
+                  ),
+                )}
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {filteredAndSortedPrograms.map(
+                  (item: Program, index: number) => (
+                    <motion.div
+                      key={item.id}
+                      ref={
+                        index === filteredAndSortedPrograms.length - 1
+                          ? lastElementRef
+                          : undefined
+                      }
+                      initial={{ opacity: 0, y: 20 }}
+                      whileInView={{ opacity: 1, y: 0 }}
+                      viewport={{ once: true }}
+                      transition={{ duration: 0.4, delay: Math.min(index * 0.05, 0.6) }}
+                    >
+                      <ProgramCard program={item} variant="list" />
+                    </motion.div>
+                  ),
+                )}
+              </div>
+            )}
+
+            {/* Empty State */}
+            {filteredAndSortedPrograms.length === 0 && !isLoading && (
+              <motion.div
+                className="text-center py-16"
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ duration: 0.3 }}
+              >
+                <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-zinc-100 flex items-center justify-center">
+                  <Search className="w-10 h-10 text-zinc-400" />
+                </div>
+                <h3 className="text-xl font-semibold text-zinc-900 mb-2">
+                  No programs found
+                </h3>
+                <p className="text-zinc-500 max-w-md mx-auto">
+                  Try adjusting your filters or search terms to discover more
+                  programs
+                </p>
+              </motion.div>
+            )}
+
+            {/* Loading State */}
+            {isLoading && (
+              <div className="flex items-center justify-center py-12">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 border-3 border-zinc-200 border-t-zinc-900 rounded-full animate-spin" />
+                  <span className="text-zinc-500">Loading programs...</span>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </section>
     </main>
+  );
+}
+
+export default function Programs() {
+  return (
+    <Suspense
+      fallback={
+        <main className="min-h-screen bg-white">
+          <div className="flex items-center justify-center py-32">
+            <div className="w-8 h-8 border-3 border-zinc-200 border-t-zinc-900 rounded-full animate-spin" />
+          </div>
+        </main>
+      }
+    >
+      <ProgramsContent />
+    </Suspense>
   );
 }

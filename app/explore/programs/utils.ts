@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { useInfiniteQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import {
   ClassPlan as PrismaClassPlan,
   WebinarPlan as PrismaWebinarPlan,
@@ -37,17 +37,17 @@ interface ClassWithAppointments {
 }
 
 export type ClassPlanProgram = PrismaClassPlan & {
-  classes: any[]; // Classes array - structure varies by context
+  classes: any[];
   type: "class";
   imageUrl: string;
-  isRegistered?: boolean; // Added for registration status
+  isRegistered?: boolean;
 };
 
 export type WebinarPlanProgram = PrismaWebinarPlan & {
-  webinars?: WebinarWithAppointment[]; // Added for registration data
+  webinars?: WebinarWithAppointment[];
   type: "webinar";
   imageUrl: string;
-  isRegistered?: boolean; // Added for registration status
+  isRegistered?: boolean;
 };
 
 export type Program = ClassPlanProgram | WebinarPlanProgram;
@@ -59,13 +59,28 @@ export interface ApiMeta {
   totalPages: number;
 }
 
+export interface TopicWithCount {
+  id: string;
+  name: string;
+  programCount: number;
+}
+
+export interface ProgramFilters {
+  topicIds?: string[];
+  language?: string;
+  domainId?: string;
+  sort?: string;
+  minPrice?: number;
+  maxPrice?: number;
+  search?: string;
+}
+
 // Generate program image URL based on ID with dimensions
 export function generateProgramImageUrl(
   id: string,
   width: number = 600,
   height: number = 400,
 ): string {
-  // Using picsum.photos with a consistent seed based on the program ID
   return `https://picsum.photos/seed/${id}/${width}/${height}`;
 }
 
@@ -79,36 +94,21 @@ export function isWebinarProgram(
   return program.type === "webinar";
 }
 
+// Client-side filtering for search term and level only.
+// Sort is handled server-side via API params — no need to re-sort here.
 export function filterAndSortPrograms(
   programs: Program[],
   searchTerm: string,
   selectedCategory: string,
-  sortBy: string,
 ): Program[] {
-  let filteredPrograms = programs.filter((program) => {
-    const matchesSearch = program.title
-      .toLowerCase()
-      .includes(searchTerm.toLowerCase());
+  return programs.filter((program) => {
+    const matchesSearch =
+      !searchTerm ||
+      program.title.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesCategory =
       selectedCategory === "all" || program.level === selectedCategory;
     return matchesSearch && matchesCategory;
   });
-
-  if (sortBy === "price-asc") {
-    filteredPrograms = filteredPrograms.sort((a, b) => a.price - b.price);
-  } else if (sortBy === "price-desc") {
-    filteredPrograms = filteredPrograms.sort((a, b) => b.price - a.price);
-  } else if (sortBy === "title-asc") {
-    filteredPrograms = filteredPrograms.sort((a, b) =>
-      a.title.localeCompare(b.title),
-    );
-  } else if (sortBy === "title-desc") {
-    filteredPrograms = filteredPrograms.sort((a, b) =>
-      b.title.localeCompare(a.title),
-    );
-  }
-
-  return filteredPrograms;
 }
 
 export function getUniqueLevels(programs: Program[]): string[] {
@@ -118,19 +118,38 @@ export function getUniqueLevels(programs: Program[]): string[] {
   return Array.from(new Set(levels));
 }
 
-// React Query fetcher function for programs
-const fetchProgramsData = (url: string) => fetch(url).then((res) => res.json());
+// Build query string from filter params
+function buildFilterParams(filters: ProgramFilters): string {
+  const params = new URLSearchParams();
+  if (filters.topicIds && filters.topicIds.length > 0) {
+    params.set("topicIds", filters.topicIds.join(","));
+  }
+  if (filters.language) params.set("language", filters.language);
+  if (filters.domainId) params.set("domainId", filters.domainId);
+  if (filters.sort) params.set("sort", filters.sort);
+  if (filters.minPrice !== undefined)
+    params.set("minPrice", String(filters.minPrice));
+  if (filters.maxPrice !== undefined)
+    params.set("maxPrice", String(filters.maxPrice));
+  if (filters.search) params.set("search", filters.search);
+  const str = params.toString();
+  return str ? `&${str}` : "";
+}
+
+const fetchJson = (url: string) => fetch(url).then((res) => res.json());
 
 interface UseProgramsOptions {
-  userId?: string | null; // Optional user ID for registration status check
+  userId?: string | null;
+  filters?: ProgramFilters;
 }
 
 export function usePrograms(
   programType: ProgramType,
   options: UseProgramsOptions = {},
 ) {
-  const { userId } = options;
+  const { userId, filters = {} } = options;
   const includeRegistration = !!userId;
+  const filterStr = buildFilterParams(filters);
 
   const {
     data,
@@ -140,28 +159,27 @@ export function usePrograms(
     isLoading,
     isFetchingNextPage,
   } = useInfiniteQuery({
-    queryKey: ["programs", programType, userId],
+    queryKey: ["programs", programType, userId, filterStr],
     queryFn: async ({ pageParam = 0 }) => {
       const requests = [];
 
-      // Add includeRegistration param when user is logged in
       const registrationParam = includeRegistration
         ? "&includeRegistration=true"
         : "";
 
       if (programType === "all" || programType === "class") {
         requests.push(
-          `/api/plans/classes?page=${pageParam + 1}&limit=${ITEMS_PER_PAGE}&include=classes${registrationParam}`,
+          `/api/plans/classes?page=${pageParam + 1}&limit=${ITEMS_PER_PAGE}&include=classes${registrationParam}${filterStr}`,
         );
       }
       if (programType === "all" || programType === "webinar") {
         requests.push(
-          `/api/plans/webinars?page=${pageParam + 1}&limit=${ITEMS_PER_PAGE}${registrationParam}`,
+          `/api/plans/webinars?page=${pageParam + 1}&limit=${ITEMS_PER_PAGE}${registrationParam}${filterStr}`,
         );
       }
 
       const responses = await Promise.all(
-        requests.map((url) => fetchProgramsData(url)),
+        requests.map((url) => fetchJson(url)),
       );
 
       let combinedPrograms: Program[] = [];
@@ -173,7 +191,6 @@ export function usePrograms(
         if (classResponse.data) {
           const formattedClasses = classResponse.data.map(
             (plan: any): ClassPlanProgram => {
-              // Check if user is enrolled in any class instance
               const classes = plan.classes || [];
               const appointments = classes.flatMap(
                 (c: ClassWithAppointments) => c.appointments ?? [],
@@ -204,7 +221,6 @@ export function usePrograms(
           if (webinarResponse.data) {
             const formattedWebinars = webinarResponse.data.map(
               (plan: any): WebinarPlanProgram => {
-                // Check if user is registered for any webinar instance
                 const webinars = plan.webinars || [];
                 const isRegistered =
                   userId && webinars.length > 0
@@ -265,14 +281,14 @@ export function usePrograms(
       return hasMore ? pages.length : undefined;
     },
     initialPageParam: 0,
-    staleTime: 2 * 60 * 1000, // 2 minutes
-    gcTime: 10 * 60 * 1000, // 10 minutes
+    staleTime: 2 * 60 * 1000,
+    gcTime: 10 * 60 * 1000,
     retry: 2,
   });
 
   const programs = useMemo(
     () => (data ? data.pages.map((d) => d.programs).flat() : []),
-    [data]
+    [data],
   );
   const hasMore = hasNextPage;
 
@@ -283,4 +299,97 @@ export function usePrograms(
     hasMore,
     loadMore: () => fetchNextPage(),
   };
+}
+
+// Hook for fetching a limited set of programs (for curated sections)
+export function useCuratedPrograms(
+  programType: ProgramType,
+  sort: string,
+  limit: number = 8,
+) {
+  const { data, isLoading } = useQuery({
+    queryKey: ["curated-programs", programType, sort, limit],
+    queryFn: async () => {
+      const requests: Promise<any>[] = [];
+
+      if (programType === "all" || programType === "class") {
+        requests.push(
+          fetchJson(
+            `/api/plans/classes?page=1&limit=${limit}&include=classes&sort=${sort}`,
+          ),
+        );
+      }
+      if (programType === "all" || programType === "webinar") {
+        requests.push(
+          fetchJson(
+            `/api/plans/webinars?page=1&limit=${limit}&sort=${sort}`,
+          ),
+        );
+      }
+
+      const responses = await Promise.all(requests);
+      const programs: Program[] = [];
+
+      if ((programType === "all" || programType === "class") && responses[0]?.data) {
+        programs.push(
+          ...responses[0].data.map(
+            (plan: any): ClassPlanProgram => ({
+              ...plan,
+              classes: plan.classes || [],
+              type: "class",
+              imageUrl: generateProgramImageUrl(plan.id, 600, 400),
+            }),
+          ),
+        );
+      }
+
+      const webIdx = programType === "all" ? 1 : 0;
+      if (
+        (programType === "all" || programType === "webinar") &&
+        responses[webIdx]?.data
+      ) {
+        programs.push(
+          ...responses[webIdx].data.map(
+            (plan: any): WebinarPlanProgram => ({
+              ...plan,
+              webinars: plan.webinars || [],
+              type: "webinar",
+              imageUrl: generateProgramImageUrl(plan.id, 600, 400),
+            }),
+          ),
+        );
+      }
+
+      // For trending, re-sort combined results; for newest, sort by createdAt
+      if (sort === "newest") {
+        programs.sort(
+          (a, b) =>
+            new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+        );
+      }
+
+      return programs.slice(0, limit);
+    },
+    staleTime: 5 * 60 * 1000,
+    gcTime: 15 * 60 * 1000,
+  });
+
+  return { programs: data || [], isLoading };
+}
+
+// Hook for fetching topics with program counts
+export function useTopicsWithCount(planType: ProgramType = "all") {
+  const { data, isLoading } = useQuery({
+    queryKey: ["topics-with-count", planType],
+    queryFn: async () => {
+      const res = await fetchJson(
+        `/api/topics?withProgramCount=true&planType=${planType}`,
+      );
+      return (res.data || []) as TopicWithCount[];
+    },
+    staleTime: 10 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
+  });
+
+  return { topics: data || [], isLoading };
 }
