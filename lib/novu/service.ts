@@ -32,15 +32,18 @@ import {
 // Core trigger function
 // ============================================================================
 
+/** Payload base type — all workflow payloads extend this. */
+type NovuPayload = Record<string, string | number | boolean | null | undefined>;
+
 interface TriggerResult {
   success: boolean;
-  error?: unknown;
+  error?: Error | string;
 }
 
-async function triggerWorkflow(
+async function triggerWorkflow<T extends NovuPayload>(
   workflowId: string,
   subscriberId: string,
-  payload: Record<string, unknown>,
+  payload: T,
 ): Promise<TriggerResult> {
   if (!isNovuConfigured()) {
     console.warn(`[Novu] Not configured. Skipped workflow: ${workflowId}`);
@@ -58,23 +61,28 @@ async function triggerWorkflow(
     return { success: true };
   } catch (error) {
     console.error(`[Novu] Failed to trigger ${workflowId}:`, error);
-    return { success: false, error };
+    return {
+      success: false,
+      error: error instanceof Error ? error : String(error),
+    };
   }
 }
 
 /**
  * Helper to trigger the same workflow for multiple users (e.g. both parties).
  */
-async function triggerForMultiple(
+async function triggerForMultiple<T extends NovuPayload>(
   workflowId: string,
   userIds: string[],
-  payload: Record<string, unknown>,
+  payload: T,
 ): Promise<TriggerResult[]> {
   const results = await Promise.allSettled(
     userIds.map((id) => triggerWorkflow(workflowId, id, payload)),
   );
   return results.map((r) =>
-    r.status === "fulfilled" ? r.value : { success: false, error: r.reason },
+    r.status === "fulfilled"
+      ? r.value
+      : { success: false, error: r.reason instanceof Error ? r.reason : String(r.reason) },
   );
 }
 
@@ -89,7 +97,7 @@ export async function notifyAppointmentBooked(
   return triggerForMultiple(
     NOVU_WORKFLOWS.APPOINTMENT_BOOKED,
     userIds,
-    payload as unknown as Record<string, unknown>,
+    payload,
   );
 }
 
@@ -100,7 +108,7 @@ export async function notifyAppointmentCancelled(
   return triggerForMultiple(
     NOVU_WORKFLOWS.APPOINTMENT_CANCELLED,
     userIds,
-    payload as unknown as Record<string, unknown>,
+    payload,
   );
 }
 
@@ -111,7 +119,7 @@ export async function notifyAppointmentRescheduled(
   return triggerForMultiple(
     NOVU_WORKFLOWS.APPOINTMENT_RESCHEDULED,
     userIds,
-    payload as unknown as Record<string, unknown>,
+    payload,
   );
 }
 
@@ -122,7 +130,7 @@ export async function notifyAppointmentCompleted(
   return triggerForMultiple(
     NOVU_WORKFLOWS.APPOINTMENT_COMPLETED,
     userIds,
-    payload as unknown as Record<string, unknown>,
+    payload,
   );
 }
 
@@ -137,7 +145,7 @@ export async function notifyPaymentSuccess(
   return triggerWorkflow(
     NOVU_WORKFLOWS.PAYMENT_SUCCESS,
     userId,
-    payload as unknown as Record<string, unknown>,
+    payload,
   );
 }
 
@@ -148,7 +156,7 @@ export async function notifyPaymentFailed(
   return triggerWorkflow(
     NOVU_WORKFLOWS.PAYMENT_FAILED,
     userId,
-    payload as unknown as Record<string, unknown>,
+    payload,
   );
 }
 
@@ -159,7 +167,7 @@ export async function notifyRefundProcessed(
   return triggerWorkflow(
     NOVU_WORKFLOWS.REFUND_PROCESSED,
     userId,
-    payload as unknown as Record<string, unknown>,
+    payload,
   );
 }
 
@@ -170,7 +178,7 @@ export async function notifyRefundRequested(
   return triggerForMultiple(
     NOVU_WORKFLOWS.REFUND_REQUESTED,
     adminUserIds,
-    payload as unknown as Record<string, unknown>,
+    payload,
   );
 }
 
@@ -185,7 +193,7 @@ export async function notifySupportTicketCreated(
   return triggerForMultiple(
     NOVU_WORKFLOWS.SUPPORT_TICKET_CREATED,
     staffUserIds,
-    payload as unknown as Record<string, unknown>,
+    payload,
   );
 }
 
@@ -196,7 +204,7 @@ export async function notifySupportTicketUpdate(
   return triggerWorkflow(
     NOVU_WORKFLOWS.SUPPORT_TICKET_UPDATE,
     userId,
-    payload as unknown as Record<string, unknown>,
+    payload,
   );
 }
 
@@ -207,7 +215,7 @@ export async function notifySupportTicketResponse(
   return triggerWorkflow(
     NOVU_WORKFLOWS.SUPPORT_TICKET_RESPONSE,
     userId,
-    payload as unknown as Record<string, unknown>,
+    payload,
   );
 }
 
@@ -222,7 +230,7 @@ export async function notifyFeedbackReceived(
   return triggerForMultiple(
     NOVU_WORKFLOWS.FEEDBACK_RECEIVED,
     adminUserIds,
-    payload as unknown as Record<string, unknown>,
+    payload,
   );
 }
 
@@ -233,7 +241,7 @@ export async function notifyNewReview(
   return triggerWorkflow(
     NOVU_WORKFLOWS.NEW_REVIEW_RECEIVED,
     consultantUserId,
-    payload as unknown as Record<string, unknown>,
+    payload,
   );
 }
 
@@ -248,7 +256,7 @@ export async function notifyTrialSessionRequested(
   return triggerWorkflow(
     NOVU_WORKFLOWS.TRIAL_SESSION_REQUESTED,
     consultantUserId,
-    payload as unknown as Record<string, unknown>,
+    payload,
   );
 }
 
@@ -259,7 +267,7 @@ export async function notifyTrialSessionScheduled(
   return triggerWorkflow(
     NOVU_WORKFLOWS.TRIAL_SESSION_SCHEDULED,
     consulteeUserId,
-    payload as unknown as Record<string, unknown>,
+    payload,
   );
 }
 
@@ -270,7 +278,7 @@ export async function notifyTrialSessionCompleted(
   return triggerForMultiple(
     NOVU_WORKFLOWS.TRIAL_SESSION_COMPLETED,
     userIds,
-    payload as unknown as Record<string, unknown>,
+    payload,
   );
 }
 
@@ -281,7 +289,7 @@ export async function notifyTrialSessionCancelled(
   return triggerForMultiple(
     NOVU_WORKFLOWS.TRIAL_SESSION_CANCELLED,
     userIds,
-    payload as unknown as Record<string, unknown>,
+    payload,
   );
 }
 
@@ -296,7 +304,7 @@ export async function notifySubscriptionStarted(
   return triggerWorkflow(
     NOVU_WORKFLOWS.SUBSCRIPTION_STARTED,
     userId,
-    payload as unknown as Record<string, unknown>,
+    payload,
   );
 }
 
@@ -307,7 +315,7 @@ export async function notifySubscriptionCancelled(
   return triggerForMultiple(
     NOVU_WORKFLOWS.SUBSCRIPTION_CANCELLED,
     userIds,
-    payload as unknown as Record<string, unknown>,
+    payload,
   );
 }
 
@@ -318,7 +326,7 @@ export async function notifySubscriptionRenewed(
   return triggerWorkflow(
     NOVU_WORKFLOWS.SUBSCRIPTION_RENEWED,
     userId,
-    payload as unknown as Record<string, unknown>,
+    payload,
   );
 }
 
@@ -333,7 +341,7 @@ export async function notifyNewBookingRequest(
   return triggerWorkflow(
     NOVU_WORKFLOWS.NEW_BOOKING_REQUEST,
     consultantUserId,
-    payload as unknown as Record<string, unknown>,
+    payload,
   );
 }
 
@@ -344,7 +352,7 @@ export async function notifyVerificationStatusChanged(
   return triggerWorkflow(
     NOVU_WORKFLOWS.VERIFICATION_STATUS_CHANGED,
     consultantUserId,
-    payload as unknown as Record<string, unknown>,
+    payload,
   );
 }
 
@@ -355,7 +363,7 @@ export async function notifyPayoutProcessed(
   return triggerWorkflow(
     NOVU_WORKFLOWS.PAYOUT_PROCESSED,
     consultantUserId,
-    payload as unknown as Record<string, unknown>,
+    payload,
   );
 }
 
@@ -370,7 +378,7 @@ export async function notifyGeneralAnnouncement(
   return triggerForMultiple(
     NOVU_WORKFLOWS.GENERAL_ANNOUNCEMENT,
     userIds,
-    payload as unknown as Record<string, unknown>,
+    payload,
   );
 }
 
@@ -381,7 +389,7 @@ export async function notifyNewConsultantApplication(
   return triggerForMultiple(
     NOVU_WORKFLOWS.NEW_CONSULTANT_APPLICATION,
     adminUserIds,
-    payload as unknown as Record<string, unknown>,
+    payload,
   );
 }
 
@@ -396,7 +404,7 @@ export async function notifyWaitlistSpotAvailable(
   return triggerWorkflow(
     NOVU_WORKFLOWS.WAITLIST_SPOT_AVAILABLE,
     userId,
-    payload as unknown as Record<string, unknown>,
+    payload,
   );
 }
 
@@ -411,7 +419,7 @@ export async function notifyDisputeCreated(
   return triggerForMultiple(
     NOVU_WORKFLOWS.DISPUTE_CREATED,
     userIds,
-    payload as unknown as Record<string, unknown>,
+    payload,
   );
 }
 
@@ -422,7 +430,7 @@ export async function notifyDisputeResolved(
   return triggerForMultiple(
     NOVU_WORKFLOWS.DISPUTE_RESOLVED,
     userIds,
-    payload as unknown as Record<string, unknown>,
+    payload,
   );
 }
 
@@ -437,6 +445,6 @@ export async function notifyRecordingAvailable(
   return triggerForMultiple(
     NOVU_WORKFLOWS.RECORDING_AVAILABLE,
     userIds,
-    payload as unknown as Record<string, unknown>,
+    payload,
   );
 }

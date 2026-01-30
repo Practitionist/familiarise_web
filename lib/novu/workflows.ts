@@ -69,7 +69,7 @@ export type NovuWorkflowId =
 // Payload Type Definitions
 // ============================================================================
 
-export interface AppointmentPayload {
+export type AppointmentPayload = {
   appointmentId?: string;
   appointmentType: string;
   consultantName: string;
@@ -77,19 +77,19 @@ export interface AppointmentPayload {
   planTitle: string;
   dateTime?: string;
   dashboardUrl: string;
-}
+};
 
-export interface AppointmentCancelledPayload extends AppointmentPayload {
+export type AppointmentCancelledPayload = AppointmentPayload & {
   reason?: string;
   cancelledBy: "consultant" | "consultee" | "system";
-}
+};
 
-export interface AppointmentRescheduledPayload extends AppointmentPayload {
+export type AppointmentRescheduledPayload = AppointmentPayload & {
   oldDateTime?: string;
   newDateTime?: string;
-}
+};
 
-export interface PaymentSuccessPayload {
+export type PaymentSuccessPayload = {
   amount: number;
   currency: string;
   consultantName: string;
@@ -97,9 +97,9 @@ export interface PaymentSuccessPayload {
   planTitle: string;
   receiptUrl?: string;
   dashboardUrl: string;
-}
+};
 
-export interface PaymentFailedPayload {
+export type PaymentFailedPayload = {
   amount: number;
   currency: string;
   consultantName: string;
@@ -107,94 +107,94 @@ export interface PaymentFailedPayload {
   planTitle?: string;
   failureReason: string;
   retryUrl?: string;
-}
+};
 
-export interface RefundPayload {
+export type RefundPayload = {
   amount: number;
   currency: string;
   reason?: string;
   appointmentType?: string;
   consultantName?: string;
   dashboardUrl: string;
-}
+};
 
-export interface SupportTicketPayload {
+export type SupportTicketPayload = {
   ticketId: string;
   ticketTitle: string;
   status?: string;
   message?: string;
   respondedBy?: string;
   dashboardUrl: string;
-}
+};
 
-export interface FeedbackPayload {
+export type FeedbackPayload = {
   feedbackId: string;
   userName: string;
   category?: string;
   message: string;
   dashboardUrl: string;
-}
+};
 
-export interface ReviewPayload {
+export type ReviewPayload = {
   reviewerName: string;
   rating: number;
   comment?: string;
   planTitle?: string;
   dashboardUrl: string;
-}
+};
 
-export interface TrialSessionPayload {
+export type TrialSessionPayload = {
   consultantName: string;
   consulteeName: string;
   planTitle: string;
   dateTime?: string;
   status: string;
   dashboardUrl: string;
-}
+};
 
-export interface SubscriptionPayload {
+export type SubscriptionPayload = {
   subscriptionId?: string;
   planTitle: string;
   consultantName: string;
   consulteeName?: string;
   dashboardUrl: string;
-}
+};
 
-export interface BookingRequestPayload {
+export type BookingRequestPayload = {
   consulteeName: string;
   planTitle: string;
   appointmentType: string;
   requestedDateTime?: string;
   dashboardUrl: string;
-}
+};
 
-export interface VerificationPayload {
+export type VerificationPayload = {
   status: string;
   reason?: string;
   dashboardUrl: string;
-}
+};
 
-export interface PayoutPayload {
+export type PayoutPayload = {
   amount: number;
   currency: string;
   payoutId?: string;
   dashboardUrl: string;
-}
+};
 
-export interface AnnouncementPayload {
+export type AnnouncementPayload = {
   title: string;
   content: string;
   linkUrl?: string;
   linkText?: string;
-}
+};
 
-export interface WaitlistPayload {
+export type WaitlistPayload = {
   consultantName: string;
   planTitle: string;
   dashboardUrl: string;
-}
+};
 
-export interface DisputePayload {
+export type DisputePayload = {
   disputeId?: string;
   amount: number;
   currency: string;
@@ -203,18 +203,18 @@ export interface DisputePayload {
   consultantName?: string;
   consulteeName?: string;
   dashboardUrl: string;
-}
+};
 
-export interface RecordingPayload {
+export type RecordingPayload = {
   appointmentType: string;
   consultantName: string;
   consulteeName?: string;
   recordingUrl: string;
   dashboardUrl: string;
-}
+};
 
-export interface ConsultantApplicationPayload {
+export type ConsultantApplicationPayload = {
   applicantName: string;
   applicantEmail: string;
   dashboardUrl: string;
-}
+};

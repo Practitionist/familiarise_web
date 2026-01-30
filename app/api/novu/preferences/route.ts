@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import authOptions from "@/app/api/auth/[...nextauth]/options";
 import prisma from "@/lib/prisma";
 import { updateSubscriberPreferences } from "@/lib/novu/subscriber";
+import { NotificationPreferenceUpdateSchema } from "@/schemas/user";
 
 /**
  * GET /api/novu/preferences
@@ -65,50 +66,31 @@ export async function PUT(req: NextRequest) {
     }
 
     const body = await req.json();
+    const result = NotificationPreferenceUpdateSchema.safeParse(body);
 
-    // Validate that only known fields are updated
-    const allowedFields = [
-      "allNotifications",
-      "inAppEnabled",
-      "emailEnabled",
-      "pushEnabled",
-      "mentions",
-      "directMessages",
-      "updates",
-      "appointmentReminders",
-      "paymentNotifications",
-      "supportUpdates",
-      "feedbackAlerts",
-      "trialNotifications",
-      "subscriptionAlerts",
-      "marketingEmails",
-      "quietHoursEnabled",
-      "quietHoursStart",
-      "quietHoursEnd",
-      "quietHoursTimezone",
-    ];
-
-    const sanitizedBody: Record<string, unknown> = {};
-    for (const key of allowedFields) {
-      if (key in body) {
-        sanitizedBody[key] = body[key];
-      }
+    if (!result.success) {
+      return NextResponse.json(
+        { error: "Validation failed", details: result.error.issues },
+        { status: 400 },
+      );
     }
+
+    const validatedData = result.data;
 
     const updated = await prisma.notificationPreference.upsert({
       where: { userId: session.user.id },
-      update: sanitizedBody,
+      update: validatedData,
       create: {
         userId: session.user.id,
-        ...sanitizedBody,
+        ...validatedData,
       },
     });
 
     // Sync channel preferences to Novu subscriber data
     if (
-      "inAppEnabled" in sanitizedBody ||
-      "emailEnabled" in sanitizedBody ||
-      "pushEnabled" in sanitizedBody
+      "inAppEnabled" in validatedData ||
+      "emailEnabled" in validatedData ||
+      "pushEnabled" in validatedData
     ) {
       await updateSubscriberPreferences(session.user.id, {
         inApp: updated.inAppEnabled,

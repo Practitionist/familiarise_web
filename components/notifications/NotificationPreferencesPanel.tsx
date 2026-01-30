@@ -28,11 +28,18 @@ interface NotificationPreferences {
   quietHoursTimezone: string | null;
 }
 
-const CHANNEL_FIELDS: {
-  key: keyof NotificationPreferences;
+/** Keys that map to boolean values — used for Switch toggle fields. */
+type BooleanPreferenceKey = {
+  [K in keyof NotificationPreferences]: NotificationPreferences[K] extends boolean ? K : never;
+}[keyof NotificationPreferences];
+
+interface ToggleField {
+  key: BooleanPreferenceKey;
   label: string;
   description: string;
-}[] = [
+}
+
+const CHANNEL_FIELDS: ToggleField[] = [
   {
     key: "inAppEnabled",
     label: "In-App Notifications",
@@ -50,11 +57,7 @@ const CHANNEL_FIELDS: {
   },
 ];
 
-const CATEGORY_FIELDS: {
-  key: keyof NotificationPreferences;
-  label: string;
-  description: string;
-}[] = [
+const CATEGORY_FIELDS: ToggleField[] = [
   {
     key: "appointmentReminders",
     label: "Appointment Reminders",
@@ -233,7 +236,7 @@ export function NotificationPreferencesPanel() {
                     <p className="text-xs text-zinc-500">{field.description}</p>
                   </div>
                   <Switch
-                    checked={prefs[field.key] as boolean}
+                    checked={prefs[field.key]}
                     onCheckedChange={(checked) =>
                       handleToggle(field.key, checked)
                     }
@@ -261,7 +264,7 @@ export function NotificationPreferencesPanel() {
                     <p className="text-xs text-zinc-500">{field.description}</p>
                   </div>
                   <Switch
-                    checked={prefs[field.key] as boolean}
+                    checked={prefs[field.key]}
                     onCheckedChange={(checked) =>
                       handleToggle(field.key, checked)
                     }
