@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import { NextRequest, NextResponse } from "next/server";
 import authOptions from "../../auth/[...nextauth]/options";
 import { notifyFeedbackReceived } from "@/lib/novu";
+import { CreateFeedbackSchema } from "@/schemas/feedbacks";
 
 export async function GET() {
   try {
@@ -47,13 +48,21 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
+    const result = CreateFeedbackSchema.safeParse(body);
+    if (!result.success) {
+      return NextResponse.json(
+        { error: "Validation failed", details: result.error.issues },
+        { status: 400 },
+      );
+    }
+    const validatedData = result.data;
 
     const feedback = await prisma.feedback.create({
       data: {
-        title: body.title,
-        description: body.description,
-        rating: body.rating,
-        category: body.category,
+        title: validatedData.title,
+        description: validatedData.description,
+        rating: validatedData.rating,
+        category: validatedData.category,
         user: { connect: { id: session.user.id } },
       },
     });

@@ -4,17 +4,19 @@ import bcrypt from "bcrypt";
 import { Prisma, UserRole } from "@prisma/client";
 import { sendWelcomeEmail } from "@/lib/email";
 import { syncSubscriber } from "@/lib/novu/subscriber";
+import { RegisterSchema } from "@/schemas/auth";
 
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { name, email, password } = body;
-
-    if (!name || !email || !password) {
-      return new NextResponse("Missing name, email, or password", {
-        status: 400,
-      });
+    const result = RegisterSchema.safeParse(body);
+    if (!result.success) {
+      return NextResponse.json(
+        { error: "Validation failed", details: result.error.issues },
+        { status: 400 },
+      );
     }
+    const { name, email, password } = result.data;
 
     // Always default to CONSULTEE - role selection happens during onboarding
     const userRole = UserRole.CONSULTEE;

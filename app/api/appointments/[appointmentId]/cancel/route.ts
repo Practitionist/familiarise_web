@@ -5,11 +5,7 @@ import authOptions from "@/app/api/auth/[...nextauth]/options";
 import { CancellationReason } from "@prisma/client";
 import { handleSlotOpening } from "@/lib/waitlist/slot-handler";
 import { notifyAppointmentCancelled } from "@/lib/novu";
-
-interface CancelRequestBody {
-  reason?: CancellationReason;
-  notes?: string;
-}
+import { CancelAppointmentSchema } from "@/schemas/appointments";
 
 export async function POST(
   request: NextRequest,
@@ -24,25 +20,22 @@ export async function POST(
     const { appointmentId } = await params;
 
     // Parse optional request body for cancellation reason
-    let body: CancelRequestBody = {};
+    let validatedData: { reason?: string; notes?: string } = {};
     try {
       const text = await request.text();
       if (text) {
-        body = JSON.parse(text);
+        const parsed = JSON.parse(text);
+        const result = CancelAppointmentSchema.safeParse(parsed);
+        if (!result.success) {
+          return NextResponse.json(
+            { error: "Validation failed", details: result.error.issues },
+            { status: 400 },
+          );
+        }
+        validatedData = result.data;
       }
     } catch {
       // Body parsing is optional - continue without it
-    }
-
-    // Validate cancellation reason if provided
-    if (
-      body.reason &&
-      !Object.values(CancellationReason).includes(body.reason)
-    ) {
-      return NextResponse.json(
-        { error: "Invalid cancellation reason" },
-        { status: 400 },
-      );
     }
 
     // Start transaction
@@ -84,8 +77,8 @@ export async function POST(
       // Prepare cancellation data
       const cancellationData = {
         requestStatus: "CANCELLED" as const,
-        cancellationReason: body.reason || null,
-        cancellationNotes: body.notes || null,
+        cancellationReason: (validatedData.reason as CancellationReason) || null,
+        cancellationNotes: validatedData.notes || null,
         cancelledAt: new Date(),
         cancelledBy: session.user.id,
       };
@@ -148,7 +141,7 @@ export async function POST(
 
       return {
         success: true,
-        cancellationReason: body.reason,
+        cancellationReason: validatedData.reason,
         cancelledAt: cancellationData.cancelledAt,
         webinarId: appointment.webinar?.id,
         classId: appointment.class?.id,
@@ -180,7 +173,7 @@ export async function POST(
           planTitle: meta.planTitle || "N/A",
           dateTime: meta.dateTime,
           dashboardUrl: "/dashboard",
-          reason: body.reason || undefined,
+          reason: validatedData.reason || undefined,
           cancelledBy:
             meta.cancelledBy === meta.consultantUserId
               ? "consultant"

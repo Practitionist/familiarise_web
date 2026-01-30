@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { notifyNewReview } from "@/lib/novu";
+import { CreateReviewSchema } from "@/schemas/feedbacks";
 
 export async function GET(req: NextRequest) {
   try {
@@ -74,12 +75,21 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
+    const result = CreateReviewSchema.safeParse(body);
+    if (!result.success) {
+      return NextResponse.json(
+        { error: "Validation failed", details: result.error.issues },
+        { status: 400 },
+      );
+    }
+    const validatedData = result.data;
+
     const newReview = await prisma.consultantReview.create({
       data: {
-        rating: body.rating,
-        reviewDescription: body.reviewDescription,
-        consultantProfileId: body.consultantProfileId,
-        consulteeProfileId: body.consulteeProfileId,
+        rating: validatedData.rating,
+        reviewDescription: validatedData.reviewDescription,
+        consultantProfileId: validatedData.consultantProfileId,
+        consulteeProfileId: validatedData.consulteeProfileId,
       },
       include: {
         consultantProfile: {

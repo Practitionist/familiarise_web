@@ -10,10 +10,10 @@ import authOptions from "@/app/api/auth/[...nextauth]/options";
 import prisma from "@/lib/prisma";
 import {
   UserRole,
-  ProfileVerificationStatus,
   ConsultantVerificationStatus,
 } from "@prisma/client";
 import { notifyVerificationStatusChanged } from "@/lib/novu";
+import { ReviewVerificationSchema } from "@/schemas/verifications";
 
 interface RouteParams {
   params: Promise<{ verificationId: string }>;
@@ -84,12 +84,6 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
   }
 }
 
-interface DocumentFeedback {
-  documentId: string;
-  isValid: boolean;
-  staffFeedback?: string;
-}
-
 /**
  * PATCH /api/admin/verification/[verificationId]
  * Review profile verification (approve/reject) with structured feedback (Admin only)
@@ -112,30 +106,20 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
 
     const { verificationId } = await params;
     const body = await req.json();
+    const result = ReviewVerificationSchema.safeParse(body);
+    if (!result.success) {
+      return NextResponse.json(
+        { error: "Validation failed", details: result.error.issues },
+        { status: 400 },
+      );
+    }
     const {
       status,
       reviewNotes,
       rejectionReason,
       feedbackDetails,
       documentFeedback,
-    } = body as {
-      status: ProfileVerificationStatus;
-      reviewNotes?: string;
-      rejectionReason?: string;
-      feedbackDetails?: string;
-      documentFeedback?: DocumentFeedback[];
-    };
-
-    // Validate status
-    const validStatuses: ProfileVerificationStatus[] = [
-      "APPROVED",
-      "REJECTED",
-      "NEEDS_INFO",
-    ];
-
-    if (!status || !validStatuses.includes(status)) {
-      return NextResponse.json({ error: "Invalid status" }, { status: 400 });
-    }
+    } = result.data;
 
     // Get verification with profile and user info (for notification)
     const verification = await prisma.consultantProfileVerification.findUnique({

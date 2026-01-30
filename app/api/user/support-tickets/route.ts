@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "lib/prisma";
 import { getServerSession } from "next-auth";
 import authOptions from "../../auth/[...nextauth]/options";
-import { SupportIssueType, SupportPriority } from "@prisma/client";
 import { notifySupportTicketCreated } from "@/lib/novu";
+import { CreateSupportTicketSchema } from "@/schemas/support";
 
 export async function GET() {
   try {
@@ -61,19 +61,6 @@ export async function GET() {
   }
 }
 
-interface CreateTicketBody {
-  title: string;
-  description: string;
-  priority?: SupportPriority;
-  category?: string;
-  issueType?: SupportIssueType;
-  // Optional entity links
-  consultationId?: string;
-  subscriptionId?: string;
-  paymentId?: string;
-  appointmentId?: string; // Can be used to auto-resolve to consultationId/subscriptionId
-}
-
 export async function POST(req: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
@@ -84,35 +71,24 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const body: CreateTicketBody = await req.json();
-
-    // Validate required fields
-    if (!body.title || !body.description) {
+    const body = await req.json();
+    const result = CreateSupportTicketSchema.safeParse(body);
+    if (!result.success) {
       return NextResponse.json(
-        { error: "Title and description are required" },
+        { error: "Validation failed", details: result.error.issues },
         { status: 400 },
       );
     }
-
-    // Validate issueType if provided
-    if (
-      body.issueType &&
-      !Object.values(SupportIssueType).includes(body.issueType)
-    ) {
-      return NextResponse.json(
-        { error: "Invalid issue type" },
-        { status: 400 },
-      );
-    }
+    const validatedData = result.data;
 
     // Resolve appointmentId to consultationId/subscriptionId if provided
-    let resolvedConsultationId = body.consultationId;
-    let resolvedSubscriptionId = body.subscriptionId;
+    let resolvedConsultationId = validatedData.consultationId;
+    let resolvedSubscriptionId = validatedData.subscriptionId;
 
-    if (body.appointmentId) {
+    if (validatedData.appointmentId) {
       const appointment = await prisma.appointment.findFirst({
         where: {
-          id: body.appointmentId,
+          id: validatedData.appointmentId,
           OR: [
             { consultation: { requestedBy: { userId: session.user.id } } },
             { subscription: { requestedBy: { userId: session.user.id } } },
@@ -142,7 +118,7 @@ export async function POST(req: NextRequest) {
     // Validate entity links in parallel - ensure they belong to this user
     // Skip validation for IDs resolved from appointmentId (already validated above)
     const validations = await Promise.all([
-      resolvedConsultationId && !body.appointmentId
+      resolvedConsultationId && !validatedData.appointmentId
         ? prisma.consultation
             .findFirst({
               where: {
@@ -152,7 +128,7 @@ export async function POST(req: NextRequest) {
             })
             .then((c) => ({ type: "consultation", valid: !!c }))
         : Promise.resolve({ type: "consultation", valid: true }),
-      resolvedSubscriptionId && !body.appointmentId
+      resolvedSubscriptionId && !validatedData.appointmentId
         ? prisma.subscription
             .findFirst({
               where: {
@@ -162,11 +138,11 @@ export async function POST(req: NextRequest) {
             })
             .then((s) => ({ type: "subscription", valid: !!s }))
         : Promise.resolve({ type: "subscription", valid: true }),
-      body.paymentId
+      validatedData.paymentId
         ? prisma.payment
             .findFirst({
               where: {
-                id: body.paymentId,
+                id: validatedData.paymentId,
                 userId: session.user.id,
               },
             })
@@ -184,14 +160,14 @@ export async function POST(req: NextRequest) {
 
     const ticket = await prisma.supportTicket.create({
       data: {
-        title: body.title,
-        description: body.description,
-        priority: body.priority || "MEDIUM",
-        category: body.category,
-        issueType: body.issueType,
+        title: validatedData.title,
+        description: validatedData.description,
+        priority: validatedData.priority || "MEDIUM",
+        category: validatedData.category,
+        issueType: validatedData.issueType,
         consultationId: resolvedConsultationId,
         subscriptionId: resolvedSubscriptionId,
-        paymentId: body.paymentId,
+        paymentId: validatedData.paymentId,
         user: { connect: { id: session.user.id } },
       },
       include: {

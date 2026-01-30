@@ -7,8 +7,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import authOptions from "@/app/api/auth/[...nextauth]/options";
 import prisma from "@/lib/prisma";
-import { SupportTicketStatus, SupportPriority, UserRole } from "@prisma/client";
+import { Prisma, UserRole } from "@prisma/client";
 import { notifySupportTicketUpdate } from "@/lib/novu";
+import { UpdateSupportTicketSchema } from "@/schemas/support";
 
 interface RouteParams {
   params: Promise<{ ticketId: string }>;
@@ -199,6 +200,14 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
 
     const { ticketId } = await params;
     const body = await req.json();
+    const result = UpdateSupportTicketSchema.safeParse(body);
+    if (!result.success) {
+      return NextResponse.json(
+        { error: "Validation failed", details: result.error.issues },
+        { status: 400 },
+      );
+    }
+    const validatedData = result.data;
 
     // Validate ticket exists
     const existingTicket = await prisma.supportTicket.findUnique({
@@ -210,28 +219,21 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
     }
 
     // Build update data
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const updateData: any = {};
+    const updateData: Prisma.SupportTicketUpdateInput = {};
 
-    if (
-      body.status &&
-      Object.values(SupportTicketStatus).includes(body.status)
-    ) {
-      updateData.status = body.status;
+    if (validatedData.status) {
+      updateData.status = validatedData.status;
     }
 
-    if (
-      body.priority &&
-      Object.values(SupportPriority).includes(body.priority)
-    ) {
-      updateData.priority = body.priority;
+    if (validatedData.priority) {
+      updateData.priority = validatedData.priority;
     }
 
-    if (body.assignedToId !== undefined) {
+    if (validatedData.assignedToId !== undefined) {
       // Validate assignee is staff/admin if not null
-      if (body.assignedToId !== null) {
+      if (validatedData.assignedToId !== null) {
         const assignee = await prisma.user.findUnique({
-          where: { id: body.assignedToId },
+          where: { id: validatedData.assignedToId },
           select: { role: true },
         });
 
@@ -245,12 +247,12 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
           );
         }
       }
-      updateData.assignedToId = body.assignedToId;
+      updateData.assignedToId = validatedData.assignedToId;
     }
 
     // Link to refund if provided
-    if (body.refundId) {
-      updateData.refundId = body.refundId;
+    if (validatedData.refundId) {
+      updateData.refundId = validatedData.refundId;
     }
 
     const updatedTicket = await prisma.supportTicket.update({

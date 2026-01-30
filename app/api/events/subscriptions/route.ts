@@ -6,11 +6,7 @@ import {
   notifySubscriptionStarted,
   notifySubscriptionCancelled,
 } from "@/lib/novu";
-
-interface UpdateSubscriptionRequest {
-  id: string;
-  status: RequestStatus;
-}
+import { UpdateSubscriptionStatusSchema } from "@/schemas/subscriptions";
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -106,26 +102,14 @@ export async function GET(request: NextRequest) {
 export async function PATCH(request: NextRequest) {
   try {
     const body = await request.json();
-
-    if (!body || typeof body !== "object") {
+    const result = UpdateSubscriptionStatusSchema.safeParse(body);
+    if (!result.success) {
       return NextResponse.json(
-        { error: "Invalid request body" },
+        { error: "Validation failed", details: result.error.issues },
         { status: 400 },
       );
     }
-
-    const { id, status } = body as UpdateSubscriptionRequest;
-
-    if (!id || !status) {
-      return NextResponse.json(
-        { error: "ID and status are required" },
-        { status: 400 },
-      );
-    }
-
-    if (!Object.values(RequestStatus).includes(status)) {
-      return NextResponse.json({ error: "Invalid status" }, { status: 400 });
-    }
+    const { id, status } = result.data;
 
     // First fetch the subscription to validate it exists and get all necessary data
     const existingSubscription = await prisma.subscription.findUnique({

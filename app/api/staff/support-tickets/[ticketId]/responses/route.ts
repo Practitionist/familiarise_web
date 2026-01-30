@@ -9,6 +9,7 @@ import authOptions from "@/app/api/auth/[...nextauth]/options";
 import prisma from "@/lib/prisma";
 import { UserRole } from "@prisma/client";
 import { notifySupportTicketResponse } from "@/lib/novu";
+import { CreateSupportResponseSchema } from "@/schemas/support";
 
 interface RouteParams {
   params: Promise<{ ticketId: string }>;
@@ -37,18 +38,14 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
 
     const { ticketId } = await params;
     const body = await req.json();
-
-    // Validate required fields
-    if (
-      !body.message ||
-      typeof body.message !== "string" ||
-      !body.message.trim()
-    ) {
+    const result = CreateSupportResponseSchema.safeParse(body);
+    if (!result.success) {
       return NextResponse.json(
-        { error: "Message is required" },
+        { error: "Validation failed", details: result.error.issues },
         { status: 400 },
       );
     }
+    const validatedData = result.data;
 
     // Verify the ticket exists
     const ticket = await prisma.supportTicket.findUnique({
@@ -62,8 +59,8 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     // Create the response
     const response = await prisma.supportResponse.create({
       data: {
-        message: body.message.trim(),
-        isInternal: body.isInternal || false, // Internal notes not visible to user
+        message: validatedData.message,
+        isInternal: validatedData.isInternal,
         supportTicket: { connect: { id: ticketId } },
         user: { connect: { id: session.user.id } },
       },
@@ -81,7 +78,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
 
     // Update ticket status to IN_PROGRESS if it was OPEN
     // Only update if this is not an internal note
-    if (ticket.status === "OPEN" && !body.isInternal) {
+    if (ticket.status === "OPEN" && !validatedData.isInternal) {
       await prisma.supportTicket.update({
         where: { id: ticketId },
         data: {
@@ -93,11 +90,11 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     }
 
     // Notify the ticket owner about the staff response (skip for internal notes)
-    if (!body.isInternal) {
+    if (!validatedData.isInternal) {
       void notifySupportTicketResponse(ticket.userId, {
         ticketId: ticket.id,
         ticketTitle: ticket.title || "Support Ticket",
-        message: body.message.trim(),
+        message: validatedData.message,
         dashboardUrl: "/dashboard",
       });
     }

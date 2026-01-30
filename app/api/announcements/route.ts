@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import authOptions from "@/app/api/auth/[...nextauth]/options";
 import prisma from "@/lib/prisma";
 import { notifyGeneralAnnouncement } from "@/lib/novu";
+import { CreateAnnouncementSchema } from "@/schemas/announcements";
 
 /**
  * GET /api/announcements
@@ -62,42 +63,30 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const {
-      title,
-      content,
-      isActive = true,
-      startDate,
-      endDate,
-      backgroundColor,
-      textColor,
-      linkUrl,
-      linkText,
-    } = body;
-
-    if (!title || !content) {
+    const result = CreateAnnouncementSchema.safeParse(body);
+    if (!result.success) {
       return NextResponse.json(
-        { success: false, error: "Title and content are required" },
+        { success: false, error: "Validation failed", details: result.error.issues },
         { status: 400 },
       );
     }
+    const validatedData = result.data;
 
     const announcement = await prisma.announcement.create({
       data: {
-        title,
-        content,
-        isActive,
-        startDate:
-          startDate && !isNaN(new Date(startDate).getTime())
-            ? new Date(startDate)
-            : null,
-        endDate:
-          endDate && !isNaN(new Date(endDate).getTime())
-            ? new Date(endDate)
-            : null,
-        backgroundColor: backgroundColor || "#000000",
-        textColor: textColor || "#FFFFFF",
-        linkUrl,
-        linkText,
+        title: validatedData.title,
+        content: validatedData.content,
+        isActive: validatedData.isActive,
+        startDate: validatedData.startDate
+          ? new Date(validatedData.startDate)
+          : null,
+        endDate: validatedData.endDate
+          ? new Date(validatedData.endDate)
+          : null,
+        backgroundColor: validatedData.backgroundColor,
+        textColor: validatedData.textColor,
+        linkUrl: validatedData.linkUrl,
+        linkText: validatedData.linkText,
         createdBy: session.user.id,
       },
     });
