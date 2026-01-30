@@ -6,11 +6,11 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import { getOrCreateAppointmentMeeting } from "@/lib/meeting";
+import { getOrCreateAppointmentMeeting, MeetingAppointment, MeetingSlot } from "@/lib/meeting";
 import { useStreamVideoClient } from "@stream-io/video-react-sdk";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, ChevronRight, Clock, Users } from "lucide-react";
-import { AppointmentsTabProps } from "../../types";
+import { ChevronLeft, ChevronRight, Clock, Users, Gift, Video, Loader2 } from "lucide-react";
+import { AppointmentsTabProps, ScheduledTrial, getBadgeStyle } from "../../types";
 import { TAppointment } from "@/types/appointment";
 import {
   calculateSessionProgress,
@@ -39,10 +39,12 @@ import {
 export function AppointmentsTab({
   appointments,
   badgeStyles,
+  scheduledTrials = [],
 }: Readonly<AppointmentsTabProps>) {
   const router = useRouter();
   const client = useStreamVideoClient();
   const { toast } = useToast();
+  const [joiningTrialId, setJoiningTrialId] = useState<string | null>(null);
   const searchParams = useSearchParams();
   const [selectedAppointment, setSelectedAppointment] =
     useState<TAppointment | null>(null);
@@ -91,7 +93,7 @@ export function AppointmentsTab({
     setGroupPagination((prev) => {
       const newMap = new Map(prev);
       const current = prev.get(groupKey) || { currentPage: 1, showAll: false };
-      newMap.set(groupKey, { ...current, showAll: !current.showAll });
+      newMap.set(groupKey, { currentPage: 1, showAll: !current.showAll });
       return newMap;
     });
   };
@@ -119,7 +121,7 @@ export function AppointmentsTab({
   };
 
   const getStyleFromBadgeData = (status: string): string => {
-    return badgeStyles[status] || badgeStyles.default;
+    return getBadgeStyle(status);
   };
 
   const handleJoinMeeting = async (appointment: TAppointment) => {
@@ -164,6 +166,84 @@ export function AppointmentsTab({
       });
     }
   };
+
+  // Helper to check if a trial is joinable (within 10 mins before start and before end)
+  const isTrialJoinable = (trial: ScheduledTrial): boolean => {
+    if (!trial.appointment?.slotsOfAppointment?.[0]) return false;
+    const slot = trial.appointment.slotsOfAppointment[0];
+    const now = new Date();
+    const startTime = new Date(slot.startsAt);
+    const endTime = slot.endsAt
+      ? new Date(slot.endsAt)
+      : new Date(startTime.getTime() + 60 * 60 * 1000);
+    if (isNaN(startTime.getTime()) || isNaN(endTime.getTime())) return false;
+    const joinWindowStart = new Date(startTime.getTime() - 10 * 60 * 1000);
+    return now >= joinWindowStart && now <= endTime;
+  };
+
+  // Handle joining a trial meeting
+  const handleJoinTrialMeeting = async (trial: ScheduledTrial) => {
+    if (!client) {
+      toast({
+        title: "Not signed in",
+        description: "Video client not initialized. Please sign in to join.",
+        variant: "warning",
+      });
+      return;
+    }
+    if (!trial.appointment?.slotsOfAppointment?.[0]) {
+      toast({
+        title: "Error",
+        description: "Meeting information is not available.",
+        variant: "destructive",
+      });
+      return;
+    }
+    setJoiningTrialId(trial.id);
+    try {
+      const trialSlot = trial.appointment.slotsOfAppointment[0];
+      const slot: MeetingSlot = {
+        id: trialSlot.id,
+        startsAt: trialSlot.startsAt,
+        endsAt: trialSlot.endsAt,
+        appointmentId: trial.appointment.id,
+      };
+      const appointmentForMeeting: MeetingAppointment = {
+        id: trial.appointment.id,
+        appointmentType: "TRIAL",
+        slotsOfAppointment: [slot],
+      };
+      const meetingId = await getOrCreateAppointmentMeeting(
+        client,
+        appointmentForMeeting,
+        slot,
+      );
+      toast({
+        title: "Joining meeting",
+        description: "You will now be redirected to the meeting room.",
+      });
+      router.push(`/meetings/${meetingId}`);
+    } catch (error) {
+      console.error("Error joining trial meeting:", error);
+      toast({
+        title: "Error joining meeting",
+        description: error instanceof Error ? error.message : "Unknown error",
+        variant: "destructive",
+      });
+      setJoiningTrialId(null);
+    }
+  };
+
+  const formatTrialTime = (dateString: string) => {
+    return new Date(dateString).toLocaleString("en-US", {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    });
+  };
+
   // Group appointments by type (CONSULTATION, SUBSCRIPTION, WEBINAR, CLASS)
   const appointmentsByType = groupAppointmentsByType(appointments || []);
 
@@ -244,6 +324,84 @@ export function AppointmentsTab({
                       <h3 className="text-lg font-semibold text-gray-900 border-b-2 border-gray-300 pb-2">
                         {getAppointmentTypeDisplayName(groupType)}
                       </h3>
+                    </div>
+                  )}
+
+                  {/* Free Trials Sub-section (only for SUBSCRIPTION type) */}
+                  {isNewTypeSection && groupType === "SUBSCRIPTION" && scheduledTrials.length > 0 && (
+                    <div className="mb-6">
+                      <h4 className="text-sm font-medium text-purple-700 mb-3 flex items-center gap-2">
+                        <Gift className="h-4 w-4" />
+                        Free Trial Sessions ({scheduledTrials.length})
+                      </h4>
+                      <div className="space-y-3">
+                        {scheduledTrials.map((trial) => (
+                          <div
+                            key={trial.id}
+                            className="border border-purple-200 rounded-lg p-4 bg-purple-50/50"
+                          >
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-3">
+                                <Avatar className="h-10 w-10">
+                                  <AvatarImage
+                                    src={trial.consulteeProfile.user.image || ""}
+                                    alt={trial.consulteeProfile.user.name}
+                                  />
+                                  <AvatarFallback>
+                                    {trial.consulteeProfile.user.name
+                                      .split(" ")
+                                      .map((n) => n[0])
+                                      .join("")}
+                                  </AvatarFallback>
+                                </Avatar>
+                                <div>
+                                  <p className="font-medium text-gray-900">
+                                    {trial.consulteeProfile.user.name}
+                                  </p>
+                                  <p className="text-sm text-gray-600">
+                                    {trial.subscriptionPlan.title} •{" "}
+                                    {trial.subscriptionPlan.freeTrialDurationMinutes} min trial
+                                  </p>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-3">
+                                <div className="text-right">
+                                  <Badge className="bg-purple-100 text-purple-800">
+                                    Trial
+                                  </Badge>
+                                  {trial.appointment?.slotsOfAppointment?.[0] && (
+                                    <p className="text-xs text-gray-500 mt-1">
+                                      {formatTrialTime(trial.appointment.slotsOfAppointment[0].startsAt)}
+                                    </p>
+                                  )}
+                                </div>
+                                <Button
+                                  size="sm"
+                                  onClick={() => handleJoinTrialMeeting(trial)}
+                                  disabled={joiningTrialId === trial.id || !isTrialJoinable(trial)}
+                                  className={
+                                    isTrialJoinable(trial)
+                                      ? "bg-purple-600 hover:bg-purple-700"
+                                      : ""
+                                  }
+                                >
+                                  {joiningTrialId === trial.id ? (
+                                    <>
+                                      <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                                      Joining...
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Video className="h-4 w-4 mr-1" />
+                                      Join
+                                    </>
+                                  )}
+                                </Button>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   )}
 

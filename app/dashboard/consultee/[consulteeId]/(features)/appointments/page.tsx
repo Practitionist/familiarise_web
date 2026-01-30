@@ -53,13 +53,15 @@ export default function AppointmentsPage({ params }: Readonly<PageProps>) {
     subscriptions = [],
     webinars = [],
     classes = [],
+    trials = [],
   } = eventsData || {};
 
   if (
     !consultations.length &&
     !subscriptions.length &&
     !webinars.length &&
-    !classes.length
+    !classes.length &&
+    !trials.length
   ) {
     return (
       <DashboardErrorBoundary>
@@ -109,6 +111,7 @@ export default function AppointmentsPage({ params }: Readonly<PageProps>) {
             subscriptions={subscriptions}
             webinars={webinars}
             classes={classes}
+            trials={trials}
           />
         </TabsContent>
 
@@ -118,6 +121,7 @@ export default function AppointmentsPage({ params }: Readonly<PageProps>) {
             subscriptions={subscriptions}
             webinars={webinars}
             classes={classes}
+            trials={trials}
           />
         </TabsContent>
       </Tabs>

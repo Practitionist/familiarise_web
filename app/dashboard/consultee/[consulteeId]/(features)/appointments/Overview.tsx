@@ -6,6 +6,7 @@ import {
   ConsultationWithPlan,
   SubscriptionWithPlan,
   WebinarWithPlan,
+  TrialWithPlan,
 } from "@/hooks/useEvents";
 import { EventWithType } from "../../utils/getMetadata";
 import {
@@ -32,6 +33,7 @@ interface OverviewProps {
   subscriptions: SubscriptionWithPlan[];
   webinars: WebinarWithPlan[];
   classes: ClassWithPlan[];
+  trials: TrialWithPlan[];
 }
 
 interface DashboardCardProps {
@@ -45,7 +47,7 @@ interface DashboardCardProps {
     date: string;
     image?: string | null;
     status: string;
-    type: "Subscription" | "Class" | "Consultation" | "Webinar";
+    type: "Subscription" | "Class" | "Consultation" | "Webinar" | "Trial";
     isTentative: boolean;
     actualSlots?: Array<{
       startTime: Date;
@@ -117,6 +119,7 @@ export function Overview({
   subscriptions,
   classes,
   webinars,
+  trials,
 }: Readonly<OverviewProps>) {
   return (
     <motion.div
@@ -175,8 +178,9 @@ export function Overview({
           title="Subscriptions"
           icon={Calendar}
           accentColor="violet"
-          items={sortEventItems(
-            subscriptions.map((subscription) => {
+          items={sortEventItems([
+            // Regular subscriptions
+            ...subscriptions.map((subscription) => {
               const slotInfo = getActualNextSlotTime({
                 ...subscription,
                 type: "Subscription",
@@ -211,7 +215,35 @@ export function Overview({
                 pendingPaymentUrl: subscription.pendingPaymentUrl,
               };
             }),
-          )}
+            // Free trials (grouped under subscriptions)
+            ...trials.map((trial) => {
+              const rawSlots = trial.appointment?.slotsOfAppointment ?? [];
+              const firstSlot = rawSlots[0];
+              return {
+                id: trial.id,
+                title: trial.subscriptionPlan.title,
+                consultant:
+                  trial.subscriptionPlan.consultantProfile?.user?.name ??
+                  "Unknown Consultant",
+                date: firstSlot
+                  ? formatDateFromSlot(firstSlot as SlotOfAppointment)
+                  : "Awaiting schedule",
+                image: trial.subscriptionPlan.consultantProfile?.user?.image,
+                status: trial.status,
+                type: "Trial" as const,
+                isTentative: firstSlot?.isTentative ?? false,
+                actualSlots: rawSlots.map((slot) => ({
+                  startTime: new Date(slot.startsAt),
+                  endTime: slot.endsAt
+                    ? new Date(slot.endsAt)
+                    : new Date(new Date(slot.startsAt).getTime() + 30 * 60 * 1000),
+                })),
+                appointmentId: trial.appointment?.id,
+                appointment: trial.appointment as TAppointment | undefined,
+                rawSlots: rawSlots as SlotOfAppointment[],
+              };
+            }),
+          ])}
         />
       </motion.div>
 
@@ -384,6 +416,11 @@ function DashboardCard({
       bg: "bg-emerald-50",
       text: "text-emerald-600",
       border: "border-emerald-100",
+    },
+    rose: {
+      bg: "bg-rose-50",
+      text: "text-rose-600",
+      border: "border-rose-100",
     },
   };
 

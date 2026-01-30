@@ -22,6 +22,7 @@ export default function AppointmentsTab({
     subscriptions = [],
     webinars = [],
     classes = [],
+    trials = [],
   } = eventsData || {};
 
   if (isLoading) {
@@ -124,6 +125,7 @@ export default function AppointmentsTab({
                   subscriptions={subscriptions}
                   webinars={webinars}
                   classes={classes}
+                  trials={trials}
                 />
               </motion.div>
             </TabsContent>
@@ -142,6 +144,7 @@ export default function AppointmentsTab({
                   subscriptions={subscriptions}
                   webinars={webinars}
                   classes={classes}
+                  trials={trials}
                 />
               </motion.div>
             </TabsContent>

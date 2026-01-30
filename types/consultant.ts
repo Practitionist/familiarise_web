@@ -23,7 +23,11 @@ export type TConsultantProfile = Prisma.ConsultantProfileGetPayload<{
     slotsOfAvailabilityWeekly: true;
     slotsOfAvailabilityCustom: true;
     consultationPlans: true;
-    subscriptionPlans: true;
+    subscriptionPlans: {
+      include: {
+        subscriptionContents: true;
+      };
+    };
     webinarPlans: true;
     classPlans: true;
     reviews: true;

@@ -149,7 +149,11 @@ export function PendingPaymentsWidget({
               <Button
                 size="sm"
                 className="bg-amber-600 hover:bg-amber-700 text-white"
-                onClick={() => window.open(payment.paymentUrl, "_blank")}
+                onClick={() => {
+                  if (payment.paymentUrl && /^https?:\/\//.test(payment.paymentUrl)) {
+                    window.open(payment.paymentUrl, "_blank", "noopener,noreferrer");
+                  }
+                }}
               >
                 Pay Now
                 <ExternalLink className="ml-2 h-3 w-3" />

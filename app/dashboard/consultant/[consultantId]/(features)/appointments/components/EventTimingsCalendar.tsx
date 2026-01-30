@@ -12,7 +12,19 @@ import { useToast } from "@/hooks/use-toast";
 import { useParams } from "next/navigation";
 import { SafeUnifiedCalendar } from "../../shared/components/SafeUnifiedCalendar";
 import { TAppointment } from "@/types/appointment";
-import { getClassPlanDefaults } from "@/utils/classPlans";
+import { getClassPlanDefaults, type ClassPlanType } from "@/utils/classPlans";
+
+interface EventDetails {
+  eventType: "consultation" | "subscription" | "webinar" | "class";
+  eventId: string;
+  callsPerWeek?: number;
+  meetingsPerWeek?: number;
+  durationInMonths: number;
+  durationInHours: number;
+  sessionDurationInHours?: number;
+  title: string;
+  planType?: ClassPlanType;
+}
 
 interface EventTimingsCalendarProps {
   isOpen: boolean;
@@ -29,11 +41,11 @@ export function EventTimingsCalendar({
   const { toast } = useToast();
 
   const consultantId = params.consultantId?.toString() || "";
-  const getEventDetails = (appointment: TAppointment) => {
+  const getEventDetails = (appointment: TAppointment): EventDetails => {
     switch (appointment.appointmentType) {
       case "CONSULTATION":
         return {
-          eventType: "consultation" as const,
+          eventType: "consultation",
           eventId: appointment.consultation?.id || "",
           callsPerWeek: 1,
           durationInMonths: 1,
@@ -44,7 +56,7 @@ export function EventTimingsCalendar({
         };
       case "SUBSCRIPTION":
         return {
-          eventType: "subscription" as const,
+          eventType: "subscription",
           eventId: appointment.subscription?.id || "",
           callsPerWeek:
             appointment.subscription?.subscriptionPlan?.callsPerWeek || 1,
@@ -53,12 +65,15 @@ export function EventTimingsCalendar({
           durationInHours:
             appointment.subscription?.subscriptionPlan
               ?.sessionDurationInHours || 1,
+          sessionDurationInHours:
+            appointment.subscription?.subscriptionPlan
+              ?.sessionDurationInHours || 1,
           title:
             appointment.subscription?.subscriptionPlan?.title || "Subscription",
         };
       case "WEBINAR":
         return {
-          eventType: "webinar" as const,
+          eventType: "webinar",
           eventId: appointment.webinar?.id || "",
           callsPerWeek: 1,
           durationInMonths: 1,
@@ -67,24 +82,21 @@ export function EventTimingsCalendar({
           title: appointment.webinar?.webinarPlan?.title || "Webinar",
         };
       case "CLASS": {
-        const plan = (appointment.class as any)?.classPlan || {};
-        const defaults = getClassPlanDefaults(plan);
-        // Use meetingsPerWeek for classes (distinct from callsPerWeek for subscriptions)
-        const meetingsPerWeek = defaults.classesPerWeek;
+        const classPlan = appointment.class?.classPlan;
+        const defaults = getClassPlanDefaults(classPlan ?? {});
         return {
-          eventType: "class" as const,
+          eventType: "class",
           eventId: appointment.class?.id || "",
-          meetingsPerWeek, // Classes use meetingsPerWeek terminology
+          meetingsPerWeek: defaults.classesPerWeek,
           durationInMonths: defaults.durationInMonths,
           durationInHours: defaults.sessionDurationInHours,
-          title: plan?.title || "Class",
-          // extra for UI only
+          title: classPlan?.title || "Class",
           planType: defaults.type,
-        } as any;
+        };
       }
       default:
         return {
-          eventType: "consultation" as const,
+          eventType: "consultation",
           eventId: "",
           callsPerWeek: 1,
           durationInMonths: 1,
@@ -116,12 +128,13 @@ export function EventTimingsCalendar({
         return `Schedule ${eventDetails.callsPerWeek} call${eventDetails.callsPerWeek !== 1 ? "s" : ""} per week for ${eventDetails.durationInMonths} month${eventDetails.durationInMonths !== 1 ? "s" : ""}. Each call is ${eventDetails.sessionDurationInHours || 1} hour${(eventDetails.sessionDurationInHours || 1) > 1 ? "s" : ""}.`;
       case "WEBINAR":
         return "Select consecutive time slots for your webinar session.";
-      case "CLASS":
-        const sessionDuration = eventDetails.sessionDurationInHours || 1;
+      case "CLASS": {
+        const sessionDuration = eventDetails.durationInHours || 1;
         const durationText =
           sessionDuration === 1 ? "1 hour" : `${sessionDuration} hours`;
-        const meetingsPerWeek = (eventDetails as any).meetingsPerWeek || 1;
+        const meetingsPerWeek = eventDetails.meetingsPerWeek || 1;
         return `Schedule ${meetingsPerWeek} meeting${meetingsPerWeek !== 1 ? "s" : ""} per week. Each session is ${durationText}.`;
+      }
       default:
         return "Select time slots for your event.";
     }
@@ -141,10 +154,10 @@ export function EventTimingsCalendar({
           {appointment.appointmentType === "CLASS" && (
             <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
               <Badge variant="outline">
-                Plan: {(eventDetails as any).planType || "Custom"}
+                Plan: {eventDetails.planType || "Custom"}
               </Badge>
               <span>
-                {(eventDetails as any).meetingsPerWeek} meetings/week ·{" "}
+                {eventDetails.meetingsPerWeek} meetings/week ·{" "}
                 {eventDetails.durationInMonths} month
                 {eventDetails.durationInMonths !== 1 ? "s" : ""} ·{" "}
                 {eventDetails.durationInHours || 1}h/session
@@ -170,7 +183,7 @@ export function EventTimingsCalendar({
           callsPerWeek={
             // Map domain-specific terminology to generic calendar prop
             eventDetails.eventType === "class"
-              ? (eventDetails as any).meetingsPerWeek
+              ? eventDetails.meetingsPerWeek
               : eventDetails.callsPerWeek
           }
           durationInHours={
@@ -197,10 +210,8 @@ export function EventTimingsCalendar({
                 ? new Date(appointment.subscription.schedulingPeriodStartsAt)
                 : undefined
               : appointment.appointmentType === "CLASS"
-                ? (appointment.class as any)?.schedulingPeriodStartsAt
-                  ? new Date(
-                      (appointment.class as any).schedulingPeriodStartsAt,
-                    )
+                ? appointment.class?.schedulingPeriodStartsAt
+                  ? new Date(appointment.class.schedulingPeriodStartsAt)
                   : undefined
                 : undefined
           }
@@ -210,8 +221,8 @@ export function EventTimingsCalendar({
                 ? new Date(appointment.subscription.schedulingPeriodEndsAt)
                 : undefined
               : appointment.appointmentType === "CLASS"
-                ? (appointment.class as any)?.schedulingPeriodEndsAt
-                  ? new Date((appointment.class as any).schedulingPeriodEndsAt)
+                ? appointment.class?.schedulingPeriodEndsAt
+                  ? new Date(appointment.class.schedulingPeriodEndsAt)
                   : undefined
                 : undefined
           }

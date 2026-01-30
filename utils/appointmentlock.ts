@@ -664,3 +664,35 @@ export async function isAppointmentLocked(
   const exists = await client.exists(key);
   return exists === 1;
 }
+
+// ============================================================================
+// Public API - Trial Slot Booking Locks
+// ============================================================================
+
+/**
+ * Lock a specific time slot to prevent double-booking during trial scheduling
+ * @param consultantProfileId - The consultant's profile ID
+ * @param slotStartTimeInUTC - The slot start time in ISO format
+ * @param ttl - Time to live in milliseconds (default 60 seconds)
+ * @returns Lock instance (must be released with unlockTrialSlot)
+ */
+export async function lockTrialSlot(
+  consultantProfileId: string,
+  slotStartTimeInUTC: string,
+  ttl: number = DEFAULT_LOCK_TTL,
+): Promise<ApprovalLock> {
+  const key = `trial-slot-booking:${consultantProfileId}:${slotStartTimeInUTC}`;
+  try {
+    return await acquireLockWithRetry(key, ttl);
+  } catch (error) {
+    throw new SlotLockError(consultantProfileId, slotStartTimeInUTC, 60);
+  }
+}
+
+/**
+ * Release a trial slot booking lock
+ * @param lock - The lock instance to release
+ */
+export async function unlockTrialSlot(lock: ApprovalLock): Promise<void> {
+  await releaseLock(lock);
+}

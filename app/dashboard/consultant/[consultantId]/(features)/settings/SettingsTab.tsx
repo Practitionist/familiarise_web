@@ -41,14 +41,12 @@ import { TConsultantProfile } from "types/consultant";
 import { MultiSelect } from "../../components/MultiSelect";
 import {
   DAYS_OF_WEEK,
-  formatSlotsForApi,
   getInitialCustomSlots,
   getInitialFormData,
   getInitialWeeklySlots,
   getMonthYearString,
   type Domain,
   type FormData,
-  type SlotsType,
   type SubDomain,
   type Tag,
 } from "./settings";
@@ -59,12 +57,15 @@ import {
   getDaysInMonth,
   getFirstDayOfMonth,
   getLocalDateString,
-  sortSlotsByTime,
 } from "@/utils/dateTimeUtils";
 import {
   validateTimeSlot,
   validateAllSlotsDetailed,
 } from "@/utils/timeSlotValidation";
+// Import shared schedule components and utilities
+import { SlotValidationFeedback } from "@/components/schedule/SlotValidationFeedback";
+import { formatSlotsForApi } from "@/utils/schedule/formatting";
+import type { SlotsType } from "@/utils/schedule/types";
 
 interface Option {
   value: string;
@@ -469,36 +470,16 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
         const validationResult = validateTimeSlot(
           updatedSlot,
           currentSlots[day]?.filter((_, i) => i !== index) || [],
-          day,
-          scheduleType === ScheduleType.WEEKLY,
         );
 
-        // Handle overnight slot splitting if needed
-        if (validationResult.needsSplitting) {
-          setSlots((prev) => {
-            const { currentDaySlot, nextDaySlot, nextKey } =
-              validationResult.needsSplitting!;
-            return {
-              ...prev,
-              [day]: [
-                ...(prev[day] || []).slice(0, index),
-                currentDaySlot,
-                ...(prev[day] || []).slice(index + 1),
-              ],
-              [nextKey]: [...(prev[nextKey] || []), nextDaySlot],
-            };
-          });
-        } else {
-          // Regular slot update
-          setSlots((prev) => ({
-            ...prev,
-            [day]: [
-              ...(prev[day] || []).slice(0, index),
-              validationResult.slot,
-              ...(prev[day] || []).slice(index + 1),
-            ],
-          }));
-        }
+        setSlots((prev) => ({
+          ...prev,
+          [day]: [
+            ...(prev[day] || []).slice(0, index),
+            validationResult,
+            ...(prev[day] || []).slice(index + 1),
+          ],
+        }));
       });
     },
     [scheduleType, weeklySlots, customSlots],
@@ -1559,8 +1540,14 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
         </RadioGroup>
       </div>
 
+      {/* Slot Validation Feedback - shared component */}
+      <SlotValidationFeedback
+        slots={scheduleType === ScheduleType.WEEKLY ? weeklySlots : customSlots}
+        className="mt-4"
+      />
+
       {/* Action Buttons */}
-      <div className="flex justify-end space-x-4 pt-6">
+      <div className="flex justify-end items-center space-x-4 pt-6">
         <Button
           type="button"
           variant="outline"
@@ -1580,16 +1567,14 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
         >
           Cancel
         </Button>
-        <div className="flex justify-end pt-4">
-          <Button
-            type="submit"
-            className="bg-primary hover:bg-primary/90 text-primary-foreground min-w-[200px]"
-            disabled={isLoading}
-          >
-            {isLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-            Or Save Changes
-          </Button>
-        </div>
+        <Button
+          type="submit"
+          className="bg-primary hover:bg-primary/90 text-primary-foreground min-w-[200px]"
+          disabled={isLoading}
+        >
+          {isLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+          Save Changes
+        </Button>
       </div>
 
       {/* Verification Resubmission Modal */}

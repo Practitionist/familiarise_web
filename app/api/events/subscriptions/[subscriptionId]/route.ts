@@ -691,6 +691,8 @@ async function createAppointmentsForSubscription(
     throw new Error("Invalid subscription plan details");
   }
 
+  const sessionDuration = subscriptionPlan.sessionDurationInHours ?? 1;
+
   if (
     !requestedBy?.user?.id ||
     !subscriptionPlan?.consultantProfile?.user?.id
@@ -738,7 +740,7 @@ async function createAppointmentsForSubscription(
           slotsOfAppointment: {
             create: {
               startsAt: appointmentDate,
-              endsAt: addHours(appointmentDate, 1),
+              endsAt: addHours(appointmentDate, sessionDuration),
               isTentative: false,
               user: {
                 connect: [

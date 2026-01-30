@@ -38,11 +38,16 @@ interface DebugDialogProps {
 interface DebugData {
   success: boolean;
   user: any;
-  channels: any[];
-  consultations: any[];
-  subscriptions: any[];
-  webinars: any[];
-  classes: any[];
+  stream: {
+    channelCount: number;
+    channels: any[];
+  };
+  database: {
+    consultations: number;
+    subscriptions: number;
+    webinars: number;
+    classes: number;
+  };
 }
 
 export const DebugDialog = ({
@@ -91,7 +96,7 @@ export const DebugDialog = ({
         setIsOpen(true);
         toast({
           title: "Debug data fetched successfully",
-          description: `Found ${data.channels.length} channels, ${data.consultations.length} consultations, ${data.subscriptions.length} subscriptions, ${data.webinars.length} webinars, and ${data.classes.length} classes.`,
+          description: `Found ${data.stream?.channelCount || 0} channels, ${data.database?.consultations || 0} consultations, ${data.database?.subscriptions || 0} subscriptions, ${data.database?.webinars || 0} webinars, and ${data.database?.classes || 0} classes.`,
         });
       } else {
         toast({
@@ -326,7 +331,7 @@ export const DebugDialog = ({
                       Channels
                     </div>
                     <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">
-                      {debugData.channels.length}
+                      {debugData.stream?.channelCount || 0}
                     </div>
                   </div>
                   <div className="bg-green-50 dark:bg-green-900/20 p-3 rounded-lg">
@@ -334,7 +339,7 @@ export const DebugDialog = ({
                       Consultations
                     </div>
                     <div className="text-2xl font-bold text-green-600 dark:text-green-400">
-                      {debugData.consultations.length}
+                      {debugData.database?.consultations || 0}
                     </div>
                   </div>
                   <div className="bg-purple-50 dark:bg-purple-900/20 p-3 rounded-lg">
@@ -342,7 +347,7 @@ export const DebugDialog = ({
                       Subscriptions
                     </div>
                     <div className="text-2xl font-bold text-purple-600 dark:text-purple-400">
-                      {debugData.subscriptions.length}
+                      {debugData.database?.subscriptions || 0}
                     </div>
                   </div>
                   <div className="bg-orange-50 dark:bg-orange-900/20 p-3 rounded-lg">
@@ -350,7 +355,7 @@ export const DebugDialog = ({
                       Webinars
                     </div>
                     <div className="text-2xl font-bold text-orange-600 dark:text-orange-400">
-                      {debugData.webinars.length}
+                      {debugData.database?.webinars || 0}
                     </div>
                   </div>
                   <div className="bg-pink-50 dark:bg-pink-900/20 p-3 rounded-lg">
@@ -358,7 +363,7 @@ export const DebugDialog = ({
                       Classes
                     </div>
                     <div className="text-2xl font-bold text-pink-600 dark:text-pink-400">
-                      {debugData.classes.length}
+                      {debugData.database?.classes || 0}
                     </div>
                   </div>
                 </div>
@@ -428,24 +433,12 @@ export const DebugDialog = ({
               <div className="space-y-6 pr-4">
                 <DebugSection title="User Information" data={debugData.user} />
                 <DebugSection
-                  title={`Channels (${debugData.channels.length})`}
-                  data={debugData.channels}
+                  title={`Channels (${debugData.stream?.channelCount || 0})`}
+                  data={debugData.stream?.channels || []}
                 />
                 <DebugSection
-                  title={`Consultations (${debugData.consultations.length})`}
-                  data={debugData.consultations}
-                />
-                <DebugSection
-                  title={`Subscriptions (${debugData.subscriptions.length})`}
-                  data={debugData.subscriptions}
-                />
-                <DebugSection
-                  title={`Webinars (${debugData.webinars.length})`}
-                  data={debugData.webinars}
-                />
-                <DebugSection
-                  title={`Classes (${debugData.classes.length})`}
-                  data={debugData.classes}
+                  title="Database Counts"
+                  data={debugData.database}
                 />
               </div>
             )}

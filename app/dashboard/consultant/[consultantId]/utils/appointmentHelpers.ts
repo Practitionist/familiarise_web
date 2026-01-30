@@ -147,9 +147,10 @@ export const calculateSessionProgress = (
   progressPercentage: number;
 } => {
   const totalSessions = groupAppointments.length;
-  const completedSessions = groupAppointments.filter((app) =>
-    getSlotTimes(app).every((time) => new Date(time) < referenceDate),
-  ).length;
+  const completedSessions = groupAppointments.filter((app) => {
+    const slotTimes = getSlotTimes(app);
+    return slotTimes.length > 0 && slotTimes.every((time) => new Date(time) < referenceDate);
+  }).length;
   const remainingSessions = totalSessions - completedSessions;
   const progressPercentage =
     totalSessions > 0 ? (completedSessions / totalSessions) * 100 : 0;
@@ -212,6 +213,14 @@ export const getAppointmentStatus = (appointment: TAppointment): string => {
 
   const now = new Date();
 
+  // Check if appointment is marked as cancelled
+  if (
+    appointment.class?.status === "CANCELLED" ||
+    appointment.webinar?.status === "CANCELLED"
+  ) {
+    return "Cancelled";
+  }
+
   // Check if appointment is marked as completed
   if (
     appointment.class?.status === "COMPLETED" ||
@@ -221,7 +230,8 @@ export const getAppointmentStatus = (appointment: TAppointment): string => {
   }
 
   // Check if all slots are in the past
-  if (getSlotTimes(appointment).every((time) => new Date(time) < now)) {
+  const slotTimes = getSlotTimes(appointment);
+  if (slotTimes.length > 0 && slotTimes.every((time) => new Date(time) < now)) {
     return "Completed";
   }
 
@@ -354,7 +364,8 @@ export const getUpcomingAppointments = (
       (appointment.appointmentType === "CLASS" && appointment.class)
     ) {
       // Check if all slots are in the past
-      const allSlotsCompleted = getSlotTimes(appointment).every(
+      const upcomingSlotTimes = getSlotTimes(appointment);
+      const allSlotsCompleted = upcomingSlotTimes.length > 0 && upcomingSlotTimes.every(
         (time) => new Date(time) < now,
       );
       // Only include if not all slots are completed
@@ -497,9 +508,10 @@ export const getGroupTitle = (appointments: TAppointment[]): string => {
 
     // Count completed sessions based on slot times
     const now = new Date();
-    const completedSessions = appointments.filter((app) =>
-      getSlotTimes(app).every((time) => new Date(time) < now),
-    ).length;
+    const completedSessions = appointments.filter((app) => {
+      const times = getSlotTimes(app);
+      return times.length > 0 && times.every((time) => new Date(time) < now);
+    }).length;
 
     return `${plan} (${completedSessions}/${totalSessions} sessions)`;
   }
@@ -510,9 +522,10 @@ export const getGroupTitle = (appointments: TAppointment[]): string => {
 
     // Count completed sessions based on slot times, same as subscription
     const now = new Date();
-    const completedSessions = appointments.filter((app) =>
-      getSlotTimes(app).every((time) => new Date(time) < now),
-    ).length;
+    const completedSessions = appointments.filter((app) => {
+      const times = getSlotTimes(app);
+      return times.length > 0 && times.every((time) => new Date(time) < now);
+    }).length;
 
     return `${plan} (${completedSessions}/${totalSessions} sessions)`;
   }
@@ -537,9 +550,10 @@ export const getGroupStatus = (appointments: TAppointment[]): string => {
     );
 
     // Check if any sessions are completed
-    const hasCompletedSessions = appointments.some((app) =>
-      getSlotTimes(app).every((time) => new Date(time) < now),
-    );
+    const hasCompletedSessions = appointments.some((app) => {
+      const times = getSlotTimes(app);
+      return times.length > 0 && times.every((time) => new Date(time) < now);
+    });
 
     if (now > endDate) return "Completed";
     if (now < startDate) return "Not Started";
@@ -550,14 +564,16 @@ export const getGroupStatus = (appointments: TAppointment[]): string => {
     const now = new Date();
 
     // Check if any sessions are completed, same as subscription
-    const hasCompletedSessions = appointments.some((app) =>
-      getSlotTimes(app).every((time) => new Date(time) < now),
-    );
+    const hasCompletedSessions = appointments.some((app) => {
+      const times = getSlotTimes(app);
+      return times.length > 0 && times.every((time) => new Date(time) < now);
+    });
 
     // Check if all sessions are completed
-    const allSessionsCompleted = appointments.every((app) =>
-      getSlotTimes(app).every((time) => new Date(time) < now),
-    );
+    const allSessionsCompleted = appointments.every((app) => {
+      const times = getSlotTimes(app);
+      return times.length > 0 && times.every((time) => new Date(time) < now);
+    });
 
     if (allSessionsCompleted) return "Completed";
     return hasCompletedSessions ? "In Progress" : "Not Started";
