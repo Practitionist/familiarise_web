@@ -114,7 +114,7 @@ export function DashboardShell({
 
           {/* Desktop header actions (notification bell etc.) */}
           {headerActions && (
-            <div className="hidden lg:flex items-center justify-end gap-2 px-6 py-2 border-b border-zinc-200/50 bg-white/80 backdrop-blur-xl">
+            <div className="hidden lg:flex items-center justify-end gap-2 px-6 py-2 border-b border-zinc-200/50 bg-white/80 backdrop-blur-xl relative z-50">
               {headerActions}
             </div>
           )}
