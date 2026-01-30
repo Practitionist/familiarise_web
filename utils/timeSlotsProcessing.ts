@@ -572,11 +572,11 @@ export function breakDownSlotsByDuration(
     while (currentStart.getTime() + durationInMillis <= end.getTime()) {
       const currentEnd = new Date(currentStart.getTime() + durationInMillis);
 
-      // If the original slot is allocated, all segments within it should be allocated
-      // Otherwise, check if this specific segment is allocated by appointments
-      const isSegmentAllocated =
-        slot.isAllocated ||
-        isSlotAllocated(currentStart, currentEnd, appointmentSlots);
+      // FIX: Check ONLY this specific segment's overlap with appointments
+      // Previously, this inherited slot.isAllocated from the parent slot,
+      // which caused ALL segments to be marked allocated if ANY part of the
+      // original availability slot overlapped with an appointment
+      const isSegmentAllocated = isSlotAllocated(currentStart, currentEnd, appointmentSlots);
 
       // Calculate booking status for this specific segment
       const segmentBookingStatus = getSlotBookingStatus(
