@@ -13,6 +13,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { NotificationPreferencesPanel } from "@/components/notifications";
 import { useToast } from "@/hooks/use-toast";
 import { useSession } from "next-auth/react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -395,6 +396,9 @@ export default function AdminSettingsPage() {
           </CardContent>
         </Card>
       )}
+
+      {/* Notification Preferences */}
+      <NotificationPreferencesPanel />
 
       {/* Save Button */}
       <div className="flex justify-end">

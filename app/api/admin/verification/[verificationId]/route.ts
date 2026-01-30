@@ -13,6 +13,7 @@ import {
   ProfileVerificationStatus,
   ConsultantVerificationStatus,
 } from "@prisma/client";
+import { notifyVerificationStatusChanged } from "@/lib/novu";
 
 interface RouteParams {
   params: Promise<{ verificationId: string }>;
@@ -136,10 +137,18 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: "Invalid status" }, { status: 400 });
     }
 
-    // Get verification with profile
+    // Get verification with profile and user info (for notification)
     const verification = await prisma.consultantProfileVerification.findUnique({
       where: { id: verificationId },
-      select: { consultantProfileId: true },
+      select: {
+        consultantProfileId: true,
+        consultantProfile: {
+          select: {
+            id: true,
+            user: { select: { id: true } },
+          },
+        },
+      },
     });
 
     if (!verification) {
@@ -223,6 +232,16 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
               ]
             : []),
     ]);
+
+    // Fire-and-forget: notify consultant of verification status change
+    const consultantUserId = verification.consultantProfile?.user?.id;
+    if (consultantUserId) {
+      void notifyVerificationStatusChanged(consultantUserId, {
+        status: profileStatusMap[status] || status,
+        reason: rejectionReason || feedbackDetails || undefined,
+        dashboardUrl: `/dashboard/consultant/${verification.consultantProfile?.id}/settings`,
+      });
+    }
 
     return NextResponse.json({
       verification: updatedVerification,

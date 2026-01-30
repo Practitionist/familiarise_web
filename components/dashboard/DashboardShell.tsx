@@ -29,12 +29,14 @@ interface DashboardShellProps {
   children: ReactNode;
   sidebar: ReactNode;
   className?: string;
+  headerActions?: ReactNode;
 }
 
 export function DashboardShell({
   children,
   sidebar,
   className,
+  headerActions,
 }: DashboardShellProps) {
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
 
@@ -102,8 +104,20 @@ export function DashboardShell({
               <Menu className="h-5 w-5" />
               <span className="sr-only">Open menu</span>
             </Button>
-            <span className="font-semibold text-zinc-900">Familiarise</span>
+            <span className="font-semibold text-zinc-900 flex-1">Familiarise</span>
+            {headerActions && (
+              <div className="flex items-center gap-2 shrink-0">
+                {headerActions}
+              </div>
+            )}
           </div>
+
+          {/* Desktop header actions (notification bell etc.) */}
+          {headerActions && (
+            <div className="hidden lg:flex items-center justify-end gap-2 px-6 py-2 border-b border-zinc-200/50 bg-white/80 backdrop-blur-xl">
+              {headerActions}
+            </div>
+          )}
 
           <AnimatePresence mode="wait">
             <motion.div

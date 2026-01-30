@@ -2,6 +2,7 @@ import prisma from "@/lib/prisma";
 import { Prisma, TrialSessionStatus } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { logTrialRequested } from "@/lib/activity/log-activity";
+import { notifyTrialSessionRequested } from "@/lib/novu";
 
 /**
  * GET /api/trials
@@ -272,6 +273,18 @@ export async function POST(request: NextRequest) {
         image: consulteeProfile.user.image,
       },
       subscriptionPlan.title
+    );
+
+    // Notify the consultant about the new trial request
+    void notifyTrialSessionRequested(
+      trialSession.consultantProfile.user.id,
+      {
+        consultantName: trialSession.consultantProfile.user.name || "Consultant",
+        consulteeName: trialSession.consulteeProfile.user.name || "User",
+        planTitle: subscriptionPlan.title,
+        status: trialSession.status,
+        dashboardUrl: "/dashboard/consultant/trials",
+      },
     );
 
     return NextResponse.json({ data: trialSession }, { status: 201 });

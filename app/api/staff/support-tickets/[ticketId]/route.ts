@@ -8,6 +8,7 @@ import { getServerSession } from "next-auth";
 import authOptions from "@/app/api/auth/[...nextauth]/options";
 import prisma from "@/lib/prisma";
 import { SupportTicketStatus, SupportPriority, UserRole } from "@prisma/client";
+import { notifySupportTicketUpdate } from "@/lib/novu";
 
 interface RouteParams {
   params: Promise<{ ticketId: string }>;
@@ -264,6 +265,14 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
           },
         },
       },
+    });
+
+    // Notify the ticket owner about the update
+    void notifySupportTicketUpdate(updatedTicket.user.id, {
+      ticketId: updatedTicket.id,
+      ticketTitle: updatedTicket.title || "Support Ticket",
+      status: updatedTicket.status,
+      dashboardUrl: "/dashboard",
     });
 
     return NextResponse.json(updatedTicket);

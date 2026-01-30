@@ -2,6 +2,10 @@ import prisma from "@/lib/prisma";
 import { Prisma, RequestStatus, AppointmentsType } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { addWeeks, addMonths, setHours, setMinutes } from "date-fns";
+import {
+  notifySubscriptionStarted,
+  notifySubscriptionCancelled,
+} from "@/lib/novu";
 
 interface UpdateSubscriptionRequest {
   id: string;
@@ -211,6 +215,41 @@ export async function PATCH(request: NextRequest) {
       // If approved, create appointments in batches
       if (status === RequestStatus.APPROVED) {
         await createAppointmentsForSubscription(subscription);
+
+        // Fire-and-forget: notify consultee that subscription started
+        const consulteeUserId = subscription.requestedBy?.user?.id;
+        if (consulteeUserId) {
+          void notifySubscriptionStarted(consulteeUserId, {
+            subscriptionId: subscription.id,
+            planTitle: subscription.subscriptionPlan?.title || "Subscription",
+            consultantName:
+              subscription.subscriptionPlan?.consultantProfile?.user?.name ||
+              "Consultant",
+            consulteeName: subscription.requestedBy?.user?.name || undefined,
+            dashboardUrl: "/dashboard",
+          });
+        }
+      }
+
+      // Fire-and-forget: notify both parties on cancellation
+      if (status === RequestStatus.CANCELLED) {
+        const consultantUserId =
+          subscription.subscriptionPlan?.consultantProfile?.user?.id;
+        const consulteeUserId = subscription.requestedBy?.user?.id;
+        const userIds = [consultantUserId, consulteeUserId].filter(
+          (id): id is string => !!id,
+        );
+        if (userIds.length > 0) {
+          void notifySubscriptionCancelled(userIds, {
+            subscriptionId: subscription.id,
+            planTitle: subscription.subscriptionPlan?.title || "Subscription",
+            consultantName:
+              subscription.subscriptionPlan?.consultantProfile?.user?.name ||
+              "Consultant",
+            consulteeName: subscription.requestedBy?.user?.name || undefined,
+            dashboardUrl: "/dashboard",
+          });
+        }
       }
 
       return NextResponse.json({ data: subscription });

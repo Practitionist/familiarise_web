@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 import authOptions from "@/app/api/auth/[...nextauth]/options";
 import { CancellationReason } from "@prisma/client";
 import { handleSlotOpening } from "@/lib/waitlist/slot-handler";
+import { notifyAppointmentCancelled } from "@/lib/novu";
 
 interface CancelRequestBody {
   reason?: CancellationReason;
@@ -46,14 +47,33 @@ export async function POST(
 
     // Start transaction
     const result = await prisma.$transaction(async (tx) => {
-      // Get appointment details
+      // Get appointment details (include user data for notifications)
       const appointment = await tx.appointment.findUnique({
         where: { id: appointmentId },
         include: {
-          consultation: true,
-          subscription: true,
+          consultation: {
+            include: {
+              consultationPlan: {
+                include: {
+                  consultantProfile: { include: { user: { select: { id: true, name: true } } } },
+                },
+              },
+              requestedBy: { include: { user: { select: { id: true, name: true } } } },
+            },
+          },
+          subscription: {
+            include: {
+              subscriptionPlan: {
+                include: {
+                  consultantProfile: { include: { user: { select: { id: true, name: true } } } },
+                },
+              },
+              requestedBy: { include: { user: { select: { id: true, name: true } } } },
+            },
+          },
           webinar: true,
           class: true,
+          slotsOfAppointment: { take: 1, select: { startsAt: true } },
         },
       });
 
@@ -103,14 +123,71 @@ export async function POST(
         where: { id: appointmentId },
       });
 
+      // Extract notification data before returning (appointment is deleted after this)
+      let consultantUserId: string | undefined;
+      let consulteeUserId: string | undefined;
+      let consultantName: string | undefined;
+      let consulteeName: string | undefined;
+      let planTitle: string | undefined;
+      let appointmentType: string = appointment.appointmentType;
+      const dateTime = appointment.slotsOfAppointment?.[0]?.startsAt?.toISOString();
+
+      if (appointment.consultation) {
+        consultantUserId = appointment.consultation.consultationPlan?.consultantProfile?.user?.id;
+        consulteeUserId = appointment.consultation.requestedBy?.user?.id;
+        consultantName = appointment.consultation.consultationPlan?.consultantProfile?.user?.name || undefined;
+        consulteeName = appointment.consultation.requestedBy?.user?.name || undefined;
+        planTitle = appointment.consultation.consultationPlan?.title;
+      } else if (appointment.subscription) {
+        consultantUserId = appointment.subscription.subscriptionPlan?.consultantProfile?.user?.id;
+        consulteeUserId = appointment.subscription.requestedBy?.user?.id;
+        consultantName = appointment.subscription.subscriptionPlan?.consultantProfile?.user?.name || undefined;
+        consulteeName = appointment.subscription.requestedBy?.user?.name || undefined;
+        planTitle = appointment.subscription.subscriptionPlan?.title;
+      }
+
       return {
         success: true,
         cancellationReason: body.reason,
         cancelledAt: cancellationData.cancelledAt,
         webinarId: appointment.webinar?.id,
         classId: appointment.class?.id,
+        // Notification metadata (not sent to client)
+        _notificationMeta: {
+          consultantUserId,
+          consulteeUserId,
+          consultantName,
+          consulteeName,
+          planTitle,
+          appointmentType,
+          dateTime,
+          cancelledBy: session.user.id,
+        },
       };
     });
+
+    // Fire-and-forget: notify both parties about cancellation
+    const meta = result._notificationMeta;
+    if (meta) {
+      const userIds = [meta.consultantUserId, meta.consulteeUserId].filter(
+        (id): id is string => !!id,
+      );
+      if (userIds.length > 0) {
+        void notifyAppointmentCancelled(userIds, {
+          appointmentType: meta.appointmentType,
+          consultantName: meta.consultantName || "Consultant",
+          consulteeName: meta.consulteeName || "Consultee",
+          planTitle: meta.planTitle || "N/A",
+          dateTime: meta.dateTime,
+          dashboardUrl: "/dashboard",
+          reason: body.reason || undefined,
+          cancelledBy:
+            meta.cancelledBy === meta.consultantUserId
+              ? "consultant"
+              : "consultee",
+        });
+      }
+    }
 
     // Notify waitlist if a webinar or class appointment was cancelled
     if (result.webinarId || result.classId) {
@@ -139,7 +216,9 @@ export async function POST(
       }
     }
 
-    return NextResponse.json(result);
+    // Strip internal notification metadata before sending response
+    const { _notificationMeta: _, ...clientResult } = result;
+    return NextResponse.json(clientResult);
   } catch (error) {
     console.error("Error canceling appointment:", error);
 

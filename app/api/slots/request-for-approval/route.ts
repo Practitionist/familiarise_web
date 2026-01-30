@@ -6,6 +6,7 @@ import { RequestStatus } from "@prisma/client";
 import { lockSlotBooking, unlockSlotBooking } from "@/utils/appointmentlock";
 import { SlotLockError } from "@/utils/errors/SlotLockError";
 import { SlotValidationService } from "@/utils/slotAllocation/SlotValidationService";
+import { notifyNewBookingRequest } from "@/lib/novu";
 
 export async function POST(req: NextRequest) {
   try {
@@ -231,6 +232,18 @@ export async function POST(req: NextRequest) {
           user: session.user.id,
           timestamp: new Date().toISOString(),
         }),
+      );
+
+      // Fire-and-forget: notify consultant of new booking request
+      void notifyNewBookingRequest(
+        consultation.consultationPlan.consultantProfile.user.id,
+        {
+          consulteeName: consultation.requestedBy.user.name || "A consultee",
+          planTitle: consultation.consultationPlan.title,
+          appointmentType: "CONSULTATION",
+          requestedDateTime: startTime.toISOString(),
+          dashboardUrl: `/dashboard/consultant/${consultation.consultationPlan.consultantProfile.id}/requests`,
+        },
       );
 
       return NextResponse.json(

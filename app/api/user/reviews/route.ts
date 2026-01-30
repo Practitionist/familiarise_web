@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { notifyNewReview } from "@/lib/novu";
 
 export async function GET(req: NextRequest) {
   try {
@@ -102,6 +103,18 @@ export async function POST(req: NextRequest) {
         },
       },
     });
+
+    // Notify the consultant about the new review
+    void notifyNewReview(
+      newReview.consultantProfile.userId,
+      {
+        reviewerName: newReview.consulteeProfile?.user?.name || "User",
+        rating: newReview.rating,
+        comment: newReview.reviewDescription || undefined,
+        planTitle: undefined,
+        dashboardUrl: "/dashboard/consultant/reviews",
+      },
+    );
 
     return NextResponse.json(newReview, { status: 201 });
   } catch (error) {

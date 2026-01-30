@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import bcrypt from "bcrypt";
 import { Prisma, UserRole } from "@prisma/client";
 import { sendWelcomeEmail } from "@/lib/email";
+import { syncSubscriber } from "@/lib/novu/subscriber";
 
 export async function POST(req: Request) {
   try {
@@ -167,6 +168,15 @@ export async function POST(req: Request) {
         .catch((emailError) => {
           console.error("[REGISTER_POST] Welcome email error:", emailError);
         });
+
+      // Fire-and-forget: sync new user as Novu subscriber
+      const nameParts = (name as string).split(" ");
+      void syncSubscriber({
+        userId: user.id,
+        email: user.email || email,
+        firstName: nameParts[0],
+        lastName: nameParts.slice(1).join(" ") || undefined,
+      });
 
       // Return only necessary user info, exclude password
       const { password: _, ...userWithoutPassword } = user;

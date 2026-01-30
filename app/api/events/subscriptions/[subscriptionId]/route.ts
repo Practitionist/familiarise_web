@@ -15,6 +15,10 @@ import {
   unlockApproval,
 } from "@/utils/appointmentlock";
 import { sendPaymentLinkEmail } from "@/lib/email";
+import {
+  notifySubscriptionStarted,
+  notifySubscriptionCancelled,
+} from "@/lib/novu";
 
 /**
  * Type for subscription with all related details needed for payment processing
@@ -596,6 +600,43 @@ export async function PATCH(
             `⚠️ Failed to send payment link email for subscription ${subscriptionId}:`,
             emailError instanceof Error ? emailError.message : "Unknown error",
           );
+        }
+      }
+
+      // Fire-and-forget: send Novu notifications for non-duplicate status changes
+      if (!result.duplicate && "data" in result && result.data) {
+        const subData = result.data;
+        const consulteeUserId = subData.requestedBy?.user?.id;
+        const consultantUserId =
+          subData.subscriptionPlan?.consultantProfile?.user?.id;
+
+        if (status === RequestStatus.APPROVED && consulteeUserId) {
+          void notifySubscriptionStarted(consulteeUserId, {
+            subscriptionId: subData.id,
+            planTitle: subData.subscriptionPlan?.title || "Subscription",
+            consultantName:
+              subData.subscriptionPlan?.consultantProfile?.user?.name ||
+              "Consultant",
+            consulteeName: subData.requestedBy?.user?.name || undefined,
+            dashboardUrl: "/dashboard",
+          });
+        }
+
+        if (status === RequestStatus.CANCELLED) {
+          const userIds = [consultantUserId, consulteeUserId].filter(
+            (id): id is string => !!id,
+          );
+          if (userIds.length > 0) {
+            void notifySubscriptionCancelled(userIds, {
+              subscriptionId: subData.id,
+              planTitle: subData.subscriptionPlan?.title || "Subscription",
+              consultantName:
+                subData.subscriptionPlan?.consultantProfile?.user?.name ||
+                "Consultant",
+              consulteeName: subData.requestedBy?.user?.name || undefined,
+              dashboardUrl: "/dashboard",
+            });
+          }
         }
       }
 

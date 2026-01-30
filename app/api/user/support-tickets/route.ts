@@ -3,6 +3,7 @@ import prisma from "lib/prisma";
 import { getServerSession } from "next-auth";
 import authOptions from "../../auth/[...nextauth]/options";
 import { SupportIssueType, SupportPriority } from "@prisma/client";
+import { notifySupportTicketCreated } from "@/lib/novu";
 
 export async function GET() {
   try {
@@ -198,6 +199,20 @@ export async function POST(req: NextRequest) {
         attachments: true,
       },
     });
+
+    // Notify staff/admin users about the new support ticket
+    const staffUsers = await prisma.user.findMany({
+      where: { role: { in: ["STAFF", "ADMIN"] } },
+      select: { id: true },
+    });
+    void notifySupportTicketCreated(
+      staffUsers.map((u) => u.id),
+      {
+        ticketId: ticket.id,
+        ticketTitle: ticket.title || "Support Ticket",
+        dashboardUrl: "/dashboard/admin/tickets",
+      },
+    );
 
     return NextResponse.json(ticket, { status: 201 });
   } catch (error) {

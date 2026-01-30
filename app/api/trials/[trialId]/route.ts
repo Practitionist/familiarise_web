@@ -3,6 +3,11 @@ import { TrialSessionStatus, AppointmentsType } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { logTrialCompleted, logTrialScheduled } from "@/lib/activity/log-activity";
 import { lockTrialSlot, unlockTrialSlot, ApprovalLock } from "@/utils/appointmentlock";
+import {
+  notifyTrialSessionScheduled,
+  notifyTrialSessionCompleted,
+  notifyTrialSessionCancelled,
+} from "@/lib/novu";
 
 interface RouteContext {
   params: Promise<{ trialId: string }>;
@@ -356,6 +361,19 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
             startTime
           );
 
+          // Notify the consultee that their trial has been scheduled
+          void notifyTrialSessionScheduled(
+            existingTrial.consulteeProfile.user.id,
+            {
+              consultantName: existingTrial.consultantProfile.user.name || "Consultant",
+              consulteeName: existingTrial.consulteeProfile.user.name || "User",
+              planTitle: existingTrial.subscriptionPlan.title,
+              dateTime: startTime.toISOString(),
+              status: TrialSessionStatus.SCHEDULED,
+              dashboardUrl: "/dashboard",
+            },
+          );
+
           return NextResponse.json({ data: result });
         } finally {
           // 5. Always release lock
@@ -379,6 +397,38 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
             image: existingTrial.consulteeProfile.user.image,
           },
           existingTrial.subscriptionPlan.title
+        );
+
+        // Notify both parties that the trial is completed
+        void notifyTrialSessionCompleted(
+          [
+            existingTrial.consultantProfile.user.id,
+            existingTrial.consulteeProfile.user.id,
+          ],
+          {
+            consultantName: existingTrial.consultantProfile.user.name || "Consultant",
+            consulteeName: existingTrial.consulteeProfile.user.name || "User",
+            planTitle: existingTrial.subscriptionPlan.title,
+            status: TrialSessionStatus.COMPLETED,
+            dashboardUrl: "/dashboard",
+          },
+        );
+      }
+
+      // Handle cancellation / rejection
+      if (status === TrialSessionStatus.CANCELLED || status === TrialSessionStatus.REJECTED) {
+        void notifyTrialSessionCancelled(
+          [
+            existingTrial.consultantProfile.user.id,
+            existingTrial.consulteeProfile.user.id,
+          ],
+          {
+            consultantName: existingTrial.consultantProfile.user.name || "Consultant",
+            consulteeName: existingTrial.consulteeProfile.user.name || "User",
+            planTitle: existingTrial.subscriptionPlan.title,
+            status,
+            dashboardUrl: "/dashboard",
+          },
         );
       }
     }

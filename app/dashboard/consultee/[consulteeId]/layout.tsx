@@ -1,6 +1,9 @@
 "use client";
 
 import { fetchConsulteeDetails, fetchUserDetails } from "@/lib/user";
+import NovuProvider from "@/providers/NovuProvider";
+import { NotificationInbox } from "@/components/notifications/NotificationInbox";
+import { useNovuSubscriberSync } from "@/hooks/useNovuSubscriberSync";
 import { getEffectiveUserId } from "@/utils/auth";
 import { Skeleton } from "@/components/ui/skeleton";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
@@ -216,6 +219,7 @@ function ConsulteeNav({
                     {userName?.split(" ")[0]}
                   </span>
                 </span>
+                <NotificationInbox />
                 <Button
                   variant="ghost"
                   size="sm"
@@ -341,6 +345,9 @@ export default function ConsulteeLayout({
 
   const userId = getEffectiveUserId(session);
 
+  // Sync user as Novu subscriber (once per session)
+  useNovuSubscriberSync();
+
   // Fetch user details with placeholderData to prevent loading flashes
   const {
     data: userDetails,
@@ -429,6 +436,7 @@ export default function ConsulteeLayout({
   }
 
   return (
+    <NovuProvider>
     <UserProvider userDetails={userDetails}>
       <div className="min-h-screen bg-zinc-50">
         <ConsulteeNav
@@ -444,5 +452,6 @@ export default function ConsulteeLayout({
         </main>
       </div>
     </UserProvider>
+    </NovuProvider>
   );
 }

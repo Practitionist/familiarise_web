@@ -2,6 +2,7 @@ import prisma from "lib/prisma";
 import { getServerSession } from "next-auth";
 import { NextRequest, NextResponse } from "next/server";
 import authOptions from "../../auth/[...nextauth]/options";
+import { notifyFeedbackReceived } from "@/lib/novu";
 
 export async function GET() {
   try {
@@ -56,6 +57,22 @@ export async function POST(req: NextRequest) {
         user: { connect: { id: session.user.id } },
       },
     });
+
+    // Notify admin users about new feedback
+    const adminUsers = await prisma.user.findMany({
+      where: { role: { in: ["STAFF", "ADMIN"] } },
+      select: { id: true },
+    });
+    void notifyFeedbackReceived(
+      adminUsers.map((u) => u.id),
+      {
+        feedbackId: feedback.id,
+        userName: session.user.name || "User",
+        category: feedback.category || undefined,
+        message: feedback.description || feedback.title || "New feedback",
+        dashboardUrl: "/dashboard/admin/feedbacks",
+      },
+    );
 
     return NextResponse.json(feedback, { status: 201 });
   } catch (error) {

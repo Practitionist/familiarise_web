@@ -8,6 +8,7 @@ import { getServerSession } from "next-auth";
 import authOptions from "@/app/api/auth/[...nextauth]/options";
 import prisma from "@/lib/prisma";
 import { UserRole } from "@prisma/client";
+import { notifySupportTicketResponse } from "@/lib/novu";
 
 interface RouteParams {
   params: Promise<{ ticketId: string }>;
@@ -88,6 +89,16 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
           // Auto-assign to responding staff if not already assigned
           assignedToId: ticket.assignedToId || session.user.id,
         },
+      });
+    }
+
+    // Notify the ticket owner about the staff response (skip for internal notes)
+    if (!body.isInternal) {
+      void notifySupportTicketResponse(ticket.userId, {
+        ticketId: ticket.id,
+        ticketTitle: ticket.title || "Support Ticket",
+        message: body.message.trim(),
+        dashboardUrl: "/dashboard",
       });
     }
 
