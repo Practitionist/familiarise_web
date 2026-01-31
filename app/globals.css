@@ -1158,13 +1158,12 @@
 [data-novu-popover],
 [data-radix-popper-content-wrapper] {
   z-index: 10000 !important;
-  overflow: visible !important;
 }
 
-/* Ensure Novu popover content doesn't clip internal menus */
-[class*="nv-popoverContent"],
-[class*="nv-notificationList"] {
-  overflow: visible !important;
+/* Let popover stretch to fit content, scroll only if needed */
+[class*="nv-popoverContent"] {
+  max-height: calc(100vh - 6rem) !important;
+  overflow-y: auto !important;
 }
 
 /* Fix Novu dropdown menu positioning */
