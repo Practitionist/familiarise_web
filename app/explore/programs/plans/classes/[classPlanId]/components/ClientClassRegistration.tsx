@@ -16,7 +16,7 @@ import {
   isUserEnrolled,
   countUniqueParticipants,
 } from "@/lib/payments/utils/participants";
-import { formatCurrency } from "@/app/checkout/plans/math";
+import { useCurrency } from "@/lib/hooks/useCurrency";
 import { JoinWaitlistButton } from "@/components/waitlist/JoinWaitlistButton";
 import { WaitlistBadge } from "@/components/waitlist/WaitlistBadge";
 
@@ -31,9 +31,10 @@ export function ClientClassRegistration({
   maxParticipants,
   waitlist = [],
 }: ClientClassRegistrationProps) {
-  const { id: classId, price, priceCurrency, classes } = plan;
+  const { id: classId, price, classes } = plan;
   const startDate = classes?.[0]?.startDate; // Corrected to startDate
   const { data: session } = useSession();
+  const { formatPrice } = useCurrency();
   const isLoggedIn = !!session?.user;
   const userId = session?.user?.id;
 
@@ -226,7 +227,7 @@ export function ClientClassRegistration({
           onClick={handleRegistration}
           className="w-full bg-black hover:bg-gray-800"
         >
-          Pay {formatCurrency(price, priceCurrency || "INR")} & Register Now
+          Pay {formatPrice(price)} & Register Now
         </Button>
       </CardFooter>
     </Card>

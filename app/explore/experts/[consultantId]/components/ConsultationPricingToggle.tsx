@@ -19,7 +19,7 @@ import { PricingOption } from "../defaults";
 import { TSlotTiming } from "@/types/slots";
 import { breakDownSlotsByDuration } from "@/utils/timeSlotsProcessing";
 import { useToast } from "@/hooks/use-toast";
-import { formatCurrency } from "@/app/checkout/plans/math";
+import { useCurrency } from "@/lib/hooks/useCurrency";
 
 interface ConsultationPricingToggleProps {
   consultationOptions: PricingOption[];
@@ -52,6 +52,7 @@ export default function ConsultationPricingToggle({
 }: Readonly<ConsultationPricingToggleProps>) {
   const { data: session } = useSession();
   const { toast } = useToast();
+  const { formatPrice } = useCurrency();
   const [activeConsultationOption, setActiveConsultationOption] = useState(
     consultationOptions.length > 0
       ? consultationOptions[0].title.toLowerCase().replace(" ", "-")
@@ -266,7 +267,7 @@ export default function ConsultationPricingToggle({
 
               <div className="my-4">
                 <span className="text-4xl font-bold text-white">
-                  {formatCurrency(option.price, option.priceCurrency)}
+                  {formatPrice(option.price)}
                 </span>
               </div>
 

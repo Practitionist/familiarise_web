@@ -14,6 +14,7 @@ import {
   Briefcase,
 } from "lucide-react";
 import { TConsultantProfile } from "@/types/consultant";
+import { useCurrency } from "@/lib/hooks/useCurrency";
 import { FiltersSection } from "./components/FiltersSection";
 import { ConsultantCard } from "./components/ConsultantCard";
 import { FeaturedExperts } from "./components/FeaturedExperts";
@@ -79,6 +80,8 @@ function ExpertsContent() {
     metadata,
     isLoading: isLoadingMetadata,
   } = useConsultantsMetadata();
+
+  const { formatPrice: formatCurrencyPrice } = useCurrency();
 
   // Curated sections
   const { experts: featuredExperts, isLoading: featuredLoading } =
@@ -194,15 +197,19 @@ function ExpertsContent() {
         min === 0 && max === 0
           ? "Free"
           : max === undefined
-            ? `$${min}+`
-            : `$${min} - $${max}`;
+            ? `${formatCurrencyPrice(min)}+`
+            : `${formatCurrencyPrice(min)} - ${formatCurrencyPrice(max)}`;
       chips.push({ key: "price", label: "Price", value: label });
     }
-    if (filters.minRating !== undefined) {
+    if (filters.availability) {
+      const availLabel =
+        filters.availability === "has_slots"
+          ? "Has Open Slots"
+          : "Available This Week";
       chips.push({
-        key: "rating",
-        label: "Rating",
-        value: `${filters.minRating}+ Stars`,
+        key: "availability",
+        label: "Availability",
+        value: availLabel,
       });
     }
     if (filters.language) {
@@ -230,7 +237,7 @@ function ExpertsContent() {
       });
     }
     return chips;
-  }, [filters, metadata]);
+  }, [filters, metadata, formatCurrencyPrice]);
 
   const handleRemoveFilter = useCallback(
     (key: string) => {
@@ -245,8 +252,8 @@ function ExpertsContent() {
         updateFilters({ experience: 0 });
       } else if (key === "price") {
         updateFilters({ minPrice: undefined, maxPrice: undefined });
-      } else if (key === "rating") {
-        updateFilters({ minRating: undefined });
+      } else if (key === "availability") {
+        updateFilters({ availability: undefined });
       } else if (key === "language") {
         updateFilters({ language: undefined });
       } else if (key === "search") {
@@ -410,8 +417,10 @@ function ExpertsContent() {
                 onMinPriceChange={(val) => updateFilters({ minPrice: val })}
                 maxPrice={filters.maxPrice}
                 onMaxPriceChange={(val) => updateFilters({ maxPrice: val })}
-                minRating={filters.minRating}
-                onMinRatingChange={(val) => updateFilters({ minRating: val })}
+                availability={filters.availability}
+                onAvailabilityChange={(val) =>
+                  updateFilters({ availability: val })
+                }
                 language={filters.language}
                 onLanguageChange={(val) => updateFilters({ language: val })}
               />

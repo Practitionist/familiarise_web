@@ -1,7 +1,7 @@
 "use client";
 
 import { motion, AnimatePresence } from "framer-motion";
-import { Menu, X } from "lucide-react";
+import { ChevronDown, Menu, X } from "lucide-react";
 import { signOut, useSession } from "next-auth/react";
 import Image from "next/image";
 import Link from "next/link";
@@ -10,6 +10,16 @@ import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  useCurrency,
+  SUPPORTED_CURRENCIES,
+} from "@/lib/hooks/useCurrency";
 import familiariseLogoTransparent from "@/public/avif/static/assets/logos/images/logos/Familiarise-logos_transparent.avif";
 import familiariseLogoWhite from "@/public/avif/static/assets/logos/images/logos/Familiarise-logos_white.avif";
 
@@ -22,6 +32,7 @@ const Navbar = () => {
   const [isOpen, setIsOpen] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
   const [isAnnouncementVisible, setIsAnnouncementVisible] = useState(true);
+  const { currency, symbol, setCurrency } = useCurrency();
 
   // Check if we're on a page with dark hero (for transparent navbar)
   const isHomePage = pathname === "/";
@@ -161,6 +172,37 @@ const Navbar = () => {
 
             {/* Desktop Auth Buttons */}
             <div className="hidden lg:flex items-center gap-3">
+              {/* Currency Selector */}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className={`gap-1 text-xs font-medium px-2 ${
+                      showDarkStyle
+                        ? "text-zinc-300 hover:text-white hover:bg-white/10"
+                        : "text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100"
+                    }`}
+                  >
+                    {symbol} {currency}
+                    <ChevronDown className="w-3 h-3" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="min-w-[120px]">
+                  {SUPPORTED_CURRENCIES.map((c) => (
+                    <DropdownMenuItem
+                      key={c.code}
+                      onClick={() => setCurrency(c.code)}
+                      className={
+                        currency === c.code ? "bg-zinc-100 font-medium" : ""
+                      }
+                    >
+                      {c.label}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+
               {session?.user ? (
                 <div className="flex items-center gap-3">
                   <Link href="/profile">
@@ -284,6 +326,28 @@ const Navbar = () => {
                     <span className="font-medium">{link.label}</span>
                   </Link>
                 ))}
+
+                {/* Mobile Currency Selector */}
+                <div className="px-4 pt-4 mt-2 border-t border-zinc-800">
+                  <span className="text-xs text-zinc-500 uppercase tracking-wide">
+                    Currency
+                  </span>
+                  <div className="flex flex-wrap gap-2 mt-2">
+                    {SUPPORTED_CURRENCIES.map((c) => (
+                      <button
+                        key={c.code}
+                        onClick={() => setCurrency(c.code)}
+                        className={`px-3 py-1.5 rounded-lg text-sm transition-colors ${
+                          currency === c.code
+                            ? "bg-white text-zinc-900 font-medium"
+                            : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700"
+                        }`}
+                      >
+                        {c.symbol} {c.code}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
 
               {/* User Section */}

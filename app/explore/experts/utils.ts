@@ -16,7 +16,7 @@ export interface ExpertFilters {
   sort: SortOption;
   minPrice?: number;
   maxPrice?: number;
-  minRating?: number;
+  availability?: "has_slots" | "this_week";
   language?: string;
 }
 
@@ -29,7 +29,7 @@ export const DEFAULT_EXPERT_FILTERS: ExpertFilters = {
   sort: "nameAsc",
   minPrice: undefined,
   maxPrice: undefined,
-  minRating: undefined,
+  availability: undefined,
   language: undefined,
 };
 
@@ -47,6 +47,9 @@ export interface MetaData {
     averageRating: number;
   };
   availableLanguages: string[];
+  availabilityStats: {
+    hasSlots: number;
+  };
 }
 
 export interface ConsultantsByDomain {
@@ -72,8 +75,8 @@ export function filtersFromSearchParams(
 ): ExpertFilters {
   const rawMinPrice = params.get("minPrice");
   const rawMaxPrice = params.get("maxPrice");
-  const rawMinRating = params.get("minRating");
   const rawExperience = params.get("experience");
+  const rawAvailability = params.get("availability");
 
   return {
     domain: params.get("domain"),
@@ -84,7 +87,10 @@ export function filtersFromSearchParams(
     sort: (params.get("sort") as SortOption) || "nameAsc",
     minPrice: rawMinPrice ? parseFloat(rawMinPrice) || undefined : undefined,
     maxPrice: rawMaxPrice ? parseFloat(rawMaxPrice) || undefined : undefined,
-    minRating: rawMinRating ? parseFloat(rawMinRating) || undefined : undefined,
+    availability:
+      rawAvailability === "has_slots" || rawAvailability === "this_week"
+        ? rawAvailability
+        : undefined,
     language: params.get("language") || undefined,
   };
 }
@@ -103,8 +109,7 @@ export function filtersToSearchParams(filters: ExpertFilters): string {
     params.set("minPrice", String(filters.minPrice));
   if (filters.maxPrice !== undefined)
     params.set("maxPrice", String(filters.maxPrice));
-  if (filters.minRating !== undefined)
-    params.set("minRating", String(filters.minRating));
+  if (filters.availability) params.set("availability", filters.availability);
   if (filters.language) params.set("language", filters.language);
   return params.toString();
 }
@@ -172,7 +177,7 @@ export function useConsultants(filters: ExpertFilters) {
     sort: sortBy,
     minPrice,
     maxPrice,
-    minRating,
+    availability,
     language,
   } = filters;
 
@@ -189,7 +194,7 @@ export function useConsultants(filters: ExpertFilters) {
         sort: sortBy,
         ...(minPrice !== undefined && { minPrice: String(minPrice) }),
         ...(maxPrice !== undefined && { maxPrice: String(maxPrice) }),
-        ...(minRating !== undefined && { minRating: String(minRating) }),
+        ...(availability && { availability }),
         ...(language && { language }),
       });
 
@@ -204,7 +209,7 @@ export function useConsultants(filters: ExpertFilters) {
       sortBy,
       minPrice,
       maxPrice,
-      minRating,
+      availability,
       language,
     ],
   );
@@ -228,7 +233,7 @@ export function useConsultants(filters: ExpertFilters) {
       sortBy,
       minPrice,
       maxPrice,
-      minRating,
+      availability,
       language,
     ],
     queryFn: ({ pageParam = 0 }) => fetchConsultantsData(getKey(pageParam)),

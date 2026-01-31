@@ -11,7 +11,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { CheckCircle } from "lucide-react";
-import { formatCurrency } from "@/app/checkout/plans/math";
+import { useCurrency } from "@/lib/hooks/useCurrency";
 import { JoinWaitlistButton } from "@/components/waitlist/JoinWaitlistButton";
 import { WaitlistBadge } from "@/components/waitlist/WaitlistBadge";
 import { countWebinarParticipants } from "@/lib/payments/utils/participants";
@@ -49,6 +49,7 @@ export function ClientWebinarRegistration({
   waitlist = [],
 }: ClientWebinarRegistrationProps) {
   const { data: session } = useSession();
+  const { formatPrice } = useCurrency();
   const isLoggedIn = !!session?.user;
   const userId = session?.user?.id;
 
@@ -107,7 +108,7 @@ export function ClientWebinarRegistration({
   }
 
   // Logic for buttonText and buttonDisabled
-  let buttonText = `Pay ${formatCurrency(price, currency || "INR")} & Register Now`;
+  let buttonText = `Pay ${formatPrice(price)} & Register Now`;
   let buttonDisabled = false;
 
   if (sessionStatus === "Completed") {

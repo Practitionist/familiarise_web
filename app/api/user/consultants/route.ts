@@ -16,12 +16,14 @@ export async function GET(request: NextRequest) {
     // New filter params with NaN guards
     const rawMinPrice = searchParams.get("minPrice");
     const rawMaxPrice = searchParams.get("maxPrice");
-    const rawMinRating = searchParams.get("minRating");
     const language = searchParams.get("language");
+    const availability = searchParams.get("availability") as
+      | "has_slots"
+      | "this_week"
+      | null;
 
     const minPrice = rawMinPrice ? parseFloat(rawMinPrice) : undefined;
     const maxPrice = rawMaxPrice ? parseFloat(rawMaxPrice) : undefined;
-    const minRating = rawMinRating ? parseFloat(rawMinRating) : undefined;
 
     // Calculate offset
     const skip = (page - 1) * limit;
@@ -89,9 +91,37 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    // Rating filter
-    if (minRating !== undefined && !isNaN(minRating)) {
-      where.AND.push({ rating: { gte: minRating } });
+    // Availability filter
+    if (availability === "has_slots") {
+      where.AND.push({
+        OR: [
+          { slotsOfAvailabilityWeekly: { some: {} } },
+          { slotsOfAvailabilityCustom: { some: {} } },
+        ],
+      });
+    } else if (availability === "this_week") {
+      const now = new Date();
+      const oneWeekFromNow = new Date(
+        now.getTime() + 7 * 24 * 60 * 60 * 1000,
+      );
+      where.AND.push({
+        OR: [
+          // Weekly slots are recurring — if they exist, the consultant
+          // has availability every week
+          { slotsOfAvailabilityWeekly: { some: {} } },
+          // Custom slots within the next 7 days
+          {
+            slotsOfAvailabilityCustom: {
+              some: {
+                availabilityStartsAt: {
+                  gte: now,
+                  lte: oneWeekFromNow,
+                },
+              },
+            },
+          },
+        ],
+      });
     }
 
     // Language filter

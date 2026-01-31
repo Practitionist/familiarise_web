@@ -23,7 +23,8 @@ import {
   createStripeCheckoutHandlers,
   handleUnifiedCheckout,
 } from "../../utils";
-import { calculatePricing, formatCurrency, formatPercentage } from "../../math";
+import { calculatePricing, formatPercentage } from "../../math";
+import { useCurrency } from "@/lib/hooks/useCurrency";
 
 import type {
   Appointment,
@@ -78,6 +79,7 @@ export default function WebinarCheckoutPage({
   const resolvedParams = use(params);
   const resolvedSearchParams = use(searchParams);
 
+  const { formatPrice } = useCurrency();
   const [planData, setPlanData] = useState<PlanResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -333,7 +335,7 @@ export default function WebinarCheckoutPage({
   const planDetails = planData?.data;
   const consultantDetails = planDetails?.consultantProfile;
   const userDetails = consultantDetails?.user;
-  const currency = planDetails?.priceCurrency || "INR";
+
   const nextSession =
     planDetails?.webinars?.[0]?.appointment?.slotsOfAppointment?.[0];
 
@@ -465,7 +467,7 @@ export default function WebinarCheckoutPage({
                 <div className="text-sm text-green-600">
                   {appliedDiscount.discountType === "PERCENTAGE"
                     ? `${appliedDiscount.discountValue}% off`
-                    : `${formatCurrency(appliedDiscount.discountValue, currency)} off`}
+                    : `${formatPrice(appliedDiscount.discountValue)} off`}
                 </div>
               </div>
               <Button
@@ -512,7 +514,7 @@ export default function WebinarCheckoutPage({
             <div className="grid gap-2">
               <div className="flex items-center justify-between">
                 <div>Registration Fee</div>
-                <div>{formatCurrency(planDetails?.price || 0, currency)}</div>
+                <div>{formatPrice(planDetails?.price || 0)}</div>
               </div>
               <div className="flex items-center justify-between">
                 <div className="flex items-center">
@@ -532,11 +534,11 @@ export default function WebinarCheckoutPage({
             <div className="grid gap-2">
               <div className="flex items-center justify-between">
                 <div>Subtotal</div>
-                <div>{formatCurrency(pricing.subtotal, currency)}</div>
+                <div>{formatPrice(pricing.subtotal)}</div>
               </div>
               <div className="flex items-center justify-between">
                 <div>Tax ({formatPercentage(pricing.taxRate)})</div>
-                <div>{formatCurrency(pricing.taxAmount, currency)}</div>
+                <div>{formatPrice(pricing.taxAmount)}</div>
               </div>
               {pricing.discountAmount > 0 && (
                 <div className="flex items-center justify-between text-green-600">
@@ -545,13 +547,13 @@ export default function WebinarCheckoutPage({
                     {pricing.discountPercent > 0 &&
                       `(${formatPercentage(pricing.discountPercent)})`}
                   </div>
-                  <div>-{formatCurrency(pricing.discountAmount, currency)}</div>
+                  <div>-{formatPrice(pricing.discountAmount)}</div>
                 </div>
               )}
               <Separator className="bg-zinc-200" />
               <div className="flex items-center justify-between font-semibold">
                 <div>Total</div>
-                <div>{formatCurrency(pricing.total, currency)}</div>
+                <div>{formatPrice(pricing.total)}</div>
               </div>
             </div>
           </CardContent>

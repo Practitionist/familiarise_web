@@ -7,8 +7,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Slider } from "@/components/ui/slider";
 import { Domain, SubDomain, Tag } from "@prisma/client";
-import { useState } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import {
   X,
   Filter,
@@ -16,9 +17,12 @@ import {
   Tag as TagIcon,
   Clock,
   DollarSign,
-  Star,
+  CalendarCheck,
   Globe,
 } from "lucide-react";
+import { useCurrency } from "@/lib/hooks/useCurrency";
+
+const MAX_PRICE_INR = 10000;
 
 interface FiltersSectionProps {
   metadata: {
@@ -26,6 +30,7 @@ interface FiltersSectionProps {
     subdomains: SubDomain[];
     tags: Tag[];
     availableLanguages?: string[];
+    availabilityStats?: { hasSlots: number };
   } | null;
   selectedDomain: string | null;
   setSelectedDomain: (value: string | null) => void;
@@ -39,27 +44,11 @@ interface FiltersSectionProps {
   onMinPriceChange?: (value: number | undefined) => void;
   maxPrice?: number;
   onMaxPriceChange?: (value: number | undefined) => void;
-  minRating?: number;
-  onMinRatingChange?: (value: number | undefined) => void;
+  availability?: "has_slots" | "this_week";
+  onAvailabilityChange?: (value: "has_slots" | "this_week" | undefined) => void;
   language?: string;
   onLanguageChange?: (value: string | undefined) => void;
 }
-
-const PRICE_RANGES = [
-  { label: "Any Price", value: "all" },
-  { label: "Free", value: "0-0" },
-  { label: "Under $50", value: "0-50" },
-  { label: "$50 - $100", value: "50-100" },
-  { label: "$100 - $200", value: "100-200" },
-  { label: "$200+", value: "200-" },
-];
-
-const RATING_OPTIONS = [
-  { label: "Any Rating", value: "all" },
-  { label: "3+ Stars", value: "3" },
-  { label: "4+ Stars", value: "4" },
-  { label: "4.5+ Stars", value: "4.5" },
-];
 
 export function FiltersSection({
   metadata,
@@ -75,13 +64,42 @@ export function FiltersSection({
   onMinPriceChange,
   maxPrice,
   onMaxPriceChange,
-  minRating,
-  onMinRatingChange,
+  availability,
+  onAvailabilityChange,
   language,
   onLanguageChange,
 }: FiltersSectionProps) {
   const [searchTerm, setSearchTerm] = useState("");
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+
+  const { formatPrice, currency } = useCurrency();
+
+  // Local slider state for smooth dragging without triggering API calls on every tick
+  const [localRange, setLocalRange] = useState<[number, number]>([
+    minPrice ?? 0,
+    maxPrice ?? MAX_PRICE_INR,
+  ]);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Sync local state when external props change (e.g. filter chip removal)
+  useEffect(() => {
+    setLocalRange([minPrice ?? 0, maxPrice ?? MAX_PRICE_INR]);
+  }, [minPrice, maxPrice]);
+
+  const handleSliderChange = useCallback(
+    (value: number[]) => {
+      const [newMin, newMax] = value as [number, number];
+      setLocalRange([newMin, newMax]);
+
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(() => {
+        const isDefault = newMin === 0 && newMax === MAX_PRICE_INR;
+        onMinPriceChange?.(isDefault ? undefined : newMin);
+        onMaxPriceChange?.(isDefault ? undefined : newMax);
+      }, 300);
+    },
+    [onMinPriceChange, onMaxPriceChange],
+  );
 
   const handleDomainChange = (value: string) => {
     setSelectedDomain(value === "all" ? null : value);
@@ -111,33 +129,15 @@ export function FiltersSection({
     setIsDropdownOpen(true);
   };
 
-  const handlePriceRangeChange = (value: string) => {
-    if (value === "all") {
-      onMinPriceChange?.(undefined);
-      onMaxPriceChange?.(undefined);
-      return;
-    }
-    const [min, max] = value.split("-");
-    onMinPriceChange?.(min ? parseInt(min) : undefined);
-    onMaxPriceChange?.(max ? parseInt(max) : undefined);
-  };
-
-  const handleRatingChange = (value: string) => {
-    onMinRatingChange?.(value === "all" ? undefined : parseFloat(value));
+  const handleAvailabilityChange = (value: string) => {
+    onAvailabilityChange?.(
+      value === "all" ? undefined : (value as "has_slots" | "this_week"),
+    );
   };
 
   const handleLanguageChange = (value: string) => {
     onLanguageChange?.(value === "all" ? undefined : value);
   };
-
-  // Derive current price range value for select
-  const currentPriceRange = (() => {
-    if (minPrice === undefined && maxPrice === undefined) return "all";
-    if (minPrice === 0 && maxPrice === 0) return "0-0";
-    const min = minPrice ?? 0;
-    const max = maxPrice !== undefined ? String(maxPrice) : "";
-    return `${min}-${max}`;
-  })();
 
   const filteredTags =
     metadata?.tags.filter((tag) => {
@@ -316,7 +316,7 @@ export function FiltersSection({
           </div>
         </div>
 
-        {/* Price Range */}
+        {/* Price Range — dual-thumb slider */}
         <div className="bg-white rounded-xl p-4 border border-zinc-200">
           <div className="flex items-center gap-2 mb-4">
             <DollarSign className="w-4 h-4 text-zinc-500" />
@@ -325,50 +325,62 @@ export function FiltersSection({
             </span>
           </div>
           <div>
-            <label className="block mb-1.5 text-xs font-medium text-zinc-500 uppercase tracking-wide">
-              Subscription Price
-            </label>
-            <Select
-              value={currentPriceRange}
-              onValueChange={handlePriceRangeChange}
-            >
-              <SelectTrigger className="w-full h-11 bg-zinc-50 border-zinc-200 rounded-lg focus:ring-zinc-900">
-                <SelectValue placeholder="Any Price" />
-              </SelectTrigger>
-              <SelectContent>
-                {PRICE_RANGES.map((range) => (
-                  <SelectItem key={range.value} value={range.value}>
-                    {range.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <div className="flex justify-between mb-3 text-sm font-medium text-zinc-700">
+              <span>{formatPrice(localRange[0])}</span>
+              <span>
+                {localRange[1] === MAX_PRICE_INR
+                  ? `${formatPrice(MAX_PRICE_INR)}+`
+                  : formatPrice(localRange[1])}
+              </span>
+            </div>
+            <Slider
+              defaultValue={[0, MAX_PRICE_INR]}
+              value={localRange}
+              min={0}
+              max={MAX_PRICE_INR}
+              step={100}
+              onValueChange={handleSliderChange}
+              className="my-2"
+            />
+            <div className="flex justify-between mt-2 text-xs text-zinc-400">
+              <span>{formatPrice(0)}</span>
+              <span>{formatPrice(MAX_PRICE_INR)}+</span>
+            </div>
+            <p className="mt-3 text-[11px] text-zinc-400 leading-tight">
+              Prices shown in {currency}. Final price may vary based on your
+              region and payment method.
+            </p>
           </div>
         </div>
 
-        {/* Rating */}
+        {/* Availability */}
         <div className="bg-white rounded-xl p-4 border border-zinc-200">
           <div className="flex items-center gap-2 mb-4">
-            <Star className="w-4 h-4 text-zinc-500" />
-            <span className="text-sm font-medium text-zinc-700">Rating</span>
+            <CalendarCheck className="w-4 h-4 text-zinc-500" />
+            <span className="text-sm font-medium text-zinc-700">
+              Availability
+            </span>
           </div>
           <div>
             <label className="block mb-1.5 text-xs font-medium text-zinc-500 uppercase tracking-wide">
-              Minimum Rating
+              Schedule Status
             </label>
             <Select
-              value={minRating !== undefined ? String(minRating) : "all"}
-              onValueChange={handleRatingChange}
+              value={availability || "all"}
+              onValueChange={handleAvailabilityChange}
             >
               <SelectTrigger className="w-full h-11 bg-zinc-50 border-zinc-200 rounded-lg focus:ring-zinc-900">
-                <SelectValue placeholder="Any Rating" />
+                <SelectValue placeholder="Any Availability" />
               </SelectTrigger>
               <SelectContent>
-                {RATING_OPTIONS.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
+                <SelectItem value="all">Any Availability</SelectItem>
+                <SelectItem value="has_slots">
+                  Has Open Slots
+                  {metadata?.availabilityStats
+                    ? ` (${metadata.availabilityStats.hasSlots})`
+                    : ""}
+                </SelectItem>
+                <SelectItem value="this_week">Available This Week</SelectItem>
               </SelectContent>
             </Select>
           </div>
