@@ -4,6 +4,11 @@ import crypto from "crypto";
 import { stripeClient } from "@/lib/payments/core/stripe";
 import { razorpayClient } from "@/lib/payments/core/razorpay";
 import { handlePayoutWebhook, refundEarnings } from "@/lib/payments/payouts";
+import {
+  notifyRefundProcessed,
+  notifyDisputeCreated,
+  notifyDisputeResolved,
+} from "@/lib/novu";
 
 // Re-export payment handlers from lib (architectural fix)
 export {
@@ -126,6 +131,13 @@ export async function handleRefundCreated(
         );
       }
     }
+
+    // --- Novu notification (fire-and-forget) ---
+    void notifyRefundProcessed(payment.userId, {
+      amount,
+      currency,
+      dashboardUrl: `${process.env.NEXT_PUBLIC_APP_URL}/dashboard`,
+    });
   });
 }
 
@@ -237,6 +249,16 @@ export async function handleDisputeCreated(
     });
 
     console.log(`✅ Dispute ${disputeId} created for payment ${payment.id}`);
+
+    // --- Novu notification (fire-and-forget) ---
+    void notifyDisputeCreated([payment.userId], {
+      disputeId,
+      amount,
+      currency,
+      reason,
+      status: mapDisputeStatus(status),
+      dashboardUrl: `${process.env.NEXT_PUBLIC_APP_URL}/dashboard`,
+    });
   });
 }
 
@@ -268,6 +290,25 @@ export async function handleDisputeUpdated(
     });
 
     console.log(`✅ Dispute ${disputeId} updated to status ${status}`);
+
+    // --- Novu notification for resolved disputes (fire-and-forget) ---
+    const resolvedStatuses = ["WON", "LOST", "CHARGE_REFUNDED", "WARNING_CLOSED"];
+    if (resolvedStatuses.includes(mapDisputeStatus(status))) {
+      const disputePayment = await tx.payment.findUnique({
+        where: { id: dispute.paymentId },
+      });
+
+      if (disputePayment) {
+        void notifyDisputeResolved([disputePayment.userId], {
+          disputeId,
+          amount: dispute.amount,
+          currency: dispute.currency,
+          reason: dispute.reason || undefined,
+          status: mapDisputeStatus(status),
+          dashboardUrl: `${process.env.NEXT_PUBLIC_APP_URL}/dashboard`,
+        });
+      }
+    }
   });
 }
 

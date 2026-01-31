@@ -15,6 +15,11 @@ import {
   unlockApproval,
 } from "@/utils/appointmentlock";
 import { sendPaymentLinkEmail } from "@/lib/email";
+import {
+  notifySubscriptionStarted,
+  notifySubscriptionCancelled,
+} from "@/lib/novu";
+import { UpdateSubscriptionSchema, PatchSubscriptionStatusSchema } from "@/schemas/subscriptions";
 
 /**
  * Type for subscription with all related details needed for payment processing
@@ -129,20 +134,28 @@ export async function PUT(
   try {
     const { subscriptionId } = await params;
     const body = await request.json();
+    const result = UpdateSubscriptionSchema.safeParse(body);
+    if (!result.success) {
+      return NextResponse.json(
+        { error: "Validation failed", details: result.error.issues },
+        { status: 400 },
+      );
+    }
+    const validatedData = result.data;
 
     const subscriptionData = await prisma.subscription.update({
       where: { id: subscriptionId },
       data: {
-        schedulingPeriodStartsAt: body.schedulingPeriodStartsAt,
-        schedulingPeriodEndsAt: body.schedulingPeriodEndsAt,
-        requestStatus: body.requestStatus,
-        requestNotes: body.requestNotes,
-        feedbackFromConsultee: body.feedbackFromConsultee,
-        feedbackFromConsultant: body.feedbackFromConsultant,
-        rating: body.rating,
-        subscriptionPlan: body.planId
+        schedulingPeriodStartsAt: validatedData.schedulingPeriodStartsAt,
+        schedulingPeriodEndsAt: validatedData.schedulingPeriodEndsAt,
+        requestStatus: validatedData.requestStatus,
+        requestNotes: validatedData.requestNotes,
+        feedbackFromConsultee: validatedData.feedbackFromConsultee,
+        feedbackFromConsultant: validatedData.feedbackFromConsultant,
+        rating: validatedData.rating,
+        subscriptionPlan: validatedData.planId
           ? {
-              connect: { id: body.planId },
+              connect: { id: validatedData.planId },
             }
           : undefined,
       },
@@ -277,27 +290,15 @@ export async function PATCH(
 ) {
   try {
     const body = await request.json();
-
-    if (!body || typeof body !== "object") {
+    const patchResult = PatchSubscriptionStatusSchema.safeParse(body);
+    if (!patchResult.success) {
       return NextResponse.json(
-        { error: "Invalid request body" },
+        { error: "Validation failed", details: patchResult.error.issues },
         { status: 400 },
       );
     }
-
-    const { status } = body as { status: RequestStatus };
+    const { status } = patchResult.data;
     const { subscriptionId } = await params;
-
-    if (!status) {
-      return NextResponse.json(
-        { error: "Status is required" },
-        { status: 400 },
-      );
-    }
-
-    if (!Object.values(RequestStatus).includes(status)) {
-      return NextResponse.json({ error: "Invalid status" }, { status: 400 });
-    }
 
     // First fetch the subscription to validate it exists and get all necessary data
     const existingSubscription = await prisma.subscription.findUnique({
@@ -596,6 +597,43 @@ export async function PATCH(
             `⚠️ Failed to send payment link email for subscription ${subscriptionId}:`,
             emailError instanceof Error ? emailError.message : "Unknown error",
           );
+        }
+      }
+
+      // Fire-and-forget: send Novu notifications for non-duplicate status changes
+      if (!result.duplicate && "data" in result && result.data) {
+        const subData = result.data;
+        const consulteeUserId = subData.requestedBy?.user?.id;
+        const consultantUserId =
+          subData.subscriptionPlan?.consultantProfile?.user?.id;
+
+        if (status === RequestStatus.APPROVED && consulteeUserId) {
+          void notifySubscriptionStarted(consulteeUserId, {
+            subscriptionId: subData.id,
+            planTitle: subData.subscriptionPlan?.title || "Subscription",
+            consultantName:
+              subData.subscriptionPlan?.consultantProfile?.user?.name ||
+              "Consultant",
+            consulteeName: subData.requestedBy?.user?.name || undefined,
+            dashboardUrl: "/dashboard",
+          });
+        }
+
+        if (status === RequestStatus.CANCELLED) {
+          const userIds = [consultantUserId, consulteeUserId].filter(
+            (id): id is string => !!id,
+          );
+          if (userIds.length > 0) {
+            void notifySubscriptionCancelled(userIds, {
+              subscriptionId: subData.id,
+              planTitle: subData.subscriptionPlan?.title || "Subscription",
+              consultantName:
+                subData.subscriptionPlan?.consultantProfile?.user?.name ||
+                "Consultant",
+              consulteeName: subData.requestedBy?.user?.name || undefined,
+              dashboardUrl: "/dashboard",
+            });
+          }
         }
       }
 

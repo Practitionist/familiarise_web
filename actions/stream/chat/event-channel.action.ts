@@ -11,7 +11,7 @@ import {
   markMembership,
   initialSyncCompletedUsers,
 } from "@/lib/stream-cache";
-import { upsertUserToStream } from "./user.action";
+import { upsertUserToStream, upsertUsersToStream } from "./user.action";
 
 // Validation schemas
 const eventTypeSchema = z.enum([
@@ -140,6 +140,10 @@ export async function addUserToEventChannel(
     // This fixes the "created_by_id must be provided" error and reduces 3 API calls to 1
     const { consultantId, members, name } = eventData;
     const allMembers = Array.from(new Set([consultantId, ...members, userId]));
+
+    // Ensure all members exist in Stream Chat before creating the channel
+    // Without this, channel creation fails with "users don't exist" error
+    await upsertUsersToStream(allMembers);
 
     // Re-initialize channel with all required data for atomic creation
     // Note: Explicitly typing channel data for stream-chat v9

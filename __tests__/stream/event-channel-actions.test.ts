@@ -36,6 +36,7 @@ jest.mock("../../lib/stream-cache", () => mockCache);
 
 jest.mock("../../actions/stream/chat/user.action", () => ({
   upsertUserToStream: jest.fn().mockResolvedValue({}),
+  upsertUsersToStream: jest.fn().mockResolvedValue({ users: {} }),
 }));
 
 describe("Event Channel Actions", () => {

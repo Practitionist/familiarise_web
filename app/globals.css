@@ -1152,3 +1152,38 @@
   margin-bottom: 2px !important;
   text-align: left !important;
 }
+
+/* ======== Novu Notification Inbox CSS Overrides ======== */
+/* Fix dropdown menus being clipped/hidden outside the popover */
+[data-novu-popover],
+[data-radix-popper-content-wrapper] {
+  z-index: 10000 !important;
+  overflow: visible !important;
+}
+
+/* Ensure Novu popover content doesn't clip internal menus */
+[class*="nv-popoverContent"],
+[class*="nv-notificationList"] {
+  overflow: visible !important;
+}
+
+/* Fix Novu dropdown menu positioning */
+[class*="nv-dropdownContent"],
+[class*="nv-dropdownMenu"],
+[class*="nv-menuContent"] {
+  z-index: 10001 !important;
+  position: fixed !important;
+  overflow: visible !important;
+}
+
+/* Ensure Novu tooltips and dropdowns appear above everything */
+[class*="nv-tooltip"],
+[class*="nv-dropdown"] {
+  z-index: 10002 !important;
+}
+
+/* Fix the Inbox dropdown (Unread/Snoozed/Archived filter) */
+[role="listbox"],
+[role="menu"] {
+  z-index: 10001 !important;
+}

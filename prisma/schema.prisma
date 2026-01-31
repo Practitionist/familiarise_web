@@ -284,9 +284,31 @@ model NotificationPreference {
   user             User    @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   userId           String  @unique
   allNotifications Boolean @default(true)
-  mentions         Boolean @default(false)
-  directMessages   Boolean @default(false)
-  updates          Boolean @default(false)
+
+  // Channel preferences
+  inAppEnabled Boolean @default(true)
+  emailEnabled Boolean @default(true)
+  pushEnabled  Boolean @default(false)
+
+  // Legacy category preferences (kept for backward compatibility)
+  mentions       Boolean @default(false)
+  directMessages Boolean @default(false)
+  updates        Boolean @default(false)
+
+  // Category preferences
+  appointmentReminders Boolean @default(true)
+  paymentNotifications Boolean @default(true)
+  supportUpdates       Boolean @default(true)
+  feedbackAlerts       Boolean @default(true)
+  trialNotifications   Boolean @default(true)
+  subscriptionAlerts   Boolean @default(true)
+  marketingEmails      Boolean @default(false)
+
+  // Quiet hours
+  quietHoursEnabled  Boolean @default(false)
+  quietHoursStart    String? // "22:00" format in user timezone
+  quietHoursEnd      String? // "08:00" format in user timezone
+  quietHoursTimezone String? // e.g. "Asia/Kolkata"
 
   @@map("notification_preferences")
 }

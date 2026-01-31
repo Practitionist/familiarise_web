@@ -6,6 +6,8 @@ import { RequestStatus } from "@prisma/client";
 import { lockSlotBooking, unlockSlotBooking } from "@/utils/appointmentlock";
 import { SlotLockError } from "@/utils/errors/SlotLockError";
 import { SlotValidationService } from "@/utils/slotAllocation/SlotValidationService";
+import { notifyNewBookingRequest } from "@/lib/novu";
+import { RequestForApprovalSchema } from "@/schemas/slots";
 
 export async function POST(req: NextRequest) {
   try {
@@ -19,6 +21,13 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
+    const parseResult = RequestForApprovalSchema.safeParse(body);
+    if (!parseResult.success) {
+      return NextResponse.json(
+        { error: "Validation failed", details: parseResult.error.issues },
+        { status: 400 },
+      );
+    }
     const {
       consultantProfileId,
       slotStartTimeInUTC,
@@ -26,55 +35,10 @@ export async function POST(req: NextRequest) {
       slotOfAvailabilityWeeklyId,
       slotOfAvailabilityCustomId,
       consultationPlanId,
-    } = body;
+    } = parseResult.data;
 
-    // Validate required fields
-    if (
-      !consultantProfileId ||
-      !slotStartTimeInUTC ||
-      !slotEndTimeInUTC ||
-      !consultationPlanId
-    ) {
-      return NextResponse.json(
-        { error: "Missing required fields" },
-        { status: 400 },
-      );
-    }
-
-    // Validate that only one slot availability ID is provided
-    if (slotOfAvailabilityWeeklyId && slotOfAvailabilityCustomId) {
-      return NextResponse.json(
-        {
-          error: "Cannot provide both weekly and custom slot availability IDs",
-        },
-        { status: 400 },
-      );
-    }
-
-    if (!slotOfAvailabilityWeeklyId && !slotOfAvailabilityCustomId) {
-      return NextResponse.json(
-        { error: "Must provide either weekly or custom slot availability ID" },
-        { status: 400 },
-      );
-    }
-
-    // Validate dates
     const startTime = new Date(slotStartTimeInUTC);
     const endTime = new Date(slotEndTimeInUTC);
-
-    if (isNaN(startTime.getTime()) || isNaN(endTime.getTime())) {
-      return NextResponse.json(
-        { error: "Invalid date format" },
-        { status: 400 },
-      );
-    }
-
-    if (startTime >= endTime) {
-      return NextResponse.json(
-        { error: "Start time must be before end time" },
-        { status: 400 },
-      );
-    }
 
     // Get the consultee profile
     const consulteeProfile = await prisma.consulteeProfile.findUnique({
@@ -231,6 +195,18 @@ export async function POST(req: NextRequest) {
           user: session.user.id,
           timestamp: new Date().toISOString(),
         }),
+      );
+
+      // Fire-and-forget: notify consultant of new booking request
+      void notifyNewBookingRequest(
+        consultation.consultationPlan.consultantProfile.user.id,
+        {
+          consulteeName: consultation.requestedBy.user.name || "A consultee",
+          planTitle: consultation.consultationPlan.title,
+          appointmentType: "CONSULTATION",
+          requestedDateTime: startTime.toISOString(),
+          dashboardUrl: `/dashboard/consultant/${consultation.consultationPlan.consultantProfile.id}/requests`,
+        },
       );
 
       return NextResponse.json(

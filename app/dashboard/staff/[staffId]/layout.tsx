@@ -35,6 +35,9 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import NovuProvider from "@/providers/NovuProvider";
+import { NotificationInbox } from "@/components/notifications/NotificationInbox";
+import { useNovuSubscriberSync } from "@/hooks/useNovuSubscriberSync";
 
 const sidebarItems = [
   { name: "Home", icon: Home, path: "home" },
@@ -67,6 +70,9 @@ export default function StaffDashboardLayout({
   const staffId = params.staffId as string;
   const [collapsed, setCollapsed] = useState(false);
 
+  // Sync user as Novu subscriber (once per session)
+  useNovuSubscriberSync();
+
   const handleSignOut = () => {
     signOut({ callbackUrl: "/auth/signin" });
   };
@@ -76,6 +82,7 @@ export default function StaffDashboardLayout({
   };
 
   return (
+    <NovuProvider>
     <div className="flex h-screen bg-zinc-50 dark:bg-zinc-950">
       {/* Sidebar */}
       <aside
@@ -199,8 +206,12 @@ export default function StaffDashboardLayout({
 
       {/* Main Content */}
       <main className="flex-1 overflow-y-auto">
+        <div className="sticky top-0 z-30 flex items-center justify-end gap-2 px-6 py-2 border-b border-zinc-200/50 bg-white/80 dark:bg-zinc-900/80 backdrop-blur-xl">
+          <NotificationInbox />
+        </div>
         <div className="p-6">{children}</div>
       </main>
     </div>
+    </NovuProvider>
   );
 }

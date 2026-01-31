@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { NotificationPreferencesPanel } from "@/components/notifications";
 import {
   CookiePreference,
   NotificationPreference,
@@ -538,6 +539,9 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
             </Button>
           </CardFooter>
         </Card>
+
+        {/* Novu Notification Preferences */}
+        <NotificationPreferencesPanel />
 
         {/* Preferences Card */}
         <Card>

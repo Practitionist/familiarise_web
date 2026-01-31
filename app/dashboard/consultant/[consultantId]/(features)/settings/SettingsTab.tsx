@@ -64,6 +64,7 @@ import {
 } from "@/utils/timeSlotValidation";
 // Import shared schedule components and utilities
 import { SlotValidationFeedback } from "@/components/schedule/SlotValidationFeedback";
+import { NotificationPreferencesPanel } from "@/components/notifications";
 import { formatSlotsForApi } from "@/utils/schedule/formatting";
 import type { SlotsType } from "@/utils/schedule/types";
 
@@ -1545,6 +1546,11 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
         slots={scheduleType === ScheduleType.WEEKLY ? weeklySlots : customSlots}
         className="mt-4"
       />
+
+      <Separator />
+
+      {/* Notification Preferences */}
+      <NotificationPreferencesPanel />
 
       {/* Action Buttons */}
       <div className="flex justify-end items-center space-x-4 pt-6">
