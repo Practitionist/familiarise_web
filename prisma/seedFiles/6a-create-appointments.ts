@@ -383,12 +383,25 @@ const createWebinarAppointment = async (
   // Limit waitlist size to prevent transaction timeout
   const waitlistSize = Math.min(faker.number.int({ min: 0, max: 3 }), 3);
 
+  // Pick 2-4 additional participants to simulate a group webinar
+  const otherConsultees = consultees.filter((c) => c.id !== consultee.id);
+  const additionalCount = Math.min(
+    faker.number.int({ min: 2, max: 4 }),
+    otherConsultees.length,
+  );
+  const additionalParticipants = faker.helpers
+    .shuffle(otherConsultees)
+    .slice(0, additionalCount);
+
   return {
     appointmentType: AppointmentsType.WEBINAR,
     slotsOfAppointment: {
       create: {
         user: {
-          connect: [{ id: consultee.id }],
+          connect: [
+            { id: consultee.id },
+            ...additionalParticipants.map((c) => ({ id: c.id })),
+          ],
         },
         startsAt: slotStartTimeInUTC,
         endsAt: slotEndTimeInUTC,
@@ -441,6 +454,16 @@ const createClassAppointment = async (
   const limitedSlots = Math.min(numSlots, 4);
   const waitlistSize = Math.min(faker.number.int({ min: 0, max: 3 }), 3);
 
+  // Pick 2-4 additional participants to simulate a group class
+  const otherConsultees = consultees.filter((c) => c.id !== consultee.id);
+  const additionalCount = Math.min(
+    faker.number.int({ min: 2, max: 4 }),
+    otherConsultees.length,
+  );
+  const additionalParticipants = faker.helpers
+    .shuffle(otherConsultees)
+    .slice(0, additionalCount);
+
   return {
     appointmentType: AppointmentsType.CLASS,
     slotsOfAppointment: {
@@ -458,7 +481,10 @@ const createClassAppointment = async (
 
         return {
           user: {
-            connect: [{ id: consultee.id }],
+            connect: [
+              { id: consultee.id },
+              ...additionalParticipants.map((c) => ({ id: c.id })),
+            ],
           },
           startsAt: slotStart,
           endsAt: slotEnd,

@@ -65,11 +65,12 @@ export class SlotValidationService {
     const scheduleCheck = this.validateMatchesSchedule(slots, consultant);
     if (!scheduleCheck.isValid) return scheduleCheck;
 
-    // FIX Issue #11: Pass slot duration from config for conflict checking
-    // Calculate slot duration in minutes from hours (default to 30 minutes)
-    const slotDurationMinutes = config.sessionDurationInHours
-      ? Math.round((config.sessionDurationInHours * 60) / slots.length)
-      : 30;
+    // FIX: All slots are uniformly 30 minutes. Previously this divided total
+    // session duration by slot count, which is circular logic — it happens to
+    // give 30 for correct inputs but gives wrong values when slots.length is
+    // wrong, and this conflict check runs BEFORE event-specific validators
+    // would catch the slot count mismatch.
+    const slotDurationMinutes = 30;
 
     const conflictCheck = await this.validateNoConflicts(
       slots,
@@ -378,19 +379,6 @@ export class SlotValidationService {
       // larger slots (e.g., 1-hour slot from 16:30-17:30) that the calendar breaks down
       // into multiple 30-minute display intervals (16:30-17:00 and 17:00-17:30)
 
-      console.log("[SlotValidationService] Custom schedule validation:", {
-        consultantAvailableSlots: consultant.slotsOfAvailabilityCustom
-          .slice(0, 5)
-          .map((s) => ({
-            start: new Date(s.availabilityStartsAt).toISOString(),
-            end: new Date(s.availabilityEndsAt).toISOString(),
-            duration: `${(new Date(s.availabilityEndsAt).getTime() - new Date(s.availabilityStartsAt).getTime()) / (1000 * 60)} mins`,
-          })),
-        totalAvailable: consultant.slotsOfAvailabilityCustom.length,
-        requestedSlots: slots.slice(0, 3).map((s) => s.toISOString()), // First 3 for debugging
-        totalRequested: slots.length,
-      });
-
       let hasInvalidSlots = false;
       const invalidSlotsList: string[] = [];
       for (const slot of slots) {
@@ -416,12 +404,6 @@ export class SlotValidationService {
       if (hasInvalidSlots) {
         console.error("[SlotValidationService] Invalid slots found:", {
           invalidSlots: invalidSlotsList,
-          availableSlotRanges: consultant.slotsOfAvailabilityCustom
-            .slice(0, 10)
-            .map((s) => ({
-              start: new Date(s.availabilityStartsAt).toISOString(),
-              end: new Date(s.availabilityEndsAt).toISOString(),
-            })),
         });
 
         const slotWord = slots.length === 1 ? "slot" : "slots";

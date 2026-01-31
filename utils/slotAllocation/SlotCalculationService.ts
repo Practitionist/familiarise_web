@@ -110,7 +110,7 @@ export class SlotCalculationService {
     // Additional sanity check: duration should be reasonable (0.5 to 24 hours)
     if (duration > 24) {
       console.warn(
-        `⚠️ ${fieldName} is unusually large (${duration} hours). Maximum expected is 24 hours.`,
+        `${fieldName} is unusually large (${duration} hours). Maximum expected is 24 hours.`,
       );
     }
 
@@ -145,7 +145,7 @@ export class SlotCalculationService {
         const duration = config.durationInHours;
         if (!duration || duration <= 0) {
           console.warn(
-            "⚠️ Consultation duration missing or invalid. Using default: 1 hour",
+            "Consultation duration missing or invalid. Using default: 1 hour",
           );
           return Math.ceil(1 / 0.5); // Default 1 hour = 2 slots
         }
@@ -173,7 +173,7 @@ export class SlotCalculationService {
         let sessionDuration = config.sessionDurationInHours;
         if (!sessionDuration || sessionDuration <= 0) {
           console.warn(
-            "⚠️ Subscription session duration missing or invalid. Using default: 1 hour",
+            "Subscription session duration missing or invalid. Using default: 1 hour",
           );
           sessionDuration = 1; // Default 1 hour
         }
