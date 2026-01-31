@@ -279,7 +279,7 @@ export function useCalendarData(
         description: errorMessage,
       });
     }
-  }, [consultantId, toast, view, currentDate]);
+  }, [consultantId, toast, view, currentDate, mode, allowedStart, allowedEnd]);
 
   // FIXED: Proper date range filtering for appointments to prevent "stray slots"
   const fetchExistingAppointments = useCallback(async (): Promise<void> => {
@@ -347,7 +347,33 @@ export function useCalendarData(
         return true;
       });
 
-      setExistingAppointments(validatedAppointments);
+      // Filter out cancelled/rejected/expired appointments so they don't show as "Booked"
+      const activeAppointments = validatedAppointments.filter((appt: any) => {
+        const inactiveRequestStatuses = ["REJECTED", "CANCELLED", "EXPIRED"];
+        // Check consultation status
+        if (appt.consultation?.requestStatus) {
+          if (inactiveRequestStatuses.includes(appt.consultation.requestStatus))
+            return false;
+        }
+        // Check subscription status
+        if (appt.subscription?.requestStatus) {
+          if (
+            inactiveRequestStatuses.includes(appt.subscription.requestStatus)
+          )
+            return false;
+        }
+        // Check webinar status
+        if (appt.webinar?.status) {
+          if (appt.webinar.status === "CANCELLED") return false;
+        }
+        // Check class status
+        if (appt.class?.status) {
+          if (appt.class.status === "CANCELLED") return false;
+        }
+        return true;
+      });
+
+      setExistingAppointments(activeAppointments);
     } catch (error) {
       console.error("Error fetching appointments:", error);
       const errorMessage =
@@ -359,7 +385,7 @@ export function useCalendarData(
         description: errorMessage,
       });
     }
-  }, [consultantId, toast, view, currentDate]);
+  }, [consultantId, toast, view, currentDate, mode, allowedStart, allowedEnd]);
 
   const fetchEventSlots = useCallback(async (): Promise<void> => {
     // Fetch event slots for ALL event types (subscription, consultation, webinar, class)
@@ -380,33 +406,63 @@ export function useCalendarData(
         firstAppointment: data?.[0],
       });
 
-      if (data && data.length > 0 && data[0].slotsOfAppointment?.length > 0) {
-        const slots: TimeSlot[] = data[0].slotsOfAppointment.flatMap(
-          (slot: any): TimeSlot[] => {
-            // FIX: Use correct field names from API (startsAt/endsAt)
-            const start = new Date(slot.startsAt || slot.slotStartTimeInUTC);
-            const end = new Date(slot.endsAt || slot.slotEndTimeInUTC);
-            const durationMinutes =
-              (end.getTime() - start.getTime()) / (1000 * 60);
-            const numIntervals = Math.round(durationMinutes / 30);
+      if (data && Array.isArray(data) && data.length > 0) {
+        // Filter out cancelled/rejected appointments from event slots
+        const activeData = data.filter((appt: any) => {
+          if (appt.consultation?.requestStatus) {
+            if (
+              ["REJECTED", "CANCELLED", "EXPIRED"].includes(
+                appt.consultation.requestStatus,
+              )
+            )
+              return false;
+          }
+          if (appt.subscription?.requestStatus) {
+            if (
+              ["REJECTED", "CANCELLED", "EXPIRED"].includes(
+                appt.subscription.requestStatus,
+              )
+            )
+              return false;
+          }
+          if (appt.webinar?.status === "CANCELLED") return false;
+          if (appt.class?.status === "CANCELLED") return false;
+          return true;
+        });
 
-            const intervalSlots: TimeSlot[] = [];
-            for (let i = 0; i < numIntervals; i++) {
-              const intervalStart = new Date(
-                start.getTime() + i * 30 * 60 * 1000,
-              );
-              const intervalEnd = new Date(
-                intervalStart.getTime() + 30 * 60 * 1000,
-              );
-              intervalSlots.push({
-                startTime: intervalStart,
-                endTime: intervalEnd,
-                isAvailable: true,
-                isBooked: true, // Event slots are considered booked/allocated
-              });
-            }
-            return intervalSlots;
-          },
+        // Process ALL appointments, not just the first one
+        // This ensures all sessions of a subscription/class show as "This Event"
+        const slots: TimeSlot[] = activeData.flatMap(
+          (appointment: any) =>
+            (appointment.slotsOfAppointment || []).flatMap(
+              (slot: any): TimeSlot[] => {
+                // FIX: Use correct field names from API (startsAt/endsAt)
+                const start = new Date(
+                  slot.startsAt || slot.slotStartTimeInUTC,
+                );
+                const end = new Date(slot.endsAt || slot.slotEndTimeInUTC);
+                const durationMinutes =
+                  (end.getTime() - start.getTime()) / (1000 * 60);
+                const numIntervals = Math.round(durationMinutes / 30);
+
+                const intervalSlots: TimeSlot[] = [];
+                for (let i = 0; i < numIntervals; i++) {
+                  const intervalStart = new Date(
+                    start.getTime() + i * 30 * 60 * 1000,
+                  );
+                  const intervalEnd = new Date(
+                    intervalStart.getTime() + 30 * 60 * 1000,
+                  );
+                  intervalSlots.push({
+                    startTime: intervalStart,
+                    endTime: intervalEnd,
+                    isAvailable: true,
+                    isBooked: true, // Event slots are considered booked/allocated
+                  });
+                }
+                return intervalSlots;
+              },
+            ),
         );
         console.log("[useCalendarData] Setting eventSlots:", {
           slotsCount: slots.length,
