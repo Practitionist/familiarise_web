@@ -162,23 +162,28 @@ export const ConsultantCard = memo(function ConsultantCard({
           </p>
 
           {/* Meta Info */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
-            <ConsultantInfo
-              icon={Clock}
-              label="Experience"
-              value={consultant.experience ? `${consultant.experience}` : null}
-            />
+          <div className="space-y-3 mb-6">
+            {/* Headline - first line */}
             <ConsultantInfo
               icon={Briefcase}
               label="Headline"
               value={consultant.headline}
             />
-            <ConsultantInfo
-              icon={MapPin}
-              label="Domain"
-              value={consultant.domain.name}
-            />
+            {/* Experience and Domain - second line together */}
+            <div className="flex items-center gap-6">
+              <ConsultantInfo
+                icon={Clock}
+                label="Experience"
+                value={consultant.experience ? `${consultant.experience}` : null}
+              />
+              <ConsultantInfo
+                icon={MapPin}
+                label="Domain"
+                value={consultant.domain.name}
+              />
+            </div>
           </div>
+
 
           {/* Tags */}
           <div className="flex flex-wrap gap-2">
