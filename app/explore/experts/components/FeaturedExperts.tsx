@@ -4,26 +4,15 @@ import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { useQuery } from "@tanstack/react-query";
 import { User, Star, StarHalf, ArrowRight, Award } from "lucide-react";
 import { TConsultantProfile } from "@/types/consultant";
 
-const fetchFeaturedExperts = async (): Promise<TConsultantProfile[]> => {
-  const response = await fetch("/api/user/consultants?limit=5");
-  if (!response.ok) throw new Error("Failed to fetch experts");
-  const data = await response.json();
-  return data?.data || [];
-};
+interface FeaturedExpertsProps {
+  experts: TConsultantProfile[];
+  isLoading: boolean;
+}
 
-export function FeaturedExperts() {
-  const { data: experts = [], isLoading } = useQuery({
-    queryKey: ["featured-experts"],
-    queryFn: fetchFeaturedExperts,
-    staleTime: 5 * 60 * 1000,
-    gcTime: 10 * 60 * 1000,
-    retry: 2,
-  });
-
+export function FeaturedExperts({ experts, isLoading }: FeaturedExpertsProps) {
   const renderRating = (rating: number) => {
     const fullStars = Math.floor(rating);
     const hasHalfStar = rating % 1 >= 0.5;
@@ -97,7 +86,10 @@ export function FeaturedExperts() {
                   initial={{ opacity: 0, y: 20 }}
                   whileInView={{ opacity: 1, y: 0 }}
                   viewport={{ once: true }}
-                  transition={{ duration: 0.4, delay: index * 0.1 }}
+                  transition={{
+                    duration: 0.4,
+                    delay: Math.min(index * 0.1, 0.6),
+                  }}
                 >
                   <Link
                     href={`/explore/experts/${expert.id}`}

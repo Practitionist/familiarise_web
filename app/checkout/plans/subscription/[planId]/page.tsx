@@ -30,7 +30,8 @@ import {
   createStripeCheckoutHandlers,
   createRazorpayCheckoutHandlers,
 } from "../../utils";
-import { calculatePricing, formatCurrency, formatPercentage } from "../../math";
+import { calculatePricing, formatPercentage } from "../../math";
+import { useCurrency } from "@/lib/hooks/useCurrency";
 
 type SubscriptionPlanWithConsultant = SubscriptionPlan & {
   consultantProfile: ConsultantProfile & {
@@ -60,6 +61,7 @@ export default function SubscriptionCheckoutPage({
   const resolvedParams = use(params);
   const resolvedSearchParams = use(searchParams);
 
+  const { formatPrice } = useCurrency();
   const [planData, setPlanData] = useState<SubscriptionResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -373,7 +375,7 @@ export default function SubscriptionCheckoutPage({
 
   const consultantDetails = planData?.data.consultantProfile;
   const userDetails = planData?.data.consultantProfile.user;
-  const currency = planData?.data?.priceCurrency || "INR";
+
 
   return (
     <>
@@ -519,7 +521,7 @@ export default function SubscriptionCheckoutPage({
                 <div className="text-sm text-green-600">
                   {appliedDiscount.discountType === "PERCENTAGE"
                     ? `${appliedDiscount.discountValue}% off`
-                    : `${formatCurrency(appliedDiscount.discountValue, currency)} off`}
+                    : `${formatPrice(appliedDiscount.discountValue)} off`}
                 </div>
               </div>
               <Button
@@ -569,7 +571,7 @@ export default function SubscriptionCheckoutPage({
               <div className="flex items-center justify-between">
                 <div>Monthly Fee</div>
                 <div>
-                  {formatCurrency(planData?.data?.price || 100, currency)}
+                  {formatPrice(planData?.data?.price || 100)}
                 </div>
               </div>
               <div className="flex items-center justify-between">
@@ -608,11 +610,11 @@ export default function SubscriptionCheckoutPage({
             <div className="grid gap-2">
               <div className="flex items-center justify-between">
                 <div>Subtotal</div>
-                <div>{formatCurrency(pricing.subtotal, currency)}</div>
+                <div>{formatPrice(pricing.subtotal)}</div>
               </div>
               <div className="flex items-center justify-between">
                 <div>Tax ({formatPercentage(pricing.taxRate)})</div>
-                <div>{formatCurrency(pricing.taxAmount, currency)}</div>
+                <div>{formatPrice(pricing.taxAmount)}</div>
               </div>
               {pricing.discountAmount > 0 && (
                 <div className="flex items-center justify-between text-green-600">
@@ -621,13 +623,13 @@ export default function SubscriptionCheckoutPage({
                     {pricing.discountPercent > 0 &&
                       `(${formatPercentage(pricing.discountPercent)})`}
                   </div>
-                  <div>-{formatCurrency(pricing.discountAmount, currency)}</div>
+                  <div>-{formatPrice(pricing.discountAmount)}</div>
                 </div>
               )}
               <Separator className="bg-zinc-200" />
               <div className="flex items-center justify-between font-semibold">
                 <div>Total</div>
-                <div>{formatCurrency(pricing.total, currency)}</div>
+                <div>{formatPrice(pricing.total)}</div>
               </div>
             </div>
           </CardContent>

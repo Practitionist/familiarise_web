@@ -1,17 +1,26 @@
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
+import {
+  parsePlanFilters,
+  buildPlanWhereClause,
+  buildPlanOrderBy,
+  paginatedResponse,
+  rankAndPaginate,
+} from "../shared/plan-filters";
 
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
-    const consultantId = searchParams.get("consultantId");
-    const page = parseInt(searchParams.get("page") || "1");
-    const limit = parseInt(searchParams.get("limit") || "10");
     const includeRegistration =
       searchParams.get("includeRegistration") === "true";
-    const skip = (page - 1) * limit;
 
-    const where = consultantId ? { consultantProfileId: consultantId } : {};
+    const filters = parsePlanFilters(searchParams);
+    const { sort, page, limit, skip } = filters;
+    const where = buildPlanWhereClause(filters) as Prisma.WebinarPlanWhereInput;
+    const orderBy = buildPlanOrderBy(sort) as
+      | Prisma.WebinarPlanOrderByWithRelationInput
+      | undefined;
 
     // Build include object based on whether registration data is requested
     const include: Record<string, unknown> = {
@@ -19,7 +28,6 @@ export async function GET(request: NextRequest) {
       topics: true,
     };
 
-    // Include webinar instances with appointment/slot/user data for registration checks
     if (includeRegistration) {
       include.webinars = {
         include: {
@@ -27,7 +35,7 @@ export async function GET(request: NextRequest) {
             include: {
               slotsOfAppointment: {
                 include: {
-                  user: { select: { id: true } }, // Only fetch user IDs for registration check
+                  user: { select: { id: true } },
                 },
               },
             },
@@ -36,28 +44,68 @@ export async function GET(request: NextRequest) {
       };
     }
 
+    // For trending sort, use a two-step Prisma approach:
+    // 1. Lightweight select (IDs + nested slot IDs only) to rank by enrollment count
+    // 2. Fetch full plan data only for the paginated slice
+    if (sort === "trending") {
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+      const plansForRanking = await prisma.webinarPlan.findMany({
+        where,
+        select: {
+          id: true,
+          webinars: {
+            select: {
+              appointment: {
+                select: {
+                  slotsOfAppointment: {
+                    where: { createdAt: { gte: thirtyDaysAgo } },
+                    select: { id: true },
+                  },
+                },
+              },
+            },
+          },
+        },
+      });
+
+      const ranked = plansForRanking
+        .map((p) => ({
+          id: p.id,
+          count: p.webinars.reduce(
+            (sum, w) =>
+              sum + (w.appointment?.slotsOfAppointment?.length ?? 0),
+            0,
+          ),
+        }))
+        .sort((a, b) => b.count - a.count);
+
+      return rankAndPaginate(
+        ranked,
+        (ids) =>
+          prisma.webinarPlan.findMany({
+            where: { ...where, id: { in: ids } },
+            include,
+          }),
+        skip,
+        limit,
+        page,
+      );
+    }
+
     const [webinarPlans, total] = await Promise.all([
       prisma.webinarPlan.findMany({
         where,
         include,
         skip,
         take: limit,
+        ...(orderBy && { orderBy }),
       }),
       prisma.webinarPlan.count({ where }),
     ]);
 
-    return NextResponse.json(
-      {
-        data: webinarPlans,
-        meta: {
-          total,
-          page,
-          limit,
-          totalPages: Math.ceil(total / limit),
-        },
-      },
-      { status: 200 },
-    );
+    return paginatedResponse(webinarPlans, total, page, limit);
   } catch (error) {
     console.error("Error fetching webinar plans:", error);
     return NextResponse.json(

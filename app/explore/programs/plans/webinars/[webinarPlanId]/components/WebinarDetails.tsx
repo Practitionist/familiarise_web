@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 import { ClientWebinarRegistration } from "./ClientWebinarRegistration";
 import { generateProgramImageUrl } from "../../../../utils";
-import { formatCurrency } from "@/app/checkout/plans/math";
+import { useCurrency } from "@/lib/hooks/useCurrency";
 import type { Prisma, Topic } from "@prisma/client";
 
 export type WebinarPlanData = Prisma.WebinarPlanGetPayload<{
@@ -81,6 +81,7 @@ export function WebinarDetails({
   nextSession,
   webinarId,
 }: WebinarDetailsProps) {
+  const { formatPrice } = useCurrency();
   let sessionStatus: SessionStatus = "To be announced";
   let formattedNextSessionDisplay = "To be announced";
 
@@ -189,7 +190,7 @@ export function WebinarDetails({
             </h1>
             <div className="flex items-center gap-4 text-white/80">
               <span className="text-2xl md:text-3xl font-bold text-white">
-                {formatCurrency(plan.price, plan.priceCurrency || "INR")}
+                {formatPrice(plan.price)}
               </span>
               <span className="text-white/60">•</span>
               <span>{plan.durationInHours} hours</span>
