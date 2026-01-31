@@ -38,51 +38,74 @@ export async function POST(
       // Body parsing is optional - continue without it
     }
 
-    // Start transaction
-    const result = await prisma.$transaction(async (tx) => {
-      // Get appointment details (include user data for notifications)
-      const appointment = await tx.appointment.findUnique({
-        where: { id: appointmentId },
-        include: {
-          consultation: {
-            include: {
-              consultationPlan: {
-                include: {
-                  consultantProfile: { include: { user: { select: { id: true, name: true } } } },
-                },
+    // Fetch appointment BEFORE transaction to avoid timeout on heavy queries
+    const appointment = await prisma.appointment.findUnique({
+      where: { id: appointmentId },
+      include: {
+        consultation: {
+          include: {
+            consultationPlan: {
+              include: {
+                consultantProfile: { include: { user: { select: { id: true, name: true } } } },
               },
-              requestedBy: { include: { user: { select: { id: true, name: true } } } },
             },
+            requestedBy: { include: { user: { select: { id: true, name: true } } } },
           },
-          subscription: {
-            include: {
-              subscriptionPlan: {
-                include: {
-                  consultantProfile: { include: { user: { select: { id: true, name: true } } } },
-                },
-              },
-              requestedBy: { include: { user: { select: { id: true, name: true } } } },
-            },
-          },
-          webinar: true,
-          class: true,
-          slotsOfAppointment: { take: 1, select: { startsAt: true } },
         },
-      });
+        subscription: {
+          include: {
+            subscriptionPlan: {
+              include: {
+                consultantProfile: { include: { user: { select: { id: true, name: true } } } },
+              },
+            },
+            requestedBy: { include: { user: { select: { id: true, name: true } } } },
+          },
+        },
+        webinar: true,
+        class: true,
+        slotsOfAppointment: { take: 1, select: { startsAt: true } },
+      },
+    });
 
-      if (!appointment) {
-        throw new Error("Appointment not found");
-      }
+    if (!appointment) {
+      return NextResponse.json({ error: "Appointment not found" }, { status: 404 });
+    }
 
-      // Prepare cancellation data
-      const cancellationData = {
-        requestStatus: "CANCELLED" as const,
-        cancellationReason: (validatedData.reason as CancellationReason) || null,
-        cancellationNotes: validatedData.notes || null,
-        cancelledAt: new Date(),
-        cancelledBy: session.user.id,
-      };
+    // Extract notification data BEFORE transaction (appointment will be deleted)
+    let consultantUserId: string | undefined;
+    let consulteeUserId: string | undefined;
+    let consultantName: string | undefined;
+    let consulteeName: string | undefined;
+    let planTitle: string | undefined;
+    const appointmentType: string = appointment.appointmentType;
+    const dateTime = appointment.slotsOfAppointment?.[0]?.startsAt?.toISOString();
 
+    if (appointment.consultation) {
+      consultantUserId = appointment.consultation.consultationPlan?.consultantProfile?.user?.id;
+      consulteeUserId = appointment.consultation.requestedBy?.user?.id;
+      consultantName = appointment.consultation.consultationPlan?.consultantProfile?.user?.name || undefined;
+      consulteeName = appointment.consultation.requestedBy?.user?.name || undefined;
+      planTitle = appointment.consultation.consultationPlan?.title;
+    } else if (appointment.subscription) {
+      consultantUserId = appointment.subscription.subscriptionPlan?.consultantProfile?.user?.id;
+      consulteeUserId = appointment.subscription.requestedBy?.user?.id;
+      consultantName = appointment.subscription.subscriptionPlan?.consultantProfile?.user?.name || undefined;
+      consulteeName = appointment.subscription.requestedBy?.user?.name || undefined;
+      planTitle = appointment.subscription.subscriptionPlan?.title;
+    }
+
+    // Prepare cancellation data
+    const cancellationData = {
+      requestStatus: "CANCELLED" as const,
+      cancellationReason: (validatedData.reason as CancellationReason) || null,
+      cancellationNotes: validatedData.notes || null,
+      cancelledAt: new Date(),
+      cancelledBy: session.user.id,
+    };
+
+    // Transaction for critical database operations only (with increased timeout)
+    const result = await prisma.$transaction(async (tx) => {
       // Update appointment status based on type
       if (appointment.consultation) {
         await tx.consultation.update({
@@ -116,70 +139,48 @@ export async function POST(
         where: { id: appointmentId },
       });
 
-      // Extract notification data before returning (appointment is deleted after this)
-      let consultantUserId: string | undefined;
-      let consulteeUserId: string | undefined;
-      let consultantName: string | undefined;
-      let consulteeName: string | undefined;
-      let planTitle: string | undefined;
-      let appointmentType: string = appointment.appointmentType;
-      const dateTime = appointment.slotsOfAppointment?.[0]?.startsAt?.toISOString();
-
-      if (appointment.consultation) {
-        consultantUserId = appointment.consultation.consultationPlan?.consultantProfile?.user?.id;
-        consulteeUserId = appointment.consultation.requestedBy?.user?.id;
-        consultantName = appointment.consultation.consultationPlan?.consultantProfile?.user?.name || undefined;
-        consulteeName = appointment.consultation.requestedBy?.user?.name || undefined;
-        planTitle = appointment.consultation.consultationPlan?.title;
-      } else if (appointment.subscription) {
-        consultantUserId = appointment.subscription.subscriptionPlan?.consultantProfile?.user?.id;
-        consulteeUserId = appointment.subscription.requestedBy?.user?.id;
-        consultantName = appointment.subscription.subscriptionPlan?.consultantProfile?.user?.name || undefined;
-        consulteeName = appointment.subscription.requestedBy?.user?.name || undefined;
-        planTitle = appointment.subscription.subscriptionPlan?.title;
-      }
-
       return {
         success: true,
         cancellationReason: validatedData.reason,
         cancelledAt: cancellationData.cancelledAt,
         webinarId: appointment.webinar?.id,
         classId: appointment.class?.id,
-        // Notification metadata (not sent to client)
-        _notificationMeta: {
-          consultantUserId,
-          consulteeUserId,
-          consultantName,
-          consulteeName,
-          planTitle,
-          appointmentType,
-          dateTime,
-          cancelledBy: session.user.id,
-        },
       };
+    }, {
+      maxWait: 10000,  // Max time to wait for connection
+      timeout: 30000,  // 30 second transaction timeout (was 5s default)
     });
 
+    // Notification metadata (for fire-and-forget notifications after transaction)
+    const notificationMeta = {
+      consultantUserId,
+      consulteeUserId,
+      consultantName,
+      consulteeName,
+      planTitle,
+      appointmentType,
+      dateTime,
+      cancelledBy: session.user.id,
+    };
+
     // Fire-and-forget: notify both parties about cancellation
-    const meta = result._notificationMeta;
-    if (meta) {
-      const userIds = [meta.consultantUserId, meta.consulteeUserId].filter(
-        (id): id is string => !!id,
-      );
-      if (userIds.length > 0) {
-        void notifyAppointmentCancelled(userIds, {
-          appointmentType: meta.appointmentType,
-          consultantName: meta.consultantName || "Consultant",
-          consulteeName: meta.consulteeName || "Consultee",
-          planTitle: meta.planTitle || "N/A",
-          dateTime: meta.dateTime,
-          dashboardUrl: "/dashboard",
-          reason: validatedData.reason || undefined,
-          cancelledBy:
-            meta.cancelledBy === meta.consultantUserId
-              ? "consultant"
-              : "consultee",
-        });
-      }
+    const userIds = [notificationMeta.consultantUserId, notificationMeta.consulteeUserId].filter(
+      (id): id is string => !!id,
+    );
+    if (userIds.length > 0) {
+      void notifyAppointmentCancelled(userIds, {
+        appointmentType: notificationMeta.appointmentType,
+        consultantName: notificationMeta.consultantName || "Consultant",
+        consulteeName: notificationMeta.consulteeName || "Consultee",
+        planTitle: notificationMeta.planTitle || "N/A",
+        dateTime: notificationMeta.dateTime,
+        dashboardUrl: "/dashboard",
+        reason: validatedData.reason || undefined,
+        cancelledBy:
+          notificationMeta.cancelledBy === notificationMeta.consultantUserId
+            ? "consultant"
+            : "consultee",
+      });
     }
 
     // Notify waitlist if a webinar or class appointment was cancelled
@@ -209,9 +210,7 @@ export async function POST(
       }
     }
 
-    // Strip internal notification metadata before sending response
-    const { _notificationMeta: _, ...clientResult } = result;
-    return NextResponse.json(clientResult);
+    return NextResponse.json(result);
   } catch (error) {
     console.error("Error canceling appointment:", error);
 
