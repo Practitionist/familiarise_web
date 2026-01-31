@@ -5,6 +5,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import StreamProvider from "@/providers/StreamProvider";
 import { DashboardShell } from "@/components/dashboard/DashboardShell";
+import NovuProvider from "@/providers/NovuProvider";
+import { NotificationInbox } from "@/components/notifications/NotificationInbox";
+import { useNovuSubscriberSync } from "@/hooks/useNovuSubscriberSync";
 import {
   DashboardSidebar,
   type NavItem,
@@ -357,6 +360,9 @@ export default function ConsultantLayout({
 
   const userId = getEffectiveUserId(session);
 
+  // Sync user as Novu subscriber (once per session)
+  useNovuSubscriberSync();
+
   // Fetch consultant data with React Query and placeholderData to prevent loading flashes
   const {
     data: consultantData,
@@ -452,14 +458,16 @@ export default function ConsultantLayout({
     !isVerified && verificationStatus && !isSettingsPage;
 
   return (
-    <>
+    <NovuProvider>
       {showVerificationOverlay && (
         <VerificationPendingOverlay
           status={verificationStatus}
           resubmitUrl={`/dashboard/consultant/${consultantId}/settings`}
         />
       )}
-      <DashboardShell sidebar={sidebar}>{memoizedStreamContent}</DashboardShell>
-    </>
+      <DashboardShell sidebar={sidebar} headerActions={<NotificationInbox />}>
+        {memoizedStreamContent}
+      </DashboardShell>
+    </NovuProvider>
   );
 }

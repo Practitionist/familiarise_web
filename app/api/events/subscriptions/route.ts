@@ -2,11 +2,11 @@ import prisma from "@/lib/prisma";
 import { Prisma, RequestStatus, AppointmentsType } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { addWeeks, addMonths, setHours, setMinutes } from "date-fns";
-
-interface UpdateSubscriptionRequest {
-  id: string;
-  status: RequestStatus;
-}
+import {
+  notifySubscriptionStarted,
+  notifySubscriptionCancelled,
+} from "@/lib/novu";
+import { UpdateSubscriptionStatusSchema } from "@/schemas/subscriptions";
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -102,26 +102,14 @@ export async function GET(request: NextRequest) {
 export async function PATCH(request: NextRequest) {
   try {
     const body = await request.json();
-
-    if (!body || typeof body !== "object") {
+    const result = UpdateSubscriptionStatusSchema.safeParse(body);
+    if (!result.success) {
       return NextResponse.json(
-        { error: "Invalid request body" },
+        { error: "Validation failed", details: result.error.issues },
         { status: 400 },
       );
     }
-
-    const { id, status } = body as UpdateSubscriptionRequest;
-
-    if (!id || !status) {
-      return NextResponse.json(
-        { error: "ID and status are required" },
-        { status: 400 },
-      );
-    }
-
-    if (!Object.values(RequestStatus).includes(status)) {
-      return NextResponse.json({ error: "Invalid status" }, { status: 400 });
-    }
+    const { id, status } = result.data;
 
     // First fetch the subscription to validate it exists and get all necessary data
     const existingSubscription = await prisma.subscription.findUnique({
@@ -211,6 +199,41 @@ export async function PATCH(request: NextRequest) {
       // If approved, create appointments in batches
       if (status === RequestStatus.APPROVED) {
         await createAppointmentsForSubscription(subscription);
+
+        // Fire-and-forget: notify consultee that subscription started
+        const consulteeUserId = subscription.requestedBy?.user?.id;
+        if (consulteeUserId) {
+          void notifySubscriptionStarted(consulteeUserId, {
+            subscriptionId: subscription.id,
+            planTitle: subscription.subscriptionPlan?.title || "Subscription",
+            consultantName:
+              subscription.subscriptionPlan?.consultantProfile?.user?.name ||
+              "Consultant",
+            consulteeName: subscription.requestedBy?.user?.name || undefined,
+            dashboardUrl: "/dashboard",
+          });
+        }
+      }
+
+      // Fire-and-forget: notify both parties on cancellation
+      if (status === RequestStatus.CANCELLED) {
+        const consultantUserId =
+          subscription.subscriptionPlan?.consultantProfile?.user?.id;
+        const consulteeUserId = subscription.requestedBy?.user?.id;
+        const userIds = [consultantUserId, consulteeUserId].filter(
+          (id): id is string => !!id,
+        );
+        if (userIds.length > 0) {
+          void notifySubscriptionCancelled(userIds, {
+            subscriptionId: subscription.id,
+            planTitle: subscription.subscriptionPlan?.title || "Subscription",
+            consultantName:
+              subscription.subscriptionPlan?.consultantProfile?.user?.name ||
+              "Consultant",
+            consulteeName: subscription.requestedBy?.user?.name || undefined,
+            dashboardUrl: "/dashboard",
+          });
+        }
       }
 
       return NextResponse.json({ data: subscription });

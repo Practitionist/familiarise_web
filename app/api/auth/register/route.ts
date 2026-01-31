@@ -3,17 +3,20 @@ import { NextResponse } from "next/server";
 import bcrypt from "bcrypt";
 import { Prisma, UserRole } from "@prisma/client";
 import { sendWelcomeEmail } from "@/lib/email";
+import { syncSubscriber } from "@/lib/novu/subscriber";
+import { RegisterSchema } from "@/schemas/auth";
 
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { name, email, password } = body;
-
-    if (!name || !email || !password) {
-      return new NextResponse("Missing name, email, or password", {
-        status: 400,
-      });
+    const result = RegisterSchema.safeParse(body);
+    if (!result.success) {
+      return NextResponse.json(
+        { error: "Validation failed", details: result.error.issues },
+        { status: 400 },
+      );
     }
+    const { name, email, password } = result.data;
 
     // Always default to CONSULTEE - role selection happens during onboarding
     const userRole = UserRole.CONSULTEE;
@@ -167,6 +170,15 @@ export async function POST(req: Request) {
         .catch((emailError) => {
           console.error("[REGISTER_POST] Welcome email error:", emailError);
         });
+
+      // Fire-and-forget: sync new user as Novu subscriber
+      const nameParts = (name as string).split(" ");
+      void syncSubscriber({
+        userId: user.id,
+        email: user.email || email,
+        firstName: nameParts[0],
+        lastName: nameParts.slice(1).join(" ") || undefined,
+      });
 
       // Return only necessary user info, exclude password
       const { password: _, ...userWithoutPassword } = user;

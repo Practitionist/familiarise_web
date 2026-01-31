@@ -3,6 +3,9 @@
 import { Skeleton } from "@/components/ui/skeleton";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { DashboardShell } from "@/components/dashboard/DashboardShell";
+import NovuProvider from "@/providers/NovuProvider";
+import { NotificationInbox } from "@/components/notifications/NotificationInbox";
+import { useNovuSubscriberSync } from "@/hooks/useNovuSubscriberSync";
 import {
   DashboardSidebar,
   type NavSection,
@@ -216,6 +219,9 @@ export default function AdminLayout({ children }: Readonly<PageProps>) {
 
   const userId = session?.user?.id;
 
+  // Sync user as Novu subscriber (once per session)
+  useNovuSubscriberSync();
+
   const {
     data: userData,
     error,
@@ -282,8 +288,10 @@ export default function AdminLayout({ children }: Readonly<PageProps>) {
   );
 
   return (
-    <DashboardShell sidebar={sidebar}>
-      <DashboardErrorBoundary>{children}</DashboardErrorBoundary>
-    </DashboardShell>
+    <NovuProvider>
+      <DashboardShell sidebar={sidebar} headerActions={<NotificationInbox />}>
+        <DashboardErrorBoundary>{children}</DashboardErrorBoundary>
+      </DashboardShell>
+    </NovuProvider>
   );
 }

@@ -13,6 +13,7 @@ import {
   SelectValue,
 } from "components/ui/select";
 import { useToast } from "@/hooks/use-toast";
+import { NotificationPreferencesPanel } from "@/components/notifications";
 import React, { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { createConsulteeQueries } from "@/hooks/useConsulteePrefetchDashboard";
@@ -384,6 +385,9 @@ export default function SettingsTab({ consulteeId }: SettingsTabProps) {
           </div>
         </CardContent>
       </Card>
+
+      {/* Notification Preferences */}
+      <NotificationPreferencesPanel />
 
       <div className="flex justify-end">
         <Button

@@ -22,6 +22,11 @@ import {
   type AppointmentType,
 } from "@/lib/payments/payouts";
 import { markWaitlistAsBooked } from "@/lib/waitlist/slot-handler";
+import {
+  notifyPaymentSuccess,
+  notifyPaymentFailed,
+  notifyAppointmentBooked,
+} from "@/lib/novu";
 
 // ============================================================================
 // Type Definitions
@@ -367,6 +372,94 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
       }
     }
 
+    // --- Novu notifications (fire-and-forget) ---
+    try {
+      const appointmentForNotif = await tx.appointment.findUnique({
+        where: { id: appointment.id },
+        include: {
+          consultation: {
+            include: {
+              consultationPlan: {
+                include: { consultantProfile: { include: { user: true } } },
+              },
+            },
+          },
+          subscription: {
+            include: {
+              subscriptionPlan: {
+                include: { consultantProfile: { include: { user: true } } },
+              },
+            },
+          },
+          webinar: {
+            include: {
+              webinarPlan: {
+                include: { consultantProfile: { include: { user: true } } },
+              },
+            },
+          },
+          class: {
+            include: {
+              classPlan: {
+                include: { consultantProfile: { include: { user: true } } },
+              },
+            },
+          },
+        },
+      });
+
+      const consultantProfileData =
+        appointmentForNotif?.consultation?.consultationPlan
+          ?.consultantProfile ||
+        appointmentForNotif?.subscription?.subscriptionPlan
+          ?.consultantProfile ||
+        appointmentForNotif?.webinar?.webinarPlan?.consultantProfile ||
+        appointmentForNotif?.class?.classPlan?.consultantProfile;
+
+      const consultantNameForNotif =
+        consultantProfileData?.user?.name || "Consultant";
+      const consultantUserId = consultantProfileData?.user?.id;
+
+      const planTitle =
+        appointmentForNotif?.consultation?.consultationPlan?.consultantProfile
+          ?.user?.name
+          ? metadata.appointmentType
+          : metadata.appointmentType || "Appointment";
+
+      const dashboardUrl = `${process.env.NEXT_PUBLIC_APP_URL}/dashboard`;
+
+      // Notify consultee of successful payment
+      void notifyPaymentSuccess(payment.userId, {
+        amount: payment.amount,
+        currency: payment.currency,
+        consultantName: consultantNameForNotif,
+        appointmentType: metadata.appointmentType,
+        planTitle: metadata.planId || planTitle,
+        dashboardUrl,
+      });
+
+      // Notify both consultant and consultee of the booked appointment
+      const notifUserIds = [payment.userId];
+      if (consultantUserId && consultantUserId !== payment.userId) {
+        notifUserIds.push(consultantUserId);
+      }
+
+      void notifyAppointmentBooked(notifUserIds, {
+        appointmentId: appointment.id,
+        appointmentType: metadata.appointmentType,
+        consultantName: consultantNameForNotif,
+        consulteeName: payment.user.name || "User",
+        planTitle: metadata.planId || planTitle,
+        dashboardUrl,
+      });
+    } catch (novuError) {
+      // Novu notifications are non-critical; log and continue
+      console.error(
+        `⚠️ Failed to send Novu notifications for payment ${payment.id}:`,
+        novuError,
+      );
+    }
+
     console.log(
       `✅ Payment ${paymentIntentId} processed successfully. Appointment ID: ${appointment.id}`,
     );
@@ -441,6 +534,32 @@ export async function handlePaymentFailure(paymentIntentId: string) {
 
     // Send payment failure email
     await sendPaymentFailureNotification(tx, payment);
+
+    // --- Novu notification (fire-and-forget) ---
+    try {
+      const consultantUser =
+        payment.appointment?.consultation?.consultationPlan?.consultantProfile
+          ?.user ||
+        payment.appointment?.subscription?.subscriptionPlan?.consultantProfile
+          ?.user;
+
+      const consultantName = consultantUser?.name || "Consultant";
+      const appointmentType = payment.appointment?.appointmentType || "CONSULTATION";
+
+      void notifyPaymentFailed(payment.userId, {
+        amount: payment.amount,
+        currency: payment.currency,
+        consultantName,
+        appointmentType,
+        failureReason: payment.description || "Payment could not be processed",
+        retryUrl: `${process.env.NEXT_PUBLIC_APP_URL}/dashboard`,
+      });
+    } catch (novuError) {
+      console.error(
+        `⚠️ Failed to send Novu payment failed notification for payment ${payment.id}:`,
+        novuError,
+      );
+    }
 
     console.log(
       `📧 Payment failure notification sent for payment ${paymentIntentId}`,

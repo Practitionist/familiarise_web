@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client";
 import { UserRole, ScheduleType } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { isValidTimeRange } from "@/utils/timeSlotValidation";
+import { notifyNewConsultantApplication } from "@/lib/novu";
 import type {
   OnboardingData,
   ConsultantProfileCreateData,
@@ -456,6 +457,31 @@ export async function processOnboardingData(
           "Verification request created for consultant:",
           updatedUser.consultantProfileId,
         );
+
+        // Fire-and-forget: notify admins of new consultant application
+        void (async () => {
+          try {
+            const admins = await prisma.user.findMany({
+              where: { role: UserRole.ADMIN },
+              select: { id: true },
+            });
+            if (admins.length > 0) {
+              await notifyNewConsultantApplication(
+                admins.map((a) => a.id),
+                {
+                  applicantName: updatedUser.name || "Unknown",
+                  applicantEmail: updatedUser.email || "Unknown",
+                  dashboardUrl: "/dashboard/admin/users",
+                },
+              );
+            }
+          } catch (notifyError) {
+            console.error(
+              "[Novu] Failed to notify admins of new consultant application:",
+              notifyError,
+            );
+          }
+        })();
       } catch (verificationError) {
         // Log but don't fail the entire onboarding if verification submission fails
         console.error(

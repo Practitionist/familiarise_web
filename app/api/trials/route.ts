@@ -2,6 +2,8 @@ import prisma from "@/lib/prisma";
 import { Prisma, TrialSessionStatus } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { logTrialRequested } from "@/lib/activity/log-activity";
+import { notifyTrialSessionRequested } from "@/lib/novu";
+import { CreateTrialSchema } from "@/schemas/trials";
 
 /**
  * GET /api/trials
@@ -136,29 +138,21 @@ export async function GET(request: NextRequest) {
   }
 }
 
-interface CreateTrialRequest {
-  consulteeProfileId: string;
-  consultantProfileId: string;
-  subscriptionPlanId: string;
-  notes?: string;
-}
-
 /**
  * POST /api/trials
  * Request a new trial session
  */
 export async function POST(request: NextRequest) {
   try {
-    const body = (await request.json()) as CreateTrialRequest;
-
-    const { consulteeProfileId, consultantProfileId, subscriptionPlanId, notes } = body;
-
-    if (!consulteeProfileId || !consultantProfileId || !subscriptionPlanId) {
+    const body = await request.json();
+    const result = CreateTrialSchema.safeParse(body);
+    if (!result.success) {
       return NextResponse.json(
-        { error: "consulteeProfileId, consultantProfileId, and subscriptionPlanId are required" },
+        { error: "Validation failed", details: result.error.issues },
         { status: 400 }
       );
     }
+    const { consulteeProfileId, consultantProfileId, subscriptionPlanId, notes } = result.data;
 
     // Check if a trial already exists for this consultee-consultant pair
     const existingTrial = await prisma.trialSession.findUnique({
@@ -272,6 +266,18 @@ export async function POST(request: NextRequest) {
         image: consulteeProfile.user.image,
       },
       subscriptionPlan.title
+    );
+
+    // Notify the consultant about the new trial request
+    void notifyTrialSessionRequested(
+      trialSession.consultantProfile.user.id,
+      {
+        consultantName: trialSession.consultantProfile.user.name || "Consultant",
+        consulteeName: trialSession.consulteeProfile.user.name || "User",
+        planTitle: subscriptionPlan.title,
+        status: trialSession.status,
+        dashboardUrl: "/dashboard/consultant/trials",
+      },
     );
 
     return NextResponse.json({ data: trialSession }, { status: 201 });

@@ -12,6 +12,7 @@ import {
   PaymentStatus,
   Prisma,
   RequestStatus,
+  TrialSessionStatus,
 } from "@prisma/client";
 import { cancelPaymentIntent, createPaymentIntent } from "../index";
 import {
@@ -68,7 +69,7 @@ type SubscriptionCheckoutResult = {
 function buildPaymentMetadata(
   data: CheckoutInput,
   userId: string,
-): { appointmentId: string; appointmentType: string; [key: string]: string } {
+): { appointmentId: string; appointmentType: string;[key: string]: string } {
   return {
     appointmentId: "pending",
     appointmentType: data.appointmentType,
@@ -439,14 +440,14 @@ export async function validateSlotAvailability(
         // FIX: Filter by consultant - only check slots belonging to this consultant
         ...(consultantUserId
           ? [
-              {
-                user: {
-                  some: {
-                    id: consultantUserId,
-                  },
+            {
+              user: {
+                some: {
+                  id: consultantUserId,
                 },
               },
-            ]
+            },
+          ]
           : []),
       ],
     },
@@ -481,14 +482,14 @@ export async function validateSlotAvailability(
           // FIX: Filter by consultant - only check tentative slots for this consultant
           ...(consultantUserId
             ? [
-                {
-                  user: {
-                    some: {
-                      id: consultantUserId,
-                    },
+              {
+                user: {
+                  some: {
+                    id: consultantUserId,
                   },
                 },
-              ]
+              },
+            ]
             : []),
           {
             appointment: {
@@ -552,14 +553,14 @@ export async function validateSlotAvailability(
         // FIX: Filter by consultant - only count tentative slots for this consultant
         ...(consultantUserId
           ? [
-              {
-                user: {
-                  some: {
-                    id: consultantUserId,
-                  },
+            {
+              user: {
+                some: {
+                  id: consultantUserId,
                 },
               },
-            ]
+            },
+          ]
           : []),
         {
           appointment: {
@@ -1068,6 +1069,39 @@ export async function handleSubscriptionCheckout(
       schedulingPeriodEndsAt: endDate,
     },
   });
+
+  // Link any completed trial to this subscription (trial conversion tracking)
+  // Find a completed trial from the same consultee for this consultant
+  const completedTrial = await tx.trialSession.findFirst({
+    where: {
+      consulteeProfileId,
+      consultantProfileId: plan.consultantProfileId,
+      status: TrialSessionStatus.COMPLETED, // Only link completed trials, not pending/scheduled
+      convertedToSubscriptionId: null, // Not already linked to another subscription
+    },
+  });
+
+  if (completedTrial) {
+    // Mark the trial as converted and link to this subscription
+    await tx.trialSession.update({
+      where: { id: completedTrial.id },
+      data: {
+        status: TrialSessionStatus.CONVERTED,
+        convertedToSubscriptionId: subscription.id,
+      },
+    });
+
+    console.log(
+      JSON.stringify({
+        event: "trial_converted",
+        trialId: completedTrial.id,
+        subscriptionId: subscription.id,
+        consulteeProfileId,
+        consultantProfileId: plan.consultantProfileId,
+        timestamp: new Date().toISOString(),
+      })
+    );
+  }
 
   // FIX Issue #2: Create placeholder appointment for payment linkage
   // This ensures webhook uses NEW FLOW (confirm) not LEGACY FLOW (create duplicate)

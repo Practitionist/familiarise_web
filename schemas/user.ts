@@ -121,12 +121,6 @@ export type PersonalInfoAndRole = z.infer<typeof PersonalInfoAndRoleSchema>;
 
 // #region Slot Schemas
 
-const slotSchema = z.object({
-  dayOfWeek: DayOfWeekEnum,
-  startTime: z.string(),
-  endTime: z.string(),
-});
-
 export const WeeklySlotSchema = z.object({
   dayOfWeekForStartsAt: DayOfWeekEnum,
   availabilityStartsAt: z.string(),
@@ -477,14 +471,40 @@ export type CookiePreference = z.infer<typeof CookiePreferenceSchema>;
 
 export const NotificationPreferenceSchema = z.object({
   allNotifications: z.boolean().default(true),
+
+  // Channel preferences
+  inAppEnabled: z.boolean().default(true),
+  emailEnabled: z.boolean().default(true),
+  pushEnabled: z.boolean().default(false),
+
+  // Legacy category preferences (kept for backward compatibility)
   mentions: z.boolean().default(false),
   directMessages: z.boolean().default(false),
   updates: z.boolean().default(false),
+
+  // Category preferences
+  appointmentReminders: z.boolean().default(true),
+  paymentNotifications: z.boolean().default(true),
+  supportUpdates: z.boolean().default(true),
+  feedbackAlerts: z.boolean().default(true),
+  trialNotifications: z.boolean().default(true),
+  subscriptionAlerts: z.boolean().default(true),
+  marketingEmails: z.boolean().default(false),
+
+  // Quiet hours
+  quietHoursEnabled: z.boolean().default(false),
+  quietHoursStart: z.string().nullable().default(null),
+  quietHoursEnd: z.string().nullable().default(null),
+  quietHoursTimezone: z.string().nullable().default(null),
 });
 
 export type NotificationPreference = z.infer<
   typeof NotificationPreferenceSchema
 >;
+
+/** Schema for partial updates to notification preferences (PUT endpoint). */
+export const NotificationPreferenceUpdateSchema =
+  NotificationPreferenceSchema.partial();
 
 // #endregion
 
