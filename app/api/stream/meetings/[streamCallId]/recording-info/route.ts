@@ -32,6 +32,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       include: {
         slotOfAppointment: {
           include: {
+            user: { select: { id: true } },
             appointment: {
               include: {
                 webinar: {
@@ -54,6 +55,26 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
                     },
                   },
                 },
+                consultation: {
+                  include: {
+                    consultationPlan: {
+                      select: { consultantProfileId: true },
+                    },
+                    requestedBy: {
+                      select: { userId: true },
+                    },
+                  },
+                },
+                subscription: {
+                  include: {
+                    subscriptionPlan: {
+                      select: { consultantProfileId: true },
+                    },
+                    requestedBy: {
+                      select: { userId: true },
+                    },
+                  },
+                },
               },
             },
           },
@@ -73,45 +94,72 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     // Authorization check - verify user has access to this meeting
     const consultantProfileId =
       appointment?.webinar?.webinarPlan?.consultantProfileId ||
-      appointment?.class?.classPlan?.consultantProfileId;
+      appointment?.class?.classPlan?.consultantProfileId ||
+      appointment?.consultation?.consultationPlan?.consultantProfileId ||
+      appointment?.subscription?.subscriptionPlan?.consultantProfileId;
 
     // Admin/Staff can access any meeting
     if (session.user.role !== "ADMIN" && session.user.role !== "STAFF") {
+      // Check if user is a participant on this meeting slot
+      const slotUserIds =
+        meetingSession.slotOfAppointment?.user?.map(
+          (u: { id: string }) => u.id,
+        ) ?? [];
+      const isSlotParticipant = slotUserIds.includes(session.user.id);
+
       // Consultant can access their own meetings
       if (session.user.role === "CONSULTANT") {
-        if (session.user.consultantProfileId !== consultantProfileId) {
+        if (
+          session.user.consultantProfileId !== consultantProfileId &&
+          !isSlotParticipant
+        ) {
           return NextResponse.json({ error: "Access denied" }, { status: 403 });
         }
       } else {
-        // Consultee needs enrollment verification
-        // Check if user has paid enrollment for this webinar/class
-        const webinarId = appointment?.webinar?.id;
-        const classId = appointment?.class?.id;
+        // Consultee: check if they are a participant on the slot,
+        // or the requestedBy user for consultation/subscription,
+        // or have a paid enrollment for webinar/class
+        const consulteeUserId =
+          appointment?.consultation?.requestedBy?.userId ||
+          appointment?.subscription?.requestedBy?.userId;
+        const isRequestor = consulteeUserId === session.user.id;
 
-        if (!webinarId && !classId) {
-          return NextResponse.json({ error: "Access denied" }, { status: 403 });
-        }
+        if (!isSlotParticipant && !isRequestor) {
+          // Fall back to payment-based enrollment check for webinars/classes
+          const webinarId = appointment?.webinar?.id;
+          const classId = appointment?.class?.id;
 
-        const enrollmentConditions = [];
-        if (webinarId) {
-          enrollmentConditions.push({ webinarId });
-        }
-        if (classId) {
-          enrollmentConditions.push({ classId });
-        }
+          if (!webinarId && !classId) {
+            return NextResponse.json(
+              { error: "Access denied" },
+              { status: 403 },
+            );
+          }
 
-        const hasEnrollment = await prisma.payment.findFirst({
-          where: {
-            userId: session.user.id,
-            paymentStatus: "SUCCEEDED",
-            appointment: {
-              OR: enrollmentConditions,
+          const enrollmentConditions = [];
+          if (webinarId) {
+            enrollmentConditions.push({ webinarId });
+          }
+          if (classId) {
+            enrollmentConditions.push({ classId });
+          }
+
+          const hasEnrollment = await prisma.payment.findFirst({
+            where: {
+              userId: session.user.id,
+              paymentStatus: "SUCCEEDED",
+              appointment: {
+                OR: enrollmentConditions,
+              },
             },
-          },
-        });
+          });
 
-        if (!hasEnrollment) {
-          return NextResponse.json({ error: "Access denied" }, { status: 403 });
+          if (!hasEnrollment) {
+            return NextResponse.json(
+              { error: "Access denied" },
+              { status: 403 },
+            );
+          }
         }
       }
     }
@@ -124,6 +172,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     } else if (appointment?.class?.classPlan) {
       recordingEnabled = appointment.class.classPlan.recordingEnabled;
     }
+    // Consultations and subscriptions don't have recordingEnabled on their plans
 
     return NextResponse.json({
       meetingSessionId: meetingSession.id,
