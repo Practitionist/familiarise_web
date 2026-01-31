@@ -18,10 +18,9 @@ import { FiltersSection } from "./components/FiltersSection";
 import { ConsultantCard } from "./components/ConsultantCard";
 import { FeaturedExperts } from "./components/FeaturedExperts";
 import { SatisfiedTestimonial } from "./components/SatisfiedTestimonial";
-import { SearchBar } from "./components/SearchBar";
+import { SearchBar, SortOption } from "./components/SearchBar";
 import ExpertRow from "./components/ExpertRow";
 import DomainGrid from "./components/DomainGrid";
-import DomainTabs from "./components/DomainTabs";
 import SectionHeader from "@/app/explore/components/SectionHeader";
 import FilterChips, {
   ActiveFilter,
@@ -43,6 +42,28 @@ const STATS = [
   { icon: TrendingUp, value: "50K+", label: "Sessions Completed" },
 ];
 
+function EmptyState() {
+  return (
+    <motion.div
+      className="text-center py-16"
+      initial={{ opacity: 0, scale: 0.95 }}
+      animate={{ opacity: 1, scale: 1 }}
+      transition={{ duration: 0.3 }}
+    >
+      <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-zinc-100 flex items-center justify-center">
+        <Search className="w-10 h-10 text-zinc-400" />
+      </div>
+      <h3 className="text-xl font-semibold text-zinc-900 mb-2">
+        No experts found
+      </h3>
+      <p className="text-zinc-500 max-w-md mx-auto">
+        Try adjusting your filters or search terms to discover more amazing
+        mentors
+      </p>
+    </motion.div>
+  );
+}
+
 function ExpertsContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -51,9 +72,6 @@ function ExpertsContent() {
   const [filters, setFilters] = useState<ExpertFilters>(() =>
     filtersFromSearchParams(searchParams),
   );
-
-  // Domain tab state (client-side only, separate from domain filter)
-  const [activeTab, setActiveTab] = useState<string | null>(null);
 
   const browseSectionRef = useRef<HTMLDivElement>(null);
 
@@ -112,35 +130,29 @@ function ExpertsContent() {
     [isLoadingMore, hasMore, loadMore],
   );
 
-  // Domain grid click -> set domain filter + scroll to browse section
-  const handleDomainSelect = useCallback(
-    (domainId: string) => {
-      updateFilters({ domain: domainId, subdomain: null, tags: [] });
-      setActiveTab(null);
+  // Scroll to browse section and optionally set sort
+  const scrollToBrowse = useCallback(
+    (sort?: SortOption) => {
+      if (sort) updateFilters({ sort });
       browseSectionRef.current?.scrollIntoView({ behavior: "smooth" });
     },
     [updateFilters],
   );
 
-  // Tab change (client-side filtering)
-  const handleTabChange = useCallback((domainId: string | null) => {
-    setActiveTab(domainId);
-  }, []);
+  // Domain grid click -> set domain filter + scroll to browse section
+  const handleDomainSelect = useCallback(
+    (domainId: string) => {
+      updateFilters({ domain: domainId, subdomain: null, tags: [] });
+      browseSectionRef.current?.scrollIntoView({ behavior: "smooth" });
+    },
+    [updateFilters],
+  );
 
   // Group consultants by domain for the grouped layout
   const groupedConsultants = useMemo(
     () => groupConsultantsByDomain(consultants),
     [consultants],
   );
-
-  // Client-side tab filtering
-  const tabFilteredConsultants = useMemo(() => {
-    if (activeTab === null) return consultants;
-    return consultants.filter((c) => c.domainId === activeTab);
-  }, [consultants, activeTab]);
-
-  // Whether domain tabs should be shown (only when no domain filter is active)
-  const showDomainTabs = filters.domain === null;
 
   // Build active filter chips
   const activeFilterChips = useMemo(() => {
@@ -248,7 +260,6 @@ function ExpertsContent() {
 
   const handleClearAll = useCallback(() => {
     setFilters(DEFAULT_EXPERT_FILTERS);
-    setActiveTab(null);
   }, []);
 
   return (
@@ -322,7 +333,7 @@ function ExpertsContent() {
             <SectionHeader
               title="Trending Experts"
               icon={<Flame className="w-5 h-5 text-white" />}
-              seeAllHref="/explore/experts?sort=trending"
+              onSeeAllClick={() => scrollToBrowse("trending")}
             />
             <ExpertRow
               experts={trendingExperts}
@@ -336,7 +347,7 @@ function ExpertsContent() {
             <SectionHeader
               title="Newly Joined"
               icon={<Clock className="w-5 h-5 text-white" />}
-              seeAllHref="/explore/experts?sort=newest"
+              onSeeAllClick={() => scrollToBrowse("newest")}
             />
             <ExpertRow
               experts={newestExperts}
@@ -366,23 +377,6 @@ function ExpertsContent() {
               title="Browse All Experts"
               icon={<Search className="w-5 h-5 text-white" />}
             />
-
-            {/* Domain Tabs (conditional) */}
-            {showDomainTabs && metadata?.domains && (
-              <motion.div
-                className="mb-6"
-                initial={{ opacity: 0, y: 10 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true }}
-                transition={{ duration: 0.3 }}
-              >
-                <DomainTabs
-                  domains={metadata.domains}
-                  activeTab={activeTab}
-                  onTabChange={handleTabChange}
-                />
-              </motion.div>
-            )}
 
             {/* Filters */}
             <motion.div
@@ -459,58 +453,8 @@ function ExpertsContent() {
                     <p className="text-zinc-500 text-sm">Finding experts...</p>
                   </div>
                 </div>
-              ) : showDomainTabs ? (
-                // Flat list filtered by active tab
-                <>
-                  <div className="space-y-6">
-                    {tabFilteredConsultants.map(
-                      (consultant: TConsultantProfile, index: number) => {
-                        const isLast =
-                          index === tabFilteredConsultants.length - 1;
-                        return (
-                          <motion.div
-                            key={consultant.id}
-                            ref={isLast ? lastConsultantRef : undefined}
-                            initial={{ opacity: 0, y: 20 }}
-                            whileInView={{ opacity: 1, y: 0 }}
-                            viewport={{ once: true }}
-                            transition={{
-                              duration: 0.4,
-                              delay: Math.min(index * 0.05, 0.6),
-                            }}
-                          >
-                            <ConsultantCard
-                              consultant={consultant}
-                              metadata={metadata}
-                            />
-                          </motion.div>
-                        );
-                      },
-                    )}
-                  </div>
-
-                  {tabFilteredConsultants.length === 0 && (
-                    <motion.div
-                      className="text-center py-16"
-                      initial={{ opacity: 0, scale: 0.95 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      transition={{ duration: 0.3 }}
-                    >
-                      <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-zinc-100 flex items-center justify-center">
-                        <Search className="w-10 h-10 text-zinc-400" />
-                      </div>
-                      <h3 className="text-xl font-semibold text-zinc-900 mb-2">
-                        No experts found
-                      </h3>
-                      <p className="text-zinc-500 max-w-md mx-auto">
-                        Try adjusting your filters or search terms to discover
-                        more amazing mentors
-                      </p>
-                    </motion.div>
-                  )}
-                </>
-              ) : (
-                // Grouped by domain layout
+              ) : filters.domain ? (
+                // Grouped by domain layout when a domain filter is active
                 <>
                   {metadata?.domains.map((domain) => {
                     const domainConsultants =
@@ -541,31 +485,21 @@ function ExpertsContent() {
                             (
                               consultant: TConsultantProfile,
                               index: number,
-                            ) => {
-                              if (
-                                domainConsultants.length ===
-                                index + 1
-                              ) {
-                                return (
-                                  <div
-                                    key={consultant.id}
-                                    ref={lastConsultantRef}
-                                  >
-                                    <ConsultantCard
-                                      consultant={consultant}
-                                      metadata={metadata}
-                                    />
-                                  </div>
-                                );
-                              }
-                              return (
+                            ) => (
+                              <div
+                                key={consultant.id}
+                                ref={
+                                  index === domainConsultants.length - 1
+                                    ? lastConsultantRef
+                                    : undefined
+                                }
+                              >
                                 <ConsultantCard
-                                  key={consultant.id}
                                   consultant={consultant}
                                   metadata={metadata}
                                 />
-                              );
-                            },
+                              </div>
+                            ),
                           )}
                         </div>
                       </motion.div>
@@ -573,23 +507,41 @@ function ExpertsContent() {
                   })}
 
                   {consultants.length === 0 && (
-                    <motion.div
-                      className="text-center py-16"
-                      initial={{ opacity: 0, scale: 0.95 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      transition={{ duration: 0.3 }}
-                    >
-                      <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-zinc-100 flex items-center justify-center">
-                        <Search className="w-10 h-10 text-zinc-400" />
-                      </div>
-                      <h3 className="text-xl font-semibold text-zinc-900 mb-2">
-                        No experts found
-                      </h3>
-                      <p className="text-zinc-500 max-w-md mx-auto">
-                        Try adjusting your filters or search terms to discover
-                        more amazing mentors
-                      </p>
-                    </motion.div>
+                    <EmptyState />
+                  )}
+                </>
+              ) : (
+                // Flat list when no domain filter is set
+                <>
+                  <div className="space-y-6">
+                    {consultants.map(
+                      (consultant: TConsultantProfile, index: number) => (
+                        <motion.div
+                          key={consultant.id}
+                          ref={
+                            index === consultants.length - 1
+                              ? lastConsultantRef
+                              : undefined
+                          }
+                          initial={{ opacity: 0, y: 20 }}
+                          whileInView={{ opacity: 1, y: 0 }}
+                          viewport={{ once: true }}
+                          transition={{
+                            duration: 0.4,
+                            delay: Math.min(index * 0.05, 0.6),
+                          }}
+                        >
+                          <ConsultantCard
+                            consultant={consultant}
+                            metadata={metadata}
+                          />
+                        </motion.div>
+                      ),
+                    )}
+                  </div>
+
+                  {consultants.length === 0 && (
+                    <EmptyState />
                   )}
                 </>
               )}

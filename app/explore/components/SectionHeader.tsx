@@ -6,14 +6,18 @@ import Link from "next/link";
 interface SectionHeaderProps {
   title: string;
   seeAllHref?: string;
+  onSeeAllClick?: () => void;
   icon?: React.ReactNode;
 }
 
 export default function SectionHeader({
   title,
   seeAllHref,
+  onSeeAllClick,
   icon,
 }: SectionHeaderProps) {
+  const showSeeAll = seeAllHref || onSeeAllClick;
+
   return (
     <div className="flex items-center justify-between mb-6">
       <div className="flex items-center gap-2.5">
@@ -26,15 +30,24 @@ export default function SectionHeader({
           {title}
         </h2>
       </div>
-      {seeAllHref && (
-        <Link
-          href={seeAllHref}
-          className="group inline-flex items-center gap-1.5 text-sm font-medium text-zinc-500 hover:text-zinc-900 transition-colors"
-        >
-          See All
-          <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-        </Link>
-      )}
+      {showSeeAll &&
+        (onSeeAllClick ? (
+          <button
+            onClick={onSeeAllClick}
+            className="group inline-flex items-center gap-1.5 text-sm font-medium text-zinc-500 hover:text-zinc-900 transition-colors"
+          >
+            See All
+            <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+          </button>
+        ) : (
+          <Link
+            href={seeAllHref!}
+            className="group inline-flex items-center gap-1.5 text-sm font-medium text-zinc-500 hover:text-zinc-900 transition-colors"
+          >
+            See All
+            <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+          </Link>
+        ))}
     </div>
   );
 }
