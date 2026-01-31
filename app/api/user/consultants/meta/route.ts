@@ -62,14 +62,49 @@ async function fetchConsultantMetadata() {
   };
 }
 
+async function fetchAvailabilityStats() {
+  const hasSlots = await prisma.consultantProfile.count({
+    where: {
+      verificationStatus: "VERIFIED",
+      OR: [
+        { slotsOfAvailabilityWeekly: { some: {} } },
+        { slotsOfAvailabilityCustom: { some: {} } },
+      ],
+    },
+  });
+
+  return { hasSlots };
+}
+
+async function fetchAvailableLanguages(): Promise<string[]> {
+  const consultants = await prisma.consultantProfile.findMany({
+    where: { verificationStatus: "VERIFIED" },
+    select: { languages: true },
+  });
+  const langSet = new Set<string>();
+  for (const c of consultants) {
+    for (const lang of c.languages) {
+      langSet.add(lang);
+    }
+  }
+  return Array.from(langSet).sort();
+}
+
 export async function GET(req: NextRequest) {
   try {
-    const [{ domains, subdomains }, tags, consultantMetadata] =
-      await Promise.all([
-        fetchDomainsAndSubdomains(),
-        fetchTags(),
-        fetchConsultantMetadata(),
-      ]);
+    const [
+      { domains, subdomains },
+      tags,
+      consultantMetadata,
+      availableLanguages,
+      availabilityStats,
+    ] = await Promise.all([
+      fetchDomainsAndSubdomains(),
+      fetchTags(),
+      fetchConsultantMetadata(),
+      fetchAvailableLanguages(),
+      fetchAvailabilityStats(),
+    ]);
 
     return NextResponse.json(
       {
@@ -78,6 +113,8 @@ export async function GET(req: NextRequest) {
           subdomains,
           tags,
           consultantMetadata,
+          availableLanguages,
+          availabilityStats,
         },
       },
       { status: 200 },
