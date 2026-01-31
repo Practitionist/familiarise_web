@@ -70,20 +70,76 @@ async function triggerWorkflow<T extends NovuPayload>(
 
 /**
  * Helper to trigger the same workflow for multiple users (e.g. both parties).
+ * Uses a single API call with array `to` field (max 100 per call).
  */
 async function triggerForMultiple<T extends NovuPayload>(
   workflowId: string,
   userIds: string[],
   payload: T,
 ): Promise<TriggerResult[]> {
-  const results = await Promise.allSettled(
-    userIds.map((id) => triggerWorkflow(workflowId, id, payload)),
-  );
-  return results.map((r) =>
-    r.status === "fulfilled"
-      ? r.value
-      : { success: false, error: r.reason instanceof Error ? r.reason : String(r.reason) },
-  );
+  if (!isNovuConfigured()) {
+    console.warn(`[Novu] Not configured. Skipped workflow: ${workflowId}`);
+    return userIds.map(() => ({ success: false, error: "Novu not configured" as const }));
+  }
+
+  if (userIds.length === 0) return [];
+  if (userIds.length === 1) return [await triggerWorkflow(workflowId, userIds[0], payload)];
+
+  const BATCH_SIZE = 100;
+  const results: TriggerResult[] = [];
+
+  for (let i = 0; i < userIds.length; i += BATCH_SIZE) {
+    const batch = userIds.slice(i, i + BATCH_SIZE);
+    try {
+      const novu = getNovuClient();
+      await novu.trigger({
+        workflowId,
+        to: batch,
+        payload,
+      });
+      console.log(`[Novu] Triggered ${workflowId} for ${batch.length} subscribers`);
+      results.push(...batch.map(() => ({ success: true }) as TriggerResult));
+    } catch (error) {
+      console.error(`[Novu] Failed to trigger ${workflowId} for batch:`, error);
+      const err: TriggerResult = {
+        success: false,
+        error: error instanceof Error ? error : String(error),
+      };
+      results.push(...batch.map(() => err));
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Trigger a broadcast workflow to all existing subscribers.
+ * Uses Novu's triggerBroadcast API — no need to fetch user IDs.
+ */
+async function triggerBroadcastWorkflow<T extends NovuPayload>(
+  workflowId: string,
+  payload: T,
+): Promise<TriggerResult> {
+  if (!isNovuConfigured()) {
+    console.warn(`[Novu] Not configured. Skipped broadcast: ${workflowId}`);
+    return { success: false, error: "Novu not configured" };
+  }
+
+  try {
+    const novu = getNovuClient();
+    await novu.triggerBroadcast({
+      name: workflowId,
+      payload,
+    });
+    console.log(`[Novu] Broadcast triggered: ${workflowId}`);
+    return { success: true };
+  } catch (error) {
+    console.error(`[Novu] Failed to broadcast ${workflowId}:`, error);
+    return {
+      success: false,
+      error: error instanceof Error ? error : String(error),
+    };
+  }
 }
 
 // ============================================================================
@@ -372,12 +428,10 @@ export async function notifyPayoutProcessed(
 // ============================================================================
 
 export async function notifyGeneralAnnouncement(
-  userIds: string[],
   payload: AnnouncementPayload,
 ) {
-  return triggerForMultiple(
+  return triggerBroadcastWorkflow(
     NOVU_WORKFLOWS.GENERAL_ANNOUNCEMENT,
-    userIds,
     payload,
   );
 }

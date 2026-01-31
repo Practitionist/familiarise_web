@@ -91,23 +91,13 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    // Fire-and-forget: broadcast announcement to all users
-    void (async () => {
-      try {
-        const users = await prisma.user.findMany({ select: { id: true } });
-        await notifyGeneralAnnouncement(
-          users.map((u) => u.id),
-          {
-            title: announcement.title,
-            content: announcement.content,
-            linkUrl: announcement.linkUrl || undefined,
-            linkText: announcement.linkText || undefined,
-          },
-        );
-      } catch (err) {
-        console.error("[Novu] Failed to broadcast announcement:", err);
-      }
-    })();
+    // Fire-and-forget: broadcast announcement to all subscribers via Novu
+    void notifyGeneralAnnouncement({
+      title: announcement.title,
+      content: announcement.content,
+      linkUrl: announcement.linkUrl || undefined,
+      linkText: announcement.linkText || undefined,
+    });
 
     return NextResponse.json({
       success: true,
