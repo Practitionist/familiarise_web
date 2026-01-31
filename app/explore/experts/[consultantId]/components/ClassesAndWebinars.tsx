@@ -19,7 +19,7 @@ import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import React, { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { formatCurrency } from "@/app/checkout/plans/math";
+import { useCurrency } from "@/lib/hooks/useCurrency";
 
 interface ClassesAndWebinarsProps {
   classPlans: ClassPlan[];
@@ -56,6 +56,7 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
 }) => {
   const router = useRouter();
   const { data: session } = useSession();
+  const { formatPrice } = useCurrency();
   const isLoggedIn = !!session?.user;
   const [activeTab, setActiveTab] = useState<"classes" | "webinars">("classes");
 
@@ -112,10 +113,7 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
             {/* Price Tag */}
             <div className="absolute bottom-4 left-1/2 -translate-x-1/2">
               <span className="px-3 py-1.5 sm:px-4 sm:py-2 bg-white rounded-full text-sm sm:text-base lg:text-lg font-bold text-zinc-900 shadow-lg whitespace-nowrap">
-                {formatCurrency(
-                  classPlan.price,
-                  classPlan.priceCurrency || "INR",
-                )}
+                {formatPrice(classPlan.price)}
               </span>
             </div>
           </div>
@@ -227,10 +225,7 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
             {/* Price Tag */}
             <div className="absolute bottom-4 left-1/2 -translate-x-1/2">
               <span className="px-3 py-1.5 sm:px-4 sm:py-2 bg-white rounded-full text-sm sm:text-base lg:text-lg font-bold text-zinc-900 shadow-lg whitespace-nowrap">
-                {formatCurrency(
-                  webinarPlan.price,
-                  webinarPlan.priceCurrency || "INR",
-                )}
+                {formatPrice(webinarPlan.price)}
               </span>
             </div>
           </div>

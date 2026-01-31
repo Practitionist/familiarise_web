@@ -16,7 +16,7 @@ import { useState, useMemo, useEffect } from "react";
 import { PricingOption } from "../defaults";
 import { useToast } from "@/hooks/use-toast";
 import { addMonths, differenceInDays, format } from "date-fns";
-import { formatCurrency } from "@/app/checkout/plans/math";
+import { useCurrency } from "@/lib/hooks/useCurrency";
 import { TrialBookingModal } from "./TrialBookingModal";
 
 interface SubscriptionPricingToggleProps {
@@ -37,6 +37,7 @@ export default function SubscriptionPricingToggle({
 }: Readonly<SubscriptionPricingToggleProps>) {
   const { data: session } = useSession();
   const { toast } = useToast();
+  const { formatPrice } = useCurrency();
   const [activeSubscriptionOption, setActiveSubscriptionOption] = useState(
     subscriptionOptions.length > 0
       ? subscriptionOptions[0].title.toLowerCase().replace(" ", "-")
@@ -278,7 +279,7 @@ export default function SubscriptionPricingToggle({
 
               <div className="my-4">
                 <span className="text-4xl font-bold text-white">
-                  {formatCurrency(option.price, option.priceCurrency)}
+                  {formatPrice(option.price)}
                 </span>
               </div>
 

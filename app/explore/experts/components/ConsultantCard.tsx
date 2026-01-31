@@ -17,7 +17,7 @@ import {
   ArrowRight,
   CheckCircle2,
 } from "lucide-react";
-import { formatCurrency } from "@/app/checkout/plans/math";
+import { useCurrency } from "@/lib/hooks/useCurrency";
 
 interface ConsultantCardProps {
   consultant: TConsultantProfile;
@@ -46,7 +46,13 @@ const ConsultantInfo = ({
   </div>
 );
 
-const SubscriptionPlanCard = ({ plan }: { plan: any }) => {
+const SubscriptionPlanCard = ({
+  plan,
+  formatPrice,
+}: {
+  plan: any;
+  formatPrice: (amountINR: number) => string;
+}) => {
   const formatDuration = (months: number) => {
     switch (months) {
       case 1:
@@ -66,7 +72,7 @@ const SubscriptionPlanCard = ({ plan }: { plan: any }) => {
     <div className="bg-white rounded-xl p-5 border border-zinc-200">
       <div className="flex flex-wrap items-baseline justify-between gap-2 mb-4">
         <div className="text-2xl sm:text-3xl font-bold text-zinc-900">
-          {formatCurrency(plan.price / 100, plan.priceCurrency || "INR")}
+          {formatPrice(plan.price / 100)}
         </div>
         <div className="text-xs sm:text-sm text-zinc-500 font-medium bg-zinc-100 px-2 sm:px-3 py-1 rounded-full whitespace-nowrap">
           {formatDuration(plan.durationInMonths)}
@@ -99,6 +105,7 @@ export const ConsultantCard = memo(function ConsultantCard({
   metadata,
 }: ConsultantCardProps) {
   const router = useRouter();
+  const { formatPrice } = useCurrency();
 
   const sortedPlans =
     consultant.subscriptionPlans
@@ -155,23 +162,28 @@ export const ConsultantCard = memo(function ConsultantCard({
           </p>
 
           {/* Meta Info */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
-            <ConsultantInfo
-              icon={Clock}
-              label="Experience"
-              value={consultant.experience ? `${consultant.experience}` : null}
-            />
+          <div className="space-y-3 mb-6">
+            {/* Headline - first line */}
             <ConsultantInfo
               icon={Briefcase}
               label="Headline"
               value={consultant.headline}
             />
-            <ConsultantInfo
-              icon={MapPin}
-              label="Domain"
-              value={consultant.domain.name}
-            />
+            {/* Experience and Domain - second line together */}
+            <div className="flex items-center gap-6">
+              <ConsultantInfo
+                icon={Clock}
+                label="Experience"
+                value={consultant.experience ? `${consultant.experience}` : null}
+              />
+              <ConsultantInfo
+                icon={MapPin}
+                label="Domain"
+                value={consultant.domain.name}
+              />
+            </div>
           </div>
+
 
           {/* Tags */}
           <div className="flex flex-wrap gap-2">
@@ -223,7 +235,7 @@ export const ConsultantCard = memo(function ConsultantCard({
                     key={`${consultant.id}-tab-content-${plan.id}`}
                     value={plan.durationInMonths.toString()}
                   >
-                    <SubscriptionPlanCard plan={plan} />
+                    <SubscriptionPlanCard plan={plan} formatPrice={formatPrice} />
                   </TabsContent>
                 ))}
               </Tabs>

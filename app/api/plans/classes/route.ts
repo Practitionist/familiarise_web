@@ -1,19 +1,27 @@
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
-import { PlanEmailSupport } from "@prisma/client";
+import { PlanEmailSupport, Prisma } from "@prisma/client";
+import {
+  parsePlanFilters,
+  buildPlanWhereClause,
+  buildPlanOrderBy,
+  paginatedResponse,
+  rankAndPaginate,
+} from "../shared/plan-filters";
 
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
-    const consultantId = searchParams.get("consultantId");
     const includeClasses = searchParams.get("include")?.includes("classes");
     const includeRegistration =
       searchParams.get("includeRegistration") === "true";
-    const page = parseInt(searchParams.get("page") || "1");
-    const limit = parseInt(searchParams.get("limit") || "10");
-    const skip = (page - 1) * limit;
 
-    const where = consultantId ? { consultantProfileId: consultantId } : {};
+    const filters = parsePlanFilters(searchParams);
+    const { sort, page, limit, skip } = filters;
+    const where = buildPlanWhereClause(filters) as Prisma.ClassPlanWhereInput;
+    const orderBy = buildPlanOrderBy(sort) as
+      | Prisma.ClassPlanOrderByWithRelationInput
+      | undefined;
 
     // Build classes include based on whether registration data is requested
     let classesInclude: boolean | Record<string, unknown> = true;
@@ -24,7 +32,7 @@ export async function GET(request: NextRequest) {
             include: {
               slotsOfAppointment: {
                 include: {
-                  user: { select: { id: true } }, // Only fetch user IDs for registration check
+                  user: { select: { id: true } },
                 },
               },
             },
@@ -37,11 +45,64 @@ export async function GET(request: NextRequest) {
       consultantProfile: true,
       topics: true,
       classContents: true,
-      // Include classes with registration data if requested, otherwise include only if explicitly asked
       ...((includeClasses || includeRegistration) && {
         classes: classesInclude,
       }),
     };
+
+    // For trending sort, use a two-step Prisma approach:
+    // 1. Lightweight select (IDs + nested slot IDs only) to rank by enrollment count
+    // 2. Fetch full plan data only for the paginated slice
+    if (sort === "trending") {
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+      const plansForRanking = await prisma.classPlan.findMany({
+        where,
+        select: {
+          id: true,
+          classes: {
+            select: {
+              appointments: {
+                select: {
+                  slotsOfAppointment: {
+                    where: { createdAt: { gte: thirtyDaysAgo } },
+                    select: { id: true },
+                  },
+                },
+              },
+            },
+          },
+        },
+      });
+
+      const ranked = plansForRanking
+        .map((p) => ({
+          id: p.id,
+          count: p.classes.reduce(
+            (sum, cls) =>
+              sum +
+              cls.appointments.reduce(
+                (s, apt) => s + apt.slotsOfAppointment.length,
+                0,
+              ),
+            0,
+          ),
+        }))
+        .sort((a, b) => b.count - a.count);
+
+      return rankAndPaginate(
+        ranked,
+        (ids) =>
+          prisma.classPlan.findMany({
+            where: { ...where, id: { in: ids } },
+            include: includeOptions,
+          }),
+        skip,
+        limit,
+        page,
+      );
+    }
 
     const [classPlans, total] = await Promise.all([
       prisma.classPlan.findMany({
@@ -49,22 +110,12 @@ export async function GET(request: NextRequest) {
         include: includeOptions,
         skip,
         take: limit,
+        ...(orderBy && { orderBy }),
       }),
       prisma.classPlan.count({ where }),
     ]);
 
-    return NextResponse.json(
-      {
-        data: classPlans,
-        meta: {
-          total,
-          page,
-          limit,
-          totalPages: Math.ceil(total / limit),
-        },
-      },
-      { status: 200 },
-    );
+    return paginatedResponse(classPlans, total, page, limit);
   } catch (error) {
     console.error("Error fetching class plans:", error);
     return NextResponse.json(

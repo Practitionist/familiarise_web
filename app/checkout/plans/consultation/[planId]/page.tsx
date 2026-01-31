@@ -24,7 +24,8 @@ import { CreditCard as CreditCardIcon } from "lucide-react";
 import { use, useCallback, useEffect, useMemo, useState } from "react";
 import RazorpayCheckout from "../../../components/RazorpayCheckout";
 import StripeCheckout from "../../../components/StripeCheckout";
-import { calculatePricing, formatCurrency, formatPercentage } from "../../math";
+import { calculatePricing, formatPercentage } from "../../math";
+import { useCurrency } from "@/lib/hooks/useCurrency";
 
 type ConsultationPlanWithConsultant = ConsultationPlan & {
   consultantProfile: ConsultantProfile & {
@@ -56,6 +57,7 @@ export default function ConsultationCheckoutPage({
   const resolvedParams = use(params);
   const resolvedSearchParams = use(searchParams);
 
+  const { formatPrice } = useCurrency();
   const [eventData, setEventData] = useState<ConsultationResponse | null>(null);
   const [slotData, setSlotData] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -479,7 +481,7 @@ export default function ConsultationCheckoutPage({
 
   const consultantDetails = eventData?.data.consultantProfile;
   const userDetails = eventData?.data.consultantProfile.user;
-  const currency = eventData?.data?.priceCurrency || "INR";
+
 
   return (
     <>
@@ -601,7 +603,7 @@ export default function ConsultationCheckoutPage({
                 <div className="text-sm text-green-600">
                   {appliedDiscount.discountType === "PERCENTAGE"
                     ? `${appliedDiscount.discountValue}% off`
-                    : `${formatCurrency(appliedDiscount.discountValue, currency)} off`}
+                    : `${formatPrice(appliedDiscount.discountValue)} off`}
                 </div>
               </div>
               <Button
@@ -631,7 +633,7 @@ export default function ConsultationCheckoutPage({
               <div className="flex items-center justify-between">
                 <div>Session Fee</div>
                 <div>
-                  {formatCurrency(eventData?.data?.price || 0, currency)}
+                  {formatPrice(eventData?.data?.price || 0)}
                 </div>
               </div>
               <div className="flex items-center justify-between">
@@ -652,11 +654,11 @@ export default function ConsultationCheckoutPage({
             <div className="grid gap-2">
               <div className="flex items-center justify-between">
                 <div>Subtotal</div>
-                <div>{formatCurrency(pricing.subtotal, currency)}</div>
+                <div>{formatPrice(pricing.subtotal)}</div>
               </div>
               <div className="flex items-center justify-between">
                 <div>Tax ({formatPercentage(pricing.taxRate)})</div>
-                <div>{formatCurrency(pricing.taxAmount, currency)}</div>
+                <div>{formatPrice(pricing.taxAmount)}</div>
               </div>
               {pricing.discountAmount > 0 && (
                 <div className="flex items-center justify-between text-green-600">
@@ -665,13 +667,13 @@ export default function ConsultationCheckoutPage({
                     {pricing.discountPercent > 0 &&
                       `(${formatPercentage(pricing.discountPercent)})`}
                   </div>
-                  <div>-{formatCurrency(pricing.discountAmount, currency)}</div>
+                  <div>-{formatPrice(pricing.discountAmount)}</div>
                 </div>
               )}
               <Separator className="bg-zinc-200" />
               <div className="flex items-center justify-between font-semibold">
                 <div>Total</div>
-                <div>{formatCurrency(pricing.total, currency)}</div>
+                <div>{formatPrice(pricing.total)}</div>
               </div>
             </div>
           </CardContent>

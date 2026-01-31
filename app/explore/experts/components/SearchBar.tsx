@@ -12,16 +12,28 @@ import {
 } from "@/components/ui/select";
 import { Search, SlidersHorizontal } from "lucide-react";
 
-export type SortOption = "nameAsc" | "nameDesc" | "reviewCount" | "rating";
+export type SortOption =
+  | "nameAsc"
+  | "nameDesc"
+  | "reviewCount"
+  | "rating"
+  | "trending"
+  | "newest";
 
 interface SearchBarProps {
   onSearch: (value: string) => void;
   onSort: (option: SortOption) => void;
   sortBy: SortOption;
+  initialSearch?: string;
 }
 
-export function SearchBar({ onSearch, onSort, sortBy }: SearchBarProps) {
-  const [localValue, setLocalValue] = useState("");
+export function SearchBar({
+  onSearch,
+  onSort,
+  sortBy,
+  initialSearch = "",
+}: SearchBarProps) {
+  const [localValue, setLocalValue] = useState(initialSearch);
   const debouncedSearch = useDebouncedCallback((value: string) => {
     onSearch(value);
   }, 300);
@@ -65,6 +77,8 @@ export function SearchBar({ onSearch, onSort, sortBy }: SearchBarProps) {
             <SelectItem value="nameDesc">Name (Z-A)</SelectItem>
             <SelectItem value="reviewCount">Most Reviews</SelectItem>
             <SelectItem value="rating">Highest Rating</SelectItem>
+            <SelectItem value="trending">Trending</SelectItem>
+            <SelectItem value="newest">Newest</SelectItem>
           </SelectContent>
         </Select>
       </div>
