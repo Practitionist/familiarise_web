@@ -47,92 +47,12 @@ import {
   ExternalLink,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-
-// Types for Staff Moderation API responses
-interface ProfileVerificationDocument {
-  id: string;
-  fileName: string;
-  originalName: string;
-  fileSize: number;
-  mimeType: string;
-  fileUrl: string;
-  description: string | null;
-}
-
-interface ProfileVerificationResponse {
-  id: string;
-  status: string;
-  submittedAt: string;
-  notes: string | null;
-  consultant: {
-    profileId: string;
-    userId: string;
-    name: string | null;
-    email: string;
-    image: string | null;
-    linkedinUrl: string | null;
-    domain: string;
-    experience: number | null;
-    headline: string | null;
-    isVerified: boolean;
-    verificationStatus: string;
-  };
-  documents: ProfileVerificationDocument[];
-  reviewedAt: string | null;
-  reviewedById: string | null;
-  reviewNotes: string | null;
-}
-
-interface ModerationReport {
-  id: string;
-  type: string;
-  reason: string;
-  description: string | null;
-  status: string;
-  createdAt: string;
-  reporter: {
-    id: string;
-    name: string | null;
-    email: string;
-  };
-  reportedUser: {
-    id: string;
-    name: string | null;
-    email: string;
-    role: string;
-  };
-  _count?: {
-    actions: number;
-  };
-}
-
-interface ModerationReview {
-  id: string;
-  rating: number;
-  comment: string | null;
-  createdAt: string;
-  consultee: {
-    id: string;
-    name: string | null;
-    image: string | null;
-  } | null;
-  consultation: {
-    consultant: {
-      user: {
-        id: string;
-        name: string | null;
-        image: string | null;
-      } | null;
-    } | null;
-  } | null;
-}
-
-interface ModerationStats {
-  pendingReports: number;
-  pendingProfiles: number;
-  pendingReviews: number;
-  resolvedToday: number;
-}
+import type {
+  ProfileVerification,
+  ModerationReport,
+  ModerationReview,
+  ModerationStats,
+} from "@/types/moderation";
 
 const getStatusColor = (status: string) => {
   switch (status.toLowerCase()) {
@@ -183,12 +103,12 @@ export default function ContentModerationPage() {
     null,
   );
   const [selectedProfile, setSelectedProfile] =
-    useState<ProfileVerificationResponse | null>(null);
+    useState<ProfileVerification | null>(null);
   const [moderationNote, setModerationNote] = useState("");
 
   // Data states
   const [reports, setReports] = useState<ModerationReport[]>([]);
-  const [profiles, setProfiles] = useState<ProfileVerificationResponse[]>([]);
+  const [profiles, setProfiles] = useState<ProfileVerification[]>([]);
   const [reviews, setReviews] = useState<ModerationReview[]>([]);
   const [stats, setStats] = useState<ModerationStats | null>(null);
 

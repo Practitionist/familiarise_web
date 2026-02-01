@@ -62,13 +62,13 @@ export function NotificationInbox() {
         elements: {
           popoverContent: {
             zIndex: 9999,
-            width: "400px",
-            maxHeight: "480px",
+            width: "min(400px, calc(100vw - 2rem))",
+            maxHeight: "calc(100vh - 6rem)",
             borderRadius: "0.75rem",
             boxShadow:
               "0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1)",
             border: "1px solid #e4e4e7",
-            overflow: "visible",
+            overflowY: "auto",
           },
           popoverTrigger: {
             zIndex: 9998,

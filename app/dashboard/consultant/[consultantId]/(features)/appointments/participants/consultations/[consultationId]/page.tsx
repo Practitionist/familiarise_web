@@ -15,26 +15,14 @@ import {
 } from "@/components/ui/table";
 import { useParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-
-interface User {
-  id: string;
-  name?: string;
-  email?: string;
-}
-
-interface ConsultationPlan {
-  id: string;
-  title: string;
-}
-
-interface Consultation {
-  id: string;
-  consultationPlan: ConsultationPlan;
-}
+import type { ParticipantUser } from "@/types/participants";
 
 interface ConsultationParticipantsData {
-  consultation: Consultation;
-  participants: User[];
+  consultation: {
+    id: string;
+    consultationPlan: { id: string; title: string };
+  };
+  participants: ParticipantUser[];
 }
 
 // Fetcher function for consultation participants

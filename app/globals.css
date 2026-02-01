@@ -53,6 +53,25 @@
     --ash: 0 0% 92%;
     --steel: 0 0% 55%;
     --graphite: 0 0% 25%;
+
+    /* Header height system — announcement-bar-height is set dynamically by JS */
+    --announcement-bar-height: 0px;
+    --navbar-height: 4rem; /* 64px — mobile default */
+    --header-height: calc(var(--announcement-bar-height) + var(--navbar-height));
+  }
+
+  /* Desktop navbar height */
+  @media (min-width: 1024px) {
+    :root {
+      --navbar-height: 5rem; /* 80px */
+    }
+  }
+
+  /* Landscape phones: compact navbar */
+  @media (orientation: landscape) and (max-height: 500px) {
+    :root {
+      --navbar-height: 3rem; /* 48px */
+    }
   }
 
   .dark {
@@ -120,7 +139,31 @@
   }
 }
 
+/* Hide announcement bar on landscape phones to save vertical space */
+@media (orientation: landscape) and (max-height: 500px) {
+  [data-announcement-bar] {
+    display: none !important;
+  }
+}
+
 @layer utilities {
+  /* Safe area inset utilities */
+  .safe-top {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+
+  .safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  .safe-left {
+    padding-left: env(safe-area-inset-left, 0px);
+  }
+
+  .safe-right {
+    padding-right: env(safe-area-inset-right, 0px);
+  }
+
   /* Line clamp utilities for text truncation */
   .line-clamp-1 {
     overflow: hidden;
@@ -1158,13 +1201,12 @@
 [data-novu-popover],
 [data-radix-popper-content-wrapper] {
   z-index: 10000 !important;
-  overflow: visible !important;
 }
 
-/* Ensure Novu popover content doesn't clip internal menus */
-[class*="nv-popoverContent"],
-[class*="nv-notificationList"] {
-  overflow: visible !important;
+/* Let popover stretch to fit content, scroll only if needed */
+[class*="nv-popoverContent"] {
+  max-height: calc(100vh - 6rem) !important;
+  overflow-y: auto !important;
 }
 
 /* Fix Novu dropdown menu positioning */

@@ -51,6 +51,27 @@ export interface ValidationResult {
 }
 
 /**
+ * Result of slot conflict checking — shared across all 4 event validate API routes,
+ * the allocationService utility, and the RequestedSlotsDialog component.
+ *
+ * Routes with extra fields (subscription, class, dialog) extend this base.
+ */
+export interface SlotConflictResult {
+  conflicts: Array<{
+    slot: string;
+    existingAppointment: {
+      type: string;
+      with: string;
+      time: string;
+    };
+  }>;
+  outsideAvailability: Array<{
+    slot: string;
+  }>;
+  validSlots: string[];
+}
+
+/**
  * Result of allocation operation
  */
 export interface AllocationResult {

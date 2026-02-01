@@ -20,6 +20,7 @@ import {
   useCurrency,
   SUPPORTED_CURRENCIES,
 } from "@/lib/hooks/useCurrency";
+import { useAnnouncementBar } from "@/providers/AnnouncementBarProvider";
 import familiariseLogoTransparent from "@/public/avif/static/assets/logos/images/logos/Familiarise-logos_transparent.avif";
 import familiariseLogoWhite from "@/public/avif/static/assets/logos/images/logos/Familiarise-logos_white.avif";
 
@@ -31,11 +32,10 @@ const Navbar = () => {
   const { data: session } = useSession();
   const [isOpen, setIsOpen] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
-  const [isAnnouncementVisible, setIsAnnouncementVisible] = useState(true);
   const { currency, symbol, setCurrency } = useCurrency();
+  const { isVisible: isAnnouncementVisible } = useAnnouncementBar();
 
   // Check if we're on a page with dark hero (for transparent navbar)
-  const isHomePage = pathname === "/";
   const darkHeroPages = [
     "/",
     "/explore/experts",
@@ -43,28 +43,6 @@ const Navbar = () => {
     "/explore/community",
   ];
   const hasDarkHero = darkHeroPages.includes(pathname);
-
-  useEffect(() => {
-    const checkAnnouncementState = () => {
-      const isClosed = localStorage.getItem("announcementBarClosed") === "true";
-      setIsAnnouncementVisible(!isClosed);
-    };
-
-    checkAnnouncementState();
-
-    // Listen for storage changes (cross-tab)
-    window.addEventListener("storage", checkAnnouncementState);
-    // Listen for custom event (same-window)
-    window.addEventListener("announcementBarClosed", checkAnnouncementState);
-
-    return () => {
-      window.removeEventListener("storage", checkAnnouncementState);
-      window.removeEventListener(
-        "announcementBarClosed",
-        checkAnnouncementState,
-      );
-    };
-  }, []);
 
   const toggleMenu = () => setIsOpen(!isOpen);
   const closeMenu = () => setIsOpen(false);
@@ -119,15 +97,21 @@ const Navbar = () => {
       {/* Main Navbar */}
       <nav
         className={`fixed w-full z-[1000] transition-all duration-300 ${
-          isAnnouncementVisible ? "top-[42px]" : "top-0"
-        } ${
           showDarkStyle
             ? "bg-transparent"
             : "bg-white/90 backdrop-blur-xl border-b border-zinc-200 shadow-sm"
         }`}
+        style={{
+          top: isAnnouncementVisible
+            ? "var(--announcement-bar-height, 0px)"
+            : "0px",
+        }}
       >
         <div className="container mx-auto px-4 md:px-6">
-          <div className="flex justify-between items-center h-16 md:h-20">
+          <div
+            className="flex justify-between items-center"
+            style={{ height: "var(--navbar-height)" }}
+          >
             {/* Logo */}
             <Link href="/" className="flex-shrink-0">
               <div className="relative h-10 md:h-12 w-32 md:w-40">
@@ -283,7 +267,7 @@ const Navbar = () => {
               animate={{ x: 0 }}
               exit={{ x: "-100%" }}
               transition={{ type: "spring", damping: 25, stiffness: 200 }}
-              className="lg:hidden fixed top-0 left-0 h-full w-[85%] max-w-sm bg-zinc-950 z-[1002] shadow-2xl"
+              className="lg:hidden fixed top-0 left-0 h-full w-[85%] max-w-sm bg-zinc-950 z-[1002] shadow-2xl safe-top safe-bottom safe-left"
             >
               {/* Drawer Header */}
               <div className="flex justify-between items-center p-5 border-b border-zinc-800">
@@ -305,7 +289,7 @@ const Navbar = () => {
               </div>
 
               {/* Navigation Links */}
-              <div className="flex flex-col p-5 space-y-1">
+              <div className="flex flex-col p-5 space-y-1 overflow-y-auto" style={{ maxHeight: "calc(100% - 10rem)" }}>
                 {session?.user && (
                   <Link
                     href="/dashboard"
@@ -351,7 +335,7 @@ const Navbar = () => {
               </div>
 
               {/* User Section */}
-              <div className="absolute bottom-0 left-0 right-0 p-5 border-t border-zinc-800 bg-zinc-900">
+              <div className="absolute bottom-0 left-0 right-0 p-5 border-t border-zinc-800 bg-zinc-900 safe-bottom">
                 {session?.user ? (
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
@@ -382,9 +366,8 @@ const Navbar = () => {
                       Sign in
                     </Button>
                     <Button
-                      variant="outline"
                       onClick={() => handleNavigation("/auth/signup")}
-                      className="w-full border-zinc-700 text-white hover:bg-zinc-800"
+                      className="w-full bg-transparent border border-zinc-700 text-white hover:bg-zinc-800"
                     >
                       Sign up
                     </Button>

@@ -20,21 +20,11 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { format } from "date-fns";
 import { Badge } from "@/components/ui/badge";
+import type { WaitlistParticipant } from "@/types/participants";
 
 interface WebinarParticipantsData {
   webinarEvent: WebinarEvent;
-  waitlist: Array<{
-    id: string;
-    user: {
-      id: string;
-      name: string | null;
-      email: string | null;
-      image: string | null;
-    };
-    joinedAt: string;
-    status: string;
-    position: number | null;
-  }>;
+  waitlist: WaitlistParticipant[];
 }
 
 // Fetcher function for webinar participants

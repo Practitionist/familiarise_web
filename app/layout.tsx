@@ -4,9 +4,10 @@ import Footer from "@/components/Footer";
 import HeaderSpacer from "@/components/HeaderSpacer";
 import Navbar from "@/components/Navbar";
 import { Toaster } from "@/components/ui/toaster";
+import { AnnouncementBarProvider } from "@/providers/AnnouncementBarProvider";
 import NextAuthProvider from "@/providers/NextAuthSessionProvider";
 import ReactQueryProvider from "@/providers/ReactQueryProvider";
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { getServerSession } from "next-auth";
 import { Sora } from "next/font/google";
 import authOptions from "./api/auth/[...nextauth]/options";
@@ -19,6 +20,12 @@ const sora = Sora({
   variable: "--font-sora",
   display: "swap",
 });
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+};
 
 export const metadata: Metadata = {
   title: "Familiarise | Expert Consultations & Career Mentorship",
@@ -48,12 +55,14 @@ export default async function RootLayout({
       >
         <ReactQueryProvider>
           <NextAuthProvider session={session}>
-            <Toaster />
-            <AnnouncementBar />
-            <Navbar />
-            <HeaderSpacer />
-            <div className="flex-1 w-full">{children}</div>
-            <Footer />
+            <AnnouncementBarProvider>
+              <Toaster />
+              <AnnouncementBar />
+              <Navbar />
+              <HeaderSpacer />
+              <div className="flex-1 w-full">{children}</div>
+              <Footer />
+            </AnnouncementBarProvider>
             <CookieConsentBanner />
           </NextAuthProvider>
         </ReactQueryProvider>

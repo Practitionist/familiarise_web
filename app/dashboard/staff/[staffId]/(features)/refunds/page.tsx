@@ -32,29 +32,7 @@ import {
   Ban,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-
-interface Refund {
-  id: string;
-  refundId: string;
-  amount: number;
-  currency: string;
-  status: string;
-  reason: string | null;
-  paymentGateway: string;
-  createdAt: string;
-  payment: {
-    id: string;
-    paymentIntent: string;
-  } | null;
-}
-
-interface RefundListResponse {
-  refunds: Refund[];
-  total: number;
-  page: number;
-  limit: number;
-  totalPages: number;
-}
+import type { Refund, RefundListResponse } from "@/types/payments";
 
 const getStatusColor = (status: string) => {
   switch (status.toUpperCase()) {

@@ -1,24 +1,10 @@
 import { TimeSlot } from "./calendarUtils";
+import type { SlotConflictResult } from "@/utils/slotAllocation/types";
 
 export interface AllocationRequest {
   isAuto: boolean;
   slots?: string[];
   useRequestedSlots?: boolean;
-}
-
-export interface ValidationResult {
-  conflicts: Array<{
-    slot: string;
-    existingAppointment: {
-      type: string;
-      with: string;
-      time: string;
-    };
-  }>;
-  outsideAvailability: Array<{
-    slot: string;
-  }>;
-  validSlots: string[];
 }
 
 export interface AllocationResponse {
@@ -29,7 +15,7 @@ export interface AllocationResponse {
 
 export interface ValidationResponse {
   success: boolean;
-  data?: ValidationResult;
+  data?: SlotConflictResult;
   error?: string;
 }
 

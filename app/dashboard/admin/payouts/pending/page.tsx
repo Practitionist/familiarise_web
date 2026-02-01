@@ -18,18 +18,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Check, X, Loader2 } from "lucide-react";
 
-interface Payout {
-  id: string;
-  consultantName: string;
-  consultantEmail: string;
-  amount: number;
-  currency: string;
-  method: string;
-  provider: string;
-  earningsCount: number;
-  batchId: string;
-  createdAt: string;
-}
+import type { Payout } from "@/types/payouts";
 
 async function fetchPendingPayouts() {
   const response = await fetch("/api/admin/payouts?status=PENDING&limit=100");
