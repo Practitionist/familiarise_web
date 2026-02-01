@@ -20,21 +20,7 @@ import {
   XCircle,
 } from "lucide-react";
 
-interface Payout {
-  id: string;
-  consultantName: string;
-  consultantEmail: string;
-  amount: number;
-  currency: string;
-  status: string;
-  method: string;
-  provider: string;
-  earningsCount: number;
-  approvedAt?: string;
-  processedAt?: string;
-  failureReason?: string;
-  createdAt: string;
-}
+import type { Payout } from "@/types/payouts";
 
 async function fetchPayouts(status?: string, page = 1, limit = 20) {
   const offset = (page - 1) * limit;

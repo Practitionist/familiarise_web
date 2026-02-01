@@ -20,22 +20,7 @@ import {
   XCircle,
   Search,
 } from "lucide-react";
-
-interface Subscription {
-  id: string;
-  paymentId: string;
-  amount: number;
-  currency: string;
-  gateway: string;
-  userName: string;
-  userEmail: string;
-  consultantName?: string;
-  startDate?: string;
-  endDate?: string;
-  appointmentStatus?: string;
-  status: "active" | "expiring_soon" | "expired";
-  createdAt: string;
-}
+import type { SubscriptionListItem } from "@/types/subscriptions";
 
 async function fetchSubscriptions(
   page: number,
@@ -272,7 +257,7 @@ export default function AdminSubscriptionsPage() {
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
-                    {data.subscriptions.map((sub: Subscription) => (
+                    {data.subscriptions.map((sub: SubscriptionListItem) => (
                       <tr key={sub.id} className="hover:bg-gray-50">
                         <td className="px-4 py-3">
                           <div>

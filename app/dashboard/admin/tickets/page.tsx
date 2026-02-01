@@ -56,51 +56,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
-
-interface TicketUser {
-  id: string;
-  name: string | null;
-  email: string | null;
-  image: string | null;
-}
-
-interface TicketResponse {
-  id: string;
-  message: string;
-  isInternal: boolean;
-  createdAt: string;
-  user: {
-    name: string | null;
-    role: string | null;
-  } | null;
-}
-
-interface Ticket {
-  id: string;
-  title: string;
-  description: string;
-  priority: string;
-  status: string;
-  category: string | null;
-  issueType: string | null;
-  user: TicketUser;
-  responses: TicketResponse[];
-  createdAt: string;
-  updatedAt: string;
-  linkedConsultation?: any;
-  linkedSubscription?: any;
-  linkedPayment?: any;
-  linkedRefund?: any;
-}
-
-interface TicketCounts {
-  total: number;
-  open: number;
-  inProgress: number;
-  onHold: number;
-  resolved: number;
-  closed: number;
-}
+import type { Ticket, TicketCounts } from "@/types/tickets";
 
 const getStatusColor = (status: string) => {
   switch (status.toUpperCase()) {
@@ -506,10 +462,10 @@ export default function AdminSupportTicketsPage() {
                         <span className="font-medium truncate max-w-[200px]">
                           {ticket.title}
                         </span>
-                        {ticket.responses?.length > 0 && (
+                        {(ticket.responses?.length ?? 0) > 0 && (
                           <Badge variant="secondary" className="text-xs">
                             <MessageSquare className="h-3 w-3 mr-1" />
-                            {ticket.responses.length}
+                            {ticket.responses!.length}
                           </Badge>
                         )}
                       </div>

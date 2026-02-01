@@ -20,28 +20,7 @@ import {
   CheckCircle,
   AlertTriangle,
 } from "lucide-react";
-
-interface EarningsStats {
-  pending: { count: number; consultantShare: number; platformFee: number };
-  ready: { count: number; consultantShare: number; platformFee: number };
-  paid: { count: number; consultantShare: number; platformFee: number };
-  held: { count: number; consultantShare: number; platformFee: number };
-  refunded: { count: number; consultantShare: number; platformFee: number };
-  totalPlatformRevenue: number;
-}
-
-interface Earning {
-  id: string;
-  consultantProfile: {
-    user: { name: string; email: string };
-  };
-  grossAmount: number;
-  platformFee: number;
-  consultantShare: number;
-  status: string;
-  holdUntil: string;
-  createdAt: string;
-}
+import type { EarningsStats, Earning } from "@/types/payments";
 
 async function fetchEarningsStats() {
   const response = await fetch("/api/admin/earnings/stats");

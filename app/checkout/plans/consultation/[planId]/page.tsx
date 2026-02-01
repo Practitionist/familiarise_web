@@ -13,6 +13,7 @@ import {
   consultationSearchParamsSchema,
   createCheckoutData,
 } from "@/schemas/checkout";
+import type { AppliedDiscount } from "@/types/checkout";
 import {
   ConsultantProfile,
   ConsultantReview,
@@ -42,8 +43,6 @@ type ConsultationResponse = {
   data: ConsultationPlanWithConsultant;
 };
 
-// Using the shared consultation schema from utils/payments.ts
-
 type PageProps = {
   params: Promise<{ planId: string }>;
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
@@ -68,12 +67,7 @@ export default function ConsultationCheckoutPage({
     null,
   );
   const [discountCodeInput, setDiscountCodeInput] = useState("");
-  const [appliedDiscount, setAppliedDiscount] = useState<{
-    code: string;
-    discountType: "PERCENTAGE" | "FIXED_AMOUNT";
-    discountValue: number;
-    discountAmount?: number;
-  } | null>(null);
+  const [appliedDiscount, setAppliedDiscount] = useState<AppliedDiscount | null>(null);
   const [isApplyingDiscount, setIsApplyingDiscount] = useState(false);
   const [discountError, setDiscountError] = useState<string | null>(null);
 

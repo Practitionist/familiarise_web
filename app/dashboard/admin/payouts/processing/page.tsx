@@ -5,20 +5,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useQuery } from "@tanstack/react-query";
 import { Loader } from "lucide-react";
 
-interface Payout {
-  id: string;
-  consultantName: string;
-  consultantEmail: string;
-  amount: number;
-  currency: string;
-  method: string;
-  provider: string;
-  providerPayoutId?: string;
-  earningsCount: number;
-  approvedAt: string;
-  approvedBy: string;
-  createdAt: string;
-}
+import type { Payout } from "@/types/payouts";
 
 async function fetchProcessingPayouts() {
   const response = await fetch(

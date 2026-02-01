@@ -19,6 +19,7 @@ import { ClientWebinarRegistration } from "./ClientWebinarRegistration";
 import { generateProgramImageUrl } from "../../../../utils";
 import { useCurrency } from "@/lib/hooks/useCurrency";
 import type { Prisma, Topic } from "@prisma/client";
+import { FeatureItem } from "@/app/explore/programs/plans/components/FeatureItem";
 
 export type WebinarPlanData = Prisma.WebinarPlanGetPayload<{
   include: {
@@ -46,23 +47,6 @@ export type WebinarPlanData = Prisma.WebinarPlanGetPayload<{
   };
 }>;
 
-type FeatureItemProps = {
-  icon: React.ReactNode;
-  label: string;
-  value: string | number | React.ReactNode;
-};
-
-const FeatureItem = ({ icon, label, value }: FeatureItemProps) => (
-  <div className="flex items-center gap-3 p-4 bg-zinc-50 rounded-xl">
-    <div className="w-10 h-10 rounded-lg bg-white border border-zinc-200 flex items-center justify-center text-zinc-600">
-      {icon}
-    </div>
-    <div>
-      <p className="text-xs text-zinc-500 uppercase tracking-wide">{label}</p>
-      <p className="text-sm font-semibold text-zinc-900">{value}</p>
-    </div>
-  </div>
-);
 
 type SessionStatus =
   | "Upcoming"

@@ -15,26 +15,14 @@ import {
 } from "@/components/ui/table";
 import { useParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-
-interface User {
-  id: string;
-  name?: string;
-  email?: string;
-}
-
-interface SubscriptionPlan {
-  id: string;
-  title: string;
-}
-
-interface Subscription {
-  id: string;
-  subscriptionPlan: SubscriptionPlan;
-}
+import type { ParticipantUser } from "@/types/participants";
 
 interface SubscriptionParticipantsData {
-  subscription: Subscription;
-  participants: User[];
+  subscription: {
+    id: string;
+    subscriptionPlan: { id: string; title: string };
+  };
+  participants: ParticipantUser[];
 }
 
 // Fetcher function for subscription participants

@@ -27,14 +27,9 @@
         "STRIPE_SECRET_KEY": "<STRIPE_SECRET_KEY>"
       }
     },
-    "serena": {
-      "command": "/home/kaustav/.local/bin/uvx",
-      "args": [
-        "--from",
-        "git+https://github.com/oraios/serena",
-        "serena",
-        "start-mcp-server"
-      ]
+     "serena": {
+      "command": "uvx",
+      "args": ["--from", "git+https://github.com/oraios/serena", "serena-mcp-server"]
     },
     "directus": {
       "command": "npx",
