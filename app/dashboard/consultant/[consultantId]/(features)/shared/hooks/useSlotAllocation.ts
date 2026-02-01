@@ -634,7 +634,7 @@ function validateEventSlots(
         result.isValid = false;
         result.errors.push(
           subscriptionValidation.weeklyCallsError ||
-            "Weekly call limit exceeded",
+          "Weekly call limit exceeded",
         );
       }
 
@@ -1659,7 +1659,7 @@ export function useEventSlotAllocation(
               // Calculate weeks passed since subscription started
               const weeksPassed = Math.floor(
                 (currentDate.getTime() - subscriptionStartDate.getTime()) /
-                  (7 * 24 * 60 * 60 * 1000),
+                (7 * 24 * 60 * 60 * 1000),
               );
               pastCallsCompleted = Math.min(
                 weeksPassed * callsPerWeek,
@@ -1669,44 +1669,34 @@ export function useEventSlotAllocation(
 
             // FIXED: Simple validation: count confirmed calls + past completed calls
             // But don't count the call we're about to complete if it's completing an existing incomplete call
-            const totalConfirmedCalls = Array.from(weeklyConfirmedCallCounts.values()).reduce((sum, count) => sum + count, 0);
+            // FIXED: Validating total calls using simplified usage logic
+            // Calculate usage from newSelection directly to avoid double counting
+            const newSelectionByDay = groupSlotsByDay(newSelection);
+            let currentUsage = 0;
 
-            // Check if this slot would complete an existing incomplete call
-            const effectiveCallsSlotDay = slot.startTime.toDateString();
-            const existingDaySlots = currentSlots.filter(
-              (selectedSlot) =>
-                selectedSlot.startTime.toDateString() === effectiveCallsSlotDay,
-            );
+            newSelectionByDay.forEach((daySlots) => {
+              // Subscriptions max 1 call per day logic:
+              // Any slots on a day (complete or partial) count as 1 usage
+              if (daySlots.length > 0) {
+                currentUsage++;
+              }
+            });
 
-            let effectiveConfirmedCalls = totalConfirmedCalls;
-
-            // If this would complete an existing incomplete call, don't count it twice
-            if (
-              existingDaySlots.length > 0 &&
-              existingDaySlots.length < slotsPerCall
-            ) {
-              // This is completing an existing incomplete call
-              // Don't add 1 to the count since we're just completing what's already started
-              effectiveConfirmedCalls = totalConfirmedCalls;
-            } else if (existingDaySlots.length === 0) {
-              // This is starting a new call
-              // Add 1 to the count since we're creating a new call
-              effectiveConfirmedCalls = totalConfirmedCalls + 1;
-            }
-
-            const totalCallsIncludingPast =
-              effectiveConfirmedCalls + pastCallsCompleted;
+            // For Total calls limit, we count "usage" (days with at least 1 slot)
+            const totalCallsIncludingPast = currentUsage + pastCallsCompleted;
 
             if (totalCallsIncludingPast > maxTotalCalls) {
               setTimeout(() => {
                 setPendingToast({
                   variant: "destructive",
                   title: "Call Limit Reached",
-                  description: `Maximum ${maxTotalCalls} calls allowed for this subscription (${pastCallsCompleted} past calls + ${effectiveConfirmedCalls} confirmed = ${totalCallsIncludingPast} total)`,
+                  description: `Maximum ${maxTotalCalls} calls allowed for this subscription (${pastCallsCompleted} past calls + ${currentUsage} scheduled = ${totalCallsIncludingPast} total)`,
                 });
               }, 0);
               return currentSlots;
             }
+
+            const effectiveCallsSlotDay = slot.startTime.toDateString();
 
             // Check daily call limit BEFORE adding the new slot
             // effectiveCallsSlotDay already declared above
