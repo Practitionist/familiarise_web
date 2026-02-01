@@ -4,6 +4,7 @@ import { getServerSession } from "next-auth";
 import authOptions from "@/app/api/auth/[...nextauth]/options";
 import { SubscriptionPlanSchema } from "@/schemas/plans";
 import { findOrCreateTopics, transformTopicsToStrings } from "@/lib/topics";
+import { SlotCalculationService } from "@/utils/slotAllocation/SlotCalculationService";
 
 export async function GET(request: NextRequest) {
   try {
@@ -110,8 +111,14 @@ export async function POST(request: NextRequest) {
 
     // Compute derived metrics
     const sessionDurationInHours = planData.sessionDurationInHours || 1.0;
+    // Use accurate week counting instead of fixed * 4 approximation
+    const metricStartDate = new Date();
+    metricStartDate.setHours(0, 0, 0, 0);
+    const metricEndDate = new Date(metricStartDate);
+    metricEndDate.setMonth(metricEndDate.getMonth() + validatedData.durationInMonths);
+    const estimatedWeeks = SlotCalculationService.countWeeks(metricStartDate, metricEndDate);
     const totalSessions =
-      (validatedData.callsPerWeek || 1) * validatedData.durationInMonths * 4;
+      (validatedData.callsPerWeek || 1) * estimatedWeeks;
     const totalHours = totalSessions * sessionDurationInHours;
 
     // Handle free trial fields
