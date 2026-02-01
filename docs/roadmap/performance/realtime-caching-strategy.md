@@ -161,7 +161,7 @@ sequenceDiagram
       → User sees: "New request" toast + fresh data
 ```
 
-> **See also**: [Dashboard Prefetching](./dashboard-prefetching.md) for detailed prefetch implementation patterns.
+> **See also**: [Dashboard Prefetching](../../performance/dashboard-prefetching.md) for detailed prefetch implementation patterns.
 
 ---
 
@@ -780,5 +780,5 @@ Static content:    300s
 
 ## Related Documentation
 
-- [Dashboard Prefetching](./dashboard-prefetching.md) - Route-based prefetching strategies
-- [Payment Status Flows](../payments/checkout-flow/06-status-flows.md) - Payment lifecycle documentation
+- [Dashboard Prefetching](../../performance/dashboard-prefetching.md) - Route-based prefetching strategies
+- [Payment Status Flows](../../payments/checkout-flow/06-status-flows.md) - Payment lifecycle documentation
