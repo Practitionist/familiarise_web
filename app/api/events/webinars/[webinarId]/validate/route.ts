@@ -17,21 +17,7 @@ import {
   eventIdSchema,
 } from "@/schemas/slotAllocation/validationSchemas";
 import { ZodError } from "zod";
-
-interface ValidationResult {
-  conflicts: {
-    slot: string;
-    existingAppointment: {
-      type: string;
-      with: string;
-      time: string;
-    };
-  }[];
-  outsideAvailability: {
-    slot: string;
-  }[];
-  validSlots: string[];
-}
+import type { SlotConflictResult } from "@/utils/slotAllocation/types";
 
 const webinarInclude = {
   webinarPlan: {
@@ -121,7 +107,7 @@ export async function POST(
       }
 
       // Parse errors to extract conflicts and availability issues
-      const result: ValidationResult = {
+      const result: SlotConflictResult = {
         conflicts: [],
         outsideAvailability: [],
         validSlots: [],

@@ -17,20 +17,9 @@ import {
   eventIdSchema,
 } from "@/schemas/slotAllocation/validationSchemas";
 import { ZodError } from "zod";
+import type { SlotConflictResult } from "@/utils/slotAllocation/types";
 
-interface ValidationResult {
-  conflicts: {
-    slot: string;
-    existingAppointment: {
-      type: string;
-      with: string;
-      time: string;
-    };
-  }[];
-  outsideAvailability: {
-    slot: string;
-  }[];
-  validSlots: string[];
+interface ValidationResult extends SlotConflictResult {
   weeklyDistributionErrors: {
     week: string;
     slotsCount: number;
