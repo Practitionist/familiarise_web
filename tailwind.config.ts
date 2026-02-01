@@ -30,6 +30,11 @@ const config: Config = {
         lg: "1024px",
         xl: "1280px",
         "2xl": "1400px",
+        landscape: { raw: "(orientation: landscape)" },
+        portrait: { raw: "(orientation: portrait)" },
+        "landscape-compact": {
+          raw: "(orientation: landscape) and (max-height: 500px)",
+        },
       },
       borderRadius: {
         lg: "var(--radius)",

@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { X, ExternalLink } from "lucide-react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
+import { useAnnouncementBar } from "@/providers/AnnouncementBarProvider";
 
 interface Announcement {
   id: string;
@@ -30,6 +31,8 @@ async function fetchAnnouncements(): Promise<Announcement[]> {
 const AnnouncementBar = () => {
   const [closedIds, setClosedIds] = useState<Set<string>>(new Set());
   const [mounted, setMounted] = useState(false);
+  const barRef = useRef<HTMLDivElement>(null);
+  const { setVisible, setHeight } = useAnnouncementBar();
 
   const { data: announcements = [] } = useQuery({
     queryKey: ["announcements"],
@@ -52,26 +55,54 @@ const AnnouncementBar = () => {
     setMounted(true);
   }, []);
 
-  const handleClose = useCallback((id: string) => {
-    localStorage.setItem(`${STORAGE_KEY_PREFIX}${id}`, "true");
-    setClosedIds((prev) => {
-      const newSet = new Set(prev);
-      newSet.add(id);
-      return newSet;
-    });
-    window.dispatchEvent(new CustomEvent("announcementBarClosed"));
-  }, []);
-
-  // Don't render until mounted (prevents hydration mismatch)
-  if (!mounted) return null;
-
   // Filter out closed announcements
   const visibleAnnouncements = announcements.filter(
     (a) => !closedIds.has(a.id),
   );
-
-  // Show the first visible announcement
   const announcement = visibleAnnouncements[0];
+
+  // Update context visibility when announcement changes
+  useEffect(() => {
+    if (!mounted) return;
+    setVisible(!!announcement);
+  }, [announcement, mounted, setVisible]);
+
+  // Measure actual height with ResizeObserver
+  useEffect(() => {
+    if (!barRef.current || !announcement) return;
+
+    const observer = new ResizeObserver(([entry]) => {
+      const h =
+        entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height;
+      setHeight(h);
+    });
+
+    observer.observe(barRef.current);
+    return () => observer.disconnect();
+  }, [setHeight, announcement]);
+
+  // Clean up CSS var when unmounting without an announcement
+  useEffect(() => {
+    if (mounted && !announcement) {
+      setHeight(0);
+    }
+  }, [mounted, announcement, setHeight]);
+
+  const handleClose = useCallback(
+    (id: string) => {
+      localStorage.setItem(`${STORAGE_KEY_PREFIX}${id}`, "true");
+      setClosedIds((prev) => {
+        const newSet = new Set(prev);
+        newSet.add(id);
+        return newSet;
+      });
+      setVisible(false);
+    },
+    [setVisible],
+  );
+
+  // Don't render until mounted (prevents hydration mismatch)
+  if (!mounted) return null;
 
   if (!announcement) return null;
 
@@ -80,10 +111,12 @@ const AnnouncementBar = () => {
 
   return (
     <div
-      className="w-full text-center py-2.5 fixed top-0 z-[1001] flex items-center justify-center gap-4 px-4"
+      ref={barRef}
+      data-announcement-bar
+      className="w-full text-center py-2.5 pt-[max(0.625rem,env(safe-area-inset-top))] fixed top-0 z-[1001] flex items-center justify-center gap-4 px-4"
       style={{ backgroundColor, color: textColor }}
     >
-      <span className="flex-1 text-center">
+      <span className="flex-1 text-center text-sm">
         {announcement.content}
         {announcement.linkUrl && (
           <Link
