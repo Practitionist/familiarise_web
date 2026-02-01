@@ -467,6 +467,108 @@ export function UnifiedCalendar({
     return [...Array(7)].map((_, i) => addDays(startDate, i));
   }, [currentDate]);
 
+  /**
+   * Builds an auto-expanded group of consecutive slots starting from a clicked slot.
+   * Strategy: forward → backward → mixed → fallback to single slot.
+   */
+  const buildAutoExpandGroup = useCallback(
+    (clickedSlot: TimeSlot, clickedDate: Date): TimeSlot[] => {
+      const targetSize = slotLimits.slotsPerSession;
+
+      // No expansion needed for single-slot sessions
+      if (!targetSize || targetSize <= 1) return [clickedSlot];
+
+      const clickedLocalStart = new Date(clickedSlot.startTime);
+      const clickedDayString = clickedDate.toDateString();
+
+      // Check if a candidate slot at a given offset is eligible for auto-expansion
+      const getEligibleSlot = (
+        offsetSteps: number,
+      ): TimeSlot | null => {
+        const offsetMs = offsetSteps * 30 * 60 * 1000;
+        const targetTime = new Date(clickedLocalStart.getTime() + offsetMs);
+
+        // Same-day constraint
+        if (targetTime.toDateString() !== clickedLocalStart.toDateString())
+          return null;
+
+        const interval = {
+          hour: targetTime.getHours(),
+          minute: targetTime.getMinutes(),
+        };
+        const status = getSlotStatusForInterval(interval, clickedDate);
+
+        // Must be available, not booked, not in past
+        if (
+          !status.isAvailable ||
+          status.isBookedForDisplay ||
+          status.isInPast
+        )
+          return null;
+
+        // Must not be already selected
+        const candidateStartMs = new Date(
+          status.intervalStartUTCString,
+        ).getTime();
+        if (selectedSlots.some((s) => s.startTime.getTime() === candidateStartMs))
+          return null;
+
+        // Must be within allowed range
+        if (allowedStart || allowedEnd) {
+          const intervalStart = new Date(status.intervalStartUTCString);
+          if (allowedStart && intervalStart < allowedStart) return null;
+          if (allowedEnd && intervalStart >= allowedEnd) return null;
+        }
+
+        return {
+          startTime: new Date(status.intervalStartUTCString),
+          endTime: new Date(status.intervalEndUTCString),
+          isAvailable: status.isAvailable,
+          isBooked: status.isBooked,
+        };
+      };
+
+      // Try forward expansion: clicked + N-1 forward slots
+      const forwardGroup: TimeSlot[] = [clickedSlot];
+      for (let step = 1; step < targetSize; step++) {
+        const eligible = getEligibleSlot(step);
+        if (!eligible) break;
+        forwardGroup.push(eligible);
+      }
+      if (forwardGroup.length === targetSize) return forwardGroup;
+
+      // Try backward expansion: N-1 backward slots + clicked
+      const backwardGroup: TimeSlot[] = [clickedSlot];
+      for (let step = 1; step < targetSize; step++) {
+        const eligible = getEligibleSlot(-step);
+        if (!eligible) break;
+        backwardGroup.unshift(eligible);
+      }
+      if (backwardGroup.length === targetSize) return backwardGroup;
+
+      // Try mixed: use forward slots + fill remaining from backward
+      if (forwardGroup.length > 1 || backwardGroup.length > 1) {
+        const mixedGroup: TimeSlot[] = [...forwardGroup];
+        for (let step = 1; mixedGroup.length < targetSize; step++) {
+          const eligible = getEligibleSlot(-step);
+          if (!eligible) break;
+          mixedGroup.unshift(eligible);
+        }
+        if (mixedGroup.length === targetSize) return mixedGroup;
+      }
+
+      // Fallback: single slot (degrades to manual selection)
+      return [clickedSlot];
+    },
+    [
+      slotLimits.slotsPerSession,
+      getSlotStatusForInterval,
+      selectedSlots,
+      allowedStart,
+      allowedEnd,
+    ],
+  );
+
   // Handle slot click
   const handleSlotClick = useCallback(
     (interval: { hour: number; minute: number }, date: Date) => {
@@ -580,13 +682,25 @@ export function UnifiedCalendar({
       }
 
       if (mode === "select" || mode === "allocate") {
-        toggleSlot(slot);
+        const isCurrentlySelected = selectedSlots.some(
+          (s) => s.startTime.getTime() === slot.startTime.getTime(),
+        );
+
+        if (isCurrentlySelected) {
+          // Deselect: hook's REMOVE path handles consecutive group detection
+          toggleSlot(slot);
+        } else {
+          // Add: build auto-expanded consecutive group
+          const expandedGroup = buildAutoExpandGroup(slot, date);
+          toggleSlot(slot, expandedGroup);
+        }
       }
     },
     [
       mode,
       getSlotStatusForInterval,
       toggleSlot,
+      buildAutoExpandGroup,
       // Dependencies used inside the callback
       eventType,
       eventId,

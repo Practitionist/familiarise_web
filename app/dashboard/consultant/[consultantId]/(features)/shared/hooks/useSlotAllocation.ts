@@ -269,8 +269,8 @@ export interface UseEventSlotAllocationReturn {
   // SLOT MANAGEMENT FUNCTIONS
   // ==========================================
 
-  /** Toggle slot selection with event-specific validation */
-  toggleSlot: (slot: TimeSlot) => void;
+  /** Toggle slot selection with event-specific validation. Pass autoExpandedGroup to add/remove multiple consecutive slots at once. */
+  toggleSlot: (slot: TimeSlot, autoExpandedGroup?: TimeSlot[]) => void;
 
   /** Clear all selected slots */
   clearSlots: () => void;
@@ -999,6 +999,50 @@ function isCompleteCall(daySlots: TimeSlot[], slotsPerCall: number): boolean {
   return true;
 }
 
+/**
+ * Finds the maximal consecutive group of slots that contains the given slot,
+ * within a sorted array of same-day slots.
+ * Used for group deselection: clicking any slot in a session deselects the entire session.
+ */
+function findConsecutiveGroupContaining(
+  targetSlot: TimeSlot,
+  sortedDaySlots: TimeSlot[],
+): TimeSlot[] {
+  if (sortedDaySlots.length === 0) return [targetSlot];
+
+  const targetIndex = sortedDaySlots.findIndex(
+    (s) => s.startTime.getTime() === targetSlot.startTime.getTime(),
+  );
+
+  if (targetIndex === -1) return [targetSlot];
+
+  // Expand backward from target
+  let startIdx = targetIndex;
+  while (startIdx > 0) {
+    const prev = sortedDaySlots[startIdx - 1];
+    const curr = sortedDaySlots[startIdx];
+    if (prev.endTime.getTime() === curr.startTime.getTime()) {
+      startIdx--;
+    } else {
+      break;
+    }
+  }
+
+  // Expand forward from target
+  let endIdx = targetIndex;
+  while (endIdx < sortedDaySlots.length - 1) {
+    const curr = sortedDaySlots[endIdx];
+    const next = sortedDaySlots[endIdx + 1];
+    if (curr.endTime.getTime() === next.startTime.getTime()) {
+      endIdx++;
+    } else {
+      break;
+    }
+  }
+
+  return sortedDaySlots.slice(startIdx, endIdx + 1);
+}
+
 function validateSubscriptionSlots(
   slots: TimeSlot[],
   options: UseEventSlotAllocationOptions,
@@ -1279,7 +1323,7 @@ export function useEventSlotAllocation(
    * Toggle slot selection with event-specific validation
    */
   const toggleSlot = useCallback(
-    (slot: TimeSlot) => {
+    (slot: TimeSlot, autoExpandedGroup?: TimeSlot[]) => {
       setSelectedSlots((current) => {
         // Safety check to ensure current is always an array
         const currentSlots = current || [];
@@ -1289,13 +1333,28 @@ export function useEventSlotAllocation(
         );
 
         if (isSelected) {
-          // Remove slot
+          // Remove the entire consecutive group containing this slot
+          const dayKey = slot.startTime.toDateString();
+          const daySlots = currentSlots
+            .filter((s) => s.startTime.toDateString() === dayKey)
+            .sort(
+              (a, b) => a.startTime.getTime() - b.startTime.getTime(),
+            );
+
+          const group = findConsecutiveGroupContaining(slot, daySlots);
+          const removeTimestamps = new Set(
+            group.map((s) => s.startTime.getTime()),
+          );
           return currentSlots.filter(
-            (s) => s.startTime.getTime() !== slot.startTime.getTime(),
+            (s) => !removeTimestamps.has(s.startTime.getTime()),
           );
         } else {
-          // Add slot with event-specific limits
-          const newSelection = [...currentSlots, slot];
+          // Add slot(s) with event-specific limits
+          const slotsToAdd =
+            autoExpandedGroup && autoExpandedGroup.length > 0
+              ? autoExpandedGroup
+              : [slot];
+          const newSelection = [...currentSlots, ...slotsToAdd];
 
           // FIXED: Enhanced subscription validation - check weekly limits and complete calls only
           if (eventType === "subscription") {
