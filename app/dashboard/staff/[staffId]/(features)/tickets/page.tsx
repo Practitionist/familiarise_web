@@ -58,121 +58,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
-
-// Types
-interface TicketUser {
-  id: string;
-  name: string | null;
-  email: string | null;
-  image: string | null;
-  phone?: string | null;
-}
-
-interface TicketResponse {
-  id: string;
-  message: string;
-  isInternal: boolean;
-  createdAt: string;
-  user: {
-    id: string;
-    name: string | null;
-    role: string | null;
-    image: string | null;
-  };
-}
-
-interface TicketAttachment {
-  id: string;
-  fileName: string;
-  originalName: string;
-  fileSize: number;
-  mimeType: string;
-  fileUrl: string;
-  uploadedAt: string;
-}
-
-interface LinkedConsultation {
-  id: string;
-  requestStatus: string;
-  consultationPlan: {
-    title: string;
-    price: number;
-    priceCurrency: string;
-    consultantProfile: {
-      user: { name: string | null; email: string | null };
-    };
-  };
-  appointment: {
-    id: string;
-    scheduledAt: string;
-    status: string;
-  } | null;
-}
-
-interface LinkedPayment {
-  id: string;
-  amount: number;
-  currency: string;
-  paymentStatus: string;
-  paymentGateway: string;
-  createdAt: string;
-}
-
-interface LinkedRefund {
-  id: string;
-  amount: number;
-  currency: string;
-  status: string;
-  reason: string | null;
-  createdAt: string;
-}
-
-interface Ticket {
-  id: string;
-  title: string;
-  description: string;
-  priority: "LOW" | "MEDIUM" | "HIGH" | "URGENT";
-  status: "OPEN" | "IN_PROGRESS" | "ON_HOLD" | "RESOLVED" | "CLOSED";
-  category: string | null;
-  issueType: string | null;
-  user: TicketUser;
-  assignedToId: string | null;
-  responseCount: number;
-  attachmentCount: number;
-  consultationId: string | null;
-  subscriptionId: string | null;
-  paymentId: string | null;
-  refundId: string | null;
-  createdAt: string;
-  updatedAt: string;
-  // Extended fields for detail view
-  responses?: TicketResponse[];
-  attachments?: TicketAttachment[];
-  linkedConsultation?: LinkedConsultation | null;
-  linkedPayment?: LinkedPayment | null;
-  linkedRefund?: LinkedRefund | null;
-}
-
-interface TicketCounts {
-  total: number;
-  open: number;
-  inProgress: number;
-  onHold: number;
-  resolved: number;
-  closed: number;
-}
-
-interface TicketListResponse {
-  tickets: Ticket[];
-  counts: TicketCounts;
-  pagination: {
-    total: number;
-    page: number;
-    limit: number;
-    totalPages: number;
-    hasMore: boolean;
-  };
-}
+import type { Ticket, TicketCounts, TicketListResponse } from "@/types/tickets";
 
 const getStatusColor = (status: string) => {
   switch (status.toUpperCase()) {
@@ -634,13 +520,13 @@ export default function SupportTicketsPage() {
                         <span className="font-medium truncate max-w-[200px]">
                           {ticket.title}
                         </span>
-                        {ticket.responseCount > 0 && (
+                        {(ticket.responseCount ?? 0) > 0 && (
                           <Badge variant="outline" className="text-xs gap-1">
                             <MessageSquare className="h-3 w-3" />
                             {ticket.responseCount}
                           </Badge>
                         )}
-                        {ticket.attachmentCount > 0 && (
+                        {(ticket.attachmentCount ?? 0) > 0 && (
                           <Badge variant="outline" className="text-xs gap-1">
                             <Paperclip className="h-3 w-3" />
                             {ticket.attachmentCount}
@@ -1049,8 +935,8 @@ export default function SupportTicketsPage() {
                             <div
                               key={response.id}
                               className={`p-3 rounded-lg ${
-                                response.user.role === "STAFF" ||
-                                response.user.role === "ADMIN"
+                                response.user?.role === "STAFF" ||
+                                response.user?.role === "ADMIN"
                                   ? response.isInternal
                                     ? "bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800"
                                     : "bg-blue-50 dark:bg-blue-950"
@@ -1060,16 +946,16 @@ export default function SupportTicketsPage() {
                               <div className="flex items-center gap-2 mb-1">
                                 <Avatar className="h-5 w-5">
                                   <AvatarImage
-                                    src={response.user.image || ""}
+                                    src={response.user?.image || ""}
                                   />
                                   <AvatarFallback className="text-xs">
-                                    {response.user.name?.[0] || "?"}
+                                    {response.user?.name?.[0] || "?"}
                                   </AvatarFallback>
                                 </Avatar>
                                 <span className="text-sm font-medium">
-                                  {response.user.name}
+                                  {response.user?.name}
                                 </span>
-                                {response.user.role && (
+                                {response.user?.role && (
                                   <Badge variant="outline" className="text-xs">
                                     {response.user.role}
                                   </Badge>

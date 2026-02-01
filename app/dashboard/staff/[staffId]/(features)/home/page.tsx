@@ -26,16 +26,6 @@ import {
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useToast } from "@/hooks/use-toast";
-
-// Types
-interface StaffStats {
-  openTickets: number;
-  usersAssisted: number;
-  pendingReviews: number;
-  resolvedToday: number;
-  recentTickets: RecentTicket[];
-}
-
 interface RecentTicket {
   id: string;
   subject: string;
@@ -44,6 +34,14 @@ interface RecentTicket {
   status: string;
   priority: string;
   createdAt: string;
+}
+
+interface StaffStats {
+  openTickets: number;
+  usersAssisted: number;
+  pendingReviews: number;
+  resolvedToday: number;
+  recentTickets: RecentTicket[];
 }
 
 // Static announcements (these could come from an API in the future)

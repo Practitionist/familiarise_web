@@ -31,37 +31,7 @@ import {
   Users,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-
-interface Subscription {
-  id: string;
-  paymentId: string;
-  amount: number;
-  currency: string;
-  gateway: string;
-  userName: string;
-  userEmail: string;
-  consultantName: string | null;
-  startDate: string | null;
-  endDate: string | null;
-  subscriptionStatus: string | null;
-  status: string;
-  createdAt: string;
-}
-
-interface SubscriptionListResponse {
-  subscriptions: Subscription[];
-  stats: {
-    activeCount: number;
-    expiringCount: number;
-    expiredCount: number;
-  };
-  pagination: {
-    total: number;
-    limit: number;
-    offset: number;
-    hasMore: boolean;
-  };
-}
+import type { SubscriptionListItem, SubscriptionListResponse } from "@/types/subscriptions";
 
 const getStatusColor = (status: string) => {
   switch (status.toLowerCase()) {
@@ -108,7 +78,7 @@ const formatDate = (dateString: string | null) => {
 
 export default function StaffSubscriptionsPage() {
   const { toast } = useToast();
-  const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
+  const [subscriptions, setSubscriptions] = useState<SubscriptionListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");

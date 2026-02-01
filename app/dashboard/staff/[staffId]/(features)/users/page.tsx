@@ -48,30 +48,8 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { UserDetailModal } from "@/components/admin/UserDetailModal";
 import { VerificationQueue } from "@/components/admin/VerificationQueue";
-
-interface User {
-  id: string;
-  name: string | null;
-  email: string | null;
-  role: string;
-  onboardingCompleted: boolean | null;
-  createdAt: string;
-  image?: string | null;
-  phone?: string | null;
-  city?: string | null;
-  country?: string | null;
-}
-
-interface UserListResponse {
-  users: User[];
-  total: number;
-  page: number;
-  totalPages: number;
-}
-
-interface ModerationStats {
-  pendingProfiles: number;
-}
+import type { UserListItem, UserListResponse } from "@/types/admin-users";
+import type { ModerationStats } from "@/types/moderation";
 
 const getRoleColor = (role: string) => {
   switch (role) {
@@ -114,7 +92,7 @@ const formatDate = (dateString: string) => {
 export default function UserManagementPage() {
   const { toast } = useToast();
   const [activeTab, setActiveTab] = useState("all-users");
-  const [users, setUsers] = useState<User[]>([]);
+  const [users, setUsers] = useState<UserListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [roleFilter, setRoleFilter] = useState("all");
