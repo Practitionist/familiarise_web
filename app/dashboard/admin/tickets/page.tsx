@@ -462,10 +462,10 @@ export default function AdminSupportTicketsPage() {
                         <span className="font-medium truncate max-w-[200px]">
                           {ticket.title}
                         </span>
-                        {(ticket.responses?.length ?? 0) > 0 && (
+                        {ticket.responses && ticket.responses.length > 0 && (
                           <Badge variant="secondary" className="text-xs">
                             <MessageSquare className="h-3 w-3 mr-1" />
-                            {ticket.responses!.length}
+                            {ticket.responses.length}
                           </Badge>
                         )}
                       </div>
