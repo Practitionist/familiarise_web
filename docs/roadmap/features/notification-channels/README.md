@@ -1,8 +1,10 @@
-# Notification Channels (SMS/WhatsApp Reminders)
+# SMS & WhatsApp Notification Channels
+
+> **Status:** Not Implemented | Email and in-app notifications are already working via Novu (`lib/novu/`) with 20+ workflows and Resend for email delivery.
 
 ## Overview
 
-Multi-channel notification system that sends appointment reminders and updates via SMS and WhatsApp in addition to email. Reduces no-shows by up to 50% through timely reminders on channels users actively monitor.
+Extend the existing notification system with SMS and WhatsApp channels. Reduces no-shows by up to 50% through timely reminders on channels users actively monitor.
 
 ### Value Proposition
 
@@ -78,23 +80,27 @@ model User {
 
 ### Notification Types & Timing
 
-| Event             | Email | SMS | WhatsApp | Timing           |
-| ----------------- | ----- | --- | -------- | ---------------- |
-| Booking Confirmed | Yes   | Yes | Yes      | Immediate        |
-| Reminder          | Yes   | Yes | Yes      | 24h, 1h before   |
-| Cancellation      | Yes   | Yes | Yes      | Immediate        |
-| Reschedule        | Yes   | Yes | Yes      | Immediate        |
-| Payment Success   | Yes   | No  | Optional | Immediate        |
-| Payment Failed    | Yes   | Yes | Yes      | Immediate        |
-| Review Request    | Yes   | No  | Yes      | 1h after session |
+| Event             | Email | In-App | SMS | WhatsApp | Timing           |
+| ----------------- | ----- | ------ | --- | -------- | ---------------- |
+| Booking Confirmed | ✅     | ✅      | ✅   | ✅        | Immediate        |
+| Reminder          | ✅     | ✅      | ✅   | ✅        | 24h, 1h before   |
+| Cancellation      | ✅     | ✅      | ✅   | ✅        | Immediate        |
+| Reschedule        | ✅     | ✅      | ✅   | ✅        | Immediate        |
+| Payment Success   | ✅     | ✅      | ❌   | ❌        | Immediate        |
+| Payment Failed    | ✅     | ✅      | ✅   | ✅        | Immediate        |
+| Review Request    | ✅     | ✅      | ❌   | ✅        | 1h after session |
+| Marketing         | ✅     | ❌      | ❌   | ❌        | Scheduled        |
+
+> ✅ Email and In-App are already implemented via Novu + Resend. SMS and WhatsApp are planned.
 
 ### External Service Providers
 
-| Channel  | Provider Options                   | Recommendation                                   |
-| -------- | ---------------------------------- | ------------------------------------------------ |
-| SMS      | Twilio, AWS SNS, MSG91, Exotel     | **Twilio** (global) or **MSG91** (India-focused) |
-| WhatsApp | Twilio, Meta Business API, Gupshup | **Twilio** (unified API) or **Gupshup** (India)  |
-| Push     | Firebase FCM, OneSignal            | **Firebase FCM** (free tier)                     |
+| Channel      | Status         | Provider                           | Recommendation                                   |
+| ------------ | -------------- | ---------------------------------- | ------------------------------------------------ |
+| **Email**    | ✅ Implemented | Resend                             | Already live via Novu + Resend                   |
+| **In-App**   | ✅ Implemented | Novu (native WebSocket)            | Already live, no external provider needed        |
+| **SMS**      | ❌ Planned     | Twilio, AWS SNS, MSG91, Exotel     | **Twilio** (global) or **MSG91** (India-focused) |
+| **WhatsApp** | ❌ Planned     | Twilio, Meta Business API, Gupshup | **Twilio** (unified API) or **Gupshup** (India)  |
 
 ### Architecture Diagram
 
@@ -113,15 +119,15 @@ model User {
 │  │  3. Select template for event type               │    │
 │  │  4. Dispatch to enabled channels                 │    │
 │  └─────────────────────────────────────────────────┘    │
-└────────────┬──────────────┬──────────────┬──────────────┘
-             │              │              │
-             ▼              ▼              ▼
-      ┌──────────┐   ┌──────────┐   ┌──────────┐
-      │  Email   │   │   SMS    │   │ WhatsApp │
-      │ (Resend) │   │ (Twilio) │   │ (Twilio) │
-      └──────────┘   └──────────┘   └──────────┘
-             │              │              │
-             └──────────────┴──────────────┘
+└────────────────────┬──────────────┬──────────────────────┘
+                     │              │
+                     ▼              ▼
+               ┌──────────┐   ┌──────────┐
+               │   SMS    │   │ WhatsApp │
+               │ (Twilio) │   │ (Twilio) │
+               └──────────┘   └──────────┘
+                     │              │
+                     └──────────────┘
                          │
                          ▼
               ┌────────────────────┐
@@ -155,7 +161,7 @@ GET /api/admin/notifications/stats
 ```typescript
 // lib/notifications/templates.ts
 
-export const templates = {
+export const smsWhatsAppTemplates = {
   BOOKING_CONFIRMED: {
     sms: (data) =>
       `Familiarise: Your ${data.serviceType} with ${data.consultantName} is confirmed for ${data.dateTime}. Details: ${data.shortUrl}`,
@@ -170,12 +176,6 @@ export const templates = {
         ]}
       ]
     }),
-
-    email: (data) => ({
-      subject: `Booking Confirmed: ${data.serviceName}`,
-      template: 'booking-confirmed',
-      data
-    })
   },
 
   REMINDER_24H: {
@@ -203,20 +203,18 @@ export const templates = {
 ### Notification Service Implementation
 
 ```typescript
-// lib/notifications/service.ts
+// lib/notifications/sms-whatsapp.ts
+// NOTE: Email/in-app notifications are already handled by lib/novu/
 
 import { Twilio } from "twilio";
-import { Resend } from "resend";
 
 const twilio = new Twilio(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
-const resend = new Resend(process.env.RESEND_API_KEY);
 
-export async function sendNotification(
+export async function sendSmsWhatsAppNotification(
   userId: string,
   eventType: NotificationEvent,
   data: Record<string, any>,
 ) {
-  // 1. Get user with preferences
   const user = await prisma.user.findUnique({
     where: { id: userId },
     include: { notificationPreference: true },
@@ -226,18 +224,12 @@ export async function sendNotification(
 
   const prefs = (user.notificationPreference
     ?.channelPreferences as ChannelPrefs) || {
-    email: true,
     sms: false,
     whatsapp: false,
   };
 
-  const template = templates[eventType];
+  const template = smsWhatsAppTemplates[eventType];
   const results: NotificationResult[] = [];
-
-  // 2. Send to each enabled channel
-  if (prefs.email && user.email) {
-    results.push(await sendEmail(user.email, template.email(data)));
-  }
 
   if (prefs.sms && user.phone && user.phoneVerified) {
     results.push(await sendSMS(user.phone, template.sms(data)));
@@ -247,7 +239,6 @@ export async function sendNotification(
     results.push(await sendWhatsApp(user.phone, template.whatsapp(data)));
   }
 
-  // 3. Log results
   await logNotifications(userId, eventType, results);
 
   return results;
@@ -363,11 +354,6 @@ export async function GET(req: NextRequest) {
 │  ─────────────────────────────────────────────────────  │
 │                                                         │
 │  ┌─────────────────────────────────────────────────────┐│
-│  │ Email                                    [Toggle ON]││
-│  │ Receive notifications at john@example.com           ││
-│  └─────────────────────────────────────────────────────┘│
-│                                                         │
-│  ┌─────────────────────────────────────────────────────┐│
 │  │ SMS                                     [Toggle OFF]││
 │  │ Add phone number to enable SMS notifications        ││
 │  │ [Add Phone Number]                                  ││
@@ -382,13 +368,15 @@ export async function GET(req: NextRequest) {
 │  Notification Types                                     │
 │  ─────────────────────────────────────────────────────  │
 │                                                         │
-│  │ Type              │ Email │ SMS │ WhatsApp │        │
-│  │───────────────────│───────│─────│──────────│        │
-│  │ Booking Confirmed │  ✓    │  ✓  │    ✓     │        │
-│  │ Reminders         │  ✓    │  ✓  │    ✓     │        │
-│  │ Cancellations     │  ✓    │  ✓  │    ✓     │        │
-│  │ Payment Updates   │  ✓    │  -  │    -     │        │
-│  │ Marketing         │  ✓    │  -  │    -     │        │
+│  │ Type              │ Email │ In-App │ SMS │ WhatsApp │
+│  │───────────────────│───────│────────│─────│──────────│
+│  │ Booking Confirmed │  ✓    │   ✓    │  ✓  │    ✓     │
+│  │ Reminders         │  ✓    │   ✓    │  ✓  │    ✓     │
+│  │ Cancellations     │  ✓    │   ✓    │  ✓  │    ✓     │
+│  │ Payment Success   │  ✓    │   ✓    │  ✗  │    ✗     │
+│  │ Payment Failed    │  ✓    │   ✓    │  ✓  │    ✓     │
+│  │ Review Request    │  ✓    │   ✓    │  ✗  │    ✓     │
+│  │ Marketing         │  ✓    │   ✗    │  ✗  │    ✗     │
 │                                                         │
 │  [Save Preferences]                                     │
 └─────────────────────────────────────────────────────────┘
@@ -467,8 +455,7 @@ export async function GET(req: NextRequest) {
 
 ### Features That Depend On This
 
-- **Waitlist Enhancements** - Notify when slot opens
-- **Gift Consultations** - Notify gift recipient
+- **Gift Consultations** - Notify gift recipient via SMS/WhatsApp
 
 ---
 

@@ -1,5 +1,7 @@
 # Support Tickets API - Mobile Integration Guide
 
+> **Note:** The Familiarise mobile app uses a separate Dart Frog backend. These docs describe the web API contracts that could be shared with or adapted for the mobile integration.
+
 This document describes how the mobile app should integrate with the shared support ticket system.
 
 ## Architecture Overview
