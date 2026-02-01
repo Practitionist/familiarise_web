@@ -145,7 +145,10 @@ export class AllocationAlgorithms {
 
         const distributionValidation = validateSlotDistribution(
           selectedSlots,
-          options.callsPerWeek,
+          // Since we are storing the selectedSlots in 30 min sloting we need to pass the 
+          // callsPerWeek * 2 to the validateSlotDistribution function 
+          // Because callsPerWeek is measuring in 1 hour slots
+          options.callsPerWeek * 2,
         );
 
         if (!distributionValidation.isValid) {

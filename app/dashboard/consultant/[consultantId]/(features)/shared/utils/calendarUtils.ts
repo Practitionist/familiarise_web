@@ -523,16 +523,16 @@ export function groupSlotsByWeek(slots: TimeSlot[]): Map<string, TimeSlot[]> {
  */
 export function validateSlotDistribution(
   slots: TimeSlot[],
-  callsPerWeek: number,
+  slotsPerWeek: number,
 ): { isValid: boolean; errorMessage?: string } {
   const slotsByWeek = groupSlotsByWeek(slots);
 
   for (const [weekKey, weekSlots] of Array.from(slotsByWeek.entries())) {
-    if (weekSlots.length > callsPerWeek) {
+    if (weekSlots.length > slotsPerWeek) {
       const weekDate = new Date(weekKey);
       return {
         isValid: false,
-        errorMessage: `Too many slots selected for week of ${weekDate.toLocaleDateString()} (max ${callsPerWeek} allowed)`,
+        errorMessage: `Too many slots selected for week of ${weekDate.toLocaleDateString()} (max ${slotsPerWeek} allowed)`,
       };
     }
   }
