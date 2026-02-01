@@ -8,6 +8,7 @@ import { getServerSession } from "next-auth";
 import authOptions from "@/app/api/auth/[...nextauth]/options";
 import prisma from "@/lib/prisma";
 import { UserRole, ProfileVerificationStatus, Prisma } from "@prisma/client";
+import type { ProfileVerification } from "@/types/moderation";
 
 /**
  * GET /api/staff/moderation/profiles
@@ -77,29 +78,26 @@ export async function GET(req: NextRequest) {
       (v) => v.consultantProfile && v.consultantProfile.user,
     );
 
-    const formattedVerifications = validVerifications.map((v) => ({
+    const formattedVerifications: ProfileVerification[] = validVerifications.map((v) => ({
       id: v.id,
       status: v.status,
-      submittedAt: v.submittedAt,
+      submittedAt: v.submittedAt.toISOString(),
       notes: v.notes,
       rejectionReason: v.rejectionReason,
       feedbackDetails: v.feedbackDetails,
-      // Return consultantProfile in the shape the frontend expects
-      consultantProfile: {
-        id: v.consultantProfile.id,
-        description: v.consultantProfile.description,
-        headline: v.consultantProfile.headline,
+      // Flatten consultantProfile + user into the "consultant" shape the frontend expects
+      consultant: {
+        profileId: v.consultantProfile.id,
+        userId: v.consultantProfile.user.id,
+        name: v.consultantProfile.user.name,
+        email: v.consultantProfile.user.email,
+        image: v.consultantProfile.user.image,
+        linkedinUrl: v.consultantProfile.user.linkedinUrl,
+        domain: v.consultantProfile.domain?.name ?? "",
         experience: v.consultantProfile.experience,
-        user: {
-          id: v.consultantProfile.user.id,
-          name: v.consultantProfile.user.name,
-          email: v.consultantProfile.user.email,
-          image: v.consultantProfile.user.image,
-          linkedinUrl: v.consultantProfile.user.linkedinUrl,
-          bio: v.consultantProfile.user.bio,
-        },
-        domain: v.consultantProfile.domain,
-        subDomains: v.consultantProfile.subDomains,
+        headline: v.consultantProfile.headline,
+        isVerified: v.status === "APPROVED",
+        verificationStatus: v.status,
       },
       documents: v.documents.map((d) => ({
         id: d.id,
@@ -110,7 +108,7 @@ export async function GET(req: NextRequest) {
         fileUrl: d.fileUrl,
         description: d.description,
       })),
-      reviewedAt: v.reviewedAt,
+      reviewedAt: v.reviewedAt?.toISOString() ?? null,
       reviewedById: v.reviewedById,
       reviewNotes: v.reviewNotes,
     }));

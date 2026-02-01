@@ -13,25 +13,13 @@ import {
   subscriptionSearchParamsSchema,
   createCheckoutData,
 } from "@/schemas/checkout";
+import type { AppliedDiscount } from "@/types/checkout";
 import {
   ConsultantProfile,
   ConsultantReview,
   SubscriptionPlan,
   PaymentGateway,
 } from "@prisma/client";
-import { loadStripe } from "@stripe/stripe-js";
-import { CreditCard as CreditCardIcon } from "lucide-react";
-import { use, useCallback, useEffect, useMemo, useState } from "react";
-import RazorpayCheckout from "../../../components/RazorpayCheckout";
-import StripeCheckout from "../../../components/StripeCheckout";
-import {
-  createHandleApiError,
-  paymentGateways,
-  createStripeCheckoutHandlers,
-  createRazorpayCheckoutHandlers,
-} from "../../utils";
-import { calculatePricing, formatPercentage } from "../../math";
-import { useCurrency } from "@/lib/hooks/useCurrency";
 
 type SubscriptionPlanWithConsultant = SubscriptionPlan & {
   consultantProfile: ConsultantProfile & {
@@ -47,6 +35,19 @@ type SubscriptionPlanWithConsultant = SubscriptionPlan & {
 type SubscriptionResponse = {
   data: SubscriptionPlanWithConsultant;
 };
+import { loadStripe } from "@stripe/stripe-js";
+import { CreditCard as CreditCardIcon } from "lucide-react";
+import { use, useCallback, useEffect, useMemo, useState } from "react";
+import RazorpayCheckout from "../../../components/RazorpayCheckout";
+import StripeCheckout from "../../../components/StripeCheckout";
+import {
+  createHandleApiError,
+  paymentGateways,
+  createStripeCheckoutHandlers,
+  createRazorpayCheckoutHandlers,
+} from "../../utils";
+import { calculatePricing, formatPercentage } from "../../math";
+import { useCurrency } from "@/lib/hooks/useCurrency";
 
 type PageProps = {
   params: Promise<{ planId: string }>;
@@ -71,12 +72,7 @@ export default function SubscriptionCheckoutPage({
     null,
   );
   const [discountCodeInput, setDiscountCodeInput] = useState("");
-  const [appliedDiscount, setAppliedDiscount] = useState<{
-    code: string;
-    discountType: "PERCENTAGE" | "FIXED_AMOUNT";
-    discountValue: number;
-    discountAmount?: number;
-  } | null>(null);
+  const [appliedDiscount, setAppliedDiscount] = useState<AppliedDiscount | null>(null);
   const [isApplyingDiscount, setIsApplyingDiscount] = useState(false);
   const [discountError, setDiscountError] = useState<string | null>(null);
 

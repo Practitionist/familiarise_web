@@ -52,49 +52,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
-
-// Types
-interface Payment {
-  id: string;
-  amount: number;
-  currency: string;
-  description: string | null;
-  receiptUrl: string | null;
-  paymentMethod: string;
-  paymentIntent: string;
-  paymentGateway: string;
-  paymentStatus: string;
-  createdAt: string;
-  appointment: {
-    appointmentType: string;
-  } | null;
-}
-
-interface Refund {
-  id: string;
-  amount: number;
-  currency: string;
-  status: string;
-  createdAt: string;
-  payment: {
-    id: string;
-    paymentIntent: string;
-  } | null;
-}
-
-interface PaymentListResponse {
-  payments: Payment[];
-  total: number;
-  page: number;
-  totalPages: number;
-}
-
-interface RefundListResponse {
-  refunds: Refund[];
-  total: number;
-  page: number;
-  totalPages: number;
-}
+import type { Payment, Refund, PaymentListResponse, RefundListResponse } from "@/types/payments";
 
 const getStatusColor = (status: string) => {
   switch (status.toUpperCase()) {

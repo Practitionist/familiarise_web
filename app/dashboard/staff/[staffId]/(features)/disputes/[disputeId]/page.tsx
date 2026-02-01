@@ -23,33 +23,7 @@ import {
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
-interface DisputeDetails {
-  id: string;
-  disputeId: string;
-  amount: number;
-  currency: string;
-  status: string;
-  reason: string | null;
-  paymentGateway: string;
-  dueBy: string | null;
-  evidence: string | null;
-  evidenceSubmittedAt: string | null;
-  createdAt: string;
-  updatedAt: string;
-  payment: {
-    id: string;
-    paymentIntent: string;
-    amount: number;
-    currency: string;
-    paymentMethod: string | null;
-    createdAt: string;
-    user: {
-      id: string;
-      name: string | null;
-      email: string;
-    };
-  } | null;
-}
+import type { DisputeDetails } from "@/types/disputes";
 
 const getStatusColor = (status: string) => {
   switch (status.toUpperCase()) {

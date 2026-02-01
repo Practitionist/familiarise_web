@@ -22,6 +22,7 @@ import {
 } from "../../utils";
 import { calculatePricing, formatPercentage } from "../../math";
 import { useCurrency } from "@/lib/hooks/useCurrency";
+import type { AppliedDiscount } from "@/types/checkout";
 
 import type {
   Appointment,
@@ -84,12 +85,7 @@ export default function ClassCheckoutPage({
     null,
   );
   const [discountCodeInput, setDiscountCodeInput] = useState("");
-  const [appliedDiscount, setAppliedDiscount] = useState<{
-    code: string;
-    discountType: "PERCENTAGE" | "FIXED_AMOUNT";
-    discountValue: number;
-    discountAmount?: number;
-  } | null>(null);
+  const [appliedDiscount, setAppliedDiscount] = useState<AppliedDiscount | null>(null);
   const [isApplyingDiscount, setIsApplyingDiscount] = useState(false);
   const [discountError, setDiscountError] = useState<string | null>(null);
 

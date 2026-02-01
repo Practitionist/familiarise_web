@@ -50,37 +50,8 @@ import {
   Calendar,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import type { Feedback, FeedbackUser, FeedbackCounts } from "@/types/feedback";
 import { FeedbackStatus } from "@prisma/client";
-
-interface FeedbackUser {
-  id: string;
-  name: string | null;
-  email: string | null;
-  image: string | null;
-  phone?: string | null;
-  createdAt?: string;
-}
-
-interface Feedback {
-  id: string;
-  title: string;
-  description: string;
-  rating: number | null;
-  category: string | null;
-  status: FeedbackStatus;
-  user: FeedbackUser;
-  createdAt: string;
-  updatedAt: string;
-}
-
-interface FeedbackCounts {
-  total: number;
-  pending: number;
-  acknowledged: number;
-  inProgress: number;
-  resolved: number;
-  closed: number;
-}
 
 const STATUS_OPTIONS: { value: FeedbackStatus | "all"; label: string }[] = [
   { value: "all", label: "All Status" },

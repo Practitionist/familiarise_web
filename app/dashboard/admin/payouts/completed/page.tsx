@@ -8,19 +8,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useState, useEffect } from "react";
 import { CheckCircle, Download } from "lucide-react";
 
-interface Payout {
-  id: string;
-  consultantName: string;
-  consultantEmail: string;
-  amount: number;
-  currency: string;
-  method: string;
-  provider: string;
-  providerPayoutId?: string;
-  earningsCount: number;
-  processedAt: string;
-  createdAt: string;
-}
+import type { Payout } from "@/types/payouts";
 
 async function fetchCompletedPayouts(
   page: number,

@@ -12,6 +12,7 @@ import { AlertTriangle, CheckCircle2, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
 import { AllocationService } from "../../shared/utils/allocationService";
 import { TimeSlot } from "../../shared/utils/calendarUtils";
+import type { SlotConflictResult } from "@/utils/slotAllocation/types";
 
 // Slot with tentative status
 interface SlotWithStatus {
@@ -19,22 +20,10 @@ interface SlotWithStatus {
   isTentative: boolean;
 }
 
-interface ValidationResult {
-  conflicts: Array<{
-    slot: string;
-    existingAppointment: {
-      type: string;
-      with: string;
-      time: string;
-    };
-  }>;
-  outsideAvailability: Array<{
-    slot: string;
-  }>;
+interface ValidationResult extends SlotConflictResult {
   outsidePeriod?: Array<{
     slot: string;
   }>;
-  validSlots: string[];
 }
 
 interface RequestedSlotsDialogProps {

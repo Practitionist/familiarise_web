@@ -26,7 +26,6 @@ import {
 import { WaitlistBadge } from "@/components/waitlist/WaitlistBadge";
 import { SlotAvailableModal } from "@/components/waitlist/SlotAvailableModal";
 import { format } from "date-fns";
-
 interface WaitlistEntry {
   id: string;
   status: "WAITING" | "NOTIFIED";
