@@ -323,6 +323,17 @@ export class SlotValidationService {
         "Saturday",
       ];
 
+      // Map DayOfWeek enum to JS getUTCDay() index (Sunday=0 ... Saturday=6)
+      const dayOfWeekToIndex: Record<string, number> = {
+        SUNDAY: 0,
+        MONDAY: 1,
+        TUESDAY: 2,
+        WEDNESDAY: 3,
+        THURSDAY: 4,
+        FRIDAY: 5,
+        SATURDAY: 6,
+      };
+
       for (const slot of slots) {
         const slotDay = slot.getUTCDay();
         const slotHours = slot.getUTCHours();
@@ -334,7 +345,18 @@ export class SlotValidationService {
           (availSlot) => {
             const availStart = new Date(availSlot.availabilityStartsAt);
             const availEnd = new Date(availSlot.availabilityEndsAt);
-            const availDay = availStart.getUTCDay();
+            // FIX: Use the explicit dayOfWeekForStartsAt enum instead of getUTCDay() on the DateTime.
+            // The stored DateTime may use a reference date (e.g., 1970 epoch) where getUTCDay()
+            // returns the wrong day-of-week. The enum is the source of truth.
+            if (!(availSlot.dayOfWeekForStartsAt in dayOfWeekToIndex)) {
+              console.error(
+                `[SlotValidationService] Corrupt availability slot ${availSlot.id}: ` +
+                  `invalid dayOfWeekForStartsAt="${availSlot.dayOfWeekForStartsAt}". ` +
+                  `Expected one of: ${Object.keys(dayOfWeekToIndex).join(", ")}. Skipping slot.`,
+              );
+              return false;
+            }
+            const availDay = dayOfWeekToIndex[availSlot.dayOfWeekForStartsAt];
 
             // Must be same day of week
             if (slotDay !== availDay) return false;
