@@ -6,6 +6,26 @@ This document details how revenue is distributed among all parties: Payment Gate
 
 ---
 
+## Pre-Revenue Reality Check (February 2026)
+
+> **IMPORTANT**: The compensation models in this document (Options 1-4 in the Employee
+> Compensation section) describe **target-state frameworks** for when the company is
+> generating significant revenue. The current reality is drastically different:
+>
+> - **Current total monthly budget:** ₹20,000 - ₹40,000 (founder's personal savings)
+> - **Current team cost:** ₹10,000/month (1 part-time tech intern)
+> - **Founder salary:** ₹0/month
+> - **Platform revenue:** ₹0 (pre-launch)
+> - **No profit to share** - the company is pre-revenue
+>
+> The salary figures in Option 1 (₹50K-₹1.5L/month) and the profit-sharing
+> models in Options 2-4 are aspirational goals, not current operating parameters.
+>
+> For the actual bootstrapped compensation plan, see the internal financial
+> planning documents.
+
+---
+
 ## Money Flow Diagram
 
 ```mermaid

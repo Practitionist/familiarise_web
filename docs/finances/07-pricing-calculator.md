@@ -139,6 +139,30 @@ Platform Revenue = ₹48,500 × 0.20 = ₹9,700
 
 ## Cost Structure Breakdown
 
+### Bootstrapped Reality Check (February 2026)
+
+> **IMPORTANT**: The fixed costs table and break-even calculator below assume a
+> funded-company scenario (₹4,50,000/month with a 4-person team). The actual
+> current fixed costs are significantly lower:
+>
+> | Item | Assumed (Below) | Actual (Feb 2026) |
+> |------|----------------|-------------------|
+> | Servers (Vercel, Supabase) | ₹50,000 | ₹0 (free tiers) |
+> | Team | ₹3,00,000 (4 people) | ₹10,000 (1 part-time tech intern) |
+> | Tools & SaaS | ₹20,000 | ₹9,325 (Claude Max ₹8,500 + Apple Dev ₹825) |
+> | Marketing | ₹50,000 | ₹0 (organic/founder-driven) |
+> | Office/Misc | ₹30,000 | ₹0 |
+> | **Total Fixed** | **₹4,50,000** | **~₹19,325** |
+>
+> **Bootstrapped break-even:**
+> - Variable cost per transaction: ~₹24 (gateway fee only; video and DB are free tier)
+> - Per-transaction profit: ₹194 - ₹24 = **₹170**
+> - Break-even transactions: ₹19,325 / ₹170 = **~114/month**
+> - At 10 transactions per consultant: **~12 active consultants**
+>
+> The pricing formulas, tier system, and minimum price recommendations below
+> are all correct regardless of cost scenario.
+
 ### Variable Costs Per Transaction
 
 | Cost Component     | Amount     | % of ₹500 Transaction |
@@ -150,7 +174,7 @@ Platform Revenue = ₹48,500 × 0.20 = ₹9,700
 | Support Overhead   | ~₹5        | 1%                    |
 | **Total Variable** | **₹20-60** | **4-15%**             |
 
-### Fixed Costs (Monthly)
+### Fixed Costs (Monthly) - Funded Company Scenario
 
 | Cost Component             | Amount        | Notes                  |
 | -------------------------- | ------------- | ---------------------- |
@@ -186,7 +210,7 @@ Result:
 - Profit Margin: 16.4%
 ```
 
-### Break-Even Volume Calculator
+### Break-Even Volume Calculator - Funded Company Scenario
 
 ```
 Monthly Fixed Costs = ₹4,50,000

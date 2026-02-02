@@ -6,6 +6,34 @@ This document analyzes the profitability of Familiarise, a B2B/B2C marketplace f
 
 ---
 
+## Bootstrapped Reality Check (February 2026)
+
+> The fixed cost scenarios in Part 4 of this document (Solo Founder: ₹70K/month,
+> Small Team: ₹3L/month) were written assuming paid SaaS tiers and market-rate
+> salaries. The actual current fixed costs are significantly lower:
+>
+> | Item | Assumed (Part 4) | Actual (Feb 2026) |
+> |------|-----------------|-------------------|
+> | SaaS tools | ₹10,000 | ₹9,325 (Claude Max + Apple Dev + Domain; all else free tier) |
+> | CEO/Founder stipend | ₹50,000 | ₹0 |
+> | Team salaries | ₹0 (solo) | ₹10,000 (1 part-time tech intern) |
+> | Taxes/GST reserve | ₹10,000 | ₹0 (pre-revenue, no GST yet) |
+> | **Total fixed** | **₹70,000** | **~₹19,325** |
+>
+> **Impact on break-even:**
+> - At ₹19,325/month fixed costs and ~₹170 platform revenue per ₹1,000 transaction:
+> - Break-even requires only **~114 transactions/month** (not 467 as stated in Part 7)
+> - At 10 transactions per consultant: **~12 active consultants**
+> - This is achievable within months 2-3 of launch
+>
+> The variable costs per transaction are also lower than stated in Part 3 because
+> video (Stream Maker Account) and database (Supabase free tier) are currently ₹0.
+> Actual variable cost per transaction is ~₹24 (gateway fee only).
+>
+> The minimum pricing recommendations in Part 8 remain valid and should be enforced.
+
+---
+
 ## Part 1: Current Architecture Overview
 
 ### Service Types & Parameters
