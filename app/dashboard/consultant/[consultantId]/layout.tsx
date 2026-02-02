@@ -12,7 +12,7 @@ import {
   DashboardSidebar,
   type NavItem,
 } from "@/components/dashboard/DashboardSidebar";
-import { useSession } from "next-auth/react";
+import { useSession } from "@/lib/auth-client";
 import { usePathname, useRouter } from "next/navigation";
 import { use, useEffect, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";

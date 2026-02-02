@@ -2,7 +2,7 @@
 
 import { GraduationCap, Video, Users, Sparkles, Search, Flame, Clock, Hash } from "lucide-react";
 import { motion } from "framer-motion";
-import { useSession } from "next-auth/react";
+import { useSession } from "@/lib/auth-client";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useMemo, useRef, useState, Suspense } from "react";
 import { useDebouncedCallback } from "use-debounce";

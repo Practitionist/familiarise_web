@@ -1,12 +1,11 @@
 import prisma from "@/lib/prisma";
 import { Prisma, ScheduleType, SessionType } from "@prisma/client";
-import { getServerSession } from "next-auth";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import authOptions from "../../../auth/[...nextauth]/options";
 import { experienceValidation } from "@/schemas/shared";
 import { checkActiveAppointments } from "../utils/consultant-appointments";
 
+import { getSession } from "@/lib/auth-server";
 // Zod schema for UUID validation
 const uuidSchema = z.string().uuid();
 
@@ -94,7 +93,7 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    // const session = await getServerSession(authOptions);
+    // const session = await getSession();
     // if (!session) {
     //   return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     // }
@@ -164,7 +163,7 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const session = await getServerSession(authOptions);
+    const session = await getSession();
     if (!session) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -377,7 +376,7 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const session = await getServerSession(authOptions);
+    const session = await getSession();
     if (!session) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }

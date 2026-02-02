@@ -10,7 +10,7 @@ import {
   DashboardSidebar,
   type NavSection,
 } from "@/components/dashboard/DashboardSidebar";
-import { useSession } from "next-auth/react";
+import { useSession } from "@/lib/auth-client";
 import { usePathname, useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";

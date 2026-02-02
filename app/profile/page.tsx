@@ -23,7 +23,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { User } from "@prisma/client";
-import { useSession } from "next-auth/react";
+import { useSession } from "@/lib/auth-client";
 import Image from "next/image";
 import { useState } from "react";
 import { useToast } from "@/hooks/use-toast";

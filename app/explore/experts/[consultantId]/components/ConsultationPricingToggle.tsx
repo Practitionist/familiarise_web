@@ -13,7 +13,7 @@ import {
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { motion } from "framer-motion";
 import { ClockIcon, CheckCircle2 } from "lucide-react";
-import { useSession } from "next-auth/react";
+import { useSession } from "@/lib/auth-client";
 import { useMemo, useState } from "react";
 import { PricingOption } from "../defaults";
 import { TSlotTiming } from "@/types/slots";

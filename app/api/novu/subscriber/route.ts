@@ -1,9 +1,8 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import authOptions from "@/app/api/auth/[...nextauth]/options";
 import prisma from "@/lib/prisma";
 import { syncSubscriber } from "@/lib/novu/subscriber";
 
+import { getSession } from "@/lib/auth-server";
 /**
  * POST /api/novu/subscriber
  * Syncs the current authenticated user to Novu as a subscriber.
@@ -11,7 +10,7 @@ import { syncSubscriber } from "@/lib/novu/subscriber";
  */
 export async function POST() {
   try {
-    const session = await getServerSession(authOptions);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }

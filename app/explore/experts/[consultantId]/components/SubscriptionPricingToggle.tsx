@@ -11,7 +11,7 @@ import {
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { motion } from "framer-motion";
 import { CalendarIcon, CheckCircle2, Gift, BookOpen, Clock, ChevronRight } from "lucide-react";
-import { useSession } from "next-auth/react";
+import { useSession } from "@/lib/auth-client";
 import { useState, useMemo, useEffect } from "react";
 import { PricingOption } from "../defaults";
 import { useToast } from "@/hooks/use-toast";

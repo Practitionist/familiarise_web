@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import options from "@/app/api/auth/[...nextauth]/options";
 import prisma from "@/lib/prisma";
 import supabase from "@/lib/supabase";
 import { Prisma } from "@prisma/client";
 
+import { getSession } from "@/lib/auth-server";
 export async function GET(
   request: NextRequest,
   {
@@ -15,7 +14,7 @@ export async function GET(
     const { appointmentId, documentId } = await params;
 
     // Get user session
-    const session = await getServerSession(options);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json(
         {

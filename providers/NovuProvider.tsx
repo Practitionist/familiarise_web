@@ -1,7 +1,7 @@
 "use client";
 
 import { NovuProvider as NovuSDKProvider } from "@novu/nextjs";
-import { useSession } from "next-auth/react";
+import { useSession } from "@/lib/auth-client";
 
 interface NovuProviderProps {
   children: React.ReactNode;

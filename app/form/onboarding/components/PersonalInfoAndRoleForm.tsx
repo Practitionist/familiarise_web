@@ -13,7 +13,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { PersonalInfoAndRoleFormSchema } from "@/utils/onboarding";
-import { useSession } from "next-auth/react";
+import { useSession } from "@/lib/auth-client";
 import { z } from "zod";
 import { UserRole, Gender } from "@prisma/client";
 

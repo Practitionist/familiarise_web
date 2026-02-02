@@ -26,7 +26,7 @@ import {
 import Link from "next/link";
 import { useParams, usePathname } from "next/navigation";
 import { useState } from "react";
-import { signOut, useSession } from "next-auth/react";
+import { signOut, useSession } from "@/lib/auth-client";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -74,7 +74,7 @@ export default function StaffDashboardLayout({
   useNovuSubscriberSync();
 
   const handleSignOut = () => {
-    signOut({ callbackUrl: "/auth/signin" });
+    signOut({ fetchOptions: { onSuccess: () => { window.location.href = "/auth/signin"; } } });
   };
 
   const isActive = (path: string) => {

@@ -13,11 +13,11 @@ import { useGetCallById } from "./hooks/useGetCallById";
 import Alert from "./components/Alert";
 import MeetingSetup from "./components/MeetingSetup";
 import MeetingRoom from "./components/MeetingRoom";
-import { useSession } from "next-auth/react";
+import { useSession } from "@/lib/auth-client";
 
 const MeetingPage = () => {
   const { id } = useParams();
-  const { data: session, status } = useSession();
+  const { data: session, isPending } = useSession();
   const { call, isCallLoading, error } = useGetCallById(id as string);
   const [isSetupComplete, setIsSetupComplete] = useState(false);
 
@@ -53,7 +53,7 @@ const MeetingPage = () => {
     };
   }, [call]);
 
-  if (status === "loading" || isCallLoading) {
+  if (isPending || isCallLoading) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen">
         <Loader2 className="h-12 w-12 animate-spin text-primary" />

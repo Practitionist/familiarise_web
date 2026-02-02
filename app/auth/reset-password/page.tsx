@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import axios from "axios";
+import { authClient } from "@/lib/auth-client";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState, Suspense } from "react";
@@ -53,18 +53,26 @@ function ResetPasswordContent() {
     toast({ title: "Resetting password..." });
 
     try {
-      const response = await axios.post("/api/auth/reset-password", {
+      const { error: resetError } = await authClient.resetPassword({
+        newPassword: password,
         token,
-        password,
       });
-      setMessage(response.data.message);
-      toast({ title: "Success", description: response.data.message });
-      // Redirect to sign-in page after successful reset
-      setTimeout(() => router.push("/auth/signin"), 3000); // Delay for user to see message
+      if (resetError) {
+        setError(resetError.message || "An unexpected error occurred.");
+        toast({
+          title: "Error Resetting Password",
+          description: resetError.message || "An unexpected error occurred.",
+          variant: "destructive",
+        });
+      } else {
+        const successMessage = "Password has been reset successfully.";
+        setMessage(successMessage);
+        toast({ title: "Success", description: successMessage });
+        setTimeout(() => router.push("/auth/signin"), 3000);
+      }
     } catch (err: any) {
       console.error("Reset password error:", err);
-      const errorMessage =
-        err.response?.data?.message || "An unexpected error occurred.";
+      const errorMessage = err?.message || "An unexpected error occurred.";
       setError(errorMessage);
       toast({
         title: "Error Resetting Password",

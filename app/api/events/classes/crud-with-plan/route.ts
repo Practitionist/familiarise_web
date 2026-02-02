@@ -4,12 +4,11 @@ import { ClassStatus } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { addMonthsSafely } from "@/utils/dateUtils";
-import { getServerSession } from "next-auth";
-import authOptions from "@/app/api/auth/[...nextauth]/options";
 import { findOrCreateTopics, transformNestedPlanTopics } from "@/lib/topics";
 import { handleSlotOpening } from "@/lib/waitlist/slot-handler";
 import { checkConsultantVerification } from "@/lib/verification";
 
+import { getSession } from "@/lib/auth-server";
 // Schema for class content input (without Prisma-managed fields like createdAt, updatedAt, classPlanId)
 const ClassContentInputSchema = ClassContentSchema.omit({
   createdAt: true,
@@ -71,7 +70,7 @@ const PatchClassWithPlanBodySchema =
 export async function POST(request: NextRequest) {
   try {
     // Authentication check
-    const session = await getServerSession(authOptions);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "Authentication required" },
@@ -331,7 +330,7 @@ export async function POST(request: NextRequest) {
 export async function PATCH(request: NextRequest) {
   try {
     // Authentication check
-    const session = await getServerSession(authOptions);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "Authentication required" },

@@ -1,9 +1,8 @@
 import prisma from "@/lib/prisma";
-import { getServerSession } from "next-auth";
 import { NextRequest, NextResponse } from "next/server";
-import authOptions from "../../../../auth/[...nextauth]/options";
 import { checkActiveAppointments } from "../../utils/consultant-appointments";
 
+import { getSession } from "@/lib/auth-server";
 /**
  * Check if a consultant can switch their schedule type.
  * Returns canSwitch: false if there are active/pending appointments.
@@ -13,7 +12,7 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const session = await getServerSession(authOptions);
+    const session = await getSession();
     if (!session) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }

@@ -1,5 +1,4 @@
-// In a utility file, e.g., utils/auth.ts
-import { Session } from "next-auth";
+import type { Session } from "@/lib/auth";
 
 export function getEffectiveUserId(
   session: Session | null,

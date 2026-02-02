@@ -1,15 +1,13 @@
 import StreamProvider from "@/providers/StreamProvider";
-import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
-import authOptions from "../api/auth/[...nextauth]/options";
-
+import { getSession } from "@/lib/auth-server";
 export default async function MeetingsLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
   // Ensure user is authenticated for meetings
-  const session = await getServerSession(authOptions);
+  const session = await getSession();
 
   if (!session?.user?.id) {
     redirect("/auth/signin");

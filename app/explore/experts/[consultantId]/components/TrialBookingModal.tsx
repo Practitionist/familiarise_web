@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { useSession, signIn } from "next-auth/react";
+import { useRouter } from "next/navigation";
+import { useSession } from "@/lib/auth-client";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -36,6 +37,7 @@ export function TrialBookingModal({
   trialDurationMinutes,
 }: Readonly<TrialBookingModalProps>) {
   const { data: session } = useSession();
+  const router = useRouter();
   const { toast } = useToast();
   const [notes, setNotes] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -43,7 +45,7 @@ export function TrialBookingModal({
 
   const handleSubmit = async () => {
     if (!session?.user?.id) {
-      signIn();
+      router.push("/auth/signin");
       return;
     }
 
@@ -144,7 +146,7 @@ export function TrialBookingModal({
             <p className="text-gray-600 mb-4">
               Please sign in to request a free trial with {consultantName}
             </p>
-            <Button onClick={() => signIn()}>Sign In to Continue</Button>
+            <Button onClick={() => router.push("/auth/signin")}>Sign In to Continue</Button>
           </div>
         </DialogContent>
       </Dialog>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useSession } from "next-auth/react";
+import { useSession } from "@/lib/auth-client";
 import { useRouter } from "next/navigation";
 import {
   Card,
@@ -14,7 +14,7 @@ import { useUserData } from "@/hooks/useUserData";
 import { useToast } from "@/components/ui/use-toast";
 
 export default function Dashboard() {
-  const { data: session, status } = useSession();
+  const { data: session, isPending } = useSession();
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(true);
   const [progress, setProgress] = useState(0);
@@ -53,7 +53,7 @@ export default function Dashboard() {
   }, [isLoading, isUserDataLoading]);
 
   useEffect(() => {
-    if (status === "authenticated" && !isUserDataLoading) {
+    if (!!session && !isUserDataLoading) {
       if (error) {
         toast({
           title: "Error loading user data",
@@ -103,9 +103,9 @@ export default function Dashboard() {
         return () => clearTimeout(timer);
       }
     }
-  }, [status, isUserDataLoading, userDetails, router, error, toast]);
+  }, [session, isUserDataLoading, userDetails, router, error, toast]);
 
-  if (status === "loading" || isLoading || isUserDataLoading) {
+  if (isPending || isLoading || isUserDataLoading) {
     return (
       <div className="flex items-center justify-center h-screen">
         <Card className="w-[300px]">

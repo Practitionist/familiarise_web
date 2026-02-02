@@ -4,8 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import axios from "axios";
-import { signIn } from "next-auth/react";
+import { signIn, signUp } from "@/lib/auth-client";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -29,72 +28,30 @@ export default function SignUp() {
     toast({ title: "Creating account..." });
 
     try {
-      // Call the registration API endpoint
-      const response = await axios.post("/api/auth/register", {
+      const { data, error } = await signUp.email({
         name,
         email,
         password,
       });
 
-      // Check if we got a message about linking accounts
-      if (response.data.message && response.data.message.includes("linked")) {
+      if (error) {
         toast({
-          title: "Account Linked Successfully!",
-          description:
-            "Your password has been added to your existing social account.",
+          title: "Sign Up Failed",
+          description: error.message || "An unexpected error occurred.",
+          variant: "destructive",
         });
-      } else {
+      } else if (data) {
         toast({
           title: "Account Created Successfully!",
-          description: "Signing you in...",
+          description: "Redirecting to onboarding...",
         });
-      }
-
-      // Sign in the user automatically after successful registration
-      const signInResult = await signIn("credentials", {
-        redirect: false,
-        email,
-        password,
-      });
-
-      if (signInResult?.error) {
-        toast({
-          title: "Sign In Failed After Signup",
-          description: "Please try signing in manually.",
-          variant: "destructive",
-        });
-        // Redirect to signin page even if auto signin fails, as account is created
-        router.push("/auth/signin");
-      } else if (signInResult?.ok) {
-        toast({ title: "Signed In Successfully!" });
-        router.push("/form/onboarding"); // New users always need to complete onboarding
-      } else {
-        toast({
-          title: "Sign In Failed After Signup",
-          description: "Unknown error.",
-          variant: "destructive",
-        });
-        router.push("/auth/signin");
+        router.push("/form/onboarding");
       }
     } catch (error: any) {
       console.error("Sign up error:", error);
-
-      // Handle JSON error responses
-      let errorMessage = "An unexpected error occurred.";
-
-      if (error.response) {
-        if (error.response.data.error) {
-          // Get error message from our API response
-          errorMessage = error.response.data.error;
-        } else if (error.response.data) {
-          // Fallback to standard response text
-          errorMessage = error.response.data;
-        }
-      }
-
       toast({
         title: "Sign Up Failed",
-        description: errorMessage,
+        description: error?.message || "An unexpected error occurred.",
         variant: "destructive",
       });
     } finally {
@@ -214,7 +171,7 @@ export default function SignUp() {
             className="w-full flex items-center justify-center bg-black hover:bg-gray-700"
             disabled={isLoading}
             onClick={() => {
-              signIn("github");
+              signIn.social({ provider: "github" });
               toast({
                 title: "Signing up with GitHub...",
                 description: "Please wait while we redirect you.",
@@ -228,7 +185,7 @@ export default function SignUp() {
             className="w-full flex items-center justify-center mt-4 bg-red-600 hover:bg-red-500"
             disabled={isLoading}
             onClick={() => {
-              signIn("google");
+              signIn.social({ provider: "google" });
               toast({
                 title: "Signing up with Google...",
                 description: "Please wait while we redirect you.",
@@ -242,7 +199,7 @@ export default function SignUp() {
             className="w-full flex items-center justify-center mt-4 bg-blue-600 hover:bg-blue-500"
             disabled={isLoading}
             onClick={() => {
-              signIn("facebook");
+              signIn.social({ provider: "facebook" });
               toast({
                 title: "Signing up with Facebook...",
                 description: "Please wait while we redirect you.",
