@@ -9,7 +9,6 @@
 - [Auth Migration](#auth-migration)
 - [Enterprise B2B Tier](#enterprise-b2b-tier)
 - [Infrastructure & Production Hardening](#infrastructure--production-hardening)
-- [Notifications & Service Integration](#notifications--service-integration)
 - [Content Strategy (CMS, Blog, Community)](#content-strategy-cms-blog-community)
 - [Navigation](#navigation)
 - [Planned Features](#planned-features)
@@ -59,16 +58,9 @@ Security, monitoring, and scaling audit documents. **None of these are implement
 
 ---
 
-## Notifications & Service Integration
-
-Novu orchestration, Resend delivery, and how all services interlink.
-
-- [notifications/service-integration-architecture.md](./notifications/service-integration-architecture.md) - Directus, ConvertKit, Resend, Novu, Enterprise interlinking diagrams
-- [notifications/notification-strategy.md](./notifications/notification-strategy.md) - Novu orchestration vs direct Resend analysis
-
----
-
 ## Content Strategy (CMS, Blog, Community)
+
+> **Note**: The notification system (Resend + Novu) has been implemented and moved to [docs/notifications/](../notifications/README.md). The service integration architecture for Directus, ConvertKit, and Enterprise features remains in the content strategy section below.
 
 Directus CMS, ConvertKit newsletter, blog and gated community decisions.
 
