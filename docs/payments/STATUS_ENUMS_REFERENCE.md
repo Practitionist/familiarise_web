@@ -558,7 +558,7 @@ Before implementing any status change:
 - [Webhook Monitoring](./webhook-monitoring.md)
 - [Abandoned Payment Solutions](./abandoned-payment-solutions.md)
 - [Cron Setup Guide](./cron-setup.md)
-- [Booking Algorithm](./booking-algorithm/00_README.md)
+- [Booking System](../booking/README.md)
 
 ---
 

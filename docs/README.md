@@ -20,41 +20,14 @@ Documentation for working, production-ready systems.
 
 ### Booking
 
-Booking system, slot management, and scheduling logic.
+Booking system, slot allocation, validation, and scheduling logic.
 
-- [checkout-system.md](./booking/checkout-system.md) - Checkout flow overview
-- [multiple-attempts-flow.md](./booking/multiple-attempts-flow.md) - Handling multiple booking attempts
-- [slot-types.md](./booking/slot-types.md) - Slot type definitions
-- [slot-type-refactor.md](./booking/slot-type-refactor.md) - Slot type refactoring notes
-
-#### Booking Algorithm
-
-Detailed documentation for the booking algorithm.
-
-- [00-readme.md](./booking/algorithm/00-readme.md) - Algorithm overview
-- [01-quick-start.md](./booking/algorithm/01-quick-start.md) - Quick start guide
-- [02-architecture.md](./booking/algorithm/02-architecture.md) - Architecture details
-- [03-event-types.md](./booking/algorithm/03-event-types.md) - Event type handling
-- [04-validation-layers.md](./booking/algorithm/04-validation-layers.md) - Validation logic
-- [05-slot-calculations.md](./booking/algorithm/05-slot-calculations.md) - Slot calculation logic
-- [06-api-reference.md](./booking/algorithm/06-api-reference.md) - API reference
-- [07-bug-fixes-changelog.md](./booking/algorithm/07-bug-fixes-changelog.md) - Bug fixes history
-- [08-troubleshooting.md](./booking/algorithm/08-troubleshooting.md) - Troubleshooting guide
-- [09-testing-guide.md](./booking/algorithm/09-testing-guide.md) - Testing guide
-- [architecture-overview.md](./booking/algorithm/architecture-overview.md) - High-level architecture
-- [datetime-migration-plan.md](./booking/algorithm/datetime-migration-plan.md) - DateTime migration
-- [flows.md](./booking/algorithm/flows.md) - Booking flows
-- [ui-guide.md](./booking/algorithm/ui-guide.md) - UI implementation guide
-
-#### Testing Reports
-
-- [testing/bug-report-part1.md](./booking/algorithm/testing/bug-report-part1.md)
-- [testing/bug-report-part2.md](./booking/algorithm/testing/bug-report-part2.md)
-- [testing/bug-report-part3.md](./booking/algorithm/testing/bug-report-part3.md)
-- [testing/bug-report-part4.md](./booking/algorithm/testing/bug-report-part4.md)
-- [testing/comprehensive-testing-prompt.md](./booking/algorithm/testing/comprehensive-testing-prompt.md)
-- [testing/more-testing-phases.md](./booking/algorithm/testing/more-testing-phases.md)
-- [testing/2025-10-14-allocation-bugs.md](./booking/algorithm/testing/2025-10-14-allocation-bugs.md)
+- [README.md](./booking/README.md) - System overview, source code map, navigation hub
+- [01-architecture.md](./booking/01-architecture.md) - Services, data model, data flows, tentative lifecycle
+- [02-event-types-and-validation.md](./booking/02-event-types-and-validation.md) - 4 event types, rules, 3 validation layers
+- [03-slot-math-and-calculations.md](./booking/03-slot-math-and-calculations.md) - 30-min slots, week counting, consecutive validation
+- [04-api-reference.md](./booking/04-api-reference.md) - 8 endpoints, Zod schemas, error codes
+- [05-troubleshooting-and-changelog.md](./booking/05-troubleshooting-and-changelog.md) - Common errors, debugging, recent fixes
 
 ---
 
