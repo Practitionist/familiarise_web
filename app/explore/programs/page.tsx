@@ -1,6 +1,15 @@
 "use client";
 
-import { GraduationCap, Video, Users, Sparkles, Search, Flame, Clock, Hash } from "lucide-react";
+import {
+  GraduationCap,
+  Video,
+  Users,
+  Sparkles,
+  Search,
+  Flame,
+  Clock,
+  Hash,
+} from "lucide-react";
 import { motion } from "framer-motion";
 import { useSession } from "@/lib/auth-client";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -89,8 +98,11 @@ function ProgramsContent() {
   const { programs: trendingPrograms, isLoading: trendingLoading } =
     useCuratedPrograms(programType, "trending", 8);
 
-  const { programs: newPrograms, isLoading: newLoading } =
-    useCuratedPrograms(programType, "newest", 8);
+  const { programs: newPrograms, isLoading: newLoading } = useCuratedPrograms(
+    programType,
+    "newest",
+    8,
+  );
 
   const { topics: topicsWithCount, isLoading: topicsLoading } =
     useTopicsWithCount(programType);
@@ -111,7 +123,11 @@ function ProgramsContent() {
       });
     }
     if (filters.language) {
-      chips.push({ key: "language", label: "Language", value: filters.language });
+      chips.push({
+        key: "language",
+        label: "Language",
+        value: filters.language,
+      });
     }
     if (filters.minPrice !== undefined || filters.maxPrice !== undefined) {
       const min = filters.minPrice ?? 0;
@@ -148,33 +164,30 @@ function ProgramsContent() {
     return chips;
   }, [filters, topicsWithCount, selectedLevel, searchTerm]);
 
-  const handleRemoveFilter = useCallback(
-    (key: string) => {
-      if (key.startsWith("topic-")) {
-        const topicId = key.replace("topic-", "");
-        setFilters((prev) => ({
-          ...prev,
-          topicIds: prev.topicIds?.filter((id) => id !== topicId),
-        }));
-      } else if (key === "language") {
-        setFilters((prev) => ({ ...prev, language: undefined }));
-      } else if (key === "price") {
-        setFilters((prev) => ({
-          ...prev,
-          minPrice: undefined,
-          maxPrice: undefined,
-        }));
-      } else if (key === "sort") {
-        setFilters((prev) => ({ ...prev, sort: undefined }));
-      } else if (key === "level") {
-        setSelectedLevel("all");
-      } else if (key === "search") {
-        setSearchTerm("");
-        setLocalSearchValue("");
-      }
-    },
-    [],
-  );
+  const handleRemoveFilter = useCallback((key: string) => {
+    if (key.startsWith("topic-")) {
+      const topicId = key.replace("topic-", "");
+      setFilters((prev) => ({
+        ...prev,
+        topicIds: prev.topicIds?.filter((id) => id !== topicId),
+      }));
+    } else if (key === "language") {
+      setFilters((prev) => ({ ...prev, language: undefined }));
+    } else if (key === "price") {
+      setFilters((prev) => ({
+        ...prev,
+        minPrice: undefined,
+        maxPrice: undefined,
+      }));
+    } else if (key === "sort") {
+      setFilters((prev) => ({ ...prev, sort: undefined }));
+    } else if (key === "level") {
+      setSelectedLevel("all");
+    } else if (key === "search") {
+      setSearchTerm("");
+      setLocalSearchValue("");
+    }
+  }, []);
 
   const handleClearAll = useCallback(() => {
     setFilters({});
@@ -191,7 +204,9 @@ function ProgramsContent() {
       return { ...prev, topicIds: [...current, topicId] };
     });
     // Scroll to filter section
-    document.getElementById("all-programs")?.scrollIntoView({ behavior: "smooth" });
+    document
+      .getElementById("all-programs")
+      ?.scrollIntoView({ behavior: "smooth" });
   }, []);
 
   // Use trending programs as featured (proxy until admin-flagged feature exists)
@@ -279,7 +294,10 @@ function ProgramsContent() {
         <div className="max-w-[1600px] mx-auto px-4 md:px-8 lg:px-12">
           {/* Tabs */}
           <div className="mb-10">
-            <ProgramTabs activeTab={programType} onTabChange={handleTabChange} />
+            <ProgramTabs
+              activeTab={programType}
+              onTabChange={handleTabChange}
+            />
           </div>
 
           {/* Featured Carousel */}
@@ -390,7 +408,10 @@ function ProgramsContent() {
                       initial={{ opacity: 0, y: 20 }}
                       whileInView={{ opacity: 1, y: 0 }}
                       viewport={{ once: true }}
-                      transition={{ duration: 0.4, delay: Math.min(index * 0.05, 0.6) }}
+                      transition={{
+                        duration: 0.4,
+                        delay: Math.min(index * 0.05, 0.6),
+                      }}
                     >
                       <ProgramCard program={item} variant="grid" />
                     </motion.div>
@@ -411,7 +432,10 @@ function ProgramsContent() {
                       initial={{ opacity: 0, y: 20 }}
                       whileInView={{ opacity: 1, y: 0 }}
                       viewport={{ once: true }}
-                      transition={{ duration: 0.4, delay: Math.min(index * 0.05, 0.6) }}
+                      transition={{
+                        duration: 0.4,
+                        delay: Math.min(index * 0.05, 0.6),
+                      }}
                     >
                       <ProgramCard program={item} variant="list" />
                     </motion.div>

@@ -15,16 +15,17 @@ Familiarise operates as a **marketplace platform** connecting consultants (exper
 >
 > **Actual fixed costs (February 2026):**
 >
-> | Item | Assumed (Below) | Actual |
-> |------|----------------|--------|
-> | Server/Infrastructure | ₹50,000 | ₹0 (Vercel free, Supabase free tier) |
-> | Team Salaries | ₹3,00,000 | ₹10,000 (1 part-time tech intern) |
-> | Marketing | ₹50,000 | ₹0 (organic/founder-driven) |
-> | Tools/SaaS | ₹20,000 | ₹9,325 (Claude Max ₹8,500 + Apple Dev ₹825) |
-> | Miscellaneous | ₹30,000 | ₹0 |
-> | **Total Fixed** | **₹4,50,000** | **~₹19,325** |
+> | Item                  | Assumed (Below) | Actual                                      |
+> | --------------------- | --------------- | ------------------------------------------- |
+> | Server/Infrastructure | ₹50,000         | ₹0 (Vercel free, Supabase free tier)        |
+> | Team Salaries         | ₹3,00,000       | ₹10,000 (1 part-time tech intern)           |
+> | Marketing             | ₹50,000         | ₹0 (organic/founder-driven)                 |
+> | Tools/SaaS            | ₹20,000         | ₹9,325 (Claude Max ₹8,500 + Apple Dev ₹825) |
+> | Miscellaneous         | ₹30,000         | ₹0                                          |
+> | **Total Fixed**       | **₹4,50,000**   | **~₹19,325**                                |
 >
 > **Impact on break-even:**
+>
 > - At ₹19,325/month fixed costs and ~17% effective commission (after 3% gateway fee):
 > - Break-even GMV = ₹19,325 / 0.17 = **~₹1,13,676 (~₹1.14L)**
 > - At ₹1,000 average transaction: **~114 transactions/month**

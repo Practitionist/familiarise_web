@@ -33,7 +33,8 @@ export default function ForgotPassword() {
           variant: "destructive",
         });
       } else {
-        const successMessage = "If an account with that email exists, a password reset link has been sent.";
+        const successMessage =
+          "If an account with that email exists, a password reset link has been sent.";
         setMessage(successMessage);
         toast({ title: "Request Sent", description: successMessage });
       }

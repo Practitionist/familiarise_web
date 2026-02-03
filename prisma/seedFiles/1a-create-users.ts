@@ -78,23 +78,88 @@ const ADMIN_LEVELS: AdminLevel[] = ["SUPER_ADMIN", "ADMIN", "MODERATOR"];
 
 // Curated name pools for realistic, consistent seed data
 const FIRST_NAMES = [
-  "Aarav", "Aditi", "Alex", "Amit", "Ananya", "Andrew", "Angela", "Arjun",
-  "Benjamin", "Catherine", "Charlotte", "Daniel", "David", "Elena", "Emily",
-  "Ethan", "Grace", "Hannah", "Isabella", "James", "Jessica", "John",
-  "Karen", "Kevin", "Lauren", "Liam", "Maria", "Michael", "Natalie", "Nathan",
-  "Olivia", "Patrick", "Priya", "Rachel", "Raj", "Rebecca", "Robert",
-  "Samantha", "Sarah", "Sophia", "Thomas", "Victoria", "William", "Zara",
+  "Aarav",
+  "Aditi",
+  "Alex",
+  "Amit",
+  "Ananya",
+  "Andrew",
+  "Angela",
+  "Arjun",
+  "Benjamin",
+  "Catherine",
+  "Charlotte",
+  "Daniel",
+  "David",
+  "Elena",
+  "Emily",
+  "Ethan",
+  "Grace",
+  "Hannah",
+  "Isabella",
+  "James",
+  "Jessica",
+  "John",
+  "Karen",
+  "Kevin",
+  "Lauren",
+  "Liam",
+  "Maria",
+  "Michael",
+  "Natalie",
+  "Nathan",
+  "Olivia",
+  "Patrick",
+  "Priya",
+  "Rachel",
+  "Raj",
+  "Rebecca",
+  "Robert",
+  "Samantha",
+  "Sarah",
+  "Sophia",
+  "Thomas",
+  "Victoria",
+  "William",
+  "Zara",
 ];
 
 const LAST_NAMES = [
-  "Anderson", "Brown", "Campbell", "Chen", "Davis", "Garcia", "Gupta",
-  "Harris", "Jackson", "Johnson", "Kim", "Kumar", "Lee", "Martin", "Miller",
-  "Nakamura", "Patel", "Rodriguez", "Sharma", "Singh", "Smith",
-  "Taylor", "Thompson", "Williams", "Wilson", "Wright", "Young",
+  "Anderson",
+  "Brown",
+  "Campbell",
+  "Chen",
+  "Davis",
+  "Garcia",
+  "Gupta",
+  "Harris",
+  "Jackson",
+  "Johnson",
+  "Kim",
+  "Kumar",
+  "Lee",
+  "Martin",
+  "Miller",
+  "Nakamura",
+  "Patel",
+  "Rodriguez",
+  "Sharma",
+  "Singh",
+  "Smith",
+  "Taylor",
+  "Thompson",
+  "Williams",
+  "Wilson",
+  "Wright",
+  "Young",
 ];
 
 const EMAIL_DOMAINS = [
-  "gmail.com", "outlook.com", "yahoo.com", "hotmail.com", "protonmail.com",
+  "gmail.com",
+  "outlook.com",
+  "yahoo.com",
+  "hotmail.com",
+  "protonmail.com",
 ];
 
 /**
@@ -103,7 +168,8 @@ const EMAIL_DOMAINS = [
  */
 function generateNameAndEmail(index: number): { name: string; email: string } {
   const firstName = FIRST_NAMES[index % FIRST_NAMES.length];
-  const lastName = LAST_NAMES[Math.floor(index / FIRST_NAMES.length) % LAST_NAMES.length];
+  const lastName =
+    LAST_NAMES[Math.floor(index / FIRST_NAMES.length) % LAST_NAMES.length];
   const fullName = `${firstName} ${lastName}`;
   const emailLocal = `${firstName.toLowerCase()}.${lastName.toLowerCase()}`;
   const emailDomain = EMAIL_DOMAINS[index % EMAIL_DOMAINS.length];

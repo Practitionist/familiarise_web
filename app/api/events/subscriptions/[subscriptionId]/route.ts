@@ -19,7 +19,10 @@ import {
   notifySubscriptionStarted,
   notifySubscriptionCancelled,
 } from "@/lib/novu";
-import { UpdateSubscriptionSchema, PatchSubscriptionStatusSchema } from "@/schemas/subscriptions";
+import {
+  UpdateSubscriptionSchema,
+  PatchSubscriptionStatusSchema,
+} from "@/schemas/subscriptions";
 
 /**
  * Type for subscription with all related details needed for payment processing

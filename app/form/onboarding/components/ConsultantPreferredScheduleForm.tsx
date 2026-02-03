@@ -476,7 +476,8 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
   // Use shared validation feedback hook
   const currentSlots = scheduleType === "WEEKLY" ? weeklySlots : customSlots;
   const validationFeedback = useSlotValidationFeedback(currentSlots);
-  const allSlotsValid = validationFeedback.isValid && validationFeedback.hasSlots;
+  const allSlotsValid =
+    validationFeedback.isValid && validationFeedback.hasSlots;
 
   const onSubmitForm = useCallback(
     (data: PreferredSchedule) => {

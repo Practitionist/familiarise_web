@@ -6,10 +6,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import {
-  UserRole,
-  ConsultantVerificationStatus,
-} from "@prisma/client";
+import { UserRole, ConsultantVerificationStatus } from "@prisma/client";
 import { notifyVerificationStatusChanged } from "@/lib/novu";
 import { ReviewVerificationSchema } from "@/schemas/verifications";
 

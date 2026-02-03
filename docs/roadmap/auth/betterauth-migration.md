@@ -41,20 +41,20 @@ The `next-auth` npm package still has ~2 million weekly downloads due to its mas
 
 ## Feature Comparison
 
-| Aspect | NextAuth (Auth.js) | BetterAuth |
-|---|---|---|
-| **Status** | Maintenance mode | Active development (v1.4.15+) |
-| **Enterprise SSO (SAML/OIDC)** | Not built-in (needs WorkOS/PropelAuth) | First-class `@better-auth/sso` plugin |
-| **Organizations / Multi-tenant** | Not built-in | First-class plugin with teams, roles, invitations |
-| **RBAC** | Manual via callbacks | Built-in with resource-action permissions |
-| **API Key Management** | Not available | First-class plugin |
-| **Admin Dashboard** | Not available | Community project + Admin plugin |
-| **Stripe Billing Integration** | Not available | First-class `@better-auth/stripe` plugin |
-| **Prisma Adapter** | Yes (`@auth/prisma-adapter`) | Yes, with CLI schema generation + join optimizations |
-| **GitHub Stars** | ~28k | ~25k |
-| **npm Weekly Downloads** | ~2M (legacy momentum) | ~612k (growing fast) |
-| **License** | ISC (free) | MIT (free, all plugins free) |
-| **Funding** | Community | $5M seed (YC, Peak XV) |
+| Aspect                           | NextAuth (Auth.js)                     | BetterAuth                                           |
+| -------------------------------- | -------------------------------------- | ---------------------------------------------------- |
+| **Status**                       | Maintenance mode                       | Active development (v1.4.15+)                        |
+| **Enterprise SSO (SAML/OIDC)**   | Not built-in (needs WorkOS/PropelAuth) | First-class `@better-auth/sso` plugin                |
+| **Organizations / Multi-tenant** | Not built-in                           | First-class plugin with teams, roles, invitations    |
+| **RBAC**                         | Manual via callbacks                   | Built-in with resource-action permissions            |
+| **API Key Management**           | Not available                          | First-class plugin                                   |
+| **Admin Dashboard**              | Not available                          | Community project + Admin plugin                     |
+| **Stripe Billing Integration**   | Not available                          | First-class `@better-auth/stripe` plugin             |
+| **Prisma Adapter**               | Yes (`@auth/prisma-adapter`)           | Yes, with CLI schema generation + join optimizations |
+| **GitHub Stars**                 | ~28k                                   | ~25k                                                 |
+| **npm Weekly Downloads**         | ~2M (legacy momentum)                  | ~612k (growing fast)                                 |
+| **License**                      | ISC (free)                             | MIT (free, all plugins free)                         |
+| **Funding**                      | Community                              | $5M seed (YC, Peak XV)                               |
 
 ---
 
@@ -86,6 +86,7 @@ The `next-auth` npm package still has ~2 million weekly downloads due to its mas
 **Built into both the Organization and Admin plugins.**
 
 Organization Plugin RBAC:
+
 - Default roles: Owner, Admin, Member (customizable)
 - Users can hold multiple roles (comma-separated storage)
 - Permissions structured as resource-action pairs (e.g., `project: ["create", "update", "delete"]`)
@@ -94,6 +95,7 @@ Organization Plugin RBAC:
 - Dynamic access control mode stores roles/permissions in DB for runtime changes
 
 Admin Plugin RBAC:
+
 - Custom access controller via `createAccessControl`
 - Define resources with fine-grained actions
 - Create roles with specific permission sets
@@ -133,19 +135,19 @@ Admin Plugin RBAC:
 
 ## NextAuth Enterprise Features (Limitations)
 
-| Feature | Auth.js Support | Notes |
-|---|---|---|
-| Basic OAuth/Social Login | YES (50+ providers) | Core strength |
-| Email/Password | YES (Credentials provider) | Works, but often confusing to set up |
-| RBAC | MANUAL IMPLEMENTATION | Must build via callbacks and middleware; role not in `req.auth.user` by default in v5 |
-| Enterprise SSO (SAML/OIDC) | NO — Requires third-party | PropelAuth, WorkOS, Descope, or custom implementation needed |
-| Organization/Multi-Tenancy | NO — Not built-in | Must build entirely from scratch or use another service |
-| Team Management | NO | Not a concept in Auth.js |
-| API Key Management | NO | Not available |
-| Audit Logging | NO | Not available |
-| Admin Dashboard | NO | Not available |
-| Stripe/Billing | NO | Not available |
-| Plugin Architecture | NO | Extensibility is via callbacks, adapters, and manual configuration |
+| Feature                    | Auth.js Support            | Notes                                                                                 |
+| -------------------------- | -------------------------- | ------------------------------------------------------------------------------------- |
+| Basic OAuth/Social Login   | YES (50+ providers)        | Core strength                                                                         |
+| Email/Password             | YES (Credentials provider) | Works, but often confusing to set up                                                  |
+| RBAC                       | MANUAL IMPLEMENTATION      | Must build via callbacks and middleware; role not in `req.auth.user` by default in v5 |
+| Enterprise SSO (SAML/OIDC) | NO — Requires third-party  | PropelAuth, WorkOS, Descope, or custom implementation needed                          |
+| Organization/Multi-Tenancy | NO — Not built-in          | Must build entirely from scratch or use another service                               |
+| Team Management            | NO                         | Not a concept in Auth.js                                                              |
+| API Key Management         | NO                         | Not available                                                                         |
+| Audit Logging              | NO                         | Not available                                                                         |
+| Admin Dashboard            | NO                         | Not available                                                                         |
+| Stripe/Billing             | NO                         | Not available                                                                         |
+| Plugin Architecture        | NO                         | Extensibility is via callbacks, adapters, and manual configuration                    |
 
 Auth.js is fundamentally an authentication library. For authorization, multi-tenancy, and enterprise features, you must either build custom solutions or integrate third-party services (Clerk, WorkOS, PropelAuth, etc.).
 
@@ -156,6 +158,7 @@ Auth.js is fundamentally an authentication library. For authorization, multi-ten
 **File:** `/app/api/auth/[...nextauth]/options.ts`
 
 **Providers:**
+
 1. Google (GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET)
 2. GitHub (GITHUB_ID, GITHUB_SECRET)
 3. Facebook (FACEBOOK_CLIENT_ID, FACEBOOK_CLIENT_SECRET)
@@ -164,12 +167,14 @@ Auth.js is fundamentally an authentication library. For authorization, multi-ten
 **Session Strategy:** JWT-based (30 days expiration)
 
 **Key Callbacks:**
+
 - **signIn**: Handles OAuth account linking (auto-links new providers to existing users by email)
 - **jwt**: Enriches token with user data (role, profile IDs, onboarding status)
 - **session**: Populates session from JWT (performance optimized — no DB query on every session check)
 - **redirect**: Redirects authenticated users to `/explore/experts`
 
 **TypeScript Extensions** (`next-auth.d.ts`):
+
 - Extended Session: `id`, `emailVerified`, `phone`, `address`, `onboardingCompleted`, `role`, `consultantProfileId`, `consulteeProfileId`, `staffProfileId`
 
 ---
@@ -219,6 +224,7 @@ export const auth = betterAuth({
 ```
 
 Key details:
+
 - CLI auto-generates Prisma schema: `npx @better-auth/cli generate`
 - Supports database joins for 2-3x performance improvements (experimental, since v1.4.0)
 - Compatible with Prisma 7+ (requires explicit `output` path)
@@ -229,28 +235,28 @@ Key details:
 
 ## Community and Maturity Comparison
 
-| Metric | BetterAuth | Auth.js (NextAuth) |
-|---|---|---|
-| **GitHub Stars** | ~25,000 | ~28,000 |
-| **Weekly npm Downloads** | ~612,000 | ~2,000,000 |
-| **First Release** | 2024 | 2020 |
-| **Discord Community** | 5,000+ members | Larger (established) |
-| **Framework Endorsements** | Recommended by Next.js, Nuxt, Astro | Was the default for Next.js |
-| **Active Development** | YES — active, frequent releases (v1.4.15 as of Jan 2026) | MAINTENANCE MODE — security patches only |
-| **v5 Stable Release** | N/A | Never released (stuck in beta since Oct 2023) |
-| **Lead Maintainer** | Active (Bereket) | Balazs Orban left in Jan 2025; team joined BetterAuth in Sep 2025 |
+| Metric                     | BetterAuth                                               | Auth.js (NextAuth)                                                |
+| -------------------------- | -------------------------------------------------------- | ----------------------------------------------------------------- |
+| **GitHub Stars**           | ~25,000                                                  | ~28,000                                                           |
+| **Weekly npm Downloads**   | ~612,000                                                 | ~2,000,000                                                        |
+| **First Release**          | 2024                                                     | 2020                                                              |
+| **Discord Community**      | 5,000+ members                                           | Larger (established)                                              |
+| **Framework Endorsements** | Recommended by Next.js, Nuxt, Astro                      | Was the default for Next.js                                       |
+| **Active Development**     | YES — active, frequent releases (v1.4.15 as of Jan 2026) | MAINTENANCE MODE — security patches only                          |
+| **v5 Stable Release**      | N/A                                                      | Never released (stuck in beta since Oct 2023)                     |
+| **Lead Maintainer**        | Active (Bereket)                                         | Balazs Orban left in Jan 2025; team joined BetterAuth in Sep 2025 |
 
 ---
 
 ## Pricing Comparison
 
-| Aspect | BetterAuth | Auth.js (NextAuth) |
-|---|---|---|
-| **License** | MIT (free, open source) | ISC (free, open source) |
-| **Per-User Fees** | None | None |
-| **Feature Paywalls** | None — all plugins are free | None |
-| **Self-Hosting** | Fully supported | Fully supported |
-| **Actual Costs** | Server + database hosting + dev time | Same + cost of third-party services for enterprise features (SSO, RBAC, etc.) |
+| Aspect               | BetterAuth                           | Auth.js (NextAuth)                                                            |
+| -------------------- | ------------------------------------ | ----------------------------------------------------------------------------- |
+| **License**          | MIT (free, open source)              | ISC (free, open source)                                                       |
+| **Per-User Fees**    | None                                 | None                                                                          |
+| **Feature Paywalls** | None — all plugins are free          | None                                                                          |
+| **Self-Hosting**     | Fully supported                      | Fully supported                                                               |
+| **Actual Costs**     | Server + database hosting + dev time | Same + cost of third-party services for enterprise features (SSO, RBAC, etc.) |
 
 **Key insight**: While both are free and open-source, Auth.js users often end up paying for third-party services to get enterprise features (WorkOS for SSO, Clerk for org management, etc.). BetterAuth includes these capabilities for free via plugins, making the total cost of ownership significantly lower for enterprise use cases.
 

@@ -2,18 +2,18 @@
 
 ## Event Type Comparison
 
-| Aspect | Consultation | Subscription | Webinar | Class |
-|--------|-------------|-------------|---------|-------|
-| **Relationship** | 1:1 | 1:1 | 1:many | 1:many |
-| **Frequency** | One-time | Recurring | One-time | Recurring |
-| **Duration field** | `durationInHours` (total) | `sessionDurationInHours` (per call) + `durationInMonths` | `durationInHours` (total) | `sessionDurationInHours` (per session) + `durationInMonths` |
-| **Slot grouping** | Consecutive + same day | 1 call/day max, consecutive within day | Consecutive | Max 2-3 sessions/day, consecutive within session |
-| **Scheduling period** | None | Required [startDate, endDate] | None | Required [startDate, endDate] |
-| **Appointments created** | 1 | 1 per call (many) | 1 | 1 per session (many) |
-| **Weekly limit** | N/A | `callsPerWeek` (0-7) | N/A | `meetingsPerWeek` |
-| **Status field** | `requestStatus` | `requestStatus` | `status` | `status` |
-| **Allocation modes** | auto, manual, requested | auto, manual, requested | auto, manual | auto, manual |
-| **Min duration** | 0.5h | 0.5h per session | 0.5h | 0.5h per session |
+| Aspect                   | Consultation              | Subscription                                             | Webinar                   | Class                                                       |
+| ------------------------ | ------------------------- | -------------------------------------------------------- | ------------------------- | ----------------------------------------------------------- |
+| **Relationship**         | 1:1                       | 1:1                                                      | 1:many                    | 1:many                                                      |
+| **Frequency**            | One-time                  | Recurring                                                | One-time                  | Recurring                                                   |
+| **Duration field**       | `durationInHours` (total) | `sessionDurationInHours` (per call) + `durationInMonths` | `durationInHours` (total) | `sessionDurationInHours` (per session) + `durationInMonths` |
+| **Slot grouping**        | Consecutive + same day    | 1 call/day max, consecutive within day                   | Consecutive               | Max 2-3 sessions/day, consecutive within session            |
+| **Scheduling period**    | None                      | Required [startDate, endDate]                            | None                      | Required [startDate, endDate]                               |
+| **Appointments created** | 1                         | 1 per call (many)                                        | 1                         | 1 per session (many)                                        |
+| **Weekly limit**         | N/A                       | `callsPerWeek` (0-7)                                     | N/A                       | `meetingsPerWeek`                                           |
+| **Status field**         | `requestStatus`           | `requestStatus`                                          | `status`                  | `status`                                                    |
+| **Allocation modes**     | auto, manual, requested   | auto, manual, requested                                  | auto, manual              | auto, manual                                                |
+| **Min duration**         | 0.5h                      | 0.5h per session                                         | 0.5h                      | 0.5h per session                                            |
 
 ---
 
@@ -39,6 +39,7 @@ flowchart TD
 ```
 
 **Booking flows**:
+
 - **Direct checkout**: Consultee selects slot, pays. Appointment created with `isTentative: true`, confirmed on payment webhook.
 - **Request-based**: Consultee submits preferred slots. Consultant approves/rejects via "Use Requested Slots" mode.
 
@@ -53,6 +54,7 @@ Recurring sessions over a period of months. Most complex event type.
 **Total slots**: `totalCalls * Math.ceil(sessionDurationInHours / 0.5)`
 
 **Rules**:
+
 - All slots within scheduling period [startDate, endDate]
 - Max 1 call per day (consecutive slots within that call)
 - Weekly limit: `callsPerWeek` calls per Sunday-Saturday week
@@ -130,15 +132,17 @@ Input format validation at the API boundary. Runs before any business logic.
 
 ```typescript
 // Allocation request (PATCH /allocate)
-allocationRequestSchema = z.object({
-  isAuto: z.boolean(),                    // Required
-  useRequestedSlots: z.boolean().optional(),
-  slots: z.array(z.string().datetime()).optional(),
-}).refine(data => {
-  if (data.isAuto) return true;           // Auto: no slots needed
-  if (data.useRequestedSlots) return true; // Requested: no slots needed
-  return data.slots && data.slots.length > 0; // Manual: slots required
-});
+allocationRequestSchema = z
+  .object({
+    isAuto: z.boolean(), // Required
+    useRequestedSlots: z.boolean().optional(),
+    slots: z.array(z.string().datetime()).optional(),
+  })
+  .refine((data) => {
+    if (data.isAuto) return true; // Auto: no slots needed
+    if (data.useRequestedSlots) return true; // Requested: no slots needed
+    return data.slots && data.slots.length > 0; // Manual: slots required
+  });
 
 // Validation request (POST /validate)
 validationRequestSchema = z.object({
@@ -146,10 +150,17 @@ validationRequestSchema = z.object({
 });
 
 // Event ID (URL parameter)
-eventIdSchema = z.string().min(1).refine(id => {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)  // UUID
-      || /^c[a-z0-9]{24}$/i.test(id);  // CUID
-});
+eventIdSchema = z
+  .string()
+  .min(1)
+  .refine((id) => {
+    return (
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        id,
+      ) || // UUID
+      /^c[a-z0-9]{24}$/i.test(id)
+    ); // CUID
+  });
 ```
 
 **Error handling**: `formatZodError()` converts Zod errors to `"field: message; field2: message2"` format. `safeParse()` wrapper returns `{success, data}` or `{success: false, error}`.
@@ -178,12 +189,15 @@ flowchart TD
 ```
 
 **Conflict detection** uses range overlap, not exact match:
+
 ```
 slotStart < existingSlotEnd AND existingSlotStart < slotEnd
 ```
+
 This catches partial overlaps that exact-match would miss.
 
 **Schedule matching** (weekly availability):
+
 - Uses `dayOfWeekForStartsAt` enum as the source of truth for day-of-week
 - Compares time-of-day only (hours:minutes), not full DateTime
 - Slot must start >= availability start AND end <= availability end
@@ -191,6 +205,7 @@ This catches partial overlaps that exact-match would miss.
 ### Layer 3: Database Constraints
 
 Prisma enforces:
+
 - Foreign key relationships (appointment -> event, slot -> appointment)
 - NOT NULL constraints on required fields
 - Enum constraints (`AppointmentsType`, `RequestStatus`, `DayOfWeek`)
@@ -205,6 +220,7 @@ Consultants configure one of two schedule types:
 ### Weekly
 
 Recurring weekly patterns stored in `SlotOfAvailabilityWeekly`:
+
 - `dayOfWeekForStartsAt`: DayOfWeek enum (SUNDAY, MONDAY, ..., SATURDAY) -- **source of truth** for which day
 - `availabilityStartsAt`: DateTime with time-of-day (date portion may be a reference date)
 - `availabilityEndsAt`: DateTime with end time
@@ -214,6 +230,7 @@ The `dayOfWeekForStartsAt` enum must be used instead of `getUTCDay()` on the Dat
 ### Custom
 
 Specific date/time ranges stored in `SlotOfAvailabilityCustom`:
+
 - `availabilityStartsAt`: Exact DateTime
 - `availabilityEndsAt`: Exact DateTime
 - Validated using overlap detection: `proposedStart < availEnd AND availStart < proposedEnd`

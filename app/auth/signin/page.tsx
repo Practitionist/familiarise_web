@@ -10,9 +10,9 @@ import { useToast } from "@/hooks/use-toast";
 import { signIn } from "@/lib/auth-client";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
 
-export default function SignIn() {
+function SignInContent() {
   const { toast } = useToast();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -157,7 +157,10 @@ export default function SignIn() {
             className="w-full flex items-center justify-center bg-black hover:bg-gray-700"
             disabled={isLoading}
             onClick={() => {
-              signIn.social({ provider: "github", callbackURL: callbackUrl || "/" });
+              signIn.social({
+                provider: "github",
+                callbackURL: callbackUrl || "/",
+              });
               toast({
                 title: "Signing in with GitHub...",
                 description: "Please wait while we redirect you.",
@@ -171,7 +174,10 @@ export default function SignIn() {
             className="w-full flex items-center justify-center mt-4 bg-red-600 hover:bg-red-500"
             disabled={isLoading}
             onClick={() => {
-              signIn.social({ provider: "google", callbackURL: callbackUrl || "/" });
+              signIn.social({
+                provider: "google",
+                callbackURL: callbackUrl || "/",
+              });
               toast({
                 title: "Signing in with Google...",
                 description: "Please wait while we redirect you.",
@@ -185,7 +191,10 @@ export default function SignIn() {
             className="w-full flex items-center justify-center mt-4 bg-blue-600 hover:bg-blue-500"
             disabled={isLoading}
             onClick={() => {
-              signIn.social({ provider: "facebook", callbackURL: callbackUrl || "/" });
+              signIn.social({
+                provider: "facebook",
+                callbackURL: callbackUrl || "/",
+              });
               toast({
                 title: "Signing in with Facebook...",
                 description: "Please wait while we redirect you.",
@@ -212,6 +221,20 @@ export default function SignIn() {
         <div />
       </div>
     </div>
+  );
+}
+
+export default function SignIn() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen flex items-center justify-center">
+          Loading...
+        </div>
+      }
+    >
+      <SignInContent />
+    </Suspense>
   );
 }
 

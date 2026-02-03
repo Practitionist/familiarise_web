@@ -67,7 +67,8 @@ export default function ConsultationCheckoutPage({
     null,
   );
   const [discountCodeInput, setDiscountCodeInput] = useState("");
-  const [appliedDiscount, setAppliedDiscount] = useState<AppliedDiscount | null>(null);
+  const [appliedDiscount, setAppliedDiscount] =
+    useState<AppliedDiscount | null>(null);
   const [isApplyingDiscount, setIsApplyingDiscount] = useState(false);
   const [discountError, setDiscountError] = useState<string | null>(null);
 
@@ -476,7 +477,6 @@ export default function ConsultationCheckoutPage({
   const consultantDetails = eventData?.data.consultantProfile;
   const userDetails = eventData?.data.consultantProfile.user;
 
-
   return (
     <>
       <div className="flex flex-col gap-6 border-r border-zinc-300 bg-gradient-to-br from-zinc-200 via-zinc-100 to-gray-200 p-8">
@@ -626,9 +626,7 @@ export default function ConsultationCheckoutPage({
             <div className="grid gap-2">
               <div className="flex items-center justify-between">
                 <div>Session Fee</div>
-                <div>
-                  {formatPrice(eventData?.data?.price || 0)}
-                </div>
+                <div>{formatPrice(eventData?.data?.price || 0)}</div>
               </div>
               <div className="flex items-center justify-between">
                 <div className="flex items-center">

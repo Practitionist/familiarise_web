@@ -9,12 +9,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Search,
-  LayoutGrid,
-  List,
-  SlidersHorizontal,
-} from "lucide-react";
+import { Search, LayoutGrid, List, SlidersHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { TopicWithCount, ProgramFilters } from "../utils";
 import { useEffect, useRef, useState } from "react";
@@ -318,8 +313,7 @@ export default function AdvancedFilters({
                   className="hover:bg-white/20 rounded-full p-0.5 transition-colors"
                   onClick={() => handleTopicToggle(id)}
                 >
-                  <span className="sr-only">Remove</span>
-                  ×
+                  <span className="sr-only">Remove</span>×
                 </button>
               </span>
             );

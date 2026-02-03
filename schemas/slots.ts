@@ -10,14 +10,16 @@ export const RequestForApprovalSchema = z
     slotOfAvailabilityCustomId: z.string().optional(),
   })
   .refine(
-    (data) => !(data.slotOfAvailabilityWeeklyId && data.slotOfAvailabilityCustomId),
+    (data) =>
+      !(data.slotOfAvailabilityWeeklyId && data.slotOfAvailabilityCustomId),
     {
       message: "Cannot provide both weekly and custom slot availability IDs",
       path: ["slotOfAvailabilityWeeklyId"],
     },
   )
   .refine(
-    (data) => data.slotOfAvailabilityWeeklyId || data.slotOfAvailabilityCustomId,
+    (data) =>
+      data.slotOfAvailabilityWeeklyId || data.slotOfAvailabilityCustomId,
     {
       message: "Must provide either weekly or custom slot availability ID",
       path: ["slotOfAvailabilityWeeklyId"],

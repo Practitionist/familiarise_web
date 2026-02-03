@@ -60,7 +60,8 @@ export default function CategoryGrid({
               {topic.name}
             </h3>
             <p className="text-xs text-zinc-500">
-              {topic.programCount} {topic.programCount === 1 ? "program" : "programs"}
+              {topic.programCount}{" "}
+              {topic.programCount === 1 ? "program" : "programs"}
             </p>
           </button>
         ))}

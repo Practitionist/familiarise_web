@@ -12,7 +12,7 @@ export async function GET(request: NextRequest) {
   if (!consultantProfileId) {
     return NextResponse.json(
       { error: "consultantProfileId is required" },
-      { status: 400 }
+      { status: 400 },
     );
   }
 
@@ -24,7 +24,7 @@ export async function GET(request: NextRequest) {
     });
 
     const data = Object.fromEntries(
-      counts.map((c) => [c.status, c._count.status])
+      counts.map((c) => [c.status, c._count.status]),
     );
 
     return NextResponse.json({ data });
@@ -32,7 +32,7 @@ export async function GET(request: NextRequest) {
     console.error("Error fetching trial stats:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching trial stats" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

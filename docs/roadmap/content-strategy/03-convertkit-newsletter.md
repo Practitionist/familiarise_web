@@ -96,18 +96,18 @@ This model captures subscriber emails. The actual email delivery, segmentation, 
 
 ConvertKit tags subscribers for targeted content:
 
-| Tag | Applied When | Used For |
-|---|---|---|
-| `subscriber` | Any newsletter signup | All broadcasts |
-| `tech` | Selected interest on signup | Tech-related blog posts |
-| `career` | Selected interest on signup | Career-related content |
-| `business` | Selected interest on signup | Business strategy content |
-| `enterprise` | Org admin signs up | Enterprise-specific sequences |
-| `plan:team` | Enterprise team plan | Plan-specific messaging |
-| `plan:business` | Enterprise business plan | Plan-specific messaging |
-| `plan:enterprise` | Enterprise custom plan | Plan-specific messaging |
-| `consultant` | Consultant signs up | Consultant-focused content |
-| `consultee` | Consultee signs up | Consultee-focused content |
+| Tag               | Applied When                | Used For                      |
+| ----------------- | --------------------------- | ----------------------------- |
+| `subscriber`      | Any newsletter signup       | All broadcasts                |
+| `tech`            | Selected interest on signup | Tech-related blog posts       |
+| `career`          | Selected interest on signup | Career-related content        |
+| `business`        | Selected interest on signup | Business strategy content     |
+| `enterprise`      | Org admin signs up          | Enterprise-specific sequences |
+| `plan:team`       | Enterprise team plan        | Plan-specific messaging       |
+| `plan:business`   | Enterprise business plan    | Plan-specific messaging       |
+| `plan:enterprise` | Enterprise custom plan      | Plan-specific messaging       |
+| `consultant`      | Consultant signs up         | Consultant-focused content    |
+| `consultee`       | Consultee signs up          | Consultee-focused content     |
 
 ---
 
@@ -136,10 +136,10 @@ ConvertKit tags subscribers for targeted content:
 
 ## Distinction from Resend and Novu
 
-| Service | Purpose | Sends Through |
-|---|---|---|
-| **ConvertKit** | Email MARKETING — newsletters, drip sequences, broadcasts | Its OWN infrastructure |
-| **Resend** | TRANSACTIONAL email delivery — auth emails, booking confirmations | Directly (for auth) or via Novu |
-| **Novu** | Notification ORCHESTRATION — decides what/who/where/when | Routes email through Resend |
+| Service        | Purpose                                                           | Sends Through                   |
+| -------------- | ----------------------------------------------------------------- | ------------------------------- |
+| **ConvertKit** | Email MARKETING — newsletters, drip sequences, broadcasts         | Its OWN infrastructure          |
+| **Resend**     | TRANSACTIONAL email delivery — auth emails, booking confirmations | Directly (for auth) or via Novu |
+| **Novu**       | Notification ORCHESTRATION — decides what/who/where/when          | Routes email through Resend     |
 
 ConvertKit and Resend/Novu are completely independent pipelines. ConvertKit handles marketing emails (opt-in, unsubscribe managed by ConvertKit). Resend handles transactional emails (triggered by user actions, managed by your app).

@@ -149,7 +149,10 @@ export const calculateSessionProgress = (
   const totalSessions = groupAppointments.length;
   const completedSessions = groupAppointments.filter((app) => {
     const slotTimes = getSlotTimes(app);
-    return slotTimes.length > 0 && slotTimes.every((time) => new Date(time) < referenceDate);
+    return (
+      slotTimes.length > 0 &&
+      slotTimes.every((time) => new Date(time) < referenceDate)
+    );
   }).length;
   const remainingSessions = totalSessions - completedSessions;
   const progressPercentage =
@@ -365,9 +368,9 @@ export const getUpcomingAppointments = (
     ) {
       // Check if all slots are in the past
       const upcomingSlotTimes = getSlotTimes(appointment);
-      const allSlotsCompleted = upcomingSlotTimes.length > 0 && upcomingSlotTimes.every(
-        (time) => new Date(time) < now,
-      );
+      const allSlotsCompleted =
+        upcomingSlotTimes.length > 0 &&
+        upcomingSlotTimes.every((time) => new Date(time) < now);
       // Only include if not all slots are completed
       return !allSlotsCompleted;
     }

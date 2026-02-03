@@ -4,10 +4,10 @@
 
 The notification system uses two complementary services rather than one:
 
-| Service | Role | Analogy |
-|---------|------|---------|
-| **Resend** | Email delivery infrastructure | The postman |
-| **Novu** | Multi-channel notification orchestration | The brain |
+| Service    | Role                                     | Analogy     |
+| ---------- | ---------------------------------------- | ----------- |
+| **Resend** | Email delivery infrastructure            | The postman |
+| **Novu**   | Multi-channel notification orchestration | The brain   |
 
 **Why both?** Resend sends emails reliably (DKIM, SPF, bounce handling) but cannot do in-app notifications, push notifications, digest batching, or user preference routing. Novu orchestrates all channels but cannot deliver emails itself -- it uses Resend as its email provider.
 
@@ -36,15 +36,15 @@ graph LR
 
 ### When to Use Each Path
 
-| Use Resend Directly | Use Novu |
-|---------------------|----------|
-| Auth emails (welcome, password reset, account linked) | Appointment lifecycle (booked, cancelled, rescheduled, completed) |
-| Payment transactional (payment link, success, failed) | Support tickets (created, updated, response) |
-| Waitlist lifecycle (joined, spot available, expiring, expired) | Feedback and reviews |
-| Any email that doesn't need in-app/push delivery | Trial sessions, subscriptions |
-| | Consultant-specific (booking requests, verification, payouts) |
-| | Admin/system (announcements, new applications) |
-| | Disputes, recordings |
+| Use Resend Directly                                            | Use Novu                                                          |
+| -------------------------------------------------------------- | ----------------------------------------------------------------- |
+| Auth emails (welcome, password reset, account linked)          | Appointment lifecycle (booked, cancelled, rescheduled, completed) |
+| Payment transactional (payment link, success, failed)          | Support tickets (created, updated, response)                      |
+| Waitlist lifecycle (joined, spot available, expiring, expired) | Feedback and reviews                                              |
+| Any email that doesn't need in-app/push delivery               | Trial sessions, subscriptions                                     |
+|                                                                | Consultant-specific (booking requests, verification, payouts)     |
+|                                                                | Admin/system (announcements, new applications)                    |
+|                                                                | Disputes, recordings                                              |
 
 ---
 
@@ -96,12 +96,12 @@ sequenceDiagram
 
 ### From Address Convention
 
-| Domain Prefix | Used For |
-|---------------|----------|
-| `onboarding@` | Welcome emails |
-| `security@` | Password reset, account linking |
-| `payments@` | Payment link, success, failure |
-| `notifications@` | Waitlist emails |
+| Domain Prefix    | Used For                        |
+| ---------------- | ------------------------------- |
+| `onboarding@`    | Welcome emails                  |
+| `security@`      | Password reset, account linking |
+| `payments@`      | Payment link, success, failure  |
+| `notifications@` | Waitlist emails                 |
 
 ---
 
@@ -159,11 +159,11 @@ graph TD
     H -->|Per workflow config| I[Email / In-App / Push]
 ```
 
-| Function | Use Case | Batching |
-|----------|----------|----------|
-| `triggerWorkflow(workflowId, subscriberId, payload)` | Single recipient (payment success, booking request) | N/A |
-| `triggerForMultiple(workflowId, userIds, payload)` | Both parties or staff group | 100 per API call |
-| `triggerBroadcastWorkflow(workflowId, payload)` | System announcements to all users | Novu handles fan-out |
+| Function                                             | Use Case                                            | Batching             |
+| ---------------------------------------------------- | --------------------------------------------------- | -------------------- |
+| `triggerWorkflow(workflowId, subscriberId, payload)` | Single recipient (payment success, booking request) | N/A                  |
+| `triggerForMultiple(workflowId, userIds, payload)`   | Both parties or staff group                         | 100 per API call     |
+| `triggerBroadcastWorkflow(workflowId, payload)`      | System announcements to all users                   | Novu handles fan-out |
 
 All three follow the same error handling pattern:
 
@@ -230,23 +230,23 @@ stateDiagram-v2
 
 ### Server-Side Sync (`lib/novu/subscriber.ts`)
 
-| Function | Purpose | Called When |
-|----------|---------|------------|
-| `syncSubscriber(data)` | Creates or updates Novu subscriber | Registration, dashboard mount, profile update |
-| `updateSubscriberPreferences(userId, prefs)` | Syncs channel toggles to Novu custom data | Preference update via API |
-| `deleteSubscriber(userId)` | Removes subscriber from Novu | Account deletion |
+| Function                                     | Purpose                                   | Called When                                   |
+| -------------------------------------------- | ----------------------------------------- | --------------------------------------------- |
+| `syncSubscriber(data)`                       | Creates or updates Novu subscriber        | Registration, dashboard mount, profile update |
+| `updateSubscriberPreferences(userId, prefs)` | Syncs channel toggles to Novu custom data | Preference update via API                     |
+| `deleteSubscriber(userId)`                   | Removes subscriber from Novu              | Account deletion                              |
 
 Subscriber data mapped from User model:
 
-| Novu Field | Source |
-|------------|--------|
-| `subscriberId` | `User.id` |
-| `firstName` | First word of `User.name` |
-| `lastName` | Remaining words of `User.name` |
-| `email` | `User.email` |
-| `phone` | `User.phone` |
-| `avatar` | `User.image` |
-| `locale` | `"en"` (hardcoded) |
+| Novu Field     | Source                         |
+| -------------- | ------------------------------ |
+| `subscriberId` | `User.id`                      |
+| `firstName`    | First word of `User.name`      |
+| `lastName`     | Remaining words of `User.name` |
+| `email`        | `User.email`                   |
+| `phone`        | `User.phone`                   |
+| `avatar`       | `User.image`                   |
+| `locale`       | `"en"` (hardcoded)             |
 
 ### Client-Side Sync (`hooks/useNovuSubscriberSync.ts`)
 
@@ -268,6 +268,7 @@ useQuery({
 ### Client-Side Provider (`providers/NovuProvider.tsx`)
 
 Wraps the app with Novu's React SDK. Only renders when both conditions are met:
+
 1. User is authenticated (`session.user.id` exists)
 2. `NEXT_PUBLIC_NOVU_APP_ID` env var is configured
 
@@ -352,6 +353,7 @@ try {
 ```
 
 This pattern ensures:
+
 1. Core business operations (payments, bookings) always succeed even if Novu is down
 2. Email delivery failures don't cause transaction rollbacks
 3. The user gets their booking/payment confirmation regardless of notification status
@@ -360,19 +362,19 @@ This pattern ensures:
 
 ## Environment Variables
 
-| Variable | Side | Required | Purpose |
-|----------|------|----------|---------|
-| `RESEND_API_KEY` | Server | Yes (for emails) | Resend API key for email delivery |
-| `NOVU_SECRET_KEY` | Server | Yes (for notifications) | Novu server-side API key |
-| `NEXT_PUBLIC_NOVU_APP_ID` | Client | Yes (for in-app) | Novu application identifier for React SDK |
-| `NEXT_PUBLIC_APP_URL` | Both | No (defaults to localhost:3000) | Base URL for email links |
+| Variable                  | Side   | Required                        | Purpose                                   |
+| ------------------------- | ------ | ------------------------------- | ----------------------------------------- |
+| `RESEND_API_KEY`          | Server | Yes (for emails)                | Resend API key for email delivery         |
+| `NOVU_SECRET_KEY`         | Server | Yes (for notifications)         | Novu server-side API key                  |
+| `NEXT_PUBLIC_NOVU_APP_ID` | Client | Yes (for in-app)                | Novu application identifier for React SDK |
+| `NEXT_PUBLIC_APP_URL`     | Both   | No (defaults to localhost:3000) | Base URL for email links                  |
 
 ### NPM Packages
 
-| Package | Version | Purpose |
-|---------|---------|---------|
-| `resend` | - | Resend Node.js SDK |
-| `@react-email/render` | - | Server-side React Email rendering |
-| `@novu/api` | 3.13.0 | Novu server-side SDK |
-| `@novu/nextjs` | 3.13.0 | Novu Next.js integration (provider) |
-| `@novu/react` | 3.13.0 | Novu React SDK (notification center) |
+| Package               | Version | Purpose                              |
+| --------------------- | ------- | ------------------------------------ |
+| `resend`              | -       | Resend Node.js SDK                   |
+| `@react-email/render` | -       | Server-side React Email rendering    |
+| `@novu/api`           | 3.13.0  | Novu server-side SDK                 |
+| `@novu/nextjs`        | 3.13.0  | Novu Next.js integration (provider)  |
+| `@novu/react`         | 3.13.0  | Novu React SDK (notification center) |

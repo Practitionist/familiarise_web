@@ -477,7 +477,7 @@ export function convertToSlotTimings(
 /**
  * Merge consecutive availability slots into contiguous blocks.
  * This allows longer durations to be scheduled across multiple adjacent slots.
- * 
+ *
  * For example, if slots are 2:30-3:00 and 3:00-3:30, this will merge them into 2:30-3:30.
  * Only merges slots that are NOT allocated (available).
  */
@@ -485,7 +485,7 @@ export function mergeConsecutiveSlots(
   slots: (TSlotTiming & {
     isAllocated: boolean;
     bookingStatus?: BookingStatus;
-  })[]
+  })[],
 ): (TSlotTiming & {
   isAllocated: boolean;
   bookingStatus?: BookingStatus;
@@ -496,7 +496,7 @@ export function mergeConsecutiveSlots(
   const sortedSlots = [...slots].sort(
     (a, b) =>
       new Date(a.slotStartTimeInUTC).getTime() -
-      new Date(b.slotStartTimeInUTC).getTime()
+      new Date(b.slotStartTimeInUTC).getTime(),
   );
 
   const mergedSlots: (TSlotTiming & {
@@ -514,7 +514,8 @@ export function mergeConsecutiveSlots(
     // Check if slots are consecutive (end time equals start time) and both are available
     // Allow a small tolerance of 1 minute for edge cases
     const isConsecutive = Math.abs(currentMergedEnd - nextSlotStart) <= 60000;
-    const bothAvailable = !currentMerged.isAllocated && !currentSlot.isAllocated;
+    const bothAvailable =
+      !currentMerged.isAllocated && !currentSlot.isAllocated;
 
     if (isConsecutive && bothAvailable) {
       // Extend the current merged slot
@@ -576,7 +577,11 @@ export function breakDownSlotsByDuration(
       // Previously, this inherited slot.isAllocated from the parent slot,
       // which caused ALL segments to be marked allocated if ANY part of the
       // original availability slot overlapped with an appointment
-      const isSegmentAllocated = isSlotAllocated(currentStart, currentEnd, appointmentSlots);
+      const isSegmentAllocated = isSlotAllocated(
+        currentStart,
+        currentEnd,
+        appointmentSlots,
+      );
 
       // Calculate booking status for this specific segment
       const segmentBookingStatus = getSlotBookingStatus(

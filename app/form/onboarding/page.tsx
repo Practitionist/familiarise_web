@@ -409,7 +409,15 @@ const MultiStepForm: React.FC = () => {
                 Step {step + 1} of {totalSteps}
               </span>
               <button
-                onClick={() => signOut({ fetchOptions: { onSuccess: () => { window.location.href = "/"; } } })}
+                onClick={() =>
+                  signOut({
+                    fetchOptions: {
+                      onSuccess: () => {
+                        window.location.href = "/";
+                      },
+                    },
+                  })
+                }
                 className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
                 title="Sign out"
               >

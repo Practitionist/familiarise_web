@@ -1,17 +1,13 @@
 import StreamProvider from "@/providers/StreamProvider";
-import { redirect } from "next/navigation";
-import { getSession } from "@/lib/auth-server";
+import { requireOnboarded } from "@/lib/auth-guard";
+
 export default async function MeetingsLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  // Ensure user is authenticated for meetings
-  const session = await getSession();
-
-  if (!session?.user?.id) {
-    redirect("/auth/signin");
-  }
+  // Ensure user is authenticated and onboarded for meetings
+  const session = await requireOnboarded();
 
   return (
     <StreamProvider

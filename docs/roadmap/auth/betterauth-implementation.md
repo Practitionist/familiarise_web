@@ -87,13 +87,13 @@
 
 ### Component Summary
 
-| Component | File | Purpose |
-|-----------|------|---------|
-| Server config | `lib/auth.ts` | BetterAuth initialization, plugins, hooks |
-| Client config | `lib/auth-client.ts` | React hooks, sign-in/out methods |
-| Route handler | `app/api/auth/[...all]/route.ts` | HTTP handler for all auth endpoints |
-| Middleware | `middleware.ts` | Route protection, role-based access |
-| Types | Auto-inferred from `auth.$Infer` | No manual type extensions needed |
+| Component     | File                             | Purpose                                   |
+| ------------- | -------------------------------- | ----------------------------------------- |
+| Server config | `lib/auth.ts`                    | BetterAuth initialization, plugins, hooks |
+| Client config | `lib/auth-client.ts`             | React hooks, sign-in/out methods          |
+| Route handler | `app/api/auth/[...all]/route.ts` | HTTP handler for all auth endpoints       |
+| Middleware    | `middleware.ts`                  | Route protection, role-based access       |
+| Types         | Auto-inferred from `auth.$Infer` | No manual type extensions needed          |
 
 ---
 
@@ -168,7 +168,7 @@ export const auth = betterAuth({
   // ── Session ──
   session: {
     expiresIn: 30 * 24 * 60 * 60, // 30 days
-    updateAge: 24 * 60 * 60,       // Refresh every 24h
+    updateAge: 24 * 60 * 60, // Refresh every 24h
     cookieCache: {
       enabled: true,
       maxAge: 5 * 60, // 5-minute cookie cache
@@ -180,7 +180,11 @@ export const auth = betterAuth({
     additionalFields: {
       phone: { type: "string", required: false },
       role: { type: "string", required: false, defaultValue: "CONSULTEE" },
-      onboardingCompleted: { type: "boolean", required: false, defaultValue: false },
+      onboardingCompleted: {
+        type: "boolean",
+        required: false,
+        defaultValue: false,
+      },
       timezone: { type: "string", required: false },
       consultantProfileId: { type: "string", required: false },
       consulteeProfileId: { type: "string", required: false },
@@ -207,7 +211,11 @@ export const auth = betterAuth({
             prisma.notificationPreference.create({ data: { userId: user.id } }),
           ]);
           // Novu subscriber sync + welcome email (async)
-          syncSubscriber({ userId: user.id, email: user.email, firstName: user.name }).catch(console.error);
+          syncSubscriber({
+            userId: user.id,
+            email: user.email,
+            firstName: user.name,
+          }).catch(console.error);
           sendWelcomeEmail(user.email, user.name).catch(console.error);
         },
       },
@@ -221,8 +229,13 @@ export const auth = betterAuth({
       create: {
         after: async (account) => {
           if (account.providerId !== "credential") {
-            const user = await prisma.user.findUnique({ where: { id: account.userId } });
-            if (user) sendAccountLinkedEmail(user.email, account.providerId).catch(console.error);
+            const user = await prisma.user.findUnique({
+              where: { id: account.userId },
+            });
+            if (user)
+              sendAccountLinkedEmail(user.email, account.providerId).catch(
+                console.error,
+              );
           }
         },
       },
@@ -256,10 +269,7 @@ import { adminClient } from "better-auth/client/plugins";
 
 export const authClient = createAuthClient({
   baseURL: process.env.NEXT_PUBLIC_APP_URL,
-  plugins: [
-    organizationClient(),
-    adminClient(),
-  ],
+  plugins: [organizationClient(), adminClient()],
 });
 
 // Named exports for convenience
@@ -380,16 +390,16 @@ erDiagram
 
 BetterAuth's `additionalFields` maps custom columns on existing tables. The Prisma schema keeps all current User fields — BetterAuth reads them automatically:
 
-| Field | Type | Default | Purpose |
-|-------|------|---------|---------|
-| `phone` | string? | null | User's phone number |
-| `role` | string | "CONSULTEE" | CONSULTEE, CONSULTANT, STAFF, ADMIN |
-| `onboardingCompleted` | boolean | false | Onboarding flow status |
-| `timezone` | string? | null | User's timezone (e.g., "Asia/Kolkata") |
-| `consultantProfileId` | string? | null | FK to ConsultantProfile |
-| `consulteeProfileId` | string? | null | FK to ConsulteeProfile |
-| `staffProfileId` | string? | null | FK to StaffProfile |
-| `adminProfileId` | string? | null | FK to AdminProfile |
+| Field                 | Type    | Default     | Purpose                                |
+| --------------------- | ------- | ----------- | -------------------------------------- |
+| `phone`               | string? | null        | User's phone number                    |
+| `role`                | string  | "CONSULTEE" | CONSULTEE, CONSULTANT, STAFF, ADMIN    |
+| `onboardingCompleted` | boolean | false       | Onboarding flow status                 |
+| `timezone`            | string? | null        | User's timezone (e.g., "Asia/Kolkata") |
+| `consultantProfileId` | string? | null        | FK to ConsultantProfile                |
+| `consulteeProfileId`  | string? | null        | FK to ConsulteeProfile                 |
+| `staffProfileId`      | string? | null        | FK to StaffProfile                     |
+| `adminProfileId`      | string? | null        | FK to AdminProfile                     |
 
 ---
 
@@ -493,14 +503,14 @@ BetterAuth uses server-side sessions stored in the database. The session token i
 Cookie: better-auth.session_token=<opaque-token>
 ```
 
-| Attribute | Value |
-|-----------|-------|
-| Name | `better-auth.session_token` |
-| HttpOnly | true (not accessible via JavaScript) |
-| Secure | true (HTTPS only in production) |
-| SameSite | Lax |
-| Path | / |
-| Max-Age | Session expiry (30 days) |
+| Attribute | Value                                |
+| --------- | ------------------------------------ |
+| Name      | `better-auth.session_token`          |
+| HttpOnly  | true (not accessible via JavaScript) |
+| Secure    | true (HTTPS only in production)      |
+| SameSite  | Lax                                  |
+| Path      | /                                    |
+| Max-Age   | Session expiry (30 days)             |
 
 ### Cookie Caching (Performance)
 
@@ -516,6 +526,7 @@ session: {
 ```
 
 **How it works:**
+
 1. First request: DB lookup → session data → set `better-auth.session_data` cookie (compact encoded)
 2. Subsequent requests (within 5 min): Read from cookie, skip DB
 3. After 5 min: Cookie expires, next request does a fresh DB lookup
@@ -545,13 +556,14 @@ export const auth = betterAuth({
 
 BetterAuth provides built-in endpoints for session management:
 
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/api/auth/list-sessions` | GET | List all active sessions for current user |
-| `/api/auth/revoke-session` | POST | Revoke a specific session by ID |
-| `/api/auth/revoke-other-sessions` | POST | Revoke all sessions except current |
+| Endpoint                          | Method | Purpose                                   |
+| --------------------------------- | ------ | ----------------------------------------- |
+| `/api/auth/list-sessions`         | GET    | List all active sessions for current user |
+| `/api/auth/revoke-session`        | POST   | Revoke a specific session by ID           |
+| `/api/auth/revoke-other-sessions` | POST   | Revoke all sessions except current        |
 
 Client usage:
+
 ```typescript
 // List all sessions
 const sessions = await authClient.listSessions();
@@ -575,7 +587,8 @@ const session = await auth.api.getSession({
 });
 
 const sessionAge = Date.now() - new Date(session.session.createdAt).getTime();
-if (sessionAge > 10 * 60 * 1000) { // 10 minutes
+if (sessionAge > 10 * 60 * 1000) {
+  // 10 minutes
   // Require re-authentication
 }
 ```
@@ -634,7 +647,10 @@ export async function middleware(req: NextRequest) {
     if (pathname.startsWith("/dashboard/consultant") && role !== "CONSULTANT") {
       return NextResponse.redirect(new URL("/dashboard", req.url));
     }
-    if (pathname.startsWith("/dashboard/staff") && !["STAFF", "ADMIN"].includes(role)) {
+    if (
+      pathname.startsWith("/dashboard/staff") &&
+      !["STAFF", "ADMIN"].includes(role)
+    ) {
       return NextResponse.redirect(new URL("/dashboard", req.url));
     }
     if (pathname.startsWith("/dashboard/admin") && role !== "ADMIN") {
@@ -643,7 +659,12 @@ export async function middleware(req: NextRequest) {
   }
 
   // Onboarding redirect
-  if (session && !session.user.onboardingCompleted && isProtectedRoute(pathname) && !pathname.startsWith("/form/onboarding")) {
+  if (
+    session &&
+    !session.user.onboardingCompleted &&
+    isProtectedRoute(pathname) &&
+    !pathname.startsWith("/form/onboarding")
+  ) {
     return NextResponse.redirect(new URL("/form/onboarding", req.url));
   }
 
@@ -737,6 +758,7 @@ Body: { currentPassword, newPassword }
 ```
 
 Client:
+
 ```typescript
 await authClient.changePassword({
   currentPassword: "OldPass123",
@@ -755,6 +777,7 @@ Body: { email }
 Triggers `sendResetPassword` hook → sends email with reset URL containing a token.
 
 Client:
+
 ```typescript
 await authClient.forgetPassword({
   email: "john@example.com",
@@ -770,6 +793,7 @@ Body: { token, newPassword }
 ```
 
 Client:
+
 ```typescript
 await authClient.resetPassword({
   token: searchParams.get("token"),
@@ -787,6 +811,7 @@ Body: { token }
 Triggers `sendVerificationEmail` hook on registration.
 
 Client:
+
 ```typescript
 await authClient.verifyEmail({ token: searchParams.get("token") });
 ```
@@ -833,7 +858,8 @@ const { data } = await supabase.storage
   .upload(`${userId}/avatar.jpg`, file);
 
 await authClient.updateUser({
-  image: supabase.storage.from("profile-images").getPublicUrl(data.path).data.publicUrl,
+  image: supabase.storage.from("profile-images").getPublicUrl(data.path).data
+    .publicUrl,
 });
 ```
 
@@ -1015,13 +1041,13 @@ const { data: activeOrg } = authClient.useActiveOrganization();
 
 ### Organization Events → Novu Notifications
 
-| Event | Novu Workflow | Recipients |
-|-------|--------------|------------|
-| Member invited | `org-member-invited` | Invitee (email) + org admin (in-app) |
-| Member joined | `org-member-joined` | Org admin (in-app) |
-| Member removed | `org-member-removed` | Removed member (email) |
-| Seat usage at 90% | `org-seat-warning` | Org admin (email + in-app) |
-| Monthly invoice ready | `org-invoice-ready` | Org admin (email) |
+| Event                 | Novu Workflow        | Recipients                           |
+| --------------------- | -------------------- | ------------------------------------ |
+| Member invited        | `org-member-invited` | Invitee (email) + org admin (in-app) |
+| Member joined         | `org-member-joined`  | Org admin (in-app)                   |
+| Member removed        | `org-member-removed` | Removed member (email)               |
+| Seat usage at 90%     | `org-seat-warning`   | Org admin (email + in-app)           |
+| Monthly invoice ready | `org-invoice-ready`  | Org admin (email)                    |
 
 ---
 
@@ -1332,6 +1358,7 @@ plugins: [
 ```
 
 Access the auto-generated API docs at:
+
 ```
 https://familiarise.com/api/auth/reference
 ```
@@ -1360,22 +1387,22 @@ This provides a complete, interactive reference of all BetterAuth endpoints — 
 
 Both platforms read/write the same tables with the same schema:
 
-| Table | Web (BetterAuth) | Mobile (Dart Frog) |
-|-------|-----------------|-------------------|
-| `users` | Managed by BetterAuth | Read/write directly via Prisma |
-| `accounts` | Managed by BetterAuth | Read/write directly via Prisma |
-| `sessions` | Managed by BetterAuth | Read/write directly via Prisma |
+| Table           | Web (BetterAuth)      | Mobile (Dart Frog)             |
+| --------------- | --------------------- | ------------------------------ |
+| `users`         | Managed by BetterAuth | Read/write directly via Prisma |
+| `accounts`      | Managed by BetterAuth | Read/write directly via Prisma |
+| `sessions`      | Managed by BetterAuth | Read/write directly via Prisma |
 | `verifications` | Managed by BetterAuth | Read/write directly via Prisma |
 
 ### Critical Compatibility Requirements
 
-| Requirement | Details |
-|-------------|---------|
-| Password hashing | Both must use BCrypt with cost factor 12 |
-| Account providerId values | Must match exactly: `"google"`, `"github"`, `"facebook"`, `"apple"`, `"credential"` |
-| Account accountId values | Must match: Google `sub`, GitHub `id`, Apple `sub`, email for credentials |
-| User ID format | Both use cuid() |
-| Session token format | Web: opaque string in cookie. Mobile: opaque string in DB, JWT wrapper for transport |
+| Requirement               | Details                                                                              |
+| ------------------------- | ------------------------------------------------------------------------------------ |
+| Password hashing          | Both must use BCrypt with cost factor 12                                             |
+| Account providerId values | Must match exactly: `"google"`, `"github"`, `"facebook"`, `"apple"`, `"credential"`  |
+| Account accountId values  | Must match: Google `sub`, GitHub `id`, Apple `sub`, email for credentials            |
+| User ID format            | Both use cuid()                                                                      |
+| Session token format      | Web: opaque string in cookie. Mobile: opaque string in DB, JWT wrapper for transport |
 
 ### Mobile Auth Document
 
@@ -1420,10 +1447,10 @@ BetterAuth includes built-in rate limiting for auth endpoints. Additional rate l
 
 ### Cookie Security
 
-| Cookie | HttpOnly | Secure | SameSite | Purpose |
-|--------|----------|--------|----------|---------|
-| `better-auth.session_token` | Yes | Yes (prod) | Lax | Session identifier |
-| `better-auth.session_data` | Yes | Yes (prod) | Lax | Cached session data (if cookie cache enabled) |
+| Cookie                      | HttpOnly | Secure     | SameSite | Purpose                                       |
+| --------------------------- | -------- | ---------- | -------- | --------------------------------------------- |
+| `better-auth.session_token` | Yes      | Yes (prod) | Lax      | Session identifier                            |
+| `better-auth.session_data`  | Yes      | Yes (prod) | Lax      | Cached session data (if cookie cache enabled) |
 
 ---
 
@@ -1431,32 +1458,32 @@ BetterAuth includes built-in rate limiting for auth endpoints. Additional rate l
 
 ### Required
 
-| Variable | Example | Purpose |
-|----------|---------|---------|
-| `BETTER_AUTH_SECRET` | `a1b2c3...` (32+ chars) | Server secret for signing |
-| `BETTER_AUTH_URL` | `https://familiarise.com` | Base URL for callbacks |
-| `DATABASE_URL` | `postgresql://...` | Supabase connection string |
-| `GOOGLE_CLIENT_ID` | `xxx.apps.googleusercontent.com` | Google OAuth |
-| `GOOGLE_CLIENT_SECRET` | `GOCSPX-xxx` | Google OAuth |
-| `GITHUB_ID` | `Iv1.xxx` | GitHub OAuth |
-| `GITHUB_SECRET` | `xxx` | GitHub OAuth |
-| `FACEBOOK_CLIENT_ID` | `123456` | Facebook OAuth |
-| `FACEBOOK_CLIENT_SECRET` | `xxx` | Facebook OAuth |
+| Variable                 | Example                          | Purpose                    |
+| ------------------------ | -------------------------------- | -------------------------- |
+| `BETTER_AUTH_SECRET`     | `a1b2c3...` (32+ chars)          | Server secret for signing  |
+| `BETTER_AUTH_URL`        | `https://familiarise.com`        | Base URL for callbacks     |
+| `DATABASE_URL`           | `postgresql://...`               | Supabase connection string |
+| `GOOGLE_CLIENT_ID`       | `xxx.apps.googleusercontent.com` | Google OAuth               |
+| `GOOGLE_CLIENT_SECRET`   | `GOCSPX-xxx`                     | Google OAuth               |
+| `GITHUB_ID`              | `Iv1.xxx`                        | GitHub OAuth               |
+| `GITHUB_SECRET`          | `xxx`                            | GitHub OAuth               |
+| `FACEBOOK_CLIENT_ID`     | `123456`                         | Facebook OAuth             |
+| `FACEBOOK_CLIENT_SECRET` | `xxx`                            | Facebook OAuth             |
 
 ### Optional (Enterprise)
 
-| Variable | Example | Purpose |
-|----------|---------|---------|
-| `APPLE_CLIENT_ID` | `com.familiarise.web` | Apple Sign-In |
-| `APPLE_CLIENT_SECRET` | `xxx` | Apple Sign-In |
-| `STRIPE_SECRET_KEY` | `sk_live_xxx` | Stripe billing |
-| `STRIPE_WEBHOOK_SECRET` | `whsec_xxx` | Stripe webhook verification |
-| `UPSTASH_REDIS_REST_URL` | `https://xxx.upstash.io` | Session secondary storage |
-| `UPSTASH_REDIS_REST_TOKEN` | `xxx` | Redis auth |
+| Variable                   | Example                  | Purpose                     |
+| -------------------------- | ------------------------ | --------------------------- |
+| `APPLE_CLIENT_ID`          | `com.familiarise.web`    | Apple Sign-In               |
+| `APPLE_CLIENT_SECRET`      | `xxx`                    | Apple Sign-In               |
+| `STRIPE_SECRET_KEY`        | `sk_live_xxx`            | Stripe billing              |
+| `STRIPE_WEBHOOK_SECRET`    | `whsec_xxx`              | Stripe webhook verification |
+| `UPSTASH_REDIS_REST_URL`   | `https://xxx.upstash.io` | Session secondary storage   |
+| `UPSTASH_REDIS_REST_TOKEN` | `xxx`                    | Redis auth                  |
 
 ### Client-Side (Public)
 
-| Variable | Example | Purpose |
-|----------|---------|---------|
-| `NEXT_PUBLIC_APP_URL` | `https://familiarise.com` | Auth client base URL |
-| `NEXT_PUBLIC_NOVU_APP_ID` | `xxx` | Novu Inbox widget |
+| Variable                  | Example                   | Purpose              |
+| ------------------------- | ------------------------- | -------------------- |
+| `NEXT_PUBLIC_APP_URL`     | `https://familiarise.com` | Auth client base URL |
+| `NEXT_PUBLIC_NOVU_APP_ID` | `xxx`                     | Novu Inbox widget    |

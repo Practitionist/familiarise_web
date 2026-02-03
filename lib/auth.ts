@@ -186,17 +186,11 @@ export const auth = betterAuth({
                   name: user.name || "User",
                   provider: account.providerId,
                 }).catch((err) =>
-                  console.error(
-                    "[AUTH_HOOK] Account linked email error:",
-                    err,
-                  ),
+                  console.error("[AUTH_HOOK] Account linked email error:", err),
                 );
               }
             } catch (error) {
-              console.error(
-                "[AUTH_HOOK] account.create.after error:",
-                error,
-              );
+              console.error("[AUTH_HOOK] account.create.after error:", error);
             }
           }
         },

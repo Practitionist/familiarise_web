@@ -18,11 +18,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Dialog,
-  DialogContent,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { VisuallyHidden } from "@radix-ui/react-visually-hidden";
 import { useToast } from "@/hooks/use-toast";
 import { Input } from "@/components/ui/input";
@@ -145,7 +141,9 @@ export function TrialsTab() {
   const [stats, setStats] = useState<Record<string, number>>({});
 
   // Subscription plans for filter dropdown
-  const [subscriptionPlans, setSubscriptionPlans] = useState<SubscriptionPlan[]>([]);
+  const [subscriptionPlans, setSubscriptionPlans] = useState<
+    SubscriptionPlan[]
+  >([]);
 
   // Debounce search input
   useEffect(() => {
@@ -196,7 +194,17 @@ export function TrialsTab() {
     } finally {
       setLoading(false);
     }
-  }, [consultantId, statusFilter, planFilter, debouncedSearch, page, limit, sortBy, sortOrder, toast]);
+  }, [
+    consultantId,
+    statusFilter,
+    planFilter,
+    debouncedSearch,
+    page,
+    limit,
+    sortBy,
+    sortOrder,
+    toast,
+  ]);
 
   const fetchStats = useCallback(async () => {
     try {
@@ -214,12 +222,16 @@ export function TrialsTab() {
 
   const fetchPlans = useCallback(async () => {
     try {
-      const response = await fetch(`/api/plans/subscriptions?consultantId=${consultantId}`);
+      const response = await fetch(
+        `/api/plans/subscriptions?consultantId=${consultantId}`,
+      );
       if (!response.ok) {
         throw new Error("Failed to fetch plans");
       }
       const { data } = await response.json();
-      setSubscriptionPlans(data.filter((p: SubscriptionPlan) => p.freeTrialEnabled));
+      setSubscriptionPlans(
+        data.filter((p: SubscriptionPlan) => p.freeTrialEnabled),
+      );
     } catch (error) {
       console.error("Error fetching subscription plans:", error);
     }
@@ -368,7 +380,10 @@ export function TrialsTab() {
 
   // Check if a trial session is joinable (within 10 mins before start and before end time)
   const isTrialJoinable = (trial: TrialSession): boolean => {
-    if (trial.status !== "SCHEDULED" || !trial.appointment?.slotsOfAppointment?.[0]) {
+    if (
+      trial.status !== "SCHEDULED" ||
+      !trial.appointment?.slotsOfAppointment?.[0]
+    ) {
       return false;
     }
 
@@ -385,7 +400,8 @@ export function TrialsTab() {
     if (!client) {
       toast({
         title: "Not signed in",
-        description: "Video client not initialized. Please sign in to join the meeting.",
+        description:
+          "Video client not initialized. Please sign in to join the meeting.",
         variant: "destructive",
       });
       return;
@@ -426,7 +442,8 @@ export function TrialsTab() {
       console.error("Error joining meeting:", error);
       toast({
         title: "Error joining meeting",
-        description: error instanceof Error ? error.message : "Unknown error occurred",
+        description:
+          error instanceof Error ? error.message : "Unknown error occurred",
         variant: "destructive",
       });
       setIsJoining(null);
@@ -455,20 +472,31 @@ export function TrialsTab() {
     setPage(1);
   };
 
-  const statusOrder = ["PENDING", "SCHEDULED", "COMPLETED", "CONVERTED", "CANCELLED", "REJECTED"];
+  const statusOrder = [
+    "PENDING",
+    "SCHEDULED",
+    "COMPLETED",
+    "CONVERTED",
+    "CANCELLED",
+    "REJECTED",
+  ];
 
   return (
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Free Trial Requests</h1>
+          <h1 className="text-2xl font-bold text-gray-900">
+            Free Trial Requests
+          </h1>
           <p className="text-gray-600 mt-1">
             Manage trial session requests from potential subscribers
           </p>
         </div>
         <Button variant="outline" onClick={handleRefresh} disabled={loading}>
-          <RefreshCw className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`} />
+          <RefreshCw
+            className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`}
+          />
           Refresh
         </Button>
       </div>
@@ -481,18 +509,32 @@ export function TrialsTab() {
             return (
               <button
                 key={status}
-                onClick={() => handleStatusFilterChange(statusFilter === status ? "all" : status)}
+                onClick={() =>
+                  handleStatusFilterChange(
+                    statusFilter === status ? "all" : status,
+                  )
+                }
                 className={cn(
                   "p-3 rounded-lg text-center transition-all border",
                   statusBgColors[status],
-                  statusFilter === status && "ring-2 ring-offset-1 ring-blue-500"
+                  statusFilter === status &&
+                    "ring-2 ring-offset-1 ring-blue-500",
                 )}
               >
-                <div className={cn("text-2xl font-bold", statusTextColors[status])}>
+                <div
+                  className={cn("text-2xl font-bold", statusTextColors[status])}
+                >
                   {count}
                 </div>
-                <div className={cn("text-xs font-medium", statusTextColors[status])}>
-                  {status === "REJECTED" ? "Declined" : status.charAt(0) + status.slice(1).toLowerCase()}
+                <div
+                  className={cn(
+                    "text-xs font-medium",
+                    statusTextColors[status],
+                  )}
+                >
+                  {status === "REJECTED"
+                    ? "Declined"
+                    : status.charAt(0) + status.slice(1).toLowerCase()}
                 </div>
               </button>
             );
@@ -555,7 +597,10 @@ export function TrialsTab() {
         )}
 
         {/* Sort */}
-        <Select value={`${sortBy}-${sortOrder}`} onValueChange={handleSortChange}>
+        <Select
+          value={`${sortBy}-${sortOrder}`}
+          onValueChange={handleSortChange}
+        >
           <SelectTrigger className="w-full sm:w-44 bg-white">
             <SelectValue placeholder="Sort by" />
           </SelectTrigger>
@@ -573,7 +618,8 @@ export function TrialsTab() {
       {/* Results count */}
       {total > 0 && (
         <p className="text-sm text-gray-600">
-          Showing {((page - 1) * limit) + 1}-{Math.min(page * limit, total)} of {total} trials
+          Showing {(page - 1) * limit + 1}-{Math.min(page * limit, total)} of{" "}
+          {total} trials
         </p>
       )}
 
@@ -594,7 +640,9 @@ export function TrialsTab() {
                 ? "No trial requests match your filters"
                 : "You don't have any trial requests yet. Enable free trials on your subscription plans to start receiving requests."}
             </p>
-            {(statusFilter !== "all" || planFilter !== "all" || debouncedSearch) && (
+            {(statusFilter !== "all" ||
+              planFilter !== "all" ||
+              debouncedSearch) && (
               <Button
                 variant="outline"
                 className="mt-4"
@@ -637,7 +685,9 @@ export function TrialsTab() {
                       </CardDescription>
                     </div>
                   </div>
-                  <Badge className={statusColors[trial.status] || "bg-gray-100"}>
+                  <Badge
+                    className={statusColors[trial.status] || "bg-gray-100"}
+                  >
                     {trial.status}
                   </Badge>
                 </div>
@@ -651,7 +701,8 @@ export function TrialsTab() {
                   <div className="flex items-center gap-2 text-sm text-gray-600">
                     <Clock className="h-4 w-4" />
                     <span>
-                      {trial.subscriptionPlan.freeTrialDurationMinutes} min trial
+                      {trial.subscriptionPlan.freeTrialDurationMinutes} min
+                      trial
                     </span>
                   </div>
                   <div className="flex items-center gap-2 text-sm text-gray-600">
@@ -673,8 +724,13 @@ export function TrialsTab() {
                   <div className="bg-blue-50 rounded-lg p-3 mb-4">
                     <p className="text-sm text-blue-700">
                       <span className="font-medium">Scheduled: </span>
-                      {formatDate(trial.appointment.slotsOfAppointment[0].startsAt)}{" "}
-                      at {formatTime(trial.appointment.slotsOfAppointment[0].startsAt)}
+                      {formatDate(
+                        trial.appointment.slotsOfAppointment[0].startsAt,
+                      )}{" "}
+                      at{" "}
+                      {formatTime(
+                        trial.appointment.slotsOfAppointment[0].startsAt,
+                      )}
                     </p>
                   </div>
                 )}
@@ -716,8 +772,16 @@ export function TrialsTab() {
                         variant="outline"
                         size="sm"
                         onClick={() => handleJoinMeeting(trial)}
-                        disabled={isProcessing || isJoining === trial.id || !isTrialJoinable(trial)}
-                        className={isTrialJoinable(trial) ? "bg-blue-50 text-blue-700 hover:bg-blue-100 border-blue-200" : ""}
+                        disabled={
+                          isProcessing ||
+                          isJoining === trial.id ||
+                          !isTrialJoinable(trial)
+                        }
+                        className={
+                          isTrialJoinable(trial)
+                            ? "bg-blue-50 text-blue-700 hover:bg-blue-100 border-blue-200"
+                            : ""
+                        }
                       >
                         {isJoining === trial.id ? (
                           <>

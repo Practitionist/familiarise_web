@@ -246,7 +246,10 @@ export async function POST(request: NextRequest) {
                     );
                     const slotStart = new Date(appointmentDate);
                     const slotEnd = new Date(appointmentDate);
-                    slotEnd.setTime(slotEnd.getTime() + sessionDurationInHours * 60 * 60 * 1000);
+                    slotEnd.setTime(
+                      slotEnd.getTime() +
+                        sessionDurationInHours * 60 * 60 * 1000,
+                    );
 
                     return {
                       appointmentType: "CLASS",
@@ -512,7 +515,11 @@ export async function PATCH(request: NextRequest) {
           updateData.sessionDurationInHours = patchSessionDuration;
 
         // Recompute derived metrics if base fields are being updated
-        if (meetingsPerWeek !== undefined || durationInMonths !== undefined || patchSessionDuration !== undefined) {
+        if (
+          meetingsPerWeek !== undefined ||
+          durationInMonths !== undefined ||
+          patchSessionDuration !== undefined
+        ) {
           const finalMeetingsPerWeek =
             meetingsPerWeek ?? existingPlan.meetingsPerWeek;
           const finalDurationInMonths =

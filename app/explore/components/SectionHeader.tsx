@@ -26,9 +26,7 @@ export default function SectionHeader({
             {icon}
           </div>
         )}
-        <h2 className="text-xl md:text-2xl font-bold text-zinc-900">
-          {title}
-        </h2>
+        <h2 className="text-xl md:text-2xl font-bold text-zinc-900">{title}</h2>
       </div>
       {showSeeAll &&
         (onSeeAllClick ? (

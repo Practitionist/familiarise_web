@@ -437,21 +437,21 @@ export default function ConsulteeLayout({
 
   return (
     <NovuProvider>
-    <UserProvider userDetails={userDetails}>
-      <div className="min-h-screen bg-zinc-50">
-        <ConsulteeNav
-          consulteeId={consulteeId}
-          currentPath={currentPath}
-          userName={userDetails.name}
-          userImage={userDetails.image}
-          isLoading={isLoading}
-        />
+      <UserProvider userDetails={userDetails}>
+        <div className="min-h-screen bg-zinc-50">
+          <ConsulteeNav
+            consulteeId={consulteeId}
+            currentPath={currentPath}
+            userName={userDetails.name}
+            userImage={userDetails.image}
+            isLoading={isLoading}
+          />
 
-        <main className="w-full px-4 sm:px-6 lg:px-8 xl:px-12 py-6 lg:py-8">
-          {memoizedStreamContent}
-        </main>
-      </div>
-    </UserProvider>
+          <main className="w-full px-4 sm:px-6 lg:px-8 xl:px-12 py-6 lg:py-8">
+            {memoizedStreamContent}
+          </main>
+        </div>
+      </UserProvider>
     </NovuProvider>
   );
 }

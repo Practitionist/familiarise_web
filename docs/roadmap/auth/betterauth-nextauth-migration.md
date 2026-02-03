@@ -86,14 +86,14 @@ See [betterauth-migration.md](./betterauth-migration.md) for the full decision a
 
 **Medium complexity.** Key factors:
 
-| Factor | Risk | Mitigation |
-|--------|------|------------|
-| Existing users with passwords | Medium | Password migration from User → Account table |
-| Active sessions during migration | Low | Users will need to re-login (expected) |
-| OAuth provider config | Low | Same credentials, just different callback URLs |
-| Custom callbacks | Medium | Must replicate signIn/jwt/session logic in BetterAuth |
-| Middleware | Medium | Different session validation approach |
-| TypeScript types | Low | BetterAuth auto-infers types from config |
+| Factor                           | Risk   | Mitigation                                            |
+| -------------------------------- | ------ | ----------------------------------------------------- |
+| Existing users with passwords    | Medium | Password migration from User → Account table          |
+| Active sessions during migration | Low    | Users will need to re-login (expected)                |
+| OAuth provider config            | Low    | Same credentials, just different callback URLs        |
+| Custom callbacks                 | Medium | Must replicate signIn/jwt/session logic in BetterAuth |
+| Middleware                       | Medium | Different session validation approach                 |
+| TypeScript types                 | Low    | BetterAuth auto-infers types from config              |
 
 ---
 
@@ -114,6 +114,7 @@ Before starting:
 ### File: `app/api/auth/[...nextauth]/options.ts`
 
 **Providers:**
+
 1. **Google** — `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`
 2. **GitHub** — `GITHUB_ID`, `GITHUB_SECRET`
 3. **Facebook** — `FACEBOOK_CLIENT_ID`, `FACEBOOK_CLIENT_SECRET`
@@ -123,12 +124,12 @@ Before starting:
 
 **Callbacks:**
 
-| Callback | Logic | BetterAuth Equivalent |
-|----------|-------|----------------------|
-| `signIn` | Auto-links OAuth accounts to existing users by email. Creates new `account` record if provider not yet linked. Updates user image/name from profile. | BetterAuth's built-in `accountLinking.enabled: true` handles most of this. Custom linking logic via `databaseHooks`. |
-| `jwt` | Enriches JWT with `role`, `onboardingCompleted`, `consultantProfileId`, `consulteeProfileId`, `staffProfileId` from DB. Handles trigger="update" for session refresh. | `customSession` plugin or `session.expiresIn` + session hooks. |
-| `session` | Copies JWT fields to session object for frontend consumption. | `session` configuration in BetterAuth + `additionalFields` on User model. |
-| `redirect` | Redirects to `/explore/experts` after auth. | BetterAuth client-side redirect or `callbackURL` parameter. |
+| Callback   | Logic                                                                                                                                                                 | BetterAuth Equivalent                                                                                                |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `signIn`   | Auto-links OAuth accounts to existing users by email. Creates new `account` record if provider not yet linked. Updates user image/name from profile.                  | BetterAuth's built-in `accountLinking.enabled: true` handles most of this. Custom linking logic via `databaseHooks`. |
+| `jwt`      | Enriches JWT with `role`, `onboardingCompleted`, `consultantProfileId`, `consulteeProfileId`, `staffProfileId` from DB. Handles trigger="update" for session refresh. | `customSession` plugin or `session.expiresIn` + session hooks.                                                       |
+| `session`  | Copies JWT fields to session object for frontend consumption.                                                                                                         | `session` configuration in BetterAuth + `additionalFields` on User model.                                            |
+| `redirect` | Redirects to `/explore/experts` after auth.                                                                                                                           | BetterAuth client-side redirect or `callbackURL` parameter.                                                          |
 
 ### File: `middleware.ts`
 
@@ -141,6 +142,7 @@ Before starting:
 ### File: `app/api/auth/register/route.ts`
 
 Custom registration endpoint that:
+
 1. Validates input with Zod (`RegisterSchema`)
 2. Handles OAuth-only users adding password credentials
 3. Creates user + ConsulteeProfile + CookiePreference + NotificationPreference
@@ -150,6 +152,7 @@ Custom registration endpoint that:
 ### TypeScript Extensions: `next-auth.d.ts`
 
 Extended session type:
+
 ```typescript
 interface Session {
   user: {
@@ -230,7 +233,7 @@ export const auth = betterAuth({
   // Session configuration
   session: {
     expiresIn: 30 * 24 * 60 * 60, // 30 days (matches current NextAuth config)
-    updateAge: 24 * 60 * 60,       // Update session every 24 hours
+    updateAge: 24 * 60 * 60, // Update session every 24 hours
     cookieCache: {
       enabled: true,
       maxAge: 5 * 60, // 5 min cookie cache to reduce DB lookups
@@ -242,7 +245,11 @@ export const auth = betterAuth({
     additionalFields: {
       phone: { type: "string", required: false },
       role: { type: "string", required: false, defaultValue: "CONSULTEE" },
-      onboardingCompleted: { type: "boolean", required: false, defaultValue: false },
+      onboardingCompleted: {
+        type: "boolean",
+        required: false,
+        defaultValue: false,
+      },
       timezone: { type: "string", required: false },
       consultantProfileId: { type: "string", required: false },
       consulteeProfileId: { type: "string", required: false },
@@ -254,7 +261,7 @@ export const auth = betterAuth({
   // Trusted origins (web + mobile app scheme)
   trustedOrigins: [
     "https://familiarise.com",
-    "familiarise://",    // Mobile app deep link scheme
+    "familiarise://", // Mobile app deep link scheme
   ],
 
   // Plugins (added in order)
@@ -295,12 +302,7 @@ export const authClient = createAuthClient({
   baseURL: process.env.NEXT_PUBLIC_APP_URL, // e.g., "https://familiarise.com"
 });
 
-export const {
-  useSession,
-  signIn,
-  signUp,
-  signOut,
-} = authClient;
+export const { useSession, signIn, signUp, signOut } = authClient;
 ```
 
 ---
@@ -557,21 +559,21 @@ export const auth = betterAuth({
 
 ### Provider Comparison
 
-| Provider | NextAuth Config | BetterAuth Config |
-|----------|----------------|-------------------|
-| Google | `GoogleProvider({ clientId, clientSecret })` | `socialProviders: { google: { clientId, clientSecret } }` |
-| GitHub | `GitHubProvider({ clientId, clientSecret })` | `socialProviders: { github: { clientId, clientSecret } }` |
-| Facebook | `FacebookProvider({ clientId, clientSecret })` | `socialProviders: { facebook: { clientId, clientSecret } }` |
+| Provider    | NextAuth Config                                           | BetterAuth Config                                                 |
+| ----------- | --------------------------------------------------------- | ----------------------------------------------------------------- |
+| Google      | `GoogleProvider({ clientId, clientSecret })`              | `socialProviders: { google: { clientId, clientSecret } }`         |
+| GitHub      | `GitHubProvider({ clientId, clientSecret })`              | `socialProviders: { github: { clientId, clientSecret } }`         |
+| Facebook    | `FacebookProvider({ clientId, clientSecret })`            | `socialProviders: { facebook: { clientId, clientSecret } }`       |
 | Credentials | `CredentialsProvider({ authorize(credentials) { ... } })` | `emailAndPassword: { enabled: true, password: { hash, verify } }` |
 
 ### Callback URL Changes
 
 Update OAuth app settings in each provider's developer console:
 
-| Provider | NextAuth Callback URL | BetterAuth Callback URL |
-|----------|----------------------|------------------------|
-| Google | `https://familiarise.com/api/auth/callback/google` | `https://familiarise.com/api/auth/callback/google` |
-| GitHub | `https://familiarise.com/api/auth/callback/github` | `https://familiarise.com/api/auth/callback/github` |
+| Provider | NextAuth Callback URL                                | BetterAuth Callback URL                              |
+| -------- | ---------------------------------------------------- | ---------------------------------------------------- |
+| Google   | `https://familiarise.com/api/auth/callback/google`   | `https://familiarise.com/api/auth/callback/google`   |
+| GitHub   | `https://familiarise.com/api/auth/callback/github`   | `https://familiarise.com/api/auth/callback/github`   |
 | Facebook | `https://familiarise.com/api/auth/callback/facebook` | `https://familiarise.com/api/auth/callback/facebook` |
 
 BetterAuth uses the same callback URL pattern as NextAuth, so no changes are needed in most cases.
@@ -581,6 +583,7 @@ BetterAuth uses the same callback URL pattern as NextAuth, so no changes are nee
 The biggest change is how credentials auth works:
 
 **NextAuth (current):**
+
 ```
 1. User submits email + password
 2. CredentialsProvider.authorize() runs
@@ -590,6 +593,7 @@ The biggest change is how credentials auth works:
 ```
 
 **BetterAuth (target):**
+
 ```
 1. User submits email + password
 2. BetterAuth's signIn.email handler runs
@@ -651,6 +655,7 @@ rm -rf app/api/auth/\[...nextauth\]/
 NextAuth used JWT callbacks to enrich the token with custom data. BetterAuth uses server-side sessions — the `user` object returned in the session already has access to all `additionalFields`.
 
 **Before (NextAuth jwt callback):**
+
 ```typescript
 async jwt({ token, user }) {
   if (user) {
@@ -754,25 +759,27 @@ The current NextAuth `trigger === "update"` mechanism (used when role changes du
 
 ### Hook Replacements
 
-| NextAuth | BetterAuth | Notes |
-|----------|-----------|-------|
-| `useSession()` from `next-auth/react` | `authClient.useSession()` from `@/lib/auth-client` | Returns `{ data: session, isPending, error }` |
-| `signIn("google")` | `authClient.signIn.social({ provider: "google" })` | |
-| `signIn("github")` | `authClient.signIn.social({ provider: "github" })` | |
-| `signIn("credentials", { email, password })` | `authClient.signIn.email({ email, password })` | |
-| `signOut()` | `authClient.signOut()` | |
-| `SessionProvider` wrapper | Not needed | BetterAuth doesn't require a provider |
-| `getServerSession(authOptions)` | `auth.api.getSession({ headers: await headers() })` | Server Components / Server Actions |
+| NextAuth                                     | BetterAuth                                          | Notes                                         |
+| -------------------------------------------- | --------------------------------------------------- | --------------------------------------------- |
+| `useSession()` from `next-auth/react`        | `authClient.useSession()` from `@/lib/auth-client`  | Returns `{ data: session, isPending, error }` |
+| `signIn("google")`                           | `authClient.signIn.social({ provider: "google" })`  |                                               |
+| `signIn("github")`                           | `authClient.signIn.social({ provider: "github" })`  |                                               |
+| `signIn("credentials", { email, password })` | `authClient.signIn.email({ email, password })`      |                                               |
+| `signOut()`                                  | `authClient.signOut()`                              |                                               |
+| `SessionProvider` wrapper                    | Not needed                                          | BetterAuth doesn't require a provider         |
+| `getServerSession(authOptions)`              | `auth.api.getSession({ headers: await headers() })` | Server Components / Server Actions            |
 
 ### Example: Sign-In Page Migration
 
 **Before:**
+
 ```typescript
 import { signIn } from "next-auth/react";
 
 const handleSubmit = async () => {
   await signIn("credentials", {
-    email, password,
+    email,
+    password,
     redirect: true,
     callbackUrl: "/explore/experts",
   });
@@ -782,12 +789,14 @@ const handleGoogleSignIn = () => signIn("google");
 ```
 
 **After:**
+
 ```typescript
 import { authClient } from "@/lib/auth-client";
 
 const handleSubmit = async () => {
   await authClient.signIn.email({
-    email, password,
+    email,
+    password,
     callbackURL: "/explore/experts",
   });
 };
@@ -803,6 +812,7 @@ const handleGoogleSignIn = () => {
 ### Example: Server Component Session Access
 
 **Before:**
+
 ```typescript
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/app/api/auth/[...nextauth]/options";
@@ -815,6 +825,7 @@ export default async function DashboardPage() {
 ```
 
 **After:**
+
 ```typescript
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
@@ -831,6 +842,7 @@ export default async function DashboardPage() {
 ### Remove SessionProvider
 
 **Before:**
+
 ```typescript
 // app/layout.tsx or providers.tsx
 import { SessionProvider } from "next-auth/react";
@@ -932,6 +944,7 @@ export const config = {
 ### Before (Custom Route)
 
 The current `app/api/auth/register/route.ts` handles registration manually:
+
 1. Zod validation
 2. Check for existing user (handle OAuth → add password case)
 3. `bcrypt.hash(password, 10)`
@@ -1017,6 +1030,7 @@ await authClient.signUp.email({
 ### Before (Custom Routes)
 
 Current custom routes:
+
 - `app/api/auth/forgot-password/route.ts` — generates token, sends email
 - `app/api/auth/reset-password/route.ts` — validates token, updates password
 
@@ -1042,6 +1056,7 @@ emailAndPassword: {
 ```
 
 Client-side:
+
 ```typescript
 // Request reset
 await authClient.forgetPassword({ email: "john@example.com" });
@@ -1068,30 +1083,30 @@ rm app/api/auth/reset-password/route.ts
 
 Every auth flow must be tested before and after migration:
 
-| Flow | Test Steps | Expected Result |
-|------|-----------|----------------|
-| Email sign-up | Submit name/email/password | User + Account + ConsulteeProfile created, session cookie set |
-| Email sign-in | Submit email/password | Session created, redirect to dashboard |
-| Google OAuth | Click Google button | Redirect to Google, callback creates/links account |
-| GitHub OAuth | Click GitHub button | Redirect to GitHub, callback creates/links account |
-| Facebook OAuth | Click Facebook button | Redirect to Facebook, callback creates/links account |
-| Account linking | Sign in with email, then link Google | Second account record created, both methods work |
-| Password change | Submit current + new password | Account.password updated with BCrypt hash |
-| Forgot password | Submit email | Email sent with reset link |
-| Reset password | Click link, submit new password | Password updated, all sessions revoked |
-| Sign out | Click sign out | Session deleted from DB, cookie cleared |
-| Session persistence | Refresh page | Still authenticated |
-| Middleware protection | Access /dashboard without session | Redirect to /auth/signin |
-| Role-based routing | Consultant accesses consultee dashboard | Redirect to correct dashboard |
+| Flow                  | Test Steps                              | Expected Result                                               |
+| --------------------- | --------------------------------------- | ------------------------------------------------------------- |
+| Email sign-up         | Submit name/email/password              | User + Account + ConsulteeProfile created, session cookie set |
+| Email sign-in         | Submit email/password                   | Session created, redirect to dashboard                        |
+| Google OAuth          | Click Google button                     | Redirect to Google, callback creates/links account            |
+| GitHub OAuth          | Click GitHub button                     | Redirect to GitHub, callback creates/links account            |
+| Facebook OAuth        | Click Facebook button                   | Redirect to Facebook, callback creates/links account          |
+| Account linking       | Sign in with email, then link Google    | Second account record created, both methods work              |
+| Password change       | Submit current + new password           | Account.password updated with BCrypt hash                     |
+| Forgot password       | Submit email                            | Email sent with reset link                                    |
+| Reset password        | Click link, submit new password         | Password updated, all sessions revoked                        |
+| Sign out              | Click sign out                          | Session deleted from DB, cookie cleared                       |
+| Session persistence   | Refresh page                            | Still authenticated                                           |
+| Middleware protection | Access /dashboard without session       | Redirect to /auth/signin                                      |
+| Role-based routing    | Consultant accesses consultee dashboard | Redirect to correct dashboard                                 |
 
 ### Cross-Platform Compatibility Tests
 
-| Scenario | Test Steps | Expected Result |
-|----------|-----------|----------------|
-| Register on web, sign in on mobile | Web: sign up → Mobile: sign in with same credentials | Success |
-| Register on mobile, sign in on web | Mobile: sign up → Web: sign in with same credentials | Success |
-| Link Google on web, use on mobile | Web: link Google → Mobile: sign in with Google | Same user account |
-| Password change on web, sign in on mobile | Web: change password → Mobile: sign in with new password | Success |
+| Scenario                                  | Test Steps                                               | Expected Result   |
+| ----------------------------------------- | -------------------------------------------------------- | ----------------- |
+| Register on web, sign in on mobile        | Web: sign up → Mobile: sign in with same credentials     | Success           |
+| Register on mobile, sign in on web        | Mobile: sign up → Web: sign in with same credentials     | Success           |
+| Link Google on web, use on mobile         | Web: link Google → Mobile: sign in with Google           | Same user account |
+| Password change on web, sign in on mobile | Web: change password → Mobile: sign in with new password | Success           |
 
 ### Rollback Plan
 
@@ -1126,16 +1141,16 @@ rm types/next-auth.d.ts           # NextAuth type extensions no longer needed
 
 Search and replace across the codebase:
 
-| Find | Replace |
-|------|---------|
-| `import { useSession } from "next-auth/react"` | `import { useSession } from "@/lib/auth-client"` |
-| `import { getServerSession } from "next-auth"` | `import { auth } from "@/lib/auth"` |
-| `import { getToken } from "next-auth/jwt"` | Remove (use `auth.api.getSession()`) |
-| `import { authOptions } from "@/app/api/auth/[...nextauth]/options"` | Remove |
-| `getServerSession(authOptions)` | `auth.api.getSession({ headers: await headers() })` |
-| `SessionProvider` | Remove wrapper |
-| `NEXTAUTH_SECRET` | `BETTER_AUTH_SECRET` |
-| `NEXTAUTH_URL` | `BETTER_AUTH_URL` |
+| Find                                                                 | Replace                                             |
+| -------------------------------------------------------------------- | --------------------------------------------------- |
+| `import { useSession } from "next-auth/react"`                       | `import { useSession } from "@/lib/auth-client"`    |
+| `import { getServerSession } from "next-auth"`                       | `import { auth } from "@/lib/auth"`                 |
+| `import { getToken } from "next-auth/jwt"`                           | Remove (use `auth.api.getSession()`)                |
+| `import { authOptions } from "@/app/api/auth/[...nextauth]/options"` | Remove                                              |
+| `getServerSession(authOptions)`                                      | `auth.api.getSession({ headers: await headers() })` |
+| `SessionProvider`                                                    | Remove wrapper                                      |
+| `NEXTAUTH_SECRET`                                                    | `BETTER_AUTH_SECRET`                                |
+| `NEXTAUTH_URL`                                                       | `BETTER_AUTH_URL`                                   |
 
 ### Update Environment Variables
 
@@ -1152,6 +1167,7 @@ BETTER_AUTH_URL=...
 ### Verify All Pages Load
 
 After cleanup, run the dev server and manually verify:
+
 - Home page
 - Sign in / Sign up pages
 - Dashboard (consultee, consultant, staff, admin)

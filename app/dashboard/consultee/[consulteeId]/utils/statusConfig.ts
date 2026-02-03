@@ -19,12 +19,33 @@ export interface StatusStyleDark {
 
 export const STATUS_CONFIG: Record<string, StatusStyle> = {
   APPROVED: { bg: "bg-teal-50", text: "text-teal-600", dot: "bg-teal-500" },
-  PENDING: { bg: "bg-orange-50", text: "text-orange-600", dot: "bg-orange-500" },
-  APPROVED_PENDING_PAYMENT: { bg: "bg-amber-50", text: "text-amber-600", dot: "bg-amber-500", label: "PAYMENT REQUIRED" },
-  SCHEDULED: { bg: "bg-indigo-50", text: "text-indigo-600", dot: "bg-indigo-500" },
+  PENDING: {
+    bg: "bg-orange-50",
+    text: "text-orange-600",
+    dot: "bg-orange-500",
+  },
+  APPROVED_PENDING_PAYMENT: {
+    bg: "bg-amber-50",
+    text: "text-amber-600",
+    dot: "bg-amber-500",
+    label: "PAYMENT REQUIRED",
+  },
+  SCHEDULED: {
+    bg: "bg-indigo-50",
+    text: "text-indigo-600",
+    dot: "bg-indigo-500",
+  },
   IN_PROGRESS: { bg: "bg-cyan-50", text: "text-cyan-600", dot: "bg-cyan-500" },
-  COMPLETED: { bg: "bg-slate-100", text: "text-slate-500", dot: "bg-slate-400" },
-  CANCELLED: { bg: "bg-stone-100", text: "text-stone-400", dot: "bg-stone-400" },
+  COMPLETED: {
+    bg: "bg-slate-100",
+    text: "text-slate-500",
+    dot: "bg-slate-400",
+  },
+  CANCELLED: {
+    bg: "bg-stone-100",
+    text: "text-stone-400",
+    dot: "bg-stone-400",
+  },
   REJECTED: { bg: "bg-red-50", text: "text-red-600", dot: "bg-red-500" },
   EXPIRED: { bg: "bg-stone-100", text: "text-stone-500", dot: "bg-stone-400" },
 };
@@ -41,7 +62,10 @@ export const STATUS_CONFIG_DARK: Record<string, StatusStyleDark> = {
   EXPIRED: { bg: "bg-stone-500/15", text: "text-stone-400" },
 };
 
-export function getStatusStyle(status: string, variant: "light" | "dark" = "light") {
+export function getStatusStyle(
+  status: string,
+  variant: "light" | "dark" = "light",
+) {
   if (variant === "dark") {
     return STATUS_CONFIG_DARK[status] ?? STATUS_CONFIG_DARK.PENDING;
   }

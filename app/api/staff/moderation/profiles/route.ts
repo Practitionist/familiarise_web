@@ -77,40 +77,41 @@ export async function GET(req: NextRequest) {
       (v) => v.consultantProfile && v.consultantProfile.user,
     );
 
-    const formattedVerifications: ProfileVerification[] = validVerifications.map((v) => ({
-      id: v.id,
-      status: v.status,
-      submittedAt: v.submittedAt.toISOString(),
-      notes: v.notes,
-      rejectionReason: v.rejectionReason,
-      feedbackDetails: v.feedbackDetails,
-      // Flatten consultantProfile + user into the "consultant" shape the frontend expects
-      consultant: {
-        profileId: v.consultantProfile.id,
-        userId: v.consultantProfile.user.id,
-        name: v.consultantProfile.user.name,
-        email: v.consultantProfile.user.email,
-        image: v.consultantProfile.user.image,
-        linkedinUrl: v.consultantProfile.user.linkedinUrl,
-        domain: v.consultantProfile.domain?.name ?? "",
-        experience: v.consultantProfile.experience,
-        headline: v.consultantProfile.headline,
-        isVerified: v.status === "APPROVED",
-        verificationStatus: v.status,
-      },
-      documents: v.documents.map((d) => ({
-        id: d.id,
-        fileName: d.fileName,
-        originalName: d.originalName,
-        fileSize: d.fileSize,
-        mimeType: d.mimeType,
-        fileUrl: d.fileUrl,
-        description: d.description,
-      })),
-      reviewedAt: v.reviewedAt?.toISOString() ?? null,
-      reviewedById: v.reviewedById,
-      reviewNotes: v.reviewNotes,
-    }));
+    const formattedVerifications: ProfileVerification[] =
+      validVerifications.map((v) => ({
+        id: v.id,
+        status: v.status,
+        submittedAt: v.submittedAt.toISOString(),
+        notes: v.notes,
+        rejectionReason: v.rejectionReason,
+        feedbackDetails: v.feedbackDetails,
+        // Flatten consultantProfile + user into the "consultant" shape the frontend expects
+        consultant: {
+          profileId: v.consultantProfile.id,
+          userId: v.consultantProfile.user.id,
+          name: v.consultantProfile.user.name,
+          email: v.consultantProfile.user.email,
+          image: v.consultantProfile.user.image,
+          linkedinUrl: v.consultantProfile.user.linkedinUrl,
+          domain: v.consultantProfile.domain?.name ?? "",
+          experience: v.consultantProfile.experience,
+          headline: v.consultantProfile.headline,
+          isVerified: v.status === "APPROVED",
+          verificationStatus: v.status,
+        },
+        documents: v.documents.map((d) => ({
+          id: d.id,
+          fileName: d.fileName,
+          originalName: d.originalName,
+          fileSize: d.fileSize,
+          mimeType: d.mimeType,
+          fileUrl: d.fileUrl,
+          description: d.description,
+        })),
+        reviewedAt: v.reviewedAt?.toISOString() ?? null,
+        reviewedById: v.reviewedById,
+        reviewNotes: v.reviewNotes,
+      }));
 
     // Get counts by status
     const statusCounts = await prisma.consultantProfileVerification.groupBy({

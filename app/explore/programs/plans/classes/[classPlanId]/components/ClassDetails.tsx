@@ -67,7 +67,6 @@ const getBadgeVariant = (
   return "default";
 };
 
-
 interface ClassDetailsProps {
   readonly plan: ClassPlanDetailsData;
 }

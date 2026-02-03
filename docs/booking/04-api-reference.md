@@ -2,12 +2,12 @@
 
 ## Endpoints Overview
 
-| Event Type | Validate (POST) | Allocate (PATCH) |
-|-----------|----------------|-----------------|
+| Event Type   | Validate (POST)                           | Allocate (PATCH)                          |
+| ------------ | ----------------------------------------- | ----------------------------------------- |
 | Consultation | `/api/events/consultations/{id}/validate` | `/api/events/consultations/{id}/allocate` |
 | Subscription | `/api/events/subscriptions/{id}/validate` | `/api/events/subscriptions/{id}/allocate` |
-| Webinar | `/api/events/webinars/{id}/validate` | `/api/events/webinars/{id}/allocate` |
-| Class | `/api/events/classes/{id}/validate` | `/api/events/classes/{id}/allocate` |
+| Webinar      | `/api/events/webinars/{id}/validate`      | `/api/events/webinars/{id}/allocate`      |
+| Class        | `/api/events/classes/{id}/validate`       | `/api/events/classes/{id}/allocate`       |
 
 All endpoints require session-based authentication. The `{id}` parameter accepts UUID or CUID format.
 
@@ -41,10 +41,7 @@ sequenceDiagram
 
 ```json
 {
-  "slots": [
-    "2025-01-15T10:00:00Z",
-    "2025-01-15T10:30:00Z"
-  ]
+  "slots": ["2025-01-15T10:00:00Z", "2025-01-15T10:30:00Z"]
 }
 ```
 
@@ -65,12 +62,8 @@ Slots must be ISO 8601 datetime strings. Array must have at least 1 element.
         }
       }
     ],
-    "outsideAvailability": [
-      { "slot": "2025-01-15T14:00:00Z" }
-    ],
-    "validSlots": [
-      "2025-01-15T10:30:00Z"
-    ]
+    "outsideAvailability": [{ "slot": "2025-01-15T14:00:00Z" }],
+    "validSlots": ["2025-01-15T10:30:00Z"]
   }
 }
 ```
@@ -143,10 +136,7 @@ System finds the first available slots automatically. For consultations/webinars
 ```json
 {
   "isAuto": false,
-  "slots": [
-    "2025-01-15T10:00:00Z",
-    "2025-01-15T10:30:00Z"
-  ]
+  "slots": ["2025-01-15T10:00:00Z", "2025-01-15T10:30:00Z"]
 }
 ```
 
@@ -189,14 +179,14 @@ Approves pre-created appointments from a consultee's request. Verifies appointme
 
 ## Error Codes
 
-| Status | Cause | Example |
-|--------|-------|---------|
-| 400 | Zod validation failure | `"slots: Each slot must be a valid ISO 8601 datetime string"` |
-| 400 | Business rule violation | `"Consultation requires exactly 2 slots (1 hour) but 3 provided"` |
-| 400 | Duplicate slots | `"Duplicate slots detected: 3 slots provided but only 2 are unique"` |
-| 404 | Event not found | `"consultation not found"` |
-| 409 | Slot conflict | `"Slot already booked: 1/15/2025 (conflicts with consultation for John)"` |
-| 500 | Transaction failure | `"Allocation failed"` |
+| Status | Cause                   | Example                                                                   |
+| ------ | ----------------------- | ------------------------------------------------------------------------- |
+| 400    | Zod validation failure  | `"slots: Each slot must be a valid ISO 8601 datetime string"`             |
+| 400    | Business rule violation | `"Consultation requires exactly 2 slots (1 hour) but 3 provided"`         |
+| 400    | Duplicate slots         | `"Duplicate slots detected: 3 slots provided but only 2 are unique"`      |
+| 404    | Event not found         | `"consultation not found"`                                                |
+| 409    | Slot conflict           | `"Slot already booked: 1/15/2025 (conflicts with consultation for John)"` |
+| 500    | Transaction failure     | `"Allocation failed"`                                                     |
 
 ### Zod Error Format
 
@@ -214,16 +204,16 @@ Zod errors are formatted as semicolon-separated field:message pairs:
 
 ### allocationRequestSchema
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `isAuto` | boolean | Yes | `true` for auto allocation, `false` for manual/requested |
-| `useRequestedSlots` | boolean | No | `true` to approve pre-created consultee appointments |
-| `slots` | string[] | Conditional | ISO 8601 datetimes. Required if `isAuto: false` and `useRequestedSlots` is not true |
+| Field               | Type     | Required    | Description                                                                         |
+| ------------------- | -------- | ----------- | ----------------------------------------------------------------------------------- |
+| `isAuto`            | boolean  | Yes         | `true` for auto allocation, `false` for manual/requested                            |
+| `useRequestedSlots` | boolean  | No          | `true` to approve pre-created consultee appointments                                |
+| `slots`             | string[] | Conditional | ISO 8601 datetimes. Required if `isAuto: false` and `useRequestedSlots` is not true |
 
 ### validationRequestSchema
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
+| Field   | Type     | Required    | Description                           |
+| ------- | -------- | ----------- | ------------------------------------- |
 | `slots` | string[] | Yes (min 1) | ISO 8601 datetime strings to validate |
 
 ### eventIdSchema
@@ -236,16 +226,16 @@ Validates URL path parameter `{id}`. Accepts UUID (`xxxxxxxx-xxxx-xxxx-xxxx-xxxx
 
 **File**: `utils/slotAllocation/types.ts`
 
-| Type | Description |
-|------|-------------|
-| `EventType` | `"consultation" \| "subscription" \| "webinar" \| "class"` |
-| `AllocationMode` | `"auto" \| "manual" \| "requested"` |
-| `AllocationRequest` | `{eventType, eventId, mode, slots?}` |
-| `AllocationConstraints` | `{schedulingPeriod, slotsRequired, sessionDuration, callsPerWeek, ...}` |
-| `ValidationResult` | `{isValid, errors: string[], warnings: string[]}` |
-| `SlotConflictResult` | `{conflicts[], outsideAvailability[], validSlots[]}` |
-| `AllocationResult` | `{success, appointments?, error?, warnings?}` |
-| `TimeSlot` | `{startTime, endTime, isAvailable, isBooked}` |
-| `ProgressInfo` | `{scheduled, required, remaining, sessionDuration, displayText}` |
-| `ConsultantAllocationData` | `{userId, scheduleType, slotsOfAvailabilityWeekly[], slotsOfAvailabilityCustom[]}` |
-| `EventConfig` | `{durationInMonths?, durationInHours?, sessionDurationInHours?, callsPerWeek?, schedulingPeriod?}` |
+| Type                       | Description                                                                                        |
+| -------------------------- | -------------------------------------------------------------------------------------------------- |
+| `EventType`                | `"consultation" \| "subscription" \| "webinar" \| "class"`                                         |
+| `AllocationMode`           | `"auto" \| "manual" \| "requested"`                                                                |
+| `AllocationRequest`        | `{eventType, eventId, mode, slots?}`                                                               |
+| `AllocationConstraints`    | `{schedulingPeriod, slotsRequired, sessionDuration, callsPerWeek, ...}`                            |
+| `ValidationResult`         | `{isValid, errors: string[], warnings: string[]}`                                                  |
+| `SlotConflictResult`       | `{conflicts[], outsideAvailability[], validSlots[]}`                                               |
+| `AllocationResult`         | `{success, appointments?, error?, warnings?}`                                                      |
+| `TimeSlot`                 | `{startTime, endTime, isAvailable, isBooked}`                                                      |
+| `ProgressInfo`             | `{scheduled, required, remaining, sessionDuration, displayText}`                                   |
+| `ConsultantAllocationData` | `{userId, scheduleType, slotsOfAvailabilityWeekly[], slotsOfAvailabilityCustom[]}`                 |
+| `EventConfig`              | `{durationInMonths?, durationInHours?, sessionDurationInHours?, callsPerWeek?, schedulingPeriod?}` |

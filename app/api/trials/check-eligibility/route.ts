@@ -19,7 +19,7 @@ export async function GET(request: NextRequest) {
   if (!consulteeProfileId || !consultantProfileId) {
     return NextResponse.json(
       { error: "consulteeProfileId and consultantProfileId are required" },
-      { status: 400 }
+      { status: 400 },
     );
   }
 
@@ -57,7 +57,7 @@ export async function GET(request: NextRequest) {
       if (!plan) {
         return NextResponse.json(
           { error: "Subscription plan not found" },
-          { status: 404 }
+          { status: 404 },
         );
       }
 
@@ -106,7 +106,7 @@ export async function GET(request: NextRequest) {
     console.error("Error checking trial eligibility:", error);
     return NextResponse.json(
       { error: "An error occurred while checking trial eligibility" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

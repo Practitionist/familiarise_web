@@ -156,9 +156,7 @@ export function useCuratedExperts(sort: SortOption, limit: number = 8) {
   const { data, isLoading } = useQuery<{ data: TConsultantProfile[] }>({
     queryKey: ["curated-experts", sort, limit],
     queryFn: () =>
-      fetchConsultantsData(
-        `/api/user/consultants?sort=${sort}&limit=${limit}`,
-      ),
+      fetchConsultantsData(`/api/user/consultants?sort=${sort}&limit=${limit}`),
     staleTime: 5 * 60 * 1000,
     gcTime: 15 * 60 * 1000,
     retry: 2,
@@ -252,7 +250,7 @@ export function useConsultants(filters: ExpertFilters) {
 
   const consultants: TConsultantProfile[] = useMemo(
     () => (data ? data.pages.flatMap((page) => page.data) : []),
-    [data]
+    [data],
   );
 
   const hasMore = hasNextPage;

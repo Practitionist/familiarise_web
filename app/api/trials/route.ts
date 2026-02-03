@@ -63,16 +63,29 @@ export async function GET(request: NextRequest) {
 
     if (search) {
       whereClause.OR = [
-        { consulteeProfile: { user: { name: { contains: search, mode: "insensitive" } } } },
-        { consulteeProfile: { user: { email: { contains: search, mode: "insensitive" } } } },
+        {
+          consulteeProfile: {
+            user: { name: { contains: search, mode: "insensitive" } },
+          },
+        },
+        {
+          consulteeProfile: {
+            user: { email: { contains: search, mode: "insensitive" } },
+          },
+        },
       ];
     }
 
     // Dynamic orderBy mapping
-    const orderByMap: Record<string, Prisma.TrialSessionOrderByWithRelationInput> = {
+    const orderByMap: Record<
+      string,
+      Prisma.TrialSessionOrderByWithRelationInput
+    > = {
       requestedAt: { requestedAt: sortOrder as "asc" | "desc" },
       status: { status: sortOrder as "asc" | "desc" },
-      name: { consulteeProfile: { user: { name: sortOrder as "asc" | "desc" } } },
+      name: {
+        consulteeProfile: { user: { name: sortOrder as "asc" | "desc" } },
+      },
       plan: { subscriptionPlan: { title: sortOrder as "asc" | "desc" } },
     };
     const orderBy = orderByMap[sortBy] || orderByMap.requestedAt;
@@ -133,7 +146,7 @@ export async function GET(request: NextRequest) {
     console.error("Error fetching trial sessions:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching trial sessions" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -149,10 +162,15 @@ export async function POST(request: NextRequest) {
     if (!result.success) {
       return NextResponse.json(
         { error: "Validation failed", details: result.error.issues },
-        { status: 400 }
+        { status: 400 },
       );
     }
-    const { consulteeProfileId, consultantProfileId, subscriptionPlanId, notes } = result.data;
+    const {
+      consulteeProfileId,
+      consultantProfileId,
+      subscriptionPlanId,
+      notes,
+    } = result.data;
 
     // Check if a trial already exists for this consultee-consultant pair
     const existingTrial = await prisma.trialSession.findUnique({
@@ -167,7 +185,7 @@ export async function POST(request: NextRequest) {
     if (existingTrial) {
       return NextResponse.json(
         { error: "You have already requested a trial with this consultant" },
-        { status: 409 }
+        { status: 409 },
       );
     }
 
@@ -186,14 +204,14 @@ export async function POST(request: NextRequest) {
     if (!subscriptionPlan) {
       return NextResponse.json(
         { error: "Subscription plan not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
     if (!subscriptionPlan.freeTrialEnabled) {
       return NextResponse.json(
         { error: "Free trial is not available for this plan" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -214,7 +232,7 @@ export async function POST(request: NextRequest) {
     if (!consulteeProfile) {
       return NextResponse.json(
         { error: "Consultee profile not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
@@ -265,27 +283,24 @@ export async function POST(request: NextRequest) {
         name: consulteeProfile.user.name,
         image: consulteeProfile.user.image,
       },
-      subscriptionPlan.title
+      subscriptionPlan.title,
     );
 
     // Notify the consultant about the new trial request
-    void notifyTrialSessionRequested(
-      trialSession.consultantProfile.user.id,
-      {
-        consultantName: trialSession.consultantProfile.user.name || "Consultant",
-        consulteeName: trialSession.consulteeProfile.user.name || "User",
-        planTitle: subscriptionPlan.title,
-        status: trialSession.status,
-        dashboardUrl: "/dashboard/consultant/trials",
-      },
-    );
+    void notifyTrialSessionRequested(trialSession.consultantProfile.user.id, {
+      consultantName: trialSession.consultantProfile.user.name || "Consultant",
+      consulteeName: trialSession.consulteeProfile.user.name || "User",
+      planTitle: subscriptionPlan.title,
+      status: trialSession.status,
+      dashboardUrl: "/dashboard/consultant/trials",
+    });
 
     return NextResponse.json({ data: trialSession }, { status: 201 });
   } catch (error) {
     console.error("Error creating trial session:", error);
     return NextResponse.json(
       { error: "An error occurred while creating trial session" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

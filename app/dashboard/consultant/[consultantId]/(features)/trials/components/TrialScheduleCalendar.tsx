@@ -3,7 +3,10 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { TSlotTiming } from "@/types/slots";
-import { breakDownSlotsByDuration, mergeConsecutiveSlots } from "@/utils/timeSlotsProcessing";
+import {
+  breakDownSlotsByDuration,
+  mergeConsecutiveSlots,
+} from "@/utils/timeSlotsProcessing";
 import { useToast } from "@/hooks/use-toast";
 import { format as formatTz } from "date-fns-tz";
 import { Calendar, Clock, Loader2, Check } from "lucide-react";
@@ -23,7 +26,8 @@ type SlotStatus = "available" | "partial" | "booked" | "selected";
 // Color classes for different slot states
 const slotColorClasses: Record<SlotStatus, string> = {
   available: "bg-green-100 hover:bg-green-200 text-green-800 border-green-400",
-  partial: "bg-yellow-100 hover:bg-yellow-200 text-yellow-800 border-yellow-400",
+  partial:
+    "bg-yellow-100 hover:bg-yellow-200 text-yellow-800 border-yellow-400",
   booked: "bg-red-100 text-red-600 cursor-not-allowed border-red-400",
   selected: "bg-gray-900 hover:bg-gray-800 text-white border-gray-900",
 };
@@ -55,10 +59,10 @@ export function TrialScheduleCalendar({
 }: TrialScheduleCalendarProps) {
   const { toast } = useToast();
   const [timezone] = useState(
-    () => Intl.DateTimeFormat().resolvedOptions().timeZone
+    () => Intl.DateTimeFormat().resolvedOptions().timeZone,
   );
   const [currentDate, setCurrentDate] = useState(
-    () => new Date(new Date().getFullYear(), new Date().getMonth(), 1)
+    () => new Date(new Date().getFullYear(), new Date().getMonth(), 1),
   );
   const [selectedDate, setSelectedDate] = useState<Date | null>(new Date());
   const [slotTimings, setSlotTimings] = useState<TSlotTiming[]>([]);
@@ -84,15 +88,15 @@ export function TrialScheduleCalendar({
 
         const response = await fetch(
           `/api/slots/availability-with-allocation/${consultantId}?` +
-          `startDateInUtc=${startDateInUtc.toISOString()}&` +
-          `endDateInUtc=${endDateInUtc.toISOString()}&` +
-          `timezone=${timezone}`
+            `startDateInUtc=${startDateInUtc.toISOString()}&` +
+            `endDateInUtc=${endDateInUtc.toISOString()}&` +
+            `timezone=${timezone}`,
         );
 
         if (!response.ok) {
           const errorData = await response.json();
           throw new Error(
-            errorData.error || "Failed to fetch availability slots"
+            errorData.error || "Failed to fetch availability slots",
           );
         }
 
@@ -121,7 +125,12 @@ export function TrialScheduleCalendar({
 
   // Filter slots by trial duration
   const availableSlots = useMemo(() => {
-    if (!slotTimings || slotTimings.length === 0 || !timezone || !selectedDate) {
+    if (
+      !slotTimings ||
+      slotTimings.length === 0 ||
+      !timezone ||
+      !selectedDate
+    ) {
       return [];
     }
 
@@ -138,7 +147,7 @@ export function TrialScheduleCalendar({
       mergedSlots,
       durationInHours,
       [],
-      timezone
+      timezone,
     );
 
     // Filter out slots in the past AND allocated slots
@@ -155,12 +164,12 @@ export function TrialScheduleCalendar({
     const daysInMonth = new Date(
       currentDate.getFullYear(),
       currentDate.getMonth() + 1,
-      0
+      0,
     ).getDate();
     const firstDayOfMonth = new Date(
       currentDate.getFullYear(),
       currentDate.getMonth(),
-      1
+      1,
     ).getDay();
 
     const adjustedFirstDay = firstDayOfMonth === 0 ? 6 : firstDayOfMonth - 1;
@@ -171,7 +180,7 @@ export function TrialScheduleCalendar({
     // Empty cells for days before the first day of month
     for (let i = 0; i < adjustedFirstDay; i++) {
       days.push(
-        <div key={`empty-${i}`} className="w-10 h-10 lg:w-11 lg:h-11" />
+        <div key={`empty-${i}`} className="w-10 h-10 lg:w-11 lg:h-11" />,
       );
     }
 
@@ -180,7 +189,7 @@ export function TrialScheduleCalendar({
       const date = new Date(
         currentDate.getFullYear(),
         currentDate.getMonth(),
-        i
+        i,
       );
       const isSelected =
         selectedDate?.getDate() === i &&
@@ -193,11 +202,12 @@ export function TrialScheduleCalendar({
           key={i}
           disabled={isPast}
           className={`w-10 h-10 lg:w-11 lg:h-11 rounded-full text-base font-medium transition-all duration-200 flex items-center justify-center
-            ${isSelected
-              ? "bg-gray-900 text-white shadow-md"
-              : isPast
-                ? "text-gray-300 cursor-not-allowed"
-                : "text-gray-700 hover:bg-gray-100"
+            ${
+              isSelected
+                ? "bg-gray-900 text-white shadow-md"
+                : isPast
+                  ? "text-gray-300 cursor-not-allowed"
+                  : "text-gray-700 hover:bg-gray-100"
             }`}
           onClick={() => {
             if (!isPast) {
@@ -207,7 +217,7 @@ export function TrialScheduleCalendar({
           }}
         >
           {i}
-        </button>
+        </button>,
       );
     }
 
@@ -264,8 +274,8 @@ export function TrialScheduleCalendar({
                     new Date(
                       currentDate.getFullYear(),
                       currentDate.getMonth() - 1,
-                      1
-                    )
+                      1,
+                    ),
                   )
                 }
               >
@@ -286,8 +296,8 @@ export function TrialScheduleCalendar({
                     new Date(
                       currentDate.getFullYear(),
                       currentDate.getMonth() + 1,
-                      1
-                    )
+                      1,
+                    ),
                   )
                 }
               >
@@ -341,7 +351,7 @@ export function TrialScheduleCalendar({
                         className={cn(
                           "w-full p-3 text-sm font-medium transition-all duration-200 rounded-lg text-left border",
                           slotColorClasses[slotStatus],
-                          isSelected && "ring-2 ring-gray-900 ring-offset-1"
+                          isSelected && "ring-2 ring-gray-900 ring-offset-1",
                         )}
                         onClick={() => !isDisabled && setSelectedSlot(slot)}
                       >
@@ -350,7 +360,9 @@ export function TrialScheduleCalendar({
                             <Clock
                               className={cn(
                                 "mr-2 h-4 w-4",
-                                isSelected ? "text-white" : "text-current opacity-60"
+                                isSelected
+                                  ? "text-white"
+                                  : "text-current opacity-60",
                               )}
                             />
                             <span>
@@ -359,12 +371,18 @@ export function TrialScheduleCalendar({
                           </div>
                           <div className="flex items-center gap-1">
                             {slotStatus === "booked" && (
-                              <Badge variant="secondary" className="text-xs bg-gray-200 text-gray-500">
+                              <Badge
+                                variant="secondary"
+                                className="text-xs bg-gray-200 text-gray-500"
+                              >
                                 Booked
                               </Badge>
                             )}
                             {slotStatus === "partial" && (
-                              <Badge variant="outline" className="text-xs bg-amber-50 text-amber-700 border-amber-300">
+                              <Badge
+                                variant="outline"
+                                className="text-xs bg-amber-50 text-amber-700 border-amber-300"
+                              >
                                 Partial
                               </Badge>
                             )}
@@ -419,18 +437,12 @@ export function TrialScheduleCalendar({
           <span className="font-medium">Duration:</span> {trialDurationMinutes}{" "}
           minutes
         </p>
-        <p className="text-xs text-gray-600 mt-1">
-          Timezone: {timezone}
-        </p>
+        <p className="text-xs text-gray-600 mt-1">Timezone: {timezone}</p>
       </div>
 
       {/* Actions */}
       <div className="flex justify-end gap-3 pt-2 border-t border-gray-200">
-        <Button
-          variant="outline"
-          onClick={onCancel}
-          disabled={isProcessing}
-        >
+        <Button variant="outline" onClick={onCancel} disabled={isProcessing}>
           Cancel
         </Button>
         <Button

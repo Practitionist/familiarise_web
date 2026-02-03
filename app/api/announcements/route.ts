@@ -65,7 +65,11 @@ export async function POST(request: NextRequest) {
     const result = CreateAnnouncementSchema.safeParse(body);
     if (!result.success) {
       return NextResponse.json(
-        { success: false, error: "Validation failed", details: result.error.issues },
+        {
+          success: false,
+          error: "Validation failed",
+          details: result.error.issues,
+        },
         { status: 400 },
       );
     }
@@ -79,9 +83,7 @@ export async function POST(request: NextRequest) {
         startDate: validatedData.startDate
           ? new Date(validatedData.startDate)
           : null,
-        endDate: validatedData.endDate
-          ? new Date(validatedData.endDate)
-          : null,
+        endDate: validatedData.endDate ? new Date(validatedData.endDate) : null,
         backgroundColor: validatedData.backgroundColor,
         textColor: validatedData.textColor,
         linkUrl: validatedData.linkUrl,

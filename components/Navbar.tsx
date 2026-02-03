@@ -16,10 +16,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  useCurrency,
-  SUPPORTED_CURRENCIES,
-} from "@/lib/hooks/useCurrency";
+import { useCurrency, SUPPORTED_CURRENCIES } from "@/lib/hooks/useCurrency";
 import { useAnnouncementBar } from "@/providers/AnnouncementBarProvider";
 import familiariseLogoTransparent from "@/public/avif/static/assets/logos/images/logos/Familiarise-logos_transparent.avif";
 import familiariseLogoWhite from "@/public/avif/static/assets/logos/images/logos/Familiarise-logos_white.avif";
@@ -289,7 +286,10 @@ const Navbar = () => {
               </div>
 
               {/* Navigation Links */}
-              <div className="flex flex-col p-5 space-y-1 overflow-y-auto" style={{ maxHeight: "calc(100% - 10rem)" }}>
+              <div
+                className="flex flex-col p-5 space-y-1 overflow-y-auto"
+                style={{ maxHeight: "calc(100% - 10rem)" }}
+              >
                 {session?.user && (
                   <Link
                     href="/dashboard"
