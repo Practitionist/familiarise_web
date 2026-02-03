@@ -24,10 +24,14 @@ const ROUTE_PATTERNS = {
 };
 
 /**
- * Fast route matching using string prefix checks instead of glob patterns
+ * Fast route matching using string prefix checks instead of glob patterns.
+ * Also matches the exact path without trailing slash (e.g. "/settings" matches "/settings/").
  */
 const matchesAnyPrefix = (pathname: string, prefixes: string[]): boolean => {
-  return prefixes.some((prefix) => pathname.startsWith(prefix));
+  return prefixes.some(
+    (prefix) =>
+      pathname.startsWith(prefix) || pathname === prefix.replace(/\/$/, ""),
+  );
 };
 
 /**

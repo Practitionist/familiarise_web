@@ -16,9 +16,13 @@ export async function requireAuth() {
 /**
  * Require an authenticated AND onboarded user.
  * Redirects to sign-in if no session, or to onboarding if not completed.
+ * Uses disableCookieCache to avoid stale onboardingCompleted values.
  */
 export async function requireOnboarded() {
-  const session = await requireAuth();
+  const session = await getSession(true);
+  if (!session?.user?.id) {
+    redirect("/auth/signin");
+  }
   if (!session.user.onboardingCompleted) {
     redirect("/form/onboarding");
   }
@@ -28,9 +32,13 @@ export async function requireOnboarded() {
 /**
  * Require that onboarding is NOT completed (for the onboarding page).
  * Redirects already-onboarded users to their dashboard.
+ * Uses disableCookieCache to avoid stale onboardingCompleted values.
  */
 export async function requireNotOnboarded() {
-  const session = await requireAuth();
+  const session = await getSession(true);
+  if (!session?.user?.id) {
+    redirect("/auth/signin");
+  }
   if (session.user.onboardingCompleted) {
     redirect("/dashboard");
   }

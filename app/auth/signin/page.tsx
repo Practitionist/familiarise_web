@@ -23,9 +23,9 @@ function SignInContent() {
 
   useEffect(() => {
     const url = searchParams.get("callbackUrl");
-    if (url) {
+    // Only allow relative paths to prevent XSS (e.g. javascript:alert(1))
+    if (url && url.startsWith("/") && !url.startsWith("//")) {
       setCallbackUrl(url);
-      console.log("Sign-in page loaded with callbackUrl:", url);
     }
   }, [searchParams]);
 
