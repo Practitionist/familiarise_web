@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { signIn } from "@/lib/auth-client";
+import { signIn, useSession } from "@/lib/auth-client";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState, useEffect, Suspense } from "react";
@@ -16,6 +16,7 @@ function SignInContent() {
   const { toast } = useToast();
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { data: session, isPending } = useSession();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -28,6 +29,13 @@ function SignInContent() {
       setCallbackUrl(url);
     }
   }, [searchParams]);
+
+  // Redirect authenticated users to dashboard
+  useEffect(() => {
+    if (!isPending && session?.user) {
+      router.push(callbackUrl || "/dashboard");
+    }
+  }, [session, isPending, router, callbackUrl]);
 
   const handleEmailSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -53,7 +61,7 @@ function SignInContent() {
             ? "Redirecting to your destination..."
             : "Redirecting to dashboard...",
         });
-        router.push(callbackUrl || "/");
+        router.push(callbackUrl || "/dashboard");
       }
     } catch (error) {
       console.error("Sign in error:", error);
@@ -159,7 +167,7 @@ function SignInContent() {
             onClick={() => {
               signIn.social({
                 provider: "github",
-                callbackURL: callbackUrl || "/",
+                callbackURL: callbackUrl || "/dashboard",
               });
               toast({
                 title: "Signing in with GitHub...",
@@ -176,7 +184,7 @@ function SignInContent() {
             onClick={() => {
               signIn.social({
                 provider: "google",
-                callbackURL: callbackUrl || "/",
+                callbackURL: callbackUrl || "/dashboard",
               });
               toast({
                 title: "Signing in with Google...",
@@ -193,7 +201,7 @@ function SignInContent() {
             onClick={() => {
               signIn.social({
                 provider: "facebook",
-                callbackURL: callbackUrl || "/",
+                callbackURL: callbackUrl || "/dashboard",
               });
               toast({
                 title: "Signing in with Facebook...",

@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { logTrialRequested } from "@/lib/activity/log-activity";
 import { notifyTrialSessionRequested } from "@/lib/novu";
 import { CreateTrialSchema } from "@/schemas/trials";
+import { getSession } from "@/lib/auth-server";
 
 /**
  * GET /api/trials
@@ -11,8 +12,8 @@ import { CreateTrialSchema } from "@/schemas/trials";
  */
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
-  const consultantProfileId = searchParams.get("consultantProfileId");
-  const consulteeProfileId = searchParams.get("consulteeProfileId");
+  let consultantProfileId = searchParams.get("consultantProfileId");
+  let consulteeProfileId = searchParams.get("consulteeProfileId");
   const subscriptionPlanId = searchParams.get("subscriptionPlanId");
   const status = searchParams.get("status") as TrialSessionStatus | null;
   const page = parseInt(searchParams.get("page") || "1");
@@ -22,6 +23,57 @@ export async function GET(request: NextRequest) {
   const sortOrder = searchParams.get("sortOrder") || "desc";
 
   try {
+    const session = await getSession(true);
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const isPrivileged =
+      session.user.role === "ADMIN" || session.user.role === "STAFF";
+
+    // Auto-infer profile filter for non-privileged users
+    if (!isPrivileged) {
+      if (session.user.role === "CONSULTANT") {
+        // Verify consultant has a valid profile
+        if (!session.user.consultantProfileId) {
+          return NextResponse.json(
+            {
+              error:
+                "Consultant profile not configured. Please complete onboarding.",
+            },
+            { status: 422 }
+          );
+        }
+        // Auto-set filter to own profile if not specified
+        if (!consultantProfileId) {
+          consultantProfileId = session.user.consultantProfileId;
+        } else if (session.user.consultantProfileId !== consultantProfileId) {
+          // Reject if trying to access another consultant's trials
+          return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+        }
+      } else if (session.user.role === "CONSULTEE") {
+        // Verify consultee has a valid profile
+        if (!session.user.consulteeProfileId) {
+          return NextResponse.json(
+            {
+              error:
+                "Consultee profile not configured. Please complete onboarding.",
+            },
+            { status: 422 }
+          );
+        }
+        // Auto-set filter to own profile if not specified
+        if (!consulteeProfileId) {
+          consulteeProfileId = session.user.consulteeProfileId;
+        } else if (session.user.consulteeProfileId !== consulteeProfileId) {
+          // Reject if trying to access another consultee's trials
+          return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+        }
+      } else {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
+    }
+
     // Auto-complete scheduled trials whose end time has passed
     const now = new Date();
     await prisma.trialSession.updateMany({
@@ -157,6 +209,11 @@ export async function GET(request: NextRequest) {
  */
 export async function POST(request: NextRequest) {
   try {
+    const session = await getSession(true);
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const body = await request.json();
     const result = CreateTrialSchema.safeParse(body);
     if (!result.success) {
@@ -171,6 +228,17 @@ export async function POST(request: NextRequest) {
       subscriptionPlanId,
       notes,
     } = result.data;
+
+    const isPrivileged =
+      session.user.role === "ADMIN" || session.user.role === "STAFF";
+    if (!isPrivileged) {
+      if (
+        session.user.role !== "CONSULTEE" ||
+        session.user.consulteeProfileId !== consulteeProfileId
+      ) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
+    }
 
     // Check if a trial already exists for this consultee-consultant pair
     const existingTrial = await prisma.trialSession.findUnique({

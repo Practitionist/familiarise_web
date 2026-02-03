@@ -1,3 +1,4 @@
+import bcrypt from "bcrypt";
 import { faker } from "@faker-js/faker";
 import {
   AdminLevel,
@@ -35,6 +36,8 @@ import {
   generateAssignedRegions,
 } from "./utils";
 import { config } from "./config";
+
+const SEED_PASSWORD = process.env.SEED_PASSWORD || "SeedPass123!";
 
 export type UserWithProfiles = User & {
   consultantProfile?: ConsultantProfile | null;
@@ -559,6 +562,9 @@ export async function createUsers(): Promise<UserWithProfiles[]> {
   let staffIndex = 0;
   let adminIndex = 0;
 
+  const hashedPassword = await bcrypt.hash(SEED_PASSWORD, 12);
+  console.log(`  Password for all seed users: ${SEED_PASSWORD}`);
+
   console.log(`Creating ${NUM_USERS} users...`);
   console.log(`  - ${NUM_CONSULTANTS} consultants`);
   console.log(`  - ${NUM_CONSULTEES} consultees`);
@@ -662,6 +668,15 @@ export async function createUsers(): Promise<UserWithProfiles[]> {
           consulteeProfile: true,
           staffProfile: true,
           adminProfile: true,
+        },
+      });
+
+      await prisma.account.create({
+        data: {
+          userId: user.id,
+          accountId: user.id,
+          providerId: "credential",
+          password: hashedPassword,
         },
       });
 

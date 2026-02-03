@@ -6,9 +6,18 @@ import {
   createSubscriptionChannel,
   createChannel,
 } from "@/actions/stream/chat/channel.action";
+import { getSession } from "@/lib/auth-server";
 
 export async function POST(req: NextRequest) {
   try {
+    const session = await getSession(true);
+    if (!session?.user?.id) {
+      return NextResponse.json(
+        { success: false, error: "Unauthorized" },
+        { status: 401 },
+      );
+    }
+
     const body = await req.json();
     const {
       channelType,
@@ -24,6 +33,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         { success: false, error: "channelType and createdById are required" },
         { status: 400 },
+      );
+    }
+
+    const isPrivileged =
+      session.user.role === "ADMIN" || session.user.role === "STAFF";
+    if (!isPrivileged && createdById !== session.user.id) {
+      return NextResponse.json(
+        { success: false, error: "Forbidden" },
+        { status: 403 },
       );
     }
 

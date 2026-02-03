@@ -156,14 +156,16 @@ export const auth = betterAuth({
               console.error("[AUTH_HOOK] Welcome email error:", err),
             );
 
-            // Sync Novu subscriber (fire and forget)
+            // Sync Novu subscriber (fire and forget with error logging)
             const nameParts = (user.name || "User").split(" ");
-            void syncSubscriber({
+            syncSubscriber({
               userId: user.id,
               email: user.email,
               firstName: nameParts[0],
               lastName: nameParts.slice(1).join(" ") || undefined,
-            });
+            }).catch((err) =>
+              console.error("[AUTH_HOOK] Novu subscriber sync error:", err)
+            );
           } catch (error) {
             console.error("[AUTH_HOOK] user.create.after error:", error);
           }

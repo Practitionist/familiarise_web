@@ -4,15 +4,25 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { authClient } from "@/lib/auth-client";
+import { authClient, useSession } from "@/lib/auth-client";
 import Link from "next/link";
-import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { useState, useEffect } from "react";
 
 export default function ForgotPassword() {
   const { toast } = useToast();
+  const router = useRouter();
+  const { data: session, isPending } = useSession();
   const [email, setEmail] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [message, setMessage] = useState("");
+
+  // Redirect authenticated users away from forgot-password
+  useEffect(() => {
+    if (!isPending && session?.user?.id) {
+      router.push("/dashboard");
+    }
+  }, [isPending, session, router]);
 
   const handleRequestReset = async (e: React.FormEvent) => {
     e.preventDefault();

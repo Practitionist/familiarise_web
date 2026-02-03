@@ -3,13 +3,6 @@
 import { useState, useEffect } from "react";
 import { useSession } from "@/lib/auth-client";
 import { useRouter } from "next/navigation";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { useUserData } from "@/hooks/useUserData";
 import { useToast } from "@/components/ui/use-toast";
 
@@ -27,6 +20,13 @@ export default function Dashboard() {
     isLoading: isUserDataLoading,
     error,
   } = useUserData(userId ?? "");
+
+  // Defensive auth check: redirect if session is missing after loading
+  useEffect(() => {
+    if (!isPending && !session?.user?.id) {
+      router.push("/auth/signin");
+    }
+  }, [isPending, session, router]);
 
   // Handle progress animation
   useEffect(() => {
@@ -107,41 +107,85 @@ export default function Dashboard() {
 
   if (isPending || isLoading || isUserDataLoading) {
     return (
-      <div className="flex items-center justify-center h-screen">
-        <Card className="w-[300px]">
-          <CardHeader>
-            <CardDescription>Loading your dashboard...</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <progress
-              className="w-full h-2.5 rounded-full"
-              value={progress}
-              max={100}
+      <div className="flex min-h-[calc(100vh-4rem)] flex-col items-center justify-center">
+        <div className="flex flex-col items-center gap-8">
+          {/* Spinner */}
+          <svg
+            className="h-10 w-10 animate-spin"
+            style={{ animationDuration: "0.8s" }}
+            viewBox="0 0 40 40"
+            fill="none"
+          >
+            <circle
+              cx="20"
+              cy="20"
+              r="16"
+              stroke="#e5e5e5"
+              strokeWidth="3"
             />
-          </CardContent>
-        </Card>
+            <circle
+              cx="20"
+              cy="20"
+              r="16"
+              stroke="#171717"
+              strokeWidth="3"
+              strokeLinecap="round"
+              strokeDasharray="75 25"
+            />
+          </svg>
+
+          <div className="flex flex-col items-center gap-4">
+            <p className="text-sm font-medium tracking-wide text-neutral-900">
+              Loading your dashboard
+            </p>
+
+            {/* Progress bar */}
+            <div className="h-[3px] w-48 overflow-hidden rounded-full bg-neutral-100">
+              <div
+                className="h-full rounded-full bg-neutral-900 transition-all duration-500 ease-out"
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+          </div>
+        </div>
       </div>
     );
   }
 
   if (error || !userDetails) {
     return (
-      <div className="flex items-center justify-center h-screen">
-        <Card className="w-[300px]">
-          <CardHeader>
-            <CardTitle>Error loading dashboard</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p>
-              There was an error loading your dashboard:{" "}
-              {error ? error.message : "Unknown error"}
+      <div className="flex min-h-[calc(100vh-4rem)] flex-col items-center justify-center">
+        <div className="flex flex-col items-center gap-5 max-w-xs text-center px-6">
+          <div className="flex h-12 w-12 items-center justify-center rounded-full border border-neutral-200">
+            <svg
+              className="h-5 w-5 text-neutral-400"
+              fill="none"
+              viewBox="0 0 24 24"
+              strokeWidth={1.5}
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z"
+              />
+            </svg>
+          </div>
+          <div className="space-y-1.5">
+            <h2 className="text-sm font-semibold text-neutral-900">
+              Unable to load dashboard
+            </h2>
+            <p className="text-sm text-neutral-500">
+              {error ? error.message : "Something went wrong. Please try again."}
             </p>
-            <p>
-              Please try refreshing the page or contact support if the problem
-              persists.
-            </p>
-          </CardContent>
-        </Card>
+          </div>
+          <button
+            onClick={() => window.location.reload()}
+            className="mt-1 rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-neutral-800"
+          >
+            Refresh page
+          </button>
+        </div>
       </div>
     );
   }

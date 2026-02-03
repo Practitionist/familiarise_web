@@ -4,19 +4,27 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { signIn, signUp } from "@/lib/auth-client";
+import { signIn, signUp, useSession } from "@/lib/auth-client";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 export default function SignUp() {
   const { toast } = useToast();
   const router = useRouter();
+  const { data: session, isPending } = useSession();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+
+  // Redirect authenticated users to dashboard
+  useEffect(() => {
+    if (!isPending && session?.user) {
+      router.push("/dashboard");
+    }
+  }, [session, isPending, router]);
 
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -171,7 +179,7 @@ export default function SignUp() {
             className="w-full flex items-center justify-center bg-black hover:bg-gray-700"
             disabled={isLoading}
             onClick={() => {
-              signIn.social({ provider: "github" });
+              signIn.social({ provider: "github", callbackURL: "/dashboard" });
               toast({
                 title: "Signing up with GitHub...",
                 description: "Please wait while we redirect you.",
@@ -185,7 +193,7 @@ export default function SignUp() {
             className="w-full flex items-center justify-center mt-4 bg-red-600 hover:bg-red-500"
             disabled={isLoading}
             onClick={() => {
-              signIn.social({ provider: "google" });
+              signIn.social({ provider: "google", callbackURL: "/dashboard" });
               toast({
                 title: "Signing up with Google...",
                 description: "Please wait while we redirect you.",
@@ -199,7 +207,7 @@ export default function SignUp() {
             className="w-full flex items-center justify-center mt-4 bg-blue-600 hover:bg-blue-500"
             disabled={isLoading}
             onClick={() => {
-              signIn.social({ provider: "facebook" });
+              signIn.social({ provider: "facebook", callbackURL: "/dashboard" });
               toast({
                 title: "Signing up with Facebook...",
                 description: "Please wait while we redirect you.",

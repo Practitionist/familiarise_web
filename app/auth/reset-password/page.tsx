@@ -30,8 +30,11 @@ function ResetPasswordContent() {
         description: "Invalid or missing password reset token.",
         variant: "destructive",
       });
-      // Optionally redirect or show a prominent error message
-      // router.push("/auth/signin");
+      // Auto-redirect to forgot-password after 3 seconds
+      const timer = setTimeout(() => {
+        router.push("/auth/forgot-password");
+      }, 3000);
+      return () => clearTimeout(timer);
     }
   }, [token, router, toast]);
 
@@ -121,14 +124,14 @@ function ResetPasswordContent() {
             <strong className="font-bold">Error!</strong>
             <span className="block sm:inline"> {error}</span>
             <p className="mt-2 text-sm">
-              Please request a new password reset link from the{" "}
+              Redirecting to the{" "}
               <Link
                 href="/auth/forgot-password"
                 className="font-medium text-red-800 hover:underline"
               >
                 forgot password page
-              </Link>
-              .
+              </Link>{" "}
+              in 3 seconds...
             </p>
           </div>
         )}

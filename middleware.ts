@@ -19,8 +19,15 @@ const ROUTE_PATTERNS = {
   ],
   PUBLIC_AUTH_PREFIXES: ["/auth/"],
   PRIVATE_API_PREFIXES: ["/api/inngest/"],
-  PROTECTED_API_PREFIXES: ["/api/form/onboarding/", "/api/verification/"],
-  PUBLIC_API_PREFIXES: ["/api/user/", "/api/auth/"],
+  PROTECTED_API_PREFIXES: [
+    "/api/form/onboarding/",
+    "/api/verification/",
+    "/api/user/",
+    "/api/events/",
+    "/api/plans/",
+  ],
+  // Note: /api/auth/ must remain public for BetterAuth to work
+  PUBLIC_API_PREFIXES: ["/api/auth/", "/api/health/"],
 };
 
 /**
@@ -76,24 +83,18 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
 
   // Handle public auth routes
   if (matchesAnyPrefix(pathname, ROUTE_PATTERNS.PUBLIC_AUTH_PREFIXES)) {
-    // Redirect authenticated users away from auth pages
-    // Client-side handles dashboard routing based on role
-    if (isAuthenticated) {
-      return NextResponse.redirect(new URL("/", req.url));
-    }
+    // Allow access to auth pages even if a session cookie exists.
+    // This avoids redirect loops when the cookie is stale/invalid.
     return NextResponse.next();
   }
 
   // Handle protected routes
   if (matchesAnyPrefix(pathname, ROUTE_PATTERNS.PROTECTED_PREFIXES)) {
     if (!isAuthenticated) {
-      // For meeting routes, preserve the meeting URL as callbackUrl
-      if (pathname.startsWith("/meetings/")) {
-        const signInUrl = new URL(URLS.SIGNIN, req.url);
-        signInUrl.searchParams.set("callbackUrl", pathname);
-        return NextResponse.redirect(signInUrl);
-      }
-      return NextResponse.redirect(new URL(URLS.SIGNIN, req.url));
+      // Preserve callbackUrl for all protected routes
+      const signInUrl = new URL(URLS.SIGNIN, req.url);
+      signInUrl.searchParams.set("callbackUrl", pathname);
+      return NextResponse.redirect(signInUrl);
     }
     return NextResponse.next();
   }
