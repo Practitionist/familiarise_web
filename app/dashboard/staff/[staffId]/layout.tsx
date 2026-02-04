@@ -24,8 +24,8 @@ import {
   Megaphone,
 } from "lucide-react";
 import Link from "next/link";
-import { useParams, usePathname } from "next/navigation";
-import { useState } from "react";
+import { useParams, usePathname, useRouter } from "next/navigation";
+import { useState, useEffect } from "react";
 import { signOut, useSession } from "@/lib/auth-client";
 import { Button } from "@/components/ui/button";
 import {
@@ -38,6 +38,10 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import NovuProvider from "@/providers/NovuProvider";
 import { NotificationInbox } from "@/components/notifications/NotificationInbox";
 import { useNovuSubscriberSync } from "@/hooks/useNovuSubscriberSync";
+import { useQuery } from "@tanstack/react-query";
+import { fetchUserDetails } from "@/lib/user";
+import { getEffectiveUserId } from "@/utils/auth";
+import { Skeleton } from "@/components/ui/skeleton";
 
 const sidebarItems = [
   { name: "Home", icon: Home, path: "home" },
@@ -66,9 +70,26 @@ export default function StaffDashboardLayout({
 }) {
   const params = useParams();
   const pathname = usePathname();
-  const { data: session } = useSession();
+  const router = useRouter();
+  const { data: session, isPending: isSessionLoading } = useSession();
   const staffId = params.staffId as string;
   const [collapsed, setCollapsed] = useState(false);
+
+  const userId = getEffectiveUserId(session);
+
+  // Fetch user details to check staff access
+  const {
+    data: userDetails,
+    isLoading: isLoadingUser,
+    error: userError,
+  } = useQuery({
+    queryKey: ["user-details", userId],
+    queryFn: () => fetchUserDetails(userId!),
+    enabled: !!userId,
+    staleTime: 5 * 60 * 1000,
+    gcTime: 10 * 60 * 1000,
+    retry: 2,
+  });
 
   // Sync user as Novu subscriber (once per session)
   useNovuSubscriberSync();
@@ -87,12 +108,79 @@ export default function StaffDashboardLayout({
     return pathname.includes(`/staff/${staffId}/${path}`);
   };
 
+  // Check if user has staff access - must have role ADMIN or STAFF and matching staffProfileId
+  const hasStaffAccess = userDetails && (
+    userDetails.role === "ADMIN" ||
+    userDetails.role === "STAFF" ||
+    (userDetails.staffProfileId && userDetails.staffProfileId === staffId)
+  );
+
+  // Redirect unauthorized users to their appropriate dashboard
+  useEffect(() => {
+    if (isLoadingUser || isSessionLoading || !userId) return;
+
+    if (userDetails && !hasStaffAccess) {
+      // User doesn't have staff access - redirect based on their role
+      if (userDetails.role === "CONSULTANT" && userDetails.consultantProfileId) {
+        router.replace(`/dashboard/consultant/${userDetails.consultantProfileId}/home`);
+      } else if (userDetails.consulteeProfileId) {
+        router.replace(`/dashboard/consultee/${userDetails.consulteeProfileId}/home`);
+      } else {
+        router.replace("/dashboard");
+      }
+    }
+  }, [userDetails, hasStaffAccess, isLoadingUser, isSessionLoading, userId, router]);
+
+  // Show loading state while checking authentication and authorization
+  if (isSessionLoading || isLoadingUser) {
+    return (
+      <div className="flex h-screen bg-zinc-50 dark:bg-zinc-950">
+        {/* Sidebar skeleton */}
+        <aside className="w-64 border-r border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4">
+          <Skeleton className="h-8 w-32 mb-6" />
+          <div className="space-y-2">
+            {[1, 2, 3, 4, 5, 6].map((i) => (
+              <Skeleton key={i} className="h-10 w-full rounded-lg" />
+            ))}
+          </div>
+        </aside>
+        {/* Main content skeleton */}
+        <main className="flex-1 p-6">
+          <Skeleton className="h-8 w-64 mb-4" />
+          <Skeleton className="h-48 w-full rounded-xl" />
+        </main>
+      </div>
+    );
+  }
+
   if (!session?.user?.id) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <p className="text-muted-foreground">
           Authentication required. Redirecting...
         </p>
+      </div>
+    );
+  }
+
+  // Show access denied message while redirecting
+  if (!hasStaffAccess) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-zinc-50 dark:bg-zinc-950">
+        <div className="text-center p-8 bg-white dark:bg-zinc-900 rounded-xl shadow-lg border border-zinc-200 dark:border-zinc-800">
+          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-red-100 dark:bg-red-900/20 flex items-center justify-center">
+            <Shield className="w-8 h-8 text-red-600 dark:text-red-400" />
+          </div>
+          <h2 className="text-xl font-bold text-zinc-900 dark:text-zinc-100 mb-2">
+            Access Denied
+          </h2>
+          <p className="text-zinc-600 dark:text-zinc-400 mb-4">
+            You don&apos;t have permission to access the Staff Portal.
+          </p>
+          <p className="text-sm text-zinc-500 dark:text-zinc-500">
+            Redirecting to your dashboard...
+          </p>
+        </div>
       </div>
     );
   }

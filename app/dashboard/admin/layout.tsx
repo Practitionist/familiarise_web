@@ -214,7 +214,7 @@ function DashboardSkeleton() {
 // Main layout
 export default function AdminLayout({ children }: Readonly<PageProps>) {
   const pathname = usePathname();
-  const { data: session } = useSession();
+  const { data: session, isPending: isSessionLoading } = useSession();
   const router = useRouter();
 
   const userId = session?.user?.id;
@@ -235,18 +235,39 @@ export default function AdminLayout({ children }: Readonly<PageProps>) {
     retry: 2,
   });
 
+  // Check if user has admin access - must have role ADMIN
+  const hasAdminAccess = userData?.role === "ADMIN";
+
+  // Redirect unauthorized users to their appropriate dashboard
+  useEffect(() => {
+    if (isLoading || isSessionLoading || !userId) return;
+
+    if (userData && !hasAdminAccess) {
+      // User doesn't have admin access - redirect based on their role
+      if (userData.role === "STAFF" && userData.staffProfileId) {
+        router.replace(`/dashboard/staff/${userData.staffProfileId}/home`);
+      } else if (userData.role === "CONSULTANT" && userData.consultantProfileId) {
+        router.replace(`/dashboard/consultant/${userData.consultantProfileId}/home`);
+      } else if (userData.consulteeProfileId) {
+        router.replace(`/dashboard/consultee/${userData.consulteeProfileId}/home`);
+      } else {
+        router.replace("/dashboard");
+      }
+    }
+  }, [userData, hasAdminAccess, isLoading, isSessionLoading, userId, router]);
+
   // Prefetch common routes
   useEffect(() => {
-    if (!userId) return;
+    if (!userId || !hasAdminAccess) return;
 
     schedulePrefetch(() => {
       router.prefetch("/dashboard/admin/home");
       router.prefetch("/dashboard/admin/payments");
     }, 3000);
-  }, [userId, router]);
+  }, [userId, router, hasAdminAccess]);
 
   // Auth check
-  if (!session?.user?.id) {
+  if (!session?.user?.id && !isSessionLoading) {
     return (
       <AccessDenied
         title="Authentication Required"
@@ -256,12 +277,19 @@ export default function AdminLayout({ children }: Readonly<PageProps>) {
   }
 
   // Initial loading
-  if (isLoading && !userData) {
+  if ((isLoading || isSessionLoading) && !userData) {
     return <DashboardSkeleton />;
   }
 
-  // Note: Role-based access control is handled by middleware
-  // This layout trusts that middleware has already validated the user's role
+  // Show access denied message while redirecting for non-admin users
+  if (!hasAdminAccess && userData) {
+    return (
+      <AccessDenied
+        title="Access Denied"
+        message="You don't have permission to access the Admin Dashboard. Redirecting to your dashboard..."
+      />
+    );
+  }
 
   // Error state
   if (error) {
