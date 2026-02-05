@@ -30,10 +30,14 @@ function SignInContent() {
     }
   }, [searchParams]);
 
-  // Redirect authenticated users to dashboard
+  // Redirect authenticated users based on onboarding status
   useEffect(() => {
     if (!isPending && session?.user) {
-      router.push(callbackUrl || "/dashboard");
+      if (session.user.onboardingCompleted) {
+        router.push(callbackUrl || "/dashboard");
+      } else {
+        router.push("/form/onboarding");
+      }
     }
   }, [session, isPending, router, callbackUrl]);
 
@@ -48,9 +52,10 @@ function SignInContent() {
 
   // If already logged in, show redirecting message
   if (session?.user) {
+    const destination = session.user.onboardingCompleted ? "dashboard" : "onboarding";
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-900">
-        <p className="text-white">Redirecting to dashboard...</p>
+        <p className="text-white">Redirecting to {destination}...</p>
       </div>
     );
   }
