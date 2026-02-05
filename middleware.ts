@@ -83,8 +83,11 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
 
   // Handle public auth routes
   if (matchesAnyPrefix(pathname, ROUTE_PATTERNS.PUBLIC_AUTH_PREFIXES)) {
-    // Allow access to auth pages even if a session cookie exists.
-    // This avoids redirect loops when the cookie is stale/invalid.
+    // Redirect authenticated users to dashboard immediately
+    // This prevents the flash of auth page before client-side redirect kicks in
+    if (isAuthenticated) {
+      return NextResponse.redirect(new URL("/dashboard", req.url));
+    }
     return NextResponse.next();
   }
 

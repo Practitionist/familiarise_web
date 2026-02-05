@@ -26,6 +26,24 @@ export default function SignUp() {
     }
   }, [session, isPending, router]);
 
+  // Show loading while checking session status (fallback for when middleware doesn't catch)
+  if (isPending) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-900">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white" />
+      </div>
+    );
+  }
+
+  // If already logged in, show redirecting message
+  if (session?.user) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-900">
+        <p className="text-white">Redirecting to dashboard...</p>
+      </div>
+    );
+  }
+
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
     if (password !== confirmPassword) {
