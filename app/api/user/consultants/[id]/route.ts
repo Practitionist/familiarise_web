@@ -93,11 +93,6 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    // const session = await getSession();
-    // if (!session) {
-    //   return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    // }
-
     const { id } = await params;
     if (!id) {
       return NextResponse.json(
@@ -106,22 +101,83 @@ export async function GET(
       );
     }
 
+    // Check if user is authenticated (for own profile access)
+    const session = await getSession();
+
+    // First, get basic consultant info to check access
+    const basicConsultant = await prisma.consultantProfile.findUnique({
+      where: { id },
+      select: {
+        userId: true,
+        verificationStatus: true,
+      },
+    });
+
+    if (!basicConsultant) {
+      return NextResponse.json(
+        { error: "Consultant not found" },
+        { status: 404 },
+      );
+    }
+
+    // Determine access level
+    const isOwnProfile = session?.user?.id === basicConsultant.userId;
+    const isAdmin = session?.user?.role === "ADMIN";
+    const isVerified = basicConsultant.verificationStatus === "VERIFIED";
+
+    // Block public access to unverified profiles
+    if (!isVerified && !isOwnProfile && !isAdmin) {
+      return NextResponse.json(
+        { error: "Consultant not found" },
+        { status: 404 },
+      );
+    }
+
+    // Determine which user fields to include based on access level
+    const isPrivilegedAccess = isOwnProfile || isAdmin;
+
+    // Fetch consultant with appropriate user data
     const consultant = await prisma.consultantProfile.findUnique({
       where: { id },
       include: {
-        user: {
-          include: {
-            workExperiences: {
-              orderBy: [{ isCurrent: "desc" }, { startDate: "desc" }],
+        user: isPrivilegedAccess
+          ? {
+            // Full user data for own profile or admin
+            include: {
+              workExperiences: {
+                orderBy: [{ isCurrent: "desc" }, { startDate: "desc" }],
+              },
+              education: {
+                orderBy: { endYear: "desc" },
+              },
+              certifications: {
+                orderBy: { issueDate: "desc" },
+              },
             },
-            education: {
-              orderBy: { endYear: "desc" },
-            },
-            certifications: {
-              orderBy: { issueDate: "desc" },
+          }
+          : {
+            // Public fields only
+            select: {
+              id: true,
+              name: true,
+              image: true,
+              profileDisplayImage: true,
+              bio: true,
+              city: true,
+              country: true,
+              linkedinUrl: true,
+              timezone: true,
+              workExperiences: {
+                orderBy: [{ isCurrent: "desc" }, { startDate: "desc" }],
+              },
+              education: {
+                orderBy: { endYear: "desc" },
+              },
+              certifications: {
+                orderBy: { issueDate: "desc" },
+              },
             },
           },
-        },
         domain: true,
         subDomains: true,
         tags: true,
@@ -140,13 +196,6 @@ export async function GET(
         reviews: true,
       },
     });
-
-    if (!consultant) {
-      return NextResponse.json(
-        { error: "Consultant not found" },
-        { status: 404 },
-      );
-    }
 
     return NextResponse.json({ data: consultant });
   } catch (error) {

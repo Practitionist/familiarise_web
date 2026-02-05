@@ -27,7 +27,14 @@ const ROUTE_PATTERNS = {
     "/api/plans/",
   ],
   // Note: /api/auth/ must remain public for BetterAuth to work
-  PUBLIC_API_PREFIXES: ["/api/auth/", "/api/health/"],
+  // /api/user/consultants routes are public for explore page (verification filter enforced in API)
+  // /api/user/reviews is public for displaying reviews on consultant profiles
+  PUBLIC_API_PREFIXES: [
+    "/api/auth/",
+    "/api/health/",
+    "/api/user/consultants", // Public: explore experts list and individual profiles
+    "/api/user/reviews",     // Public: consultant reviews
+  ],
 };
 
 /**

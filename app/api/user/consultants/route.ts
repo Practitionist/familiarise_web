@@ -187,10 +187,11 @@ export async function GET(request: NextRequest) {
       include: {
         user: {
           select: {
+            // Only public profile fields - no email
             id: true,
             name: true,
-            email: true,
             image: true,
+            profileDisplayImage: true,
           },
         },
         domain: { select: { id: true, name: true } },
