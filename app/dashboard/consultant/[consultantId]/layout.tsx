@@ -396,10 +396,14 @@ export default function ConsultantLayout({
     placeholderData: (previousData) => previousData, // Keep showing previous data while refetching
   });
 
-  // Check if user has consultant access - must have role CONSULTANT and matching consultantProfileId
+  // Check if user has access to this consultant dashboard:
+  // - ADMIN: Can access ANY dashboard
+  // - STAFF: Can view consultant and consultee dashboards  
+  // - CONSULTANT: Can only access their OWN dashboard
   const hasConsultantAccess = userDetails && (
-    userDetails.role === "CONSULTANT" &&
-    userDetails.consultantProfileId === consultantId
+    userDetails.role === "ADMIN" ||
+    userDetails.role === "STAFF" ||
+    (userDetails.role === "CONSULTANT" && userDetails.consultantProfileId === consultantId)
   );
 
   // Redirect unauthorized users to their appropriate dashboard
@@ -407,11 +411,10 @@ export default function ConsultantLayout({
     if (isLoadingUserDetails || isSessionLoading || !userId) return;
 
     if (userDetails && !hasConsultantAccess) {
-      // User doesn't have consultant access - redirect based on their role
-      if (userDetails.role === "ADMIN") {
-        router.replace("/dashboard/admin/home");
-      } else if (userDetails.role === "STAFF" && userDetails.staffProfileId) {
-        router.replace(`/dashboard/staff/${userDetails.staffProfileId}/home`);
+      // User doesn't have access - redirect based on their role
+      if (userDetails.consultantProfileId) {
+        // Consultant trying to access another consultant's dashboard - redirect to their own
+        router.replace(`/dashboard/consultant/${userDetails.consultantProfileId}/home`);
       } else if (userDetails.consulteeProfileId) {
         router.replace(`/dashboard/consultee/${userDetails.consulteeProfileId}/home`);
       } else {
@@ -462,13 +465,9 @@ export default function ConsultantLayout({
     return <AuthRequired />;
   }
 
-  // Initial loading state
-  if ((isLoading || isLoadingUserDetails || isSessionLoading) && !consultantData) {
-    return <DashboardSkeleton />;
-  }
-
-  // Show access denied for users without consultant access
-  if (!hasConsultantAccess && userDetails) {
+  // ACCESS DENIED CHECK - BEFORE skeleton to avoid showing skeleton for unauthorized users
+  // If we have user details but no access, show redirect message immediately
+  if (userDetails && !hasConsultantAccess) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-zinc-100">
         <motion.div
@@ -476,9 +475,9 @@ export default function ConsultantLayout({
           animate={{ opacity: 1, y: 0 }}
           className="bg-white p-8 rounded-2xl shadow-xl border border-zinc-200 max-w-md text-center"
         >
-          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-red-100 flex items-center justify-center">
+          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-amber-100 flex items-center justify-center">
             <svg
-              className="w-8 h-8 text-red-600"
+              className="w-8 h-8 text-amber-600"
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
@@ -503,6 +502,11 @@ export default function ConsultantLayout({
         </motion.div>
       </div>
     );
+  }
+
+  // Initial loading state - only show if we don't have userDetails yet (still determining access)
+  if ((isLoading || isLoadingUserDetails || isSessionLoading) && !consultantData && !userDetails) {
+    return <DashboardSkeleton />;
   }
 
   // Error state

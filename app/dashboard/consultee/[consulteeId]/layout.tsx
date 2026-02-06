@@ -378,28 +378,28 @@ export default function ConsulteeLayout({
     placeholderData: (previousData) => previousData, // Keep showing previous data while refetching
   });
 
-  // Check if user has consultee access - must have matching consulteeProfileId
-  // and NOT be an admin/staff/consultant (those have their own dashboards)
-  const hasConsulteeAccess = userDetails &&
-    userDetails.consulteeProfileId === consulteeId &&
-    userDetails.role !== "ADMIN" &&
-    userDetails.role !== "STAFF" &&
-    userDetails.role !== "CONSULTANT";
+  // Check if user has access to this consultee dashboard:
+  // - ADMIN: Can access ANY dashboard
+  // - STAFF: Can view consultant and consultee dashboards
+  // - CONSULTEE: Can only access their OWN dashboard
+  // - CONSULTANT: Cannot access consultee dashboards (they have their own)
+  const hasConsulteeAccess = userDetails && (
+    userDetails.role === "ADMIN" ||
+    userDetails.role === "STAFF" ||
+    (userDetails.consulteeProfileId === consulteeId &&
+      userDetails.role !== "CONSULTANT")  // Consultees only, not consultants
+  );
 
   // Redirect unauthorized users to their appropriate dashboard
   useEffect(() => {
     if (isLoadingUser || isSessionLoading || !userId) return;
 
     if (userDetails && !hasConsulteeAccess) {
-      // User doesn't have consultee access - redirect based on their role
-      if (userDetails.role === "ADMIN") {
-        router.replace("/dashboard/admin/home");
-      } else if (userDetails.role === "STAFF" && userDetails.staffProfileId) {
-        router.replace(`/dashboard/staff/${userDetails.staffProfileId}/home`);
-      } else if (userDetails.role === "CONSULTANT" && userDetails.consultantProfileId) {
+      // User doesn't have access - redirect based on their role
+      if (userDetails.role === "CONSULTANT" && userDetails.consultantProfileId) {
         router.replace(`/dashboard/consultant/${userDetails.consultantProfileId}/home`);
       } else if (userDetails.consulteeProfileId && userDetails.consulteeProfileId !== consulteeId) {
-        // User has a different consultee profile - redirect to their own
+        // Consultee trying to access another consultee's dashboard - redirect to their own
         router.replace(`/dashboard/consultee/${userDetails.consulteeProfileId}/home`);
       } else {
         router.replace("/dashboard");
@@ -449,13 +449,9 @@ export default function ConsulteeLayout({
     return <AuthRequired />;
   }
 
-  // Initial loading
-  if ((isLoading || isSessionLoading) && !userDetails) {
-    return <DashboardSkeleton />;
-  }
-
-  // Show access denied for users without consultee access
-  if (!hasConsulteeAccess && userDetails) {
+  // ACCESS DENIED CHECK - BEFORE skeleton to avoid showing skeleton for unauthorized users
+  // If we have user details but no access, show redirect message immediately
+  if (userDetails && !hasConsulteeAccess) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-zinc-100">
         <motion.div
@@ -463,9 +459,9 @@ export default function ConsulteeLayout({
           animate={{ opacity: 1, y: 0 }}
           className="bg-white p-8 rounded-2xl shadow-xl border border-zinc-200 max-w-md text-center"
         >
-          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-red-100 flex items-center justify-center">
+          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-amber-100 flex items-center justify-center">
             <svg
-              className="w-8 h-8 text-red-600"
+              className="w-8 h-8 text-amber-600"
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
@@ -490,6 +486,11 @@ export default function ConsulteeLayout({
         </motion.div>
       </div>
     );
+  }
+
+  // Initial loading state - only show if we don't have userDetails yet (still determining access)
+  if ((isLoading || isSessionLoading) && !userDetails) {
+    return <DashboardSkeleton />;
   }
 
   // Error state

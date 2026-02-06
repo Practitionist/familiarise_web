@@ -131,8 +131,41 @@ export default function StaffDashboardLayout({
     }
   }, [userDetails, hasStaffAccess, isLoadingUser, isSessionLoading, userId, router]);
 
-  // Show loading state while checking authentication and authorization
-  if (isSessionLoading || isLoadingUser) {
+  // Auth check first
+  if (!session?.user?.id && !isSessionLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <p className="text-muted-foreground">
+          Authentication required. Redirecting...
+        </p>
+      </div>
+    );
+  }
+
+  // ACCESS DENIED CHECK - BEFORE skeleton to avoid showing skeleton for unauthorized users
+  if (userDetails && !hasStaffAccess) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-zinc-50 dark:bg-zinc-950">
+        <div className="text-center p-8 bg-white dark:bg-zinc-900 rounded-xl shadow-lg border border-zinc-200 dark:border-zinc-800">
+          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-amber-100 dark:bg-amber-900/20 flex items-center justify-center">
+            <Shield className="w-8 h-8 text-amber-600 dark:text-amber-400" />
+          </div>
+          <h2 className="text-xl font-bold text-zinc-900 dark:text-zinc-100 mb-2">
+            Access Denied
+          </h2>
+          <p className="text-zinc-600 dark:text-zinc-400 mb-4">
+            You don&apos;t have permission to access the Staff Portal.
+          </p>
+          <p className="text-sm text-zinc-500 dark:text-zinc-500">
+            Redirecting to your dashboard...
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // Show loading state only if we don't have userDetails yet (still determining access)
+  if ((isSessionLoading || isLoadingUser) && !userDetails) {
     return (
       <div className="flex h-screen bg-zinc-50 dark:bg-zinc-950">
         {/* Sidebar skeleton */}
@@ -149,38 +182,6 @@ export default function StaffDashboardLayout({
           <Skeleton className="h-8 w-64 mb-4" />
           <Skeleton className="h-48 w-full rounded-xl" />
         </main>
-      </div>
-    );
-  }
-
-  if (!session?.user?.id) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <p className="text-muted-foreground">
-          Authentication required. Redirecting...
-        </p>
-      </div>
-    );
-  }
-
-  // Show access denied message while redirecting
-  if (!hasStaffAccess) {
-    return (
-      <div className="flex items-center justify-center min-h-screen bg-zinc-50 dark:bg-zinc-950">
-        <div className="text-center p-8 bg-white dark:bg-zinc-900 rounded-xl shadow-lg border border-zinc-200 dark:border-zinc-800">
-          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-red-100 dark:bg-red-900/20 flex items-center justify-center">
-            <Shield className="w-8 h-8 text-red-600 dark:text-red-400" />
-          </div>
-          <h2 className="text-xl font-bold text-zinc-900 dark:text-zinc-100 mb-2">
-            Access Denied
-          </h2>
-          <p className="text-zinc-600 dark:text-zinc-400 mb-4">
-            You don&apos;t have permission to access the Staff Portal.
-          </p>
-          <p className="text-sm text-zinc-500 dark:text-zinc-500">
-            Redirecting to your dashboard...
-          </p>
-        </div>
       </div>
     );
   }

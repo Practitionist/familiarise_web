@@ -276,19 +276,19 @@ export default function AdminLayout({ children }: Readonly<PageProps>) {
     );
   }
 
-  // Initial loading
-  if ((isLoading || isSessionLoading) && !userData) {
-    return <DashboardSkeleton />;
-  }
-
-  // Show access denied message while redirecting for non-admin users
-  if (!hasAdminAccess && userData) {
+  // ACCESS DENIED CHECK - BEFORE skeleton to avoid showing skeleton for unauthorized users
+  if (userData && !hasAdminAccess) {
     return (
       <AccessDenied
         title="Access Denied"
         message="You don't have permission to access the Admin Dashboard. Redirecting to your dashboard..."
       />
     );
+  }
+
+  // Initial loading - only show if we don't have userData yet (still determining access)
+  if ((isLoading || isSessionLoading) && !userData) {
+    return <DashboardSkeleton />;
   }
 
   // Error state
