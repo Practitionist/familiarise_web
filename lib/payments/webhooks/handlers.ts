@@ -761,37 +761,25 @@ async function createWebinar(tx: Prisma.TransactionClient, data: EventData) {
   });
   if (!webinar) throw new Error("Webinar not found");
 
-  // FIX Issue #5: Validate webinar is scheduled before allowing booking
-  if (!webinar.appointment?.slotsOfAppointment?.[0]) {
+  // Validate webinar has been scheduled (has an appointment with at least one slot)
+  const masterSlot = webinar.appointment?.slotsOfAppointment?.[0];
+  if (!webinar.appointment || !masterSlot) {
     throw new Error("Webinar has not been scheduled. Cannot create booking.");
   }
 
-  let appointment = webinar.appointment;
-  if (!appointment) {
-    appointment = await tx.appointment.create({
-      data: {
-        appointmentType: AppointmentsType.WEBINAR,
-        webinarId: webinar.id,
-      },
-      include: {
-        slotsOfAppointment: true,
-      },
-    });
-  }
-
+  // Use the master slot's times — guaranteed to exist after validation above
   await tx.slotOfAppointment.create({
     data: {
-      appointmentId: appointment.id,
-      startsAt:
-        webinar.appointment?.slotsOfAppointment[0]?.startsAt || new Date(),
-      endsAt: webinar.appointment?.slotsOfAppointment[0]?.endsAt || new Date(),
+      appointmentId: webinar.appointment.id,
+      startsAt: masterSlot.startsAt,
+      endsAt: masterSlot.endsAt,
       isTentative: false,
       user: { connect: { id: data.userId } },
     },
   });
 
   const createdAppointment = await tx.appointment.findUnique({
-    where: { id: appointment.id },
+    where: { id: webinar.appointment.id },
     include: { slotsOfAppointment: true },
   });
   if (!createdAppointment) {

@@ -19,6 +19,9 @@ const createRefundSchema = z.object({
   paymentId: z.string().min(1, "Payment ID is required"),
   amount: z.number().positive().optional(),
   reason: z.string().optional(),
+  // NEW-1: When true, allows refunding even if consultant earnings are already paid out.
+  // The platform absorbs the loss. Requires explicit admin acknowledgement.
+  forceRefund: z.boolean().optional().default(false),
 });
 
 const getRefundsSchema = z.object({
@@ -52,7 +55,8 @@ export async function POST(req: NextRequest) {
 
     // Validate request
     const body = await req.json();
-    const { paymentId, amount, reason } = createRefundSchema.parse(body);
+    const { paymentId, amount, reason, forceRefund } =
+      createRefundSchema.parse(body);
 
     // ==========================================================================
     // TWO-PHASE REFUND PATTERN
@@ -70,13 +74,14 @@ export async function POST(req: NextRequest) {
     // PHASE 1: Create PENDING refund record in a transaction
     // This atomically validates and claims the refund amount
     const phase1Result = await prisma.$transaction(async (tx) => {
-      // Get payment with refunds inside transaction
+      // Get payment with refunds and associated earnings inside transaction
       const payment = await tx.payment.findUnique({
         where: { id: paymentId },
         include: {
           user: { select: { id: true, email: true, name: true } },
           appointment: true,
           refunds: true,
+          earnings: true,
         },
       });
 
@@ -86,6 +91,21 @@ export async function POST(req: NextRequest) {
 
       if (payment.paymentStatus !== "SUCCEEDED") {
         throw new Error("Only successful payments can be refunded");
+      }
+
+      // NEW-1: Block refund if consultant earnings have already been paid out.
+      // Once the consultant has received their payout, issuing a refund means
+      // the platform absorbs the full loss. Require explicit forceRefund flag.
+      if (
+        payment.earnings &&
+        payment.earnings.status === "PAID" &&
+        !forceRefund
+      ) {
+        throw new Error(
+          "Cannot refund: consultant earnings have already been paid out. " +
+            "Issuing this refund means the platform absorbs the loss. " +
+            'Set forceRefund: true to proceed, or initiate a clawback from the consultant first.',
+        );
       }
 
       // Calculate total already refunded (SUCCEEDED) + pending refunds (PENDING)
