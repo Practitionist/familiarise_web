@@ -239,9 +239,9 @@ function ErrorDisplay({ message }: { message: string }) {
               onClick={
                 config.secondaryAction.href === "#"
                   ? (e) => {
-                    e.preventDefault();
-                    window.location.reload();
-                  }
+                      e.preventDefault();
+                      window.location.reload();
+                    }
                   : undefined
               }
               className="w-full px-6 py-2.5 bg-zinc-100 text-zinc-700 rounded-lg font-medium hover:bg-zinc-200 transition-colors"
@@ -364,10 +364,7 @@ export default function ConsultantLayout({
   useNovuSubscriberSync();
 
   // Fetch user details to check consultant access
-  const {
-    data: userDetails,
-    isLoading: isLoadingUserDetails,
-  } = useQuery({
+  const { data: userDetails, isLoading: isLoadingUserDetails } = useQuery({
     queryKey: ["user-details", userId],
     queryFn: async () => {
       const response = await fetch(`/api/user/${userId}`);
@@ -398,13 +395,14 @@ export default function ConsultantLayout({
 
   // Check if user has access to this consultant dashboard:
   // - ADMIN: Can access ANY dashboard
-  // - STAFF: Can view consultant and consultee dashboards  
+  // - STAFF: Can view consultant and consultee dashboards
   // - CONSULTANT: Can only access their OWN dashboard
-  const hasConsultantAccess = userDetails && (
-    userDetails.role === "ADMIN" ||
-    userDetails.role === "STAFF" ||
-    (userDetails.role === "CONSULTANT" && userDetails.consultantProfileId === consultantId)
-  );
+  const hasConsultantAccess =
+    userDetails &&
+    (userDetails.role === "ADMIN" ||
+      userDetails.role === "STAFF" ||
+      (userDetails.role === "CONSULTANT" &&
+        userDetails.consultantProfileId === consultantId));
 
   // Redirect unauthorized users to their appropriate dashboard
   useEffect(() => {
@@ -414,14 +412,25 @@ export default function ConsultantLayout({
       // User doesn't have access - redirect based on their role
       if (userDetails.consultantProfileId) {
         // Consultant trying to access another consultant's dashboard - redirect to their own
-        router.replace(`/dashboard/consultant/${userDetails.consultantProfileId}/home`);
+        router.replace(
+          `/dashboard/consultant/${userDetails.consultantProfileId}/home`,
+        );
       } else if (userDetails.consulteeProfileId) {
-        router.replace(`/dashboard/consultee/${userDetails.consulteeProfileId}/home`);
+        router.replace(
+          `/dashboard/consultee/${userDetails.consulteeProfileId}/home`,
+        );
       } else {
         router.replace("/dashboard");
       }
     }
-  }, [userDetails, hasConsultantAccess, isLoadingUserDetails, isSessionLoading, userId, router]);
+  }, [
+    userDetails,
+    hasConsultantAccess,
+    isLoadingUserDetails,
+    isSessionLoading,
+    userId,
+    router,
+  ]);
 
   // Prefetch critical routes on mount
   useEffect(() => {
@@ -505,7 +514,11 @@ export default function ConsultantLayout({
   }
 
   // Initial loading state - only show if we don't have userDetails yet (still determining access)
-  if ((isLoading || isLoadingUserDetails || isSessionLoading) && !consultantData && !userDetails) {
+  if (
+    (isLoading || isLoadingUserDetails || isSessionLoading) &&
+    !consultantData &&
+    !userDetails
+  ) {
     return <DashboardSkeleton />;
   }
 

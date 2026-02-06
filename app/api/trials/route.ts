@@ -41,7 +41,7 @@ export async function GET(request: NextRequest) {
               error:
                 "Consultant profile not configured. Please complete onboarding.",
             },
-            { status: 422 }
+            { status: 422 },
           );
         }
         // Auto-set filter to own profile if not specified
@@ -59,7 +59,7 @@ export async function GET(request: NextRequest) {
               error:
                 "Consultee profile not configured. Please complete onboarding.",
             },
-            { status: 422 }
+            { status: 422 },
           );
         }
         // Auto-set filter to own profile if not specified

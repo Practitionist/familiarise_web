@@ -26,7 +26,8 @@ const MeetingPage = () => {
   const { data: session, isPending: isSessionPending } = useSession();
   const { call, isCallLoading, error } = useGetCallById(id as string);
   const [isSetupComplete, setIsSetupComplete] = useState(false);
-  const [accessValidation, setAccessValidation] = useState<AccessValidation | null>(null);
+  const [accessValidation, setAccessValidation] =
+    useState<AccessValidation | null>(null);
   const [isValidatingAccess, setIsValidatingAccess] = useState(true);
 
   // Validate meeting access
@@ -124,11 +125,10 @@ const MeetingPage = () => {
           <h2 className="text-xl font-bold text-zinc-900 mb-2">
             Access Denied
           </h2>
-          <p className="text-zinc-600 mb-4">
-            {accessValidation.message}
-          </p>
+          <p className="text-zinc-600 mb-4">{accessValidation.message}</p>
           <p className="text-sm text-zinc-500">
-            If you believe this is an error, please contact support or the meeting host.
+            If you believe this is an error, please contact support or the
+            meeting host.
           </p>
           <button
             onClick={() => window.history.back()}
@@ -175,4 +175,3 @@ const MeetingPage = () => {
 };
 
 export default MeetingPage;
-

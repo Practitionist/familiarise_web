@@ -38,7 +38,7 @@ export async function POST(request: NextRequest) {
     if (!email || !password || !name) {
       return NextResponse.json(
         { message: "Missing required fields: email, password, name" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -53,7 +53,7 @@ export async function POST(request: NextRequest) {
     if (existingUser) {
       return NextResponse.json(
         { message: "User with this email already exists" },
-        { status: 409 } // Conflict
+        { status: 409 }, // Conflict
       );
     }
 
@@ -84,7 +84,7 @@ export async function POST(request: NextRequest) {
     // Provide a generic error message
     return NextResponse.json(
       { message: "Internal Server Error" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -100,7 +100,7 @@ export async function GET(request: NextRequest) {
     // Only ADMIN/STAFF can list staff members
     if (!isPrivileged(session.user.role)) {
       return forbiddenResponse(
-        "Only administrators and staff can view staff members"
+        "Only administrators and staff can view staff members",
       );
     }
 
@@ -118,7 +118,7 @@ export async function GET(request: NextRequest) {
     console.error("Failed to fetch staff users:", error);
     return NextResponse.json(
       { message: "Internal Server Error fetching staff" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

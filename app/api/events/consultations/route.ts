@@ -130,7 +130,7 @@ export async function PATCH(request: NextRequest) {
     if (!id || !status) {
       return NextResponse.json(
         { error: "ID and status are required" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -153,7 +153,7 @@ export async function PATCH(request: NextRequest) {
     if (!existingConsultation) {
       return NextResponse.json(
         { error: "Consultation not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
@@ -167,7 +167,7 @@ export async function PATCH(request: NextRequest) {
 
     if (!isPrivileged(session.user.role) && !isParticipant) {
       return forbiddenResponse(
-        "You can only update consultations you are a participant in"
+        "You can only update consultations you are a participant in",
       );
     }
 

@@ -164,7 +164,7 @@ export const auth = betterAuth({
               firstName: nameParts[0],
               lastName: nameParts.slice(1).join(" ") || undefined,
             }).catch((err) =>
-              console.error("[AUTH_HOOK] Novu subscriber sync error:", err)
+              console.error("[AUTH_HOOK] Novu subscriber sync error:", err),
             );
           } catch (error) {
             console.error("[AUTH_HOOK] user.create.after error:", error);
