@@ -1,6 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { formatAmountFromPaise } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -64,14 +66,6 @@ const getStatusIcon = (status: string) => {
   }
 };
 
-const formatCurrency = (amount: number, currency: string = "INR") => {
-  return new Intl.NumberFormat("en-IN", {
-    style: "currency",
-    currency: currency,
-    maximumFractionDigits: 0,
-  }).format(amount / 100);
-};
-
 const formatDate = (dateString: string) => {
   return new Date(dateString).toLocaleString("en-IN", {
     day: "numeric",
@@ -84,14 +78,10 @@ const formatDate = (dateString: string) => {
 
 export default function StaffRefundsPage() {
   const { toast } = useToast();
-  const [refunds, setRefunds] = useState<Refund[]>([]);
-  const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [gatewayFilter, setGatewayFilter] = useState("all");
   const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
-  const [total, setTotal] = useState(0);
 
   const [debouncedSearch, setDebouncedSearch] = useState("");
 
@@ -103,38 +93,36 @@ export default function StaffRefundsPage() {
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
-  const fetchRefunds = useCallback(async () => {
-    setLoading(true);
-    try {
+  const { data: refundsData, isLoading: loading, refetch: refetchRefunds, error: refundsError } = useQuery<RefundListResponse>({
+    queryKey: ["staff-refunds", page, debouncedSearch, statusFilter, gatewayFilter],
+    queryFn: async () => {
       const params = new URLSearchParams();
       params.set("page", page.toString());
       params.set("limit", "20");
       if (debouncedSearch) params.set("search", debouncedSearch);
       if (statusFilter !== "all") params.set("status", statusFilter);
       if (gatewayFilter !== "all") params.set("gateway", gatewayFilter);
-
       const response = await fetch(`/api/admin/refunds?${params}`);
       if (!response.ok) throw new Error("Failed to fetch refunds");
+      return response.json() as Promise<RefundListResponse>;
+    },
+  });
 
-      const data: RefundListResponse = await response.json();
-      setRefunds(data.refunds);
-      setTotalPages(data.totalPages);
-      setTotal(data.total);
-    } catch (error) {
-      console.error("Error fetching refunds:", error);
+  // Show toast on error (React Query v5 removed onError callback)
+  useEffect(() => {
+    if (refundsError) {
+      console.error("Error fetching refunds:", refundsError);
       toast({
         title: "Error",
         description: "Failed to load refunds",
         variant: "destructive",
       });
-    } finally {
-      setLoading(false);
     }
-  }, [page, debouncedSearch, statusFilter, gatewayFilter, toast]);
+  }, [refundsError, toast]);
 
-  useEffect(() => {
-    fetchRefunds();
-  }, [fetchRefunds]);
+  const refunds: Refund[] = refundsData?.refunds ?? [];
+  const totalPages = refundsData?.totalPages ?? 1;
+  const total = refundsData?.total ?? 0;
 
   // Calculate stats
   const stats = {
@@ -156,7 +144,7 @@ export default function StaffRefundsPage() {
             View and track refund requests
           </p>
         </div>
-        <Button variant="outline" onClick={fetchRefunds} disabled={loading}>
+        <Button variant="outline" onClick={() => refetchRefunds()} disabled={loading}>
           <RefreshCw
             className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`}
           />
@@ -313,7 +301,7 @@ export default function StaffRefundsPage() {
                       </div>
                     </TableCell>
                     <TableCell className="font-medium">
-                      {formatCurrency(refund.amount, refund.currency)}
+                      {formatAmountFromPaise(refund.amount, refund.currency)}
                     </TableCell>
                     <TableCell className="text-sm text-zinc-600 dark:text-zinc-400">
                       {refund.paymentGateway}

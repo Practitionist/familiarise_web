@@ -1304,6 +1304,19 @@ export async function handleClassCheckout(
     }
   }
 
+  // H5 FIX: Validate class hasn't already ended (all sessions past).
+  // Similar to webinar validation — prevents booking a class whose last session is over.
+  if (classInstance.appointments.length > 0) {
+    const lastSession =
+      classInstance.appointments[classInstance.appointments.length - 1];
+    const lastMasterSlot = lastSession.slotsOfAppointment[0];
+    if (lastMasterSlot && lastMasterSlot.endsAt < new Date()) {
+      throw new Error(
+        "This class has already ended. It can no longer accept enrollments.",
+      );
+    }
+  }
+
   // Check if user is already enrolled - OPT-2: Use extracted utility
   if (isUserEnrolled(classInstance.appointments, userId)) {
     throw new Error("You are already enrolled in this class");
@@ -1530,7 +1543,14 @@ export async function handleCheckout(
 
           return { appointmentId: createdAppointment?.id };
         },
-        { timeout: 25000 },
+        {
+          timeout: 25000,
+          // H6 FIX: Use Serializable isolation for booking transactions to prevent
+          // phantom reads on capacity-limited events (webinars, classes). The
+          // distributed lock serializes per-event, but Serializable adds DB-level
+          // safety for edge cases like lock expiry under high load.
+          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        },
       );
 
       const logMessage = isMockPayment

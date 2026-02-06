@@ -15,6 +15,7 @@ import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { useState } from "react";
 import { PaymentGateway, DisputeStatus } from "@prisma/client";
+import { formatAmountFromPaise } from "@/lib/utils";
 
 // Fetch disputes with filters
 async function fetchDisputes(params: {
@@ -237,7 +238,7 @@ export default function AdminDisputesPage() {
                             {dispute.disputeId?.substring(0, 20)}...
                           </td>
                           <td className="px-4 py-3 text-sm text-gray-900">
-                            {dispute.amount} {dispute.currency}
+                            {formatAmountFromPaise(dispute.amount, dispute.currency)}
                           </td>
                           <td className="px-4 py-3 text-sm">
                             <span

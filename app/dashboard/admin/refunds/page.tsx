@@ -15,6 +15,7 @@ import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { useState } from "react";
 import { PaymentGateway, RefundStatus } from "@prisma/client";
+import { formatAmountFromPaise } from "@/lib/utils";
 
 // Fetch refunds with filters
 async function fetchRefunds(params: {
@@ -207,7 +208,7 @@ export default function AdminRefundsPage() {
                           {refund.refundId?.substring(0, 20)}...
                         </td>
                         <td className="px-4 py-3 text-sm text-gray-900">
-                          {refund.amount} {refund.currency}
+                          {formatAmountFromPaise(refund.amount, refund.currency)}
                         </td>
                         <td className="px-4 py-3 text-sm">
                           <span

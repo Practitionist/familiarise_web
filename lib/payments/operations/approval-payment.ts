@@ -15,6 +15,7 @@
 import prisma from "@/lib/prisma";
 import { PaymentGateway, PaymentStatus } from "@prisma/client";
 import { createPaymentIntent } from "../index";
+import { acquireLock, releaseLock } from "@/lib/redis";
 
 // ============================================================================
 // Type Definitions
@@ -52,6 +53,13 @@ export interface ApprovalPaymentResult {
  * @param params - Payment parameters including user, appointment type, and plan details
  * @returns Payment intent ID and checkout URL for user to complete payment
  */
+/**
+ * H3 FIX: Uses a distributed lock keyed on the resource being paid for
+ * (consultationId or subscriptionId) to prevent duplicate payment link
+ * generation from concurrent API calls.
+ */
+const APPROVAL_PAYMENT_LOCK_TTL = 30_000; // 30 seconds
+
 export async function createApprovalPaymentIntent(
   params: CreateApprovalPaymentParams,
 ): Promise<ApprovalPaymentResult> {
@@ -67,71 +75,86 @@ export async function createApprovalPaymentIntent(
     );
   }
 
-  // FIX Issue #7: Check for existing payment to prevent duplicates
-  const hasExistingPayment = await checkExistingPayment({
-    consultationId: params.consultationId,
-    subscriptionId: params.subscriptionId,
-  });
+  // H3 FIX: Acquire distributed lock keyed on the resource
+  const resourceId = params.consultationId || params.subscriptionId;
+  const lockKey = `lock:approval_payment:${resourceId}`;
+  const lockToken = await acquireLock(lockKey, APPROVAL_PAYMENT_LOCK_TTL);
 
-  if (hasExistingPayment) {
+  if (!lockToken) {
     throw new Error(
-      "A payment link has already been generated for this request",
+      "Payment link generation is already in progress for this request. Please wait.",
     );
   }
 
-  // BUG-D: Validate user has consultee profile (required for webhook to succeed)
-  const user = await prisma.user.findUnique({
-    where: { id: params.userId },
-    include: { consulteeProfile: true },
-  });
+  try {
+    // FIX Issue #7: Check for existing payment to prevent duplicates
+    const hasExistingPayment = await checkExistingPayment({
+      consultationId: params.consultationId,
+      subscriptionId: params.subscriptionId,
+    });
 
-  if (!user) {
-    throw new Error("User not found");
-  }
+    if (hasExistingPayment) {
+      throw new Error(
+        "A payment link has already been generated for this request",
+      );
+    }
 
-  if (!user.consulteeProfile) {
-    throw new Error(
-      "User does not have a consultee profile. Please complete profile setup first.",
-    );
-  }
+    // BUG-D: Validate user has consultee profile (required for webhook to succeed)
+    const user = await prisma.user.findUnique({
+      where: { id: params.userId },
+      include: { consulteeProfile: true },
+    });
 
-  // Get plan and calculate amount
-  const { amount, currency, plan } = await calculateAmount(params);
+    if (!user) {
+      throw new Error("User not found");
+    }
 
-  // Build metadata for webhook processing
-  const metadata = buildApprovalMetadata(params);
+    if (!user.consulteeProfile) {
+      throw new Error(
+        "User does not have a consultee profile. Please complete profile setup first.",
+      );
+    }
 
-  // Create payment intent with gateway
-  const paymentResponse = await createPaymentIntent({
-    amount,
-    currency,
-    metadata,
-    paymentGateway: params.paymentGateway,
-    isMockPayment: false,
-  });
+    // Get plan and calculate amount
+    const { amount, currency, plan } = await calculateAmount(params);
 
-  // Store payment record in database
-  await prisma.payment.create({
-    data: {
+    // Build metadata for webhook processing
+    const metadata = buildApprovalMetadata(params);
+
+    // Create payment intent with gateway
+    const paymentResponse = await createPaymentIntent({
       amount,
       currency,
-      description: `Payment for ${params.appointmentType.toLowerCase()} - ${plan.title}`,
-      paymentMethod: "card",
-      paymentIntent: paymentResponse.id,
+      metadata,
       paymentGateway: params.paymentGateway,
-      paymentStatus: PaymentStatus.PENDING,
-      userId: params.userId,
-      expiresAt: new Date(Date.now() + 48 * 60 * 60 * 1000), // 48 hours expiration
       isMockPayment: false,
-    },
-  });
+    });
 
-  return {
-    paymentIntentId: paymentResponse.id,
-    checkoutUrl: paymentResponse.client_secret, // This is the checkout URL/session URL
-    amount,
-    currency,
-  };
+    // Store payment record in database
+    await prisma.payment.create({
+      data: {
+        amount,
+        currency,
+        description: `Payment for ${params.appointmentType.toLowerCase()} - ${plan.title}`,
+        paymentMethod: "card",
+        paymentIntent: paymentResponse.id,
+        paymentGateway: params.paymentGateway,
+        paymentStatus: PaymentStatus.PENDING,
+        userId: params.userId,
+        expiresAt: new Date(Date.now() + 48 * 60 * 60 * 1000), // 48 hours expiration
+        isMockPayment: false,
+      },
+    });
+
+    return {
+      paymentIntentId: paymentResponse.id,
+      checkoutUrl: paymentResponse.client_secret,
+      amount,
+      currency,
+    };
+  } finally {
+    await releaseLock(lockKey, lockToken);
+  }
 }
 
 // ============================================================================

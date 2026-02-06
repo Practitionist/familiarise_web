@@ -286,11 +286,29 @@ export async function createPayoutBatch(
 
 /**
  * Approve a payout (admin action)
+ *
+ * C3 FIX: Validates payout is in PENDING status before approving.
+ * Without this, a COMPLETED/PROCESSING/FAILED payout could be re-approved,
+ * potentially causing double payouts.
  */
 export async function approvePayout(
   payoutId: string,
   adminUserId: string,
 ): Promise<void> {
+  const payout = await prisma.payout.findUnique({
+    where: { id: payoutId },
+  });
+
+  if (!payout) {
+    throw new Error(`Payout ${payoutId} not found`);
+  }
+
+  if (payout.status !== PayoutStatus.PENDING) {
+    throw new Error(
+      `Payout ${payoutId} cannot be approved (current status: ${payout.status}). Only PENDING payouts can be approved.`,
+    );
+  }
+
   await prisma.payout.update({
     where: { id: payoutId },
     data: {
@@ -303,6 +321,10 @@ export async function approvePayout(
 
 /**
  * Reject a payout (admin action)
+ *
+ * M4 FIX: Validates payout is in PENDING status before rejecting.
+ * Without this, a PROCESSING or COMPLETED payout could be rejected,
+ * unlinking earnings that may already be paid out.
  */
 export async function rejectPayout(
   payoutId: string,
@@ -315,6 +337,12 @@ export async function rejectPayout(
 
   if (!payout) {
     throw new Error("Payout not found");
+  }
+
+  if (payout.status !== PayoutStatus.PENDING) {
+    throw new Error(
+      `Payout ${payoutId} cannot be rejected (current status: ${payout.status}). Only PENDING payouts can be rejected.`,
+    );
   }
 
   // Unlink earnings and set them back to READY
@@ -337,30 +365,57 @@ export async function rejectPayout(
 
 /**
  * Process all approved payouts
+ *
+ * C4 FIX: Uses a distributed lock to prevent concurrent processing.
+ * Without this, two workers (or cron triggers) could fetch the same APPROVED
+ * payouts and send duplicate payments to the gateway.
+ * Additionally, each payout is atomically claimed (APPROVED → PROCESSING)
+ * before gateway calls to prevent double-processing.
  */
+const PAYOUT_PROCESS_LOCK_KEY = "lock:payout_processing";
+const PAYOUT_PROCESS_LOCK_TTL = 300_000; // 5 minutes — generous for batch processing
+
 export async function processApprovedPayouts(): Promise<PayoutResult[]> {
-  const approvedPayouts = await prisma.payout.findMany({
-    where: { status: PayoutStatus.APPROVED },
-    include: {
-      consultantProfile: {
-        include: {
-          payoutAccounts: {
-            where: { isDefault: true, isVerified: true },
-          },
-          user: true,
-        },
-      },
-    },
-  });
-
-  const results: PayoutResult[] = [];
-
-  for (const payout of approvedPayouts) {
-    const result = await processSinglePayout(payout);
-    results.push(result);
+  const lockToken = await acquireLock(
+    PAYOUT_PROCESS_LOCK_KEY,
+    PAYOUT_PROCESS_LOCK_TTL,
+  );
+  if (!lockToken) {
+    console.warn(
+      "[Payouts] Payout processing is already in progress. Skipping.",
+    );
+    return [];
   }
 
-  return results;
+  try {
+    const approvedPayouts = await prisma.payout.findMany({
+      where: {
+        status: PayoutStatus.APPROVED,
+        retryCount: { lt: PAYOUT_CONSTANTS.MAX_RETRY_ATTEMPTS },
+      },
+      include: {
+        consultantProfile: {
+          include: {
+            payoutAccounts: {
+              where: { isDefault: true, isVerified: true },
+            },
+            user: true,
+          },
+        },
+      },
+    });
+
+    const results: PayoutResult[] = [];
+
+    for (const payout of approvedPayouts) {
+      const result = await processSinglePayout(payout);
+      results.push(result);
+    }
+
+    return results;
+  } finally {
+    await releaseLock(PAYOUT_PROCESS_LOCK_KEY, lockToken);
+  }
 }
 
 /**
@@ -434,6 +489,15 @@ async function processSinglePayout(payout: {
         failureReason: errorMessage,
         retryCount: { increment: 1 },
       },
+    });
+
+    // C5 FIX: Unlink earnings from the failed payout so they can be
+    // picked up by the next batch. Without this, earnings linked to a
+    // payout that failed before the gateway call (e.g., "No payout account")
+    // would remain orphaned since no webhook fires to unlink them.
+    await prisma.consultantEarnings.updateMany({
+      where: { payoutId: payout.id },
+      data: { payoutId: null },
     });
 
     return {
@@ -535,6 +599,10 @@ async function processStripePayout(
 
 /**
  * Handle payout webhook from provider
+ *
+ * C6 FIX: Wrapped in a prisma.$transaction() to ensure atomicity.
+ * Without this, the payout status, earnings status, and consultant stats
+ * could get out of sync if any individual DB call fails mid-way.
  */
 export async function handlePayoutWebhook(
   _provider: PaymentGateway,
@@ -571,47 +639,52 @@ export async function handlePayoutWebhook(
       payoutStatus = PayoutStatus.PENDING;
   }
 
-  // Update payout status
-  await prisma.payout.update({
-    where: { id: payout.id },
-    data: {
-      status: payoutStatus,
-      processedAt:
-        payoutStatus === PayoutStatus.COMPLETED ? new Date() : undefined,
-      failureReason: failureReason,
-    },
+  await prisma.$transaction(async (tx) => {
+    // Update payout status
+    await tx.payout.update({
+      where: { id: payout.id },
+      data: {
+        status: payoutStatus,
+        processedAt:
+          payoutStatus === PayoutStatus.COMPLETED ? new Date() : undefined,
+        failureReason: failureReason,
+      },
+    });
+
+    // If completed, update earnings and consultant stats
+    if (payoutStatus === PayoutStatus.COMPLETED) {
+      // Update earnings to PAID
+      await tx.consultantEarnings.updateMany({
+        where: { payoutId: payout.id },
+        data: {
+          status: EarningStatus.PAID,
+          paidAt: new Date(),
+        },
+      });
+
+      // Update consultant stats
+      await tx.consultantProfile.update({
+        where: { id: payout.consultantProfileId },
+        data: {
+          totalRevenue: { increment: payout.amount },
+          pendingRevenue: { decrement: payout.amount },
+        },
+      });
+    }
+
+    // If failed or cancelled, unlink earnings so they can be included in next batch
+    if (
+      payoutStatus === PayoutStatus.FAILED ||
+      payoutStatus === PayoutStatus.CANCELLED
+    ) {
+      await tx.consultantEarnings.updateMany({
+        where: { payoutId: payout.id },
+        data: {
+          payoutId: null,
+        },
+      });
+    }
   });
-
-  // If completed, update earnings and consultant stats
-  if (payoutStatus === PayoutStatus.COMPLETED) {
-    // Update earnings to PAID
-    await prisma.consultantEarnings.updateMany({
-      where: { payoutId: payout.id },
-      data: {
-        status: EarningStatus.PAID,
-        paidAt: new Date(),
-      },
-    });
-
-    // Update consultant stats
-    await prisma.consultantProfile.update({
-      where: { id: payout.consultantProfileId },
-      data: {
-        totalRevenue: { increment: payout.amount },
-        pendingRevenue: { decrement: payout.amount },
-      },
-    });
-  }
-
-  // If failed, unlink earnings so they can be included in next batch
-  if (payoutStatus === PayoutStatus.FAILED) {
-    await prisma.consultantEarnings.updateMany({
-      where: { payoutId: payout.id },
-      data: {
-        payoutId: null,
-      },
-    });
-  }
 }
 
 /**

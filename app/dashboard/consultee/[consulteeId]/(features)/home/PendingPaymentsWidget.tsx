@@ -12,6 +12,7 @@ import {
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { CreditCard, Clock, ExternalLink, AlertCircle } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
+import { formatAmountFromPaise } from "@/lib/utils";
 
 interface PendingPayment {
   id: string;
@@ -120,7 +121,7 @@ export function PendingPaymentsWidget({
                 </p>
                 <div className="flex items-center gap-4 mt-2 text-sm">
                   <span className="font-semibold text-gray-900">
-                    {payment.currency} {payment.amount}
+                    {formatAmountFromPaise(payment.amount, payment.currency)}
                   </span>
                   <span className="text-gray-500">•</span>
                   <span className="capitalize text-gray-600">

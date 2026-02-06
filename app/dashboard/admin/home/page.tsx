@@ -21,6 +21,7 @@ import {
   Zap,
 } from "lucide-react";
 import { cn } from "@/utils/tailwind";
+import { formatAmountFromPaise } from "@/lib/utils";
 
 // Fetch admin dashboard stats
 async function fetchAdminStats() {
@@ -143,7 +144,7 @@ export default function AdminHomePage() {
                           </div>
                           <div>
                             <p className="font-medium text-zinc-900">
-                              {payment.amount} {payment.currency}
+                              {formatAmountFromPaise(payment.amount, payment.currency)}
                             </p>
                             <p className="text-sm text-zinc-500">
                               {payment.paymentGateway} •{" "}
@@ -200,7 +201,7 @@ export default function AdminHomePage() {
                           </div>
                           <div>
                             <p className="font-medium text-zinc-900">
-                              {refund.amount} {refund.currency}
+                              {formatAmountFromPaise(refund.amount, refund.currency)}
                             </p>
                             <p className="text-sm text-zinc-500">
                               {refund.paymentGateway}

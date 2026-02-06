@@ -10,6 +10,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { use, useState } from "react";
+import { formatAmountFromPaise } from "@/lib/utils";
 
 // Fetch payment details
 async function fetchPaymentDetails(paymentId: string) {
@@ -164,7 +165,7 @@ export default function PaymentDetailsPage({ params }: PageProps) {
             <div>
               <Label className="text-gray-500">Amount</Label>
               <p className="text-2xl font-bold">
-                {payment.amount} {payment.currency}
+                {formatAmountFromPaise(payment.amount, payment.currency)}
               </p>
             </div>
             <div>
@@ -260,14 +261,32 @@ export default function PaymentDetailsPage({ params }: PageProps) {
               <Label htmlFor="refundAmount">
                 Refund Amount (leave empty for full refund)
               </Label>
-              <Input
-                id="refundAmount"
-                type="number"
-                placeholder={`Max: ${payment.amount}`}
-                value={refundAmount}
-                onChange={(e) => setRefundAmount(e.target.value)}
-                max={payment.amount}
-              />
+              {/* H7 FIX: Calculate remaining refundable balance accounting for
+                  already-processed refunds to prevent over-refunding */}
+              {(() => {
+                const successfulRefunds = (payment.refunds || [])
+                  .filter((r: any) => r.status === "SUCCEEDED" || r.status === "PENDING")
+                  .reduce((sum: number, r: any) => sum + r.amount, 0);
+                const remainingRefundable = payment.amount - successfulRefunds;
+                return (
+                  <>
+                    <Input
+                      id="refundAmount"
+                      type="number"
+                      placeholder={`Max: ${formatAmountFromPaise(remainingRefundable)}`}
+                      value={refundAmount}
+                      onChange={(e) => setRefundAmount(e.target.value)}
+                      max={remainingRefundable}
+                      min={1}
+                    />
+                    {successfulRefunds > 0 && (
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Already refunded: {formatAmountFromPaise(successfulRefunds)} • Remaining: {formatAmountFromPaise(remainingRefundable)}
+                      </p>
+                    )}
+                  </>
+                );
+              })()}
             </div>
             <div>
               <Label htmlFor="refundReason">Reason (optional)</Label>
@@ -314,7 +333,7 @@ export default function PaymentDetailsPage({ params }: PageProps) {
                 >
                   <div>
                     <p className="font-medium">
-                      {refund.amount} {refund.currency}
+                      {formatAmountFromPaise(refund.amount, refund.currency)}
                     </p>
                     <p className="text-sm text-gray-500">{refund.reason}</p>
                     <p className="text-xs text-gray-400 mt-1">
@@ -356,7 +375,7 @@ export default function PaymentDetailsPage({ params }: PageProps) {
                   <div className="flex justify-between items-start">
                     <div>
                       <p className="font-medium">
-                        {dispute.amount} {dispute.currency}
+                        {formatAmountFromPaise(dispute.amount, dispute.currency)}
                       </p>
                       <p className="text-sm text-gray-600">{dispute.reason}</p>
                       <p className="text-xs text-gray-400 mt-1">
