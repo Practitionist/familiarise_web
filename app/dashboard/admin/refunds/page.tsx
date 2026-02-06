@@ -16,6 +16,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { PaymentGateway, RefundStatus } from "@prisma/client";
 import { formatAmountFromPaise } from "@/lib/utils";
+import type { Refund, RefundListResponse } from "@/types/payments";
 
 // Fetch refunds with filters
 async function fetchRefunds(params: {
@@ -24,7 +25,7 @@ async function fetchRefunds(params: {
   status?: RefundStatus;
   gateway?: PaymentGateway;
   search?: string;
-}) {
+}): Promise<RefundListResponse> {
   const searchParams = new URLSearchParams({
     page: params.page.toString(),
     limit: params.limit.toString(),
@@ -37,7 +38,7 @@ async function fetchRefunds(params: {
   if (!response.ok) {
     throw new Error("Failed to fetch refunds");
   }
-  return response.json();
+  return response.json() as Promise<RefundListResponse>;
 }
 
 export default function AdminRefundsPage() {
@@ -166,7 +167,7 @@ export default function AdminRefundsPage() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {isLoading ? (
+          {isLoading || !data ? (
             <div className="space-y-3">
               {[1, 2, 3, 4, 5].map((i) => (
                 <Skeleton key={i} className="h-16 w-full" />
@@ -202,7 +203,7 @@ export default function AdminRefundsPage() {
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
-                    {data.refunds.map((refund: any) => (
+                    {data.refunds.map((refund: Refund) => (
                       <tr key={refund.id} className="hover:bg-gray-50">
                         <td className="px-4 py-3 text-sm font-mono text-gray-900">
                           {refund.refundId?.substring(0, 20)}...
@@ -236,7 +237,7 @@ export default function AdminRefundsPage() {
                         </td>
                         <td className="px-4 py-3 text-sm">
                           <Link
-                            href={`/dashboard/admin/payments/${refund.paymentId}`}
+                            href={`/dashboard/admin/payments/${refund.payment?.id}`}
                             className="text-blue-600 hover:text-blue-700 font-medium"
                           >
                             View Payment

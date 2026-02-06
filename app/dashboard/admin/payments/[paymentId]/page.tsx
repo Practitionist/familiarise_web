@@ -11,14 +11,19 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { use, useState } from "react";
 import { formatAmountFromPaise } from "@/lib/utils";
+import type {
+  PaymentDetail,
+  PaymentDetailRefund,
+  PaymentDetailDispute,
+} from "@/types/payments";
 
 // Fetch payment details
-async function fetchPaymentDetails(paymentId: string) {
+async function fetchPaymentDetails(paymentId: string): Promise<PaymentDetail> {
   const response = await fetch(`/api/admin/payments/${paymentId}`);
   if (!response.ok) {
     throw new Error("Failed to fetch payment details");
   }
-  return response.json();
+  return response.json() as Promise<PaymentDetail>;
 }
 
 // Create refund
@@ -113,7 +118,7 @@ export default function PaymentDetailsPage({ params }: PageProps) {
     );
   }
 
-  if (isLoading) {
+  if (isLoading || !payment) {
     return (
       <div className="space-y-6">
         <Skeleton className="h-8 w-64" />
@@ -265,8 +270,8 @@ export default function PaymentDetailsPage({ params }: PageProps) {
                   already-processed refunds to prevent over-refunding */}
               {(() => {
                 const successfulRefunds = (payment.refunds || [])
-                  .filter((r: any) => r.status === "SUCCEEDED" || r.status === "PENDING")
-                  .reduce((sum: number, r: any) => sum + r.amount, 0);
+                  .filter((r: PaymentDetailRefund) => r.status === "SUCCEEDED" || r.status === "PENDING")
+                  .reduce((sum: number, r: PaymentDetailRefund) => sum + r.amount, 0);
                 const remainingRefundable = payment.amount - successfulRefunds;
                 return (
                   <>
@@ -326,7 +331,7 @@ export default function PaymentDetailsPage({ params }: PageProps) {
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
-              {payment.refunds.map((refund: any) => (
+              {payment.refunds.map((refund: PaymentDetailRefund) => (
                 <div
                   key={refund.id}
                   className="p-4 border rounded-lg flex justify-between items-start"
@@ -366,7 +371,7 @@ export default function PaymentDetailsPage({ params }: PageProps) {
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
-              {payment.disputes.map((dispute: any) => (
+              {payment.disputes.map((dispute: PaymentDetailDispute) => (
                 <Link
                   key={dispute.id}
                   href={`/dashboard/admin/disputes/${dispute.id}`}

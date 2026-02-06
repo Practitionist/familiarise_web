@@ -22,15 +22,29 @@ import {
 } from "lucide-react";
 import type { EarningsStats, Earning } from "@/types/payments";
 
-async function fetchEarningsStats() {
+interface EarningsStatsResponse {
+  stats: EarningsStats;
+}
+
+interface EarningsListResponse {
+  earnings: Earning[];
+  pagination: {
+    total: number;
+    limit: number;
+    offset: number;
+    hasMore: boolean;
+  };
+}
+
+async function fetchEarningsStats(): Promise<EarningsStatsResponse> {
   const response = await fetch("/api/admin/earnings/stats");
   if (!response.ok) {
     throw new Error("Failed to fetch earnings stats");
   }
-  return response.json();
+  return response.json() as Promise<EarningsStatsResponse>;
 }
 
-async function fetchEarnings(status?: string, page = 1, limit = 20) {
+async function fetchEarnings(status?: string, page = 1, limit = 20): Promise<EarningsListResponse> {
   const params = new URLSearchParams({
     limit: limit.toString(),
     offset: ((page - 1) * limit).toString(),
@@ -41,7 +55,7 @@ async function fetchEarnings(status?: string, page = 1, limit = 20) {
   if (!response.ok) {
     throw new Error("Failed to fetch earnings");
   }
-  return response.json();
+  return response.json() as Promise<EarningsListResponse>;
 }
 
 export default function ConsultantEarningsPage() {
@@ -231,7 +245,7 @@ export default function ConsultantEarningsPage() {
           </div>
         </CardHeader>
         <CardContent>
-          {earningsLoading ? (
+          {earningsLoading || !earningsData ? (
             <div className="space-y-3">
               {[1, 2, 3, 4, 5].map((i) => (
                 <Skeleton key={i} className="h-16 w-full" />

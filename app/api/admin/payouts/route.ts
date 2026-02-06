@@ -9,7 +9,7 @@ import {
   classifyError,
   logClassifiedError,
 } from "@/lib/payments/error-classification";
-import { PayoutStatus } from "@prisma/client";
+import { PayoutStatus, Prisma } from "@prisma/client";
 import { getPayoutStats, createPayoutBatch } from "@/lib/payments/payouts";
 
 import { getSession } from "@/lib/auth-server";
@@ -42,7 +42,7 @@ export async function GET(req: NextRequest) {
     const offset = parseInt(searchParams.get("offset") || "0");
 
     // Build where clause with optional status and search filters
-    const where: any = {};
+    const where: Prisma.PayoutWhereInput = {};
     if (status) {
       where.status = status;
     }
