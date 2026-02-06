@@ -5,6 +5,10 @@
 
 import { createRefund, listRefunds } from "@/lib/payments";
 import prisma from "@/lib/prisma";
+import {
+  classifyError,
+  logClassifiedError,
+} from "@/lib/payments/error-classification";
 import { Prisma } from "@prisma/client";
 import crypto from "crypto";
 import { NextRequest, NextResponse } from "next/server";
@@ -194,8 +198,6 @@ export async function POST(req: NextRequest) {
       message: "Refund created successfully",
     });
   } catch (error) {
-    console.error("Refund creation error:", error);
-
     if (error instanceof z.ZodError) {
       return NextResponse.json(
         { error: "Validation error", details: error.errors },
@@ -203,12 +205,12 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const classified = classifyError(error, "Failed to create refund");
+    logClassifiedError("Refunds", classified, error);
+
     return NextResponse.json(
-      {
-        error:
-          error instanceof Error ? error.message : "Failed to create refund",
-      },
-      { status: 500 },
+      { error: classified.errorMessage },
+      { status: classified.httpStatus },
     );
   }
 }

@@ -5,6 +5,10 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import {
+  classifyError,
+  logClassifiedError,
+} from "@/lib/payments/error-classification";
 import { PayoutStatus } from "@prisma/client";
 import { getPayoutStats, createPayoutBatch } from "@/lib/payments/payouts";
 
@@ -164,10 +168,12 @@ export async function POST(req: NextRequest) {
       })),
     });
   } catch (error) {
-    console.error("Error creating payout batch:", error);
+    const classified = classifyError(error, "Failed to create payout batch");
+    logClassifiedError("Payouts", classified, error);
+
     return NextResponse.json(
-      { error: "Failed to create payout batch" },
-      { status: 500 },
+      { error: classified.errorMessage },
+      { status: classified.httpStatus },
     );
   }
 }

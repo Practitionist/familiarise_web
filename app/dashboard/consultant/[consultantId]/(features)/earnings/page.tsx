@@ -60,7 +60,7 @@ interface EarningsResponse {
     isEligible: boolean;
     reason?: string;
     readyAmount: number;
-    minimumPayout: number;
+    minimumAmount: number;
   };
   earnings: EarningRecord[];
   pagination: {
@@ -398,7 +398,7 @@ export default function EarningsPage({
                   {eligibility.isEligible
                     ? `You have ${formatCurrency(eligibility.readyAmount)} ready for payout. Payouts are processed weekly.`
                     : eligibility.reason ??
-                      `Minimum payout threshold is ${formatCurrency(eligibility.minimumPayout)}.`}
+                      `Minimum payout threshold is ${formatCurrency(eligibility.minimumAmount)}.`}
                 </p>
               </div>
             </div>
