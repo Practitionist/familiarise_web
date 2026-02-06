@@ -15,7 +15,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { NotificationPreferencesPanel } from "@/components/notifications";
 import { useToast } from "@/hooks/use-toast";
-import { useSession } from "next-auth/react";
+import { useSession } from "@/lib/auth-client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, useEffect } from "react";
 import { AdminLevel } from "@prisma/client";

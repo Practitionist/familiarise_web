@@ -8,17 +8,17 @@
 
 Pure-function service with no database access. Single source of truth for all slot math.
 
-| Method | Purpose |
-|--------|---------|
-| `countWeeks(start, end)` | Count Sunday-to-Saturday weeks overlapping a date range |
-| `startOfWeekSunday(date)` | Get the Sunday 00:00 of the week containing a date |
-| `validateDuration(duration, fieldName)` | Safety check: positive, finite, >= 0.5h, <= 24h |
-| `calculateRequiredSlots(eventType, config)` | Total 30-min slots needed for an event |
-| `getSlotsPerCall(sessionDurationInHours)` | Slots per session: `Math.ceil(duration / 0.5)` |
-| `calculateProgress(selectedSlots, eventType, config)` | UI progress: scheduled vs required vs remaining |
-| `countCompletedCalls(slots, slotsPerCall)` | Count complete consecutive-slot groups per day |
-| `groupSlotsByDay(slots)` | Map\<dateString, slots[]\> |
-| `groupSlotsByWeek(slots)` | Map\<sundayISO, slots[]\> |
+| Method                                                | Purpose                                                 |
+| ----------------------------------------------------- | ------------------------------------------------------- |
+| `countWeeks(start, end)`                              | Count Sunday-to-Saturday weeks overlapping a date range |
+| `startOfWeekSunday(date)`                             | Get the Sunday 00:00 of the week containing a date      |
+| `validateDuration(duration, fieldName)`               | Safety check: positive, finite, >= 0.5h, <= 24h         |
+| `calculateRequiredSlots(eventType, config)`           | Total 30-min slots needed for an event                  |
+| `getSlotsPerCall(sessionDurationInHours)`             | Slots per session: `Math.ceil(duration / 0.5)`          |
+| `calculateProgress(selectedSlots, eventType, config)` | UI progress: scheduled vs required vs remaining         |
+| `countCompletedCalls(slots, slotsPerCall)`            | Count complete consecutive-slot groups per day          |
+| `groupSlotsByDay(slots)`                              | Map\<dateString, slots[]\>                              |
+| `groupSlotsByWeek(slots)`                             | Map\<sundayISO, slots[]\>                               |
 
 ### SlotValidationService
 
@@ -30,23 +30,23 @@ Unified validation for all 4 event types. Takes a `PrismaClient` or transaction 
 
 **Universal validators** (all event types):
 
-| Validator | What it checks |
-|-----------|---------------|
-| `validateSlotsInFuture` | All slots > now + 5 seconds (buffer prevents race conditions) |
-| `validateNoConflicts` | Range overlap detection: `slotStart < existingEnd AND existingStart < slotEnd`. Checks APPROVED subscriptions, PENDING/APPROVED/APPROVED_PENDING_PAYMENT consultations, SCHEDULED webinars/classes. Detects expired payments (orphaned payment fix). |
-| `validateMatchesSchedule` | WEEKLY: day-of-week + time-of-day within availability ranges. CUSTOM: overlap detection with available slots. |
-| `validateSchedulingPeriod` | All slots within [startDate, endDate] -- server-side enforcement |
-| `validateConsecutiveSlots` | Sort + check 30-min diff with 1-second tolerance |
-| `validateSameDaySlots` | All slots share the same `toDateString()` |
+| Validator                  | What it checks                                                                                                                                                                                                                                       |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `validateSlotsInFuture`    | All slots > now + 5 seconds (buffer prevents race conditions)                                                                                                                                                                                        |
+| `validateNoConflicts`      | Range overlap detection: `slotStart < existingEnd AND existingStart < slotEnd`. Checks APPROVED subscriptions, PENDING/APPROVED/APPROVED_PENDING_PAYMENT consultations, SCHEDULED webinars/classes. Detects expired payments (orphaned payment fix). |
+| `validateMatchesSchedule`  | WEEKLY: day-of-week + time-of-day within availability ranges. CUSTOM: overlap detection with available slots.                                                                                                                                        |
+| `validateSchedulingPeriod` | All slots within [startDate, endDate] -- server-side enforcement                                                                                                                                                                                     |
+| `validateConsecutiveSlots` | Sort + check 30-min diff with 1-second tolerance                                                                                                                                                                                                     |
+| `validateSameDaySlots`     | All slots share the same `toDateString()`                                                                                                                                                                                                            |
 
 **Event-specific validators**:
 
-| Validator | Rules |
-|-----------|-------|
-| `validateConsultation` | Same day + consecutive + exact slot count |
-| `validateSubscription` | Delegates to `SubscriptionValidationService` |
-| `validateWebinar` | Consecutive + exact slot count |
-| `validateClass` | Complete sessions per day + consecutive within day + weekly limits |
+| Validator              | Rules                                                              |
+| ---------------------- | ------------------------------------------------------------------ |
+| `validateConsultation` | Same day + consecutive + exact slot count                          |
+| `validateSubscription` | Delegates to `SubscriptionValidationService`                       |
+| `validateWebinar`      | Consecutive + exact slot count                                     |
+| `validateClass`        | Complete sessions per day + consecutive within day + weekly limits |
 
 ```mermaid
 sequenceDiagram
@@ -95,6 +95,7 @@ flowchart TD
 ```
 
 **Auto allocation** (`autoAllocate`):
+
 1. Fetch event config and consultant availability
 2. Detect reschedule (existing tentative slots? preserve total slot count)
 3. Build lookup set of all available 30-min blocks (weekly: generate 8 weeks of occurrences; custom: break into 30-min blocks)
@@ -103,6 +104,7 @@ flowchart TD
 6. Validate selected slots, create appointments, update event status
 
 **Manual allocation** (`manualAllocate`):
+
 1. Convert ISO strings to Date objects
 2. Reject duplicates
 3. Verify slot count is exact multiple of slotsPerCall
@@ -110,6 +112,7 @@ flowchart TD
 5. Delete existing appointments, create new ones, update status
 
 **Requested allocation** (`useRequestedSlots`):
+
 1. Verify appointments actually exist (prevents approving empty requests)
 2. Verify slot count matches
 3. Run full validation
@@ -117,6 +120,7 @@ flowchart TD
 5. Update event status to APPROVED
 
 **Appointment structure**:
+
 ```
 1 Appointment record = 1 call/session
   N SlotOfAppointment records (N = slotsPerCall)
@@ -135,6 +139,7 @@ flowchart TD
 Central React hook managing slot selection state for all event types.
 
 **Key behaviors**:
+
 - `toggleSlot()` -- event-specific interactive blocking: weekly limits (subscription), daily session limits (class), consecutive enforcement
 - Auto-expansion -- when selecting a slot, auto-select consecutive adjacent slots to fill `slotsPerSession`
 - `validateWeeklyDistribution()` -- counts **calls** not raw slots (divides by `slotsPerSession`)
@@ -148,6 +153,7 @@ Central React hook managing slot selection state for all event types.
 Unified calendar data synchronization. Fetches availability, appointments, and event slots in parallel.
 
 **Key function**: `getSlotStatusForInterval()` returns:
+
 - `isAvailable` / `isBookedForDisplay` (fully booked) / `isPartiallyBooked`
 - `isDisabled` / `isInPast`
 - `overlappingAppointments` for tooltips
@@ -207,6 +213,7 @@ erDiagram
 ```
 
 **Key relationships**:
+
 - One-time events (consultation, webinar) have **1 appointment** with N slots
 - Recurring events (subscription, class) have **M appointments** (one per call/session), each with N slots
 - `slotsPerSession = Math.ceil(sessionDurationInHours / 0.5)`
@@ -290,6 +297,7 @@ stateDiagram-v2
 ```
 
 **Retry protection**:
+
 - User deduplication: 5-minute window blocks same-user duplicate attempts
 - Rate limiting: max 3 pending attempts per slot per 30 minutes
 - Cleanup job: runs every 15 minutes, removes appointments abandoned for 30+ minutes

@@ -4,18 +4,17 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import authOptions from "@/app/api/auth/[...nextauth]/options";
 import prisma from "@/lib/prisma";
 import { processApprovedPayouts } from "@/lib/payments/payouts";
 
+import { getSession } from "@/lib/auth-server";
 /**
  * POST /api/admin/payouts/process
  * Process all approved payouts
  */
 export async function POST(_req: NextRequest) {
   try {
-    const session = await getServerSession(authOptions);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }

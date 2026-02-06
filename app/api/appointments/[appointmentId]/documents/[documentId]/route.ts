@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import authOptions from "@/app/api/auth/[...nextauth]/options";
 import prisma from "@/lib/prisma";
 import { deleteAppointmentDocument } from "@/lib/supabase";
 import { Prisma } from "@prisma/client";
 
+import { getSession } from "@/lib/auth-server";
 // GET - Get specific document details
 export async function GET(
   request: NextRequest,
@@ -13,7 +12,7 @@ export async function GET(
   }: { params: Promise<{ appointmentId: string; documentId: string }> },
 ) {
   try {
-    const session = await getServerSession(authOptions);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json(
         {
@@ -133,7 +132,7 @@ export async function PATCH(
   }: { params: Promise<{ appointmentId: string; documentId: string }> },
 ) {
   try {
-    const session = await getServerSession(authOptions);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json(
         {
@@ -263,7 +262,7 @@ export async function DELETE(
   }: { params: Promise<{ appointmentId: string; documentId: string }> },
 ) {
   try {
-    const session = await getServerSession(authOptions);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json(
         {

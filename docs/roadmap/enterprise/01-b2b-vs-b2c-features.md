@@ -20,18 +20,18 @@
 
 ## Feature Comparison Matrix
 
-| Feature | B2C (Individual Consultees) | B2B (Enterprise) |
-|---|---|---|
-| **Onboarding** | Self-signup | SSO (SAML/OIDC) via company IdP |
-| **Account structure** | Individual user | Organization → Teams → Members |
-| **Billing** | Per-session or subscription | Org-level invoicing, PO support, GST compliance |
-| **Seat management** | N/A | Admin allocates seats, tracks usage |
-| **Content access** | Book live sessions | Recording library access + live sessions |
-| **Analytics** | Personal history | Team learning progress dashboard |
-| **Branding** | Platform branding | Custom branding (whitelabel lite) |
-| **Support** | Standard tickets | Dedicated support, SLA guarantees |
-| **API access** | N/A | API keys for integrations (LMS, HRIS) |
-| **Recording collections** | Per-session recordings | Curated playlists by topic/role |
+| Feature                   | B2C (Individual Consultees) | B2B (Enterprise)                                |
+| ------------------------- | --------------------------- | ----------------------------------------------- |
+| **Onboarding**            | Self-signup                 | SSO (SAML/OIDC) via company IdP                 |
+| **Account structure**     | Individual user             | Organization → Teams → Members                  |
+| **Billing**               | Per-session or subscription | Org-level invoicing, PO support, GST compliance |
+| **Seat management**       | N/A                         | Admin allocates seats, tracks usage             |
+| **Content access**        | Book live sessions          | Recording library access + live sessions        |
+| **Analytics**             | Personal history            | Team learning progress dashboard                |
+| **Branding**              | Platform branding           | Custom branding (whitelabel lite)               |
+| **Support**               | Standard tickets            | Dedicated support, SLA guarantees               |
+| **API access**            | N/A                         | API keys for integrations (LMS, HRIS)           |
+| **Recording collections** | Per-session recordings      | Curated playlists by topic/role                 |
 
 ---
 
@@ -39,24 +39,24 @@
 
 From Issue #367:
 
-| Plan | Seats | Price/Month | Features |
-|------|-------|-------------|----------|
-| **Team** | 10 | ₹9,999 | Basic library access, member management |
-| **Business** | 50 | ₹39,999 | + Admin dashboard, analytics, collections |
-| **Enterprise** | Unlimited | Custom | + SSO, API, dedicated support, custom branding |
+| Plan           | Seats     | Price/Month | Features                                       |
+| -------------- | --------- | ----------- | ---------------------------------------------- |
+| **Team**       | 10        | ₹9,999      | Basic library access, member management        |
+| **Business**   | 50        | ₹39,999     | + Admin dashboard, analytics, collections      |
+| **Enterprise** | Unlimited | Custom      | + SSO, API, dedicated support, custom branding |
 
 ---
 
 ## Existing GitHub Issues for Enterprise
 
-| Issue | Title | Status | Relevance |
-|---|---|---|---|
-| #367 | Enterprise Recording Library — B2B Marketplace Expansion | OPEN | Core enterprise feature proposal with schema, pricing, and implementation plan |
-| #338 | Feature Gap Analysis: Familiarise vs Competitors | OPEN | Two-product strategy (Familiarise for mentors, Tiringly for courses) with gap analysis |
-| #366 | Recording Monetization: Access Tiers, Replay Store & Recovery Upsell | OPEN | Recording access tiers that enable enterprise library |
-| #326 | Support multiple admin levels (SUPER_ADMIN, ADMIN, MODERATOR) | OPEN | Granular admin permissions needed for enterprise org admins |
-| #380 | Implement Referral System & Affiliate Program | OPEN | Enterprise referral could drive B2B leads |
-| #312 | Integrate Directus CMS for Blog and Community Features | OPEN | CMS for enterprise knowledge base content |
+| Issue | Title                                                                | Status | Relevance                                                                              |
+| ----- | -------------------------------------------------------------------- | ------ | -------------------------------------------------------------------------------------- |
+| #367  | Enterprise Recording Library — B2B Marketplace Expansion             | OPEN   | Core enterprise feature proposal with schema, pricing, and implementation plan         |
+| #338  | Feature Gap Analysis: Familiarise vs Competitors                     | OPEN   | Two-product strategy (Familiarise for mentors, Tiringly for courses) with gap analysis |
+| #366  | Recording Monetization: Access Tiers, Replay Store & Recovery Upsell | OPEN   | Recording access tiers that enable enterprise library                                  |
+| #326  | Support multiple admin levels (SUPER_ADMIN, ADMIN, MODERATOR)        | OPEN   | Granular admin permissions needed for enterprise org admins                            |
+| #380  | Implement Referral System & Affiliate Program                        | OPEN   | Enterprise referral could drive B2B leads                                              |
+| #312  | Integrate Directus CMS for Blog and Community Features               | OPEN   | CMS for enterprise knowledge base content                                              |
 
 ---
 

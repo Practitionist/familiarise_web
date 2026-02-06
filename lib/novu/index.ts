@@ -1,7 +1,11 @@
 export { getNovuClient, isNovuConfigured, validateNovuConfig } from "./client";
 export { NOVU_WORKFLOWS } from "./workflows";
 export type { NovuWorkflowId } from "./workflows";
-export { syncSubscriber, deleteSubscriber, updateSubscriberPreferences } from "./subscriber";
+export {
+  syncSubscriber,
+  deleteSubscriber,
+  updateSubscriberPreferences,
+} from "./subscriber";
 export {
   // Appointments
   notifyAppointmentBooked,

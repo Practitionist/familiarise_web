@@ -80,5 +80,8 @@ yarn-error.log*
 next-env.d.ts
 .qodo
 
+# Private financial documents - DO NOT COMMIT
+docs/finances/private/
+
 # Other Repos
 node-payment-main/

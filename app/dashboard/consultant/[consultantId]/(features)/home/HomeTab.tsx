@@ -131,23 +131,25 @@ export function HomeTab({
           slotsOfAppointment: [slot],
         }));
       }),
-    [appointments]
+    [appointments],
   );
 
   const todayAppointments = useMemo(
     () =>
       getTodayAppointments(expandedAppointments)
         .filter(
-          (appointment) => getAppointmentStatus(appointment) !== "Completed"
+          (appointment) => getAppointmentStatus(appointment) !== "Completed",
         )
         .slice(0, 4),
-    [expandedAppointments]
+    [expandedAppointments],
   );
 
   const allUpcomingAppointments = useMemo(
     () =>
-      sortAppointmentsByStartTime(getUpcomingAppointments(expandedAppointments)),
-    [expandedAppointments]
+      sortAppointmentsByStartTime(
+        getUpcomingAppointments(expandedAppointments),
+      ),
+    [expandedAppointments],
   );
 
   const upcomingGroups = useMemo(() => {
@@ -158,7 +160,7 @@ export function HomeTab({
   // Calculate stats from real data
   const totalToday = useMemo(
     () => getTodayAppointments(expandedAppointments).length,
-    [expandedAppointments]
+    [expandedAppointments],
   );
   const totalUpcoming = allUpcomingAppointments.length;
 
@@ -404,9 +406,7 @@ export function HomeTab({
                             )}
                           </div>
 
-                          <Badge
-                            className={getBadgeStyle(status)}
-                          >
+                          <Badge className={getBadgeStyle(status)}>
                             {status}
                           </Badge>
 

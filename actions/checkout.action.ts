@@ -1,17 +1,15 @@
 "use server";
 
-import authOptions from "@/app/api/auth/[...nextauth]/options";
 import { handleCheckout } from "@/lib/payments/operations/checkout";
 import { CheckoutInput, checkoutSchema } from "@/schemas/checkout";
-import { getServerSession } from "next-auth";
-
+import { getSession } from "@/lib/auth-server";
 export async function checkoutAction(
   data: CheckoutInput,
   isMockPayment: boolean = false,
 ) {
   try {
     // Check authentication
-    const session = await getServerSession(authOptions);
+    const session = await getSession();
     if (!session?.user) {
       return { error: "Unauthorized" };
     }

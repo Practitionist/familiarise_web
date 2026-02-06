@@ -1,7 +1,6 @@
 import prisma from "@/lib/prisma";
-import { getServerSession } from "next-auth";
 import { NextRequest, NextResponse } from "next/server";
-import authOptions from "@/app/api/auth/[...nextauth]/options";
+import { getSession } from "@/lib/auth-server";
 import {
   ReschedulePolicyError,
   AppointmentNotFoundError,
@@ -36,7 +35,7 @@ export async function POST(
   { params }: { params: Promise<{ appointmentId: string }> },
 ) {
   try {
-    const session = await getServerSession(authOptions);
+    const session = await getSession();
     if (!session?.user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }

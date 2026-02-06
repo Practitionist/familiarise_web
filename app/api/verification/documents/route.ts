@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import authOptions from "@/app/api/auth/[...nextauth]/options";
 import prisma from "@/lib/prisma";
 import { uploadToSupabase, deleteFromSupabase } from "@/lib/supabase";
 
+import { getSession } from "@/lib/auth-server";
 const ALLOWED_TYPES = [
   "image/png",
   "image/jpeg",
@@ -24,7 +23,7 @@ const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
  */
 export async function POST(request: NextRequest) {
   try {
-    const session = await getServerSession(authOptions);
+    const session = await getSession();
 
     if (!session?.user?.id) {
       return NextResponse.json(
@@ -201,7 +200,7 @@ export async function POST(request: NextRequest) {
  */
 export async function DELETE(request: NextRequest) {
   try {
-    const session = await getServerSession(authOptions);
+    const session = await getSession();
 
     if (!session?.user?.id) {
       return NextResponse.json(

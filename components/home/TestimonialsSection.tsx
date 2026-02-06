@@ -67,8 +67,9 @@ export function TestimonialsSection({
 }: TestimonialsSectionProps) {
   // Ensure enough items for smooth marquee
   const displayReviews = useMemo(
-    () => (reviews.length >= 3 ? reviews : [...reviews, ...reviews, ...reviews]),
-    [reviews]
+    () =>
+      reviews.length >= 3 ? reviews : [...reviews, ...reviews, ...reviews],
+    [reviews],
   );
 
   return (

@@ -7,19 +7,59 @@ import {
   StreamTheme,
   CallingState,
 } from "@stream-io/video-react-sdk";
-import { Loader2 } from "lucide-react";
+import { Loader2, ShieldAlert } from "lucide-react";
 
 import { useGetCallById } from "./hooks/useGetCallById";
 import Alert from "./components/Alert";
 import MeetingSetup from "./components/MeetingSetup";
 import MeetingRoom from "./components/MeetingRoom";
-import { useSession } from "next-auth/react";
+import { useSession } from "@/lib/auth-client";
+
+interface AccessValidation {
+  hasAccess: boolean;
+  role: "host" | "participant" | null;
+  message: string;
+}
 
 const MeetingPage = () => {
   const { id } = useParams();
-  const { data: session, status } = useSession();
+  const { data: session, isPending: isSessionPending } = useSession();
   const { call, isCallLoading, error } = useGetCallById(id as string);
   const [isSetupComplete, setIsSetupComplete] = useState(false);
+  const [accessValidation, setAccessValidation] =
+    useState<AccessValidation | null>(null);
+  const [isValidatingAccess, setIsValidatingAccess] = useState(true);
+
+  // Validate meeting access
+  useEffect(() => {
+    const validateAccess = async () => {
+      if (!id || !session?.user?.id) {
+        setIsValidatingAccess(false);
+        return;
+      }
+
+      try {
+        const response = await fetch(`/api/meetings/${id}/validate-access`);
+        const data = await response.json();
+        setAccessValidation(data);
+      } catch (err) {
+        console.error("Error validating meeting access:", err);
+        setAccessValidation({
+          hasAccess: false,
+          role: null,
+          message: "Failed to validate access. Please try again.",
+        });
+      } finally {
+        setIsValidatingAccess(false);
+      }
+    };
+
+    if (session?.user?.id) {
+      validateAccess();
+    } else if (!isSessionPending) {
+      setIsValidatingAccess(false);
+    }
+  }, [id, session?.user?.id, isSessionPending]);
 
   // Cleanup on component unmount - disable media streams before leaving
   useEffect(() => {
@@ -53,11 +93,50 @@ const MeetingPage = () => {
     };
   }, [call]);
 
-  if (status === "loading" || isCallLoading) {
+  // Loading states
+  if (isSessionPending || isValidatingAccess || isCallLoading) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen">
         <Loader2 className="h-12 w-12 animate-spin text-primary" />
-        <p className="mt-4 text-lg">Loading meeting...</p>
+        <p className="mt-4 text-lg">
+          {isSessionPending
+            ? "Checking authentication..."
+            : isValidatingAccess
+              ? "Validating access..."
+              : "Loading meeting..."}
+        </p>
+      </div>
+    );
+  }
+
+  // Not logged in
+  if (!session?.user) {
+    return <Alert title="You need to be logged in to join this meeting" />;
+  }
+
+  // Access denied
+  if (accessValidation && !accessValidation.hasAccess) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-zinc-50">
+        <div className="bg-white p-8 rounded-2xl shadow-xl border border-zinc-200 max-w-md text-center">
+          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-red-100 flex items-center justify-center">
+            <ShieldAlert className="w-8 h-8 text-red-600" />
+          </div>
+          <h2 className="text-xl font-bold text-zinc-900 mb-2">
+            Access Denied
+          </h2>
+          <p className="text-zinc-600 mb-4">{accessValidation.message}</p>
+          <p className="text-sm text-zinc-500">
+            If you believe this is an error, please contact support or the
+            meeting host.
+          </p>
+          <button
+            onClick={() => window.history.back()}
+            className="mt-6 px-6 py-2.5 bg-zinc-900 text-white rounded-lg font-medium hover:bg-zinc-800 transition-colors"
+          >
+            Go Back
+          </button>
+        </div>
       </div>
     );
   }
@@ -78,14 +157,6 @@ const MeetingPage = () => {
         description="The meeting you're trying to join doesn't exist or has ended."
       />
     );
-  }
-
-  // Check if the user is allowed to join this meeting
-  // This is a simple check - you might want to implement more complex permission logic
-  const notAllowed = !session?.user;
-
-  if (notAllowed) {
-    return <Alert title="You need to be logged in to join this meeting" />;
   }
 
   return (

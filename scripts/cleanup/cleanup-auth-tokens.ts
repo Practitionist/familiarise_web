@@ -44,20 +44,20 @@ export async function cleanupAuthTokens(): Promise<AuthTokenCleanupResult> {
   console.log(`   Current time: ${now.toISOString()}`);
 
   try {
-    // 1. Delete expired verification tokens
-    console.log("\n📧 Cleaning up expired verification tokens...");
-    const verificationResult = await prisma.verificationToken.deleteMany({
+    // 1. Delete expired verification entries (includes password reset tokens)
+    console.log("\n📧 Cleaning up expired verification entries...");
+    const verificationResult = await prisma.verification.deleteMany({
       where: {
-        expires: { lt: now },
+        expiresAt: { lt: now },
       },
     });
     verificationTokensDeleted = verificationResult.count;
     console.log(
-      `   Deleted ${verificationTokensDeleted} expired verification tokens`,
+      `   Deleted ${verificationTokensDeleted} expired verification entries`,
     );
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    errors.push(`Verification token cleanup: ${errorMessage}`);
+    errors.push(`Verification cleanup: ${errorMessage}`);
     console.error(`   Error: ${errorMessage}`);
   }
 
@@ -66,7 +66,7 @@ export async function cleanupAuthTokens(): Promise<AuthTokenCleanupResult> {
     console.log("\n🔐 Cleaning up expired sessions...");
     const sessionResult = await prisma.session.deleteMany({
       where: {
-        expires: { lt: now },
+        expiresAt: { lt: now },
       },
     });
     sessionsDeleted = sessionResult.count;
@@ -77,28 +77,9 @@ export async function cleanupAuthTokens(): Promise<AuthTokenCleanupResult> {
     console.error(`   Error: ${errorMessage}`);
   }
 
-  try {
-    // 3. Clear expired password reset tokens
-    console.log("\n🔑 Clearing expired password reset tokens...");
-    const passwordResetResult = await prisma.user.updateMany({
-      where: {
-        passwordResetExpires: { lt: now },
-        passwordResetToken: { not: null },
-      },
-      data: {
-        passwordResetToken: null,
-        passwordResetExpires: null,
-      },
-    });
-    passwordResetTokensCleared = passwordResetResult.count;
-    console.log(
-      `   Cleared ${passwordResetTokensCleared} expired password reset tokens`,
-    );
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    errors.push(`Password reset token cleanup: ${errorMessage}`);
-    console.error(`   Error: ${errorMessage}`);
-  }
+  // Note: BetterAuth stores password reset tokens in the Verification table
+  // (with identifier prefix "reset-password:"), so they are already cleaned up
+  // in step 1 above when expired verification entries are deleted.
 
   const totalCleaned =
     verificationTokensDeleted + sessionsDeleted + passwordResetTokensCleared;

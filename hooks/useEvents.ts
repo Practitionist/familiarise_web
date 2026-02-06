@@ -67,8 +67,12 @@ interface EventsResult {
 // --- Single internal implementation ---
 
 function useEventsInternal(mode: EventQueryMode): EventsResult {
-  const [consultations, setConsultations] = useState<ConsultationWithPlan[]>([]);
-  const [subscriptions, setSubscriptions] = useState<SubscriptionWithPlan[]>([]);
+  const [consultations, setConsultations] = useState<ConsultationWithPlan[]>(
+    [],
+  );
+  const [subscriptions, setSubscriptions] = useState<SubscriptionWithPlan[]>(
+    [],
+  );
   const [webinars, setWebinars] = useState<WebinarWithPlan[]>([]);
   const [classes, setClasses] = useState<ClassWithPlan[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -77,13 +81,14 @@ function useEventsInternal(mode: EventQueryMode): EventsResult {
 
   // Stable key for the effect dependency
   const modeKey =
-    mode.type === "user" ? `user:${mode.userId}` :
-    mode.type === "consultant" ? `consultant:${mode.profileId}` :
-    `consultee:${mode.profileId}`;
+    mode.type === "user"
+      ? `user:${mode.userId}`
+      : mode.type === "consultant"
+        ? `consultant:${mode.profileId}`
+        : `consultee:${mode.profileId}`;
 
   useEffect(() => {
-    const identifier =
-      mode.type === "user" ? mode.userId : mode.profileId;
+    const identifier = mode.type === "user" ? mode.userId : mode.profileId;
     if (!identifier) return;
 
     const fetchEvents = async () => {

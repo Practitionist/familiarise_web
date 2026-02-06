@@ -83,7 +83,9 @@ export function SlotValidationFeedback({
  * Hook to get validation feedback for slots.
  * Useful when you need the feedback data without rendering the component.
  */
-export function useSlotValidationFeedback(slots: SlotsType): ValidationFeedback {
+export function useSlotValidationFeedback(
+  slots: SlotsType,
+): ValidationFeedback {
   return useMemo(() => {
     const validation = validateAllSlotsDetailed(slots);
     const stats = getSlotStatistics(slots);

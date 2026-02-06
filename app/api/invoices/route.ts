@@ -4,18 +4,17 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import authOptions from "@/app/api/auth/[...nextauth]/options";
 import { PaymentStatus } from "@prisma/client";
 import { getUserInvoices } from "@/lib/payments/payouts";
 
+import { getSession } from "@/lib/auth-server";
 /**
  * GET /api/invoices
  * Get current user's invoices
  */
 export async function GET(req: NextRequest) {
   try {
-    const session = await getServerSession(authOptions);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }

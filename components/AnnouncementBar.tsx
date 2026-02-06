@@ -72,8 +72,7 @@ const AnnouncementBar = () => {
     if (!barRef.current || !announcement) return;
 
     const observer = new ResizeObserver(([entry]) => {
-      const h =
-        entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height;
+      const h = entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height;
       setHeight(h);
     });
 

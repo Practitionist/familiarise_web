@@ -1,13 +1,35 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import {
+  requireApiAuth,
+  isPrivileged,
+  checkOwnership,
+  forbiddenResponse,
+} from "@/lib/auth-helpers";
 
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
+    // Require authentication
+    const authResult = await requireApiAuth();
+    if (authResult.error) return authResult.error;
+    const { session } = authResult;
+
     const resolvedParams = await params;
     const { id } = resolvedParams;
+
+    // Check authorization: privileged users can access any, others only their own
+    const canAccess =
+      isPrivileged(session.user.role) ||
+      checkOwnership(session, id, "consultee");
+
+    if (!canAccess) {
+      return forbiddenResponse(
+        "You can only access your own consultee profile",
+      );
+    }
 
     const consultee = await prisma.consulteeProfile.findUnique({
       where: { id: id },
@@ -45,8 +67,22 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
+    // Require authentication
+    const authResult = await requireApiAuth();
+    if (authResult.error) return authResult.error;
+    const { session } = authResult;
+
     const resolvedParams = await params;
     const { id } = resolvedParams;
+
+    // Check authorization: privileged users can create for any user, others only for themselves
+    const canCreate = isPrivileged(session.user.role) || session.user.id === id;
+
+    if (!canCreate) {
+      return forbiddenResponse(
+        "You can only create a consultee profile for yourself",
+      );
+    }
 
     const body = await req.json();
     const user = await prisma.user.findUnique({
@@ -100,8 +136,24 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
+    // Require authentication
+    const authResult = await requireApiAuth();
+    if (authResult.error) return authResult.error;
+    const { session } = authResult;
+
     const resolvedParams = await params;
     const { id } = resolvedParams;
+
+    // Check authorization: privileged users can update any, others only their own
+    const canUpdate =
+      isPrivileged(session.user.role) ||
+      checkOwnership(session, id, "consultee");
+
+    if (!canUpdate) {
+      return forbiddenResponse(
+        "You can only update your own consultee profile",
+      );
+    }
 
     const body = await req.json();
 
@@ -156,8 +208,24 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
+    // Require authentication
+    const authResult = await requireApiAuth();
+    if (authResult.error) return authResult.error;
+    const { session } = authResult;
+
     const resolvedParams = await params;
     const { id } = resolvedParams;
+
+    // Check authorization: privileged users can delete any, others only their own
+    const canDelete =
+      isPrivileged(session.user.role) ||
+      checkOwnership(session, id, "consultee");
+
+    if (!canDelete) {
+      return forbiddenResponse(
+        "You can only delete your own consultee profile",
+      );
+    }
 
     const existingConsultee = await prisma.consulteeProfile.findUnique({
       where: { id: id },

@@ -236,7 +236,9 @@ export function Overview({
                   startTime: new Date(slot.startsAt),
                   endTime: slot.endsAt
                     ? new Date(slot.endsAt)
-                    : new Date(new Date(slot.startsAt).getTime() + 30 * 60 * 1000),
+                    : new Date(
+                        new Date(slot.startsAt).getTime() + 30 * 60 * 1000,
+                      ),
                 })),
                 appointmentId: trial.appointment?.id,
                 appointment: trial.appointment as TAppointment | undefined,

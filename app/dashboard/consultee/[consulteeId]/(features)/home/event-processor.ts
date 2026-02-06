@@ -59,7 +59,10 @@ function findNextSlot(slots: SlotWithContext[]): SlotWithContext | null {
   );
 
   // Find first upcoming slot, or fall back to most recent past slot
-  return sortedSlots.find((s) => s.startsAt > now) ?? sortedSlots[sortedSlots.length - 1];
+  return (
+    sortedSlots.find((s) => s.startsAt > now) ??
+    sortedSlots[sortedSlots.length - 1]
+  );
 }
 
 /**

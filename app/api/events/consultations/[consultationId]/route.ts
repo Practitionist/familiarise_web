@@ -15,6 +15,11 @@ import {
   unlockApproval,
 } from "@/utils/appointmentlock";
 import { sendPaymentLinkEmail } from "@/lib/email";
+import {
+  requireApiAuth,
+  isPrivileged,
+  forbiddenResponse,
+} from "@/lib/auth-helpers";
 
 /**
  * Type for consultation with all related details needed for payment processing
@@ -52,6 +57,11 @@ export async function GET(
   { params }: { params: Promise<{ consultationId: string }> },
 ) {
   try {
+    // Require authentication
+    const authResult = await requireApiAuth();
+    if (authResult.error) return authResult.error;
+    const { session } = authResult;
+
     const { consultationId } = await params;
     const consultationData = await prisma.consultation.findUniqueOrThrow({
       where: { id: consultationId },
@@ -103,6 +113,21 @@ export async function GET(
       },
     });
 
+    // Check authorization: must be a participant or privileged
+    const consultantProfileId =
+      consultationData.consultationPlan?.consultantProfile?.id;
+    const consulteeProfileId = consultationData.requestedBy?.id;
+    const isConsultant =
+      consultantProfileId === session.user.consultantProfileId;
+    const isConsultee = consulteeProfileId === session.user.consulteeProfileId;
+    const isParticipant = isConsultant || isConsultee;
+
+    if (!isPrivileged(session.user.role) && !isParticipant) {
+      return forbiddenResponse(
+        "You can only view consultations you are a participant in",
+      );
+    }
+
     return NextResponse.json({ data: consultationData }, { status: 200 });
   } catch (error) {
     if (
@@ -127,7 +152,46 @@ export async function PUT(
   { params }: { params: Promise<{ consultationId: string }> },
 ) {
   try {
+    // Require authentication
+    const authResult = await requireApiAuth();
+    if (authResult.error) return authResult.error;
+    const { session } = authResult;
+
     const { consultationId } = await params;
+
+    // Fetch the consultation to check ownership
+    const existingConsultation = await prisma.consultation.findUnique({
+      where: { id: consultationId },
+      include: {
+        consultationPlan: {
+          include: {
+            consultantProfile: true,
+          },
+        },
+      },
+    });
+
+    if (!existingConsultation) {
+      return NextResponse.json(
+        { error: "Consultation not found" },
+        { status: 404 },
+      );
+    }
+
+    // Check authorization: must be a participant or privileged
+    const isConsultant =
+      existingConsultation.consultationPlan?.consultantProfile?.id ===
+      session.user.consultantProfileId;
+    const isConsultee =
+      existingConsultation.requestedById === session.user.consulteeProfileId;
+    const isParticipant = isConsultant || isConsultee;
+
+    if (!isPrivileged(session.user.role) && !isParticipant) {
+      return forbiddenResponse(
+        "You can only update consultations you are a participant in",
+      );
+    }
+
     const body = await request.json();
 
     const consultationData = await prisma.consultation.update({
@@ -208,7 +272,45 @@ export async function DELETE(
   { params }: { params: Promise<{ consultationId: string }> },
 ) {
   try {
+    // Require authentication
+    const authResult = await requireApiAuth();
+    if (authResult.error) return authResult.error;
+    const { session } = authResult;
+
     const { consultationId } = await params;
+
+    // Fetch the consultation to check ownership
+    const existingConsultation = await prisma.consultation.findUnique({
+      where: { id: consultationId },
+      include: {
+        consultationPlan: {
+          include: {
+            consultantProfile: true,
+          },
+        },
+      },
+    });
+
+    if (!existingConsultation) {
+      return NextResponse.json(
+        { error: "Consultation not found" },
+        { status: 404 },
+      );
+    }
+
+    // Check authorization: must be a participant or privileged
+    const isConsultant =
+      existingConsultation.consultationPlan?.consultantProfile?.id ===
+      session.user.consultantProfileId;
+    const isConsultee =
+      existingConsultation.requestedById === session.user.consulteeProfileId;
+    const isParticipant = isConsultant || isConsultee;
+
+    if (!isPrivileged(session.user.role) && !isParticipant) {
+      return forbiddenResponse(
+        "You can only delete consultations you are a participant in",
+      );
+    }
 
     const consultationData = await prisma.consultation.delete({
       where: { id: consultationId },
@@ -275,6 +377,11 @@ export async function PATCH(
   { params }: { params: Promise<{ consultationId: string }> },
 ) {
   try {
+    // Require authentication
+    const authResult = await requireApiAuth();
+    if (authResult.error) return authResult.error;
+    const { session } = authResult;
+
     const body = await request.json();
 
     if (!body || typeof body !== "object") {
@@ -337,6 +444,20 @@ export async function PATCH(
       return NextResponse.json(
         { error: "Invalid consultation: missing requestedBy information" },
         { status: 400 },
+      );
+    }
+
+    // Check authorization: must be a participant or privileged
+    const isConsultant =
+      existingConsultation.consultationPlan?.consultantProfile?.id ===
+      session.user.consultantProfileId;
+    const isConsultee =
+      existingConsultation.requestedById === session.user.consulteeProfileId;
+    const isParticipant = isConsultant || isConsultee;
+
+    if (!isPrivileged(session.user.role) && !isParticipant) {
+      return forbiddenResponse(
+        "You can only update consultations you are a participant in",
       );
     }
 

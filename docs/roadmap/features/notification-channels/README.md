@@ -82,14 +82,14 @@ model User {
 
 | Event             | Email | In-App | SMS | WhatsApp | Timing           |
 | ----------------- | ----- | ------ | --- | -------- | ---------------- |
-| Booking Confirmed | ✅     | ✅      | ✅   | ✅        | Immediate        |
-| Reminder          | ✅     | ✅      | ✅   | ✅        | 24h, 1h before   |
-| Cancellation      | ✅     | ✅      | ✅   | ✅        | Immediate        |
-| Reschedule        | ✅     | ✅      | ✅   | ✅        | Immediate        |
-| Payment Success   | ✅     | ✅      | ❌   | ❌        | Immediate        |
-| Payment Failed    | ✅     | ✅      | ✅   | ✅        | Immediate        |
-| Review Request    | ✅     | ✅      | ❌   | ✅        | 1h after session |
-| Marketing         | ✅     | ❌      | ❌   | ❌        | Scheduled        |
+| Booking Confirmed | ✅    | ✅     | ✅  | ✅       | Immediate        |
+| Reminder          | ✅    | ✅     | ✅  | ✅       | 24h, 1h before   |
+| Cancellation      | ✅    | ✅     | ✅  | ✅       | Immediate        |
+| Reschedule        | ✅    | ✅     | ✅  | ✅       | Immediate        |
+| Payment Success   | ✅    | ✅     | ❌  | ❌       | Immediate        |
+| Payment Failed    | ✅    | ✅     | ✅  | ✅       | Immediate        |
+| Review Request    | ✅    | ✅     | ❌  | ✅       | 1h after session |
+| Marketing         | ✅    | ❌     | ❌  | ❌       | Scheduled        |
 
 > ✅ Email and In-App are already implemented via Novu + Resend. SMS and WhatsApp are planned.
 

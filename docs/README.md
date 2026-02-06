@@ -178,6 +178,16 @@ Webhook handlers and schemas.
 
 ---
 
+### Notifications
+
+Notification system: Resend (transactional email) + Novu (multi-channel orchestration).
+
+- [README.md](./notifications/README.md) - System overview, source code map, navigation hub
+- [01-architecture.md](./notifications/01-architecture.md) - Dual-layer architecture, subscriber management, preferences, fire-and-forget pattern
+- [02-workflows-and-api.md](./notifications/02-workflows-and-api.md) - 27 Novu workflows, 10 Resend email functions, API endpoints
+
+---
+
 ### Storage
 
 Storage management and document review system.
@@ -281,7 +291,7 @@ All documentation for features, integrations, and improvements that are **not ye
 - [Auth Migration (BetterAuth)](./roadmap/auth/betterauth-migration.md) - NextAuth → BetterAuth migration
 - [Enterprise B2B Tier](./roadmap/enterprise/README.md) - SSO, org management, recording library
 - [Infrastructure Hardening](./roadmap/infrastructure/README.md) - Security, monitoring, scaling (14 audit documents)
-- [Notifications Architecture](./roadmap/notifications/service-integration-architecture.md) - Directus, ConvertKit, Resend, Novu interlinking
+- [Service Integration Architecture](./roadmap/content-strategy/README.md) - Directus, ConvertKit, Enterprise interlinking (planned)
 - [Content Strategy](./roadmap/content-strategy/README.md) - CMS, blog, gated community
 - [Navigation Mega-Menu](./roadmap/navigation/README.md) - Mega-menu design
 - [15 Planned Features](./roadmap/features/) - AI summaries, smart matching, referrals, and more

@@ -63,13 +63,17 @@ export default function ExpertProfile(
           params.consultantId,
         );
         setConsultantDetails(consultantData);
-        if (consultantData.userId) {
-          const userData = await fetchUserDetails(consultantData.userId);
-          setUserDetails(userData);
+
+        // Use user data from consultant response instead of separate API call
+        // This allows public access since consultant API is public
+        if (consultantData.user) {
+          setUserDetails(
+            consultantData.user as TUserWithProfessionalBackground,
+          );
           const reviewsData = await fetchReviews(params.consultantId);
           setReviews(reviewsData);
         } else {
-          throw new Error("Consultant user ID not found");
+          throw new Error("Consultant user data not found");
         }
       } catch (err) {
         console.error("Error fetching data:", err);

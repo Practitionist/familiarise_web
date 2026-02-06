@@ -125,44 +125,44 @@ All items are clickable and navigate to a page, EXCEPT items marked "Coming Soon
 
 ### Platform Dropdown
 
-| Item | Link | Status |
-|---|---|---|
-| Browse Consultants | `/explore/experts` | **Live** (clickable) |
-| Browse Programs | `/explore/programs` | **Live** (clickable) |
-| How It Works | `/how-it-works` | Coming Soon (non-clickable) |
-| Features | `/features` | Coming Soon |
+| Item               | Link                | Status                      |
+| ------------------ | ------------------- | --------------------------- |
+| Browse Consultants | `/explore/experts`  | **Live** (clickable)        |
+| Browse Programs    | `/explore/programs` | **Live** (clickable)        |
+| How It Works       | `/how-it-works`     | Coming Soon (non-clickable) |
+| Features           | `/features`         | Coming Soon                 |
 
 ### Solutions Dropdown
 
-| Item | Link | Status |
-|---|---|---|
-| **By Audience** | | |
-| For Individuals | `/solutions/individuals` | Coming Soon |
-| For Teams | `/solutions/teams` | Coming Soon |
-| For Enterprise | `/solutions/enterprise` | Coming Soon |
-| **By Use Case** | | |
-| Career Transitions | `/use-cases/career-transitions` | Coming Soon |
+| Item                 | Link                              | Status      |
+| -------------------- | --------------------------------- | ----------- |
+| **By Audience**      |                                   |             |
+| For Individuals      | `/solutions/individuals`          | Coming Soon |
+| For Teams            | `/solutions/teams`                | Coming Soon |
+| For Enterprise       | `/solutions/enterprise`           | Coming Soon |
+| **By Use Case**      |                                   |             |
+| Career Transitions   | `/use-cases/career-transitions`   | Coming Soon |
 | Technical Mentorship | `/use-cases/technical-mentorship` | Coming Soon |
-| Business Strategy | `/use-cases/business-strategy` | Coming Soon |
-| Leadership Coaching | `/use-cases/leadership-coaching` | Coming Soon |
+| Business Strategy    | `/use-cases/business-strategy`    | Coming Soon |
+| Leadership Coaching  | `/use-cases/leadership-coaching`  | Coming Soon |
 
 ### Resources Dropdown
 
-| Item | Link | Status |
-|---|---|---|
-| Blog | `/blog` | Coming Soon (until Directus is set up) |
-| Success Stories | `/success-stories` | Coming Soon |
-| Community | `/community` | Coming Soon (gated, for paying users) |
-| Help Center | `/help` | Coming Soon |
+| Item            | Link               | Status                                 |
+| --------------- | ------------------ | -------------------------------------- |
+| Blog            | `/blog`            | Coming Soon (until Directus is set up) |
+| Success Stories | `/success-stories` | Coming Soon                            |
+| Community       | `/community`       | Coming Soon (gated, for paying users)  |
+| Help Center     | `/help`            | Coming Soon                            |
 
 ### Direct Links (Not in Dropdowns)
 
-| Item | Link | Status |
-|---|---|---|
-| Pricing | `/pricing` | **Live** (clickable) |
-| Login | `/login` | **Live** (clickable) |
-| Find an Expert (CTA button) | `/explore/experts` | **Live** (clickable) |
-| For Enterprise (CTA button) | `/solutions/enterprise` | Coming Soon |
+| Item                        | Link                    | Status               |
+| --------------------------- | ----------------------- | -------------------- |
+| Pricing                     | `/pricing`              | **Live** (clickable) |
+| Login                       | `/login`                | **Live** (clickable) |
+| Find an Expert (CTA button) | `/explore/experts`      | **Live** (clickable) |
+| For Enterprise (CTA button) | `/solutions/enterprise` | Coming Soon          |
 
 ---
 
@@ -170,13 +170,13 @@ All items are clickable and navigate to a page, EXCEPT items marked "Coming Soon
 
 Existing reusable pages that belong in the footer (not the navbar):
 
-| Section | Pages |
-|---|---|
-| **Legal** | Privacy Policy, Terms of Service, Cookie Policy, Refund Policy |
-| **Platform** | Browse Experts, Browse Programs, Pricing, How It Works |
-| **Solutions** | For Individuals, For Teams, For Enterprise |
-| **Resources** | Blog, Success Stories, Help Center, Community |
-| **Company** | About Us, Contact, Become a Consultant |
-| **Domains** | (Programmatic SEO links to domain/category pages) |
+| Section       | Pages                                                          |
+| ------------- | -------------------------------------------------------------- |
+| **Legal**     | Privacy Policy, Terms of Service, Cookie Policy, Refund Policy |
+| **Platform**  | Browse Experts, Browse Programs, Pricing, How It Works         |
+| **Solutions** | For Individuals, For Teams, For Enterprise                     |
+| **Resources** | Blog, Success Stories, Help Center, Community                  |
+| **Company**   | About Us, Contact, Become a Consultant                         |
+| **Domains**   | (Programmatic SEO links to domain/category pages)              |
 
 The footer serves as the full sitemap with SEO-friendly links to every page, including domain-specific category pages for programmatic SEO.

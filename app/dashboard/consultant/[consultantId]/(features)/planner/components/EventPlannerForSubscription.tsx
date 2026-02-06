@@ -103,10 +103,10 @@ export function EventPlannerForSubscription({
 
   // State for free trial (not in the Zod schema, handled separately)
   const [freeTrialEnabled, setFreeTrialEnabled] = useState(
-    initialData?.subscriptionPlan?.freeTrialEnabled ?? false
+    initialData?.subscriptionPlan?.freeTrialEnabled ?? false,
   );
   const [freeTrialDurationMinutes, setFreeTrialDurationMinutes] = useState(
-    initialData?.subscriptionPlan?.freeTrialDurationMinutes ?? 30
+    initialData?.subscriptionPlan?.freeTrialDurationMinutes ?? 30,
   );
 
   // State for subscription contents/roadmap (not in Zod schema)
@@ -181,9 +181,15 @@ export function EventPlannerForSubscription({
         topics: initialData.subscriptionPlan.topics ?? [],
       });
       // Reset free trial and subscription contents state
-      setFreeTrialEnabled(initialData.subscriptionPlan.freeTrialEnabled ?? false);
-      setFreeTrialDurationMinutes(initialData.subscriptionPlan.freeTrialDurationMinutes ?? 30);
-      setSubscriptionContents(initialData.subscriptionPlan.subscriptionContents ?? []);
+      setFreeTrialEnabled(
+        initialData.subscriptionPlan.freeTrialEnabled ?? false,
+      );
+      setFreeTrialDurationMinutes(
+        initialData.subscriptionPlan.freeTrialDurationMinutes ?? 30,
+      );
+      setSubscriptionContents(
+        initialData.subscriptionPlan.subscriptionContents ?? [],
+      );
     }
   }, [initialData, form]);
 
@@ -315,7 +321,7 @@ export function EventPlannerForSubscription({
   const updateSubscriptionContent = (
     index: number,
     field: string,
-    value: string | number | null
+    value: string | number | null,
   ) => {
     const newContents = [...subscriptionContents];
     newContents[index] = { ...newContents[index], [field]: value };
@@ -725,7 +731,7 @@ export function EventPlannerForSubscription({
                               updateSubscriptionContent(
                                 index,
                                 "title",
-                                e.target.value
+                                e.target.value,
                               )
                             }
                             className="mt-2"
@@ -744,7 +750,7 @@ export function EventPlannerForSubscription({
                               updateSubscriptionContent(
                                 index,
                                 "hoursAllotted",
-                                Number.parseFloat(e.target.value) || 1
+                                Number.parseFloat(e.target.value) || 1,
                               )
                             }
                             className="mt-2"
@@ -763,7 +769,7 @@ export function EventPlannerForSubscription({
                               updateSubscriptionContent(
                                 index,
                                 "description",
-                                e.target.value
+                                e.target.value,
                               )
                             }
                             className="mt-2 min-h-[60px] resize-none"
@@ -779,7 +785,7 @@ export function EventPlannerForSubscription({
                               updateSubscriptionContent(
                                 index,
                                 "contentType",
-                                e.target.value || null
+                                e.target.value || null,
                               )
                             }
                             className="mt-2"
@@ -795,7 +801,7 @@ export function EventPlannerForSubscription({
                               updateSubscriptionContent(
                                 index,
                                 "contentUrl",
-                                e.target.value || null
+                                e.target.value || null,
                               )
                             }
                             className="mt-2"

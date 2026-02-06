@@ -2,251 +2,262 @@
 
 ## Overview
 
-This document details the current and projected SaaS expenditures for Familiarise. All costs are based on actual pricing as of December 2025.
+This document details all SaaS and infrastructure costs for Familiarise. Updated February 2026 to reflect the actual bootstrapped stack.
+
+**Key insight:** At the bootstrapped/pre-revenue stage, the platform runs almost entirely on free tiers. The single largest SaaS cost is Claude Max ($100/mo) for AI-assisted development.
 
 ---
 
-## Current Tech Stack Costs
+## Current Stack - Pre-Launch (February 2026)
 
-### Infrastructure & Hosting
+### Non-Negotiable Costs (Paid)
 
-| Service                                  | Plan | Monthly Cost (USD) | Monthly Cost (INR) | Notes                            |
-| ---------------------------------------- | ---- | ------------------ | ------------------ | -------------------------------- |
-| [Vercel](https://vercel.com/pricing)     | Pro  | $20/seat           | ~₹1,700/seat       | Frontend hosting, Edge functions |
-| [Supabase](https://supabase.com/pricing) | Pro  | $25 + usage        | ~₹2,100 base       | 8GB DB, 100GB storage, 100K MAUs |
+| Service                                                          | Plan     | Monthly Cost (USD) | Monthly Cost (INR) | Annual (INR)   | Purpose                                       |
+| ---------------------------------------------------------------- | -------- | ------------------ | ------------------ | -------------- | --------------------------------------------- |
+| [Claude Max](https://claude.com/pricing) (Anthropic)             | Max $100 | $100               | ~₹8,500            | ~₹1,02,000     | AI coding assistant, primary development tool |
+| [Apple Developer Program](https://developer.apple.com/programs/) | Annual   | $8.25/mo amortized | ~₹725              | ₹8,700         | Required to publish on iOS App Store          |
+| Domain (.com/.in)                                                | Annual   | ~$1.20/mo          | ~₹100              | ~₹1,200        | Platform identity                             |
+| **Subtotal (Non-Negotiable)**                                    |          | **~$109.45**       | **~₹9,325**        | **~₹1,11,900** |                                               |
 
-### Payment Processing
+> **Note on Claude:** Downgrading from Max ($100) to Pro ($20) saves ₹6,800/month. This is the single biggest cost-reduction lever if cash runs low.
 
-| Service                          | Fee Structure | Example on ₹1,000 | Notes                           |
-| -------------------------------- | ------------- | ----------------- | ------------------------------- |
-| [Razorpay](https://razorpay.com) | 2% + 18% GST  | ~₹24 (2.36%)      | Domestic cards, UPI, netbanking |
-| Razorpay (International)         | 3% + 18% GST  | ~₹35 (3.54%)      | International cards             |
-| Razorpay UPI                     | ~0-1%         | ~₹0-10            | Lowest fees                     |
-| Stripe (if used)                 | 2.9% + $0.30  | ~₹54              | Higher base rate                |
+### One-Time Costs (Already Paid or Due Once)
 
-**Source**: [Razorpay Pricing](https://razorpay.com/docs/)
+| Service                                                 | Cost (USD) | Cost (INR) | Notes                                |
+| ------------------------------------------------------- | ---------- | ---------- | ------------------------------------ |
+| [Google Play Console](https://play.google.com/console/) | $25        | ~₹2,100    | One-time registration, no annual fee |
 
-### Communication & Notifications
+### Free Tier SaaS (₹0 Current Cost)
 
-| Service                                        | Plan        | Monthly Cost    | Notes                              |
-| ---------------------------------------------- | ----------- | --------------- | ---------------------------------- |
-| [Resend](https://resend.com/pricing)           | Pro         | $20-50          | Transactional emails (10K-100K/mo) |
-| SMS Provider                                   | Pay-per-SMS | ~₹0.15-0.25/SMS | OTP, notifications                 |
-| [Twilio](https://www.twilio.com/pricing) (alt) | Usage       | ~$0.0079/SMS    | International SMS                  |
+| Service                                                          | Free Tier Limits                         | Monthly Cost at Free | Paid Tier Cost           | When You Outgrow Free                            |
+| ---------------------------------------------------------------- | ---------------------------------------- | -------------------- | ------------------------ | ------------------------------------------------ |
+| [Supabase](https://supabase.com/pricing)                         | 500MB DB, 1GB storage, 50K MAU           | ₹0                   | $25/mo (~₹2,125) Pro     | ~200-500 active users                            |
+| [Vercel](https://vercel.com/pricing)                             | 100GB bandwidth, hobby project           | ₹0                   | $20/seat (~₹1,700) Pro   | Team features needed                             |
+| [Stream.io](https://getstream.io/maker-account/) (Maker Account) | 2K MAU chat, 333K video participant-mins | ₹0                   | $99-299/mo (~₹8.4-25.4K) | $10K revenue OR $100K funding OR >5 team members |
+| [Globe.dev](https://globe.dev/)                                  | Free tier (Flutter deployment)           | ₹0                   | Not publicly listed      | Unknown                                          |
+| [Resend](https://resend.com/pricing)                             | 100 emails/day, 3K/month                 | ₹0                   | $20/mo (~₹1,700)         | ~100 bookings/day                                |
+| [Upstash Redis](https://upstash.com/pricing)                     | Free tier                                | ₹0                   | $10/mo (~₹850)           | Heavy rate-limiting                              |
+| [PostHog](https://posthog.com/pricing)                           | 1M events/month                          | ₹0                   | Usage-based              | Scale stage                                      |
+| [Sentry](https://sentry.io/pricing)                              | 5K errors/month                          | ₹0                   | $26/mo (~₹2,200) Team    | Paid features needed                             |
+| [Cloudflare](https://www.cloudflare.com/plans/)                  | CDN, DDoS protection                     | ₹0                   | $20/mo Pro               | Enterprise features                              |
+| [GitHub](https://github.com/pricing)                             | Free private repos, Actions minutes      | ₹0                   | $4/user/mo (~₹340) Team  | Team management                                  |
 
-### Video & Real-time
+### Total Current Monthly SaaS Burn
 
-| Service              | Plan    | Monthly Cost    | Notes              |
-| -------------------- | ------- | --------------- | ------------------ |
-| Stream.io / Daily.co | Pro     | ₹10,000-25,000  | WebRTC video calls |
-| Agora (alternative)  | Usage   | ~$0.99/1000 min | Pay-per-minute     |
-| 100ms (alternative)  | Starter | Free-₹8,000     | 10K free minutes   |
-
-### Analytics & Monitoring
-
-| Service                                  | Plan     | Monthly Cost | Notes                        |
-| ---------------------------------------- | -------- | ------------ | ---------------------------- |
-| [Mixpanel](https://mixpanel.com/pricing) | Growth   | Free-$24     | User analytics, 10K MTU free |
-| [PostHog](https://posthog.com/pricing)   | Free     | $0           | 1M events/mo free            |
-| [Sentry](https://sentry.io/pricing)      | Team     | $26/mo       | Error tracking               |
-| Vercel Analytics                         | Included | $0           | Basic with Pro plan          |
-
-### Other Services
-
-| Service                                        | Plan     | Cost             | Notes                 |
-| ---------------------------------------------- | -------- | ---------------- | --------------------- |
-| Domain                                         | Annual   | ~₹1,000-1,500/yr | .com/.in domain       |
-| SSL Certificate                                | Included | $0               | Via Vercel/Cloudflare |
-| [Cloudflare](https://www.cloudflare.com/plans) | Free     | $0               | CDN, DDoS protection  |
-| GitHub                                         | Team     | $4/user/mo       | Code repository       |
+| Category                    | Amount (INR)   |
+| --------------------------- | -------------- |
+| Claude Max (Anthropic)      | ₹8,500         |
+| Apple Developer (amortized) | ₹725           |
+| Domain                      | ₹100           |
+| All free tier tools         | ₹0             |
+| **Total Monthly SaaS**      | **~₹9,325**    |
+| **Total Annual SaaS**       | **~₹1,11,900** |
 
 ---
 
-## Cost Projections by Stage
+## Stream.io Maker Account: Why It's Free
 
-### Stage 1: MVP (0-100 users)
+Familiarise qualifies for Stream's [Maker Account](https://getstream.io/maker-account/) because:
 
-| Category             | Monthly Cost   |
-| -------------------- | -------------- |
-| Vercel Pro (2 seats) | ₹3,400 (~$40)  |
-| Supabase Pro         | ₹2,100 (~$25)  |
-| Email (Resend)       | ₹850 (~$10)    |
-| Video (100ms Free)   | ₹0             |
-| Domain + Misc        | ₹500           |
-| **Total**            | **~₹6,850/mo** |
+| Requirement            | Your Status            | Qualifies? |
+| ---------------------- | ---------------------- | ---------- |
+| < 5 team members       | 2 (founder + 1 intern) | Yes        |
+| < $10K monthly revenue | $0 (pre-revenue)       | Yes        |
+| < $100K in funding     | $0 (bootstrapped)      | Yes        |
 
-### Stage 2: Growth (100-1,000 users)
+### What Maker Account Includes
 
-| Category               | Monthly Cost    |
-| ---------------------- | --------------- |
-| Vercel Pro (4 seats)   | ₹6,800 (~$80)   |
-| Supabase Pro + compute | ₹5,000 (~$60)   |
-| Email (Resend Pro)     | ₹2,550 (~$30)   |
-| Video (Paid tier)      | ₹10,000         |
-| SMS (5K/mo)            | ₹1,000          |
-| Analytics              | ₹2,000 (~$24)   |
-| Sentry                 | ₹2,200 (~$26)   |
-| **Total**              | **~₹29,550/mo** |
+| Feature        | Limit                             | Normal Paid Cost         |
+| -------------- | --------------------------------- | ------------------------ |
+| Chat           | 2,000 MAU, 100 concurrent         | $99-499/mo               |
+| Video          | 333,000 participant-minutes/month | Usage-based, ~$20-270/mo |
+| Activity Feeds | 125,000 API calls/month           | $99+/mo                  |
+| AI Moderation  | $100 in credits                   | Varies                   |
 
-### Stage 3: Scale (1,000-10,000 users)
+### When You Lose Maker Account Eligibility
 
-| Category                  | Monthly Cost    |
-| ------------------------- | --------------- |
-| Vercel Pro (10 seats)     | ₹17,000 (~$200) |
-| Supabase Pro + XL compute | ₹15,000 (~$175) |
-| Email                     | ₹4,250 (~$50)   |
-| Video                     | ₹25,000         |
-| SMS (25K/mo)              | ₹5,000          |
-| Analytics (Paid)          | ₹8,500 (~$100)  |
-| Sentry Team               | ₹6,800 (~$80)   |
-| CDN/Security              | ₹4,250 (~$50)   |
-| **Total**                 | **~₹85,800/mo** |
+You lose access when ANY of these happen:
 
-### Stage 4: Enterprise (10,000+ users)
+- Team grows beyond 5 members
+- Monthly revenue exceeds $10K (~₹8.5L)
+- Funding exceeds $100K (~₹85L)
 
-| Category                 | Monthly Cost      |
-| ------------------------ | ----------------- |
-| Vercel Enterprise        | Custom ($20K+/yr) |
-| Supabase Team/Enterprise | ₹50,000+ (~$600+) |
-| All services scaled      | Variable          |
-| **Total**                | **₹2,00,000+/mo** |
+**At that point, Stream costs jump to ~₹8,400-25,400/month** depending on usage. This is the biggest single SaaS cost increase to plan for.
 
 ---
 
-## Per-Transaction Cost Breakdown
+## Payment Gateway Costs (Variable, Per-Transaction)
 
-### Example: ₹1,000 Consultation
+### Razorpay (India - Primary)
 
-| Cost Component             | Amount         | % of Transaction |
-| -------------------------- | -------------- | ---------------- |
-| Razorpay Gateway           | ₹24 (2% + GST) | 2.4%             |
-| Server/DB cost (estimated) | ₹2             | 0.2%             |
-| Video minutes (30 min)     | ₹15            | 1.5%             |
-| Email notifications (3)    | ₹0.50          | 0.05%            |
-| SMS notifications (2)      | ₹0.40          | 0.04%            |
-| **Total Variable Cost**    | **~₹42**       | **4.2%**         |
+| Payment Method              | Fee  | GST on Fee (18%) | Total Effective | On ₹1,000 |
+| --------------------------- | ---- | ---------------- | --------------- | --------- |
+| Domestic cards (Visa/MC)    | 2%   | +0.36%           | 2.36%           | ₹23.60    |
+| UPI                         | 0-1% | +0-0.18%         | 0-1.18%         | ₹0-11.80  |
+| Net Banking                 | 2%   | +0.36%           | 2.36%           | ₹23.60    |
+| International cards         | 3%   | +0.54%           | 3.54%           | ₹35.40    |
+| Premium cards (Amex/Diners) | 3%   | +0.54%           | 3.54%           | ₹35.40    |
+| EMI transactions            | 3%   | +0.54%           | 3.54%           | ₹35.40    |
 
-### Margin Analysis
+- No setup fees, no maintenance fees
+- UPI tiered: reduced fees after ₹25L cumulative UPI sales
+- Settlement: T+2 business days (domestic), T+7 (international)
+
+**Source:** [Razorpay Pricing](https://razorpay.com/pricing/)
+
+### Stripe (International - Future)
+
+| Method              | Fee                          |
+| ------------------- | ---------------------------- |
+| Standard            | 2.9% + $0.30 per transaction |
+| International cards | +1% additional               |
+| Currency conversion | +1% additional               |
+
+**Source:** [Stripe Pricing](https://stripe.com/pricing)
+
+---
+
+## Per-Transaction Variable Costs (Updated)
+
+### At Current Stack (All Free Tiers + Maker Account)
+
+| Cost Component                      | Consultation (1hr) | Subscription (1mo, 4 calls) | Webinar (1hr) | Class (1mo, 4 sessions) |
+| ----------------------------------- | ------------------ | --------------------------- | ------------- | ----------------------- |
+| Video infrastructure (Stream Maker) | ₹0                 | ₹0                          | ₹0            | ₹0                      |
+| Server/Database (Supabase Free)     | ₹0                 | ₹0                          | ₹0            | ₹0                      |
+| Email notifications (Resend Free)   | ₹0                 | ₹0                          | ₹0            | ₹0                      |
+| Payment gateway (~2.4%)             | ~₹24 per ₹1,000    | ~₹48 per ₹2,000             | ~₹12 per ₹500 | ~₹72 per ₹3,000         |
+| **Total Variable Cost**             | **~₹24**           | **~₹48**                    | **~₹12**      | **~₹72**                |
+
+**Previous estimate in this document was ₹42/transaction. Actual is ₹24** because video, server, and email are all free at current scale. The only real variable cost is the payment gateway fee.
+
+### At Growth Stage (Paid Tiers)
+
+| Cost Component          | Consultation (1hr) | Subscription (1mo) | Webinar (1hr) | Class (1mo) |
+| ----------------------- | ------------------ | ------------------ | ------------- | ----------- |
+| Video infrastructure    | ₹15-30             | ₹60-120            | ₹25-50        | ₹60-120     |
+| Server/Database         | ₹2                 | ₹5                 | ₹3            | ₹10         |
+| Email/SMS notifications | ₹2                 | ₹5                 | ₹3            | ₹8          |
+| Payment gateway (~2.4%) | Variable           | Variable           | Variable      | Variable    |
+| **Base Variable Cost**  | **₹19-34**         | **₹70-130**        | **₹31-56**    | **₹78-138** |
+
+---
+
+## SaaS Cost Projections by Revenue Stage
+
+### Stage 1: Pre-Launch & Launch (₹0 GMV)
+
+| Service                      | Monthly Cost   |
+| ---------------------------- | -------------- |
+| Claude Max                   | ₹8,500         |
+| Apple Developer (amortized)  | ₹725           |
+| Domain                       | ₹100           |
+| Everything else (free tiers) | ₹0             |
+| **Total**                    | **~₹9,325/mo** |
+
+### Stage 2: Early Revenue (₹25K-₹1L GMV/month)
+
+| Service                           | Monthly Cost             |
+| --------------------------------- | ------------------------ |
+| Claude Max                        | ₹8,500                   |
+| Apple Developer                   | ₹725                     |
+| Domain                            | ₹100                     |
+| Supabase (still free tier likely) | ₹0                       |
+| Stream.io (still Maker)           | ₹0                       |
+| Resend (approaching limit)        | ₹0-1,700                 |
+| **Total**                         | **~₹9,325 - ₹11,025/mo** |
+
+### Stage 3: Growth (₹1L-₹5L GMV/month)
+
+| Service                              | Monthly Cost              |
+| ------------------------------------ | ------------------------- |
+| Claude Max                           | ₹8,500                    |
+| Supabase Pro                         | ₹2,125                    |
+| Vercel Pro (2 seats)                 | ₹3,400                    |
+| Stream.io (losing Maker, Start plan) | ₹8,400-25,400             |
+| Resend Pro                           | ₹1,700                    |
+| Apple Developer                      | ₹725                      |
+| Domain + misc                        | ₹500                      |
+| **Total**                            | **~₹25,350 - ₹42,350/mo** |
+
+> **The Free Tier Cliff:** Stream.io going from ₹0 to ₹8,400-25,400 is the biggest single cost jump. Plan for this at ₹1L+ GMV.
+
+### Stage 4: Scale (₹5L-₹20L GMV/month)
+
+| Service                     | Monthly Cost              |
+| --------------------------- | ------------------------- |
+| Claude Max                  | ₹8,500                    |
+| Supabase Pro + compute      | ₹5,000-10,000             |
+| Vercel Pro (4 seats)        | ₹6,800                    |
+| Stream.io (paid plan)       | ₹15,000-40,000            |
+| Resend Pro                  | ₹1,700-4,250              |
+| Sentry Team                 | ₹2,200                    |
+| PostHog (if over free tier) | ₹0-8,500                  |
+| Apple Developer             | ₹725                      |
+| Domain + misc               | ₹500                      |
+| **Total**                   | **~₹40,425 - ₹81,475/mo** |
+
+### Stage 5: Enterprise (₹20L+ GMV/month)
+
+| Service               | Monthly Cost        |
+| --------------------- | ------------------- |
+| All services at scale | ₹1,00,000-2,50,000+ |
+
+---
+
+## Free Tier Expiry Risk Matrix
+
+| Service             | Trigger to Outgrow                      | Risk Level | Cost Jump             | Mitigation                                                   |
+| ------------------- | --------------------------------------- | ---------- | --------------------- | ------------------------------------------------------------ |
+| **Stream.io Maker** | $10K revenue, $100K funding, or >5 team | HIGH       | ₹0 → ₹8,400-25,400/mo | Largest single cost increase. Budget for this at ₹1L+ GMV    |
+| **Supabase**        | 500MB DB or 50K MAU                     | MEDIUM     | ₹0 → ₹2,125/mo        | DB growth is gradual; monitor usage dashboard weekly         |
+| **Vercel**          | Need team features or bandwidth         | LOW        | ₹0 → ₹1,700/seat      | Can stay on hobby plan for a long time with single developer |
+| **Resend**          | 100 emails/day or 3K/month              | MEDIUM     | ₹0 → ₹1,700/mo        | At ~50+ bookings/day (each generates 2-3 emails)             |
+| **PostHog**         | 1M events/month                         | LOW        | ₹0 → usage-based      | Very generous free tier; unlikely to hit in Year 1           |
+| **Sentry**          | 5K errors/month                         | LOW        | ₹0 → ₹2,200/mo        | If hitting 5K errors, you have bigger problems               |
+
+---
+
+## Cost Comparison: Previous Estimates vs Reality
+
+| Line Item         | Previous Doc Estimate    | Actual Cost (Feb 2026)       | Difference                                                                        |
+| ----------------- | ------------------------ | ---------------------------- | --------------------------------------------------------------------------------- |
+| Vercel            | ₹3,400/mo (Pro, 2 seats) | ₹0 (free tier)               | -₹3,400                                                                           |
+| Supabase          | ₹2,100/mo (Pro)          | ₹0 (free tier)               | -₹2,100                                                                           |
+| Stream.io / Video | ₹10,000-25,000/mo        | ₹0 (Maker Account)           | -₹10,000+                                                                         |
+| Claude Max        | Not listed               | ₹8,500/mo                    | +₹8,500                                                                           |
+| Apple Developer   | Not listed               | ₹725/mo                      | +₹725                                                                             |
+| Google Play       | Not listed               | ₹175/mo (amortized one-time) | +₹175                                                                             |
+| Globe.dev         | Not listed               | ₹0 (free tier)               | ₹0                                                                                |
+| Email (Resend)    | ₹850-2,550               | ₹0 (free tier)               | -₹850+                                                                            |
+| **Total**         | **~₹6,850-29,550**       | **~₹9,325**                  | **Significantly lower than estimated for infrastructure, but Claude adds ₹8,500** |
+
+**Key takeaway:** The previous document overestimated infrastructure costs (assumed paid tiers for everything) but completely missed the ₹8,500/month Claude Max expense. The net effect is that actual costs are within the same range but allocated very differently.
+
+---
+
+## Break-Even Infrastructure
+
+### At Current Costs (₹9,325/month SaaS)
 
 ```
-Transaction: ₹1,000
-- Gateway Fee: ₹24 (2.4%)
-- Variable Costs: ₹18 (1.8%)
-= Net Available: ₹958
+Monthly SaaS: ₹9,325
+Platform Revenue per ₹1,000 transaction: ~₹170 (at ~17% blended commission after gateway)
+Break-even transactions: 9,325 / 170 = ~55 transactions/month
 
-Platform Commission (20%): ₹192
-Consultant Share (80%): ₹766
-
-Platform Margin after costs: ₹192 - ₹18 = ₹174 (17.4%)
+At 5 transactions/consultant/month: need ~11 active consultants
+At 10 transactions/consultant/month: need ~6 active consultants
 ```
 
----
+This is achievable within the first 1-2 months of launch.
 
-## Supabase Detailed Breakdown
-
-### Pro Plan ($25/month) Includes
-
-| Resource          | Included       | Overage Cost |
-| ----------------- | -------------- | ------------ |
-| Database Size     | 8 GB           | $0.125/GB    |
-| Storage           | 100 GB         | $0.021/GB    |
-| Egress            | 250 GB         | $0.09/GB     |
-| MAUs (Auth)       | 100,000        | $0.00325/MAU |
-| Edge Functions    | 2M invocations | $2/million   |
-| Realtime Messages | 5M             | $2.5/million |
-
-### Compute Add-ons
-
-| Size   | Monthly Cost | Use Case            |
-| ------ | ------------ | ------------------- |
-| Micro  | Included     | Development         |
-| Small  | $10/mo       | Light production    |
-| Medium | $25/mo       | Standard production |
-| Large  | $50/mo       | High traffic        |
-| XL     | $100/mo      | Heavy workloads     |
-
-**Source**: [Supabase Pricing](https://supabase.com/pricing)
-
----
-
-## Vercel Detailed Breakdown
-
-### Pro Plan ($20/seat/month) Includes
-
-| Resource              | Included | Overage Cost  |
-| --------------------- | -------- | ------------- |
-| Bandwidth             | 1 TB     | $40/100GB     |
-| Serverless Executions | 1M       | $0.60/million |
-| Edge Middleware       | 1M       | $0.65/million |
-| Image Optimization    | 5K       | $5/1K         |
-| Build Hours           | 400      | $0.50/hour    |
-
-### Team Considerations
-
-- **Viewer seats** are FREE (read-only access)
-- Only deployers need paid seats
-- Typical early team: 2-4 paid seats
-
-**Source**: [Vercel Pricing](https://vercel.com/pricing)
-
----
-
-## Cost Optimization Strategies
-
-### 1. Use Free Tiers Wisely
-
-| Service  | Free Tier Limit               |
-| -------- | ----------------------------- |
-| Supabase | 2 projects, 500MB DB          |
-| Vercel   | 100GB bandwidth, 100hrs build |
-| PostHog  | 1M events/month               |
-| Resend   | 100 emails/day                |
-| 100ms    | 10K free minutes/month        |
-
-### 2. Right-Size Infrastructure
-
-- Start with Supabase Small compute, scale up as needed
-- Use Vercel Edge Functions for lightweight operations
-- Cache aggressively to reduce DB queries
-
-### 3. Optimize Video Costs
-
-| Strategy                     | Savings |
-| ---------------------------- | ------- |
-| Limit max call duration      | 20-30%  |
-| Use audio-only for check-ins | 50%     |
-| Compress video quality       | 15-25%  |
-
-### 4. Bundle Services
-
-- Vercel + Supabase often offer discounts together
-- Annual billing typically saves 10-20%
-
----
-
-## Annual Cost Summary
-
-### Year 1 Projection (MVP → Growth)
-
-| Quarter          | Monthly Avg | Quarterly Total |
-| ---------------- | ----------- | --------------- |
-| Q1               | ₹10,000     | ₹30,000         |
-| Q2               | ₹20,000     | ₹60,000         |
-| Q3               | ₹35,000     | ₹1,05,000       |
-| Q4               | ₹50,000     | ₹1,50,000       |
-| **Year 1 Total** |             | **₹3,45,000**   |
-
-### Break-Even Infrastructure
-
-To cover infrastructure costs with platform revenue:
+### At Growth Costs (~₹35,000/month SaaS)
 
 ```
-Monthly Infra Cost: ₹30,000
-Platform Revenue per ₹1,000 transaction: ₹174 (net)
-Break-even transactions: 30,000 / 174 = ~173 transactions/month
+Monthly SaaS: ₹35,000
+Break-even transactions: 35,000 / 170 = ~206 transactions/month
 
-At 10 transactions/consultant/month:
-Need: ~17 active consultants to cover infra
+At 10 transactions/consultant/month: need ~21 active consultants
 ```
 
 ---
@@ -255,23 +266,20 @@ Need: ~17 active consultants to cover infra
 
 ### Set Cost Alerts For
 
-| Service  | Alert Threshold        |
-| -------- | ---------------------- |
-| Supabase | 80% of included quotas |
-| Vercel   | 75% of bandwidth       |
-| Razorpay | Track refund rate      |
-| Overall  | Monthly budget +20%    |
-
-### Tools for Cost Monitoring
-
-- Supabase Dashboard → Usage tab
-- Vercel Dashboard → Usage & Billing
-- Custom dashboard with Mixpanel/PostHog
+| Service   | Where to Monitor            | Alert When                   |
+| --------- | --------------------------- | ---------------------------- |
+| Supabase  | Dashboard → Usage           | 70% of any free tier limit   |
+| Vercel    | Dashboard → Usage & Billing | 75% of bandwidth             |
+| Stream.io | Dashboard → Usage           | 1,500 MAU (75% of 2K limit)  |
+| Resend    | Dashboard → Usage           | 70 emails/day (70% of limit) |
+| Razorpay  | Dashboard → Settlements     | Refund rate > 5%             |
+| Claude    | Subscription page           | Before renewal each month    |
 
 ---
 
 ## Related Documents
 
-- [01-business-model.md](./01-business-model.md) - Revenue model
-- [05-saas-metrics-monthly.md](./05-saas-metrics-monthly.md) - Track metrics
+- [01-business-model.md](./01-business-model.md) - Revenue model and commission structure
+- [05-saas-metrics-monthly.md](./05-saas-metrics-monthly.md) - SaaS metrics tracking
 - [07-pricing-calculator.md](./07-pricing-calculator.md) - Pricing strategy
+- [10-profitability-minimum-pricing.md](./10-profitability-minimum-pricing.md) - Profitability analysis

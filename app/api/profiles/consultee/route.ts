@@ -15,7 +15,7 @@ export async function GET(request: NextRequest) {
     if (!userId) {
       return NextResponse.json(
         { error: "userId is required" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -36,7 +36,7 @@ export async function GET(request: NextRequest) {
     if (!consulteeProfile) {
       return NextResponse.json(
         { error: "Consultee profile not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
@@ -52,7 +52,7 @@ export async function GET(request: NextRequest) {
         error: "Failed to fetch consultee profile",
         message: error instanceof Error ? error.message : "Unknown error",
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

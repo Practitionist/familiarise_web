@@ -4,20 +4,52 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import axios from "axios";
-import { signIn } from "next-auth/react";
+import { signIn, signUp, useSession } from "@/lib/auth-client";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 export default function SignUp() {
   const { toast } = useToast();
   const router = useRouter();
+  const { data: session, isPending } = useSession();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+
+  // Redirect authenticated users based on onboarding status
+  useEffect(() => {
+    if (!isPending && session?.user) {
+      if (session.user.onboardingCompleted) {
+        router.push("/dashboard");
+      } else {
+        router.push("/form/onboarding");
+      }
+    }
+  }, [session, isPending, router]);
+
+  // Show loading while checking session status (fallback for when middleware doesn't catch)
+  if (isPending) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-900">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white" />
+      </div>
+    );
+  }
+
+  // If already logged in, show redirecting message
+  if (session?.user) {
+    const destination = session.user.onboardingCompleted
+      ? "dashboard"
+      : "onboarding";
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-900">
+        <p className="text-white">Redirecting to {destination}...</p>
+      </div>
+    );
+  }
 
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -29,72 +61,30 @@ export default function SignUp() {
     toast({ title: "Creating account..." });
 
     try {
-      // Call the registration API endpoint
-      const response = await axios.post("/api/auth/register", {
+      const { data, error } = await signUp.email({
         name,
         email,
         password,
       });
 
-      // Check if we got a message about linking accounts
-      if (response.data.message && response.data.message.includes("linked")) {
+      if (error) {
         toast({
-          title: "Account Linked Successfully!",
-          description:
-            "Your password has been added to your existing social account.",
+          title: "Sign Up Failed",
+          description: error.message || "An unexpected error occurred.",
+          variant: "destructive",
         });
-      } else {
+      } else if (data) {
         toast({
           title: "Account Created Successfully!",
-          description: "Signing you in...",
+          description: "Redirecting to onboarding...",
         });
-      }
-
-      // Sign in the user automatically after successful registration
-      const signInResult = await signIn("credentials", {
-        redirect: false,
-        email,
-        password,
-      });
-
-      if (signInResult?.error) {
-        toast({
-          title: "Sign In Failed After Signup",
-          description: "Please try signing in manually.",
-          variant: "destructive",
-        });
-        // Redirect to signin page even if auto signin fails, as account is created
-        router.push("/auth/signin");
-      } else if (signInResult?.ok) {
-        toast({ title: "Signed In Successfully!" });
-        router.push("/form/onboarding"); // New users always need to complete onboarding
-      } else {
-        toast({
-          title: "Sign In Failed After Signup",
-          description: "Unknown error.",
-          variant: "destructive",
-        });
-        router.push("/auth/signin");
+        router.push("/form/onboarding");
       }
     } catch (error: any) {
       console.error("Sign up error:", error);
-
-      // Handle JSON error responses
-      let errorMessage = "An unexpected error occurred.";
-
-      if (error.response) {
-        if (error.response.data.error) {
-          // Get error message from our API response
-          errorMessage = error.response.data.error;
-        } else if (error.response.data) {
-          // Fallback to standard response text
-          errorMessage = error.response.data;
-        }
-      }
-
       toast({
         title: "Sign Up Failed",
-        description: errorMessage,
+        description: error?.message || "An unexpected error occurred.",
         variant: "destructive",
       });
     } finally {
@@ -214,7 +204,7 @@ export default function SignUp() {
             className="w-full flex items-center justify-center bg-black hover:bg-gray-700"
             disabled={isLoading}
             onClick={() => {
-              signIn("github");
+              signIn.social({ provider: "github", callbackURL: "/dashboard" });
               toast({
                 title: "Signing up with GitHub...",
                 description: "Please wait while we redirect you.",
@@ -228,7 +218,7 @@ export default function SignUp() {
             className="w-full flex items-center justify-center mt-4 bg-red-600 hover:bg-red-500"
             disabled={isLoading}
             onClick={() => {
-              signIn("google");
+              signIn.social({ provider: "google", callbackURL: "/dashboard" });
               toast({
                 title: "Signing up with Google...",
                 description: "Please wait while we redirect you.",
@@ -242,7 +232,10 @@ export default function SignUp() {
             className="w-full flex items-center justify-center mt-4 bg-blue-600 hover:bg-blue-500"
             disabled={isLoading}
             onClick={() => {
-              signIn("facebook");
+              signIn.social({
+                provider: "facebook",
+                callbackURL: "/dashboard",
+              });
               toast({
                 title: "Signing up with Facebook...",
                 description: "Please wait while we redirect you.",

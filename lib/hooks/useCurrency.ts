@@ -87,7 +87,9 @@ export function useCurrency() {
   const currency = isINR ? "INR" : (data?.currency ?? selectedCurrency);
   const symbol = isINR
     ? "\u20B9"
-    : (data?.symbol ?? SUPPORTED_CURRENCIES.find((c) => c.code === selectedCurrency)?.symbol ?? selectedCurrency);
+    : (data?.symbol ??
+      SUPPORTED_CURRENCIES.find((c) => c.code === selectedCurrency)?.symbol ??
+      selectedCurrency);
   const rate = isINR ? 1 : (data?.rate ?? 1);
 
   const convert = useCallback(

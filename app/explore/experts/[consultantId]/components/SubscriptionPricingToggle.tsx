@@ -10,8 +10,15 @@ import {
 } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { motion } from "framer-motion";
-import { CalendarIcon, CheckCircle2, Gift, BookOpen, Clock, ChevronRight } from "lucide-react";
-import { useSession } from "next-auth/react";
+import {
+  CalendarIcon,
+  CheckCircle2,
+  Gift,
+  BookOpen,
+  Clock,
+  ChevronRight,
+} from "lucide-react";
+import { useSession } from "@/lib/auth-client";
 import { useState, useMemo, useEffect } from "react";
 import { PricingOption } from "../defaults";
 import { useToast } from "@/hooks/use-toast";
@@ -72,7 +79,7 @@ export default function SubscriptionPricingToggle({
   const selectedPlanDetails = useMemo(() => {
     if (!selectedOption?.durationInMonths) return null;
     const plan = consultantDetails?.subscriptionPlans?.find(
-      (p: any) => p.durationInMonths === selectedOption.durationInMonths
+      (p: any) => p.durationInMonths === selectedOption.durationInMonths,
     );
     return plan;
   }, [selectedOption, consultantDetails]);
@@ -80,17 +87,27 @@ export default function SubscriptionPricingToggle({
   // Check trial eligibility when plan changes
   useEffect(() => {
     const checkEligibility = async () => {
-      if (!session?.user?.id || !selectedPlanDetails?.id || !selectedPlanDetails?.freeTrialEnabled) {
+      if (
+        !session?.user?.id ||
+        !selectedPlanDetails?.id ||
+        !selectedPlanDetails?.freeTrialEnabled
+      ) {
         return;
       }
 
-      setTrialEligibility(prev => ({ ...prev, isLoading: true }));
+      setTrialEligibility((prev) => ({ ...prev, isLoading: true }));
 
       try {
         // First get consultee profile
-        const profileResponse = await fetch(`/api/profiles/consultee?userId=${session.user.id}`);
+        const profileResponse = await fetch(
+          `/api/profiles/consultee?userId=${session.user.id}`,
+        );
         if (!profileResponse.ok) {
-          setTrialEligibility({ isEligible: false, reason: "Could not verify profile", isLoading: false });
+          setTrialEligibility({
+            isEligible: false,
+            reason: "Could not verify profile",
+            isLoading: false,
+          });
           return;
         }
         const { data: consulteeProfile } = await profileResponse.json();
@@ -102,7 +119,7 @@ export default function SubscriptionPricingToggle({
 
         // Check eligibility
         const eligibilityResponse = await fetch(
-          `/api/trials/check-eligibility?consulteeProfileId=${consulteeProfile.id}&consultantProfileId=${consultantDetails?.id}&subscriptionPlanId=${selectedPlanDetails.id}`
+          `/api/trials/check-eligibility?consulteeProfileId=${consulteeProfile.id}&consultantProfileId=${consultantDetails?.id}&subscriptionPlanId=${selectedPlanDetails.id}`,
         );
 
         if (eligibilityResponse.ok) {
@@ -110,7 +127,7 @@ export default function SubscriptionPricingToggle({
           setTrialEligibility({
             isEligible: data.isEligible,
             reason: data.reason,
-            isLoading: false
+            isLoading: false,
           });
         } else {
           setTrialEligibility({ isEligible: true, isLoading: false });
@@ -122,7 +139,12 @@ export default function SubscriptionPricingToggle({
     };
 
     checkEligibility();
-  }, [session?.user?.id, selectedPlanDetails?.id, selectedPlanDetails?.freeTrialEnabled, consultantDetails?.id]);
+  }, [
+    session?.user?.id,
+    selectedPlanDetails?.id,
+    selectedPlanDetails?.freeTrialEnabled,
+    consultantDetails?.id,
+  ]);
 
   const suggestedDates = useMemo(() => {
     if (!selectedOption?.durationInMonths) {
@@ -238,11 +260,12 @@ export default function SubscriptionPricingToggle({
           <TabsTrigger
             key={option.durationInMonths}
             value={option.title.toLowerCase().replace(" ", "-")}
-            className={`${activeSubscriptionOption ===
+            className={`${
+              activeSubscriptionOption ===
               option.title.toLowerCase().replace(" ", "-")
-              ? "bg-white text-zinc-900 shadow-sm"
-              : "text-zinc-400 hover:text-white hover:bg-zinc-700/50"
-              } flex-1 px-2 sm:px-4 py-2 rounded-lg font-medium text-xs sm:text-sm transition-all duration-200 whitespace-nowrap`}
+                ? "bg-white text-zinc-900 shadow-sm"
+                : "text-zinc-400 hover:text-white hover:bg-zinc-700/50"
+            } flex-1 px-2 sm:px-4 py-2 rounded-lg font-medium text-xs sm:text-sm transition-all duration-200 whitespace-nowrap`}
           >
             {option.title}
           </TabsTrigger>
@@ -257,7 +280,7 @@ export default function SubscriptionPricingToggle({
             animate={{
               opacity:
                 activeSubscriptionOption ===
-                  option.title.toLowerCase().replace(" ", "-")
+                option.title.toLowerCase().replace(" ", "-")
                   ? 1
                   : 0,
               y: 0,
@@ -265,7 +288,7 @@ export default function SubscriptionPricingToggle({
             transition={{ duration: 0.2 }}
             className={
               activeSubscriptionOption ===
-                option.title.toLowerCase().replace(" ", "-")
+              option.title.toLowerCase().replace(" ", "-")
                 ? "block"
                 : "hidden"
             }
@@ -303,16 +326,21 @@ export default function SubscriptionPricingToggle({
               {/* Free Trial Button */}
               {selectedPlanDetails?.freeTrialEnabled && (
                 <Button
-                  className={`w-full mb-3 font-medium rounded-xl h-11 ${trialEligibility.isEligible && !trialEligibility.isLoading
-                    ? "bg-emerald-600 text-white hover:bg-emerald-500"
-                    : "bg-zinc-600 text-zinc-400 cursor-not-allowed"
-                    }`}
-                  disabled={!trialEligibility.isEligible || trialEligibility.isLoading}
+                  className={`w-full mb-3 font-medium rounded-xl h-11 ${
+                    trialEligibility.isEligible && !trialEligibility.isLoading
+                      ? "bg-emerald-600 text-white hover:bg-emerald-500"
+                      : "bg-zinc-600 text-zinc-400 cursor-not-allowed"
+                  }`}
+                  disabled={
+                    !trialEligibility.isEligible || trialEligibility.isLoading
+                  }
                   onClick={() => {
                     if (!trialEligibility.isEligible) {
                       toast({
                         title: "Not Eligible",
-                        description: trialEligibility.reason || "You have already requested a trial with this consultant",
+                        description:
+                          trialEligibility.reason ||
+                          "You have already requested a trial with this consultant",
                         variant: "destructive",
                       });
                       return;
@@ -320,7 +348,8 @@ export default function SubscriptionPricingToggle({
                     setSelectedTrialPlan({
                       id: selectedPlanDetails.id,
                       title: selectedPlanDetails.title,
-                      freeTrialDurationMinutes: selectedPlanDetails.freeTrialDurationMinutes,
+                      freeTrialDurationMinutes:
+                        selectedPlanDetails.freeTrialDurationMinutes,
                     });
                     setIsTrialModalOpen(true);
                   }}
@@ -330,8 +359,7 @@ export default function SubscriptionPricingToggle({
                     ? "Checking eligibility..."
                     : trialEligibility.isEligible
                       ? `Book Free Trial (${selectedPlanDetails.freeTrialDurationMinutes} min)`
-                      : "Trial Already Requested"
-                  }
+                      : "Trial Already Requested"}
                 </Button>
               )}
 
@@ -366,8 +394,8 @@ export default function SubscriptionPricingToggle({
               Select Scheduling Period
             </DialogTitle>
             <DialogDescription className="text-zinc-400">
-              Choose when you&apos;d like your {selectedOption?.durationInMonths}{" "}
-              month subscription to run
+              Choose when you&apos;d like your{" "}
+              {selectedOption?.durationInMonths} month subscription to run
             </DialogDescription>
           </DialogHeader>
 
@@ -432,9 +460,7 @@ export default function SubscriptionPricingToggle({
             {/* Period Summary */}
             {schedulingStartDate && schedulingEndDate && (
               <div className="p-4 bg-zinc-800/50 rounded-xl border border-zinc-700/50">
-                <p className="text-sm text-zinc-500 mb-1">
-                  Selected Period:
-                </p>
+                <p className="text-sm text-zinc-500 mb-1">Selected Period:</p>
                 <p className="text-white font-semibold text-lg">
                   {format(schedulingStartDate, "MMM dd, yyyy")} →{" "}
                   {format(schedulingEndDate, "MMM dd, yyyy")}
@@ -442,10 +468,8 @@ export default function SubscriptionPricingToggle({
                 <p className="text-sm text-zinc-500 mt-1">
                   Duration: ~
                   {Math.round(
-                    differenceInDays(
-                      schedulingEndDate,
-                      schedulingStartDate,
-                    ) / 30,
+                    differenceInDays(schedulingEndDate, schedulingStartDate) /
+                      30,
                   )}{" "}
                   month(s)
                 </p>
@@ -455,9 +479,7 @@ export default function SubscriptionPricingToggle({
             {/* Validation Message */}
             {!validation.valid && validation.message && (
               <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-xl">
-                <p className="text-sm text-red-400">
-                  {validation.message}
-                </p>
+                <p className="text-sm text-red-400">{validation.message}</p>
               </div>
             )}
 
@@ -506,7 +528,8 @@ export default function SubscriptionPricingToggle({
               Session Roadmap
             </DialogTitle>
             <DialogDescription className="text-zinc-400">
-              {selectedPlanDetails?.title || selectedOption?.title} - What you&apos;ll learn
+              {selectedPlanDetails?.title || selectedOption?.title} - What
+              you&apos;ll learn
             </DialogDescription>
           </DialogHeader>
 
@@ -517,52 +540,54 @@ export default function SubscriptionPricingToggle({
                 <div className="absolute left-[19px] top-8 bottom-8 w-0.5 bg-gradient-to-b from-zinc-700 via-zinc-600 to-zinc-700" />
 
                 <div className="space-y-6">
-                  {selectedPlanDetails.subscriptionContents.map((content: any, index: number) => (
-                    <motion.div
-                      key={content.id || index}
-                      initial={{ opacity: 0, x: -20 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      transition={{ delay: index * 0.1, duration: 0.3 }}
-                      className="relative flex items-start gap-4"
-                    >
-                      {/* Week badge */}
-                      <div className="relative z-10 flex-shrink-0 min-w-[52px] h-10 px-2 rounded-full bg-zinc-800 border-2 border-zinc-700 flex items-center justify-center text-xs font-bold text-white shadow-lg whitespace-nowrap">
-                        Week {content.order || index + 1}
-                      </div>
+                  {selectedPlanDetails.subscriptionContents.map(
+                    (content: any, index: number) => (
+                      <motion.div
+                        key={content.id || index}
+                        initial={{ opacity: 0, x: -20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ delay: index * 0.1, duration: 0.3 }}
+                        className="relative flex items-start gap-4"
+                      >
+                        {/* Week badge */}
+                        <div className="relative z-10 flex-shrink-0 min-w-[52px] h-10 px-2 rounded-full bg-zinc-800 border-2 border-zinc-700 flex items-center justify-center text-xs font-bold text-white shadow-lg whitespace-nowrap">
+                          Week {content.order || index + 1}
+                        </div>
 
-                      {/* Content card */}
-                      <div className="flex-1 bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-4 hover:bg-zinc-800/30 transition-colors">
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="flex-1 min-w-0">
-                            <h4 className="font-semibold text-white text-base mb-1 truncate">
-                              {content.title}
-                            </h4>
-                            {content.description && (
-                              <p className="text-sm text-zinc-400 line-clamp-2">
-                                {content.description}
-                              </p>
+                        {/* Content card */}
+                        <div className="flex-1 bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-4 hover:bg-zinc-800/30 transition-colors">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex-1 min-w-0">
+                              <h4 className="font-semibold text-white text-base mb-1 truncate">
+                                {content.title}
+                              </h4>
+                              {content.description && (
+                                <p className="text-sm text-zinc-400 line-clamp-2">
+                                  {content.description}
+                                </p>
+                              )}
+                            </div>
+                            <ChevronRight className="w-4 h-4 text-zinc-600 flex-shrink-0 mt-1" />
+                          </div>
+
+                          {/* Meta info */}
+                          <div className="flex items-center gap-4 mt-3 text-xs text-zinc-500">
+                            {content.hoursAllotted && (
+                              <span className="flex items-center gap-1">
+                                <Clock className="w-3 h-3" />
+                                {content.hoursAllotted}h
+                              </span>
+                            )}
+                            {content.contentType && (
+                              <span className="px-2 py-0.5 bg-zinc-800 rounded-full">
+                                {content.contentType}
+                              </span>
                             )}
                           </div>
-                          <ChevronRight className="w-4 h-4 text-zinc-600 flex-shrink-0 mt-1" />
                         </div>
-
-                        {/* Meta info */}
-                        <div className="flex items-center gap-4 mt-3 text-xs text-zinc-500">
-                          {content.hoursAllotted && (
-                            <span className="flex items-center gap-1">
-                              <Clock className="w-3 h-3" />
-                              {content.hoursAllotted}h
-                            </span>
-                          )}
-                          {content.contentType && (
-                            <span className="px-2 py-0.5 bg-zinc-800 rounded-full">
-                              {content.contentType}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    </motion.div>
-                  ))}
+                      </motion.div>
+                    ),
+                  )}
                 </div>
               </div>
             ) : (
@@ -578,11 +603,16 @@ export default function SubscriptionPricingToggle({
             <div className="p-4 border-t border-zinc-800/50 bg-zinc-900/50 flex-shrink-0">
               <div className="flex items-center justify-between text-sm">
                 <span className="text-zinc-400">
-                  {selectedPlanDetails.subscriptionContents.length} week{selectedPlanDetails.subscriptionContents.length > 1 ? "s" : ""} •{" "}
+                  {selectedPlanDetails.subscriptionContents.length} week
+                  {selectedPlanDetails.subscriptionContents.length > 1
+                    ? "s"
+                    : ""}{" "}
+                  •{" "}
                   {selectedPlanDetails.subscriptionContents.reduce(
                     (acc: number, c: any) => acc + (c.hoursAllotted || 0),
-                    0
-                  )}h total
+                    0,
+                  )}
+                  h total
                 </span>
                 <Button
                   size="sm"

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { processOnboardingData } from "@/utils/onboarding-server";
+import { getSession } from "@/lib/auth-server";
 
 export async function PATCH(
   req: NextRequest,
@@ -7,9 +8,20 @@ export async function PATCH(
 ) {
   try {
     console.log("API Route: Received request to update onboarding information");
+    const session = await getSession(true);
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const { id } = await params;
     const body = await req.json();
     console.log("Request Body:", JSON.stringify(body, null, 2));
+
+    const isPrivileged =
+      session.user.role === "ADMIN" || session.user.role === "STAFF";
+    if (!isPrivileged && session.user.id !== id) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
 
     // Use central utility function directly
     const result = await processOnboardingData(id, body);

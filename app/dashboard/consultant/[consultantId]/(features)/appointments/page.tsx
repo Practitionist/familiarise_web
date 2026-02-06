@@ -20,14 +20,11 @@ export default function AppointmentsPage({
   const { data: appointments, isLoading, error } = useQuery(appointmentsQuery);
 
   // Fetch scheduled trials for this consultant
-  const {
-    data: trialsData,
-    isLoading: trialsLoading,
-  } = useQuery({
+  const { data: trialsData, isLoading: trialsLoading } = useQuery({
     queryKey: ["trials", consultantId, "SCHEDULED"],
     queryFn: async () => {
       const res = await fetch(
-        `/api/trials?consultantProfileId=${consultantId}&status=SCHEDULED`
+        `/api/trials?consultantProfileId=${consultantId}&status=SCHEDULED`,
       );
       if (!res.ok) throw new Error("Failed to fetch trials");
       const { data } = await res.json();

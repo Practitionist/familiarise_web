@@ -33,8 +33,7 @@ export async function GET(request: NextRequest) {
           } else if (planType === "webinar") {
             programCount = count.webinarPlans ?? 0;
           } else {
-            programCount =
-              (count.classPlans ?? 0) + (count.webinarPlans ?? 0);
+            programCount = (count.classPlans ?? 0) + (count.webinarPlans ?? 0);
           }
           return {
             id: topic.id,

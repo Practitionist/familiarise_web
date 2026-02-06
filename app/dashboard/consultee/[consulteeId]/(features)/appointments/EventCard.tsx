@@ -624,8 +624,15 @@ export function EventCard({
               <Button
                 size="sm"
                 onClick={() => {
-                  if (pendingPaymentUrl && /^https?:\/\//.test(pendingPaymentUrl)) {
-                    window.open(pendingPaymentUrl, "_blank", "noopener,noreferrer");
+                  if (
+                    pendingPaymentUrl &&
+                    /^https?:\/\//.test(pendingPaymentUrl)
+                  ) {
+                    window.open(
+                      pendingPaymentUrl,
+                      "_blank",
+                      "noopener,noreferrer",
+                    );
                   }
                 }}
                 className="w-full h-9 text-sm font-medium bg-amber-500 hover:bg-amber-600 text-white"

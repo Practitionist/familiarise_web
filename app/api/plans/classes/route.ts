@@ -8,6 +8,11 @@ import {
   paginatedResponse,
   rankAndPaginate,
 } from "../shared/plan-filters";
+import {
+  requireApiAuth,
+  isPrivileged,
+  forbiddenResponse,
+} from "@/lib/auth-helpers";
 
 export async function GET(request: NextRequest) {
   try {
@@ -127,6 +132,11 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    // Require authentication
+    const authResult = await requireApiAuth();
+    if (authResult.error) return authResult.error;
+    const { session } = authResult;
+
     const body = await request.json();
     const {
       title,
@@ -159,6 +169,16 @@ export async function POST(request: NextRequest) {
         { error: "Missing required fields" },
         { status: 400 },
       );
+    }
+
+    // Authorization: verify consultantProfileId matches session user's profile
+    // (unless privileged user creating on behalf of another)
+    if (!isPrivileged(session.user.role)) {
+      if (session.user.consultantProfileId !== consultantProfileId) {
+        return forbiddenResponse(
+          "You can only create class plans for your own consultant profile",
+        );
+      }
     }
 
     if (

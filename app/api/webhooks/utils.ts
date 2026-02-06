@@ -292,7 +292,12 @@ export async function handleDisputeUpdated(
     console.log(`✅ Dispute ${disputeId} updated to status ${status}`);
 
     // --- Novu notification for resolved disputes (fire-and-forget) ---
-    const resolvedStatuses = ["WON", "LOST", "CHARGE_REFUNDED", "WARNING_CLOSED"];
+    const resolvedStatuses = [
+      "WON",
+      "LOST",
+      "CHARGE_REFUNDED",
+      "WARNING_CLOSED",
+    ];
     if (resolvedStatuses.includes(mapDisputeStatus(status))) {
       const disputePayment = await tx.payment.findUnique({
         where: { id: dispute.paymentId },

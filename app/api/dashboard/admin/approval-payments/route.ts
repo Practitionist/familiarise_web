@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { RequestStatus } from "@prisma/client";
+import { getSession } from "@/lib/auth-server";
 
 /**
  * GET /api/dashboard/admin/approval-payments
@@ -9,6 +10,14 @@ import { RequestStatus } from "@prisma/client";
  */
 export async function GET() {
   try {
+    const session = await getSession(true);
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    if (session.user.role !== "ADMIN") {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+
     // Fetch consultations with APPROVED_PENDING_PAYMENT status
     const pendingConsultations = await prisma.consultation.findMany({
       where: {
