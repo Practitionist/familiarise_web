@@ -5,12 +5,9 @@ import HeaderSpacer from "@/components/HeaderSpacer";
 import Navbar from "@/components/Navbar";
 import { Toaster } from "@/components/ui/toaster";
 import { AnnouncementBarProvider } from "@/providers/AnnouncementBarProvider";
-import NextAuthProvider from "@/providers/NextAuthSessionProvider";
 import ReactQueryProvider from "@/providers/ReactQueryProvider";
 import type { Metadata, Viewport } from "next";
-import { getServerSession } from "next-auth";
 import { Sora } from "next/font/google";
-import authOptions from "./api/auth/[...nextauth]/options";
 
 import "@stream-io/video-react-sdk/dist/css/styles.css";
 import "./globals.css";
@@ -46,7 +43,6 @@ export default async function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const session = await getServerSession(authOptions);
   return (
     <html lang="en" className={sora.variable} suppressHydrationWarning>
       <body
@@ -54,17 +50,15 @@ export default async function RootLayout({
         suppressHydrationWarning
       >
         <ReactQueryProvider>
-          <NextAuthProvider session={session}>
-            <AnnouncementBarProvider>
-              <Toaster />
-              <AnnouncementBar />
-              <Navbar />
-              <HeaderSpacer />
-              <div className="flex-1 w-full">{children}</div>
-              <Footer />
-            </AnnouncementBarProvider>
-            <CookieConsentBanner />
-          </NextAuthProvider>
+          <AnnouncementBarProvider>
+            <Toaster />
+            <AnnouncementBar />
+            <Navbar />
+            <HeaderSpacer />
+            <div className="flex-1 w-full">{children}</div>
+            <Footer />
+          </AnnouncementBarProvider>
+          <CookieConsentBanner />
         </ReactQueryProvider>
       </body>
     </html>

@@ -1,3 +1,4 @@
+import bcrypt from "bcrypt";
 import { faker } from "@faker-js/faker";
 import {
   AdminLevel,
@@ -35,6 +36,8 @@ import {
   generateAssignedRegions,
 } from "./utils";
 import { config } from "./config";
+
+const SEED_PASSWORD = process.env.SEED_PASSWORD || "SeedPass123!";
 
 export type UserWithProfiles = User & {
   consultantProfile?: ConsultantProfile | null;
@@ -78,23 +81,88 @@ const ADMIN_LEVELS: AdminLevel[] = ["SUPER_ADMIN", "ADMIN", "MODERATOR"];
 
 // Curated name pools for realistic, consistent seed data
 const FIRST_NAMES = [
-  "Aarav", "Aditi", "Alex", "Amit", "Ananya", "Andrew", "Angela", "Arjun",
-  "Benjamin", "Catherine", "Charlotte", "Daniel", "David", "Elena", "Emily",
-  "Ethan", "Grace", "Hannah", "Isabella", "James", "Jessica", "John",
-  "Karen", "Kevin", "Lauren", "Liam", "Maria", "Michael", "Natalie", "Nathan",
-  "Olivia", "Patrick", "Priya", "Rachel", "Raj", "Rebecca", "Robert",
-  "Samantha", "Sarah", "Sophia", "Thomas", "Victoria", "William", "Zara",
+  "Aarav",
+  "Aditi",
+  "Alex",
+  "Amit",
+  "Ananya",
+  "Andrew",
+  "Angela",
+  "Arjun",
+  "Benjamin",
+  "Catherine",
+  "Charlotte",
+  "Daniel",
+  "David",
+  "Elena",
+  "Emily",
+  "Ethan",
+  "Grace",
+  "Hannah",
+  "Isabella",
+  "James",
+  "Jessica",
+  "John",
+  "Karen",
+  "Kevin",
+  "Lauren",
+  "Liam",
+  "Maria",
+  "Michael",
+  "Natalie",
+  "Nathan",
+  "Olivia",
+  "Patrick",
+  "Priya",
+  "Rachel",
+  "Raj",
+  "Rebecca",
+  "Robert",
+  "Samantha",
+  "Sarah",
+  "Sophia",
+  "Thomas",
+  "Victoria",
+  "William",
+  "Zara",
 ];
 
 const LAST_NAMES = [
-  "Anderson", "Brown", "Campbell", "Chen", "Davis", "Garcia", "Gupta",
-  "Harris", "Jackson", "Johnson", "Kim", "Kumar", "Lee", "Martin", "Miller",
-  "Nakamura", "Patel", "Rodriguez", "Sharma", "Singh", "Smith",
-  "Taylor", "Thompson", "Williams", "Wilson", "Wright", "Young",
+  "Anderson",
+  "Brown",
+  "Campbell",
+  "Chen",
+  "Davis",
+  "Garcia",
+  "Gupta",
+  "Harris",
+  "Jackson",
+  "Johnson",
+  "Kim",
+  "Kumar",
+  "Lee",
+  "Martin",
+  "Miller",
+  "Nakamura",
+  "Patel",
+  "Rodriguez",
+  "Sharma",
+  "Singh",
+  "Smith",
+  "Taylor",
+  "Thompson",
+  "Williams",
+  "Wilson",
+  "Wright",
+  "Young",
 ];
 
 const EMAIL_DOMAINS = [
-  "gmail.com", "outlook.com", "yahoo.com", "hotmail.com", "protonmail.com",
+  "gmail.com",
+  "outlook.com",
+  "yahoo.com",
+  "hotmail.com",
+  "protonmail.com",
 ];
 
 /**
@@ -103,7 +171,8 @@ const EMAIL_DOMAINS = [
  */
 function generateNameAndEmail(index: number): { name: string; email: string } {
   const firstName = FIRST_NAMES[index % FIRST_NAMES.length];
-  const lastName = LAST_NAMES[Math.floor(index / FIRST_NAMES.length) % LAST_NAMES.length];
+  const lastName =
+    LAST_NAMES[Math.floor(index / FIRST_NAMES.length) % LAST_NAMES.length];
   const fullName = `${firstName} ${lastName}`;
   const emailLocal = `${firstName.toLowerCase()}.${lastName.toLowerCase()}`;
   const emailDomain = EMAIL_DOMAINS[index % EMAIL_DOMAINS.length];
@@ -493,6 +562,9 @@ export async function createUsers(): Promise<UserWithProfiles[]> {
   let staffIndex = 0;
   let adminIndex = 0;
 
+  const hashedPassword = await bcrypt.hash(SEED_PASSWORD, 12);
+  console.log(`  Password for all seed users: ${SEED_PASSWORD}`);
+
   console.log(`Creating ${NUM_USERS} users...`);
   console.log(`  - ${NUM_CONSULTANTS} consultants`);
   console.log(`  - ${NUM_CONSULTEES} consultees`);
@@ -596,6 +668,15 @@ export async function createUsers(): Promise<UserWithProfiles[]> {
           consulteeProfile: true,
           staffProfile: true,
           adminProfile: true,
+        },
+      });
+
+      await prisma.account.create({
+        data: {
+          userId: user.id,
+          accountId: user.id,
+          providerId: "credential",
+          password: hashedPassword,
         },
       });
 

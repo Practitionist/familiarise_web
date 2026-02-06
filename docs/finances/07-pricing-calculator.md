@@ -145,16 +145,17 @@ Platform Revenue = ₹48,500 × 0.20 = ₹9,700
 > funded-company scenario (₹4,50,000/month with a 4-person team). The actual
 > current fixed costs are significantly lower:
 >
-> | Item | Assumed (Below) | Actual (Feb 2026) |
-> |------|----------------|-------------------|
-> | Servers (Vercel, Supabase) | ₹50,000 | ₹0 (free tiers) |
-> | Team | ₹3,00,000 (4 people) | ₹10,000 (1 part-time tech intern) |
-> | Tools & SaaS | ₹20,000 | ₹9,325 (Claude Max ₹8,500 + Apple Dev ₹825) |
-> | Marketing | ₹50,000 | ₹0 (organic/founder-driven) |
-> | Office/Misc | ₹30,000 | ₹0 |
-> | **Total Fixed** | **₹4,50,000** | **~₹19,325** |
+> | Item                       | Assumed (Below)      | Actual (Feb 2026)                           |
+> | -------------------------- | -------------------- | ------------------------------------------- |
+> | Servers (Vercel, Supabase) | ₹50,000              | ₹0 (free tiers)                             |
+> | Team                       | ₹3,00,000 (4 people) | ₹10,000 (1 part-time tech intern)           |
+> | Tools & SaaS               | ₹20,000              | ₹9,325 (Claude Max ₹8,500 + Apple Dev ₹825) |
+> | Marketing                  | ₹50,000              | ₹0 (organic/founder-driven)                 |
+> | Office/Misc                | ₹30,000              | ₹0                                          |
+> | **Total Fixed**            | **₹4,50,000**        | **~₹19,325**                                |
 >
 > **Bootstrapped break-even:**
+>
 > - Variable cost per transaction: ~₹24 (gateway fee only; video and DB are free tier)
 > - Per-transaction profit: ₹194 - ₹24 = **₹170**
 > - Break-even transactions: ₹19,325 / ₹170 = **~114/month**

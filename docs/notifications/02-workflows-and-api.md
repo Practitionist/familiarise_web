@@ -70,13 +70,13 @@ graph TD
 
 ### Appointment Lifecycle
 
-| Workflow ID | Trigger Function | Recipients | Payload Type |
-|-------------|-----------------|------------|--------------|
-| `appointment-booked` | `notifyAppointmentBooked(userIds[], payload)` | Both parties | `AppointmentPayload` |
-| `appointment-cancelled` | `notifyAppointmentCancelled(userIds[], payload)` | Both parties | `AppointmentCancelledPayload` |
+| Workflow ID               | Trigger Function                                   | Recipients   | Payload Type                    |
+| ------------------------- | -------------------------------------------------- | ------------ | ------------------------------- |
+| `appointment-booked`      | `notifyAppointmentBooked(userIds[], payload)`      | Both parties | `AppointmentPayload`            |
+| `appointment-cancelled`   | `notifyAppointmentCancelled(userIds[], payload)`   | Both parties | `AppointmentCancelledPayload`   |
 | `appointment-rescheduled` | `notifyAppointmentRescheduled(userIds[], payload)` | Both parties | `AppointmentRescheduledPayload` |
-| `appointment-reminder` | _(cron job)_ | Both parties | `AppointmentPayload` |
-| `appointment-completed` | `notifyAppointmentCompleted(userIds[], payload)` | Both parties | `AppointmentPayload` |
+| `appointment-reminder`    | _(cron job)_                                       | Both parties | `AppointmentPayload`            |
+| `appointment-completed`   | `notifyAppointmentCompleted(userIds[], payload)`   | Both parties | `AppointmentPayload`            |
 
 ```mermaid
 sequenceDiagram
@@ -102,12 +102,12 @@ sequenceDiagram
 
 ### Payment Events
 
-| Workflow ID | Trigger Function | Recipients | Payload Type |
-|-------------|-----------------|------------|--------------|
-| `payment-success` | `notifyPaymentSuccess(userId, payload)` | Payer (consultee) | `PaymentSuccessPayload` |
-| `payment-failed` | `notifyPaymentFailed(userId, payload)` | Payer (consultee) | `PaymentFailedPayload` |
-| `refund-processed` | `notifyRefundProcessed(userId, payload)` | Recipient (consultee) | `RefundPayload` |
-| `refund-requested` | `notifyRefundRequested(adminUserIds[], payload)` | Admin team | `RefundPayload` |
+| Workflow ID        | Trigger Function                                 | Recipients            | Payload Type            |
+| ------------------ | ------------------------------------------------ | --------------------- | ----------------------- |
+| `payment-success`  | `notifyPaymentSuccess(userId, payload)`          | Payer (consultee)     | `PaymentSuccessPayload` |
+| `payment-failed`   | `notifyPaymentFailed(userId, payload)`           | Payer (consultee)     | `PaymentFailedPayload`  |
+| `refund-processed` | `notifyRefundProcessed(userId, payload)`         | Recipient (consultee) | `RefundPayload`         |
+| `refund-requested` | `notifyRefundRequested(adminUserIds[], payload)` | Admin team            | `RefundPayload`         |
 
 **PaymentSuccessPayload**: `amount`, `currency`, `consultantName`, `appointmentType`, `planTitle`, `receiptUrl?`, `dashboardUrl`
 
@@ -119,11 +119,11 @@ sequenceDiagram
 
 ### Support Tickets
 
-| Workflow ID | Trigger Function | Recipients | Payload Type |
-|-------------|-----------------|------------|--------------|
-| `support-ticket-created` | `notifySupportTicketCreated(staffUserIds[], payload)` | Staff team | `SupportTicketPayload` |
-| `support-ticket-update` | `notifySupportTicketUpdate(userId, payload)` | Ticket author | `SupportTicketPayload` |
-| `support-ticket-response` | `notifySupportTicketResponse(userId, payload)` | Ticket author | `SupportTicketPayload` |
+| Workflow ID               | Trigger Function                                      | Recipients    | Payload Type           |
+| ------------------------- | ----------------------------------------------------- | ------------- | ---------------------- |
+| `support-ticket-created`  | `notifySupportTicketCreated(staffUserIds[], payload)` | Staff team    | `SupportTicketPayload` |
+| `support-ticket-update`   | `notifySupportTicketUpdate(userId, payload)`          | Ticket author | `SupportTicketPayload` |
+| `support-ticket-response` | `notifySupportTicketResponse(userId, payload)`        | Ticket author | `SupportTicketPayload` |
 
 **SupportTicketPayload**: `ticketId`, `ticketTitle`, `status?`, `message?`, `respondedBy?`, `dashboardUrl`
 
@@ -131,10 +131,10 @@ sequenceDiagram
 
 ### Feedback and Reviews
 
-| Workflow ID | Trigger Function | Recipients | Payload Type |
-|-------------|-----------------|------------|--------------|
-| `feedback-received` | `notifyFeedbackReceived(adminUserIds[], payload)` | Admin team | `FeedbackPayload` |
-| `new-review-received` | `notifyNewReview(consultantUserId, payload)` | Consultant | `ReviewPayload` |
+| Workflow ID           | Trigger Function                                  | Recipients | Payload Type      |
+| --------------------- | ------------------------------------------------- | ---------- | ----------------- |
+| `feedback-received`   | `notifyFeedbackReceived(adminUserIds[], payload)` | Admin team | `FeedbackPayload` |
+| `new-review-received` | `notifyNewReview(consultantUserId, payload)`      | Consultant | `ReviewPayload`   |
 
 **FeedbackPayload**: `feedbackId`, `userName`, `category?`, `message`, `dashboardUrl`
 
@@ -144,12 +144,12 @@ sequenceDiagram
 
 ### Trial Sessions
 
-| Workflow ID | Trigger Function | Recipients | Payload Type |
-|-------------|-----------------|------------|--------------|
-| `trial-session-requested` | `notifyTrialSessionRequested(consultantUserId, payload)` | Consultant | `TrialSessionPayload` |
-| `trial-session-scheduled` | `notifyTrialSessionScheduled(consulteeUserId, payload)` | Consultee | `TrialSessionPayload` |
-| `trial-session-completed` | `notifyTrialSessionCompleted(userIds[], payload)` | Both parties | `TrialSessionPayload` |
-| `trial-session-cancelled` | `notifyTrialSessionCancelled(userIds[], payload)` | Both parties | `TrialSessionPayload` |
+| Workflow ID               | Trigger Function                                         | Recipients   | Payload Type          |
+| ------------------------- | -------------------------------------------------------- | ------------ | --------------------- |
+| `trial-session-requested` | `notifyTrialSessionRequested(consultantUserId, payload)` | Consultant   | `TrialSessionPayload` |
+| `trial-session-scheduled` | `notifyTrialSessionScheduled(consulteeUserId, payload)`  | Consultee    | `TrialSessionPayload` |
+| `trial-session-completed` | `notifyTrialSessionCompleted(userIds[], payload)`        | Both parties | `TrialSessionPayload` |
+| `trial-session-cancelled` | `notifyTrialSessionCancelled(userIds[], payload)`        | Both parties | `TrialSessionPayload` |
 
 **TrialSessionPayload**: `consultantName`, `consulteeName`, `planTitle`, `dateTime?`, `status`, `dashboardUrl`
 
@@ -157,11 +157,11 @@ sequenceDiagram
 
 ### Subscriptions
 
-| Workflow ID | Trigger Function | Recipients | Payload Type |
-|-------------|-----------------|------------|--------------|
-| `subscription-started` | `notifySubscriptionStarted(userId, payload)` | Consultee | `SubscriptionPayload` |
+| Workflow ID              | Trigger Function                                  | Recipients   | Payload Type          |
+| ------------------------ | ------------------------------------------------- | ------------ | --------------------- |
+| `subscription-started`   | `notifySubscriptionStarted(userId, payload)`      | Consultee    | `SubscriptionPayload` |
 | `subscription-cancelled` | `notifySubscriptionCancelled(userIds[], payload)` | Both parties | `SubscriptionPayload` |
-| `subscription-renewed` | `notifySubscriptionRenewed(userId, payload)` | Consultee | `SubscriptionPayload` |
+| `subscription-renewed`   | `notifySubscriptionRenewed(userId, payload)`      | Consultee    | `SubscriptionPayload` |
 
 **SubscriptionPayload**: `subscriptionId?`, `planTitle`, `consultantName`, `consulteeName?`, `dashboardUrl`
 
@@ -169,11 +169,11 @@ sequenceDiagram
 
 ### Consultant-Specific
 
-| Workflow ID | Trigger Function | Recipients | Payload Type |
-|-------------|-----------------|------------|--------------|
-| `new-booking-request` | `notifyNewBookingRequest(consultantUserId, payload)` | Consultant | `BookingRequestPayload` |
-| `verification-status-changed` | `notifyVerificationStatusChanged(consultantUserId, payload)` | Consultant | `VerificationPayload` |
-| `payout-processed` | `notifyPayoutProcessed(consultantUserId, payload)` | Consultant | `PayoutPayload` |
+| Workflow ID                   | Trigger Function                                             | Recipients | Payload Type            |
+| ----------------------------- | ------------------------------------------------------------ | ---------- | ----------------------- |
+| `new-booking-request`         | `notifyNewBookingRequest(consultantUserId, payload)`         | Consultant | `BookingRequestPayload` |
+| `verification-status-changed` | `notifyVerificationStatusChanged(consultantUserId, payload)` | Consultant | `VerificationPayload`   |
+| `payout-processed`            | `notifyPayoutProcessed(consultantUserId, payload)`           | Consultant | `PayoutPayload`         |
 
 **BookingRequestPayload**: `consulteeName`, `planTitle`, `appointmentType`, `requestedDateTime?`, `dashboardUrl`
 
@@ -185,10 +185,10 @@ sequenceDiagram
 
 ### Admin / System
 
-| Workflow ID | Trigger Function | Recipients | Payload Type |
-|-------------|-----------------|------------|--------------|
-| `general-announcement` | `notifyGeneralAnnouncement(payload)` | All subscribers (broadcast) | `AnnouncementPayload` |
-| `new-consultant-application` | `notifyNewConsultantApplication(adminUserIds[], payload)` | Admin team | `ConsultantApplicationPayload` |
+| Workflow ID                  | Trigger Function                                          | Recipients                  | Payload Type                   |
+| ---------------------------- | --------------------------------------------------------- | --------------------------- | ------------------------------ |
+| `general-announcement`       | `notifyGeneralAnnouncement(payload)`                      | All subscribers (broadcast) | `AnnouncementPayload`          |
+| `new-consultant-application` | `notifyNewConsultantApplication(adminUserIds[], payload)` | Admin team                  | `ConsultantApplicationPayload` |
 
 **AnnouncementPayload**: `title`, `content`, `linkUrl?`, `linkText?`
 
@@ -198,12 +198,12 @@ sequenceDiagram
 
 ### Waitlist, Disputes, Recordings
 
-| Workflow ID | Trigger Function | Recipients | Payload Type |
-|-------------|-----------------|------------|--------------|
-| `waitlist-spot-available` | `notifyWaitlistSpotAvailable(userId, payload)` | Waitlisted user | `WaitlistPayload` |
-| `dispute-created` | `notifyDisputeCreated(userIds[], payload)` | Both parties | `DisputePayload` |
-| `dispute-resolved` | `notifyDisputeResolved(userIds[], payload)` | Both parties | `DisputePayload` |
-| `recording-available` | `notifyRecordingAvailable(userIds[], payload)` | Both parties | `RecordingPayload` |
+| Workflow ID               | Trigger Function                               | Recipients      | Payload Type       |
+| ------------------------- | ---------------------------------------------- | --------------- | ------------------ |
+| `waitlist-spot-available` | `notifyWaitlistSpotAvailable(userId, payload)` | Waitlisted user | `WaitlistPayload`  |
+| `dispute-created`         | `notifyDisputeCreated(userIds[], payload)`     | Both parties    | `DisputePayload`   |
+| `dispute-resolved`        | `notifyDisputeResolved(userIds[], payload)`    | Both parties    | `DisputePayload`   |
+| `recording-available`     | `notifyRecordingAvailable(userIds[], payload)` | Both parties    | `RecordingPayload` |
 
 **WaitlistPayload**: `consultantName`, `planTitle`, `dashboardUrl`
 
@@ -219,28 +219,28 @@ These emails bypass Novu and are sent directly through Resend with React Email t
 
 ### Auth Emails (`lib/email.ts`)
 
-| Function | Subject | From |
-|----------|---------|------|
-| `sendWelcomeEmail({email, name, dashboardUrl?})` | "Welcome to Familiarise!" | onboarding@familiarise.com |
-| `sendPasswordResetEmail({email, name, token})` | "Reset your Familiarise password" | security@familiarise.com |
-| `sendAccountLinkedEmail({email, name, provider, dashboardUrl?})` | "Your Familiarise account now linked with {provider}" | security@familiarise.com |
+| Function                                                         | Subject                                               | From                       |
+| ---------------------------------------------------------------- | ----------------------------------------------------- | -------------------------- |
+| `sendWelcomeEmail({email, name, dashboardUrl?})`                 | "Welcome to Familiarise!"                             | onboarding@familiarise.com |
+| `sendPasswordResetEmail({email, name, token})`                   | "Reset your Familiarise password"                     | security@familiarise.com   |
+| `sendAccountLinkedEmail({email, name, provider, dashboardUrl?})` | "Your Familiarise account now linked with {provider}" | security@familiarise.com   |
 
 ### Payment Emails (`lib/email.ts`)
 
-| Function | Subject | From |
-|----------|---------|------|
-| `sendPaymentLinkEmail({email, name, consultantName, appointmentType, amount, currency, paymentUrl, expiresAt})` | "Payment Required - {Type} with {Consultant}" | payments@familiarise.com |
-| `sendPaymentSuccessEmail({email, name, consultantName, appointmentType, amount, currency, receiptUrl?, dashboardUrl?})` | "Payment Confirmed - {Type} with {Consultant}" | payments@familiarise.com |
-| `sendPaymentFailedEmail({email, name, consultantName, appointmentType, amount, currency, retryUrl, failureReason?, expiresAt?})` | "Payment Failed - {Type} with {Consultant}" | payments@familiarise.com |
+| Function                                                                                                                         | Subject                                        | From                     |
+| -------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- | ------------------------ |
+| `sendPaymentLinkEmail({email, name, consultantName, appointmentType, amount, currency, paymentUrl, expiresAt})`                  | "Payment Required - {Type} with {Consultant}"  | payments@familiarise.com |
+| `sendPaymentSuccessEmail({email, name, consultantName, appointmentType, amount, currency, receiptUrl?, dashboardUrl?})`          | "Payment Confirmed - {Type} with {Consultant}" | payments@familiarise.com |
+| `sendPaymentFailedEmail({email, name, consultantName, appointmentType, amount, currency, retryUrl, failureReason?, expiresAt?})` | "Payment Failed - {Type} with {Consultant}"    | payments@familiarise.com |
 
 ### Waitlist Emails (`lib/waitlist/notifications.ts`)
 
-| Function | Subject | From |
-|----------|---------|------|
-| `sendWaitlistJoinedEmail({email, name, eventTitle, eventType, position, estimatedWait?})` | "You're on the waitlist for {eventTitle}" | notifications@familiarise.com |
-| `sendWaitlistSpotAvailableEmail({email, name, eventTitle, eventType, eventId, scheduledDate?, expiresAt, waitlistId})` | "A spot is available for {eventTitle}!" | notifications@familiarise.com |
-| `sendWaitlistExpiringEmail({email, name, eventTitle, eventType, eventId, expiresAt, waitlistId})` | "Reminder: Your spot for {eventTitle} expires soon!" | notifications@familiarise.com |
-| `sendWaitlistExpiredEmail({email, name, eventTitle, eventType, rejoinUrl?})` | "Your spot for {eventTitle} has expired" | notifications@familiarise.com |
+| Function                                                                                                               | Subject                                              | From                          |
+| ---------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- | ----------------------------- |
+| `sendWaitlistJoinedEmail({email, name, eventTitle, eventType, position, estimatedWait?})`                              | "You're on the waitlist for {eventTitle}"            | notifications@familiarise.com |
+| `sendWaitlistSpotAvailableEmail({email, name, eventTitle, eventType, eventId, scheduledDate?, expiresAt, waitlistId})` | "A spot is available for {eventTitle}!"              | notifications@familiarise.com |
+| `sendWaitlistExpiringEmail({email, name, eventTitle, eventType, eventId, expiresAt, waitlistId})`                      | "Reminder: Your spot for {eventTitle} expires soon!" | notifications@familiarise.com |
+| `sendWaitlistExpiredEmail({email, name, eventTitle, eventType, rejoinUrl?})`                                           | "Your spot for {eventTitle} has expired"             | notifications@familiarise.com |
 
 ---
 
@@ -255,6 +255,7 @@ Syncs the authenticated user to Novu as a subscriber. Called by the `useNovuSubs
 **Request**: No body required (uses session user ID)
 
 **Response**:
+
 ```json
 { "success": true }
 ```
@@ -275,6 +276,7 @@ Returns the current user's notification preferences. If none exist, returns defa
 **Auth**: Required (NextAuth session)
 
 **Response** (defaults shown):
+
 ```json
 {
   "allNotifications": true,
@@ -307,6 +309,7 @@ Updates notification preferences. Accepts partial updates (any subset of fields)
 **Auth**: Required (NextAuth session)
 
 **Request body** (all fields optional):
+
 ```json
 {
   "emailEnabled": false,

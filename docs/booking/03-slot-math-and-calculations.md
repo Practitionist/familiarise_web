@@ -10,15 +10,15 @@ Every time slot in the system is a **30-minute atomic unit**.
 - 48 intervals per day (24h / 0.5h)
 - `slotsPerSession = Math.ceil(sessionDurationInHours / 0.5)`
 
-| Duration | Slots |
-|----------|-------|
-| 0.5 hours | 1 |
-| 1 hour | 2 |
-| 1.5 hours | 3 |
-| 2 hours | 4 |
-| 2.5 hours | 5 |
-| 3 hours | 6 |
-| 4 hours | 8 |
+| Duration  | Slots |
+| --------- | ----- |
+| 0.5 hours | 1     |
+| 1 hour    | 2     |
+| 1.5 hours | 3     |
+| 2 hours   | 4     |
+| 2.5 hours | 5     |
+| 3 hours   | 6     |
+| 4 hours   | 8     |
 
 ## Week Boundaries (Sunday-Saturday)
 
@@ -40,6 +40,7 @@ Output: Sunday Jan 12, 2025 00:00:00
 Counts distinct Sunday-start weeks overlapping the date range [start, end].
 
 **Algorithm**:
+
 1. Normalize both dates to midnight
 2. Find the Sunday of start week and end week
 3. Count Sundays from start to end inclusive
@@ -73,12 +74,12 @@ gantt
 
 The hardcoded `* 4` approximation is wrong for anything beyond short durations:
 
-| Duration | `* 4` result | `countWeeks()` result | Error |
-|----------|-------------|----------------------|-------|
-| 1 month | 4 weeks | 4-5 weeks | 0-1 |
-| 3 months | 12 weeks | 13-14 weeks | 1-2 |
-| 6 months | 24 weeks | 26-27 weeks | 2-3 |
-| 12 months | 48 weeks | 52-53 weeks | 4-5 |
+| Duration  | `* 4` result | `countWeeks()` result | Error |
+| --------- | ------------ | --------------------- | ----- |
+| 1 month   | 4 weeks      | 4-5 weeks             | 0-1   |
+| 3 months  | 12 weeks     | 13-14 weeks           | 1-2   |
+| 6 months  | 24 weeks     | 26-27 weeks           | 2-3   |
+| 12 months | 48 weeks     | 52-53 weeks           | 4-5   |
 
 Always use `SlotCalculationService.countWeeks()`.
 
@@ -86,12 +87,12 @@ Always use `SlotCalculationService.countWeeks()`.
 
 **`calculateRequiredSlots(eventType, config)`**:
 
-| Event Type | Formula | Example |
-|-----------|---------|---------|
-| Consultation | `Math.ceil(durationInHours / 0.5)` | 1.5h = 3 slots |
-| Webinar | `Math.ceil(durationInHours / 0.5)` | 2h = 4 slots |
-| Subscription | `countWeeks(start, end) * callsPerWeek * Math.ceil(sessionDuration / 0.5)` | 5 weeks, 2/week, 1h sessions = 5 * 2 * 2 = 20 slots |
-| Class | `countWeeks(start, end) * meetingsPerWeek * Math.ceil(sessionDuration / 0.5)` | Same formula |
+| Event Type   | Formula                                                                       | Example                                             |
+| ------------ | ----------------------------------------------------------------------------- | --------------------------------------------------- |
+| Consultation | `Math.ceil(durationInHours / 0.5)`                                            | 1.5h = 3 slots                                      |
+| Webinar      | `Math.ceil(durationInHours / 0.5)`                                            | 2h = 4 slots                                        |
+| Subscription | `countWeeks(start, end) * callsPerWeek * Math.ceil(sessionDuration / 0.5)`    | 5 weeks, 2/week, 1h sessions = 5 _ 2 _ 2 = 20 slots |
+| Class        | `countWeeks(start, end) * meetingsPerWeek * Math.ceil(sessionDuration / 0.5)` | Same formula                                        |
 
 ## Consecutive Slot Validation
 
@@ -139,16 +140,19 @@ Used by: weekly distribution validation, weekly limit checks.
 **`calculateProgress(selectedSlots, eventType, config)`**:
 
 For one-time events (consultation, webinar):
+
 - `scheduled = selectedSlots.length >= slotsPerCall ? 1 : 0`
 - `required = 1`
 
 For recurring events (subscription, class):
+
 - `scheduled = countCompletedCalls(selectedSlots, slotsPerCall)`
 - `required = countWeeks(start, end) * callsPerWeek`
 
 **`countCompletedCalls`** groups slots by day, sorts within each day, and counts complete consecutive groups of `slotsPerCall` slots. It counts **calls** (complete session groups), not individual slots.
 
 Example: 2 slots/call, day has slots at [10:00, 10:30, 14:00, 14:30]
+
 - Group 1: 10:00 + 10:30 = 1 complete call
 - Group 2: 14:00 + 14:30 = 1 complete call
 - Result: 2 completed calls

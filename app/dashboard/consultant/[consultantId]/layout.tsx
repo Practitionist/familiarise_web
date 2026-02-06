@@ -12,7 +12,7 @@ import {
   DashboardSidebar,
   type NavItem,
 } from "@/components/dashboard/DashboardSidebar";
-import { useSession } from "next-auth/react";
+import { useSession } from "@/lib/auth-client";
 import { usePathname, useRouter } from "next/navigation";
 import { use, useEffect, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -239,9 +239,9 @@ function ErrorDisplay({ message }: { message: string }) {
               onClick={
                 config.secondaryAction.href === "#"
                   ? (e) => {
-                      e.preventDefault();
-                      window.location.reload();
-                    }
+                    e.preventDefault();
+                    window.location.reload();
+                  }
                   : undefined
               }
               className="w-full px-6 py-2.5 bg-zinc-100 text-zinc-700 rounded-lg font-medium hover:bg-zinc-200 transition-colors"
@@ -354,7 +354,7 @@ export default function ConsultantLayout({
   const resolvedParams = use(params);
   const consultantId = resolvedParams.consultantId;
   const pathname = usePathname();
-  const { data: session } = useSession();
+  const { data: session, isPending: isSessionLoading } = useSession();
   const router = useRouter();
   const queryClient = useQueryClient();
 
@@ -362,6 +362,24 @@ export default function ConsultantLayout({
 
   // Sync user as Novu subscriber (once per session)
   useNovuSubscriberSync();
+
+  // Fetch user details to check consultant access
+  const {
+    data: userDetails,
+    isLoading: isLoadingUserDetails,
+  } = useQuery({
+    queryKey: ["user-details", userId],
+    queryFn: async () => {
+      const response = await fetch(`/api/user/${userId}`);
+      if (!response.ok) throw new Error("Failed to fetch user details");
+      const result = await response.json();
+      return result.data;
+    },
+    enabled: !!userId,
+    staleTime: 5 * 60 * 1000,
+    gcTime: 10 * 60 * 1000,
+    retry: 2,
+  });
 
   // Fetch consultant data with React Query and placeholderData to prevent loading flashes
   const {
@@ -378,9 +396,36 @@ export default function ConsultantLayout({
     placeholderData: (previousData) => previousData, // Keep showing previous data while refetching
   });
 
+  // Check if user has access to this consultant dashboard:
+  // - ADMIN: Can access ANY dashboard
+  // - STAFF: Can view consultant and consultee dashboards  
+  // - CONSULTANT: Can only access their OWN dashboard
+  const hasConsultantAccess = userDetails && (
+    userDetails.role === "ADMIN" ||
+    userDetails.role === "STAFF" ||
+    (userDetails.role === "CONSULTANT" && userDetails.consultantProfileId === consultantId)
+  );
+
+  // Redirect unauthorized users to their appropriate dashboard
+  useEffect(() => {
+    if (isLoadingUserDetails || isSessionLoading || !userId) return;
+
+    if (userDetails && !hasConsultantAccess) {
+      // User doesn't have access - redirect based on their role
+      if (userDetails.consultantProfileId) {
+        // Consultant trying to access another consultant's dashboard - redirect to their own
+        router.replace(`/dashboard/consultant/${userDetails.consultantProfileId}/home`);
+      } else if (userDetails.consulteeProfileId) {
+        router.replace(`/dashboard/consultee/${userDetails.consulteeProfileId}/home`);
+      } else {
+        router.replace("/dashboard");
+      }
+    }
+  }, [userDetails, hasConsultantAccess, isLoadingUserDetails, isSessionLoading, userId, router]);
+
   // Prefetch critical routes on mount
   useEffect(() => {
-    if (!userId || !consultantId) return;
+    if (!userId || !consultantId || !hasConsultantAccess) return;
 
     schedulePrefetch(() => {
       // Prefetch home route if not there
@@ -390,7 +435,7 @@ export default function ConsultantLayout({
       // Prefetch appointments (commonly accessed)
       router.prefetch(`/dashboard/consultant/${consultantId}/appointments`);
     }, 3000);
-  }, [userId, consultantId, pathname, router]);
+  }, [userId, consultantId, pathname, router, hasConsultantAccess]);
 
   // Memoize StreamProvider children to prevent re-initialization on tab switches
   // Must be called before any early returns to comply with Rules of Hooks
@@ -414,13 +459,53 @@ export default function ConsultantLayout({
   if (
     process.env.NODE_ENV !== "development" &&
     process.env.NODE_ENV !== "test" &&
-    !session?.user?.id
+    !session?.user?.id &&
+    !isSessionLoading
   ) {
     return <AuthRequired />;
   }
 
-  // Initial loading state
-  if (isLoading && !consultantData) {
+  // ACCESS DENIED CHECK - BEFORE skeleton to avoid showing skeleton for unauthorized users
+  // If we have user details but no access, show redirect message immediately
+  if (userDetails && !hasConsultantAccess) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-zinc-100">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-white p-8 rounded-2xl shadow-xl border border-zinc-200 max-w-md text-center"
+        >
+          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-amber-100 flex items-center justify-center">
+            <svg
+              className="w-8 h-8 text-amber-600"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
+              />
+            </svg>
+          </div>
+          <h2 className="text-xl font-bold text-zinc-900 mb-2">
+            Access Denied
+          </h2>
+          <p className="text-zinc-600">
+            You don&apos;t have permission to access this Consultant Dashboard.
+          </p>
+          <p className="text-sm text-zinc-500 mt-2">
+            Redirecting to your dashboard...
+          </p>
+        </motion.div>
+      </div>
+    );
+  }
+
+  // Initial loading state - only show if we don't have userDetails yet (still determining access)
+  if ((isLoading || isLoadingUserDetails || isSessionLoading) && !consultantData && !userDetails) {
     return <DashboardSkeleton />;
   }
 

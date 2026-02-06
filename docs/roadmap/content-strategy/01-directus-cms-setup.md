@@ -24,16 +24,17 @@
 
 ## Why Directus Over Payload CMS
 
-| CMS | Why Not Selected |
-|-----|------------------|
-| **Payload CMS** | Uses Drizzle ORM — conflicts with Prisma. `users` table naming collision. **REJECTED.** |
-| **Strapi** | Uses Knex.js ORM — similar conflicts as Payload |
-| **Outstatic** | Git-based (no DB) — limited for real-time community features |
-| **KeystoneJS** | Primarily MongoDB focused, not PostgreSQL |
-| **TinaCMS** | Git-based — same limitations as Outstatic |
-| **Directus** | **SELECTED** — No ORM (uses DB introspection), works with existing PostgreSQL, `directus_*` prefixed tables |
+| CMS             | Why Not Selected                                                                                            |
+| --------------- | ----------------------------------------------------------------------------------------------------------- |
+| **Payload CMS** | Uses Drizzle ORM — conflicts with Prisma. `users` table naming collision. **REJECTED.**                     |
+| **Strapi**      | Uses Knex.js ORM — similar conflicts as Payload                                                             |
+| **Outstatic**   | Git-based (no DB) — limited for real-time community features                                                |
+| **KeystoneJS**  | Primarily MongoDB focused, not PostgreSQL                                                                   |
+| **TinaCMS**     | Git-based — same limitations as Outstatic                                                                   |
+| **Directus**    | **SELECTED** — No ORM (uses DB introspection), works with existing PostgreSQL, `directus_*` prefixed tables |
 
 Directus doesn't use an ORM at all. It introspects your database schema directly and generates APIs dynamically. This means:
+
 - No conflict with Prisma
 - Can use the same Supabase PostgreSQL database
 - Only creates its own `directus_*` prefixed system tables
@@ -86,6 +87,7 @@ Directus doesn't use an ORM at all. It introspects your database schema directly
 - Cleanest isolation, same database
 
 This means:
+
 - Prisma and Directus never touch each other's tables
 - Development resets don't destroy CMS content
 - No naming conflicts possible
@@ -97,6 +99,7 @@ This means:
 **Directus Cloud** is a managed SaaS where Directus hosts the admin panel and API for you. It still connects to your external Supabase PostgreSQL database.
 
 With Directus Cloud:
+
 - Point it at your Supabase DB connection string
 - It creates `directus_*` system tables + your `cms_*` content tables directly in PostgreSQL
 - Access the admin panel at `yourproject.directus.app`
@@ -118,6 +121,7 @@ With the separate `cms` schema approach, this is even cleaner — Prisma only lo
 If you run `prisma db pull` (introspection), it could potentially pull tables from other schemas depending on configuration.
 
 **Solutions:**
+
 1. **Never use `prisma db pull`** — stick to the `prisma migrate` workflow (which we already use). This is the recommended approach.
 2. If you ever must introspect, manually remove the Directus-related models afterwards.
 3. The separate PostgreSQL schema (`cms`) provides natural isolation from `prisma db pull` since it defaults to the `public` schema.
@@ -126,13 +130,13 @@ If you run `prisma db pull` (introspection), it could potentially pull tables fr
 
 ## Prisma Migrate Reset — The Danger Zone
 
-| Command | Effect on Directus Tables (cms schema) |
-|---|---|
-| `prisma migrate deploy` | **Safe** — only applies Prisma migrations to `public` schema |
-| `prisma migrate dev` | **Safe** — creates new migration for Prisma schema changes only |
-| `prisma db seed` | **Safe** — only seeds Prisma-managed tables |
-| `prisma migrate reset` | **Safe with separate schemas** — only drops `public` schema, `cms` schema survives |
-| `prisma db push` | **Safe** — only pushes Prisma schema changes to `public` |
+| Command                 | Effect on Directus Tables (cms schema)                                             |
+| ----------------------- | ---------------------------------------------------------------------------------- |
+| `prisma migrate deploy` | **Safe** — only applies Prisma migrations to `public` schema                       |
+| `prisma migrate dev`    | **Safe** — creates new migration for Prisma schema changes only                    |
+| `prisma db seed`        | **Safe** — only seeds Prisma-managed tables                                        |
+| `prisma migrate reset`  | **Safe with separate schemas** — only drops `public` schema, `cms` schema survives |
+| `prisma db push`        | **Safe** — only pushes Prisma schema changes to `public`                           |
 
 With separate PostgreSQL schemas, `prisma migrate reset` is safe because it only affects the `public` schema. This was a key reason for choosing the separate schema approach over keeping everything in `public`.
 
@@ -142,13 +146,13 @@ With separate PostgreSQL schemas, `prisma migrate reset` is safe because it only
 
 All managed by Directus in the `cms` schema:
 
-| Directus Collection (Admin UI) | Actual Table Name | Purpose |
-|-------------------------------|-------------------|---------|
-| Posts | `cms_posts` | Blog articles |
-| Categories | `cms_categories` | Blog categories |
-| Threads | `cms_threads` | Gated community threads |
-| Replies | `cms_replies` | Thread replies |
-| Community Categories | `cms_community_categories` | Community topic categories |
+| Directus Collection (Admin UI) | Actual Table Name          | Purpose                    |
+| ------------------------------ | -------------------------- | -------------------------- |
+| Posts                          | `cms_posts`                | Blog articles              |
+| Categories                     | `cms_categories`           | Blog categories            |
+| Threads                        | `cms_threads`              | Gated community threads    |
+| Replies                        | `cms_replies`              | Thread replies             |
+| Community Categories           | `cms_community_categories` | Community topic categories |
 
 ---
 
@@ -166,6 +170,7 @@ All Directus content tables use a `cms_` prefix to prevent any naming conflicts.
 ```
 
 This way:
+
 - Directus admin shows "Posts" (clean UI)
 - Database table is `cms_posts` (no conflicts)
 - Future Prisma tables can coexist safely

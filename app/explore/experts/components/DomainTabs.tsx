@@ -12,7 +12,10 @@ export default function DomainTabs({
   onTabChange,
 }: DomainTabsProps) {
   return (
-    <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-2" style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}>
+    <div
+      className="flex gap-2 overflow-x-auto scrollbar-hide pb-2"
+      style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
+    >
       <button
         onClick={() => onTabChange(null)}
         className={`flex-shrink-0 px-4 py-2 rounded-full text-sm font-medium transition-colors ${

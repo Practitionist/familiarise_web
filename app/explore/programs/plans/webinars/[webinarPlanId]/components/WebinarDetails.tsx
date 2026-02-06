@@ -47,7 +47,6 @@ export type WebinarPlanData = Prisma.WebinarPlanGetPayload<{
   };
 }>;
 
-
 type SessionStatus =
   | "Upcoming"
   | "Happening Now"

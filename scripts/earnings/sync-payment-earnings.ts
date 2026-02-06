@@ -202,7 +202,9 @@ export async function syncPaymentEarnings(): Promise<PaymentEarningSyncResult> {
       where: { paymentId: { in: paymentIds } },
       select: { paymentId: true },
     });
-    const existingPaymentIds = new Set(existingEarnings.map((e) => e.paymentId));
+    const existingPaymentIds = new Set(
+      existingEarnings.map((e) => e.paymentId),
+    );
 
     // Prepare earnings to create and revenue updates
     const earningsToCreate: Array<{

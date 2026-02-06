@@ -12,7 +12,7 @@ import {
   DashboardSidebar,
   type NavItem,
 } from "@/components/dashboard/DashboardSidebar";
-import { signOut, useSession } from "next-auth/react";
+import { signOut, useSession } from "@/lib/auth-client";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { use, useEffect, useMemo } from "react";
@@ -340,7 +340,7 @@ export default function ConsulteeLayout({
   const consulteeId = resolvedParams.consulteeId;
   const pathname = usePathname();
   const currentPath = pathname.split("/").pop();
-  const { data: session } = useSession();
+  const { data: session, isPending: isSessionLoading } = useSession();
   const router = useRouter();
 
   const userId = getEffectiveUserId(session);
@@ -378,16 +378,45 @@ export default function ConsulteeLayout({
     placeholderData: (previousData) => previousData, // Keep showing previous data while refetching
   });
 
+  // Check if user has access to this consultee dashboard:
+  // - ADMIN: Can access ANY dashboard
+  // - STAFF: Can view consultant and consultee dashboards
+  // - CONSULTEE: Can only access their OWN dashboard
+  // - CONSULTANT: Cannot access consultee dashboards (they have their own)
+  const hasConsulteeAccess = userDetails && (
+    userDetails.role === "ADMIN" ||
+    userDetails.role === "STAFF" ||
+    (userDetails.consulteeProfileId === consulteeId &&
+      userDetails.role !== "CONSULTANT")  // Consultees only, not consultants
+  );
+
+  // Redirect unauthorized users to their appropriate dashboard
+  useEffect(() => {
+    if (isLoadingUser || isSessionLoading || !userId) return;
+
+    if (userDetails && !hasConsulteeAccess) {
+      // User doesn't have access - redirect based on their role
+      if (userDetails.role === "CONSULTANT" && userDetails.consultantProfileId) {
+        router.replace(`/dashboard/consultant/${userDetails.consultantProfileId}/home`);
+      } else if (userDetails.consulteeProfileId && userDetails.consulteeProfileId !== consulteeId) {
+        // Consultee trying to access another consultee's dashboard - redirect to their own
+        router.replace(`/dashboard/consultee/${userDetails.consulteeProfileId}/home`);
+      } else {
+        router.replace("/dashboard");
+      }
+    }
+  }, [userDetails, hasConsulteeAccess, isLoadingUser, isSessionLoading, userId, router, consulteeId]);
+
   // Prefetch
   useEffect(() => {
-    if (!userId || !consulteeId) return;
+    if (!userId || !consulteeId || !hasConsulteeAccess) return;
 
     schedulePrefetch(() => {
       if (!pathname.includes("/home")) {
         router.prefetch(`/dashboard/consultee/${consulteeId}/home`);
       }
     }, 3000);
-  }, [userId, consulteeId, pathname, router]);
+  }, [userId, consulteeId, pathname, router, hasConsulteeAccess]);
 
   const isLoading = isLoadingUser || isLoadingProfile;
   const error = (userError || profileError) as Error | null;
@@ -414,13 +443,53 @@ export default function ConsulteeLayout({
   if (
     process.env.NODE_ENV !== "development" &&
     process.env.NODE_ENV !== "test" &&
-    !session?.user?.id
+    !session?.user?.id &&
+    !isSessionLoading
   ) {
     return <AuthRequired />;
   }
 
-  // Initial loading
-  if (!userDetails && isLoading) {
+  // ACCESS DENIED CHECK - BEFORE skeleton to avoid showing skeleton for unauthorized users
+  // If we have user details but no access, show redirect message immediately
+  if (userDetails && !hasConsulteeAccess) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-zinc-100">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-white p-8 rounded-2xl shadow-xl border border-zinc-200 max-w-md text-center"
+        >
+          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-amber-100 flex items-center justify-center">
+            <svg
+              className="w-8 h-8 text-amber-600"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
+              />
+            </svg>
+          </div>
+          <h2 className="text-xl font-bold text-zinc-900 mb-2">
+            Access Denied
+          </h2>
+          <p className="text-zinc-600">
+            You don&apos;t have permission to access this dashboard.
+          </p>
+          <p className="text-sm text-zinc-500 mt-2">
+            Redirecting to your dashboard...
+          </p>
+        </motion.div>
+      </div>
+    );
+  }
+
+  // Initial loading state - only show if we don't have userDetails yet (still determining access)
+  if ((isLoading || isSessionLoading) && !userDetails) {
     return <DashboardSkeleton />;
   }
 
@@ -437,21 +506,21 @@ export default function ConsulteeLayout({
 
   return (
     <NovuProvider>
-    <UserProvider userDetails={userDetails}>
-      <div className="min-h-screen bg-zinc-50">
-        <ConsulteeNav
-          consulteeId={consulteeId}
-          currentPath={currentPath}
-          userName={userDetails.name}
-          userImage={userDetails.image}
-          isLoading={isLoading}
-        />
+      <UserProvider userDetails={userDetails}>
+        <div className="min-h-screen bg-zinc-50">
+          <ConsulteeNav
+            consulteeId={consulteeId}
+            currentPath={currentPath}
+            userName={userDetails.name}
+            userImage={userDetails.image}
+            isLoading={isLoading}
+          />
 
-        <main className="w-full px-4 sm:px-6 lg:px-8 xl:px-12 py-6 lg:py-8">
-          {memoizedStreamContent}
-        </main>
-      </div>
-    </UserProvider>
+          <main className="w-full px-4 sm:px-6 lg:px-8 xl:px-12 py-6 lg:py-8">
+            {memoizedStreamContent}
+          </main>
+        </div>
+      </UserProvider>
     </NovuProvider>
   );
 }

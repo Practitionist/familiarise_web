@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { DiscountType } from "@prisma/client";
+import { getSession } from "@/lib/auth-server";
 
 interface ValidateDiscountRequest {
   code: string;
@@ -23,6 +24,15 @@ interface DiscountCodeResponse {
  */
 export async function POST(request: NextRequest) {
   try {
+    // Authentication check
+    const session = await getSession();
+    if (!session?.user) {
+      return NextResponse.json(
+        { valid: false, message: "Unauthorized" },
+        { status: 401 },
+      );
+    }
+
     const body: ValidateDiscountRequest = await request.json();
     const { code, amount } = body;
 

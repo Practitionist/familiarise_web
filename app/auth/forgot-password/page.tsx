@@ -4,15 +4,25 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import axios from "axios";
+import { authClient, useSession } from "@/lib/auth-client";
 import Link from "next/link";
-import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { useState, useEffect } from "react";
 
 export default function ForgotPassword() {
   const { toast } = useToast();
+  const router = useRouter();
+  const { data: session, isPending } = useSession();
   const [email, setEmail] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [message, setMessage] = useState("");
+
+  // Redirect authenticated users away from forgot-password
+  useEffect(() => {
+    if (!isPending && session?.user?.id) {
+      router.push("/dashboard");
+    }
+  }, [isPending, session, router]);
 
   const handleRequestReset = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -21,14 +31,27 @@ export default function ForgotPassword() {
     toast({ title: "Sending reset link..." });
 
     try {
-      const response = await axios.post("/api/auth/forgot-password", { email });
-      setMessage(response.data.message);
-      toast({ title: "Request Sent", description: response.data.message });
+      const { error } = await authClient.requestPasswordReset({
+        email,
+        redirectTo: "/auth/reset-password",
+      });
+      if (error) {
+        setMessage(error.message || "An unexpected error occurred.");
+        toast({
+          title: "Error Sending Request",
+          description: error.message || "An unexpected error occurred.",
+          variant: "destructive",
+        });
+      } else {
+        const successMessage =
+          "If an account with that email exists, a password reset link has been sent.";
+        setMessage(successMessage);
+        toast({ title: "Request Sent", description: successMessage });
+      }
     } catch (error: any) {
       console.error("Forgot password error:", error);
-      const errorMessage =
-        error.response?.data?.message || "An unexpected error occurred.";
-      setMessage(errorMessage); // Display error message as well
+      const errorMessage = error?.message || "An unexpected error occurred.";
+      setMessage(errorMessage);
       toast({
         title: "Error Sending Request",
         description: errorMessage,

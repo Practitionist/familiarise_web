@@ -101,9 +101,7 @@ export async function GET(request: NextRequest) {
       });
     } else if (availability === "this_week") {
       const now = new Date();
-      const oneWeekFromNow = new Date(
-        now.getTime() + 7 * 24 * 60 * 60 * 1000,
-      );
+      const oneWeekFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
       where.AND.push({
         OR: [
           // Weekly slots are recurring — if they exist, the consultant
@@ -189,10 +187,11 @@ export async function GET(request: NextRequest) {
       include: {
         user: {
           select: {
+            // Only public profile fields - no email
             id: true,
             name: true,
-            email: true,
             image: true,
+            profileDisplayImage: true,
           },
         },
         domain: { select: { id: true, name: true } },

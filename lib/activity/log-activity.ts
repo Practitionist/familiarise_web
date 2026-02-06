@@ -64,7 +64,7 @@ export async function logConsultationBooked(
   consultantProfileId: string,
   consultationId: string,
   actor: { id: string; name: string; image?: string | null },
-  planTitle: string
+  planTitle: string,
 ) {
   return logActivity({
     activityType: "CONSULTATION_BOOKED",
@@ -85,7 +85,7 @@ export async function logConsultationCompleted(
   consultantProfileId: string,
   consultationId: string,
   actor: { id: string; name: string; image?: string | null },
-  planTitle: string
+  planTitle: string,
 ) {
   return logActivity({
     activityType: "CONSULTATION_COMPLETED",
@@ -107,7 +107,7 @@ export async function logConsultationCancelled(
   consultationId: string,
   actor: { id: string; name: string; image?: string | null },
   planTitle: string,
-  cancelledBy: "consultant" | "consultee"
+  cancelledBy: "consultant" | "consultee",
 ) {
   return logActivity({
     activityType: "CONSULTATION_CANCELLED",
@@ -128,7 +128,7 @@ export async function logSubscriptionRequested(
   consultantProfileId: string,
   subscriptionId: string,
   actor: { id: string; name: string; image?: string | null },
-  planTitle: string
+  planTitle: string,
 ) {
   return logActivity({
     activityType: "SUBSCRIPTION_REQUESTED",
@@ -149,7 +149,7 @@ export async function logSubscriptionApproved(
   consultantProfileId: string,
   subscriptionId: string,
   actor: { id: string; name: string; image?: string | null },
-  planTitle: string
+  planTitle: string,
 ) {
   return logActivity({
     activityType: "SUBSCRIPTION_APPROVED",
@@ -171,7 +171,7 @@ export async function logSubscriptionCancelled(
   subscriptionId: string,
   actor: { id: string; name: string; image?: string | null },
   planTitle: string,
-  cancelledBy: "consultant" | "consultee"
+  cancelledBy: "consultant" | "consultee",
 ) {
   return logActivity({
     activityType: "SUBSCRIPTION_CANCELLED",
@@ -192,7 +192,7 @@ export async function logWebinarRegistered(
   consultantProfileId: string,
   webinarId: string,
   actor: { id: string; name: string; image?: string | null },
-  webinarTitle: string
+  webinarTitle: string,
 ) {
   return logActivity({
     activityType: "WEBINAR_REGISTERED",
@@ -213,7 +213,7 @@ export async function logClassEnrolled(
   consultantProfileId: string,
   classId: string,
   actor: { id: string; name: string; image?: string | null },
-  classTitle: string
+  classTitle: string,
 ) {
   return logActivity({
     activityType: "CLASS_ENROLLED",
@@ -234,7 +234,7 @@ export async function logTrialRequested(
   consultantProfileId: string,
   trialSessionId: string,
   actor: { id: string; name: string; image?: string | null },
-  planTitle: string
+  planTitle: string,
 ) {
   return logActivity({
     activityType: "TRIAL_REQUESTED",
@@ -256,7 +256,7 @@ export async function logTrialScheduled(
   trialSessionId: string,
   actor: { id: string; name: string; image?: string | null },
   planTitle: string,
-  scheduledTime: Date
+  scheduledTime: Date,
 ) {
   return logActivity({
     activityType: "TRIAL_SCHEDULED",
@@ -277,7 +277,7 @@ export async function logTrialCompleted(
   consultantProfileId: string,
   trialSessionId: string,
   actor: { id: string; name: string; image?: string | null },
-  planTitle: string
+  planTitle: string,
 ) {
   return logActivity({
     activityType: "TRIAL_COMPLETED",
@@ -299,7 +299,7 @@ export async function logTrialConverted(
   trialSessionId: string,
   subscriptionId: string,
   actor: { id: string; name: string; image?: string | null },
-  planTitle: string
+  planTitle: string,
 ) {
   return logActivity({
     activityType: "TRIAL_CONVERTED",
@@ -320,7 +320,7 @@ export async function logTrialConverted(
 export async function logReviewSubmitted(
   consultantProfileId: string,
   actor: { id: string; name: string; image?: string | null },
-  rating: number
+  rating: number,
 ) {
   return logActivity({
     activityType: "REVIEW_SUBMITTED",
@@ -338,7 +338,7 @@ export async function logReviewSubmitted(
  */
 export async function getRecentActivities(
   consultantProfileId: string,
-  limit: number = 10
+  limit: number = 10,
 ) {
   return prisma.activityLog.findMany({
     where: { consultantProfileId },

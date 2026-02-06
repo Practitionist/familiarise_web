@@ -33,13 +33,13 @@ Are blog and community sections recommended for a consulting platform? Or are th
 
 ## What Successful Platforms Actually Do
 
-| Platform | Has Blog? | Has Community? | Notes |
-|---|---|---|---|
-| **MentorCruise** | Yes (major SEO channel) | No public community | Blog is their #1 growth channel. 5x higher conversion than any other channel. |
-| **GrowthMentor** | Yes | Yes (private Slack + networking feature) | Community is a paid member benefit, not a public marketing page. |
-| **Topmate** | Yes (blog.topmate.io) | No | Blog focuses on product updates and creator tips. No community forum. |
-| **Preplaced** | Yes ("/blog" branded as "Stories") | Yes ("Ask Mentor" forums) | Forum is a lead-gen tool, not a standalone community destination. |
-| **Clarity.fm** | No traditional blog | Yes ("Answers" page) | The Answers page is a Q&A section where experts respond to questions — a lightweight community. |
+| Platform         | Has Blog?                          | Has Community?                           | Notes                                                                                           |
+| ---------------- | ---------------------------------- | ---------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| **MentorCruise** | Yes (major SEO channel)            | No public community                      | Blog is their #1 growth channel. 5x higher conversion than any other channel.                   |
+| **GrowthMentor** | Yes                                | Yes (private Slack + networking feature) | Community is a paid member benefit, not a public marketing page.                                |
+| **Topmate**      | Yes (blog.topmate.io)              | No                                       | Blog focuses on product updates and creator tips. No community forum.                           |
+| **Preplaced**    | Yes ("/blog" branded as "Stories") | Yes ("Ask Mentor" forums)                | Forum is a lead-gen tool, not a standalone community destination.                               |
+| **Clarity.fm**   | No traditional blog                | Yes ("Answers" page)                     | The Answers page is a Q&A section where experts respond to questions — a lightweight community. |
 
 ---
 
@@ -68,18 +68,18 @@ Community features are valuable for **retention** (keeping paying users engaged)
 
 Based on all research, here is the recommended investment priority:
 
-| Priority | Content Type | Effort | Impact on Conversions |
-|---|---|---|---|
-| 1 (Highest) | **Programmatic category/profile pages** | Medium (one-time engineering) | Very High (MentorCruise: 30k+ monthly visits) |
-| 2 | **SEO blog targeting commercial-intent keywords** | High (ongoing) | Very High (MentorCruise: 5x conversion rate) |
-| 3 | **Success stories / case studies page** | Medium | High (bottom-of-funnel trust) |
-| 4 | **Use case landing pages** (by role & challenge) | Medium | High (targeted conversion) |
-| 5 | **"For Enterprise/Teams" page** | Low | High (higher ACV deals) |
-| 6 | **Testimonials / Wall of Love** | Low | Medium (social proof) |
-| 7 | **Video library / workshops** | High | Medium |
-| 8 | **Glossary / educational content** | Medium | Medium (SEO long-tail) |
-| 9 | **Community (authenticated)** | High | Low for acquisition, high for retention |
-| 10 (Lowest) | **Public community forum** | High | Low (distraction risk) |
+| Priority    | Content Type                                      | Effort                        | Impact on Conversions                         |
+| ----------- | ------------------------------------------------- | ----------------------------- | --------------------------------------------- |
+| 1 (Highest) | **Programmatic category/profile pages**           | Medium (one-time engineering) | Very High (MentorCruise: 30k+ monthly visits) |
+| 2           | **SEO blog targeting commercial-intent keywords** | High (ongoing)                | Very High (MentorCruise: 5x conversion rate)  |
+| 3           | **Success stories / case studies page**           | Medium                        | High (bottom-of-funnel trust)                 |
+| 4           | **Use case landing pages** (by role & challenge)  | Medium                        | High (targeted conversion)                    |
+| 5           | **"For Enterprise/Teams" page**                   | Low                           | High (higher ACV deals)                       |
+| 6           | **Testimonials / Wall of Love**                   | Low                           | Medium (social proof)                         |
+| 7           | **Video library / workshops**                     | High                          | Medium                                        |
+| 8           | **Glossary / educational content**                | Medium                        | Medium (SEO long-tail)                        |
+| 9           | **Community (authenticated)**                     | High                          | Low for acquisition, high for retention       |
+| 10 (Lowest) | **Public community forum**                        | High                          | Low (distraction risk)                        |
 
 ---
 
@@ -87,33 +87,33 @@ Based on all research, here is the recommended investment priority:
 
 ### Tier 1: Essential (Every Platform Has These)
 
-| Page | Purpose | Who Does It Best |
-|---|---|---|
-| **Homepage** | Hero + value prop + social proof + CTA | All platforms |
-| **Browse/Search Consultants** | Core product experience | MentorCruise, Topmate |
-| **Pricing** | Convert consideration to purchase | GrowthMentor, Topmate |
-| **How It Works** | Reduce friction for new visitors | All platforms |
-| **Individual Consultant Profiles** | SEO + conversion (programmatic pages) | MentorCruise (30k+ organic visits from profiles alone) |
+| Page                               | Purpose                                | Who Does It Best                                       |
+| ---------------------------------- | -------------------------------------- | ------------------------------------------------------ |
+| **Homepage**                       | Hero + value prop + social proof + CTA | All platforms                                          |
+| **Browse/Search Consultants**      | Core product experience                | MentorCruise, Topmate                                  |
+| **Pricing**                        | Convert consideration to purchase      | GrowthMentor, Topmate                                  |
+| **How It Works**                   | Reduce friction for new visitors       | All platforms                                          |
+| **Individual Consultant Profiles** | SEO + conversion (programmatic pages)  | MentorCruise (30k+ organic visits from profiles alone) |
 
 ### Tier 2: High-Value Differentiation Pages
 
-| Page | Purpose | Who Does It Best |
-|---|---|---|
-| **Success Stories / Case Studies** | Trust-building, bottom-of-funnel | Preplaced, GrowthMentor ("Wall of Love", "Customer Stories") |
-| **For Enterprise / For Teams** | B2B upsell, higher ACV deals | MentorCruise ("Mentorship for Teams"), GrowthMentor ("For Teams", "For Venture Capital") |
-| **Use Case Pages** (by role/challenge) | SEO + targeted conversion | GrowthMentor (10+ use case pages by challenge type) |
-| **Category/Domain Pages** | Programmatic SEO | MentorCruise, Preplaced (domain-specific footer links) |
-| **Testimonials / Wall of Love** | Social proof aggregation | GrowthMentor |
+| Page                                   | Purpose                          | Who Does It Best                                                                         |
+| -------------------------------------- | -------------------------------- | ---------------------------------------------------------------------------------------- |
+| **Success Stories / Case Studies**     | Trust-building, bottom-of-funnel | Preplaced, GrowthMentor ("Wall of Love", "Customer Stories")                             |
+| **For Enterprise / For Teams**         | B2B upsell, higher ACV deals     | MentorCruise ("Mentorship for Teams"), GrowthMentor ("For Teams", "For Venture Capital") |
+| **Use Case Pages** (by role/challenge) | SEO + targeted conversion        | GrowthMentor (10+ use case pages by challenge type)                                      |
+| **Category/Domain Pages**              | Programmatic SEO                 | MentorCruise, Preplaced (domain-specific footer links)                                   |
+| **Testimonials / Wall of Love**        | Social proof aggregation         | GrowthMentor                                                                             |
 
 ### Tier 3: Content & Resources
 
-| Page | Purpose | Who Does It Best |
-|---|---|---|
-| **SEO Blog** | Top-of-funnel organic traffic | MentorCruise (2M+ visits/year from blog) |
-| **Video Library / Workshops** | Value demonstration | GrowthMentor |
-| **Glossary** | SEO long-tail keyword capture | GrowthMentor |
-| **Career Paths / Guides** | Educational content + SEO | MentorCruise ("Career Paths") |
-| **Live Events** | Community engagement + conversion | Preplaced, GrowthMentor |
+| Page                          | Purpose                           | Who Does It Best                         |
+| ----------------------------- | --------------------------------- | ---------------------------------------- |
+| **SEO Blog**                  | Top-of-funnel organic traffic     | MentorCruise (2M+ visits/year from blog) |
+| **Video Library / Workshops** | Value demonstration               | GrowthMentor                             |
+| **Glossary**                  | SEO long-tail keyword capture     | GrowthMentor                             |
+| **Career Paths / Guides**     | Educational content + SEO         | MentorCruise ("Career Paths")            |
+| **Live Events**               | Community engagement + conversion | Preplaced, GrowthMentor                  |
 
 ---
 

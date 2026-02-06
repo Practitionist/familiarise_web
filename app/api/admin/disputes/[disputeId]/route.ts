@@ -1,9 +1,8 @@
-import { getServerSession } from "next-auth";
 import { NextRequest, NextResponse } from "next/server";
-import authOptions from "../../../auth/[...nextauth]/options";
 import prisma from "@/lib/prisma";
 import { UserRole } from "@prisma/client";
 
+import { getSession } from "@/lib/auth-server";
 interface RouteParams {
   params: Promise<{
     disputeId: string;
@@ -13,7 +12,7 @@ interface RouteParams {
 export async function GET(req: NextRequest, { params }: RouteParams) {
   try {
     // Check authentication
-    const session = await getServerSession(authOptions);
+    const session = await getSession();
     if (!session?.user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }

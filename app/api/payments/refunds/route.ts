@@ -3,15 +3,14 @@
  * Handles refund creation, retrieval, and listing
  */
 
-import authOptions from "@/app/api/auth/[...nextauth]/options";
 import { createRefund, listRefunds } from "@/lib/payments";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import crypto from "crypto";
-import { getServerSession } from "next-auth";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { getSession } from "@/lib/auth-server";
 // ============================================================================
 // Validation Schemas
 // ============================================================================
@@ -34,7 +33,7 @@ const getRefundsSchema = z.object({
 export async function POST(req: NextRequest) {
   try {
     // Authentication
-    const session = await getServerSession(authOptions);
+    const session = await getSession();
     if (!session?.user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -201,7 +200,7 @@ export async function POST(req: NextRequest) {
 export async function GET(req: NextRequest) {
   try {
     // Authentication
-    const session = await getServerSession(authOptions);
+    const session = await getSession();
     if (!session?.user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }

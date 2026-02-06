@@ -1,13 +1,12 @@
 import prisma from "lib/prisma";
-import { getServerSession } from "next-auth";
 import { NextRequest, NextResponse } from "next/server";
-import authOptions from "../../auth/[...nextauth]/options";
 import { notifyFeedbackReceived } from "@/lib/novu";
 import { CreateFeedbackSchema } from "@/schemas/feedbacks";
 
+import { getSession } from "@/lib/auth-server";
 export async function GET() {
   try {
-    const session = await getServerSession(authOptions);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "You must be logged in to access your feedback" },
@@ -39,7 +38,7 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   try {
-    const session = await getServerSession(authOptions);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "You must be logged in to submit feedback" },

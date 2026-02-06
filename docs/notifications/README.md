@@ -41,56 +41,56 @@ graph TD
 
 ### Backend Services
 
-| File | Purpose |
-|------|---------|
-| `lib/novu/client.ts` | Singleton Novu client, `isNovuConfigured()` guard |
-| `lib/novu/service.ts` | 20+ trigger functions: `notifyAppointmentBooked`, `notifyPaymentSuccess`, etc. |
-| `lib/novu/workflows.ts` | 27 workflow ID constants + 16 typed payload interfaces |
-| `lib/novu/subscriber.ts` | `syncSubscriber`, `updateSubscriberPreferences`, `deleteSubscriber` |
-| `lib/email.ts` | 6 Resend email functions (welcome, password reset, account linked, payment link/success/failed) |
-| `lib/waitlist/notifications.ts` | 4 waitlist-specific Resend emails (joined, spot available, expiring, expired) |
+| File                            | Purpose                                                                                         |
+| ------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `lib/novu/client.ts`            | Singleton Novu client, `isNovuConfigured()` guard                                               |
+| `lib/novu/service.ts`           | 20+ trigger functions: `notifyAppointmentBooked`, `notifyPaymentSuccess`, etc.                  |
+| `lib/novu/workflows.ts`         | 27 workflow ID constants + 16 typed payload interfaces                                          |
+| `lib/novu/subscriber.ts`        | `syncSubscriber`, `updateSubscriberPreferences`, `deleteSubscriber`                             |
+| `lib/email.ts`                  | 6 Resend email functions (welcome, password reset, account linked, payment link/success/failed) |
+| `lib/waitlist/notifications.ts` | 4 waitlist-specific Resend emails (joined, spot available, expiring, expired)                   |
 
 ### Frontend
 
-| File | Purpose |
-|------|---------|
-| `providers/NovuProvider.tsx` | Client-side Novu SDK wrapper, auth-gated |
+| File                             | Purpose                                                       |
+| -------------------------------- | ------------------------------------------------------------- |
+| `providers/NovuProvider.tsx`     | Client-side Novu SDK wrapper, auth-gated                      |
 | `hooks/useNovuSubscriberSync.ts` | Auto-syncs user to Novu on dashboard mount (30-min staleTime) |
 
 ### API Routes
 
-| Route | Method | Purpose |
-|-------|--------|---------|
-| `/api/novu/subscriber` | POST | Syncs authenticated user to Novu as subscriber |
-| `/api/novu/preferences` | GET | Returns user's notification preferences (with defaults) |
-| `/api/novu/preferences` | PUT | Updates notification preferences, syncs channel prefs to Novu |
+| Route                   | Method | Purpose                                                       |
+| ----------------------- | ------ | ------------------------------------------------------------- |
+| `/api/novu/subscriber`  | POST   | Syncs authenticated user to Novu as subscriber                |
+| `/api/novu/preferences` | GET    | Returns user's notification preferences (with defaults)       |
+| `/api/novu/preferences` | PUT    | Updates notification preferences, syncs channel prefs to Novu |
 
 ### Email Templates (`emails/`)
 
-| Template | Category | Sent Via |
-|----------|----------|----------|
-| `auth/WelcomeEmail.tsx` | Auth | Resend direct |
-| `auth/PasswordResetEmail.tsx` | Auth | Resend direct |
-| `auth/AccountLinkedEmail.tsx` | Auth | Resend direct |
-| `payments/PaymentLinkEmail.tsx` | Payments | Resend direct |
-| `payments/PaymentSuccessEmail.tsx` | Payments | Resend direct |
-| `payments/PaymentFailedEmail.tsx` | Payments | Resend direct |
-| `waitlist/WaitlistJoinedEmail.tsx` | Waitlist | Resend direct |
+| Template                                  | Category | Sent Via      |
+| ----------------------------------------- | -------- | ------------- |
+| `auth/WelcomeEmail.tsx`                   | Auth     | Resend direct |
+| `auth/PasswordResetEmail.tsx`             | Auth     | Resend direct |
+| `auth/AccountLinkedEmail.tsx`             | Auth     | Resend direct |
+| `payments/PaymentLinkEmail.tsx`           | Payments | Resend direct |
+| `payments/PaymentSuccessEmail.tsx`        | Payments | Resend direct |
+| `payments/PaymentFailedEmail.tsx`         | Payments | Resend direct |
+| `waitlist/WaitlistJoinedEmail.tsx`        | Waitlist | Resend direct |
 | `waitlist/WaitlistSpotAvailableEmail.tsx` | Waitlist | Resend direct |
-| `waitlist/WaitlistExpiringEmail.tsx` | Waitlist | Resend direct |
-| `waitlist/WaitlistExpiredEmail.tsx` | Waitlist | Resend direct |
+| `waitlist/WaitlistExpiringEmail.tsx`      | Waitlist | Resend direct |
+| `waitlist/WaitlistExpiredEmail.tsx`       | Waitlist | Resend direct |
 
 ### Schemas
 
-| File | Purpose |
-|------|---------|
+| File              | Purpose                                                              |
+| ----------------- | -------------------------------------------------------------------- |
 | `schemas/user.ts` | `NotificationPreferenceSchema`, `NotificationPreferenceUpdateSchema` |
 
 ## Quick Navigation
 
-| I want to... | Go to |
-|--------------|-------|
-| Understand the dual-layer architecture | [01-architecture.md](./01-architecture.md) |
-| See all 27 workflows and API endpoints | [02-workflows-and-api.md](./02-workflows-and-api.md) |
-| Understand the payment system | [../payments/architecture.md](../payments/architecture.md) |
-| Check the database schema | [../../prisma/schema.prisma](../../prisma/schema.prisma) |
+| I want to...                           | Go to                                                      |
+| -------------------------------------- | ---------------------------------------------------------- |
+| Understand the dual-layer architecture | [01-architecture.md](./01-architecture.md)                 |
+| See all 27 workflows and API endpoints | [02-workflows-and-api.md](./02-workflows-and-api.md)       |
+| Understand the payment system          | [../payments/architecture.md](../payments/architecture.md) |
+| Check the database schema              | [../../prisma/schema.prisma](../../prisma/schema.prisma)   |

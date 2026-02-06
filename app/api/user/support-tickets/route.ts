@@ -1,13 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "lib/prisma";
-import { getServerSession } from "next-auth";
-import authOptions from "../../auth/[...nextauth]/options";
 import { notifySupportTicketCreated } from "@/lib/novu";
 import { CreateSupportTicketSchema } from "@/schemas/support";
 
+import { getSession } from "@/lib/auth-server";
 export async function GET() {
   try {
-    const session = await getServerSession(authOptions);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "You must be logged in to access your support tickets" },
@@ -63,7 +62,7 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   try {
-    const session = await getServerSession(authOptions);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "You must be logged in to create a support ticket" },

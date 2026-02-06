@@ -72,7 +72,8 @@ export default function SubscriptionCheckoutPage({
     null,
   );
   const [discountCodeInput, setDiscountCodeInput] = useState("");
-  const [appliedDiscount, setAppliedDiscount] = useState<AppliedDiscount | null>(null);
+  const [appliedDiscount, setAppliedDiscount] =
+    useState<AppliedDiscount | null>(null);
   const [isApplyingDiscount, setIsApplyingDiscount] = useState(false);
   const [discountError, setDiscountError] = useState<string | null>(null);
 
@@ -372,7 +373,6 @@ export default function SubscriptionCheckoutPage({
   const consultantDetails = planData?.data.consultantProfile;
   const userDetails = planData?.data.consultantProfile.user;
 
-
   return (
     <>
       <div className="flex flex-col gap-6 border-r border-zinc-300 bg-gradient-to-br from-zinc-200 via-zinc-100 to-gray-200 p-8">
@@ -566,9 +566,7 @@ export default function SubscriptionCheckoutPage({
             <div className="grid gap-2">
               <div className="flex items-center justify-between">
                 <div>Monthly Fee</div>
-                <div>
-                  {formatPrice(planData?.data?.price || 100)}
-                </div>
+                <div>{formatPrice(planData?.data?.price || 100)}</div>
               </div>
               <div className="flex items-center justify-between">
                 <div className="flex items-center">

@@ -276,9 +276,7 @@ describe("Schedule Validation", () => {
       );
 
       expect(result.isValid).toBe(false);
-      expect(result.errorMessage).toBe(
-        "Start and end time cannot be the same",
-      );
+      expect(result.errorMessage).toBe("Start and end time cannot be the same");
     });
   });
 
@@ -293,9 +291,7 @@ describe("Schedule Validation", () => {
       );
 
       expect(result.isValid).toBe(false);
-      expect(result.errorMessage).toBe(
-        "Please select both start and end time",
-      );
+      expect(result.errorMessage).toBe("Please select both start and end time");
     });
 
     it("should handle empty end time", () => {
@@ -305,9 +301,7 @@ describe("Schedule Validation", () => {
       );
 
       expect(result.isValid).toBe(false);
-      expect(result.errorMessage).toBe(
-        "Please select both start and end time",
-      );
+      expect(result.errorMessage).toBe("Please select both start and end time");
     });
 
     it("should handle both times empty", () => {

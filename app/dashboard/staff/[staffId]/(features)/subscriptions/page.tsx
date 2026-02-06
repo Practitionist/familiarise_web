@@ -31,7 +31,10 @@ import {
   Users,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import type { SubscriptionListItem, SubscriptionListResponse } from "@/types/subscriptions";
+import type {
+  SubscriptionListItem,
+  SubscriptionListResponse,
+} from "@/types/subscriptions";
 
 const getStatusColor = (status: string) => {
   switch (status.toLowerCase()) {
@@ -78,7 +81,9 @@ const formatDate = (dateString: string | null) => {
 
 export default function StaffSubscriptionsPage() {
   const { toast } = useToast();
-  const [subscriptions, setSubscriptions] = useState<SubscriptionListItem[]>([]);
+  const [subscriptions, setSubscriptions] = useState<SubscriptionListItem[]>(
+    [],
+  );
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");

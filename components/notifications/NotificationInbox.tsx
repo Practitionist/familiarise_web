@@ -3,7 +3,7 @@
 import { Inbox } from "@novu/nextjs";
 import { Bell } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useSession } from "next-auth/react";
+import { useSession } from "@/lib/auth-client";
 
 const NOVU_APP_ID = process.env.NEXT_PUBLIC_NOVU_APP_ID;
 

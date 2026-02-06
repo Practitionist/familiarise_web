@@ -9,8 +9,6 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import authOptions from "@/app/api/auth/[...nextauth]/options";
 import prisma from "@/lib/prisma";
 import { UserRole } from "@prisma/client";
 
@@ -58,6 +56,7 @@ import { reconcileDocumentStorage } from "@/scripts/cleanup/reconcile-document-s
 // Alerts
 import { alertOrphanedPayments } from "@/scripts/alerts/alert-orphaned-payments";
 
+import { getSession } from "@/lib/auth-server";
 // Job ID to function mapping
 type JobResult = {
   success: boolean;
@@ -336,7 +335,7 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
 export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
     // 1. Verify session
-    const session = await getServerSession(authOptions);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }

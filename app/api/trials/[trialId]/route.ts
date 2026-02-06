@@ -1,8 +1,15 @@
 import prisma from "@/lib/prisma";
 import { TrialSessionStatus, AppointmentsType, Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
-import { logTrialCompleted, logTrialScheduled } from "@/lib/activity/log-activity";
-import { lockTrialSlot, unlockTrialSlot, ApprovalLock } from "@/utils/appointmentlock";
+import {
+  logTrialCompleted,
+  logTrialScheduled,
+} from "@/lib/activity/log-activity";
+import {
+  lockTrialSlot,
+  unlockTrialSlot,
+  ApprovalLock,
+} from "@/utils/appointmentlock";
 import {
   notifyTrialSessionScheduled,
   notifyTrialSessionCompleted,
@@ -66,7 +73,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
     if (!trialSession) {
       return NextResponse.json(
         { error: "Trial session not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
@@ -75,11 +82,10 @@ export async function GET(request: NextRequest, context: RouteContext) {
     console.error("Error fetching trial session:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching trial session" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
-
 
 /**
  * Validates that a time slot is still available (no overlapping appointments)
@@ -87,7 +93,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
 async function validateSlotAvailability(
   consultantProfileId: string,
   startsAt: string,
-  endsAt: string
+  endsAt: string,
 ): Promise<boolean> {
   const startTime = new Date(startsAt);
   const endTime = new Date(endsAt);
@@ -135,10 +141,7 @@ async function validateSlotAvailability(
         ],
       },
       // Check for time overlap
-      AND: [
-        { startsAt: { lt: endTime } },
-        { endsAt: { gt: startTime } },
-      ],
+      AND: [{ startsAt: { lt: endTime } }, { endsAt: { gt: startTime } }],
     },
   });
 
@@ -158,7 +161,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     if (!parseResult.success) {
       return NextResponse.json(
         { error: "Validation failed", details: parseResult.error.issues },
-        { status: 400 }
+        { status: 400 },
       );
     }
     const { status, scheduledTime, slotData, notes } = parseResult.data;
@@ -185,7 +188,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     if (!existingTrial) {
       return NextResponse.json(
         { error: "Trial session not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
@@ -199,20 +202,21 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     if (status) {
       // Simplified state machine: PENDING → SCHEDULED → COMPLETED → CONVERTED
       // REJECTED = consultant declines, CANCELLED = consultee cancels
-      const validTransitions: Record<TrialSessionStatus, TrialSessionStatus[]> = {
-        PENDING: ["SCHEDULED", "CANCELLED", "REJECTED"],
-        SCHEDULED: ["COMPLETED", "CANCELLED"],
-        COMPLETED: ["CONVERTED"],
-        CONVERTED: [],
-        CANCELLED: [],
-        REJECTED: [],
-      };
+      const validTransitions: Record<TrialSessionStatus, TrialSessionStatus[]> =
+        {
+          PENDING: ["SCHEDULED", "CANCELLED", "REJECTED"],
+          SCHEDULED: ["COMPLETED", "CANCELLED"],
+          COMPLETED: ["CONVERTED"],
+          CONVERTED: [],
+          CANCELLED: [],
+          REJECTED: [],
+        };
 
       const currentStatus = existingTrial.status;
       if (!validTransitions[currentStatus]?.includes(status)) {
         return NextResponse.json(
           { error: `Cannot transition from ${currentStatus} to ${status}` },
-          { status: 400 }
+          { status: 400 },
         );
       }
 
@@ -223,8 +227,11 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         // Support both new slotData and legacy scheduledTime
         if (!slotData && !scheduledTime) {
           return NextResponse.json(
-            { error: "slotData or scheduledTime is required when scheduling a trial" },
-            { status: 400 }
+            {
+              error:
+                "slotData or scheduledTime is required when scheduling a trial",
+            },
+            { status: 400 },
           );
         }
 
@@ -236,7 +243,8 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
           endTime = new Date(slotData.endsAt);
         } else {
           startTime = new Date(scheduledTime!);
-          const durationMinutes = existingTrial.subscriptionPlan.freeTrialDurationMinutes;
+          const durationMinutes =
+            existingTrial.subscriptionPlan.freeTrialDurationMinutes;
           endTime = new Date(startTime.getTime() + durationMinutes * 60 * 1000);
         }
 
@@ -245,12 +253,15 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         try {
           lock = await lockTrialSlot(
             existingTrial.consultantProfileId,
-            startTime.toISOString()
+            startTime.toISOString(),
           );
         } catch {
           return NextResponse.json(
-            { error: "This time slot is currently being processed. Please try again." },
-            { status: 423 } // Locked
+            {
+              error:
+                "This time slot is currently being processed. Please try again.",
+            },
+            { status: 423 }, // Locked
           );
         }
 
@@ -259,13 +270,16 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
           const isAvailable = await validateSlotAvailability(
             existingTrial.consultantProfileId,
             startTime.toISOString(),
-            endTime.toISOString()
+            endTime.toISOString(),
           );
 
           if (!isAvailable) {
             return NextResponse.json(
-              { error: "Selected slot is no longer available. Please choose a different time." },
-              { status: 409 }
+              {
+                error:
+                  "Selected slot is no longer available. Please choose a different time.",
+              },
+              { status: 409 },
             );
           }
 
@@ -353,14 +367,15 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
               image: existingTrial.consulteeProfile.user.image,
             },
             existingTrial.subscriptionPlan.title,
-            startTime
+            startTime,
           );
 
           // Notify the consultee that their trial has been scheduled
           void notifyTrialSessionScheduled(
             existingTrial.consulteeProfile.user.id,
             {
-              consultantName: existingTrial.consultantProfile.user.name || "Consultant",
+              consultantName:
+                existingTrial.consultantProfile.user.name || "Consultant",
               consulteeName: existingTrial.consulteeProfile.user.name || "User",
               planTitle: existingTrial.subscriptionPlan.title,
               dateTime: startTime.toISOString(),
@@ -391,7 +406,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
             name: existingTrial.consulteeProfile.user.name,
             image: existingTrial.consulteeProfile.user.image,
           },
-          existingTrial.subscriptionPlan.title
+          existingTrial.subscriptionPlan.title,
         );
 
         // Notify both parties that the trial is completed
@@ -401,7 +416,8 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
             existingTrial.consulteeProfile.user.id,
           ],
           {
-            consultantName: existingTrial.consultantProfile.user.name || "Consultant",
+            consultantName:
+              existingTrial.consultantProfile.user.name || "Consultant",
             consulteeName: existingTrial.consulteeProfile.user.name || "User",
             planTitle: existingTrial.subscriptionPlan.title,
             status: TrialSessionStatus.COMPLETED,
@@ -411,14 +427,18 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       }
 
       // Handle cancellation / rejection
-      if (status === TrialSessionStatus.CANCELLED || status === TrialSessionStatus.REJECTED) {
+      if (
+        status === TrialSessionStatus.CANCELLED ||
+        status === TrialSessionStatus.REJECTED
+      ) {
         void notifyTrialSessionCancelled(
           [
             existingTrial.consultantProfile.user.id,
             existingTrial.consulteeProfile.user.id,
           ],
           {
-            consultantName: existingTrial.consultantProfile.user.name || "Consultant",
+            consultantName:
+              existingTrial.consultantProfile.user.name || "Consultant",
             consulteeName: existingTrial.consulteeProfile.user.name || "User",
             planTitle: existingTrial.subscriptionPlan.title,
             status,
@@ -476,7 +496,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     console.error("Error updating trial session:", error);
     return NextResponse.json(
       { error: "An error occurred while updating trial session" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -496,7 +516,7 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     if (!existingTrial) {
       return NextResponse.json(
         { error: "Trial session not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
@@ -509,7 +529,7 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     if (!cancellableStatuses.includes(existingTrial.status)) {
       return NextResponse.json(
         { error: `Cannot cancel a trial in ${existingTrial.status} status` },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -524,7 +544,7 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     console.error("Error cancelling trial session:", error);
     return NextResponse.json(
       { error: "An error occurred while cancelling trial session" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

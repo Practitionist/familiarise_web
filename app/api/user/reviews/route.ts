@@ -115,16 +115,13 @@ export async function POST(req: NextRequest) {
     });
 
     // Notify the consultant about the new review
-    void notifyNewReview(
-      newReview.consultantProfile.userId,
-      {
-        reviewerName: newReview.consulteeProfile?.user?.name || "User",
-        rating: newReview.rating,
-        comment: newReview.reviewDescription || undefined,
-        planTitle: undefined,
-        dashboardUrl: "/dashboard/consultant/reviews",
-      },
-    );
+    void notifyNewReview(newReview.consultantProfile.userId, {
+      reviewerName: newReview.consulteeProfile?.user?.name || "User",
+      rating: newReview.rating,
+      comment: newReview.reviewDescription || undefined,
+      planTitle: undefined,
+      dashboardUrl: "/dashboard/consultant/reviews",
+    });
 
     return NextResponse.json(newReview, { status: 201 });
   } catch (error) {

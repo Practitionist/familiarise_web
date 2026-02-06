@@ -150,8 +150,15 @@ export function PendingPaymentsWidget({
                 size="sm"
                 className="bg-amber-600 hover:bg-amber-700 text-white"
                 onClick={() => {
-                  if (payment.paymentUrl && /^https?:\/\//.test(payment.paymentUrl)) {
-                    window.open(payment.paymentUrl, "_blank", "noopener,noreferrer");
+                  if (
+                    payment.paymentUrl &&
+                    /^https?:\/\//.test(payment.paymentUrl)
+                  ) {
+                    window.open(
+                      payment.paymentUrl,
+                      "_blank",
+                      "noopener,noreferrer",
+                    );
                   }
                 }}
               >

@@ -420,11 +420,10 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
         consultantProfileData?.user?.name || "Consultant";
       const consultantUserId = consultantProfileData?.user?.id;
 
-      const planTitle =
-        appointmentForNotif?.consultation?.consultationPlan?.consultantProfile
-          ?.user?.name
-          ? metadata.appointmentType
-          : metadata.appointmentType || "Appointment";
+      const planTitle = appointmentForNotif?.consultation?.consultationPlan
+        ?.consultantProfile?.user?.name
+        ? metadata.appointmentType
+        : metadata.appointmentType || "Appointment";
 
       const dashboardUrl = `${process.env.NEXT_PUBLIC_APP_URL}/dashboard`;
 
@@ -544,7 +543,8 @@ export async function handlePaymentFailure(paymentIntentId: string) {
           ?.user;
 
       const consultantName = consultantUser?.name || "Consultant";
-      const appointmentType = payment.appointment?.appointmentType || "CONSULTATION";
+      const appointmentType =
+        payment.appointment?.appointmentType || "CONSULTATION";
 
       void notifyPaymentFailed(payment.userId, {
         amount: payment.amount,

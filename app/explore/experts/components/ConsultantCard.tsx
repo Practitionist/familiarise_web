@@ -174,7 +174,9 @@ export const ConsultantCard = memo(function ConsultantCard({
               <ConsultantInfo
                 icon={Clock}
                 label="Experience"
-                value={consultant.experience ? `${consultant.experience}` : null}
+                value={
+                  consultant.experience ? `${consultant.experience}` : null
+                }
               />
               <ConsultantInfo
                 icon={MapPin}
@@ -183,7 +185,6 @@ export const ConsultantCard = memo(function ConsultantCard({
               />
             </div>
           </div>
-
 
           {/* Tags */}
           <div className="flex flex-wrap gap-2">
@@ -235,7 +236,10 @@ export const ConsultantCard = memo(function ConsultantCard({
                     key={`${consultant.id}-tab-content-${plan.id}`}
                     value={plan.durationInMonths.toString()}
                   >
-                    <SubscriptionPlanCard plan={plan} formatPrice={formatPrice} />
+                    <SubscriptionPlanCard
+                      plan={plan}
+                      formatPrice={formatPrice}
+                    />
                   </TabsContent>
                 ))}
               </Tabs>
