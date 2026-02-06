@@ -167,9 +167,9 @@ export class SlotAllocationService {
             const firstBad = slotsOutsidePeriod[0];
             throw new Error(
               `Cannot allocate slots outside scheduling period. ` +
-                `Period: ${config.schedulingPeriodStartsAt.toISOString()} to ${config.schedulingPeriodEndsAt.toISOString()}. ` +
-                `Found slot at: ${firstBad.toISOString()} (${firstBad < config.schedulingPeriodStartsAt! ? "before start" : "after end"}). ` +
-                `Total violations: ${slotsOutsidePeriod.length}`,
+              `Period: ${config.schedulingPeriodStartsAt.toISOString()} to ${config.schedulingPeriodEndsAt.toISOString()}. ` +
+              `Found slot at: ${firstBad.toISOString()} (${firstBad < config.schedulingPeriodStartsAt! ? "before start" : "after end"}). ` +
+              `Total violations: ${slotsOutsidePeriod.length}`,
             );
           }
         }
@@ -211,7 +211,7 @@ export class SlotAllocationService {
         };
       },
       {
-        timeout: 60000, // 60 seconds - handles large allocations (200+ slots)
+        timeout: 120000, // 120 seconds (2 min) - handles large allocations (200+ slots)
       },
     );
   }
@@ -265,7 +265,7 @@ export class SlotAllocationService {
         if (uniqueSlots.length !== slots.length) {
           throw new Error(
             `Duplicate slots detected: ${slots.length} slots provided but only ` +
-              `${uniqueSlots.length} are unique. Each slot can only be selected once.`,
+            `${uniqueSlots.length} are unique. Each slot can only be selected once.`,
           );
         }
 
@@ -280,8 +280,8 @@ export class SlotAllocationService {
             config.sessionDurationInHours || config.durationInHours || 1;
           throw new Error(
             `Invalid slot count: ${slots.length} slots provided, but ${sessionDuration}-hour ` +
-              `sessions require multiples of ${slotsPerCall} slots (30 minutes each). ` +
-              `Valid counts: ${slotsPerCall}, ${slotsPerCall * 2}, ${slotsPerCall * 3}, etc.`,
+            `sessions require multiples of ${slotsPerCall} slots (30 minutes each). ` +
+            `Valid counts: ${slotsPerCall}, ${slotsPerCall * 2}, ${slotsPerCall * 3}, etc.`,
           );
         }
 
@@ -323,7 +323,7 @@ export class SlotAllocationService {
         };
       },
       {
-        timeout: 60000, // 60 seconds - handles large allocations (200+ slots)
+        timeout: 120000, // 120 seconds (2 min) - handles large allocations (200+ slots)
       },
     );
   }
@@ -377,8 +377,8 @@ export class SlotAllocationService {
         if (existingAppointments.length === 0) {
           throw new Error(
             "Cannot approve requested slots: No appointments found. " +
-              "The consultee may not have created appointments yet, or they were deleted. " +
-              "Please ask the consultee to resubmit their request.",
+            "The consultee may not have created appointments yet, or they were deleted. " +
+            "Please ask the consultee to resubmit their request.",
           );
         }
 
@@ -391,8 +391,8 @@ export class SlotAllocationService {
         if (existingSlotCount !== requestedSlots.length) {
           throw new Error(
             `Appointment mismatch: Found ${existingSlotCount} slots in appointments ` +
-              `but ${requestedSlots.length} requested slots. ` +
-              `The appointments may have been modified. Please review and try again.`,
+            `but ${requestedSlots.length} requested slots. ` +
+            `The appointments may have been modified. Please review and try again.`,
           );
         }
 
@@ -436,7 +436,7 @@ export class SlotAllocationService {
         };
       },
       {
-        timeout: 60000, // 60 seconds - handles large allocations (200+ slots)
+        timeout: 120000, // 120 seconds (2 min) - handles large allocations (200+ slots)
       },
     );
   }
@@ -805,8 +805,8 @@ export class SlotAllocationService {
     if (slots.length % slotsPerCall !== 0) {
       throw new Error(
         `INTERNAL ERROR: Cannot create appointments - ${slots.length} slots ` +
-          `cannot be evenly divided into ${slotsPerCall}-slot sessions. ` +
-          `This indicates a validation bug.`,
+        `cannot be evenly divided into ${slotsPerCall}-slot sessions. ` +
+        `This indicates a validation bug.`,
       );
     }
 
@@ -823,7 +823,7 @@ export class SlotAllocationService {
     ) {
       throw new Error(
         `INTERNAL ERROR: ${eventType} should create exactly 1 appointment, but ${calls.length} were grouped. ` +
-          `This indicates non-consecutive slots were provided. Slots: ${slots.map((s) => s.toISOString()).join(", ")}`,
+        `This indicates non-consecutive slots were provided. Slots: ${slots.map((s) => s.toISOString()).join(", ")}`,
       );
     }
 
@@ -1025,9 +1025,9 @@ export class SlotAllocationService {
         const sessionDuration =
           classContents.length > 0
             ? classContents.reduce(
-                (sum: number, c: any) => sum + c.hoursAllotted,
-                0,
-              ) / classContents.length
+              (sum: number, c: any) => sum + c.hoursAllotted,
+              0,
+            ) / classContents.length
             : event.classPlan?.sessionDurationInHours || 1;
 
         config = {
@@ -1050,8 +1050,8 @@ export class SlotAllocationService {
       if (config.schedulingPeriodStartsAt >= config.schedulingPeriodEndsAt) {
         throw new Error(
           `Invalid date range: schedulingPeriodStartsAt (${config.schedulingPeriodStartsAt.toISOString()}) ` +
-            `must be before schedulingPeriodEndsAt (${config.schedulingPeriodEndsAt.toISOString()}). ` +
-            `Please check the ${eventType} configuration.`,
+          `must be before schedulingPeriodEndsAt (${config.schedulingPeriodEndsAt.toISOString()}). ` +
+          `Please check the ${eventType} configuration.`,
         );
       }
     }

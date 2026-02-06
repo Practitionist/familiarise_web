@@ -143,12 +143,15 @@ export class AllocationAlgorithms {
           };
         }
 
+        // Calculate slotsPerWeek based on actual session duration
+        // slotsPerSession = sessionDurationInHours / 0.5 (since each slot is 30 min)
+        // slotsPerWeek = callsPerWeek * slotsPerSession
+        const slotsPerSession = Math.ceil((options.sessionDurationInHours || 1) / 0.5);
+        const slotsPerWeek = options.callsPerWeek * slotsPerSession;
+
         const distributionValidation = validateSlotDistribution(
           selectedSlots,
-          // Since we are storing the selectedSlots in 30 min sloting we need to pass the 
-          // callsPerWeek * 2 to the validateSlotDistribution function 
-          // Because callsPerWeek is measuring in 1 hour slots
-          options.callsPerWeek * 2,
+          slotsPerWeek,
         );
 
         if (!distributionValidation.isValid) {

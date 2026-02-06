@@ -77,17 +77,17 @@ function isDateInSchedulingPeriod(
   );
   const startOnly = allowedStart
     ? new Date(
-        allowedStart.getFullYear(),
-        allowedStart.getMonth(),
-        allowedStart.getDate(),
-      )
+      allowedStart.getFullYear(),
+      allowedStart.getMonth(),
+      allowedStart.getDate(),
+    )
     : null;
   const endOnly = allowedEnd
     ? new Date(
-        allowedEnd.getFullYear(),
-        allowedEnd.getMonth(),
-        allowedEnd.getDate(),
-      )
+      allowedEnd.getFullYear(),
+      allowedEnd.getMonth(),
+      allowedEnd.getDate(),
+    )
     : null;
 
   if (startOnly && dateOnly < startOnly) return false;
@@ -416,7 +416,7 @@ export function UnifiedCalendar({
     maxTotalCalls:
       eventType === "subscription" && allowedStart && allowedEnd && callsPerWeek
         ? countSundayWeeksInclusive(allowedStart, allowedEnd) *
-          (callsPerWeek || 1)
+        (callsPerWeek || 1)
         : undefined,
     onSuccess: handleAllocationSuccess,
   });
@@ -692,6 +692,19 @@ export function UnifiedCalendar({
         } else {
           // Add: build auto-expanded consecutive group
           const expandedGroup = buildAutoExpandGroup(slot, date);
+
+          // Block selection if we can't find enough consecutive slots for a complete session
+          const requiredSlots = slotLimits.slotsPerSession;
+          if (requiredSlots > 1 && expandedGroup.length < requiredSlots) {
+            const sessionHours = (requiredSlots * 30) / 60; // Convert slots to hours
+            toast({
+              variant: "destructive",
+              title: "Not enough consecutive slots",
+              description: `Each session requires ${sessionHours} hours (${requiredSlots} consecutive slots). Only ${expandedGroup.length} available here.`,
+            });
+            return;
+          }
+
           toggleSlot(slot, expandedGroup);
         }
       }
@@ -701,6 +714,7 @@ export function UnifiedCalendar({
       getSlotStatusForInterval,
       toggleSlot,
       buildAutoExpandGroup,
+      slotLimits,
       // Dependencies used inside the callback
       eventType,
       eventId,
@@ -966,14 +980,12 @@ export function UnifiedCalendar({
             return (
               <div
                 key={date.toISOString()}
-                className={`min-h-[100px] border p-1 flex flex-col ${
-                  isCurrentDay ? "ring-2 ring-primary" : ""
-                } ${isPastDay ? "bg-gray-100 text-gray-400" : "bg-white"}`}
+                className={`min-h-[100px] border p-1 flex flex-col ${isCurrentDay ? "ring-2 ring-primary" : ""
+                  } ${isPastDay ? "bg-gray-100 text-gray-400" : "bg-white"}`}
               >
                 <div
-                  className={`font-bold mb-1 text-xs ${
-                    isCurrentDay ? "text-primary" : ""
-                  } ${isPastDay ? "" : "text-gray-700"}`}
+                  className={`font-bold mb-1 text-xs ${isCurrentDay ? "text-primary" : ""
+                    } ${isPastDay ? "" : "text-gray-700"}`}
                 >
                   {i + 1}
                 </div>
@@ -1148,14 +1160,12 @@ export function UnifiedCalendar({
               return (
                 <div
                   key={DAYS[index]}
-                  className={`text-center p-1 md:p-2 ${
-                    isInPeriod ? "bg-blue-50 border-x-2 border-blue-200" : ""
-                  }`}
+                  className={`text-center p-1 md:p-2 ${isInPeriod ? "bg-blue-50 border-x-2 border-blue-200" : ""
+                    }`}
                 >
                   <div
-                    className={`font-bold text-xs md:text-base ${
-                      isToday ? "text-primary" : ""
-                    }`}
+                    className={`font-bold text-xs md:text-base ${isToday ? "text-primary" : ""
+                      }`}
                   >
                     {DAYS[index].slice(0, 3)}
                   </div>
