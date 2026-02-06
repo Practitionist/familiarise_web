@@ -1,11 +1,10 @@
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import authOptions from "@/app/api/auth/[...nextauth]/options";
 import { ConsultationPlanSchema } from "@/schemas/plans";
 import { findOrCreateTopics, transformTopicsToStrings } from "@/lib/topics";
 
+import { getSession } from "@/lib/auth-server";
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ consultationPlanId: string }> },
@@ -63,7 +62,7 @@ export async function PUT(
 ) {
   try {
     // Authentication check
-    const session = await getServerSession(authOptions);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "Authentication required" },
@@ -184,7 +183,7 @@ export async function DELETE(
 ) {
   try {
     // Authentication check
-    const session = await getServerSession(authOptions);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "Authentication required" },

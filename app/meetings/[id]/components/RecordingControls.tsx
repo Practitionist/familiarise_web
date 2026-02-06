@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useCall } from "@stream-io/video-react-sdk";
-import { useSession } from "next-auth/react";
+import { useSession } from "@/lib/auth-client";
 import { Circle, Square, Loader2 } from "lucide-react";
 import { cn } from "@/utils/tailwind";
 import { useToast } from "@/hooks/use-toast";

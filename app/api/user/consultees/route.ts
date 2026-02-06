@@ -1,8 +1,25 @@
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
+import {
+  requireApiAuth,
+  isPrivileged,
+  forbiddenResponse,
+} from "@/lib/auth-helpers";
 
 export async function GET(request: NextRequest) {
   try {
+    // Require authentication
+    const authResult = await requireApiAuth();
+    if (authResult.error) return authResult.error;
+    const { session } = authResult;
+
+    // Only ADMIN/STAFF can list all consultees
+    if (!isPrivileged(session.user.role)) {
+      return forbiddenResponse(
+        "Only administrators and staff can list all consultees"
+      );
+    }
+
     const searchParams = request.nextUrl.searchParams;
     const page = parseInt(searchParams.get("page") || "1");
     const limit = parseInt(searchParams.get("limit") || "10");
@@ -30,7 +47,7 @@ export async function GET(request: NextRequest) {
     console.error("Error getting consultees:", error);
     return NextResponse.json(
       { error: "Internal Server Error" },
-      { status: 500 },
+      { status: 500 }
     );
   }
 }

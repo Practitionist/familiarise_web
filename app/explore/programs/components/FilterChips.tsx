@@ -1,1 +1,4 @@
-export { default, type ActiveFilter } from "@/app/explore/components/FilterChips";
+export {
+  default,
+  type ActiveFilter,
+} from "@/app/explore/components/FilterChips";

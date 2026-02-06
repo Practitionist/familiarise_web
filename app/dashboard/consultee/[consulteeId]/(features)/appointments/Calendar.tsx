@@ -156,7 +156,8 @@ export function Calendar({
           const slots = t.appointment?.slotsOfAppointment ?? [];
           return slots.map((slot) => {
             const startTime = new Date(slot.startsAt);
-            const durationMs = (t.subscriptionPlan.freeTrialDurationMinutes || 30) * 60 * 1000;
+            const durationMs =
+              (t.subscriptionPlan.freeTrialDurationMinutes || 30) * 60 * 1000;
             return {
               id: `${t.id}-${startTime.getTime()}`,
               title: `Free Trial: ${t.subscriptionPlan.title}`,
@@ -207,7 +208,6 @@ export function Calendar({
   };
 
   const handleEventClick = (_event: Event) => {};
-
 
   return (
     <div className="space-y-4">

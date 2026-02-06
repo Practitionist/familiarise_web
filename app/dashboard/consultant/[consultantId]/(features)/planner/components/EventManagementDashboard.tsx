@@ -104,7 +104,7 @@ export function EventManagementDashboard({
 
     try {
       const response = await fetch(
-        `/api/trials?consultantProfileId=${consultantId}&status=PENDING`
+        `/api/trials?consultantProfileId=${consultantId}&status=PENDING`,
       );
       if (!response.ok) return;
 
@@ -113,13 +113,13 @@ export function EventManagementDashboard({
       const counts = data.reduce(
         (
           acc: Record<string, number>,
-          trial: { subscriptionPlanId: string }
+          trial: { subscriptionPlanId: string },
         ) => {
           acc[trial.subscriptionPlanId] =
             (acc[trial.subscriptionPlanId] || 0) + 1;
           return acc;
         },
-        {}
+        {},
       );
       setPendingTrialCounts(counts);
     } catch (error) {

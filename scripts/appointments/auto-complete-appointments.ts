@@ -19,7 +19,12 @@
  */
 
 import prisma from "../../lib/prisma";
-import { WebinarStatus, ClassStatus, RequestStatus, TrialSessionStatus } from "@prisma/client";
+import {
+  WebinarStatus,
+  ClassStatus,
+  RequestStatus,
+  TrialSessionStatus,
+} from "@prisma/client";
 
 // Only complete appointments that ended at least 1 hour ago
 // This gives buffer time for any post-session activities
@@ -410,7 +415,10 @@ async function completeTrials(): Promise<{
             actorImage: trial.consulteeProfile.user.image,
             consultantProfileId: trial.consultantProfileId,
             trialSessionId: trial.id,
-            metadata: { planTitle: trial.subscriptionPlan.title, autoCompleted: true },
+            metadata: {
+              planTitle: trial.subscriptionPlan.title,
+              autoCompleted: true,
+            },
           },
         });
       } catch (activityError) {

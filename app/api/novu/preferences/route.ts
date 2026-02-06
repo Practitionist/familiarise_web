@@ -1,17 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import authOptions from "@/app/api/auth/[...nextauth]/options";
 import prisma from "@/lib/prisma";
 import { updateSubscriberPreferences } from "@/lib/novu/subscriber";
 import { NotificationPreferenceUpdateSchema } from "@/schemas/user";
 
+import { getSession } from "@/lib/auth-server";
 /**
  * GET /api/novu/preferences
  * Returns the current user's notification preferences.
  */
 export async function GET() {
   try {
-    const session = await getServerSession(authOptions);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -60,7 +59,7 @@ export async function GET() {
  */
 export async function PUT(req: NextRequest) {
   try {
-    const session = await getServerSession(authOptions);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }

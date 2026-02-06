@@ -1,13 +1,11 @@
 import { checkoutSchema } from "@/schemas/checkout";
 import { handleCheckout } from "@/lib/payments/operations/checkout";
-import { getServerSession } from "next-auth";
 import { NextRequest, NextResponse } from "next/server";
-import authOptions from "../auth/[...nextauth]/options";
-
+import { getSession } from "@/lib/auth-server";
 export async function POST(req: NextRequest) {
   try {
     // Check authentication
-    const session = await getServerSession(authOptions);
+    const session = await getSession();
     if (!session?.user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }

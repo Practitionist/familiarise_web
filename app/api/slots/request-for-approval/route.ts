@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { getServerSession } from "next-auth";
-import authOptions from "@/app/api/auth/[...nextauth]/options";
 import { RequestStatus } from "@prisma/client";
 import { lockSlotBooking, unlockSlotBooking } from "@/utils/appointmentlock";
 import { SlotLockError } from "@/utils/errors/SlotLockError";
@@ -9,9 +7,10 @@ import { SlotValidationService } from "@/utils/slotAllocation/SlotValidationServ
 import { notifyNewBookingRequest } from "@/lib/novu";
 import { RequestForApprovalSchema } from "@/schemas/slots";
 
+import { getSession } from "@/lib/auth-server";
 export async function POST(req: NextRequest) {
   try {
-    const session = await getServerSession(authOptions);
+    const session = await getSession();
 
     if (!session?.user?.id) {
       return NextResponse.json(

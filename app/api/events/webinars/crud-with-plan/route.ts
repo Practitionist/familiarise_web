@@ -3,12 +3,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { WebinarPlanSchema } from "@/schemas/plans";
 import { WebinarStatus } from "@prisma/client";
-import { getServerSession } from "next-auth";
-import authOptions from "@/app/api/auth/[...nextauth]/options";
 import { findOrCreateTopics, transformNestedPlanTopics } from "@/lib/topics";
 import { handleSlotOpening } from "@/lib/waitlist/slot-handler";
 import { checkConsultantVerification } from "@/lib/verification";
 
+import { getSession } from "@/lib/auth-server";
 // Schema for POST request body based on WebinarPlanSchema
 // Topics are now accepted as names (strings) - API handles finding/creating
 const PostWebinarWithPlanBodySchema = WebinarPlanSchema.omit({
@@ -48,7 +47,7 @@ const PatchWebinarWithPlanBodySchema = PostWebinarWithPlanBodySchema.omit({
 export async function POST(request: NextRequest) {
   try {
     // Authentication check
-    const session = await getServerSession(authOptions);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "Authentication required" },
@@ -326,7 +325,7 @@ export async function POST(request: NextRequest) {
 export async function PATCH(request: NextRequest) {
   try {
     // Authentication check
-    const session = await getServerSession(authOptions);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "Authentication required" },

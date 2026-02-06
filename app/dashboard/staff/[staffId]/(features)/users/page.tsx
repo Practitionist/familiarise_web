@@ -168,7 +168,7 @@ export default function UserManagementPage() {
       consultees: users.filter((u) => u.role === "CONSULTEE").length,
       pending: users.filter((u) => u.onboardingCompleted === false).length,
     }),
-    [users, total]
+    [users, total],
   );
 
   const handleViewUser = (userId: string, e: React.MouseEvent) => {

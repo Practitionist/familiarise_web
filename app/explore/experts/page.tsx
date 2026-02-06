@@ -1,6 +1,13 @@
 "use client";
 
-import { useState, useRef, useCallback, useMemo, useEffect, Suspense } from "react";
+import {
+  useState,
+  useRef,
+  useCallback,
+  useMemo,
+  useEffect,
+  Suspense,
+} from "react";
 import { motion } from "framer-motion";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -76,10 +83,7 @@ function ExpertsContent() {
 
   const browseSectionRef = useRef<HTMLDivElement>(null);
 
-  const {
-    metadata,
-    isLoading: isLoadingMetadata,
-  } = useConsultantsMetadata();
+  const { metadata, isLoading: isLoadingMetadata } = useConsultantsMetadata();
 
   const { formatPrice: formatCurrencyPrice } = useCurrency();
 
@@ -110,12 +114,9 @@ function ExpertsContent() {
     }
   }, [filters, router]);
 
-  const updateFilters = useCallback(
-    (partial: Partial<ExpertFilters>) => {
-      setFilters((prev) => ({ ...prev, ...partial }));
-    },
-    [],
-  );
+  const updateFilters = useCallback((partial: Partial<ExpertFilters>) => {
+    setFilters((prev) => ({ ...prev, ...partial }));
+  }, []);
 
   // Infinite scroll observer
   const observer = useRef<IntersectionObserver | null>(null);
@@ -167,9 +168,7 @@ function ExpertsContent() {
       }
     }
     if (filters.subdomain) {
-      const sub = metadata?.subdomains.find(
-        (s) => s.id === filters.subdomain,
-      );
+      const sub = metadata?.subdomains.find((s) => s.id === filters.subdomain);
       if (sub) {
         chips.push({
           key: "subdomain",
@@ -491,10 +490,7 @@ function ExpertsContent() {
                         </div>
                         <div className="space-y-6">
                           {domainConsultants.map(
-                            (
-                              consultant: TConsultantProfile,
-                              index: number,
-                            ) => (
+                            (consultant: TConsultantProfile, index: number) => (
                               <div
                                 key={consultant.id}
                                 ref={
@@ -515,9 +511,7 @@ function ExpertsContent() {
                     );
                   })}
 
-                  {consultants.length === 0 && (
-                    <EmptyState />
-                  )}
+                  {consultants.length === 0 && <EmptyState />}
                 </>
               ) : (
                 // Flat list when no domain filter is set
@@ -549,9 +543,7 @@ function ExpertsContent() {
                     )}
                   </div>
 
-                  {consultants.length === 0 && (
-                    <EmptyState />
-                  )}
+                  {consultants.length === 0 && <EmptyState />}
                 </>
               )}
 

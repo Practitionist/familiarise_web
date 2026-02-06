@@ -321,16 +321,17 @@ export function useCuratedPrograms(
       }
       if (programType === "all" || programType === "webinar") {
         requests.push(
-          fetchJson(
-            `/api/plans/webinars?page=1&limit=${limit}&sort=${sort}`,
-          ),
+          fetchJson(`/api/plans/webinars?page=1&limit=${limit}&sort=${sort}`),
         );
       }
 
       const responses = await Promise.all(requests);
       const programs: Program[] = [];
 
-      if ((programType === "all" || programType === "class") && responses[0]?.data) {
+      if (
+        (programType === "all" || programType === "class") &&
+        responses[0]?.data
+      ) {
         programs.push(
           ...responses[0].data.map(
             (plan: any): ClassPlanProgram => ({

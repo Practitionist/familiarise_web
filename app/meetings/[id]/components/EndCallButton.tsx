@@ -8,7 +8,7 @@ import {
 } from "@stream-io/video-react-sdk";
 import { Button } from "@/components/ui/button";
 import { useRouter } from "next/navigation";
-import { useSession } from "next-auth/react";
+import { useSession } from "@/lib/auth-client";
 import { Loader2 } from "lucide-react";
 
 const EndCallButton = () => {

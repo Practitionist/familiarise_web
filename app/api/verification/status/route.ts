@@ -1,15 +1,14 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import authOptions from "@/app/api/auth/[...nextauth]/options";
 import prisma from "@/lib/prisma";
 
+import { getSession } from "@/lib/auth-server";
 /**
  * GET /api/verification/status
  * Get the current verification status for the authenticated consultant
  */
 export async function GET() {
   try {
-    const session = await getServerSession(authOptions);
+    const session = await getSession();
 
     if (!session?.user?.id) {
       return NextResponse.json(

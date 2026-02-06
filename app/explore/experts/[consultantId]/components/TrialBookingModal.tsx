@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { useSession, signIn } from "next-auth/react";
+import { useRouter } from "next/navigation";
+import { useSession } from "@/lib/auth-client";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -36,6 +37,7 @@ export function TrialBookingModal({
   trialDurationMinutes,
 }: Readonly<TrialBookingModalProps>) {
   const { data: session } = useSession();
+  const router = useRouter();
   const { toast } = useToast();
   const [notes, setNotes] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -43,7 +45,7 @@ export function TrialBookingModal({
 
   const handleSubmit = async () => {
     if (!session?.user?.id) {
-      signIn();
+      router.push("/auth/signin");
       return;
     }
 
@@ -52,7 +54,7 @@ export function TrialBookingModal({
 
       // First, get the consultee profile ID
       const profileResponse = await fetch(
-        `/api/profiles/consultee?userId=${session.user.id}`
+        `/api/profiles/consultee?userId=${session.user.id}`,
       );
       if (!profileResponse.ok) {
         throw new Error("Failed to get your profile. Please try again.");
@@ -61,13 +63,13 @@ export function TrialBookingModal({
 
       if (!consulteeProfile?.id) {
         throw new Error(
-          "You need a consultee profile to request a trial. Please complete your profile setup."
+          "You need a consultee profile to request a trial. Please complete your profile setup.",
         );
       }
 
       // Check eligibility
       const eligibilityResponse = await fetch(
-        `/api/trials/check-eligibility?consulteeProfileId=${consulteeProfile.id}&consultantProfileId=${consultantProfileId}&subscriptionPlanId=${subscriptionPlanId}`
+        `/api/trials/check-eligibility?consulteeProfileId=${consulteeProfile.id}&consultantProfileId=${consultantProfileId}&subscriptionPlanId=${subscriptionPlanId}`,
       );
       if (!eligibilityResponse.ok) {
         throw new Error("Failed to check eligibility");
@@ -144,7 +146,9 @@ export function TrialBookingModal({
             <p className="text-gray-600 mb-4">
               Please sign in to request a free trial with {consultantName}
             </p>
-            <Button onClick={() => signIn()}>Sign In to Continue</Button>
+            <Button onClick={() => router.push("/auth/signin")}>
+              Sign In to Continue
+            </Button>
           </div>
         </DialogContent>
       </Dialog>
@@ -163,7 +167,8 @@ export function TrialBookingModal({
               Trial Requested!
             </h3>
             <p className="text-gray-600">
-              {consultantName} will review your request and get back to you soon.
+              {consultantName} will review your request and get back to you
+              soon.
             </p>
           </div>
         </DialogContent>

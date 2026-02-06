@@ -1,13 +1,33 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import {
+  requireApiAuth,
+  isPrivileged,
+  checkOwnership,
+  forbiddenResponse,
+} from "@/lib/auth-helpers";
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> },
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    // Require authentication
+    const authResult = await requireApiAuth();
+    if (authResult.error) return authResult.error;
+    const { session } = authResult;
+
     const resolvedParams = await params;
     const { id } = resolvedParams;
+
+    // Check authorization: privileged users can access any, others only their own
+    const canAccess =
+      isPrivileged(session.user.role) ||
+      checkOwnership(session, id, "consultee");
+
+    if (!canAccess) {
+      return forbiddenResponse("You can only access your own consultee profile");
+    }
 
     const consultee = await prisma.consulteeProfile.findUnique({
       where: { id: id },
@@ -19,7 +39,7 @@ export async function GET(
     if (!consultee) {
       return NextResponse.json(
         { error: "Consultee profile not found" },
-        { status: 404 },
+        { status: 404 }
       );
     }
 
@@ -35,18 +55,33 @@ export async function GET(
             ? error.message
             : "Failed to get consultee profile",
       },
-      { status: 500 },
+      { status: 500 }
     );
   }
 }
 
 export async function POST(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> },
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    // Require authentication
+    const authResult = await requireApiAuth();
+    if (authResult.error) return authResult.error;
+    const { session } = authResult;
+
     const resolvedParams = await params;
     const { id } = resolvedParams;
+
+    // Check authorization: privileged users can create for any user, others only for themselves
+    const canCreate =
+      isPrivileged(session.user.role) || session.user.id === id;
+
+    if (!canCreate) {
+      return forbiddenResponse(
+        "You can only create a consultee profile for yourself"
+      );
+    }
 
     const body = await req.json();
     const user = await prisma.user.findUnique({
@@ -56,7 +91,7 @@ export async function POST(
     if (!user) {
       return NextResponse.json(
         { error: "User not found. Cannot create consultee profile." },
-        { status: 404 },
+        { status: 404 }
       );
     }
 
@@ -90,18 +125,34 @@ export async function POST(
           "An unexpected error occurred while creating the consultee profile",
         details: error instanceof Error ? error.message : "Unknown error",
       },
-      { status: 500 },
+      { status: 500 }
     );
   }
 }
 
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> },
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    // Require authentication
+    const authResult = await requireApiAuth();
+    if (authResult.error) return authResult.error;
+    const { session } = authResult;
+
     const resolvedParams = await params;
     const { id } = resolvedParams;
+
+    // Check authorization: privileged users can update any, others only their own
+    const canUpdate =
+      isPrivileged(session.user.role) ||
+      checkOwnership(session, id, "consultee");
+
+    if (!canUpdate) {
+      return forbiddenResponse(
+        "You can only update your own consultee profile"
+      );
+    }
 
     const body = await req.json();
 
@@ -112,7 +163,7 @@ export async function PATCH(
     if (!existingConsultee) {
       return NextResponse.json(
         { error: "Consultee profile not found for updating" },
-        { status: 404 },
+        { status: 404 }
       );
     }
 
@@ -146,18 +197,34 @@ export async function PATCH(
           "An unexpected error occurred while updating the consultee profile",
         details: error instanceof Error ? error.message : "Unknown error",
       },
-      { status: 500 },
+      { status: 500 }
     );
   }
 }
 
 export async function DELETE(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> },
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    // Require authentication
+    const authResult = await requireApiAuth();
+    if (authResult.error) return authResult.error;
+    const { session } = authResult;
+
     const resolvedParams = await params;
     const { id } = resolvedParams;
+
+    // Check authorization: privileged users can delete any, others only their own
+    const canDelete =
+      isPrivileged(session.user.role) ||
+      checkOwnership(session, id, "consultee");
+
+    if (!canDelete) {
+      return forbiddenResponse(
+        "You can only delete your own consultee profile"
+      );
+    }
 
     const existingConsultee = await prisma.consulteeProfile.findUnique({
       where: { id: id },
@@ -166,7 +233,7 @@ export async function DELETE(
     if (!existingConsultee) {
       return NextResponse.json(
         { error: "Consultee profile not found for deletion" },
-        { status: 404 },
+        { status: 404 }
       );
     }
 
@@ -187,7 +254,7 @@ export async function DELETE(
           "An unexpected error occurred while deleting the consultee profile",
         details: error instanceof Error ? error.message : "Unknown error",
       },
-      { status: 500 },
+      { status: 500 }
     );
   }
 }

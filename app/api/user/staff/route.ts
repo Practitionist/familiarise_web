@@ -1,11 +1,26 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { hash } from "bcryptjs"; // Example hashing library
+import { hash } from "bcryptjs";
 import prisma from "@/lib/prisma";
 import { UserRole } from "@prisma/client";
+import {
+  requireApiAuth,
+  isPrivileged,
+  forbiddenResponse,
+} from "@/lib/auth-helpers";
 
-// POST /api/user/staff - Create a new staff member
+// POST /api/user/staff - Create a new staff member (ADMIN only)
 export async function POST(request: NextRequest) {
   try {
+    // Require authentication
+    const authResult = await requireApiAuth();
+    if (authResult.error) return authResult.error;
+    const { session } = authResult;
+
+    // Only ADMIN can create staff members
+    if (session.user.role !== "ADMIN") {
+      return forbiddenResponse("Only administrators can create staff members");
+    }
+
     const body = await request.json();
     const {
       email,
@@ -23,7 +38,7 @@ export async function POST(request: NextRequest) {
     if (!email || !password || !name) {
       return NextResponse.json(
         { message: "Missing required fields: email, password, name" },
-        { status: 400 },
+        { status: 400 }
       );
     }
 
@@ -38,7 +53,7 @@ export async function POST(request: NextRequest) {
     if (existingUser) {
       return NextResponse.json(
         { message: "User with this email already exists" },
-        { status: 409 }, // Conflict
+        { status: 409 } // Conflict
       );
     }
 
@@ -69,17 +84,26 @@ export async function POST(request: NextRequest) {
     // Provide a generic error message
     return NextResponse.json(
       { message: "Internal Server Error" },
-      { status: 500 },
+      { status: 500 }
     );
   }
 }
 
-// GET /api/user/staff - Get all staff members (Implementation TBD)
+// GET /api/user/staff - Get all staff members (ADMIN/STAFF only)
 export async function GET(request: NextRequest) {
-  // TODO: Implement logic to fetch all users with role 'STAFF'
-  // Remember to handle pagination, sorting, filtering
-  // Omit sensitive data like passwords
   try {
+    // Require authentication
+    const authResult = await requireApiAuth();
+    if (authResult.error) return authResult.error;
+    const { session } = authResult;
+
+    // Only ADMIN/STAFF can list staff members
+    if (!isPrivileged(session.user.role)) {
+      return forbiddenResponse(
+        "Only administrators and staff can view staff members"
+      );
+    }
+
     const staffUsers = await prisma.user.findMany({
       where: {
         role: "STAFF",
@@ -87,24 +111,14 @@ export async function GET(request: NextRequest) {
       include: {
         staffProfile: true, // Include related staff profile data
       },
-      // Add ordering, pagination etc. as needed
-      // orderBy: { createdAt: 'desc' },
-      // take: 10,
-      // skip: 0,
     });
-
-    // Exclude password from the returned user list
-    // const usersWithoutPassword = staffUsers.map(
-    //   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    //   ({ password: _, ...user }) => user,
-    // );
 
     return NextResponse.json(staffUsers);
   } catch (error) {
     console.error("Failed to fetch staff users:", error);
     return NextResponse.json(
       { message: "Internal Server Error fetching staff" },
-      { status: 500 },
+      { status: 500 }
     );
   }
 }

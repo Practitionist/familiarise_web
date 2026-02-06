@@ -5,16 +5,12 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import authOptions from "@/app/api/auth/[...nextauth]/options";
 import prisma from "@/lib/prisma";
-import {
-  UserRole,
-  ConsultantVerificationStatus,
-} from "@prisma/client";
+import { UserRole, ConsultantVerificationStatus } from "@prisma/client";
 import { notifyVerificationStatusChanged } from "@/lib/novu";
 import { ReviewVerificationSchema } from "@/schemas/verifications";
 
+import { getSession } from "@/lib/auth-server";
 interface RouteParams {
   params: Promise<{ verificationId: string }>;
 }
@@ -25,7 +21,7 @@ interface RouteParams {
  */
 export async function GET(_req: NextRequest, { params }: RouteParams) {
   try {
-    const session = await getServerSession(authOptions);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -90,7 +86,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
  */
 export async function PATCH(req: NextRequest, { params }: RouteParams) {
   try {
-    const session = await getServerSession(authOptions);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }

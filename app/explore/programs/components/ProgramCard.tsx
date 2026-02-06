@@ -41,9 +41,7 @@ function TypeBadge({ type }: { type: "class" | "webinar" }) {
   return (
     <span
       className={`px-3 py-1 rounded-full text-xs font-medium ${
-        type === "class"
-          ? "bg-zinc-900 text-white"
-          : "bg-white text-zinc-900"
+        type === "class" ? "bg-zinc-900 text-white" : "bg-white text-zinc-900"
       }`}
     >
       {type === "class" ? "Class" : "Webinar"}
@@ -63,7 +61,13 @@ function ExtraBadge({ badge }: { badge: ProgramBadge }) {
   );
 }
 
-function GridCard({ program, badge }: { program: Program; badge?: ProgramBadge }) {
+function GridCard({
+  program,
+  badge,
+}: {
+  program: Program;
+  badge?: ProgramBadge;
+}) {
   const router = useRouter();
 
   const handleClick = () => {
@@ -134,7 +138,13 @@ function GridCard({ program, badge }: { program: Program; badge?: ProgramBadge }
   );
 }
 
-function ListCard({ program, badge }: { program: Program; badge?: ProgramBadge }) {
+function ListCard({
+  program,
+  badge,
+}: {
+  program: Program;
+  badge?: ProgramBadge;
+}) {
   const router = useRouter();
 
   const handleClick = () => {
@@ -212,7 +222,13 @@ function ListCard({ program, badge }: { program: Program; badge?: ProgramBadge }
   );
 }
 
-function CarouselCard({ program, badge }: { program: Program; badge?: ProgramBadge }) {
+function CarouselCard({
+  program,
+  badge,
+}: {
+  program: Program;
+  badge?: ProgramBadge;
+}) {
   const router = useRouter();
 
   const handleClick = () => {

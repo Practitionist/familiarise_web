@@ -17,7 +17,9 @@ export interface PlanFilterParams {
 /**
  * Parse filter query params from a URLSearchParams with NaN guards on numeric values.
  */
-export function parsePlanFilters(searchParams: URLSearchParams): PlanFilterParams {
+export function parsePlanFilters(
+  searchParams: URLSearchParams,
+): PlanFilterParams {
   const page = parseInt(searchParams.get("page") || "1") || 1;
   const limit = parseInt(searchParams.get("limit") || "10") || 10;
   const skip = (page - 1) * limit;
@@ -33,8 +35,10 @@ export function parsePlanFilters(searchParams: URLSearchParams): PlanFilterParam
     language: searchParams.get("language"),
     domainId: searchParams.get("domainId"),
     sort: searchParams.get("sort"),
-    minPrice: parsedMin !== undefined && !isNaN(parsedMin) ? parsedMin : undefined,
-    maxPrice: parsedMax !== undefined && !isNaN(parsedMax) ? parsedMax : undefined,
+    minPrice:
+      parsedMin !== undefined && !isNaN(parsedMin) ? parsedMin : undefined,
+    maxPrice:
+      parsedMax !== undefined && !isNaN(parsedMax) ? parsedMax : undefined,
     search: searchParams.get("search"),
     page,
     limit,
@@ -46,7 +50,9 @@ export function parsePlanFilters(searchParams: URLSearchParams): PlanFilterParam
  * Build a Prisma where clause from parsed plan filters.
  * Returns a plain object that can be cast to ClassPlanWhereInput or WebinarPlanWhereInput.
  */
-export function buildPlanWhereClause(filters: PlanFilterParams): Record<string, unknown> {
+export function buildPlanWhereClause(
+  filters: PlanFilterParams,
+): Record<string, unknown> {
   const where: Record<string, unknown> = {};
 
   if (filters.consultantId) {
@@ -124,14 +130,11 @@ export async function rankAndPaginate<T extends { id: string }>(
   const total = ranked.length;
   const paginatedIds = ranked.slice(skip, skip + limit).map((r) => r.id);
 
-  const items =
-    paginatedIds.length > 0 ? await fetchByIds(paginatedIds) : [];
+  const items = paginatedIds.length > 0 ? await fetchByIds(paginatedIds) : [];
 
   // Re-sort to match the ranking order
   const idOrder = new Map(paginatedIds.map((id, i) => [id, i]));
-  items.sort(
-    (a, b) => (idOrder.get(a.id) ?? 0) - (idOrder.get(b.id) ?? 0),
-  );
+  items.sort((a, b) => (idOrder.get(a.id) ?? 0) - (idOrder.get(b.id) ?? 0));
 
   return paginatedResponse(items, total, page, limit);
 }

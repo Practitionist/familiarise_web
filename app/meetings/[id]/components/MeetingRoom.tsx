@@ -16,7 +16,7 @@ import {
   RecordCallButton,
 } from "@stream-io/video-react-sdk";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useSession } from "next-auth/react";
+import { useSession } from "@/lib/auth-client";
 import { Users, LayoutList, Grid3X3, Monitor, X, Phone } from "lucide-react";
 
 import {

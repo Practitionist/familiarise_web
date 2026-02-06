@@ -5,18 +5,17 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import authOptions from "@/app/api/auth/[...nextauth]/options";
 import { joinWaitlist, getUserWaitlistEntries } from "@/lib/waitlist";
 import { sendWaitlistJoinedEmail } from "@/lib/waitlist/notifications";
 import prisma from "@/lib/prisma";
 
+import { getSession } from "@/lib/auth-server";
 /**
  * POST /api/waitlist - Join a waitlist
  */
 export async function POST(request: NextRequest) {
   try {
-    const session = await getServerSession(authOptions);
+    const session = await getSession();
 
     if (!session?.user?.id) {
       return NextResponse.json(
@@ -105,7 +104,7 @@ export async function POST(request: NextRequest) {
  */
 export async function GET() {
   try {
-    const session = await getServerSession(authOptions);
+    const session = await getSession();
 
     if (!session?.user?.id) {
       return NextResponse.json(

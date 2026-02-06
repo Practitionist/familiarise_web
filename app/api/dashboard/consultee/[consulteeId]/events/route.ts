@@ -32,8 +32,8 @@ export async function GET(
 
     // PERFORMANCE FIX: Use direct Prisma queries instead of internal HTTP fetches
     // This avoids network overhead and reduces response time from 11+ seconds to <1 second
-    const [consultations, subscriptions, webinars, classes, trials] = await Promise.all(
-      [
+    const [consultations, subscriptions, webinars, classes, trials] =
+      await Promise.all([
         prisma.consultation.findMany({
           where: { requestedById: consulteeId },
           include: {
@@ -202,7 +202,12 @@ export async function GET(
                   orderBy: { startsAt: "asc" },
                   include: {
                     user: {
-                      select: { id: true, name: true, email: true, image: true },
+                      select: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        image: true,
+                      },
                     },
                   },
                 },
@@ -211,8 +216,7 @@ export async function GET(
           },
           orderBy: { requestedAt: "desc" },
         }),
-      ],
-    );
+      ]);
 
     return NextResponse.json({
       data: {

@@ -52,7 +52,12 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
-import type { Payment, Refund, PaymentListResponse, RefundListResponse } from "@/types/payments";
+import type {
+  Payment,
+  Refund,
+  PaymentListResponse,
+  RefundListResponse,
+} from "@/types/payments";
 
 const getStatusColor = (status: string) => {
   switch (status.toUpperCase()) {

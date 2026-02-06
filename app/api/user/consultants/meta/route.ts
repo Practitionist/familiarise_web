@@ -37,17 +37,28 @@ async function fetchTags() {
 }
 
 async function fetchConsultantMetadata() {
-  const totalConsultants = await prisma.consultantProfile.count();
+  // Only count verified consultants for public display
+  const totalConsultants = await prisma.consultantProfile.count({
+    where: { verificationStatus: "VERIFIED" },
+  });
+
+  // Get domain breakdown for verified consultants only
   const consultantsByDomain = await prisma.domain.findMany({
     select: {
       id: true,
       name: true,
       _count: {
-        select: { consultantProfiles: true },
+        select: {
+          consultantProfiles: {
+            where: { verificationStatus: "VERIFIED" },
+          },
+        },
       },
     },
   });
+
   const averageRating = await prisma.consultantProfile.aggregate({
+    where: { verificationStatus: "VERIFIED" },
     _avg: { rating: true },
   });
 

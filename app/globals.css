@@ -57,7 +57,9 @@
     /* Header height system — announcement-bar-height is set dynamically by JS */
     --announcement-bar-height: 0px;
     --navbar-height: 4rem; /* 64px — mobile default */
-    --header-height: calc(var(--announcement-bar-height) + var(--navbar-height));
+    --header-height: calc(
+      var(--announcement-bar-height) + var(--navbar-height)
+    );
   }
 
   /* Desktop navbar height */

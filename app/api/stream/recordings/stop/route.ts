@@ -6,13 +6,12 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
 import { z } from "zod";
-import authOptions from "@/app/api/auth/[...nextauth]/options";
 import { RecordingService } from "@/lib/stream/recording-service";
 import { getMeetingSessionOwnershipInfo } from "@/lib/stream/recording-utils";
 import prisma from "@/lib/prisma";
 
+import { getSession } from "@/lib/auth-server";
 const stopRecordingSchema = z.object({
   streamCallId: z.string().min(1, "Stream call ID is required"),
   meetingSessionId: z.string().min(1, "Meeting session ID is required"),
@@ -21,7 +20,7 @@ const stopRecordingSchema = z.object({
 export async function POST(req: NextRequest) {
   try {
     // Check authentication
-    const session = await getServerSession(authOptions);
+    const session = await getSession();
     if (!session?.user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }

@@ -79,11 +79,15 @@ async function triggerForMultiple<T extends NovuPayload>(
 ): Promise<TriggerResult[]> {
   if (!isNovuConfigured()) {
     console.warn(`[Novu] Not configured. Skipped workflow: ${workflowId}`);
-    return userIds.map(() => ({ success: false, error: "Novu not configured" as const }));
+    return userIds.map(() => ({
+      success: false,
+      error: "Novu not configured" as const,
+    }));
   }
 
   if (userIds.length === 0) return [];
-  if (userIds.length === 1) return [await triggerWorkflow(workflowId, userIds[0], payload)];
+  if (userIds.length === 1)
+    return [await triggerWorkflow(workflowId, userIds[0], payload)];
 
   const BATCH_SIZE = 100;
   const results: TriggerResult[] = [];
@@ -97,7 +101,9 @@ async function triggerForMultiple<T extends NovuPayload>(
         to: batch,
         payload,
       });
-      console.log(`[Novu] Triggered ${workflowId} for ${batch.length} subscribers`);
+      console.log(
+        `[Novu] Triggered ${workflowId} for ${batch.length} subscribers`,
+      );
       results.push(...batch.map(() => ({ success: true }) as TriggerResult));
     } catch (error) {
       console.error(`[Novu] Failed to trigger ${workflowId} for batch:`, error);
@@ -198,33 +204,21 @@ export async function notifyPaymentSuccess(
   userId: string,
   payload: PaymentSuccessPayload,
 ) {
-  return triggerWorkflow(
-    NOVU_WORKFLOWS.PAYMENT_SUCCESS,
-    userId,
-    payload,
-  );
+  return triggerWorkflow(NOVU_WORKFLOWS.PAYMENT_SUCCESS, userId, payload);
 }
 
 export async function notifyPaymentFailed(
   userId: string,
   payload: PaymentFailedPayload,
 ) {
-  return triggerWorkflow(
-    NOVU_WORKFLOWS.PAYMENT_FAILED,
-    userId,
-    payload,
-  );
+  return triggerWorkflow(NOVU_WORKFLOWS.PAYMENT_FAILED, userId, payload);
 }
 
 export async function notifyRefundProcessed(
   userId: string,
   payload: RefundPayload,
 ) {
-  return triggerWorkflow(
-    NOVU_WORKFLOWS.REFUND_PROCESSED,
-    userId,
-    payload,
-  );
+  return triggerWorkflow(NOVU_WORKFLOWS.REFUND_PROCESSED, userId, payload);
 }
 
 export async function notifyRefundRequested(
@@ -257,11 +251,7 @@ export async function notifySupportTicketUpdate(
   userId: string,
   payload: SupportTicketPayload,
 ) {
-  return triggerWorkflow(
-    NOVU_WORKFLOWS.SUPPORT_TICKET_UPDATE,
-    userId,
-    payload,
-  );
+  return triggerWorkflow(NOVU_WORKFLOWS.SUPPORT_TICKET_UPDATE, userId, payload);
 }
 
 export async function notifySupportTicketResponse(
@@ -357,11 +347,7 @@ export async function notifySubscriptionStarted(
   userId: string,
   payload: SubscriptionPayload,
 ) {
-  return triggerWorkflow(
-    NOVU_WORKFLOWS.SUBSCRIPTION_STARTED,
-    userId,
-    payload,
-  );
+  return triggerWorkflow(NOVU_WORKFLOWS.SUBSCRIPTION_STARTED, userId, payload);
 }
 
 export async function notifySubscriptionCancelled(
@@ -379,11 +365,7 @@ export async function notifySubscriptionRenewed(
   userId: string,
   payload: SubscriptionPayload,
 ) {
-  return triggerWorkflow(
-    NOVU_WORKFLOWS.SUBSCRIPTION_RENEWED,
-    userId,
-    payload,
-  );
+  return triggerWorkflow(NOVU_WORKFLOWS.SUBSCRIPTION_RENEWED, userId, payload);
 }
 
 // ============================================================================
@@ -427,13 +409,8 @@ export async function notifyPayoutProcessed(
 // Admin / System Notifications
 // ============================================================================
 
-export async function notifyGeneralAnnouncement(
-  payload: AnnouncementPayload,
-) {
-  return triggerBroadcastWorkflow(
-    NOVU_WORKFLOWS.GENERAL_ANNOUNCEMENT,
-    payload,
-  );
+export async function notifyGeneralAnnouncement(payload: AnnouncementPayload) {
+  return triggerBroadcastWorkflow(NOVU_WORKFLOWS.GENERAL_ANNOUNCEMENT, payload);
 }
 
 export async function notifyNewConsultantApplication(
@@ -470,22 +447,14 @@ export async function notifyDisputeCreated(
   userIds: string[],
   payload: DisputePayload,
 ) {
-  return triggerForMultiple(
-    NOVU_WORKFLOWS.DISPUTE_CREATED,
-    userIds,
-    payload,
-  );
+  return triggerForMultiple(NOVU_WORKFLOWS.DISPUTE_CREATED, userIds, payload);
 }
 
 export async function notifyDisputeResolved(
   userIds: string[],
   payload: DisputePayload,
 ) {
-  return triggerForMultiple(
-    NOVU_WORKFLOWS.DISPUTE_RESOLVED,
-    userIds,
-    payload,
-  );
+  return triggerForMultiple(NOVU_WORKFLOWS.DISPUTE_RESOLVED, userIds, payload);
 }
 
 // ============================================================================

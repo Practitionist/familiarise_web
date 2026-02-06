@@ -65,19 +65,19 @@ export default function ProfessionalBackgroundForm({
         (initialData.workExperiences || []).map((exp, i) => ({
           ...exp,
           id: exp.id || `work_init_${i}`,
-        })) as WorkExperience[]
+        })) as WorkExperience[],
       );
       setEducation(
         (initialData.educationHistory || []).map((edu, i) => ({
           ...edu,
           id: edu.id || `edu_init_${i}`,
-        })) as Education[]
+        })) as Education[],
       );
       setCertifications(
         (initialData.certificationsList || []).map((cert, i) => ({
           ...cert,
           id: cert.id || `cert_init_${i}`,
-        })) as Certification[]
+        })) as Certification[],
       );
     }
   }, [initialData]);

@@ -29,6 +29,12 @@ export const CreateSupportResponseSchema = z.object({
   isInternal: z.boolean().default(false),
 });
 
-export type CreateSupportTicketInput = z.infer<typeof CreateSupportTicketSchema>;
-export type UpdateSupportTicketInput = z.infer<typeof UpdateSupportTicketSchema>;
-export type CreateSupportResponseInput = z.infer<typeof CreateSupportResponseSchema>;
+export type CreateSupportTicketInput = z.infer<
+  typeof CreateSupportTicketSchema
+>;
+export type UpdateSupportTicketInput = z.infer<
+  typeof UpdateSupportTicketSchema
+>;
+export type CreateSupportResponseInput = z.infer<
+  typeof CreateSupportResponseSchema
+>;

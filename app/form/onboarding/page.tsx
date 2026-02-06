@@ -9,7 +9,7 @@ import {
 import { Progress } from "@/components/ui/progress";
 import { LogOut } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { signOut, useSession } from "next-auth/react";
+import { signOut, useSession } from "@/lib/auth-client";
 import { useRouter } from "next/navigation";
 import React, { useState } from "react";
 import { FormProvider, useForm } from "react-hook-form";
@@ -53,7 +53,7 @@ const STEP_LABELS = {
 };
 
 const MultiStepForm: React.FC = () => {
-  const { data: session, update: updateSession } = useSession();
+  const { data: session } = useSession();
   const [step, setStep] = useState(0);
   const [formData, setFormData] = useState<OnboardingFormData>({
     preferredCommunicationMethod: "VIDEO",
@@ -173,19 +173,8 @@ const MultiStepForm: React.FC = () => {
         description: "Your profile has been created successfully.",
       });
 
-      await updateSession({
-        ...session,
-        user: {
-          ...session?.user,
-          onboardingCompleted: true,
-          role: finalData.role,
-          consultantProfileId: result.user.consultantProfileId,
-          consulteeProfileId: result.user.consulteeProfileId,
-          staffProfileId: result.user.staffProfileId,
-        },
-      });
-
-      // Redirect based on role
+      // Redirect based on role (server has already updated the user record,
+      // session cookie will refresh automatically)
       if (finalData.role === "CONSULTANT" && result.user.consultantProfileId) {
         router.push(`/dashboard/consultant/${result.user.consultantProfileId}`);
       } else if (
@@ -420,7 +409,15 @@ const MultiStepForm: React.FC = () => {
                 Step {step + 1} of {totalSteps}
               </span>
               <button
-                onClick={() => signOut({ callbackUrl: "/" })}
+                onClick={() =>
+                  signOut({
+                    fetchOptions: {
+                      onSuccess: () => {
+                        window.location.href = "/";
+                      },
+                    },
+                  })
+                }
                 className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
                 title="Sign out"
               >

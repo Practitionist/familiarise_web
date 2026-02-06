@@ -6,6 +6,37 @@ Familiarise operates as a **marketplace platform** connecting consultants (exper
 
 ---
 
+## Bootstrapped Reality Check (February 2026)
+
+> **IMPORTANT**: The Break-Even Analysis section of this document assumes ₹4,50,000/month
+> in fixed costs (team salaries, marketing, SaaS tools) and calculates a ₹26.5L GMV
+> break-even point. These figures describe a **future funded-company scenario**, not
+> the current bootstrapped reality.
+>
+> **Actual fixed costs (February 2026):**
+>
+> | Item                  | Assumed (Below) | Actual                                      |
+> | --------------------- | --------------- | ------------------------------------------- |
+> | Server/Infrastructure | ₹50,000         | ₹0 (Vercel free, Supabase free tier)        |
+> | Team Salaries         | ₹3,00,000       | ₹10,000 (1 part-time tech intern)           |
+> | Marketing             | ₹50,000         | ₹0 (organic/founder-driven)                 |
+> | Tools/SaaS            | ₹20,000         | ₹9,325 (Claude Max ₹8,500 + Apple Dev ₹825) |
+> | Miscellaneous         | ₹30,000         | ₹0                                          |
+> | **Total Fixed**       | **₹4,50,000**   | **~₹19,325**                                |
+>
+> **Impact on break-even:**
+>
+> - At ₹19,325/month fixed costs and ~17% effective commission (after 3% gateway fee):
+> - Break-even GMV = ₹19,325 / 0.17 = **~₹1,13,676 (~₹1.14L)**
+> - At ₹1,000 average transaction: **~114 transactions/month**
+> - At 10 transactions per consultant: **~12 active consultants**
+>
+> The commission models (Options 1-5) and minimum pricing strategy in this document
+> are correct and should be used as-is. Only the break-even section and monthly
+> targets reflect the future funded scenario.
+
+---
+
 ## Revenue Model: Commission-Based
 
 ```mermaid

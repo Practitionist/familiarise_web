@@ -74,8 +74,7 @@ export async function GET(request: NextRequest) {
         .map((p) => ({
           id: p.id,
           count: p.webinars.reduce(
-            (sum, w) =>
-              sum + (w.appointment?.slotsOfAppointment?.length ?? 0),
+            (sum, w) => sum + (w.appointment?.slotsOfAppointment?.length ?? 0),
             0,
           ),
         }))

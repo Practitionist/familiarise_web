@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import authOptions from "@/app/api/auth/[...nextauth]/options";
 import prisma from "@/lib/prisma";
 import { uploadConsultantDocument } from "@/lib/supabase";
 import { Prisma } from "@prisma/client";
 
+import { getSession } from "@/lib/auth-server";
 // Development mode check
 const isDevelopment = () =>
   process.env.NODE_ENV === "development" &&
@@ -19,7 +18,7 @@ export async function POST(
   { params }: { params: Promise<{ appointmentId: string }> },
 ) {
   try {
-    const session = await getServerSession(authOptions);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json(
         {

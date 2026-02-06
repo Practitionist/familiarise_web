@@ -10,13 +10,12 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import authOptions from "@/app/api/auth/[...nextauth]/options";
 import prisma from "@/lib/prisma";
 import { PaymentStatus, UserRole } from "@prisma/client";
 import { validateWebhookMetadata } from "@/schemas/webhooks/metadata";
 import { ZodError } from "zod";
 
+import { getSession } from "@/lib/auth-server";
 // ============================================================================
 // GET - Fetch payment details for recovery
 // ============================================================================
@@ -27,7 +26,7 @@ export async function GET(
 ) {
   try {
     // Authenticate admin/staff
-    const session = await getServerSession(authOptions);
+    const session = await getSession();
     if (
       !session?.user?.id ||
       (session.user.role !== UserRole.ADMIN &&
@@ -98,7 +97,7 @@ export async function POST(
 ) {
   try {
     // Authenticate admin/staff
-    const session = await getServerSession(authOptions);
+    const session = await getSession();
     if (
       !session?.user?.id ||
       (session.user.role !== UserRole.ADMIN &&

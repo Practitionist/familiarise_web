@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
+import { getSession } from "@/lib/auth-server";
 
 // =============================================================================
 // Prisma Query Types - Derived from actual query shape for type safety
@@ -250,6 +251,11 @@ export async function GET(
   void request;
 
   try {
+    const session = await getSession(true);
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const resolvedParams = await params;
     const { consultantId: consultantProfileId } = resolvedParams;
 
@@ -258,6 +264,16 @@ export async function GET(
         { error: "Consultant ID is required" },
         { status: 400 },
       );
+    }
+
+    const isPrivileged =
+      session.user.role === "ADMIN" || session.user.role === "STAFF";
+    const ownsProfile =
+      session.user.role === "CONSULTANT" &&
+      session.user.consultantProfileId === consultantProfileId;
+
+    if (!isPrivileged && !ownsProfile) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
     // PERFORMANCE FIX #364: Use direct Prisma queries instead of internal HTTP fetches
