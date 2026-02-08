@@ -104,7 +104,7 @@ function makeSubscriptionEvent(overrides: any = {}) {
     },
     requestedBy: { user: { id: "consultee-1" } },
     schedulingPeriodStartsAt: new Date("2025-01-06T00:00:00Z"),
-    schedulingPeriodEndsAt: new Date("2025-02-02T23:59:59Z"),
+    schedulingPeriodEndsAt: new Date("2025-01-10T00:00:00Z"), // 1 week → requires 2 slots
     appointments: [],
     ...overrides,
   };
@@ -132,7 +132,7 @@ function makeClassEvent(overrides: any = {}) {
       classContents: [],
     },
     schedulingPeriodStartsAt: new Date("2025-01-06T00:00:00Z"),
-    schedulingPeriodEndsAt: new Date("2025-02-02T23:59:59Z"),
+    schedulingPeriodEndsAt: new Date("2025-01-10T00:00:00Z"), // 1 week → requires 2 slots
     appointments: [],
     ...overrides,
   };
@@ -468,7 +468,11 @@ describe("Manual allocation", () => {
   });
 
   it("should create multiple appointments for subscription with multiple calls", async () => {
-    mockTx.subscription.findUnique.mockResolvedValue(makeSubscriptionEvent());
+    mockTx.subscription.findUnique.mockResolvedValue(
+      makeSubscriptionEvent({
+        schedulingPeriodEndsAt: new Date("2025-01-17T00:00:00Z"), // 2 weeks → requires 4 slots
+      }),
+    );
 
     // 4 slots → 2 appointments of 2 slots each (1hr sessions)
     await SlotAllocationService.allocate({
@@ -1036,6 +1040,8 @@ describe("fetchEventData - config extraction", () => {
             { hoursAllotted: 2 },
           ],
         },
+        // 1 week with meetingsPerWeek=2, 1.5hr sessions (3 slots each) → requires 6 slots
+        schedulingPeriodEndsAt: new Date("2025-01-10T00:00:00Z"),
       }),
     );
 
@@ -1043,11 +1049,14 @@ describe("fetchEventData - config extraction", () => {
       eventType: "class",
       eventId: "class-1",
       mode: "manual",
-      // classContents average: (1+2)/2 = 1.5 hours → 3 slots per call
+      // classContents average: (1+2)/2 = 1.5 hours → 3 slots per call, 2 calls = 6 slots
       slots: [
         "2025-01-06T10:00:00Z",
         "2025-01-06T10:30:00Z",
         "2025-01-06T11:00:00Z",
+        "2025-01-08T10:00:00Z",
+        "2025-01-08T10:30:00Z",
+        "2025-01-08T11:00:00Z",
       ],
     });
 
@@ -1154,7 +1163,11 @@ describe("updateEventStatus", () => {
 
 describe("createAppointments - grouping and validation", () => {
   it("should group 4 slots into 2 appointments for 1-hour sessions", async () => {
-    mockTx.subscription.findUnique.mockResolvedValue(makeSubscriptionEvent());
+    mockTx.subscription.findUnique.mockResolvedValue(
+      makeSubscriptionEvent({
+        schedulingPeriodEndsAt: new Date("2025-01-17T00:00:00Z"), // 2 weeks → requires 4 slots
+      }),
+    );
 
     await SlotAllocationService.allocate({
       eventType: "subscription",
@@ -1188,6 +1201,7 @@ describe("createAppointments - grouping and validation", () => {
           sessionDurationInHours: 1.5, // 3 slots per call
           consultantProfile: makeConsultantProfile(),
         },
+        schedulingPeriodEndsAt: new Date("2025-01-17T00:00:00Z"), // 2 weeks → requires 6 slots
       }),
     );
 

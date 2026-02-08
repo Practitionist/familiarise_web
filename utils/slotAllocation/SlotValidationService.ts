@@ -650,6 +650,37 @@ export class SlotValidationService {
     slots: Date[],
     config: EventConfig,
   ): Promise<ValidationResult> {
+    const errors: string[] = [];
+    const warnings: string[] = [];
+
+    // Validate per-session consecutiveness (matches validateClass behavior)
+    // Without this, non-adjacent slots (e.g., 09:00 and 11:00) could be
+    // grouped into a single session, creating appointments with time gaps
+    const sessionDuration = config.sessionDurationInHours || 1;
+    const slotsPerSession =
+      SlotCalculationService.getSlotsPerCall(sessionDuration);
+
+    if (slotsPerSession > 1) {
+      const sortedSlots = [...slots].sort(
+        (a, b) => a.getTime() - b.getTime(),
+      );
+
+      for (let i = 0; i < sortedSlots.length; i += slotsPerSession) {
+        const sessionSlots = sortedSlots.slice(i, i + slotsPerSession);
+        const consecutiveCheck = this.validateConsecutiveSlots(sessionSlots);
+        if (!consecutiveCheck.isValid) {
+          const sessionNum = Math.floor(i / slotsPerSession) + 1;
+          errors.push(
+            `Session ${sessionNum} slots must be consecutive (no gaps allowed)`,
+          );
+        }
+      }
+
+      if (errors.length > 0) {
+        return { isValid: false, errors, warnings };
+      }
+    }
+
     const validationService = new SubscriptionValidationService(
       this.prismaClient as any,
     );
@@ -661,8 +692,8 @@ export class SlotValidationService {
 
     return {
       isValid: result.isValid,
-      errors: result.errors,
-      warnings: result.warnings,
+      errors: [...errors, ...result.errors],
+      warnings: [...warnings, ...result.warnings],
     };
   }
 

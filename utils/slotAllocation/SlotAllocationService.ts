@@ -253,8 +253,17 @@ export class SlotAllocationService {
 
         const { consultant, config, consulteeUserId } = eventData;
 
-        // Convert to Date objects
-        const slots = slotStrings.map((s) => new Date(s));
+        // Convert to Date objects with validation
+        const slots = slotStrings.map((s, i) => {
+          const date = new Date(s);
+          if (isNaN(date.getTime())) {
+            throw new Error(
+              `Invalid date string at position ${i + 1}: "${s}". ` +
+                `Expected ISO 8601 format (e.g., "2026-03-01T09:00:00.000Z").`,
+            );
+          }
+          return date;
+        });
 
         // FIX: Detect and reject duplicate slots
         // Duplicates can cause validation errors, inflated counts, and DB anomalies
@@ -268,6 +277,10 @@ export class SlotAllocationService {
             `${uniqueSlots.length} are unique. Each slot can only be selected once.`,
           );
         }
+
+        // Sort slots chronologically to ensure correct grouping into appointments
+        // and correct schedulingPeriodStartsAt derivation from slots[0]
+        slots.sort((a, b) => a.getTime() - b.getTime());
 
         // CRITICAL FIX: Validate slot count matches session duration requirements
         // This prevents incomplete appointments from being created
@@ -283,6 +296,23 @@ export class SlotAllocationService {
             `sessions require multiples of ${slotsPerCall} slots (30 minutes each). ` +
             `Valid counts: ${slotsPerCall}, ${slotsPerCall * 2}, ${slotsPerCall * 3}, etc.`,
           );
+        }
+
+        // Validate total slot count for recurring event types
+        // Ensures the consultant provides exactly the right number of slots
+        // (not fewer, which would leave the event under-allocated but marked APPROVED)
+        if (eventType === "subscription" || eventType === "class") {
+          if (config.schedulingPeriodStartsAt && config.schedulingPeriodEndsAt) {
+            const requiredSlots =
+              SlotCalculationService.calculateRequiredSlots(eventType, config);
+            if (slots.length !== requiredSlots) {
+              throw new Error(
+                `This ${eventType} requires exactly ${requiredSlots} slots ` +
+                `(based on the scheduling period and session configuration), ` +
+                `but ${slots.length} were provided.`,
+              );
+            }
+          }
         }
 
         // Validate
