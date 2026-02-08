@@ -87,14 +87,14 @@ export default function AdminDisputesPage() {
       </div>
 
       {/* Alert for Urgent Disputes */}
-      {(data?.urgentDisputes ?? 0) > 0 && (
+      {data && data.urgentDisputes > 0 && (
         <Card className="border-red-200 bg-red-50">
           <CardContent className="pt-6">
             <div className="flex items-center gap-2">
               <span className="text-2xl">⚠️</span>
               <div>
                 <p className="font-semibold text-red-900">
-                  {data!.urgentDisputes} disputes require immediate attention
+                  {data.urgentDisputes} disputes require immediate attention
                 </p>
                 <p className="text-sm text-red-700">
                   These disputes have approaching deadlines and need responses.

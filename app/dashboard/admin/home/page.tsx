@@ -135,9 +135,9 @@ export default function AdminHomePage() {
                 viewAllLink="/dashboard/admin/payments"
                 viewAllText="View all payments"
               >
-                {(stats?.recentPayments?.length ?? 0) > 0 ? (
+                {stats?.recentPayments && stats.recentPayments.length > 0 ? (
                   <div className="space-y-3">
-                    {stats!.recentPayments.map((payment: RecentPayment) => (
+                    {stats.recentPayments.map((payment: RecentPayment) => (
                       <Link
                         key={payment.id}
                         href={`/dashboard/admin/payments/${payment.id}`}
@@ -192,9 +192,9 @@ export default function AdminHomePage() {
                 viewAllLink="/dashboard/admin/refunds"
                 viewAllText="View all refunds"
               >
-                {(stats?.recentRefunds?.length ?? 0) > 0 ? (
+                {stats?.recentRefunds && stats.recentRefunds.length > 0 ? (
                   <div className="space-y-3">
-                    {stats!.recentRefunds.map((refund: RecentRefund) => (
+                    {stats.recentRefunds.map((refund: RecentRefund) => (
                       <Link
                         key={refund.id}
                         href={`/dashboard/admin/refunds/${refund.id}`}

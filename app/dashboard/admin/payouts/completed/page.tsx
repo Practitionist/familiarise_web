@@ -166,7 +166,7 @@ export default function CompletedPayoutsPage() {
                 <Skeleton key={i} className="h-16 w-full" />
               ))}
             </div>
-          ) : (filteredPayouts?.length ?? 0) > 0 ? (
+          ) : filteredPayouts && filteredPayouts.length > 0 ? (
             <>
               <div className="overflow-x-auto">
                 <table className="w-full">
@@ -193,7 +193,7 @@ export default function CompletedPayoutsPage() {
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
-                    {filteredPayouts!.map((payout: Payout) => (
+                    {filteredPayouts.map((payout: Payout) => (
                       <tr key={payout.id} className="hover:bg-gray-50">
                         <td className="px-4 py-3">
                           <div>
