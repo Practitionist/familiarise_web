@@ -14,30 +14,30 @@ describe("SlotCalculationService.startOfWeekSunday", () => {
   it("should return Sunday for a Sunday input", () => {
     const sunday = new Date("2025-01-05T12:30:00.000Z"); // Sunday
     const result = SlotCalculationService.startOfWeekSunday(sunday);
-    expect(result.getDay()).toBe(0);
-    expect(result.getHours()).toBe(0);
-    expect(result.getMinutes()).toBe(0);
-    expect(result.getDate()).toBe(5);
+    expect(result.getUTCDay()).toBe(0);
+    expect(result.getUTCHours()).toBe(0);
+    expect(result.getUTCMinutes()).toBe(0);
+    expect(result.getUTCDate()).toBe(5);
   });
 
   it("should return the previous Sunday for a Wednesday", () => {
     const wed = new Date("2025-01-08T15:00:00.000Z"); // Wednesday Jan 8
     const result = SlotCalculationService.startOfWeekSunday(wed);
-    expect(result.getDay()).toBe(0);
-    expect(result.getDate()).toBe(5); // Sunday Jan 5
+    expect(result.getUTCDay()).toBe(0);
+    expect(result.getUTCDate()).toBe(5); // Sunday Jan 5
   });
 
   it("should return the previous Sunday for a Saturday", () => {
     const sat = new Date("2025-01-11T12:00:00.000Z"); // Saturday Jan 11 (noon UTC, safe across timezones)
     const result = SlotCalculationService.startOfWeekSunday(sat);
-    expect(result.getDay()).toBe(0); // Sunday
+    expect(result.getUTCDay()).toBe(0); // Sunday
   });
 
   it("should return the previous Sunday for a Monday", () => {
     const mon = new Date("2025-01-06T00:00:00.000Z"); // Monday Jan 6
     const result = SlotCalculationService.startOfWeekSunday(mon);
-    expect(result.getDay()).toBe(0);
-    expect(result.getDate()).toBe(5); // Sunday Jan 5
+    expect(result.getUTCDay()).toBe(0);
+    expect(result.getUTCDate()).toBe(5); // Sunday Jan 5
   });
 
   it("should not mutate the input date", () => {
@@ -50,10 +50,10 @@ describe("SlotCalculationService.startOfWeekSunday", () => {
   it("should zero out hours/minutes/seconds/ms", () => {
     const d = new Date("2025-01-08T23:59:59.999Z");
     const result = SlotCalculationService.startOfWeekSunday(d);
-    expect(result.getHours()).toBe(0);
-    expect(result.getMinutes()).toBe(0);
-    expect(result.getSeconds()).toBe(0);
-    expect(result.getMilliseconds()).toBe(0);
+    expect(result.getUTCHours()).toBe(0);
+    expect(result.getUTCMinutes()).toBe(0);
+    expect(result.getUTCSeconds()).toBe(0);
+    expect(result.getUTCMilliseconds()).toBe(0);
   });
 });
 
