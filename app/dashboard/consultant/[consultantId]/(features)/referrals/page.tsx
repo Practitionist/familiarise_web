@@ -1,7 +1,7 @@
 "use client";
 
 import { use, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   DashboardHeader,
   DashboardContent,
@@ -54,6 +54,7 @@ export default function ConsultantReferralsPage({
 }) {
   use(params);
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const [copied, setCopied] = useState(false);
   const [customCode, setCustomCode] = useState("");
 
@@ -111,6 +112,7 @@ export default function ConsultantReferralsPage({
     if (res.ok) {
       toast({ title: "Custom code set!" });
       setCustomCode("");
+      queryClient.invalidateQueries({ queryKey: ["referral-code"] });
     } else {
       toast({ title: "Failed to set custom code", variant: "destructive" });
     }
