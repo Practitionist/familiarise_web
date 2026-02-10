@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { formatAmountFromPaise } from "@/lib/utils";
+import { formatCurrencyAmount } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -209,7 +209,7 @@ export default function PaymentsAssistancePage() {
             </div>
             <div>
               <p className="text-2xl font-bold">
-                {formatAmountFromPaise(stats.totalAmount)}
+                {formatCurrencyAmount(stats.totalAmount, "INR")}
               </p>
               <p className="text-sm text-zinc-500">Processed (page)</p>
             </div>
@@ -330,7 +330,7 @@ export default function PaymentsAssistancePage() {
                           </div>
                         </TableCell>
                         <TableCell className="font-medium">
-                          {formatAmountFromPaise(payment.amount, payment.currency)}
+                          {formatCurrencyAmount(payment.amount, payment.currency)}
                         </TableCell>
                         <TableCell>
                           <Badge
@@ -466,7 +466,7 @@ export default function PaymentsAssistancePage() {
                             </span>
                             <span>
                               Amount:{" "}
-                              {formatAmountFromPaise(refund.amount, refund.currency)}
+                              {formatCurrencyAmount(refund.amount, refund.currency)}
                             </span>
                           </div>
                         </div>
@@ -525,7 +525,7 @@ export default function PaymentsAssistancePage() {
                   <div>
                     <p className="text-sm text-zinc-500">Amount</p>
                     <p className="text-2xl font-bold">
-                      {formatAmountFromPaise(
+                      {formatCurrencyAmount(
                         selectedPayment.amount,
                         selectedPayment.currency,
                       )}

@@ -10,7 +10,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { use, useState } from "react";
-import { formatAmountFromPaise } from "@/lib/utils";
+import { formatCurrencyAmount } from "@/lib/utils";
 import type {
   PaymentDetail,
   PaymentDetailRefund,
@@ -170,7 +170,7 @@ export default function PaymentDetailsPage({ params }: PageProps) {
             <div>
               <Label className="text-gray-500">Amount</Label>
               <p className="text-2xl font-bold">
-                {formatAmountFromPaise(payment.amount, payment.currency)}
+                {formatCurrencyAmount(payment.amount, payment.currency)}
               </p>
             </div>
             <div>
@@ -278,7 +278,7 @@ export default function PaymentDetailsPage({ params }: PageProps) {
                     <Input
                       id="refundAmount"
                       type="number"
-                      placeholder={`Max: ${formatAmountFromPaise(remainingRefundable)}`}
+                      placeholder={`Max: ${formatCurrencyAmount(remainingRefundable, payment.currency)}`}
                       value={refundAmount}
                       onChange={(e) => setRefundAmount(e.target.value)}
                       max={remainingRefundable}
@@ -286,7 +286,7 @@ export default function PaymentDetailsPage({ params }: PageProps) {
                     />
                     {successfulRefunds > 0 && (
                       <p className="text-xs text-muted-foreground mt-1">
-                        Already refunded: {formatAmountFromPaise(successfulRefunds)} • Remaining: {formatAmountFromPaise(remainingRefundable)}
+                        Already refunded: {formatCurrencyAmount(successfulRefunds, payment.currency)} • Remaining: {formatCurrencyAmount(remainingRefundable, payment.currency)}
                       </p>
                     )}
                   </>
@@ -338,7 +338,7 @@ export default function PaymentDetailsPage({ params }: PageProps) {
                 >
                   <div>
                     <p className="font-medium">
-                      {formatAmountFromPaise(refund.amount, refund.currency)}
+                      {formatCurrencyAmount(refund.amount, refund.currency)}
                     </p>
                     <p className="text-sm text-gray-500">{refund.reason}</p>
                     <p className="text-xs text-gray-400 mt-1">
@@ -380,7 +380,7 @@ export default function PaymentDetailsPage({ params }: PageProps) {
                   <div className="flex justify-between items-start">
                     <div>
                       <p className="font-medium">
-                        {formatAmountFromPaise(dispute.amount, dispute.currency)}
+                        {formatCurrencyAmount(dispute.amount, dispute.currency)}
                       </p>
                       <p className="text-sm text-gray-600">{dispute.reason}</p>
                       <p className="text-xs text-gray-400 mt-1">

@@ -9,7 +9,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Clock, AlertCircle, ExternalLink, RefreshCcw } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { useState } from "react";
-import { formatAmountFromPaise } from "@/lib/utils";
+import { formatCurrencyAmount } from "@/lib/utils";
 
 interface ApprovalPayment {
   id: string;
@@ -234,7 +234,7 @@ export default function ApprovalPaymentsPage() {
                         <div>
                           <p className="text-gray-500">Amount</p>
                           <p className="font-medium text-gray-900">
-                            {formatAmountFromPaise(payment.amount, payment.currency)}
+                            {formatCurrencyAmount(payment.amount, payment.currency)}
                           </p>
                         </div>
                         <div>

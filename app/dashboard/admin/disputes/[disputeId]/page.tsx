@@ -9,7 +9,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { use, useState } from "react";
-import { formatAmountFromPaise } from "@/lib/utils";
+import { formatCurrencyAmount } from "@/lib/utils";
 import type { DisputeDetails } from "@/types/disputes";
 
 // Fetch dispute details
@@ -214,7 +214,7 @@ export default function DisputeDetailsPage({ params }: PageProps) {
             <div>
               <Label className="text-gray-500">Amount</Label>
               <p className="text-2xl font-bold">
-                {formatAmountFromPaise(dispute.amount, dispute.currency)}
+                {formatCurrencyAmount(dispute.amount, dispute.currency)}
               </p>
             </div>
             <div>

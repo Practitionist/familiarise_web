@@ -18,6 +18,7 @@ import {
   ArrowUpRight,
   Loader2,
 } from "lucide-react";
+import { formatCurrencyAmount } from "@/lib/utils";
 
 type EarningStatus = "PENDING" | "READY" | "PAID" | "HELD" | "REFUNDED";
 
@@ -71,14 +72,16 @@ interface EarningsResponse {
   };
 }
 
-function formatCurrency(amountInPaise: number): string {
-  return new Intl.NumberFormat("en-IN", {
-    style: "currency",
-    currency: "INR",
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  }).format(amountInPaise / 100);
-}
+/**
+ * Format currency using the shared utility.
+ * Summary amounts don't carry a currency (backend aggregates across all),
+ * so we default to INR. Individual earning rows use payment.currency.
+ */
+const formatSummaryAmount = (amount: number) =>
+  formatCurrencyAmount(amount, "INR");
+
+const formatEarningAmount = (amount: number, currency: string) =>
+  formatCurrencyAmount(amount, currency);
 
 function formatDate(dateStr: string): string {
   return new Date(dateStr).toLocaleDateString("en-IN", {
@@ -192,13 +195,13 @@ export default function EarningsPage({
         <DashboardGrid columns={4}>
           <StatCard
             title="Total Earnings"
-            value={formatCurrency(summary?.totalEarnings ?? 0)}
+            value={formatSummaryAmount(summary?.totalEarnings ?? 0)}
             icon={IndianRupee}
             variant="default"
           />
           <StatCard
             title="Ready for Payout"
-            value={formatCurrency(summary?.readyEarnings ?? 0)}
+            value={formatSummaryAmount(summary?.readyEarnings ?? 0)}
             icon={CheckCircle}
             variant="success"
             subtitle={
@@ -209,26 +212,26 @@ export default function EarningsPage({
           />
           <StatCard
             title="Pending (In Hold)"
-            value={formatCurrency(summary?.pendingEarnings ?? 0)}
+            value={formatSummaryAmount(summary?.pendingEarnings ?? 0)}
             icon={Clock}
             variant="warning"
             subtitle="Released after hold period"
           />
           <StatCard
             title="Already Paid Out"
-            value={formatCurrency(summary?.paidEarnings ?? 0)}
+            value={formatSummaryAmount(summary?.paidEarnings ?? 0)}
             icon={Wallet}
             variant="info"
           />
         </DashboardGrid>
 
         {/* Held earnings alert */}
-        {(summary?.heldEarnings ?? 0) > 0 && (
+        {summary && summary.heldEarnings > 0 && (
           <div className="mt-4 flex items-center gap-3 p-4 bg-red-50 border border-red-200 rounded-lg">
             <AlertTriangle className="w-5 h-5 text-red-500 flex-shrink-0" />
             <div>
               <p className="text-sm font-medium text-red-800">
-                {formatCurrency(summary!.heldEarnings)} is on hold
+                {formatSummaryAmount(summary.heldEarnings)} is on hold
               </p>
               <p className="text-xs text-red-600">
                 Earnings may be held due to disputes or policy review. Contact
@@ -317,13 +320,13 @@ export default function EarningsPage({
                           </span>
                         </td>
                         <td className="px-4 py-3 text-right text-zinc-600">
-                          {formatCurrency(earning.payment?.amount ?? 0)}
+                          {formatEarningAmount(earning.payment?.amount ?? 0, earning.payment?.currency ?? "INR")}
                         </td>
                         <td className="px-4 py-3 text-right font-medium text-zinc-900">
-                          {formatCurrency(earning.consultantShare)}
+                          {formatEarningAmount(earning.consultantShare, earning.payment?.currency ?? "INR")}
                         </td>
                         <td className="px-4 py-3 text-right text-zinc-400">
-                          {formatCurrency(earning.platformFee)}
+                          {formatEarningAmount(earning.platformFee, earning.payment?.currency ?? "INR")}
                         </td>
                         <td className="px-4 py-3">
                           <Badge
@@ -396,9 +399,9 @@ export default function EarningsPage({
                 </p>
                 <p className="text-xs text-zinc-500 mt-1">
                   {eligibility.isEligible
-                    ? `You have ${formatCurrency(eligibility.readyAmount)} ready for payout. Payouts are processed weekly.`
+                    ? `You have ${formatSummaryAmount(eligibility.readyAmount)} ready for payout. Payouts are processed weekly.`
                     : eligibility.reason ??
-                      `Minimum payout threshold is ${formatCurrency(eligibility.minimumAmount)}.`}
+                      `Minimum payout threshold is ${formatSummaryAmount(eligibility.minimumAmount)}.`}
                 </p>
               </div>
             </div>
