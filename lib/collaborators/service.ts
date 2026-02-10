@@ -28,6 +28,27 @@ export async function inviteCollaborator(
   );
   if (!valid) return null;
 
+  // Check for existing active collaboration (not REMOVED/DECLINED)
+  if (planType === "webinar") {
+    const existing = await prisma.webinarCollaborator.findFirst({
+      where: {
+        webinarPlanId: planId,
+        consultantProfileId,
+        status: { notIn: ["REMOVED", "DECLINED"] },
+      },
+    });
+    if (existing) return null;
+  } else {
+    const existing = await prisma.classCollaborator.findFirst({
+      where: {
+        classPlanId: planId,
+        consultantProfileId,
+        status: { notIn: ["REMOVED", "DECLINED"] },
+      },
+    });
+    if (existing) return null;
+  }
+
   if (planType === "webinar") {
     return prisma.webinarCollaborator.create({
       data: {

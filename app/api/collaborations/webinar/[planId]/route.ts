@@ -71,6 +71,27 @@ export async function POST(
       );
     }
 
+    if (consultantProfileId === ownerProfile.id) {
+      return NextResponse.json(
+        { error: "You cannot invite yourself as a collaborator" },
+        { status: 400 },
+      );
+    }
+
+    const existingCollab = await prisma.webinarCollaborator.findFirst({
+      where: {
+        webinarPlanId: planId,
+        consultantProfileId,
+        status: { notIn: ["REMOVED", "DECLINED"] },
+      },
+    });
+    if (existingCollab) {
+      return NextResponse.json(
+        { error: "This consultant already has an active or pending collaboration on this plan" },
+        { status: 409 },
+      );
+    }
+
     const collab = await inviteCollaborator(
       "webinar",
       planId,
