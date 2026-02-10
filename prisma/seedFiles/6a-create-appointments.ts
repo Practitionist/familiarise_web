@@ -1,13 +1,17 @@
 import { faker } from "@faker-js/faker";
 import {
   AppointmentsType,
+  ClassPlan,
   ClassStatus,
+  ConsultationPlan,
   DayOfWeek,
   Platform,
   Prisma,
   RequestStatus,
   SlotOfAvailabilityCustom,
   SlotOfAvailabilityWeekly,
+  SubscriptionPlan,
+  WebinarPlan,
   WebinarStatus,
 } from "@prisma/client";
 import prisma from "../../lib/prisma";
@@ -155,7 +159,7 @@ const createMeetingSessionData = (
 
 const createConsultationAppointment = (
   consultee: UserWithProfiles,
-  consultationPlans: any[],
+  consultationPlans: ConsultationPlan[],
   defaultStatus: RequestStatus,
   isPastAppointment: boolean,
   slotStartTimeInUTC: Date,
@@ -205,8 +209,8 @@ const createConsultationAppointment = (
 
 const createSubscriptionAppointment = (
   consultee: UserWithProfiles,
-  subscriptionPlans: any[],
-  consultantWeeklySlots: any[], // Add consultant's weekly availability
+  subscriptionPlans: SubscriptionPlan[],
+  consultantWeeklySlots: SlotOfAvailabilityWeekly[],
   defaultStatus: RequestStatus,
   isPastAppointment: boolean,
   startDate: Date,
@@ -374,7 +378,7 @@ const createSubscriptionAppointment = (
 
 const createWebinarAppointment = async (
   consultee: UserWithProfiles,
-  webinarPlans: any[],
+  webinarPlans: WebinarPlan[],
   consultees: UserWithProfiles[],
   isPastAppointment: boolean,
   slotStartTimeInUTC: Date,
@@ -430,7 +434,7 @@ const createWebinarAppointment = async (
 
 const createClassAppointment = async (
   consultee: UserWithProfiles,
-  classPlans: any[],
+  classPlans: ClassPlan[],
   consultees: UserWithProfiles[],
   isPastAppointment: boolean,
   startDate: Date,
@@ -511,11 +515,11 @@ const createClassAppointment = async (
 async function createAppointmentBatch(
   consultees: UserWithProfiles[],
   allSlots: SlotData[],
-  consultationPlans: any[],
-  subscriptionPlans: any[],
-  webinarPlans: any[],
-  classPlans: any[],
-  weeklySlots: any[],
+  consultationPlans: ConsultationPlan[],
+  subscriptionPlans: SubscriptionPlan[],
+  webinarPlans: WebinarPlan[],
+  classPlans: ClassPlan[],
+  weeklySlots: SlotOfAvailabilityWeekly[],
   startIndex: number,
   batchSize: number,
 ): Promise<number> {

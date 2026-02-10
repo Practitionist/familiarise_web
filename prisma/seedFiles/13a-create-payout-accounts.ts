@@ -3,7 +3,6 @@ import { PaymentGateway, PayoutAccountType } from "@prisma/client";
 import prisma from "../../lib/prisma";
 import {
   INDIAN_BANKS,
-  IndianBank,
   generateIfscCode,
   generateUpiId,
   generateStripeAccountId,
@@ -36,13 +35,19 @@ interface PayoutAccountData {
   isDefault: boolean;
 }
 
+type PayoutAccountDetails = Pick<
+  PayoutAccountData,
+  "provider" | "accountType"
+> &
+  Partial<PayoutAccountData>;
+
 /**
  * Generate bank account details
  */
 function generateBankAccountDetails(
   consultantName: string,
-): Partial<PayoutAccountData> {
-  const bank = faker.helpers.arrayElement(INDIAN_BANKS) as IndianBank;
+): PayoutAccountDetails {
+  const bank = faker.helpers.arrayElement(INDIAN_BANKS);
   return {
     provider: PaymentGateway.RAZORPAY,
     accountType: PayoutAccountType.BANK_ACCOUNT,
@@ -60,7 +65,7 @@ function generateBankAccountDetails(
  */
 function generateUpiAccountDetails(
   consultantName: string,
-): Partial<PayoutAccountData> {
+): PayoutAccountDetails {
   return {
     provider: PaymentGateway.RAZORPAY,
     accountType: PayoutAccountType.UPI,
@@ -76,7 +81,7 @@ function generateUpiAccountDetails(
  */
 function generateStripeConnectDetails(
   consultantName: string,
-): Partial<PayoutAccountData> {
+): PayoutAccountDetails {
   const statuses = ["active", "pending", "restricted"];
   return {
     provider: PaymentGateway.STRIPE,
@@ -96,7 +101,7 @@ function generatePayoutAccountData(
   accountType: PayoutAccountType,
   isDefault: boolean,
 ): PayoutAccountData {
-  let accountDetails: Partial<PayoutAccountData>;
+  let accountDetails: PayoutAccountDetails;
 
   switch (accountType) {
     case PayoutAccountType.BANK_ACCOUNT:
@@ -117,7 +122,7 @@ function generatePayoutAccountData(
     isVerified: faker.datatype.boolean({ probability: VERIFICATION_RATE }),
     isDefault,
     ...accountDetails,
-  } as PayoutAccountData;
+  };
 }
 
 export async function createPayoutAccounts(): Promise<void> {

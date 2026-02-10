@@ -1,4 +1,5 @@
 import { faker } from "@faker-js/faker";
+import { Prisma } from "@prisma/client";
 import prisma from "../../lib/prisma";
 import { UserWithProfiles } from "./1a-create-users";
 import { config } from "./config";
@@ -53,7 +54,7 @@ export async function createWaitlists(
 
       let eventId: string;
       let entryKey: string;
-      let createData: any;
+      let createData: Prisma.WaitlistCreateManyInput;
 
       if (isWebinar) {
         const webinar = faker.helpers.arrayElement(webinars);

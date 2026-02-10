@@ -197,9 +197,15 @@ const VOLUMES: Record<SeedMode, VolumeConfig> = {
  * Gets the current seed mode from environment variables
  * Defaults to 'small' if not specified or invalid
  */
+const VALID_SEED_MODES: readonly SeedMode[] = ["small", "medium", "large"];
+
+function isSeedMode(value: string): value is SeedMode {
+  return VALID_SEED_MODES.includes(value as SeedMode);
+}
+
 export function getSeedMode(): SeedMode {
-  const mode = process.env.SEED_MODE?.toLowerCase() as SeedMode;
-  if (mode && ["small", "medium", "large"].includes(mode)) {
+  const mode = process.env.SEED_MODE?.toLowerCase();
+  if (mode && isSeedMode(mode)) {
     return mode;
   }
   return "small";
