@@ -82,8 +82,9 @@ export async function generateUniqueCode(
  */
 export async function validateReferralCode(
   code: string,
+  db: Prisma.TransactionClient | typeof prisma = prisma,
 ): Promise<ReferralCode | null> {
-  return prisma.referralCode.findFirst({
+  return db.referralCode.findFirst({
     where: {
       OR: [
         { code: code.toUpperCase() },
@@ -102,20 +103,20 @@ export async function applyReferralCode(
   newUserId: string,
   code: string,
 ): Promise<Referral | null> {
-  const referralCode = await validateReferralCode(code);
-  if (!referralCode) return null;
+  return prisma.$transaction(async (tx) => {
+    // Validate inside transaction to prevent TOCTOU race conditions
+    const referralCode = await validateReferralCode(code, tx);
+    if (!referralCode) return null;
 
-  // Can't refer yourself
-  if (referralCode.userId === newUserId) return null;
+    // Can't refer yourself
+    if (referralCode.userId === newUserId) return null;
 
-  // Check if already referred
-  const existingReferral = await prisma.referral.findUnique({
-    where: { referredUserId: newUserId },
-  });
-  if (existingReferral) return null;
+    // Check if already referred
+    const existingReferral = await tx.referral.findUnique({
+      where: { referredUserId: newUserId },
+    });
+    if (existingReferral) return null;
 
-  // Create referral + update stats + give referee bonus in a transaction
-  const referral = await prisma.$transaction(async (tx) => {
     const ref = await tx.referral.create({
       data: {
         referralCodeId: referralCode.id,
@@ -154,8 +155,6 @@ export async function applyReferralCode(
 
     return ref;
   });
-
-  return referral;
 }
 
 /**
