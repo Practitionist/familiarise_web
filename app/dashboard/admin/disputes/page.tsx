@@ -15,6 +15,8 @@ import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { useState } from "react";
 import { PaymentGateway, DisputeStatus } from "@prisma/client";
+import { formatCurrencyAmount } from "@/lib/utils";
+import type { Dispute, DisputeListResponse } from "@/types/disputes";
 
 // Fetch disputes with filters
 async function fetchDisputes(params: {
@@ -23,7 +25,7 @@ async function fetchDisputes(params: {
   status?: DisputeStatus;
   gateway?: PaymentGateway;
   search?: string;
-}) {
+}): Promise<DisputeListResponse> {
   const searchParams = new URLSearchParams({
     page: params.page.toString(),
     limit: params.limit.toString(),
@@ -36,7 +38,7 @@ async function fetchDisputes(params: {
   if (!response.ok) {
     throw new Error("Failed to fetch disputes");
   }
-  return response.json();
+  return response.json() as Promise<DisputeListResponse>;
 }
 
 export default function AdminDisputesPage() {
@@ -85,7 +87,7 @@ export default function AdminDisputesPage() {
       </div>
 
       {/* Alert for Urgent Disputes */}
-      {data?.urgentDisputes > 0 && (
+      {data && data.urgentDisputes > 0 && (
         <Card className="border-red-200 bg-red-50">
           <CardContent className="pt-6">
             <div className="flex items-center gap-2">
@@ -186,7 +188,7 @@ export default function AdminDisputesPage() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {isLoading ? (
+          {isLoading || !data ? (
             <div className="space-y-3">
               {[1, 2, 3, 4, 5].map((i) => (
                 <Skeleton key={i} className="h-16 w-full" />
@@ -222,7 +224,7 @@ export default function AdminDisputesPage() {
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
-                    {data.disputes.map((dispute: any) => {
+                    {data.disputes.map((dispute: Dispute) => {
                       const isUrgent =
                         dispute.dueBy &&
                         new Date(dispute.dueBy) <
@@ -237,7 +239,7 @@ export default function AdminDisputesPage() {
                             {dispute.disputeId?.substring(0, 20)}...
                           </td>
                           <td className="px-4 py-3 text-sm text-gray-900">
-                            {dispute.amount} {dispute.currency}
+                            {formatCurrencyAmount(dispute.amount, dispute.currency)}
                           </td>
                           <td className="px-4 py-3 text-sm">
                             <span

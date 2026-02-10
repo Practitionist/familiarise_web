@@ -1185,9 +1185,7 @@ export async function handleWebinarCheckout(
     );
   }
 
-  // Allow late joiners: SCHEDULED and IN_PROGRESS webinars can accept new registrations
-  // TODO: (Optional) Add configurable buffer time before webinar ends if needed in future
-  //       e.g., block registration 5 minutes before scheduled end time
+  // Block booking for COMPLETED or CANCELLED webinars
   const blockedStatuses = ["COMPLETED", "CANCELLED"] as const;
   if (
     blockedStatuses.includes(webinar.status as (typeof blockedStatuses)[number])
@@ -1197,6 +1195,16 @@ export async function handleWebinarCheckout(
         ? "This webinar has already ended."
         : "This webinar has been cancelled.";
     throw new Error(message);
+  }
+
+  // BUG-A FIX: Block booking if the webinar's scheduled end time has already passed.
+  // This catches stale SCHEDULED webinars where the consultant never updated the status.
+  // Late joiners to IN_PROGRESS webinars are still allowed as long as the end time hasn't passed.
+  const masterSlot = webinar.appointment.slotsOfAppointment[0];
+  if (masterSlot.endsAt < new Date()) {
+    throw new Error(
+      "This webinar has already ended. It can no longer accept registrations.",
+    );
   }
 
   // Check if user is already registered for this webinar
@@ -1293,6 +1301,19 @@ export async function handleClassCheckout(
       throw new Error("Class is full. Added to waitlist.");
     } else {
       throw new Error("Class is full");
+    }
+  }
+
+  // H5 FIX: Validate class hasn't already ended (all sessions past).
+  // Similar to webinar validation — prevents booking a class whose last session is over.
+  if (classInstance.appointments.length > 0) {
+    const lastSession =
+      classInstance.appointments[classInstance.appointments.length - 1];
+    const lastMasterSlot = lastSession.slotsOfAppointment[0];
+    if (lastMasterSlot && lastMasterSlot.endsAt < new Date()) {
+      throw new Error(
+        "This class has already ended. It can no longer accept enrollments.",
+      );
     }
   }
 
@@ -1522,7 +1543,14 @@ export async function handleCheckout(
 
           return { appointmentId: createdAppointment?.id };
         },
-        { timeout: 25000 },
+        {
+          timeout: 25000,
+          // H6 FIX: Use Serializable isolation for booking transactions to prevent
+          // phantom reads on capacity-limited events (webinars, classes). The
+          // distributed lock serializes per-event, but Serializable adds DB-level
+          // safety for edge cases like lock expiry under high load.
+          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        },
       );
 
       const logMessage = isMockPayment

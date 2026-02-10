@@ -10,14 +10,20 @@ import { useToast } from "@/hooks/use-toast";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { use, useState } from "react";
+import { formatCurrencyAmount } from "@/lib/utils";
+import type {
+  PaymentDetail,
+  PaymentDetailRefund,
+  PaymentDetailDispute,
+} from "@/types/payments";
 
 // Fetch payment details
-async function fetchPaymentDetails(paymentId: string) {
+async function fetchPaymentDetails(paymentId: string): Promise<PaymentDetail> {
   const response = await fetch(`/api/admin/payments/${paymentId}`);
   if (!response.ok) {
     throw new Error("Failed to fetch payment details");
   }
-  return response.json();
+  return response.json() as Promise<PaymentDetail>;
 }
 
 // Create refund
@@ -112,7 +118,7 @@ export default function PaymentDetailsPage({ params }: PageProps) {
     );
   }
 
-  if (isLoading) {
+  if (isLoading || !payment) {
     return (
       <div className="space-y-6">
         <Skeleton className="h-8 w-64" />
@@ -164,7 +170,7 @@ export default function PaymentDetailsPage({ params }: PageProps) {
             <div>
               <Label className="text-gray-500">Amount</Label>
               <p className="text-2xl font-bold">
-                {payment.amount} {payment.currency}
+                {formatCurrencyAmount(payment.amount, payment.currency)}
               </p>
             </div>
             <div>
@@ -260,14 +266,32 @@ export default function PaymentDetailsPage({ params }: PageProps) {
               <Label htmlFor="refundAmount">
                 Refund Amount (leave empty for full refund)
               </Label>
-              <Input
-                id="refundAmount"
-                type="number"
-                placeholder={`Max: ${payment.amount}`}
-                value={refundAmount}
-                onChange={(e) => setRefundAmount(e.target.value)}
-                max={payment.amount}
-              />
+              {/* H7 FIX: Calculate remaining refundable balance accounting for
+                  already-processed refunds to prevent over-refunding */}
+              {(() => {
+                const successfulRefunds = (payment.refunds || [])
+                  .filter((r: PaymentDetailRefund) => r.status === "SUCCEEDED" || r.status === "PENDING")
+                  .reduce((sum: number, r: PaymentDetailRefund) => sum + r.amount, 0);
+                const remainingRefundable = payment.amount - successfulRefunds;
+                return (
+                  <>
+                    <Input
+                      id="refundAmount"
+                      type="number"
+                      placeholder={`Max: ${formatCurrencyAmount(remainingRefundable, payment.currency)}`}
+                      value={refundAmount}
+                      onChange={(e) => setRefundAmount(e.target.value)}
+                      max={remainingRefundable}
+                      min={1}
+                    />
+                    {successfulRefunds > 0 && (
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Already refunded: {formatCurrencyAmount(successfulRefunds, payment.currency)} • Remaining: {formatCurrencyAmount(remainingRefundable, payment.currency)}
+                      </p>
+                    )}
+                  </>
+                );
+              })()}
             </div>
             <div>
               <Label htmlFor="refundReason">Reason (optional)</Label>
@@ -307,14 +331,14 @@ export default function PaymentDetailsPage({ params }: PageProps) {
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
-              {payment.refunds.map((refund: any) => (
+              {payment.refunds.map((refund: PaymentDetailRefund) => (
                 <div
                   key={refund.id}
                   className="p-4 border rounded-lg flex justify-between items-start"
                 >
                   <div>
                     <p className="font-medium">
-                      {refund.amount} {refund.currency}
+                      {formatCurrencyAmount(refund.amount, refund.currency)}
                     </p>
                     <p className="text-sm text-gray-500">{refund.reason}</p>
                     <p className="text-xs text-gray-400 mt-1">
@@ -347,7 +371,7 @@ export default function PaymentDetailsPage({ params }: PageProps) {
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
-              {payment.disputes.map((dispute: any) => (
+              {payment.disputes.map((dispute: PaymentDetailDispute) => (
                 <Link
                   key={dispute.id}
                   href={`/dashboard/admin/disputes/${dispute.id}`}
@@ -356,7 +380,7 @@ export default function PaymentDetailsPage({ params }: PageProps) {
                   <div className="flex justify-between items-start">
                     <div>
                       <p className="font-medium">
-                        {dispute.amount} {dispute.currency}
+                        {formatCurrencyAmount(dispute.amount, dispute.currency)}
                       </p>
                       <p className="text-sm text-gray-600">{dispute.reason}</p>
                       <p className="text-xs text-gray-400 mt-1">

@@ -6,9 +6,11 @@ import {
   BudgetPreference,
   CareerStage,
   ConsultantProfile,
+  ConsultantVerificationStatus,
   ConsultationMode,
   ConsulteeProfile,
   Gender,
+  Prisma,
   ScheduleType,
   SessionType,
   StaffProfile,
@@ -396,6 +398,14 @@ async function createConsultantProfileData() {
       ? faker.datatype.boolean({ probability: 0.7 })
       : faker.datatype.boolean({ probability: 0.2 });
 
+  // Verification status should be consistent with isVerified
+  const verificationStatus: ConsultantVerificationStatus = isVerified
+    ? ConsultantVerificationStatus.VERIFIED
+    : faker.helpers.arrayElement<ConsultantVerificationStatus>([
+        ConsultantVerificationStatus.PENDING_VERIFICATION,
+        ConsultantVerificationStatus.UNDER_REVIEW,
+      ]);
+
   // Total mentees helped
   const totalMenteesHelped = Math.floor(
     experience * faker.number.int({ min: 5, max: 20 }),
@@ -412,10 +422,10 @@ async function createConsultantProfileData() {
     tags: {
       connect: tags.map((t) => ({ id: t.id })),
     },
-    scheduleType: faker.helpers.arrayElement([
-      "WEEKLY",
-      "CUSTOM",
-    ]) as ScheduleType,
+    scheduleType: faker.helpers.arrayElement<ScheduleType>([
+      ScheduleType.WEEKLY,
+      ScheduleType.CUSTOM,
+    ]),
 
     // Consultant profile fields
     headline: generateHeadline(domain.name),
@@ -437,6 +447,7 @@ async function createConsultantProfileData() {
     sessionTypes,
     profileCompletionPercentage,
     isVerified,
+    verificationStatus,
     totalMenteesHelped,
     domainName: domain.name, // For passing to work experience generation
   };
@@ -595,10 +606,10 @@ export async function createUsers(): Promise<UserWithProfiles[]> {
       const city = generateCity(country);
       const gender = faker.helpers.arrayElement(GENDERS);
 
-      const userData: any = {
+      const userData: Prisma.UserCreateInput = {
         name,
         email,
-        emailVerified: faker.date.past(),
+        emailVerified: true,
         image: sanitizeString(faker.image.avatar()),
         phone: sanitizePhone(faker.phone.number()),
         address: sanitizeString(faker.location.streetAddress()),

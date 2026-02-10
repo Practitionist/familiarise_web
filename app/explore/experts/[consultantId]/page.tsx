@@ -5,12 +5,11 @@ import { useToast } from "@/components/ui/use-toast";
 import {
   fetchConsultantDetails,
   fetchReviews,
-  fetchUserDetails,
 } from "@/lib/user";
 import { TConsultantProfile } from "@/types/consultant";
 import { TSlotTiming } from "@/types/slots";
 import { TUserWithProfessionalBackground } from "@/types/user";
-import { ConsultantReview } from "@prisma/client";
+import { TConsultantReview } from "@/types/review";
 import Link from "next/link";
 import { use, useCallback, useEffect, useState } from "react";
 import { motion } from "framer-motion";
@@ -43,7 +42,7 @@ export default function ExpertProfile(
     useState<TUserWithProfessionalBackground | null>(null);
   const [consultantDetails, setConsultantDetails] =
     useState<TConsultantProfile | null>(null);
-  const [reviews, setReviews] = useState<ConsultantReview[]>([]);
+  const [reviews, setReviews] = useState<TConsultantReview[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
   const [currentDate, setCurrentDate] = useState(new Date());

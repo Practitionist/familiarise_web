@@ -20,15 +20,25 @@ import { Check, X, Loader2 } from "lucide-react";
 
 import type { Payout } from "@/types/payouts";
 
-async function fetchPendingPayouts() {
+interface PayoutListResponse {
+  payouts: Payout[];
+  pagination: {
+    total: number;
+    limit: number;
+    offset: number;
+    hasMore: boolean;
+  };
+}
+
+async function fetchPendingPayouts(): Promise<PayoutListResponse> {
   const response = await fetch("/api/admin/payouts?status=PENDING&limit=100");
   if (!response.ok) {
     throw new Error("Failed to fetch payouts");
   }
-  return response.json();
+  return response.json() as Promise<PayoutListResponse>;
 }
 
-async function approvePayout(id: string) {
+async function approvePayout(id: string): Promise<Payout> {
   const response = await fetch(`/api/admin/payouts/${id}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -38,10 +48,10 @@ async function approvePayout(id: string) {
     const error = await response.json();
     throw new Error(error.error || "Failed to approve payout");
   }
-  return response.json();
+  return response.json() as Promise<Payout>;
 }
 
-async function rejectPayout(id: string, reason: string) {
+async function rejectPayout(id: string, reason: string): Promise<Payout> {
   const response = await fetch(`/api/admin/payouts/${id}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -51,7 +61,7 @@ async function rejectPayout(id: string, reason: string) {
     const error = await response.json();
     throw new Error(error.error || "Failed to reject payout");
   }
-  return response.json();
+  return response.json() as Promise<Payout>;
 }
 
 export default function PendingPayoutsPage() {
@@ -147,7 +157,7 @@ export default function PendingPayoutsPage() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {isLoading ? (
+          {isLoading || !data ? (
             <div className="space-y-3">
               {[1, 2, 3, 4, 5].map((i) => (
                 <Skeleton key={i} className="h-16 w-full" />

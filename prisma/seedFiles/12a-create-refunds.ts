@@ -1,5 +1,5 @@
 import { faker } from "@faker-js/faker";
-import { PaymentGateway, RefundStatus } from "@prisma/client";
+import { PaymentGateway, Prisma, RefundStatus } from "@prisma/client";
 import prisma from "../../lib/prisma";
 
 // Status distribution: 60% SUCCEEDED, 20% PENDING, 15% FAILED, 5% CANCELLED
@@ -110,7 +110,7 @@ export async function createRefunds(): Promise<void> {
       const refundId = generateRefundId(payment.paymentGateway);
 
       // Metadata based on status
-      let metadata: Record<string, any> = {
+      let metadata: Record<string, Prisma.JsonValue> = {
         initiatedBy: "customer",
         requestDate: faker.date.recent({ days: 30 }).toISOString(),
       };

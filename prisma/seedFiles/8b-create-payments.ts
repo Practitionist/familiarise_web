@@ -12,31 +12,6 @@ import { config } from "./config";
 // Payment volume - configurable via SEED_MODE environment variable
 const NUM_PAYMENTS = config.volumes.payments;
 
-type AppointmentWithPlans = Prisma.AppointmentGetPayload<{
-  include: {
-    consultation: {
-      include: {
-        consultationPlan: true;
-      };
-    };
-    subscription: {
-      include: {
-        subscriptionPlan: true;
-      };
-    };
-    webinar: {
-      include: {
-        webinarPlan: true;
-      };
-    };
-    class: {
-      include: {
-        classPlan: true;
-      };
-    };
-  };
-}>;
-
 export async function createPayments(users: UserWithProfiles[]) {
   console.log(`Creating payments...`);
   const discountCodes = await prisma.discountCode.findMany();
@@ -79,7 +54,7 @@ export async function createPayments(users: UserWithProfiles[]) {
 
   for (let i = 0; i < appointments.length; i++) {
     const user = faker.helpers.arrayElement(users);
-    const appointment = appointments[i] as AppointmentWithPlans;
+    const appointment = appointments[i];
 
     try {
       // Determine the amount based on the appointment type and plan

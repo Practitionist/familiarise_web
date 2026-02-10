@@ -1,10 +1,10 @@
 // Data fetching functions using relative URLs
 // These work in both client and server components
-import { ConsultantReview } from "@prisma/client";
 import { TConsultantProfile } from "@/types/consultant";
 import { TConsulteeProfile } from "@/types/consultee";
 import { TStaffProfile } from "@/types/staff";
 import { TUserWithProfessionalBackground } from "@/types/user";
+import type { TConsultantReview } from "@/types/review";
 
 export const fetchUserDetails = async (
   userId: string,
@@ -53,13 +53,13 @@ export const fetchStaffDetails = async (
 
 export const fetchReviews = async (
   consultantId: string,
-): Promise<ConsultantReview[]> => {
+): Promise<TConsultantReview[]> => {
   const response = await fetch(
     `/api/user/reviews?consultantId=${consultantId}`,
   );
   if (!response.ok)
     throw new Error(`Failed to fetch reviews: ${response.statusText}`);
-  const reviewsData: { data: ConsultantReview[] } = await response.json();
+  const reviewsData: { data: TConsultantReview[] } = await response.json();
   return reviewsData.data;
 };
 

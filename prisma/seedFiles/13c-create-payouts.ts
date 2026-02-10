@@ -1,5 +1,5 @@
 import { faker } from "@faker-js/faker";
-import { PaymentGateway, PayoutMethod, PayoutStatus } from "@prisma/client";
+import { PaymentGateway, PayoutMethod } from "@prisma/client";
 import prisma from "../../lib/prisma";
 import {
   generateBatchId,
@@ -115,12 +115,10 @@ export async function createPayouts(): Promise<void> {
       );
 
       // Determine provider and related fields
-      const provider = weightedRandom(
-        PAYOUT_PROVIDER_WEIGHTS,
-      ) as PaymentGateway;
+      const provider = weightedRandom(PAYOUT_PROVIDER_WEIGHTS);
       const method = getPayoutMethod(provider);
       const currency = getCurrency(provider);
-      const status = weightedRandom(PAYOUT_STATUS_WEIGHTS) as PayoutStatus;
+      const status = weightedRandom(PAYOUT_STATUS_WEIGHTS);
 
       // Generate dates based on status
       const createdAt = faker.date.recent({ days: 30 });

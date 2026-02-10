@@ -1,5 +1,5 @@
 import { faker } from "@faker-js/faker";
-import { EarningStatus, Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import prisma from "../../lib/prisma";
 import {
   calculatePlatformFee,
@@ -131,9 +131,7 @@ export async function createConsultantEarnings(): Promise<void> {
   for (const payment of succeededPayments) {
     try {
       // Get consultant profile ID from the payment's appointment
-      const consultantProfileId = getConsultantProfileIdFromPayment(
-        payment as PaymentWithAppointment,
-      );
+      const consultantProfileId = getConsultantProfileIdFromPayment(payment);
 
       if (!consultantProfileId) {
         console.warn(
@@ -149,7 +147,7 @@ export async function createConsultantEarnings(): Promise<void> {
       const consultantShare = calculateConsultantShare(grossAmount);
 
       // Assign status based on weighted distribution
-      const status = weightedRandom(EARNING_STATUS_WEIGHTS) as EarningStatus;
+      const status = weightedRandom(EARNING_STATUS_WEIGHTS);
 
       // Calculate hold period (based on payment creation date)
       const holdUntil = generateHoldUntilDate(payment.createdAt);

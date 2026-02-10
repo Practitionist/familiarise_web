@@ -101,7 +101,7 @@ export default function StaffDisputeDetailPage() {
         const response = await fetch(`/api/admin/disputes/${disputeId}`);
         if (!response.ok) throw new Error("Failed to fetch dispute");
 
-        const data = await response.json();
+        const data: DisputeDetails = await response.json();
         setDispute(data);
       } catch (error) {
         console.error("Error fetching dispute:", error);
@@ -358,9 +358,11 @@ export default function StaffDisputeDetailPage() {
                 </AlertDescription>
               </Alert>
               <div className="p-4 rounded-lg bg-zinc-50 dark:bg-zinc-900">
-                <p className="text-sm whitespace-pre-wrap">
-                  {dispute.evidence}
-                </p>
+                <pre className="text-sm whitespace-pre-wrap overflow-auto">
+                  {typeof dispute.evidence === "object"
+                    ? JSON.stringify(dispute.evidence, null, 2)
+                    : String(dispute.evidence)}
+                </pre>
               </div>
             </div>
           ) : (
