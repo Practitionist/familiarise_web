@@ -293,14 +293,18 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
               },
             },
             webinar: {
-              include: {
+              select: {
+                id: true,
+                webinarPlanId: true,
                 webinarPlan: {
                   include: { consultantProfile: true },
                 },
               },
             },
             class: {
-              include: {
+              select: {
+                id: true,
+                classPlanId: true,
                 classPlan: {
                   include: { consultantProfile: true },
                 },
@@ -338,6 +342,12 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
           appointment: {
             ...paymentWithAppointment.appointment,
             consultantProfile: { id: consultantProfile.id },
+            webinar: paymentWithAppointment.appointment.webinar
+              ? { webinarPlanId: paymentWithAppointment.appointment.webinar.webinarPlanId }
+              : null,
+            class: paymentWithAppointment.appointment.class
+              ? { classPlanId: paymentWithAppointment.appointment.class.classPlanId }
+              : null,
           },
         };
 

@@ -235,6 +235,21 @@ export async function DELETE(
       );
     }
 
+    // Check for active collaborators (PENDING or ACCEPTED)
+    const activeCollaborators = await prisma.classCollaborator.count({
+      where: {
+        classPlanId,
+        status: { in: ["PENDING", "ACCEPTED"] },
+      },
+    });
+
+    if (activeCollaborators > 0) {
+      return NextResponse.json(
+        { error: "Cannot delete class plan with active collaborators. Remove or notify collaborators first." },
+        { status: 400 },
+      );
+    }
+
     const classPlan = await prisma.classPlan.delete({
       where: { id: classPlanId },
       include: {

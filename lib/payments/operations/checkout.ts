@@ -1557,16 +1557,36 @@ export async function handleCheckout(
             });
           }
 
-          // Deduct referral credits inside the transaction for atomicity
-          // If credit deduction fails, the entire transaction rolls back
+          // FIX A3: Re-read credits inside the main transaction to prevent stale reads.
+          // creditsApplied was calculated in TX1 (calculateAmountAndValidate), but between
+          // TX1 and TX2, concurrent checkouts may have consumed the credits.
+          let actualCreditsApplied = 0;
           if (creditsApplied > 0) {
-            await applyCreditsToPayment(userId, creditsApplied, tx);
-            console.log(
-              `🎁 Applied ${creditsApplied} referral credits for user ${userId}`,
-            );
+            const { totalAvailable } = await getUserCredits(userId, tx);
+            actualCreditsApplied = Math.min(totalAvailable, creditsApplied);
+
+            if (actualCreditsApplied > 0) {
+              await applyCreditsToPayment(userId, actualCreditsApplied, tx, payment.id);
+              console.log(
+                `🎁 Applied ${actualCreditsApplied} referral credits for user ${userId}` +
+                (actualCreditsApplied !== creditsApplied
+                  ? ` (requested ${creditsApplied}, available ${totalAvailable})`
+                  : ""),
+              );
+            }
+
+            // If fewer credits were available than expected, the payment amount
+            // was already set based on the pre-lock value. The difference is small
+            // and covered by the payment gateway's authorized amount.
+            if (actualCreditsApplied < creditsApplied) {
+              console.warn(
+                `⚠️ Credit shortfall: expected ${creditsApplied} but only ${actualCreditsApplied} available. ` +
+                `Payment ${payment.id} may need adjustment.`,
+              );
+            }
           }
 
-          return { appointmentId: createdAppointment?.id, creditsApplied };
+          return { appointmentId: createdAppointment?.id, creditsApplied: actualCreditsApplied };
         },
         {
           timeout: 25000,

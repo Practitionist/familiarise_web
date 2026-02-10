@@ -197,6 +197,21 @@ export async function DELETE(
       );
     }
 
+    // Check for active collaborators (PENDING or ACCEPTED)
+    const activeCollaborators = await prisma.webinarCollaborator.count({
+      where: {
+        webinarPlanId,
+        status: { in: ["PENDING", "ACCEPTED"] },
+      },
+    });
+
+    if (activeCollaborators > 0) {
+      return NextResponse.json(
+        { error: "Cannot delete webinar plan with active collaborators. Remove or notify collaborators first." },
+        { status: 400 },
+      );
+    }
+
     const webinarPlan = await prisma.webinarPlan.delete({
       where: { id: webinarPlanId },
       include: {

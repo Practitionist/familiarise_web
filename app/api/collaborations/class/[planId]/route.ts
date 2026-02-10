@@ -5,6 +5,7 @@ import {
   getCollaborators,
   inviteCollaborator,
 } from "@/lib/collaborators/service";
+import { inviteClassCollaboratorSchema } from "@/schemas/collaborators";
 
 export async function GET(
   _req: NextRequest,
@@ -61,14 +62,16 @@ export async function POST(
     }
 
     const body = await req.json();
-    const { consultantProfileId, role, revenueSharePercentage } = body;
+    const parsed = inviteClassCollaboratorSchema.safeParse(body);
 
-    if (!consultantProfileId || !role || revenueSharePercentage === undefined) {
+    if (!parsed.success) {
       return NextResponse.json(
-        { error: "Missing required fields" },
+        { error: parsed.error.errors.map((e) => e.message).join(", ") },
         { status: 400 },
       );
     }
+
+    const { consultantProfileId, role, revenueSharePercentage } = parsed.data;
 
     if (consultantProfileId === ownerProfile.id) {
       return NextResponse.json(

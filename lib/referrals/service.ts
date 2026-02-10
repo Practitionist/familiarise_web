@@ -111,6 +111,9 @@ export async function applyReferralCode(
     // Can't refer yourself
     if (referralCode.userId === newUserId) return null;
 
+    // Check if max referrals cap reached
+    if (referralCode.totalReferrals >= referralCode.maxReferrals) return null;
+
     // Check if already referred
     const existingReferral = await tx.referral.findUnique({
       where: { referredUserId: newUserId },
@@ -260,6 +263,7 @@ export async function applyCreditsToPayment(
   userId: string,
   paymentAmount: number,
   tx: Prisma.TransactionClient,
+  paymentId?: string,
 ): Promise<{ creditsUsed: number; remainingToPay: number }> {
   const { credits } = await getUserCredits(userId, tx);
 
@@ -279,6 +283,8 @@ export async function applyCreditsToPayment(
         ...(credit.remainingAmount - useAmount === 0 && {
           usedAt: new Date(),
         }),
+        // Audit trail: link credit usage to the payment
+        ...(paymentId && { usedOnPaymentId: paymentId }),
       },
     });
 
@@ -287,6 +293,50 @@ export async function applyCreditsToPayment(
   }
 
   return { creditsUsed, remainingToPay };
+}
+
+/**
+ * Reverses referral credits that were consumed for a specific payment.
+ * Called during refund processing to restore credits to the user.
+ */
+export async function reverseCreditsForPayment(
+  paymentId: string,
+  tx: Prisma.TransactionClient,
+): Promise<number> {
+  // Find all credits used on this payment
+  const usedCredits = await tx.referralCredit.findMany({
+    where: { usedOnPaymentId: paymentId },
+  });
+
+  if (usedCredits.length === 0) return 0;
+
+  let totalRestored = 0;
+
+  for (const credit of usedCredits) {
+    // Restore the amount that was used (usedAmount tracks total usage)
+    const restoreAmount = credit.usedAmount;
+    if (restoreAmount <= 0) continue;
+
+    await tx.referralCredit.update({
+      where: { id: credit.id },
+      data: {
+        usedAmount: 0,
+        remainingAmount: { increment: restoreAmount },
+        usedAt: null,
+        usedOnPaymentId: null,
+      },
+    });
+
+    totalRestored += restoreAmount;
+  }
+
+  if (totalRestored > 0) {
+    console.log(
+      `🔄 Restored ${totalRestored} referral credits for refunded payment ${paymentId}`,
+    );
+  }
+
+  return totalRestored;
 }
 
 /**

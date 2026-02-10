@@ -1,12 +1,35 @@
 import { NextRequest, NextResponse } from "next/server";
 import { validateReferralCode } from "@/lib/referrals/service";
 import prisma from "@/lib/prisma";
+import { Ratelimit } from "@upstash/ratelimit";
+import redis from "@/lib/redis";
+
+// Rate limit: 10 requests per minute per IP to prevent brute-force enumeration
+const ratelimit = new Ratelimit({
+  redis: redis as ConstructorParameters<typeof Ratelimit>[0]["redis"],
+  limiter: Ratelimit.slidingWindow(10, "1 m"),
+  prefix: "ratelimit:referral-check",
+});
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ code: string }> },
 ) {
   try {
+    // Rate limit by IP
+    const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+    const { success, remaining } = await ratelimit.limit(ip);
+
+    if (!success) {
+      return NextResponse.json(
+        { error: "Too many requests. Please try again later." },
+        {
+          status: 429,
+          headers: { "X-RateLimit-Remaining": String(remaining) },
+        },
+      );
+    }
+
     const { code } = await params;
 
     if (!code) {

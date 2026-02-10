@@ -1,4 +1,9 @@
 import prisma from "@/lib/prisma";
+import {
+  Prisma,
+  type WebinarCollaboratorRole,
+  type ClassCollaboratorRole,
+} from "@prisma/client";
 import type {
   WebinarCollaborator,
   ClassCollaborator,
@@ -20,58 +25,69 @@ export async function inviteCollaborator(
   revenueSharePercentage: number,
   invitedById: string,
 ): Promise<WebinarCollaborator | ClassCollaborator | null> {
-  // Validate revenue share total <= 90%
-  const valid = await validateRevenueShares(
-    planType,
-    planId,
-    revenueSharePercentage,
-  );
-  if (!valid) return null;
-
-  // Check for existing active collaboration (not REMOVED/DECLINED)
-  if (planType === "webinar") {
-    const existing = await prisma.webinarCollaborator.findFirst({
-      where: {
-        webinarPlanId: planId,
-        consultantProfileId,
-        status: { notIn: ["REMOVED", "DECLINED"] },
-      },
-    });
-    if (existing) return null;
-  } else {
-    const existing = await prisma.classCollaborator.findFirst({
-      where: {
-        classPlanId: planId,
-        consultantProfileId,
-        status: { notIn: ["REMOVED", "DECLINED"] },
-      },
-    });
-    if (existing) return null;
+  // Validate percentage range
+  if (revenueSharePercentage <= 0 || revenueSharePercentage > 90) {
+    return null;
   }
 
-  if (planType === "webinar") {
-    return prisma.webinarCollaborator.create({
-      data: {
-        consultantProfileId,
-        webinarPlanId: planId,
-        role: role as "CO_HOST" | "MODERATOR" | "GUEST_SPEAKER" | "TECHNICAL_SUPPORT",
-        revenueSharePercentage,
-        status: "PENDING",
-        invitedById,
-      },
-    });
-  } else {
-    return prisma.classCollaborator.create({
-      data: {
-        consultantProfileId,
-        classPlanId: planId,
-        role: role as "CO_INSTRUCTOR" | "TEACHING_ASSISTANT" | "GUEST_LECTURER" | "CONTENT_CREATOR",
-        revenueSharePercentage,
-        status: "PENDING",
-        invitedById,
-      },
-    });
-  }
+  // FIX B1: Wrap validation + creation in a serializable transaction
+  // to prevent concurrent invites from exceeding the 90% cap.
+  return prisma.$transaction(async (tx) => {
+    // Validate revenue share total <= 90% INSIDE transaction
+    const valid = await validateRevenueSharesTx(
+      tx,
+      planType,
+      planId,
+      revenueSharePercentage,
+    );
+    if (!valid) return null;
+
+    // Check for existing active collaboration (not REMOVED/DECLINED)
+    if (planType === "webinar") {
+      const existing = await tx.webinarCollaborator.findFirst({
+        where: {
+          webinarPlanId: planId,
+          consultantProfileId,
+          status: { notIn: ["REMOVED", "DECLINED"] },
+        },
+      });
+      if (existing) return null;
+
+      return tx.webinarCollaborator.create({
+        data: {
+          consultantProfileId,
+          webinarPlanId: planId,
+          role: role as WebinarCollaboratorRole,
+          revenueSharePercentage,
+          status: "PENDING",
+          invitedById,
+        },
+      });
+    } else {
+      const existing = await tx.classCollaborator.findFirst({
+        where: {
+          classPlanId: planId,
+          consultantProfileId,
+          status: { notIn: ["REMOVED", "DECLINED"] },
+        },
+      });
+      if (existing) return null;
+
+      return tx.classCollaborator.create({
+        data: {
+          consultantProfileId,
+          classPlanId: planId,
+          role: role as ClassCollaboratorRole,
+          revenueSharePercentage,
+          status: "PENDING",
+          invitedById,
+        },
+      });
+    }
+  }, {
+    isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+    timeout: 10000,
+  });
 }
 
 /**
@@ -163,61 +179,75 @@ export async function updateCollaborator(
   collaborationId: string,
   updates: { revenueSharePercentage?: number; role?: string },
 ): Promise<WebinarCollaborator | ClassCollaborator | null> {
-  if (planType === "webinar") {
-    const collab = await prisma.webinarCollaborator.findUnique({
-      where: { id: collaborationId },
-    });
-    if (!collab) return null;
-
-    if (updates.revenueSharePercentage !== undefined) {
-      const valid = await validateRevenueShares(
-        "webinar",
-        collab.webinarPlanId,
-        updates.revenueSharePercentage,
-        collaborationId,
-      );
-      if (!valid) return null;
+  // Validate percentage range if updating
+  if (updates.revenueSharePercentage !== undefined) {
+    if (updates.revenueSharePercentage <= 0 || updates.revenueSharePercentage > 90) {
+      return null;
     }
-
-    return prisma.webinarCollaborator.update({
-      where: { id: collaborationId },
-      data: {
-        ...(updates.revenueSharePercentage !== undefined && {
-          revenueSharePercentage: updates.revenueSharePercentage,
-        }),
-        ...(updates.role && {
-          role: updates.role as "CO_HOST" | "MODERATOR" | "GUEST_SPEAKER" | "TECHNICAL_SUPPORT",
-        }),
-      },
-    });
-  } else {
-    const collab = await prisma.classCollaborator.findUnique({
-      where: { id: collaborationId },
-    });
-    if (!collab) return null;
-
-    if (updates.revenueSharePercentage !== undefined) {
-      const valid = await validateRevenueShares(
-        "class",
-        collab.classPlanId,
-        updates.revenueSharePercentage,
-        collaborationId,
-      );
-      if (!valid) return null;
-    }
-
-    return prisma.classCollaborator.update({
-      where: { id: collaborationId },
-      data: {
-        ...(updates.revenueSharePercentage !== undefined && {
-          revenueSharePercentage: updates.revenueSharePercentage,
-        }),
-        ...(updates.role && {
-          role: updates.role as "CO_INSTRUCTOR" | "TEACHING_ASSISTANT" | "GUEST_LECTURER" | "CONTENT_CREATOR",
-        }),
-      },
-    });
   }
+
+  return prisma.$transaction(async (tx) => {
+    if (planType === "webinar") {
+      const collab = await tx.webinarCollaborator.findUnique({
+        where: { id: collaborationId },
+      });
+      if (!collab) return null;
+
+      if (updates.revenueSharePercentage !== undefined) {
+        const valid = await validateRevenueSharesTx(
+          tx,
+          "webinar",
+          collab.webinarPlanId,
+          updates.revenueSharePercentage,
+          collaborationId,
+        );
+        if (!valid) return null;
+      }
+
+      return tx.webinarCollaborator.update({
+        where: { id: collaborationId },
+        data: {
+          ...(updates.revenueSharePercentage !== undefined && {
+            revenueSharePercentage: updates.revenueSharePercentage,
+          }),
+          ...(updates.role && {
+            role: updates.role as WebinarCollaboratorRole,
+          }),
+        },
+      });
+    } else {
+      const collab = await tx.classCollaborator.findUnique({
+        where: { id: collaborationId },
+      });
+      if (!collab) return null;
+
+      if (updates.revenueSharePercentage !== undefined) {
+        const valid = await validateRevenueSharesTx(
+          tx,
+          "class",
+          collab.classPlanId,
+          updates.revenueSharePercentage,
+          collaborationId,
+        );
+        if (!valid) return null;
+      }
+
+      return tx.classCollaborator.update({
+        where: { id: collaborationId },
+        data: {
+          ...(updates.revenueSharePercentage !== undefined && {
+            revenueSharePercentage: updates.revenueSharePercentage,
+          }),
+          ...(updates.role && {
+            role: updates.role as ClassCollaboratorRole,
+          }),
+        },
+      });
+    }
+  }, {
+    isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+    timeout: 10000,
+  });
 }
 
 /**
@@ -297,8 +327,10 @@ export async function getMyCollaborations(consultantProfileId: string) {
 
 /**
  * Validate that total revenue shares don't exceed 90% (host keeps min 10%).
+ * Transaction-safe version that accepts a Prisma transaction client.
  */
-export async function validateRevenueShares(
+async function validateRevenueSharesTx(
+  db: Prisma.TransactionClient | typeof prisma,
   planType: PlanType,
   planId: string,
   newShare: number,
@@ -307,7 +339,7 @@ export async function validateRevenueShares(
   let currentTotal = 0;
 
   if (planType === "webinar") {
-    const collabs = await prisma.webinarCollaborator.findMany({
+    const collabs = await db.webinarCollaborator.findMany({
       where: {
         webinarPlanId: planId,
         status: { in: ["PENDING", "ACCEPTED"] },
@@ -317,7 +349,7 @@ export async function validateRevenueShares(
     });
     currentTotal = collabs.reduce((sum, c) => sum + c.revenueSharePercentage, 0);
   } else {
-    const collabs = await prisma.classCollaborator.findMany({
+    const collabs = await db.classCollaborator.findMany({
       where: {
         classPlanId: planId,
         status: { in: ["PENDING", "ACCEPTED"] },
@@ -329,6 +361,19 @@ export async function validateRevenueShares(
   }
 
   return currentTotal + newShare <= 100 - MIN_HOST_SHARE;
+}
+
+/**
+ * Validate that total revenue shares don't exceed 90% (host keeps min 10%).
+ * Public wrapper that uses the global prisma client.
+ */
+export async function validateRevenueShares(
+  planType: PlanType,
+  planId: string,
+  newShare: number,
+  excludeId?: string,
+): Promise<boolean> {
+  return validateRevenueSharesTx(prisma, planType, planId, newShare, excludeId);
 }
 
 /**

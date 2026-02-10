@@ -9,6 +9,7 @@ import {
   notifyDisputeCreated,
   notifyDisputeResolved,
 } from "@/lib/novu";
+import { reverseCreditsForPayment } from "@/lib/referrals/service";
 
 // Re-export payment handlers from lib (architectural fix)
 export {
@@ -118,7 +119,7 @@ export async function handleRefundCreated(
 
     console.log(`✅ Refund ${refundId} created for payment ${payment.id}`);
 
-    // Update earnings if refund succeeded
+    // Update earnings and reverse credits if refund succeeded
     if (mapRefundStatus(status) === "SUCCEEDED") {
       try {
         await refundEarnings(payment.id);
@@ -128,6 +129,21 @@ export async function handleRefundCreated(
         console.error(
           `⚠️ Failed to refund earnings for payment ${payment.id}:`,
           earningsError,
+        );
+      }
+
+      // Reverse any referral credits that were applied to this payment
+      try {
+        const restored = await reverseCreditsForPayment(payment.id, tx);
+        if (restored > 0) {
+          console.log(
+            `🔄 Reversed ${restored} referral credits for refunded payment ${payment.id}`,
+          );
+        }
+      } catch (creditError) {
+        console.error(
+          `⚠️ Failed to reverse referral credits for payment ${payment.id}:`,
+          creditError,
         );
       }
     }

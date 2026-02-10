@@ -4,8 +4,9 @@
  */
 
 import prisma from "@/lib/prisma";
-import { EarningStatus, Payment, Prisma } from "@prisma/client";
+import { EarningRole, EarningStatus, Payment, Prisma } from "@prisma/client";
 import { PAYOUT_CONSTANTS, AppointmentType } from "./constants";
+import { calculateRevenueSplit } from "@/lib/collaborators/service";
 
 // ============================================
 // Types
@@ -26,6 +27,12 @@ export interface CreateEarningsParams {
       consultantProfile?: {
         id: string;
       };
+      webinar?: {
+        webinarPlanId: string;
+      } | null;
+      class?: {
+        classPlanId: string;
+      } | null;
     } | null;
   };
   appointmentType: AppointmentType;
@@ -68,7 +75,7 @@ export async function createEarningsFromPayment({
   const platformFee = Math.round(
     (grossAmount * PAYOUT_CONSTANTS.PLATFORM_FEE_PERCENTAGE) / 100,
   );
-  const consultantShare = grossAmount - platformFee;
+  const totalConsultantPool = grossAmount - platformFee;
 
   // Calculate hold period
   const holdHours =
@@ -76,32 +83,93 @@ export async function createEarningsFromPayment({
     PAYOUT_CONSTANTS.HOLD_PERIOD_HOURS.CONSULTATION;
   const holdUntil = new Date(Date.now() + holdHours * 60 * 60 * 1000);
 
+  // Determine if this payment involves collaborators (webinars/classes only)
+  let planType: "webinar" | "class" | null = null;
+  let planId: string | null = null;
+
+  if (appointmentType === "WEBINAR" && payment.appointment?.webinar) {
+    planType = "webinar";
+    planId = payment.appointment.webinar.webinarPlanId;
+  } else if (appointmentType === "CLASS" && payment.appointment?.class) {
+    planType = "class";
+    planId = payment.appointment.class.classPlanId;
+  }
+
+  // Calculate collaborator splits if applicable
+  let splits: { consultantProfileId: string; share: number; role: string }[] = [];
+  if (planType && planId) {
+    splits = await calculateRevenueSplit(planType, planId, totalConsultantPool);
+  }
+
   // M2 FIX: Wrap create in try-catch to handle P2002 unique constraint violation
   // gracefully. The `paymentId` column has a unique constraint on `ConsultantEarnings`,
   // so concurrent calls (e.g., duplicate webhook + background sync job) may collide.
   // Instead of throwing, we treat it as an idempotent success.
   try {
-    const earnings = await prisma.consultantEarnings.create({
-      data: {
-        consultantProfileId,
-        paymentId: payment.id,
-        grossAmount,
-        platformFee,
-        consultantShare,
-        status: EarningStatus.PENDING,
-        holdUntil,
-      },
-    });
+    if (splits.length > 0) {
+      // Multi-party payment: create earnings for owner and each collaborator
+      let ownerEarningsId: string | null = null;
 
-    // Update consultant's pending revenue
-    await prisma.consultantProfile.update({
-      where: { id: consultantProfileId },
-      data: {
-        pendingRevenue: { increment: consultantShare },
-      },
-    });
+      for (const split of splits) {
+        const isOwner = split.role === "OWNER";
+        const sharePercentage = isOwner
+          ? (split.share / totalConsultantPool) * 100
+          : (split.share / totalConsultantPool) * 100;
 
-    return earnings.id;
+        const earnings = await prisma.consultantEarnings.create({
+          data: {
+            consultantProfileId: split.consultantProfileId,
+            paymentId: payment.id,
+            grossAmount: isOwner ? grossAmount : 0,
+            platformFee: isOwner ? platformFee : 0,
+            consultantShare: split.share,
+            role: isOwner ? EarningRole.OWNER : EarningRole.COLLABORATOR,
+            sharePercentage: Math.round(sharePercentage * 100) / 100,
+            status: EarningStatus.PENDING,
+            holdUntil,
+          },
+        });
+
+        await prisma.consultantProfile.update({
+          where: { id: split.consultantProfileId },
+          data: {
+            pendingRevenue: { increment: split.share },
+          },
+        });
+
+        if (split.role === "OWNER") {
+          ownerEarningsId = earnings.id;
+        }
+
+        console.log(
+          `💰 Earnings created for ${split.role} (${split.consultantProfileId}): ₹${split.share / 100} from payment ${payment.id}`,
+        );
+      }
+
+      return ownerEarningsId;
+    } else {
+      // Single-owner payment (no collaborators or not a webinar/class)
+      const earnings = await prisma.consultantEarnings.create({
+        data: {
+          consultantProfileId,
+          paymentId: payment.id,
+          grossAmount,
+          platformFee,
+          consultantShare: totalConsultantPool,
+          status: EarningStatus.PENDING,
+          holdUntil,
+        },
+      });
+
+      await prisma.consultantProfile.update({
+        where: { id: consultantProfileId },
+        data: {
+          pendingRevenue: { increment: totalConsultantPool },
+        },
+      });
+
+      return earnings.id;
+    }
   } catch (error) {
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
