@@ -8,16 +8,20 @@ import { signIn, signUp, useSession } from "@/lib/auth-client";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useEffect } from "react";
+import { useSearchParams } from "next/navigation";
 
 export default function SignUp() {
   const { toast } = useToast();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const referralCode = searchParams.get("ref");
   const { data: session, isPending } = useSession();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [refCode, setRefCode] = useState(referralCode || "");
 
   // Redirect authenticated users based on onboarding status
   useEffect(() => {
@@ -74,6 +78,18 @@ export default function SignUp() {
           variant: "destructive",
         });
       } else if (data) {
+        // Apply referral code if present
+        if (refCode) {
+          try {
+            await fetch("/api/referrals/apply", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ code: refCode }),
+            });
+          } catch {
+            // Non-blocking: referral application failure shouldn't block signup
+          }
+        }
         toast({
           title: "Account Created Successfully!",
           description: "Redirecting to onboarding...",
@@ -180,6 +196,26 @@ export default function SignUp() {
                 disabled={isLoading}
               />
             </div>
+            {!referralCode && (
+              <div className="grid gap-2 mt-4">
+                <Label htmlFor="referral-code">Referral Code (optional)</Label>
+                <Input
+                  id="referral-code"
+                  placeholder="Enter referral code"
+                  type="text"
+                  value={refCode}
+                  onChange={(e) => setRefCode(e.target.value)}
+                  disabled={isLoading}
+                />
+              </div>
+            )}
+            {referralCode && (
+              <div className="mt-4 p-3 rounded-md bg-green-900/30 border border-green-700">
+                <p className="text-sm text-green-400">
+                  Referral code <span className="font-semibold">{referralCode}</span> applied! You&apos;ll receive a welcome bonus after signing up.
+                </p>
+              </div>
+            )}
             <Button
               type="submit"
               className="w-full mt-4 bg-gray-800 hover:bg-gray-700"

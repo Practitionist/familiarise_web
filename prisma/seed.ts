@@ -55,6 +55,10 @@ import { createConsultantEarnings } from "./seedFiles/13b-create-consultant-earn
 import { createPayouts } from "./seedFiles/13c-create-payouts";
 import { createInvoices } from "./seedFiles/13d-create-invoices";
 
+// Phase 14: Referrals & Collaborators
+import { createReferralCodes } from "./seedFiles/14a-create-referral-codes";
+import { createCollaborators } from "./seedFiles/14b-create-collaborators";
+
 async function seed() {
   console.log("Starting seed process...");
 
@@ -174,6 +178,14 @@ async function seed() {
 
     console.log("Creating invoices...");
     await createInvoices();
+
+    // Phase 14: Referrals & Collaborators
+    console.log("\n[Phase 14] Creating referrals & collaborators...");
+    console.log("Creating referral codes...");
+    await createReferralCodes();
+
+    console.log("Creating collaborators...");
+    await createCollaborators();
 
     // Summary
     const endTime = Date.now();

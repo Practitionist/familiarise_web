@@ -31,6 +31,8 @@ const NAV_ITEMS: NavItem[] = [
   { name: "Requests", path: "requests", icon: "requests" },
   { name: "Free Trials", path: "trials", icon: "trials" },
   { name: "Earnings", path: "earnings", icon: "wallet" },
+  { name: "Collaborations", path: "collaborations", icon: "users" },
+  { name: "Referrals", path: "referrals", icon: "users" },
   { name: "Documents", path: "documents", icon: "documents" },
   { name: "Help", path: "help", icon: "help" },
 ];

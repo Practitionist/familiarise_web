@@ -29,6 +29,10 @@ import {
   countWebinarParticipants,
 } from "@/lib/payments/utils/participants";
 import { markWaitlistAsBooked } from "@/lib/waitlist/slot-handler";
+import {
+  applyCreditsToPayment,
+  getUserCredits,
+} from "@/lib/referrals/service";
 
 // Re-export for backward compatibility
 export const unifiedCheckoutSchema = checkoutSchema;
@@ -378,11 +382,23 @@ export async function calculateAmountAndValidate(
         currency = validatedData.paymentGateway === "RAZORPAY" ? "INR" : "USD";
     }
 
+    // Apply referral credits if requested
+    let creditsApplied = 0;
+    if (validatedData.useReferralCredits && amount > 0) {
+      const { totalAvailable } = await getUserCredits(userId);
+      if (totalAvailable > 0) {
+        // Credits are stored in paise, amount is also in paise
+        creditsApplied = Math.min(totalAvailable, amount);
+        amount = amount - creditsApplied;
+      }
+    }
+
     return {
       amount,
       currency,
       discountCodeId,
       consulteeProfileId: user.consulteeProfile.id,
+      creditsApplied,
     };
   });
 }
@@ -1397,7 +1413,7 @@ export async function handleCheckout(
 
   try {
     // STEP 1: Calculate amount and fetch plan data (OUTSIDE LOCK - just pricing)
-    const { amount, currency, discountCodeId, consulteeProfileId } =
+    const { amount, currency, discountCodeId, consulteeProfileId, creditsApplied } =
       await calculateAmountAndValidate(validatedData, userId);
 
     // Get plan data for consultant ID (needed for lock acquisition)
@@ -1541,7 +1557,7 @@ export async function handleCheckout(
             });
           }
 
-          return { appointmentId: createdAppointment?.id };
+          return { appointmentId: createdAppointment?.id, creditsApplied };
         },
         {
           timeout: 25000,
@@ -1567,6 +1583,21 @@ export async function handleCheckout(
           timestamp: new Date().toISOString(),
         }),
       );
+
+      // Deduct referral credits if applied
+      if (result.creditsApplied && result.creditsApplied > 0) {
+        try {
+          await applyCreditsToPayment(userId, result.creditsApplied);
+          console.log(
+            `🎁 Applied ${result.creditsApplied} referral credits for user ${userId}`,
+          );
+        } catch (creditError) {
+          console.error(
+            `⚠️ Failed to deduct referral credits for user ${userId}:`,
+            creditError,
+          );
+        }
+      }
 
       // Update waitlist status if coming from waitlist flow
       if (isMockPayment && validatedData.fromWaitlist) {

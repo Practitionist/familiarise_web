@@ -83,7 +83,7 @@ export async function createConsultantEarnings(): Promise<void> {
   const succeededPayments = await prisma.payment.findMany({
     where: {
       paymentStatus: "SUCCEEDED",
-      earnings: null, // No existing earnings record
+      earnings: { none: {} }, // No existing earnings record
       appointment: {
         isNot: null, // Must have an appointment
       },

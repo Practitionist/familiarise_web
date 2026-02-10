@@ -87,6 +87,7 @@ export const checkoutSchema = z
     paymentGateway: paymentGatewaySchema,
     notes: z.string().optional(),
     fromWaitlist: z.string().optional(), // Waitlist ID if coming from waitlist flow
+    useReferralCredits: z.boolean().optional(), // Apply available referral credits
   })
   .superRefine((data, ctx) => {
     // === CONSULTATION validation ===

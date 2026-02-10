@@ -60,6 +60,16 @@ export const NOVU_WORKFLOWS = {
 
   // Recordings
   RECORDING_AVAILABLE: "recording-available",
+
+  // Referrals
+  REFERRAL_BONUS_EARNED: "referral-bonus-earned",
+  REFEREE_WELCOME_BONUS: "referee-welcome-bonus",
+  REFERRAL_CREDITS_APPLIED: "referral-credits-applied",
+
+  // Collaborators
+  COLLABORATOR_INVITED: "collaborator-invited",
+  COLLABORATOR_ACCEPTED: "collaborator-accepted",
+  COLLABORATOR_REMOVED: "collaborator-removed",
 } as const;
 
 export type NovuWorkflowId =
@@ -216,5 +226,52 @@ export type RecordingPayload = {
 export type ConsultantApplicationPayload = {
   applicantName: string;
   applicantEmail: string;
+  dashboardUrl: string;
+};
+
+export type ReferralBonusPayload = {
+  referrerName: string;
+  refereeName: string;
+  bonusAmount: number;
+  currency: string;
+  dashboardUrl: string;
+};
+
+export type RefereeWelcomeBonusPayload = {
+  refereeName: string;
+  referrerName: string;
+  bonusAmount: number;
+  currency: string;
+  dashboardUrl: string;
+};
+
+export type ReferralCreditsAppliedPayload = {
+  creditsUsed: number;
+  currency: string;
+  remainingCredits: number;
+  appointmentType: string;
+  dashboardUrl: string;
+};
+
+export type CollaboratorInvitedPayload = {
+  planTitle: string;
+  planType: string;
+  role: string;
+  revenueSharePercentage: number;
+  ownerName: string;
+  dashboardUrl: string;
+};
+
+export type CollaboratorAcceptedPayload = {
+  planTitle: string;
+  planType: string;
+  collaboratorName: string;
+  role: string;
+  dashboardUrl: string;
+};
+
+export type CollaboratorRemovedPayload = {
+  planTitle: string;
+  planType: string;
   dashboardUrl: string;
 };

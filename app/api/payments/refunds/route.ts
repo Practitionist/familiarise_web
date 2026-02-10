@@ -101,8 +101,8 @@ export async function POST(req: NextRequest) {
       // Once the consultant has received their payout, issuing a refund means
       // the platform absorbs the full loss. Require explicit forceRefund flag.
       if (
-        payment.earnings &&
-        payment.earnings.status === "PAID" &&
+        payment.earnings.length > 0 &&
+        payment.earnings.some((e) => e.status === "PAID") &&
         !forceRefund
       ) {
         throw new Error(

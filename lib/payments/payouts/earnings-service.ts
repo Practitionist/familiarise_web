@@ -53,9 +53,9 @@ export async function createEarningsFromPayment({
     return null;
   }
 
-  // Check if earnings already exist for this payment
-  const existingEarnings = await prisma.consultantEarnings.findUnique({
-    where: { paymentId: payment.id },
+  // Check if earnings already exist for this payment (for this consultant)
+  const existingEarnings = await prisma.consultantEarnings.findFirst({
+    where: { paymentId: payment.id, consultantProfileId },
   });
 
   if (existingEarnings) {
@@ -111,8 +111,8 @@ export async function createEarningsFromPayment({
       console.warn(
         `[Earnings] Duplicate earnings creation for payment ${payment.id} (P2002). Treating as idempotent success.`,
       );
-      const existing = await prisma.consultantEarnings.findUnique({
-        where: { paymentId: payment.id },
+      const existing = await prisma.consultantEarnings.findFirst({
+        where: { paymentId: payment.id, consultantProfileId },
       });
       return existing?.id ?? null;
     }
@@ -248,48 +248,49 @@ export async function getConsultantEarnings(
  * Refund earnings (called when a payment is refunded)
  */
 export async function refundEarnings(paymentId: string): Promise<boolean> {
-  const earnings = await prisma.consultantEarnings.findUnique({
+  const allEarnings = await prisma.consultantEarnings.findMany({
     where: { paymentId },
   });
 
-  if (!earnings) {
+  if (allEarnings.length === 0) {
     console.warn(`No earnings found for payment ${paymentId}`);
     return false;
   }
 
-  // C7 FIX: Guard against already-refunded earnings.
-  // Without this, a duplicate webhook or API call could decrement
-  // pendingRevenue twice on the consultant profile.
-  if (earnings.status === EarningStatus.REFUNDED) {
-    console.warn(
-      `Earnings ${earnings.id} already refunded for payment ${paymentId}. Skipping.`,
-    );
-    return true; // Already handled — idempotent success
+  // Refund each earnings record (supports multi-party collaborator payments)
+  for (const earnings of allEarnings) {
+    // C7 FIX: Guard against already-refunded earnings.
+    if (earnings.status === EarningStatus.REFUNDED) {
+      console.warn(
+        `Earnings ${earnings.id} already refunded for payment ${paymentId}. Skipping.`,
+      );
+      continue;
+    }
+
+    // Can only refund if not yet paid out
+    if (earnings.status === EarningStatus.PAID) {
+      console.error(
+        `Cannot refund earnings ${earnings.id} - already paid out. Manual intervention required.`,
+      );
+      continue;
+    }
+
+    // Update earnings status to refunded
+    await prisma.consultantEarnings.update({
+      where: { id: earnings.id },
+      data: {
+        status: EarningStatus.REFUNDED,
+      },
+    });
+
+    // Decrease consultant's pending revenue
+    await prisma.consultantProfile.update({
+      where: { id: earnings.consultantProfileId },
+      data: {
+        pendingRevenue: { decrement: earnings.consultantShare },
+      },
+    });
   }
-
-  // Can only refund if not yet paid out
-  if (earnings.status === EarningStatus.PAID) {
-    console.error(
-      `Cannot refund earnings ${earnings.id} - already paid out. Manual intervention required.`,
-    );
-    return false;
-  }
-
-  // Update earnings status to refunded
-  await prisma.consultantEarnings.update({
-    where: { id: earnings.id },
-    data: {
-      status: EarningStatus.REFUNDED,
-    },
-  });
-
-  // Decrease consultant's pending revenue
-  await prisma.consultantProfile.update({
-    where: { id: earnings.consultantProfileId },
-    data: {
-      pendingRevenue: { decrement: earnings.consultantShare },
-    },
-  });
 
   return true;
 }

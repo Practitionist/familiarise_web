@@ -50,6 +50,18 @@ export async function GET(
         },
         topics: true,
         classContents: true,
+        collaborators: {
+          where: { status: "ACCEPTED" },
+          include: {
+            consultantProfile: {
+              include: {
+                user: {
+                  select: { id: true, name: true, image: true },
+                },
+              },
+            },
+          },
+        },
       },
     });
 

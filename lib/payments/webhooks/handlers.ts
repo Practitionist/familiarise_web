@@ -27,6 +27,7 @@ import {
   notifyPaymentFailed,
   notifyAppointmentBooked,
 } from "@/lib/novu";
+import { processQualifyingAction } from "@/lib/referrals/service";
 
 // ============================================================================
 // Type Definitions
@@ -357,6 +358,16 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
     console.error(
       `⚠️ Failed to create earnings for payment ${paymentId}:`,
       earningsError,
+    );
+  }
+
+  // --- Referral qualifying action (first paid booking triggers referrer reward) ---
+  try {
+    await processQualifyingAction(userId, "first_paid_booking");
+  } catch (referralError) {
+    console.error(
+      `⚠️ Failed to process referral qualifying action for user ${userId}:`,
+      referralError,
     );
   }
 

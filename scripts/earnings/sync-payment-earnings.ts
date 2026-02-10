@@ -141,7 +141,7 @@ export async function syncPaymentEarnings(): Promise<PaymentEarningSyncResult> {
       where: {
         paymentStatus: PaymentStatus.SUCCEEDED,
         createdAt: { gte: thirtyDaysAgo },
-        earnings: null, // No linked earnings
+        earnings: { none: {} }, // No linked earnings
       },
       take: BATCH_SIZE,
       skip,
