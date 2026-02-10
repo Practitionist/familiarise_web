@@ -1,11 +1,11 @@
 "use client";
 
-import { ConsultantReview } from "@prisma/client";
 import { Star, MessageSquare } from "lucide-react";
+import { TConsultantReview } from "@/types/review";
 import Review from "./Review";
 
 interface ReviewsSectionProps {
-  reviews: ConsultantReview[];
+  reviews: TConsultantReview[];
 }
 
 export function ReviewsSection({ reviews }: ReviewsSectionProps) {

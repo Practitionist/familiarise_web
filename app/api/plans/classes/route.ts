@@ -167,7 +167,7 @@ export async function POST(request: NextRequest) {
     ) {
       return NextResponse.json(
         { error: "Missing required fields" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -176,7 +176,7 @@ export async function POST(request: NextRequest) {
     if (!isPrivileged(session.user.role)) {
       if (session.user.consultantProfileId !== consultantProfileId) {
         return forbiddenResponse(
-          "You can only create class plans for your own consultant profile"
+          "You can only create class plans for your own consultant profile",
         );
       }
     }

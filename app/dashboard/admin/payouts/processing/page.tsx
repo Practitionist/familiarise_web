@@ -7,14 +7,24 @@ import { Loader } from "lucide-react";
 
 import type { Payout } from "@/types/payouts";
 
-async function fetchProcessingPayouts() {
+interface PayoutListResponse {
+  payouts: Payout[];
+  pagination: {
+    total: number;
+    limit: number;
+    offset: number;
+    hasMore: boolean;
+  };
+}
+
+async function fetchProcessingPayouts(): Promise<PayoutListResponse> {
   const response = await fetch(
     "/api/admin/payouts?status=PROCESSING&limit=100",
   );
   if (!response.ok) {
     throw new Error("Failed to fetch payouts");
   }
-  return response.json();
+  return response.json() as Promise<PayoutListResponse>;
 }
 
 export default function ProcessingPayoutsPage() {
@@ -61,7 +71,7 @@ export default function ProcessingPayoutsPage() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {isLoading ? (
+          {isLoading || !data ? (
             <div className="space-y-3">
               {[1, 2, 3, 4, 5].map((i) => (
                 <Skeleton key={i} className="h-16 w-full" />

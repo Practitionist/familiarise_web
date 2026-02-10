@@ -246,10 +246,17 @@ export default function AdminLayout({ children }: Readonly<PageProps>) {
       // User doesn't have admin access - redirect based on their role
       if (userData.role === "STAFF" && userData.staffProfileId) {
         router.replace(`/dashboard/staff/${userData.staffProfileId}/home`);
-      } else if (userData.role === "CONSULTANT" && userData.consultantProfileId) {
-        router.replace(`/dashboard/consultant/${userData.consultantProfileId}/home`);
+      } else if (
+        userData.role === "CONSULTANT" &&
+        userData.consultantProfileId
+      ) {
+        router.replace(
+          `/dashboard/consultant/${userData.consultantProfileId}/home`,
+        );
       } else if (userData.consulteeProfileId) {
-        router.replace(`/dashboard/consultee/${userData.consulteeProfileId}/home`);
+        router.replace(
+          `/dashboard/consultee/${userData.consulteeProfileId}/home`,
+        );
       } else {
         router.replace("/dashboard");
       }

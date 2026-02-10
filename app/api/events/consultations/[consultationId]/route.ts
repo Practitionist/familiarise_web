@@ -54,7 +54,7 @@ type ConsultationWithDetails = Prisma.ConsultationGetPayload<{
 
 export async function GET(
   request: Request,
-  { params }: { params: Promise<{ consultationId: string }> }
+  { params }: { params: Promise<{ consultationId: string }> },
 ) {
   try {
     // Require authentication
@@ -124,7 +124,7 @@ export async function GET(
 
     if (!isPrivileged(session.user.role) && !isParticipant) {
       return forbiddenResponse(
-        "You can only view consultations you are a participant in"
+        "You can only view consultations you are a participant in",
       );
     }
 
@@ -136,20 +136,20 @@ export async function GET(
     ) {
       return NextResponse.json(
         { error: "Consultation not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
     console.error("Error fetching consultation:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching the consultation" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
 
 export async function PUT(
   request: Request,
-  { params }: { params: Promise<{ consultationId: string }> }
+  { params }: { params: Promise<{ consultationId: string }> },
 ) {
   try {
     // Require authentication
@@ -174,7 +174,7 @@ export async function PUT(
     if (!existingConsultation) {
       return NextResponse.json(
         { error: "Consultation not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
@@ -188,7 +188,7 @@ export async function PUT(
 
     if (!isPrivileged(session.user.role) && !isParticipant) {
       return forbiddenResponse(
-        "You can only update consultations you are a participant in"
+        "You can only update consultations you are a participant in",
       );
     }
 
@@ -269,7 +269,7 @@ export async function PUT(
 
 export async function DELETE(
   request: Request,
-  { params }: { params: Promise<{ consultationId: string }> }
+  { params }: { params: Promise<{ consultationId: string }> },
 ) {
   try {
     // Require authentication
@@ -294,7 +294,7 @@ export async function DELETE(
     if (!existingConsultation) {
       return NextResponse.json(
         { error: "Consultation not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
@@ -308,7 +308,7 @@ export async function DELETE(
 
     if (!isPrivileged(session.user.role) && !isParticipant) {
       return forbiddenResponse(
-        "You can only delete consultations you are a participant in"
+        "You can only delete consultations you are a participant in",
       );
     }
 
@@ -374,7 +374,7 @@ export async function DELETE(
 
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: Promise<{ consultationId: string }> }
+  { params }: { params: Promise<{ consultationId: string }> },
 ) {
   try {
     // Require authentication
@@ -387,7 +387,7 @@ export async function PATCH(
     if (!body || typeof body !== "object") {
       return NextResponse.json(
         { error: "Invalid request body" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -397,7 +397,7 @@ export async function PATCH(
     if (!status) {
       return NextResponse.json(
         { error: "Status is required" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -443,7 +443,7 @@ export async function PATCH(
     if (!existingConsultation.requestedBy?.user?.id) {
       return NextResponse.json(
         { error: "Invalid consultation: missing requestedBy information" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -457,7 +457,7 @@ export async function PATCH(
 
     if (!isPrivileged(session.user.role) && !isParticipant) {
       return forbiddenResponse(
-        "You can only update consultations you are a participant in"
+        "You can only update consultations you are a participant in",
       );
     }
 

@@ -1,40 +1,26 @@
-import { Avatar } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { TConsultantReview } from "@/types/review";
 
-import { fetchConsulteeDetails, fetchUserDetails } from "@/lib/user";
-
-import { ConsultantReview } from "@prisma/client";
 import { StarIcon } from "lucide-react";
-import React, { useEffect, useState } from "react";
+import React from "react";
 
-const Review: React.FC<Readonly<ConsultantReview>> = ({
-  consulteeProfileId,
+const Review: React.FC<Readonly<TConsultantReview>> = ({
+  consulteeProfile,
   createdAt,
   rating,
   reviewDescription,
 }) => {
-  const [reviewerName, setReviewerName] = useState<string>(consulteeProfileId);
-
-  useEffect(() => {
-    const fetchReviewerName = async () => {
-      try {
-        const consulteeData = await fetchConsulteeDetails(consulteeProfileId);
-        if (consulteeData.userId) {
-          const userData = await fetchUserDetails(consulteeData.userId);
-          if (userData.name) {
-            setReviewerName(userData.name);
-          }
-        }
-      } catch (err) {
-        console.error("Error fetching reviewer name:", err);
-      }
-    };
-
-    fetchReviewerName();
-  }, [consulteeProfileId]);
+  const reviewerName = consulteeProfile?.user?.name || "Anonymous";
+  const reviewerImage = consulteeProfile?.user?.image || null;
 
   return (
     <div className="flex items-start space-x-4 p-4 bg-white rounded-lg shadow-sm">
-      <Avatar className="w-10 h-10" />
+      <Avatar className="w-10 h-10">
+        {reviewerImage && <AvatarImage src={reviewerImage} alt={reviewerName} />}
+        <AvatarFallback>
+          {reviewerName.charAt(0).toUpperCase()}
+        </AvatarFallback>
+      </Avatar>
       <div className="flex-1">
         <div className="flex items-center justify-between mb-2">
           <div>

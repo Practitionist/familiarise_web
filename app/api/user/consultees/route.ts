@@ -16,7 +16,7 @@ export async function GET(request: NextRequest) {
     // Only ADMIN/STAFF can list all consultees
     if (!isPrivileged(session.user.role)) {
       return forbiddenResponse(
-        "Only administrators and staff can list all consultees"
+        "Only administrators and staff can list all consultees",
       );
     }
 
@@ -47,7 +47,7 @@ export async function GET(request: NextRequest) {
     console.error("Error getting consultees:", error);
     return NextResponse.json(
       { error: "Internal Server Error" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

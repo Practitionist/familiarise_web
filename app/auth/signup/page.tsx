@@ -41,7 +41,9 @@ export default function SignUp() {
 
   // If already logged in, show redirecting message
   if (session?.user) {
-    const destination = session.user.onboardingCompleted ? "dashboard" : "onboarding";
+    const destination = session.user.onboardingCompleted
+      ? "dashboard"
+      : "onboarding";
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-900">
         <p className="text-white">Redirecting to {destination}...</p>
@@ -230,7 +232,10 @@ export default function SignUp() {
             className="w-full flex items-center justify-center mt-4 bg-blue-600 hover:bg-blue-500"
             disabled={isLoading}
             onClick={() => {
-              signIn.social({ provider: "facebook", callbackURL: "/dashboard" });
+              signIn.social({
+                provider: "facebook",
+                callbackURL: "/dashboard",
+              });
               toast({
                 title: "Signing up with Facebook...",
                 description: "Please wait while we redirect you.",

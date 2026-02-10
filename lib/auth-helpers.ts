@@ -7,8 +7,7 @@ import type { Session } from "@/lib/auth";
  * Use this at the start of protected API route handlers.
  */
 export async function requireApiAuth(): Promise<
-  | { session: Session; error?: never }
-  | { session?: never; error: NextResponse }
+  { session: Session; error?: never } | { session?: never; error: NextResponse }
 > {
   const session = await getSession(true);
   if (!session?.user?.id) {
@@ -33,7 +32,7 @@ export function isPrivileged(role: string | undefined | null): boolean {
 export function checkOwnership(
   session: Session,
   resourceOwnerId: string | null | undefined,
-  profileType: "consultant" | "consultee" | "staff" | "admin"
+  profileType: "consultant" | "consultee" | "staff" | "admin",
 ): boolean {
   if (!resourceOwnerId) return false;
 
@@ -57,10 +56,9 @@ export function checkOwnership(
 export function isConsultationParticipant(
   session: Session,
   consultantProfileId: string | null | undefined,
-  consulteeProfileId: string | null | undefined
+  consulteeProfileId: string | null | undefined,
 ): boolean {
-  const isConsultant =
-    session.user.consultantProfileId === consultantProfileId;
+  const isConsultant = session.user.consultantProfileId === consultantProfileId;
   const isConsultee = session.user.consulteeProfileId === consulteeProfileId;
   return isConsultant || isConsultee;
 }

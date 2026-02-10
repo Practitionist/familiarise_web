@@ -109,11 +109,11 @@ export default function StaffDashboardLayout({
   };
 
   // Check if user has staff access - must have role ADMIN or STAFF and matching staffProfileId
-  const hasStaffAccess = userDetails && (
-    userDetails.role === "ADMIN" ||
-    userDetails.role === "STAFF" ||
-    (userDetails.staffProfileId && userDetails.staffProfileId === staffId)
-  );
+  const hasStaffAccess =
+    userDetails &&
+    (userDetails.role === "ADMIN" ||
+      userDetails.role === "STAFF" ||
+      (userDetails.staffProfileId && userDetails.staffProfileId === staffId));
 
   // Redirect unauthorized users to their appropriate dashboard
   useEffect(() => {
@@ -121,15 +121,29 @@ export default function StaffDashboardLayout({
 
     if (userDetails && !hasStaffAccess) {
       // User doesn't have staff access - redirect based on their role
-      if (userDetails.role === "CONSULTANT" && userDetails.consultantProfileId) {
-        router.replace(`/dashboard/consultant/${userDetails.consultantProfileId}/home`);
+      if (
+        userDetails.role === "CONSULTANT" &&
+        userDetails.consultantProfileId
+      ) {
+        router.replace(
+          `/dashboard/consultant/${userDetails.consultantProfileId}/home`,
+        );
       } else if (userDetails.consulteeProfileId) {
-        router.replace(`/dashboard/consultee/${userDetails.consulteeProfileId}/home`);
+        router.replace(
+          `/dashboard/consultee/${userDetails.consulteeProfileId}/home`,
+        );
       } else {
         router.replace("/dashboard");
       }
     }
-  }, [userDetails, hasStaffAccess, isLoadingUser, isSessionLoading, userId, router]);
+  }, [
+    userDetails,
+    hasStaffAccess,
+    isLoadingUser,
+    isSessionLoading,
+    userId,
+    router,
+  ]);
 
   // Auth check first
   if (!session?.user?.id && !isSessionLoading) {

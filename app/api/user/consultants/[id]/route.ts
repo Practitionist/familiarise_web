@@ -142,42 +142,42 @@ export async function GET(
       include: {
         user: isPrivilegedAccess
           ? {
-            // Full user data for own profile or admin
-            include: {
-              workExperiences: {
-                orderBy: [{ isCurrent: "desc" }, { startDate: "desc" }],
+              // Full user data for own profile or admin
+              include: {
+                workExperiences: {
+                  orderBy: [{ isCurrent: "desc" }, { startDate: "desc" }],
+                },
+                education: {
+                  orderBy: { endYear: "desc" },
+                },
+                certifications: {
+                  orderBy: { issueDate: "desc" },
+                },
               },
-              education: {
-                orderBy: { endYear: "desc" },
-              },
-              certifications: {
-                orderBy: { issueDate: "desc" },
-              },
-            },
-          }
+            }
           : {
-            // Public fields only
-            select: {
-              id: true,
-              name: true,
-              image: true,
-              profileDisplayImage: true,
-              bio: true,
-              city: true,
-              country: true,
-              linkedinUrl: true,
-              timezone: true,
-              workExperiences: {
-                orderBy: [{ isCurrent: "desc" }, { startDate: "desc" }],
-              },
-              education: {
-                orderBy: { endYear: "desc" },
-              },
-              certifications: {
-                orderBy: { issueDate: "desc" },
+              // Public fields only
+              select: {
+                id: true,
+                name: true,
+                image: true,
+                profileDisplayImage: true,
+                bio: true,
+                city: true,
+                country: true,
+                linkedinUrl: true,
+                timezone: true,
+                workExperiences: {
+                  orderBy: [{ isCurrent: "desc" }, { startDate: "desc" }],
+                },
+                education: {
+                  orderBy: { endYear: "desc" },
+                },
+                certifications: {
+                  orderBy: { issueDate: "desc" },
+                },
               },
             },
-          },
         domain: true,
         subDomains: true,
         tags: true,

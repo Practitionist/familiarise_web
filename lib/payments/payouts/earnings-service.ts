@@ -4,7 +4,7 @@
  */
 
 import prisma from "@/lib/prisma";
-import { EarningStatus, Payment } from "@prisma/client";
+import { EarningStatus, Payment, Prisma } from "@prisma/client";
 import { PAYOUT_CONSTANTS, AppointmentType } from "./constants";
 
 // ============================================
@@ -76,28 +76,48 @@ export async function createEarningsFromPayment({
     PAYOUT_CONSTANTS.HOLD_PERIOD_HOURS.CONSULTATION;
   const holdUntil = new Date(Date.now() + holdHours * 60 * 60 * 1000);
 
-  // Create earnings record
-  const earnings = await prisma.consultantEarnings.create({
-    data: {
-      consultantProfileId,
-      paymentId: payment.id,
-      grossAmount,
-      platformFee,
-      consultantShare,
-      status: EarningStatus.PENDING,
-      holdUntil,
-    },
-  });
+  // M2 FIX: Wrap create in try-catch to handle P2002 unique constraint violation
+  // gracefully. The `paymentId` column has a unique constraint on `ConsultantEarnings`,
+  // so concurrent calls (e.g., duplicate webhook + background sync job) may collide.
+  // Instead of throwing, we treat it as an idempotent success.
+  try {
+    const earnings = await prisma.consultantEarnings.create({
+      data: {
+        consultantProfileId,
+        paymentId: payment.id,
+        grossAmount,
+        platformFee,
+        consultantShare,
+        status: EarningStatus.PENDING,
+        holdUntil,
+      },
+    });
 
-  // Update consultant's pending revenue
-  await prisma.consultantProfile.update({
-    where: { id: consultantProfileId },
-    data: {
-      pendingRevenue: { increment: consultantShare },
-    },
-  });
+    // Update consultant's pending revenue
+    await prisma.consultantProfile.update({
+      where: { id: consultantProfileId },
+      data: {
+        pendingRevenue: { increment: consultantShare },
+      },
+    });
 
-  return earnings.id;
+    return earnings.id;
+  } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    ) {
+      // Unique constraint violation — earnings already created by a concurrent call
+      console.warn(
+        `[Earnings] Duplicate earnings creation for payment ${payment.id} (P2002). Treating as idempotent success.`,
+      );
+      const existing = await prisma.consultantEarnings.findUnique({
+        where: { paymentId: payment.id },
+      });
+      return existing?.id ?? null;
+    }
+    throw error;
+  }
 }
 
 /**
@@ -235,6 +255,16 @@ export async function refundEarnings(paymentId: string): Promise<boolean> {
   if (!earnings) {
     console.warn(`No earnings found for payment ${paymentId}`);
     return false;
+  }
+
+  // C7 FIX: Guard against already-refunded earnings.
+  // Without this, a duplicate webhook or API call could decrement
+  // pendingRevenue twice on the consultant profile.
+  if (earnings.status === EarningStatus.REFUNDED) {
+    console.warn(
+      `Earnings ${earnings.id} already refunded for payment ${paymentId}. Skipping.`,
+    );
+    return true; // Already handled — idempotent success
   }
 
   // Can only refund if not yet paid out

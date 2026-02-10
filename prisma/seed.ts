@@ -1,4 +1,4 @@
-import * as dotenv from "dotenv";
+import "dotenv/config";
 import prisma from "../lib/prisma";
 import { printConfigSummary, getSeedMode } from "./seedFiles/config";
 
@@ -54,8 +54,6 @@ import { createPayoutAccounts } from "./seedFiles/13a-create-payout-accounts";
 import { createConsultantEarnings } from "./seedFiles/13b-create-consultant-earnings";
 import { createPayouts } from "./seedFiles/13c-create-payouts";
 import { createInvoices } from "./seedFiles/13d-create-invoices";
-
-dotenv.config({ path: ".env" });
 
 async function seed() {
   console.log("Starting seed process...");

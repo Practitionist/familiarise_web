@@ -33,7 +33,7 @@ const ROUTE_PATTERNS = {
     "/api/auth/",
     "/api/health/",
     "/api/user/consultants", // Public: explore experts list and individual profiles
-    "/api/user/reviews",     // Public: consultant reviews
+    "/api/user/reviews", // Public: consultant reviews
   ],
 };
 

@@ -1,15 +1,33 @@
-import { ConsultantReview } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 
-export type ReviewWithProfiles = ConsultantReview & {
-  consulteeProfile: {
-    user: {
-      name: string | null;
-      image: string | null;
+/**
+ * Review with both consultant and consultee profile data.
+ * Matches the include pattern in GET /api/user/reviews.
+ * Used by home page testimonials and upcoming events sections.
+ */
+export type TConsultantReview = Prisma.ConsultantReviewGetPayload<{
+  include: {
+    consultantProfile: {
+      include: {
+        user: {
+          select: {
+            name: true;
+          };
+        };
+      };
+    };
+    consulteeProfile: {
+      include: {
+        user: {
+          select: {
+            name: true;
+            image: true;
+          };
+        };
+      };
     };
   };
-  consultantProfile: {
-    user: {
-      name: string | null;
-    };
-  };
-};
+}>;
+
+/** @deprecated Use TConsultantReview instead */
+export type ReviewWithProfiles = TConsultantReview;

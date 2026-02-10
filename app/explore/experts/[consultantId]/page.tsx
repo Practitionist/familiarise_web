@@ -5,12 +5,11 @@ import { useToast } from "@/components/ui/use-toast";
 import {
   fetchConsultantDetails,
   fetchReviews,
-  fetchUserDetails,
 } from "@/lib/user";
 import { TConsultantProfile } from "@/types/consultant";
 import { TSlotTiming } from "@/types/slots";
 import { TUserWithProfessionalBackground } from "@/types/user";
-import { ConsultantReview } from "@prisma/client";
+import { TConsultantReview } from "@/types/review";
 import Link from "next/link";
 import { use, useCallback, useEffect, useState } from "react";
 import { motion } from "framer-motion";
@@ -43,7 +42,7 @@ export default function ExpertProfile(
     useState<TUserWithProfessionalBackground | null>(null);
   const [consultantDetails, setConsultantDetails] =
     useState<TConsultantProfile | null>(null);
-  const [reviews, setReviews] = useState<ConsultantReview[]>([]);
+  const [reviews, setReviews] = useState<TConsultantReview[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -67,7 +66,9 @@ export default function ExpertProfile(
         // Use user data from consultant response instead of separate API call
         // This allows public access since consultant API is public
         if (consultantData.user) {
-          setUserDetails(consultantData.user as TUserWithProfessionalBackground);
+          setUserDetails(
+            consultantData.user as TUserWithProfessionalBackground,
+          );
           const reviewsData = await fetchReviews(params.consultantId);
           setReviews(reviewsData);
         } else {
@@ -102,7 +103,8 @@ export default function ExpertProfile(
           endDateInUtc.setHours(23, 59, 59, 999);
 
           const response = await fetch(
-            `/api/slots/availability-with-allocation/${consultantDetails.id
+            `/api/slots/availability-with-allocation/${
+              consultantDetails.id
             }?startDateInUtc=${startDateInUtc.toISOString()}&endDateInUtc=${endDateInUtc.toISOString()}&timezone=${timezone}`,
           );
 
@@ -256,9 +258,10 @@ export default function ExpertProfile(
         <button
           key={i}
           className={`w-10 h-10 lg:w-11 lg:h-11 rounded-full text-base font-medium transition-all duration-200 flex items-center justify-center
-            ${isSelected
-              ? "bg-white text-zinc-900 shadow-md"
-              : "text-zinc-300 hover:bg-zinc-700/60"
+            ${
+              isSelected
+                ? "bg-white text-zinc-900 shadow-md"
+                : "text-zinc-300 hover:bg-zinc-700/60"
             }`}
           onClick={() => {
             setSelectedDate(date);

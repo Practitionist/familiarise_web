@@ -10,7 +10,7 @@ import {
 // GET: Public read (for trust/SEO purposes)
 export async function GET(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ id: string }> },
 ) {
   try {
     const { id } = await params;
@@ -32,7 +32,7 @@ export async function GET(
     console.error("Error getting review:", error);
     return NextResponse.json(
       { error: "Internal Server Error" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -40,7 +40,7 @@ export async function GET(
 // PUT: Requires auth + ownership
 export async function PUT(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ id: string }> },
 ) {
   try {
     // Require authentication
@@ -64,7 +64,7 @@ export async function PUT(
     const isOwner = checkOwnership(
       session,
       review.consulteeProfileId,
-      "consultee"
+      "consultee",
     );
     if (!isPrivileged(session.user.role) && !isOwner) {
       return forbiddenResponse("You can only update your own reviews");
@@ -88,7 +88,7 @@ export async function PUT(
     console.error("Error updating review:", error);
     return NextResponse.json(
       { error: "Internal Server Error" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -96,7 +96,7 @@ export async function PUT(
 // DELETE: Requires auth + ownership
 export async function DELETE(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ id: string }> },
 ) {
   try {
     // Require authentication
@@ -120,7 +120,7 @@ export async function DELETE(
     const isOwner = checkOwnership(
       session,
       review.consulteeProfileId,
-      "consultee"
+      "consultee",
     );
     if (!isPrivileged(session.user.role) && !isOwner) {
       return forbiddenResponse("You can only delete your own reviews");
@@ -132,13 +132,13 @@ export async function DELETE(
 
     return NextResponse.json(
       { message: "Review deleted successfully" },
-      { status: 200 }
+      { status: 200 },
     );
   } catch (error) {
     console.error("Error deleting review:", error);
     return NextResponse.json(
       { error: "Internal Server Error" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

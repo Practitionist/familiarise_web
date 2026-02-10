@@ -52,7 +52,9 @@ function SignInContent() {
 
   // If already logged in, show redirecting message
   if (session?.user) {
-    const destination = session.user.onboardingCompleted ? "dashboard" : "onboarding";
+    const destination = session.user.onboardingCompleted
+      ? "dashboard"
+      : "onboarding";
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-900">
         <p className="text-white">Redirecting to {destination}...</p>

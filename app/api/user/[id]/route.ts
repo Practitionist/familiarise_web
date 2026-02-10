@@ -1,8 +1,29 @@
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
-import { UserRole } from "@prisma/client";
+import { UserRole, Gender } from "@prisma/client";
 
 import { getSession } from "@/lib/auth-server";
+
+/**
+ * Convert empty strings to undefined so Prisma skips the field update.
+ * For enum fields, also validates against the allowed values.
+ */
+function emptyToUndefined(value: unknown): string | undefined {
+  if (typeof value !== "string" || value.trim() === "") return undefined;
+  return value;
+}
+
+function parseEnumOrUndefined<T extends Record<string, string>>(
+  value: unknown,
+  enumObj: T,
+): T[keyof T] | undefined {
+  if (typeof value !== "string" || value.trim() === "") return undefined;
+  const upper = value.toUpperCase();
+  if (Object.values(enumObj).includes(upper as T[keyof T])) {
+    return upper as T[keyof T];
+  }
+  return undefined;
+}
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -168,21 +189,20 @@ export async function PUT(
     const updatedUser = await prisma.user.update({
       where: { id: id },
       data: {
-        name,
-        email,
-        image,
-        phone,
-        address,
+        name: emptyToUndefined(name),
+        email: emptyToUndefined(email),
+        image: emptyToUndefined(image),
+        phone: emptyToUndefined(phone),
+        address: emptyToUndefined(address),
         onboardingCompleted,
-        role: role as UserRole,
-        timezone: currentTimezone,
-        // New user fields
+        role: parseEnumOrUndefined(role, UserRole),
+        timezone: emptyToUndefined(currentTimezone),
         dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : undefined,
-        gender,
-        city,
-        country,
-        linkedinUrl,
-        bio,
+        gender: parseEnumOrUndefined(gender, Gender),
+        city: emptyToUndefined(city),
+        country: emptyToUndefined(country),
+        linkedinUrl: emptyToUndefined(linkedinUrl),
+        bio: emptyToUndefined(bio),
       },
       select: {
         id: true,

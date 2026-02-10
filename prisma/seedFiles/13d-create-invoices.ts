@@ -174,8 +174,6 @@ export async function createInvoices(): Promise<void> {
 
   for (const payment of succeededPayments) {
     try {
-      const typedPayment = payment as PaymentWithAppointment;
-
       // Generate invoice number
       const invoiceNumber = generateInvoiceNumber(payment.createdAt);
 
@@ -183,7 +181,7 @@ export async function createInvoices(): Promise<void> {
       const { baseAmount, taxAmount } = calculateTaxBreakdown(payment.amount);
 
       // Build line items
-      const items = buildInvoiceLineItems(typedPayment);
+      const items = buildInvoiceLineItems(payment);
 
       // Determine invoice status based on payment status
       const status = PaymentStatus.SUCCEEDED;

@@ -383,12 +383,12 @@ export default function ConsulteeLayout({
   // - STAFF: Can view consultant and consultee dashboards
   // - CONSULTEE: Can only access their OWN dashboard
   // - CONSULTANT: Cannot access consultee dashboards (they have their own)
-  const hasConsulteeAccess = userDetails && (
-    userDetails.role === "ADMIN" ||
-    userDetails.role === "STAFF" ||
-    (userDetails.consulteeProfileId === consulteeId &&
-      userDetails.role !== "CONSULTANT")  // Consultees only, not consultants
-  );
+  const hasConsulteeAccess =
+    userDetails &&
+    (userDetails.role === "ADMIN" ||
+      userDetails.role === "STAFF" ||
+      (userDetails.consulteeProfileId === consulteeId &&
+        userDetails.role !== "CONSULTANT")); // Consultees only, not consultants
 
   // Redirect unauthorized users to their appropriate dashboard
   useEffect(() => {
@@ -396,16 +396,34 @@ export default function ConsulteeLayout({
 
     if (userDetails && !hasConsulteeAccess) {
       // User doesn't have access - redirect based on their role
-      if (userDetails.role === "CONSULTANT" && userDetails.consultantProfileId) {
-        router.replace(`/dashboard/consultant/${userDetails.consultantProfileId}/home`);
-      } else if (userDetails.consulteeProfileId && userDetails.consulteeProfileId !== consulteeId) {
+      if (
+        userDetails.role === "CONSULTANT" &&
+        userDetails.consultantProfileId
+      ) {
+        router.replace(
+          `/dashboard/consultant/${userDetails.consultantProfileId}/home`,
+        );
+      } else if (
+        userDetails.consulteeProfileId &&
+        userDetails.consulteeProfileId !== consulteeId
+      ) {
         // Consultee trying to access another consultee's dashboard - redirect to their own
-        router.replace(`/dashboard/consultee/${userDetails.consulteeProfileId}/home`);
+        router.replace(
+          `/dashboard/consultee/${userDetails.consulteeProfileId}/home`,
+        );
       } else {
         router.replace("/dashboard");
       }
     }
-  }, [userDetails, hasConsulteeAccess, isLoadingUser, isSessionLoading, userId, router, consulteeId]);
+  }, [
+    userDetails,
+    hasConsulteeAccess,
+    isLoadingUser,
+    isSessionLoading,
+    userId,
+    router,
+    consulteeId,
+  ]);
 
   // Prefetch
   useEffect(() => {

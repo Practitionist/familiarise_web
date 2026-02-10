@@ -116,13 +116,7 @@ export default function Dashboard() {
             viewBox="0 0 40 40"
             fill="none"
           >
-            <circle
-              cx="20"
-              cy="20"
-              r="16"
-              stroke="#e5e5e5"
-              strokeWidth="3"
-            />
+            <circle cx="20" cy="20" r="16" stroke="#e5e5e5" strokeWidth="3" />
             <circle
               cx="20"
               cy="20"
@@ -176,7 +170,9 @@ export default function Dashboard() {
               Unable to load dashboard
             </h2>
             <p className="text-sm text-neutral-500">
-              {error ? error.message : "Something went wrong. Please try again."}
+              {error
+                ? error.message
+                : "Something went wrong. Please try again."}
             </p>
           </div>
           <button

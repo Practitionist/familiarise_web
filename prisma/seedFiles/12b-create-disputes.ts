@@ -1,5 +1,5 @@
 import { faker } from "@faker-js/faker";
-import { DisputeStatus, PaymentGateway } from "@prisma/client";
+import { DisputeStatus, PaymentGateway, Prisma } from "@prisma/client";
 import prisma from "../../lib/prisma";
 
 // Dispute status values
@@ -69,8 +69,8 @@ function generateDisputeId(gateway: PaymentGateway): string {
 function generateEvidence(
   reason: string,
   status: DisputeStatus,
-): Record<string, any> {
-  const baseEvidence: Record<string, any> = {
+): Record<string, Prisma.JsonValue> {
+  const baseEvidence: Record<string, Prisma.JsonValue> = {
     customer_name: faker.person.fullName(),
     customer_email: faker.internet.email(),
     product_description: "Online consultation service",
