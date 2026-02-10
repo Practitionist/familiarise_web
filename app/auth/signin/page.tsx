@@ -12,6 +12,20 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState, useEffect, Suspense } from "react";
 
+export default function SignIn() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen flex items-center justify-center bg-gray-900">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white" />
+        </div>
+      }
+    >
+      <SignInContent />
+    </Suspense>
+  );
+}
+
 function SignInContent() {
   const { toast } = useToast();
   const router = useRouter();
@@ -254,20 +268,6 @@ function SignInContent() {
         <div />
       </div>
     </div>
-  );
-}
-
-export default function SignIn() {
-  return (
-    <Suspense
-      fallback={
-        <div className="min-h-screen flex items-center justify-center">
-          Loading...
-        </div>
-      }
-    >
-      <SignInContent />
-    </Suspense>
   );
 }
 

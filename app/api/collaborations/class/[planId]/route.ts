@@ -8,7 +8,7 @@ import {
 
 export async function GET(
   _req: NextRequest,
-  { params }: { params: Promise<{ classPlanId: string }> },
+  { params }: { params: Promise<{ planId: string }> },
 ) {
   try {
     const session = await getSession();
@@ -16,8 +16,8 @@ export async function GET(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const { classPlanId } = await params;
-    const collaborators = await getCollaborators("class", classPlanId);
+    const { planId } = await params;
+    const collaborators = await getCollaborators("class", planId);
     return NextResponse.json({ data: collaborators });
   } catch (error) {
     console.error("Error fetching class collaborators:", error);
@@ -30,7 +30,7 @@ export async function GET(
 
 export async function POST(
   req: NextRequest,
-  { params }: { params: Promise<{ classPlanId: string }> },
+  { params }: { params: Promise<{ planId: string }> },
 ) {
   try {
     const session = await getSession();
@@ -38,10 +38,10 @@ export async function POST(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const { classPlanId } = await params;
+    const { planId } = await params;
 
     const plan = await prisma.classPlan.findUnique({
-      where: { id: classPlanId },
+      where: { id: planId },
       include: { consultantProfile: true },
     });
 
@@ -72,7 +72,7 @@ export async function POST(
 
     const collab = await inviteCollaborator(
       "class",
-      classPlanId,
+      planId,
       consultantProfileId,
       role,
       revenueSharePercentage,

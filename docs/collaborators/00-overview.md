@@ -162,14 +162,14 @@ EarningRole:
 | `lib/collaborators/service.ts` | Core business logic (invite, respond, remove, revenue split) |
 | `lib/collaborators/permissions.ts` | Role-based permission checking |
 | `lib/payments/payouts/earnings-service.ts` | `createCollaboratorEarnings()` function |
-| `app/api/webinars/[webinarPlanId]/collaborators/route.ts` | GET/POST webinar collaborators |
-| `app/api/webinars/[webinarPlanId]/collaborators/[id]/route.ts` | PATCH/DELETE specific collaborator |
-| `app/api/classes/[classPlanId]/collaborators/route.ts` | GET/POST class collaborators |
-| `app/api/classes/[classPlanId]/collaborators/[id]/route.ts` | PATCH/DELETE specific collaborator |
+| `app/api/collaborations/webinar/[planId]/route.ts` | GET/POST webinar collaborators |
+| `app/api/collaborations/webinar/[planId]/[id]/route.ts` | PATCH/DELETE specific webinar collaborator |
+| `app/api/collaborations/class/[planId]/route.ts` | GET/POST class collaborators |
+| `app/api/collaborations/class/[planId]/[id]/route.ts` | PATCH/DELETE specific class collaborator |
 | `app/api/collaborations/[id]/respond/route.ts` | PATCH accept/decline invitation |
 | `app/api/collaborations/route.ts` | GET all my collaborations |
-| `app/api/webinars/[id]/revenue-split/route.ts` | GET revenue split preview |
-| `app/api/classes/[id]/revenue-split/route.ts` | GET revenue split preview |
+| `app/api/collaborations/webinar/[planId]/revenue-split/route.ts` | GET webinar revenue split preview |
+| `app/api/collaborations/class/[planId]/revenue-split/route.ts` | GET class revenue split preview |
 | `app/api/collaborators/[consultantProfileId]/availability/route.ts` | GET co-host availability |
 | `components/collaborators/CollaboratorsTab.tsx` | Reusable UI for managing collaborators |
 | `components/collaborators/InvitationsPanel.tsx` | Invitation management UI |

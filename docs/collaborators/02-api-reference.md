@@ -6,7 +6,7 @@ All endpoints require authentication (via BetterAuth session).
 
 ## Collaborator Management
 
-### GET /api/webinars/[webinarPlanId]/collaborators
+### GET /api/collaborations/webinar/[planId]
 
 List all collaborators for a webinar plan.
 
@@ -38,7 +38,7 @@ List all collaborators for a webinar plan.
 
 ---
 
-### POST /api/webinars/[webinarPlanId]/collaborators
+### POST /api/collaborations/webinar/[planId]
 
 Invite a collaborator to a webinar plan.
 
@@ -79,7 +79,7 @@ Invite a collaborator to a webinar plan.
 
 ---
 
-### PATCH /api/webinars/[webinarPlanId]/collaborators/[id]
+### PATCH /api/collaborations/webinar/[planId]/[id]
 
 Update a collaborator's role or revenue share.
 
@@ -104,7 +104,7 @@ Update a collaborator's role or revenue share.
 
 ---
 
-### DELETE /api/webinars/[webinarPlanId]/collaborators/[id]
+### DELETE /api/collaborations/webinar/[planId]/[id]
 
 Remove a collaborator (sets status to REMOVED).
 
@@ -124,10 +124,10 @@ Remove a collaborator (sets status to REMOVED).
 
 Identical to the webinar endpoints above, but at:
 
-- `GET /api/classes/[classPlanId]/collaborators`
-- `POST /api/classes/[classPlanId]/collaborators`
-- `PATCH /api/classes/[classPlanId]/collaborators/[id]`
-- `DELETE /api/classes/[classPlanId]/collaborators/[id]`
+- `GET /api/collaborations/class/[planId]`
+- `POST /api/collaborations/class/[planId]`
+- `PATCH /api/collaborations/class/[planId]/[id]`
+- `DELETE /api/collaborations/class/[planId]/[id]`
 
 Same request/response shapes. Uses `ClassCollaboratorRole` enum values:
 `CO_INSTRUCTOR`, `TEACHING_ASSISTANT`, `GUEST_LECTURER`, `CONTENT_CREATOR`
@@ -219,7 +219,7 @@ Get all collaborations for the authenticated consultant (both webinar and class)
 
 ## Revenue Split Preview
 
-### GET /api/webinars/[id]/revenue-split
+### GET /api/collaborations/webinar/[planId]/revenue-split
 
 Preview how earnings would be split for a webinar plan.
 
@@ -260,7 +260,7 @@ Preview how earnings would be split for a webinar plan.
 }
 ```
 
-### GET /api/classes/[id]/revenue-split
+### GET /api/collaborations/class/[planId]/revenue-split
 
 Same format for class plans.
 

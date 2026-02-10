@@ -86,10 +86,7 @@ export function CollaboratorsTab({
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  const basePath =
-    planType === "webinar"
-      ? `/api/webinars/${planId}/collaborators`
-      : `/api/classes/${planId}/collaborators`;
+  const basePath = `/api/collaborations/${planType}/${planId}`;
 
   const roles = planType === "webinar" ? WEBINAR_ROLES : CLASS_ROLES;
 

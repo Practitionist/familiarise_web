@@ -72,7 +72,7 @@ A host can invite collaborators from the "Collaborators" tab in their plan edito
 When the host clicks "Send Invitation," the frontend sends:
 
 ```
-POST /api/webinars/{webinarPlanId}/collaborators
+POST /api/collaborations/webinar/{planId}
 {
   "consultantProfileId": "clx_consultant_b",
   "role": "CO_HOST",
@@ -385,7 +385,7 @@ The key insight is that refunds are all-or-nothing for a payment. You can't refu
 The host can remove a collaborator at any time by clicking the trash icon in the `CollaboratorsTab` component. This sends:
 
 ```
-DELETE /api/webinars/{webinarPlanId}/collaborators/{id}
+DELETE /api/collaborations/webinar/{planId}/{id}
 ```
 
 The service sets `status: REMOVED` (a soft delete — the record persists for audit purposes). The collaborator's revenue share is freed up, and the host can invite someone new.

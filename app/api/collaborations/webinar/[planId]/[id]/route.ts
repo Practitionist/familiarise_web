@@ -8,7 +8,7 @@ import {
 
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: Promise<{ webinarPlanId: string; id: string }> },
+  { params }: { params: Promise<{ planId: string; id: string }> },
 ) {
   try {
     const session = await getSession();
@@ -16,11 +16,11 @@ export async function PATCH(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const { webinarPlanId, id } = await params;
+    const { planId, id } = await params;
 
     // Verify the requester is the plan owner
     const plan = await prisma.webinarPlan.findUnique({
-      where: { id: webinarPlanId },
+      where: { id: planId },
     });
 
     const ownerProfile = await prisma.consultantProfile.findFirst({
@@ -56,7 +56,7 @@ export async function PATCH(
 
 export async function DELETE(
   _req: NextRequest,
-  { params }: { params: Promise<{ webinarPlanId: string; id: string }> },
+  { params }: { params: Promise<{ planId: string; id: string }> },
 ) {
   try {
     const session = await getSession();
@@ -64,11 +64,11 @@ export async function DELETE(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const { webinarPlanId, id } = await params;
+    const { planId, id } = await params;
 
     // Verify the requester is the plan owner
     const plan = await prisma.webinarPlan.findUnique({
-      where: { id: webinarPlanId },
+      where: { id: planId },
     });
 
     const ownerProfile = await prisma.consultantProfile.findFirst({
