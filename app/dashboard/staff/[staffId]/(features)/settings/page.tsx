@@ -186,8 +186,7 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
     setError(null);
 
     // Build payload - API expects flat object with both user and profile fields
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let payload: Record<string, any> = {};
+    let payload: Record<string, unknown> = {};
 
     // Construct payload based on section
     switch (section) {
@@ -484,13 +483,13 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
               <Label>Responsibilities</Label>
               <p className="text-sm text-gray-500 dark:text-gray-400">
                 {/* TODO: Improve display/editing for JSON */}
-                {JSON.stringify(staffData.responsibilities) ?? "Not specified"}
+                {staffData.responsibilities ? JSON.stringify(staffData.responsibilities) : "Not specified"}
               </p>
             </div>
             <div className="space-y-2 md:col-span-2">
               <Label>Permissions</Label>
               <p className="text-sm text-gray-500 dark:text-gray-400">
-                {JSON.stringify(staffData.permissions) ?? "Not specified"}
+                {staffData.permissions ? JSON.stringify(staffData.permissions) : "Not specified"}
               </p>
             </div>
           </CardContent>

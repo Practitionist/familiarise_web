@@ -19,6 +19,8 @@ import {
   PaymentStatus,
   AppointmentsType,
 } from "@prisma/client";
+import { formatCurrencyAmount } from "@/lib/utils";
+import type { PaymentListResponse, Payment } from "@/types/payments";
 
 // Fetch payments with filters
 async function fetchPayments(params: {
@@ -28,7 +30,7 @@ async function fetchPayments(params: {
   gateway?: PaymentGateway;
   appointmentType?: AppointmentsType;
   search?: string;
-}) {
+}): Promise<PaymentListResponse> {
   const searchParams = new URLSearchParams({
     page: params.page.toString(),
     limit: params.limit.toString(),
@@ -42,7 +44,7 @@ async function fetchPayments(params: {
   if (!response.ok) {
     throw new Error("Failed to fetch payments");
   }
-  return response.json();
+  return response.json() as Promise<PaymentListResponse>;
 }
 
 export default function AdminPaymentsPage() {
@@ -203,7 +205,7 @@ export default function AdminPaymentsPage() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {isLoading ? (
+          {isLoading || !data ? (
             <div className="space-y-3">
               {[1, 2, 3, 4, 5].map((i) => (
                 <Skeleton key={i} className="h-16 w-full" />
@@ -242,13 +244,13 @@ export default function AdminPaymentsPage() {
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
-                    {data.payments.map((payment: any) => (
+                    {data.payments.map((payment: Payment) => (
                       <tr key={payment.id} className="hover:bg-gray-50">
                         <td className="px-4 py-3 text-sm font-mono text-gray-900">
                           {payment.paymentIntent?.substring(0, 20)}...
                         </td>
                         <td className="px-4 py-3 text-sm text-gray-900">
-                          {payment.amount} {payment.currency}
+                          {formatCurrencyAmount(payment.amount, payment.currency)}
                         </td>
                         <td className="px-4 py-3 text-sm">
                           <span

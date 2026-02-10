@@ -84,6 +84,43 @@ async function generateInvoiceNumber(): Promise<string> {
   return `${prefix}-${String(sequence).padStart(5, "0")}`;
 }
 
+/**
+ * C2 FIX: Retry wrapper for invoice creation to handle concurrent invoice
+ * number generation. The `invoiceNumber` has a unique constraint, so if two
+ * invoices are created simultaneously, one will hit a P2002 error. This
+ * wrapper retries up to 3 times with a fresh invoice number each attempt.
+ */
+const INVOICE_CREATE_MAX_RETRIES = 3;
+
+async function createInvoiceWithRetry(
+  data: Parameters<typeof prisma.invoice.create>[0]["data"],
+): Promise<Awaited<ReturnType<typeof prisma.invoice.create>>> {
+  for (let attempt = 1; attempt <= INVOICE_CREATE_MAX_RETRIES; attempt++) {
+    try {
+      // Re-generate invoice number on retry to avoid the same collision
+      if (attempt > 1) {
+        const freshNumber = await generateInvoiceNumber();
+        data = { ...data, invoiceNumber: freshNumber };
+      }
+      return await prisma.invoice.create({ data });
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002" &&
+        attempt < INVOICE_CREATE_MAX_RETRIES
+      ) {
+        console.warn(
+          `[Invoice] Unique constraint collision on attempt ${attempt}, retrying...`,
+        );
+        continue;
+      }
+      throw error;
+    }
+  }
+  // Should never reach here, but TypeScript requires it
+  throw new Error("Invoice creation failed after max retries");
+}
+
 // ============================================
 // Invoice Creation
 // ============================================
@@ -136,24 +173,21 @@ export async function createInvoice(
     hsnCode = TAX_CONSTANTS.HSN_CODES.EDUCATION;
   }
 
-  // Generate invoice number
+  // Generate invoice number (with retry for concurrent collision — C2 FIX)
   const invoiceNumber = await generateInvoiceNumber();
 
-  // Create invoice record
-  const invoice = await prisma.invoice.create({
-    data: {
-      paymentId,
-      invoiceNumber,
-      amount: total,
-      currency: payment.currency,
-      status: payment.paymentStatus,
-      items: items as unknown as Prisma.InputJsonValue,
-      taxAmount,
-      taxRate,
-      hsnCode,
-      paidAt:
-        payment.paymentStatus === PaymentStatus.SUCCEEDED ? new Date() : null,
-    },
+  const invoice = await createInvoiceWithRetry({
+    paymentId,
+    invoiceNumber,
+    amount: total,
+    currency: payment.currency,
+    status: payment.paymentStatus,
+    items: items as unknown as Prisma.InputJsonValue,
+    taxAmount,
+    taxRate,
+    hsnCode,
+    paidAt:
+      payment.paymentStatus === PaymentStatus.SUCCEEDED ? new Date() : null,
   });
 
   return {
@@ -249,24 +283,21 @@ export async function createInvoiceFromPayment(
       },
     ];
 
-    // Generate invoice number
+    // Generate invoice number (with retry for concurrent collision — C2 FIX)
     const invoiceNumber = await generateInvoiceNumber();
 
-    // Create invoice
-    const invoice = await prisma.invoice.create({
-      data: {
-        paymentId,
-        invoiceNumber,
-        amount: totalAmount,
-        currency: payment.currency,
-        status: payment.paymentStatus,
-        items: items as unknown as Prisma.InputJsonValue,
-        taxAmount,
-        taxRate,
-        hsnCode,
-        paidAt:
-          payment.paymentStatus === PaymentStatus.SUCCEEDED ? new Date() : null,
-      },
+    const invoice = await createInvoiceWithRetry({
+      paymentId,
+      invoiceNumber,
+      amount: totalAmount,
+      currency: payment.currency,
+      status: payment.paymentStatus,
+      items: items as unknown as Prisma.InputJsonValue,
+      taxAmount,
+      taxRate,
+      hsnCode,
+      paidAt:
+        payment.paymentStatus === PaymentStatus.SUCCEEDED ? new Date() : null,
     });
 
     console.log(`📄 Invoice ${invoiceNumber} created for payment ${paymentId}`);

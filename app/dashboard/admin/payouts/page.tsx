@@ -12,12 +12,34 @@ import {
   ArrowRight,
 } from "lucide-react";
 
-async function fetchPayoutStats() {
+interface PayoutStatCategory {
+  count: number;
+  amount: number;
+}
+
+interface PayoutStatsResponse {
+  payouts: unknown[];
+  stats: {
+    pending: PayoutStatCategory;
+    approved: PayoutStatCategory;
+    processing: PayoutStatCategory;
+    completed: PayoutStatCategory;
+    failed: PayoutStatCategory;
+  };
+  pagination: {
+    total: number;
+    limit: number;
+    offset: number;
+    hasMore: boolean;
+  };
+}
+
+async function fetchPayoutStats(): Promise<PayoutStatsResponse> {
   const response = await fetch("/api/admin/payouts?limit=0");
   if (!response.ok) {
     throw new Error("Failed to fetch payout stats");
   }
-  return response.json();
+  return response.json() as Promise<PayoutStatsResponse>;
 }
 
 export default function AdminPayoutsPage() {

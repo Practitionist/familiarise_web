@@ -1,7 +1,19 @@
 /**
  * Shared types for Dispute API responses.
- * Used by staff/disputes and staff/disputes/[disputeId] pages.
+ * Used by admin/disputes, staff/disputes and their detail pages.
  */
+
+/**
+ * Represents a JSON value from Prisma's Json type.
+ * Used for fields like `evidence` and `metadata` that store arbitrary JSON.
+ */
+export type JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | JsonValue[]
+  | { [key: string]: JsonValue };
 
 export interface Dispute {
   id: string;
@@ -36,14 +48,17 @@ export interface DisputeDetails {
   status: string;
   reason: string | null;
   paymentGateway: string;
+  paymentId: string;
   dueBy: string | null;
-  evidence: string | null;
+  isChargeRefundable: boolean;
+  evidence: JsonValue | null;
   evidenceSubmittedAt: string | null;
   createdAt: string;
   updatedAt: string;
   payment: {
     id: string;
     paymentIntent: string;
+    paymentStatus: string;
     amount: number;
     currency: string;
     paymentMethod: string | null;

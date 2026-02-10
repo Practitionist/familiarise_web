@@ -246,37 +246,99 @@ export function resetCircuitBreaker(): void {
 // ============================================================================
 
 /**
- * Acquire a simple lock
+ * Acquire a simple lock with circuit breaker protection.
+ *
+ * When Redis is reachable: standard SET NX PX locking.
+ * When Redis is unreachable / budget exhausted:
+ *   - Circuit breaker trips after 5 consecutive failures
+ *   - Returns null (= "lock not acquired") instead of crashing
+ *   - Callers already handle null by telling the user to retry later
+ *   - After 30 seconds, half-open probes test if Redis is back
+ *
+ * This means a Redis outage degrades to "temporarily cannot start
+ * new payout batches / approval payments" rather than a 500 crash.
+ *
  * @param key - The lock key
  * @param ttl - Time to live in milliseconds
- * @returns Lock token if acquired, null if already locked
+ * @returns Lock token if acquired, null if locked or Redis unavailable
  */
 export async function acquireLock(
   key: string,
   ttl: number,
 ): Promise<string | null> {
-  const token = crypto.randomUUID();
-  const result = await redis.set(key, token, { nx: true, px: ttl });
-  return result === "OK" ? token : null;
+  return withCircuitBreaker(
+    async () => {
+      const token = crypto.randomUUID();
+      const result = await redis.set(key, token, { nx: true, px: ttl });
+      return result === "OK" ? token : null;
+    },
+    // Fallback when circuit is open: return null (= lock not acquired).
+    // The caller's existing "try again later" message handles this gracefully.
+    () => {
+      console.warn(
+        JSON.stringify({
+          event: "lock_acquire_circuit_open",
+          key,
+          message:
+            "Redis unavailable, returning null (lock not acquired). Caller will ask user to retry.",
+          timestamp: new Date().toISOString(),
+        }),
+      );
+      return null;
+    },
+  );
 }
 
 /**
- * Release a simple lock (atomic version using Lua script)
- * Uses atomic check-and-delete to prevent releasing another client's lock
+ * Release a simple lock with circuit breaker protection.
+ *
+ * Uses atomic Lua script to check-and-delete, preventing release of
+ * another client's lock. If Redis is unreachable, the lock will
+ * expire naturally via its TTL — no data inconsistency, just a brief
+ * period where the resource stays locked until TTL elapses.
+ *
+ * Never throws — safe for finally blocks.
+ *
  * @param key - The lock key
  * @param token - The lock token (for safe release)
  */
 export async function releaseLock(key: string, token: string): Promise<void> {
-  // Atomic release using Lua script
-  const script = `
-    if redis.call("get", KEYS[1]) == ARGV[1] then
-      return redis.call("del", KEYS[1])
-    else
-      return 0
-    end
-  `;
-
-  await redis.eval(script, [key], [token]);
+  try {
+    await withCircuitBreaker(
+      async () => {
+        const script = `
+          if redis.call("get", KEYS[1]) == ARGV[1] then
+            return redis.call("del", KEYS[1])
+          else
+            return 0
+          end
+        `;
+        await redis.eval(script, [key], [token]);
+      },
+      // Fallback: if Redis is down, the lock expires via TTL. Log and move on.
+      () => {
+        console.warn(
+          JSON.stringify({
+            event: "lock_release_circuit_open",
+            key,
+            message:
+              "Redis unavailable, lock will expire via TTL. No action needed.",
+            timestamp: new Date().toISOString(),
+          }),
+        );
+      },
+    );
+  } catch (error) {
+    // Never throw in release — log only. The lock's TTL is the safety net.
+    console.error(
+      JSON.stringify({
+        event: "lock_release_error",
+        key,
+        error: error instanceof Error ? error.message : String(error),
+        timestamp: new Date().toISOString(),
+      }),
+    );
+  }
 }
 
 /**

@@ -100,7 +100,18 @@ export async function handlePaymentSuccess(
   paymentIntentId: string,
   metadata: Record<string, string>,
 ): Promise<void> {
-  return await prisma.$transaction(async (tx) => {
+  // C1 FIX: Split into two phases:
+  //   Phase 1 (transaction): Critical payment + appointment processing
+  //   Phase 2 (post-tx): Earnings, invoice, waitlist, notifications
+  //
+  // Previously, earnings/invoice creation used the global `prisma` client
+  // inside the transaction, meaning they ran outside isolation but errors
+  // were swallowed. Now they run explicitly post-transaction with proper
+  // error logging. The `sync-payment-earnings` background job serves as
+  // a safety net for any failures in Phase 2.
+
+  // Phase 1: Critical transaction — payment confirmation + appointment
+  const txResult = await prisma.$transaction(async (tx) => {
     const payment = await tx.payment.findUnique({
       where: { paymentIntent: paymentIntentId },
       include: { user: { include: { consulteeProfile: true } } },
@@ -114,7 +125,7 @@ export async function handlePaymentSuccess(
 
     if (payment.paymentStatus === PaymentStatus.SUCCEEDED) {
       console.log(`Payment ${paymentIntentId} has already been processed.`);
-      return;
+      return null; // Signal: already processed, skip Phase 2
     }
 
     // VALIDATION: Check metadata before processing
@@ -141,13 +152,11 @@ export async function handlePaymentSuccess(
         where: { id: payment.id },
         data: {
           paymentStatus: PaymentStatus.SUCCEEDED,
-          // Store error in description for manual recovery - prefixed for easy searching
           description: `REQUIRES_MANUAL_RECOVERY: Metadata validation failed: ${errorMessage}. Customer charged but appointment NOT created.`,
         },
       });
 
       // CRITICAL ALERT - Log in structured format for monitoring systems
-      // This should trigger PagerDuty/Slack alerts via log monitoring
       console.error(
         JSON.stringify({
           event: "CRITICAL_PAYMENT_WITHOUT_APPOINTMENT",
@@ -166,7 +175,6 @@ export async function handlePaymentSuccess(
         }),
       );
 
-      // Also log in human-readable format for direct log viewing
       console.error(
         `
 ================================================================================
@@ -185,8 +193,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
         `,
       );
 
-      // Exit early - appointment not created, requires manual intervention
-      return;
+      return null; // Exit early — requires manual intervention
     }
 
     await tx.payment.update({
@@ -197,7 +204,6 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
     let appointment;
     if (payment.appointmentId) {
       // NEW FLOW: Appointment already created during checkout (tentative)
-      // Just confirm it by setting isTentative = false
       appointment = await tx.appointment.findUnique({
         where: { id: payment.appointmentId },
       });
@@ -212,7 +218,6 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
       );
     } else {
       // LEGACY FLOW: Appointment not created during checkout
-      // Create it now from webhook metadata
       appointment = await createAppointmentFromWebhook(tx, metadata, payment);
 
       console.log(
@@ -231,7 +236,6 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
     }
 
     // Confirm appointment: set isTentative = false and update status to APPROVED
-    // FIX Issue #1 & #3: Pass userId to confirm only this user's slots for multi-user events
     await confirmExistingAppointment(tx, appointment.id, payment.userId);
 
     // Send payment success email
@@ -242,227 +246,238 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
       metadata.appointmentType,
     );
 
-    // Create earnings record for consultant payout (outside transaction for non-blocking)
-    // This runs after core payment processing is complete
-    try {
-      // Fetch payment with appointment and consultant profile for earnings calculation
-      const paymentWithAppointment = await tx.payment.findUnique({
-        where: { id: payment.id },
-        include: {
-          appointment: {
-            include: {
-              consultation: {
-                include: {
-                  consultationPlan: {
-                    include: { consultantProfile: true },
-                  },
-                },
-              },
-              subscription: {
-                include: {
-                  subscriptionPlan: {
-                    include: { consultantProfile: true },
-                  },
-                },
-              },
-              webinar: {
-                include: {
-                  webinarPlan: {
-                    include: { consultantProfile: true },
-                  },
-                },
-              },
-              class: {
-                include: {
-                  classPlan: {
-                    include: { consultantProfile: true },
-                  },
-                },
-              },
-            },
-          },
-        },
-      });
-
-      if (paymentWithAppointment?.appointment) {
-        // Get consultant profile from the appointment type
-        const consultantProfile =
-          paymentWithAppointment.appointment.consultation?.consultationPlan
-            ?.consultantProfile ||
-          paymentWithAppointment.appointment.subscription?.subscriptionPlan
-            ?.consultantProfile ||
-          paymentWithAppointment.appointment.webinar?.webinarPlan
-            ?.consultantProfile ||
-          paymentWithAppointment.appointment.class?.classPlan
-            ?.consultantProfile;
-
-        if (consultantProfile) {
-          // Map appointment type to earnings hold period type
-          const appointmentTypeMap: Record<string, AppointmentType> = {
-            CONSULTATION: "CONSULTATION",
-            SUBSCRIPTION: "SUBSCRIPTION",
-            WEBINAR: "WEBINAR",
-            CLASS: "CLASS",
-          };
-
-          const earningsAppointmentType =
-            appointmentTypeMap[metadata.appointmentType] || "CONSULTATION";
-
-          // Create earnings with consultant profile attached
-          const paymentForEarnings = {
-            ...paymentWithAppointment,
-            appointment: {
-              ...paymentWithAppointment.appointment,
-              consultantProfile: { id: consultantProfile.id },
-            },
-          };
-
-          await createEarningsFromPayment({
-            payment: paymentForEarnings as Parameters<
-              typeof createEarningsFromPayment
-            >[0]["payment"],
-            appointmentType: earningsAppointmentType,
-          });
-
-          console.log(
-            `💰 Earnings record created for payment ${payment.id}, consultant ${consultantProfile.id}`,
-          );
-        }
-      }
-    } catch (earningsError) {
-      // Log but don't fail the payment - earnings can be created manually if needed
-      console.error(
-        `⚠️ Failed to create earnings for payment ${payment.id}:`,
-        earningsError,
-      );
-    }
-
-    // Create invoice for the payment
-    try {
-      const invoiceId = await createInvoiceFromPayment(payment.id);
-      if (invoiceId) {
-        console.log(`📄 Invoice created for payment ${payment.id}`);
-      }
-    } catch (invoiceError) {
-      // Log but don't fail - invoice can be created manually if needed
-      console.error(
-        `⚠️ Failed to create invoice for payment ${payment.id}:`,
-        invoiceError,
-      );
-    }
-
-    // Update waitlist status if coming from waitlist flow
-    if (metadata.fromWaitlist) {
-      try {
-        await markWaitlistAsBooked(metadata.fromWaitlist);
-        console.log(
-          JSON.stringify({
-            event: "waitlist_booking_completed",
-            waitlistId: metadata.fromWaitlist,
-            paymentIntent: paymentIntentId,
-            timestamp: new Date().toISOString(),
-          }),
-        );
-      } catch (waitlistError) {
-        // Log but don't fail the payment - waitlist update is best-effort
-        console.error(
-          `⚠️ Failed to update waitlist status for payment ${payment.id}:`,
-          waitlistError,
-        );
-      }
-    }
-
-    // --- Novu notifications (fire-and-forget) ---
-    try {
-      const appointmentForNotif = await tx.appointment.findUnique({
-        where: { id: appointment.id },
-        include: {
-          consultation: {
-            include: {
-              consultationPlan: {
-                include: { consultantProfile: { include: { user: true } } },
-              },
-            },
-          },
-          subscription: {
-            include: {
-              subscriptionPlan: {
-                include: { consultantProfile: { include: { user: true } } },
-              },
-            },
-          },
-          webinar: {
-            include: {
-              webinarPlan: {
-                include: { consultantProfile: { include: { user: true } } },
-              },
-            },
-          },
-          class: {
-            include: {
-              classPlan: {
-                include: { consultantProfile: { include: { user: true } } },
-              },
-            },
-          },
-        },
-      });
-
-      const consultantProfileData =
-        appointmentForNotif?.consultation?.consultationPlan
-          ?.consultantProfile ||
-        appointmentForNotif?.subscription?.subscriptionPlan
-          ?.consultantProfile ||
-        appointmentForNotif?.webinar?.webinarPlan?.consultantProfile ||
-        appointmentForNotif?.class?.classPlan?.consultantProfile;
-
-      const consultantNameForNotif =
-        consultantProfileData?.user?.name || "Consultant";
-      const consultantUserId = consultantProfileData?.user?.id;
-
-      const planTitle = appointmentForNotif?.consultation?.consultationPlan
-        ?.consultantProfile?.user?.name
-        ? metadata.appointmentType
-        : metadata.appointmentType || "Appointment";
-
-      const dashboardUrl = `${process.env.NEXT_PUBLIC_APP_URL}/dashboard`;
-
-      // Notify consultee of successful payment
-      void notifyPaymentSuccess(payment.userId, {
-        amount: payment.amount,
-        currency: payment.currency,
-        consultantName: consultantNameForNotif,
-        appointmentType: metadata.appointmentType,
-        planTitle: metadata.planId || planTitle,
-        dashboardUrl,
-      });
-
-      // Notify both consultant and consultee of the booked appointment
-      const notifUserIds = [payment.userId];
-      if (consultantUserId && consultantUserId !== payment.userId) {
-        notifUserIds.push(consultantUserId);
-      }
-
-      void notifyAppointmentBooked(notifUserIds, {
-        appointmentId: appointment.id,
-        appointmentType: metadata.appointmentType,
-        consultantName: consultantNameForNotif,
-        consulteeName: payment.user.name || "User",
-        planTitle: metadata.planId || planTitle,
-        dashboardUrl,
-      });
-    } catch (novuError) {
-      // Novu notifications are non-critical; log and continue
-      console.error(
-        `⚠️ Failed to send Novu notifications for payment ${payment.id}:`,
-        novuError,
-      );
-    }
-
     console.log(
       `✅ Payment ${paymentIntentId} processed successfully. Appointment ID: ${appointment.id}`,
     );
+
+    // Return data needed for Phase 2
+    return {
+      paymentId: payment.id,
+      appointmentId: appointment.id,
+      userId: payment.userId,
+      userName: payment.user.name,
+      amount: payment.amount,
+      currency: payment.currency,
+    };
   });
+
+  // If transaction returned null, the payment was already processed or had a metadata error
+  if (!txResult) return;
+
+  // Phase 2: Non-critical post-transaction work (earnings, invoice, waitlist, notifications)
+  // Failures here are logged but do NOT roll back the payment.
+  // The `sync-payment-earnings` and related background jobs serve as safety nets.
+
+  const { paymentId, appointmentId, userId, userName, amount, currency } = txResult;
+
+  // --- Earnings creation ---
+  try {
+    const paymentWithAppointment = await prisma.payment.findUnique({
+      where: { id: paymentId },
+      include: {
+        appointment: {
+          include: {
+            consultation: {
+              include: {
+                consultationPlan: {
+                  include: { consultantProfile: true },
+                },
+              },
+            },
+            subscription: {
+              include: {
+                subscriptionPlan: {
+                  include: { consultantProfile: true },
+                },
+              },
+            },
+            webinar: {
+              include: {
+                webinarPlan: {
+                  include: { consultantProfile: true },
+                },
+              },
+            },
+            class: {
+              include: {
+                classPlan: {
+                  include: { consultantProfile: true },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (paymentWithAppointment?.appointment) {
+      const consultantProfile =
+        paymentWithAppointment.appointment.consultation?.consultationPlan
+          ?.consultantProfile ||
+        paymentWithAppointment.appointment.subscription?.subscriptionPlan
+          ?.consultantProfile ||
+        paymentWithAppointment.appointment.webinar?.webinarPlan
+          ?.consultantProfile ||
+        paymentWithAppointment.appointment.class?.classPlan
+          ?.consultantProfile;
+
+      if (consultantProfile) {
+        const appointmentTypeMap: Record<string, AppointmentType> = {
+          CONSULTATION: "CONSULTATION",
+          SUBSCRIPTION: "SUBSCRIPTION",
+          WEBINAR: "WEBINAR",
+          CLASS: "CLASS",
+        };
+
+        const earningsAppointmentType =
+          appointmentTypeMap[metadata.appointmentType] || "CONSULTATION";
+
+        const paymentForEarnings = {
+          ...paymentWithAppointment,
+          appointment: {
+            ...paymentWithAppointment.appointment,
+            consultantProfile: { id: consultantProfile.id },
+          },
+        };
+
+        await createEarningsFromPayment({
+          payment: paymentForEarnings as Parameters<
+            typeof createEarningsFromPayment
+          >[0]["payment"],
+          appointmentType: earningsAppointmentType,
+        });
+
+        console.log(
+          `💰 Earnings record created for payment ${paymentId}, consultant ${consultantProfile.id}`,
+        );
+      }
+    }
+  } catch (earningsError) {
+    // Log but don't fail — sync-payment-earnings job will pick up the gap
+    console.error(
+      `⚠️ Failed to create earnings for payment ${paymentId}:`,
+      earningsError,
+    );
+  }
+
+  // --- Invoice creation ---
+  try {
+    const invoiceId = await createInvoiceFromPayment(paymentId);
+    if (invoiceId) {
+      console.log(`📄 Invoice created for payment ${paymentId}`);
+    }
+  } catch (invoiceError) {
+    console.error(
+      `⚠️ Failed to create invoice for payment ${paymentId}:`,
+      invoiceError,
+    );
+  }
+
+  // --- Waitlist update ---
+  if (metadata.fromWaitlist) {
+    try {
+      await markWaitlistAsBooked(metadata.fromWaitlist);
+      console.log(
+        JSON.stringify({
+          event: "waitlist_booking_completed",
+          waitlistId: metadata.fromWaitlist,
+          paymentIntent: paymentIntentId,
+          timestamp: new Date().toISOString(),
+        }),
+      );
+    } catch (waitlistError) {
+      console.error(
+        `⚠️ Failed to update waitlist status for payment ${paymentId}:`,
+        waitlistError,
+      );
+    }
+  }
+
+  // --- Novu notifications (M5 FIX: moved outside transaction) ---
+  try {
+    const appointmentForNotif = await prisma.appointment.findUnique({
+      where: { id: appointmentId },
+      include: {
+        consultation: {
+          include: {
+            consultationPlan: {
+              include: { consultantProfile: { include: { user: true } } },
+            },
+          },
+        },
+        subscription: {
+          include: {
+            subscriptionPlan: {
+              include: { consultantProfile: { include: { user: true } } },
+            },
+          },
+        },
+        webinar: {
+          include: {
+            webinarPlan: {
+              include: { consultantProfile: { include: { user: true } } },
+            },
+          },
+        },
+        class: {
+          include: {
+            classPlan: {
+              include: { consultantProfile: { include: { user: true } } },
+            },
+          },
+        },
+      },
+    });
+
+    const consultantProfileData =
+      appointmentForNotif?.consultation?.consultationPlan
+        ?.consultantProfile ||
+      appointmentForNotif?.subscription?.subscriptionPlan
+        ?.consultantProfile ||
+      appointmentForNotif?.webinar?.webinarPlan?.consultantProfile ||
+      appointmentForNotif?.class?.classPlan?.consultantProfile;
+
+    const consultantNameForNotif =
+      consultantProfileData?.user?.name || "Consultant";
+    const consultantUserId = consultantProfileData?.user?.id;
+
+    const planTitle = appointmentForNotif?.consultation?.consultationPlan
+      ?.consultantProfile?.user?.name
+      ? metadata.appointmentType
+      : metadata.appointmentType || "Appointment";
+
+    const dashboardUrl = `${process.env.NEXT_PUBLIC_APP_URL}/dashboard`;
+
+    // Notify consultee of successful payment
+    void notifyPaymentSuccess(userId, {
+      amount,
+      currency,
+      consultantName: consultantNameForNotif,
+      appointmentType: metadata.appointmentType,
+      planTitle: metadata.planId || planTitle,
+      dashboardUrl,
+    });
+
+    // Notify both consultant and consultee of the booked appointment
+    const notifUserIds = [userId];
+    if (consultantUserId && consultantUserId !== userId) {
+      notifUserIds.push(consultantUserId);
+    }
+
+    void notifyAppointmentBooked(notifUserIds, {
+      appointmentId,
+      appointmentType: metadata.appointmentType,
+      consultantName: consultantNameForNotif,
+      consulteeName: userName || "User",
+      planTitle: metadata.planId || planTitle,
+      dashboardUrl,
+    });
+  } catch (novuError) {
+    console.error(
+      `⚠️ Failed to send Novu notifications for payment ${paymentId}:`,
+      novuError,
+    );
+  }
 }
 
 /**
@@ -518,6 +533,15 @@ export async function handlePaymentFailure(paymentIntentId: string) {
     if (payment.paymentStatus === PaymentStatus.FAILED) {
       console.log(
         `Payment ${paymentIntentId} has already been marked as failed.`,
+      );
+      return;
+    }
+
+    // M7 FIX: Guard against SUCCEEDED → FAILED transition.
+    // A late failure webhook must not override a payment that already succeeded.
+    if (payment.paymentStatus === PaymentStatus.SUCCEEDED) {
+      console.warn(
+        `Payment ${paymentIntentId} already SUCCEEDED. Ignoring late failure webhook.`,
       );
       return;
     }
@@ -761,37 +785,25 @@ async function createWebinar(tx: Prisma.TransactionClient, data: EventData) {
   });
   if (!webinar) throw new Error("Webinar not found");
 
-  // FIX Issue #5: Validate webinar is scheduled before allowing booking
-  if (!webinar.appointment?.slotsOfAppointment?.[0]) {
+  // Validate webinar has been scheduled (has an appointment with at least one slot)
+  const masterSlot = webinar.appointment?.slotsOfAppointment?.[0];
+  if (!webinar.appointment || !masterSlot) {
     throw new Error("Webinar has not been scheduled. Cannot create booking.");
   }
 
-  let appointment = webinar.appointment;
-  if (!appointment) {
-    appointment = await tx.appointment.create({
-      data: {
-        appointmentType: AppointmentsType.WEBINAR,
-        webinarId: webinar.id,
-      },
-      include: {
-        slotsOfAppointment: true,
-      },
-    });
-  }
-
+  // Use the master slot's times — guaranteed to exist after validation above
   await tx.slotOfAppointment.create({
     data: {
-      appointmentId: appointment.id,
-      startsAt:
-        webinar.appointment?.slotsOfAppointment[0]?.startsAt || new Date(),
-      endsAt: webinar.appointment?.slotsOfAppointment[0]?.endsAt || new Date(),
+      appointmentId: webinar.appointment.id,
+      startsAt: masterSlot.startsAt,
+      endsAt: masterSlot.endsAt,
       isTentative: false,
       user: { connect: { id: data.userId } },
     },
   });
 
   const createdAppointment = await tx.appointment.findUnique({
-    where: { id: appointment.id },
+    where: { id: webinar.appointment.id },
     include: { slotsOfAppointment: true },
   });
   if (!createdAppointment) {

@@ -1,4 +1,5 @@
 import { useToast } from "@/hooks/use-toast";
+import { getErrorToast } from "@/lib/payments/error-toast-map";
 import { CheckoutInput, checkoutResponseSchema } from "@/schemas/checkout";
 import { PaymentGateway } from "@prisma/client";
 import { loadStripe } from "@stripe/stripe-js";
@@ -21,54 +22,11 @@ export function createHandleApiError(
     const errorMessage = errorData.error || "Operation failed";
     const errorType = errorData.errorType || "UNKNOWN_ERROR";
 
-    const errorMessages = {
-      PAYMENT_CONFIG_ERROR: {
-        title: "Payment System Unavailable",
-        description:
-          "We're unable to connect to the payment system right now. This is a temporary issue on our end. Please try again in a few minutes, or contact support if the problem persists.",
-      },
-      PAYMENT_PROCESSING_ERROR: {
-        title: "Payment Could Not Be Processed",
-        description:
-          "Your payment couldn't be completed. This could be due to insufficient funds, an invalid card, or a temporary bank issue. Please check your payment details and try again, or use a different payment method.",
-      },
-      DATABASE_ERROR: {
-        title: "Unable to Save Your Booking",
-        description:
-          "We encountered an issue while saving your information. Your payment has not been processed. Please refresh the page and try again. If this continues, contact support.",
-      },
-      NOT_FOUND_ERROR: {
-        title: "Booking Information Not Found",
-        description:
-          errorMessage ||
-          "The item you're trying to book could not be found. It may have been removed or is no longer available. Please go back and select a different option.",
-      },
-      AVAILABILITY_ERROR: {
-        title: "No Longer Available",
-        description:
-          errorMessage ||
-          "This booking is no longer available. Someone else may have just booked it, or the schedule has changed. Please go back and select a different time slot or option.",
-      },
-      DUPLICATE_REGISTRATION_ERROR: {
-        title: "Already Registered",
-        description:
-          "You're already registered for this event! Check your dashboard to view your registration details and upcoming sessions.",
-      },
-      UNKNOWN_ERROR: {
-        title: "Something Went Wrong",
-        description:
-          errorMessage ||
-          "An unexpected error occurred while processing your request. Please try again. If the problem continues, take a screenshot of this message and contact support.",
-      },
-    };
-
-    const error =
-      errorMessages[errorType as keyof typeof errorMessages] ||
-      errorMessages.UNKNOWN_ERROR;
+    const { title, description } = getErrorToast(errorType, errorMessage);
 
     toast({
-      title: error.title,
-      description: error.description,
+      title,
+      description,
       variant: "destructive",
     });
   };

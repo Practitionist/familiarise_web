@@ -21,14 +21,20 @@ import {
   Zap,
 } from "lucide-react";
 import { cn } from "@/utils/tailwind";
+import { formatCurrencyAmount } from "@/lib/utils";
+import type {
+  AdminDashboardStats,
+  RecentPayment,
+  RecentRefund,
+} from "@/types/payments";
 
 // Fetch admin dashboard stats
-async function fetchAdminStats() {
+async function fetchAdminStats(): Promise<AdminDashboardStats> {
   const response = await fetch("/api/admin/stats");
   if (!response.ok) {
     throw new Error("Failed to fetch admin stats");
   }
-  return response.json();
+  return response.json() as Promise<AdminDashboardStats>;
 }
 
 const staggerChildren = {
@@ -129,9 +135,9 @@ export default function AdminHomePage() {
                 viewAllLink="/dashboard/admin/payments"
                 viewAllText="View all payments"
               >
-                {stats?.recentPayments?.length > 0 ? (
+                {stats?.recentPayments && stats.recentPayments.length > 0 ? (
                   <div className="space-y-3">
-                    {stats.recentPayments.map((payment: any) => (
+                    {stats.recentPayments.map((payment: RecentPayment) => (
                       <Link
                         key={payment.id}
                         href={`/dashboard/admin/payments/${payment.id}`}
@@ -143,11 +149,11 @@ export default function AdminHomePage() {
                           </div>
                           <div>
                             <p className="font-medium text-zinc-900">
-                              {payment.amount} {payment.currency}
+                              {formatCurrencyAmount(payment.amount, payment.currency)}
                             </p>
                             <p className="text-sm text-zinc-500">
                               {payment.paymentGateway} •{" "}
-                              {payment.appointmentType}
+                              {payment.appointment?.appointmentType ?? "N/A"}
                             </p>
                           </div>
                         </div>
@@ -186,9 +192,9 @@ export default function AdminHomePage() {
                 viewAllLink="/dashboard/admin/refunds"
                 viewAllText="View all refunds"
               >
-                {stats?.recentRefunds?.length > 0 ? (
+                {stats?.recentRefunds && stats.recentRefunds.length > 0 ? (
                   <div className="space-y-3">
-                    {stats.recentRefunds.map((refund: any) => (
+                    {stats.recentRefunds.map((refund: RecentRefund) => (
                       <Link
                         key={refund.id}
                         href={`/dashboard/admin/refunds/${refund.id}`}
@@ -200,7 +206,7 @@ export default function AdminHomePage() {
                           </div>
                           <div>
                             <p className="font-medium text-zinc-900">
-                              {refund.amount} {refund.currency}
+                              {formatCurrencyAmount(refund.amount, refund.currency)}
                             </p>
                             <p className="text-sm text-zinc-500">
                               {refund.paymentGateway}
@@ -245,7 +251,6 @@ export default function AdminHomePage() {
                     const isActive =
                       gateway === "STRIPE" || gateway === "RAZORPAY";
                     const count = stats?.gatewayStats?.[gateway]?.count || 0;
-                    const value = stats?.gatewayStats?.[gateway]?.value || "$0";
 
                     return (
                       <div
@@ -278,7 +283,7 @@ export default function AdminHomePage() {
                             {count}
                           </p>
                           <p className="text-sm text-zinc-500">
-                            payments • {value}
+                            payment{count !== 1 ? "s" : ""} processed
                           </p>
                         </div>
                       </div>

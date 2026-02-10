@@ -9,18 +9,23 @@ import { useToast } from "@/hooks/use-toast";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { use, useState } from "react";
+import { formatCurrencyAmount } from "@/lib/utils";
+import type { DisputeDetails } from "@/types/disputes";
 
 // Fetch dispute details
-async function fetchDisputeDetails(disputeId: string) {
+async function fetchDisputeDetails(disputeId: string): Promise<DisputeDetails> {
   const response = await fetch(`/api/admin/disputes/${disputeId}`);
   if (!response.ok) {
     throw new Error("Failed to fetch dispute details");
   }
-  return response.json();
+  return response.json() as Promise<DisputeDetails>;
 }
 
 // Submit dispute evidence
-async function submitEvidence(data: { disputeId: string; evidence: any }) {
+async function submitEvidence(data: {
+  disputeId: string;
+  evidence: Record<string, string | undefined>;
+}): Promise<DisputeDetails> {
   const response = await fetch("/api/payments/disputes", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -32,7 +37,7 @@ async function submitEvidence(data: { disputeId: string; evidence: any }) {
     throw new Error(error.error || "Failed to submit evidence");
   }
 
-  return response.json();
+  return response.json() as Promise<DisputeDetails>;
 }
 
 interface PageProps {
@@ -87,6 +92,8 @@ export default function DisputeDetailsPage({ params }: PageProps) {
   });
 
   const handleSubmitEvidence = () => {
+    if (!dispute) return;
+
     const evidence = {
       customerName: customerName || undefined,
       customerEmailAddress: customerEmail || undefined,
@@ -124,7 +131,7 @@ export default function DisputeDetailsPage({ params }: PageProps) {
     );
   }
 
-  if (isLoading) {
+  if (isLoading || !dispute) {
     return (
       <div className="space-y-6">
         <Skeleton className="h-8 w-64" />
@@ -181,7 +188,7 @@ export default function DisputeDetailsPage({ params }: PageProps) {
               <div>
                 <p className="font-semibold text-red-900">
                   Urgent: Response due by{" "}
-                  {new Date(dispute.dueBy).toLocaleDateString()}
+                  {dispute.dueBy ? new Date(dispute.dueBy).toLocaleDateString() : "N/A"}
                 </p>
                 <p className="text-sm text-red-700">
                   This dispute requires immediate attention. Submit evidence as
@@ -207,7 +214,7 @@ export default function DisputeDetailsPage({ params }: PageProps) {
             <div>
               <Label className="text-gray-500">Amount</Label>
               <p className="text-2xl font-bold">
-                {dispute.amount} {dispute.currency}
+                {formatCurrencyAmount(dispute.amount, dispute.currency)}
               </p>
             </div>
             <div>

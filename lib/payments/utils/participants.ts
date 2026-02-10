@@ -20,7 +20,7 @@ export function isUserWithId(value: unknown): value is { id: string } {
  */
 export function countUniqueParticipants(
   appointments: Array<{
-    slotsOfAppointment: Array<{ user?: Array<{ id: string }> | unknown }>;
+    slotsOfAppointment: Array<Record<string, unknown>>;
   }>,
   excludeUserIds: string[] = [],
 ): number {
@@ -48,7 +48,9 @@ export function countUniqueParticipants(
  * @returns Number of unique participants across all slots
  */
 export function countWebinarParticipants(
-  appointment: any,
+  appointment: {
+    slotsOfAppointment?: Array<Record<string, unknown>>;
+  } | null,
   excludeUserIds: string[] = [],
 ): number {
   if (!appointment?.slotsOfAppointment) return 0;

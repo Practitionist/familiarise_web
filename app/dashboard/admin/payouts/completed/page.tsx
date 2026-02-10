@@ -10,11 +10,21 @@ import { CheckCircle, Download } from "lucide-react";
 
 import type { Payout } from "@/types/payouts";
 
+interface PayoutListResponse {
+  payouts: Payout[];
+  pagination: {
+    total: number;
+    limit: number;
+    offset: number;
+    hasMore: boolean;
+  };
+}
+
 async function fetchCompletedPayouts(
   page: number,
   limit: number,
   search: string,
-) {
+): Promise<PayoutListResponse> {
   const offset = (page - 1) * limit;
   const params = new URLSearchParams({
     status: "COMPLETED",
@@ -28,7 +38,7 @@ async function fetchCompletedPayouts(
   if (!response.ok) {
     throw new Error("Failed to fetch payouts");
   }
-  return response.json();
+  return response.json() as Promise<PayoutListResponse>;
 }
 
 export default function CompletedPayoutsPage() {
@@ -150,13 +160,13 @@ export default function CompletedPayoutsPage() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {isLoading ? (
+          {isLoading || !data ? (
             <div className="space-y-3">
               {[1, 2, 3, 4, 5].map((i) => (
                 <Skeleton key={i} className="h-16 w-full" />
               ))}
             </div>
-          ) : filteredPayouts?.length > 0 ? (
+          ) : filteredPayouts && filteredPayouts.length > 0 ? (
             <>
               <div className="overflow-x-auto">
                 <table className="w-full">

@@ -36,7 +36,7 @@ interface AdminData {
   adminProfile?: {
     id: string;
     adminLevel: AdminLevel;
-    accessScope: string | null;
+    accessScope: Record<string, unknown> | string | null;
     assignedRegions: string[];
     notes: string | null;
   } | null;
@@ -47,7 +47,7 @@ async function fetchAdminData(userId: string): Promise<AdminData> {
   if (!response.ok) {
     throw new Error("Failed to fetch admin data");
   }
-  const result = await response.json();
+  const result = await response.json() as { data: AdminData };
   return result.data;
 }
 
@@ -363,7 +363,16 @@ export default function AdminSettingsPage() {
               <div className="space-y-2">
                 <Label>Access Scope</Label>
                 <p className="text-sm text-gray-600 bg-gray-100 p-2 rounded">
-                  {adminData.adminProfile.accessScope || "Not specified"}
+                  {adminData.adminProfile.accessScope
+                    ? typeof adminData.adminProfile.accessScope === "object"
+                      ? Object.keys(
+                          adminData.adminProfile.accessScope as Record<
+                            string,
+                            unknown
+                          >,
+                        ).join(", ")
+                      : String(adminData.adminProfile.accessScope)
+                    : "Not specified"}
                 </p>
               </div>
             </div>

@@ -22,7 +22,29 @@ import {
 
 import type { Payout } from "@/types/payouts";
 
-async function fetchPayouts(status?: string, page = 1, limit = 20) {
+interface PayoutStatCategory {
+  count: number;
+  amount: number;
+}
+
+interface PayoutListResponse {
+  payouts: Payout[];
+  stats: {
+    pending: PayoutStatCategory;
+    approved: PayoutStatCategory;
+    processing: PayoutStatCategory;
+    completed: PayoutStatCategory;
+    failed: PayoutStatCategory;
+  };
+  pagination: {
+    total: number;
+    limit: number;
+    offset: number;
+    hasMore: boolean;
+  };
+}
+
+async function fetchPayouts(status?: string, page = 1, limit = 20): Promise<PayoutListResponse> {
   const offset = (page - 1) * limit;
   const params = new URLSearchParams({
     limit: limit.toString(),
@@ -34,7 +56,7 @@ async function fetchPayouts(status?: string, page = 1, limit = 20) {
   if (!response.ok) {
     throw new Error("Failed to fetch payouts");
   }
-  return response.json();
+  return response.json() as Promise<PayoutListResponse>;
 }
 
 export default function StaffPayoutsPage() {
@@ -232,7 +254,7 @@ export default function StaffPayoutsPage() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {isLoading ? (
+          {isLoading || !data ? (
             <div className="space-y-3">
               {[1, 2, 3, 4, 5].map((i) => (
                 <Skeleton key={i} className="h-16 w-full" />

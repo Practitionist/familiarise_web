@@ -2,7 +2,12 @@
 
 import { handleCheckout } from "@/lib/payments/operations/checkout";
 import { CheckoutInput, checkoutSchema } from "@/schemas/checkout";
+import {
+  classifyError,
+  logClassifiedError,
+} from "@/lib/payments/error-classification";
 import { getSession } from "@/lib/auth-server";
+
 export async function checkoutAction(
   data: CheckoutInput,
   isMockPayment: boolean = false,
@@ -21,9 +26,9 @@ export async function checkoutAction(
     // Supports both real and mock payments via isMockPayment flag
     return await handleCheckout(validatedData, session.user.id, isMockPayment);
   } catch (error) {
-    console.error("Checkout error:", error);
-    return {
-      error: error instanceof Error ? error.message : "Checkout failed",
-    };
+    const classified = classifyError(error, "Checkout failed");
+    logClassifiedError("Checkout Action", classified, error);
+
+    return { error: classified.errorMessage };
   }
 }

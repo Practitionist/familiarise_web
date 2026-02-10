@@ -1,6 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { formatCurrencyAmount } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -90,15 +92,6 @@ const getTypeColor = (type: string) => {
   }
 };
 
-const formatCurrency = (amount: number, currency: string = "INR") => {
-  // Amount is in smallest unit (paise), convert to rupees
-  return new Intl.NumberFormat("en-IN", {
-    style: "currency",
-    currency: currency,
-    maximumFractionDigits: 0,
-  }).format(amount / 100);
-};
-
 const formatDate = (dateString: string) => {
   return new Date(dateString).toLocaleString("en-IN", {
     day: "numeric",
@@ -113,17 +106,12 @@ export default function PaymentsAssistancePage() {
   const [activeTab, setActiveTab] = useState("payments");
 
   // Payments state
-  const [payments, setPayments] = useState<Payment[]>([]);
-  const [loadingPayments, setLoadingPayments] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
   const [selectedPayment, setSelectedPayment] = useState<Payment | null>(null);
 
   // Refunds state
-  const [refunds, setRefunds] = useState<Refund[]>([]);
-  const [loadingRefunds, setLoadingRefunds] = useState(true);
 
   // Debounced search
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -136,63 +124,33 @@ export default function PaymentsAssistancePage() {
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
-  // Fetch payments
-  const fetchPayments = useCallback(async () => {
-    setLoadingPayments(true);
-    try {
+  // Fetch payments with React Query
+  const { data: paymentsData, isLoading: loadingPayments, refetch: refetchPayments } = useQuery({
+    queryKey: ["staff-payments", page, debouncedSearch, statusFilter],
+    queryFn: async () => {
       const params = new URLSearchParams();
       params.set("page", page.toString());
       if (debouncedSearch) params.set("search", debouncedSearch);
       if (statusFilter !== "all") params.set("status", statusFilter);
-
       const response = await fetch(`/api/admin/payments?${params}`);
       if (!response.ok) throw new Error("Failed to fetch payments");
+      return response.json() as Promise<PaymentListResponse>;
+    },
+  });
+  const payments = paymentsData?.payments ?? [];
+  const totalPages = paymentsData?.totalPages ?? 1;
 
-      const data: PaymentListResponse = await response.json();
-      setPayments(data.payments);
-      setTotalPages(data.totalPages);
-    } catch (error) {
-      console.error("Error fetching payments:", error);
-      toast({
-        title: "Error",
-        description: "Failed to load payments",
-        variant: "destructive",
-      });
-    } finally {
-      setLoadingPayments(false);
-    }
-  }, [page, debouncedSearch, statusFilter, toast]);
-
-  // Fetch refunds
-  const fetchRefunds = useCallback(async () => {
-    setLoadingRefunds(true);
-    try {
+  // Fetch refunds with React Query
+  const { data: refundsData, isLoading: loadingRefunds, refetch: refetchRefunds } = useQuery({
+    queryKey: ["staff-refunds-pending"],
+    queryFn: async () => {
       const response = await fetch("/api/admin/refunds?status=PENDING");
       if (!response.ok) throw new Error("Failed to fetch refunds");
-
-      const data: RefundListResponse = await response.json();
-      setRefunds(data.refunds);
-    } catch (error) {
-      console.error("Error fetching refunds:", error);
-      toast({
-        title: "Error",
-        description: "Failed to load refunds",
-        variant: "destructive",
-      });
-    } finally {
-      setLoadingRefunds(false);
-    }
-  }, [toast]);
-
-  useEffect(() => {
-    fetchPayments();
-  }, [fetchPayments]);
-
-  useEffect(() => {
-    if (activeTab === "refunds") {
-      fetchRefunds();
-    }
-  }, [activeTab, fetchRefunds]);
+      return response.json() as Promise<RefundListResponse>;
+    },
+    enabled: activeTab === "refunds",
+  });
+  const refunds = refundsData?.refunds ?? [];
 
   // Calculate stats
   const stats = {
@@ -219,8 +177,8 @@ export default function PaymentsAssistancePage() {
         <Button
           variant="outline"
           onClick={() => {
-            fetchPayments();
-            if (activeTab === "refunds") fetchRefunds();
+            refetchPayments();
+            if (activeTab === "refunds") refetchRefunds();
           }}
           disabled={loadingPayments || loadingRefunds}
         >
@@ -251,7 +209,7 @@ export default function PaymentsAssistancePage() {
             </div>
             <div>
               <p className="text-2xl font-bold">
-                {formatCurrency(stats.totalAmount)}
+                {formatCurrencyAmount(stats.totalAmount, "INR")}
               </p>
               <p className="text-sm text-zinc-500">Processed (page)</p>
             </div>
@@ -372,7 +330,7 @@ export default function PaymentsAssistancePage() {
                           </div>
                         </TableCell>
                         <TableCell className="font-medium">
-                          {formatCurrency(payment.amount, payment.currency)}
+                          {formatCurrencyAmount(payment.amount, payment.currency)}
                         </TableCell>
                         <TableCell>
                           <Badge
@@ -508,7 +466,7 @@ export default function PaymentsAssistancePage() {
                             </span>
                             <span>
                               Amount:{" "}
-                              {formatCurrency(refund.amount, refund.currency)}
+                              {formatCurrencyAmount(refund.amount, refund.currency)}
                             </span>
                           </div>
                         </div>
@@ -567,7 +525,7 @@ export default function PaymentsAssistancePage() {
                   <div>
                     <p className="text-sm text-zinc-500">Amount</p>
                     <p className="text-2xl font-bold">
-                      {formatCurrency(
+                      {formatCurrencyAmount(
                         selectedPayment.amount,
                         selectedPayment.currency,
                       )}
