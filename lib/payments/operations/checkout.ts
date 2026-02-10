@@ -385,7 +385,7 @@ export async function calculateAmountAndValidate(
     // Apply referral credits if requested
     let creditsApplied = 0;
     if (validatedData.useReferralCredits && amount > 0) {
-      const { totalAvailable } = await getUserCredits(userId);
+      const { totalAvailable } = await getUserCredits(userId, tx);
       if (totalAvailable > 0) {
         // Credits are stored in paise, amount is also in paise
         creditsApplied = Math.min(totalAvailable, amount);
@@ -1557,6 +1557,15 @@ export async function handleCheckout(
             });
           }
 
+          // Deduct referral credits inside the transaction for atomicity
+          // If credit deduction fails, the entire transaction rolls back
+          if (creditsApplied > 0) {
+            await applyCreditsToPayment(userId, creditsApplied, tx);
+            console.log(
+              `🎁 Applied ${creditsApplied} referral credits for user ${userId}`,
+            );
+          }
+
           return { appointmentId: createdAppointment?.id, creditsApplied };
         },
         {
@@ -1583,21 +1592,6 @@ export async function handleCheckout(
           timestamp: new Date().toISOString(),
         }),
       );
-
-      // Deduct referral credits if applied
-      if (result.creditsApplied && result.creditsApplied > 0) {
-        try {
-          await applyCreditsToPayment(userId, result.creditsApplied);
-          console.log(
-            `🎁 Applied ${result.creditsApplied} referral credits for user ${userId}`,
-          );
-        } catch (creditError) {
-          console.error(
-            `⚠️ Failed to deduct referral credits for user ${userId}:`,
-            creditError,
-          );
-        }
-      }
 
       // Update waitlist status if coming from waitlist flow
       if (isMockPayment && validatedData.fromWaitlist) {

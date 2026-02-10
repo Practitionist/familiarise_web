@@ -3,6 +3,7 @@ import type {
   ReferralCode,
   Referral,
   ReferralCredit,
+  Prisma,
 } from "@prisma/client";
 
 // Constants
@@ -230,11 +231,14 @@ export async function processQualifyingAction(
 /**
  * Returns the user's available (non-expired, non-fully-used) credit balance.
  */
-export async function getUserCredits(userId: string): Promise<{
+export async function getUserCredits(
+  userId: string,
+  db: Prisma.TransactionClient | typeof prisma = prisma,
+): Promise<{
   totalAvailable: number;
   credits: ReferralCredit[];
 }> {
-  const credits = await prisma.referralCredit.findMany({
+  const credits = await db.referralCredit.findMany({
     where: {
       userId,
       remainingAmount: { gt: 0 },
@@ -256,8 +260,9 @@ export async function getUserCredits(userId: string): Promise<{
 export async function applyCreditsToPayment(
   userId: string,
   paymentAmount: number,
+  tx: Prisma.TransactionClient,
 ): Promise<{ creditsUsed: number; remainingToPay: number }> {
-  const { credits } = await getUserCredits(userId);
+  const { credits } = await getUserCredits(userId, tx);
 
   let creditsUsed = 0;
   let remainingToPay = paymentAmount;
@@ -267,7 +272,7 @@ export async function applyCreditsToPayment(
 
     const useAmount = Math.min(credit.remainingAmount, remainingToPay);
 
-    await prisma.referralCredit.update({
+    await tx.referralCredit.update({
       where: { id: credit.id },
       data: {
         usedAmount: { increment: useAmount },

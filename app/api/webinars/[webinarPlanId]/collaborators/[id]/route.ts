@@ -16,7 +16,24 @@ export async function PATCH(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const { id } = await params;
+    const { webinarPlanId, id } = await params;
+
+    // Verify the requester is the plan owner
+    const plan = await prisma.webinarPlan.findUnique({
+      where: { id: webinarPlanId },
+    });
+
+    const ownerProfile = await prisma.consultantProfile.findFirst({
+      where: { userId: session.user.id },
+    });
+
+    if (plan?.consultantProfileId !== ownerProfile?.id) {
+      return NextResponse.json(
+        { error: "Only the plan owner can update collaborators" },
+        { status: 403 },
+      );
+    }
+
     const body = await req.json();
 
     const collab = await updateCollaborator("webinar", id, body);
