@@ -9,7 +9,20 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState, Suspense } from "react";
 
-// Wrap the component that uses useSearchParams in Suspense
+export default function ResetPasswordPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen flex items-center justify-center bg-gray-900">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white" />
+        </div>
+      }
+    >
+      <ResetPasswordContent />
+    </Suspense>
+  );
+}
+
 function ResetPasswordContent() {
   const { toast } = useToast();
   const router = useRouter();
@@ -202,11 +215,3 @@ function ResetPasswordContent() {
   );
 }
 
-// Export default component wrapped in Suspense
-export default function ResetPasswordPage() {
-  return (
-    <Suspense fallback={<div>Loading...</div>}>
-      <ResetPasswordContent />
-    </Suspense>
-  );
-}

@@ -7,9 +7,28 @@ import { useToast } from "@/hooks/use-toast";
 import { signIn, signUp, useSession } from "@/lib/auth-client";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+<<<<<<< Updated upstream
 import { useState, useEffect } from "react";
+=======
+import { useState, useEffect, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
+>>>>>>> Stashed changes
 
 export default function SignUp() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen flex items-center justify-center bg-gray-900">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white" />
+        </div>
+      }
+    >
+      <SignUpContent />
+    </Suspense>
+  );
+}
+
+function SignUpContent() {
   const { toast } = useToast();
   const router = useRouter();
   const { data: session, isPending } = useSession();
