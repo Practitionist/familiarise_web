@@ -60,16 +60,6 @@ export async function createEarningsFromPayment({
     return null;
   }
 
-  // Check if earnings already exist for this payment (for this consultant)
-  const existingEarnings = await prisma.consultantEarnings.findFirst({
-    where: { paymentId: payment.id, consultantProfileId },
-  });
-
-  if (existingEarnings) {
-    console.warn(`Earnings already exist for payment ${payment.id}. Skipping.`);
-    return existingEarnings.id;
-  }
-
   // Calculate revenue split
   const grossAmount = payment.amount;
   const platformFee = Math.round(
@@ -107,6 +97,15 @@ export async function createEarningsFromPayment({
     if (splits.length > 0) {
       // Multi-party payment: create earnings for owner and each collaborator atomically
       const ownerEarningsId = await prisma.$transaction(async (tx) => {
+        // Idempotency check inside transaction to prevent races
+        const existingEarnings = await tx.consultantEarnings.findFirst({
+          where: { paymentId: payment.id, consultantProfileId },
+        });
+        if (existingEarnings) {
+          console.warn(`Earnings already exist for payment ${payment.id}. Skipping.`);
+          return existingEarnings.id;
+        }
+
         let ownerId: string | null = null;
 
         for (const split of splits) {
@@ -150,6 +149,15 @@ export async function createEarningsFromPayment({
     } else {
       // Single-owner payment (no collaborators or not a webinar/class)
       return await prisma.$transaction(async (tx) => {
+        // Idempotency check inside transaction to prevent races
+        const existingEarnings = await tx.consultantEarnings.findFirst({
+          where: { paymentId: payment.id, consultantProfileId },
+        });
+        if (existingEarnings) {
+          console.warn(`Earnings already exist for payment ${payment.id}. Skipping.`);
+          return existingEarnings.id;
+        }
+
         const earnings = await tx.consultantEarnings.create({
           data: {
             consultantProfileId,

@@ -71,28 +71,31 @@ export async function POST(req: NextRequest) {
 
     try {
       switch (eventType) {
-        case "payment.captured":
+        case "payment.captured": {
           const capturedEvent = razorpayPaymentCapturedEventSchema.parse(event);
           await handlePaymentSuccess(
             capturedEvent.payload.payment.entity.order_id,
             capturedEvent.payload.payment.entity.notes || {},
           );
           break;
+        }
 
-        case "order.paid":
+        case "order.paid": {
           const paidEvent = razorpayOrderPaidEventSchema.parse(event);
           await handlePaymentSuccess(
             paidEvent.payload.order.entity.id,
             paidEvent.payload.order.entity.notes || {},
           );
           break;
+        }
 
-        case "payment.failed":
+        case "payment.failed": {
           const failedEvent = razorpayPaymentFailedEventSchema.parse(event);
           await handlePaymentFailure(
             failedEvent.payload.payment.entity.order_id,
           );
           break;
+        }
 
         // Refund events
         // FIX #5: Razorpay refunds use payment_id, but our DB stores order_id as

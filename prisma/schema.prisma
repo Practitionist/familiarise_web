@@ -1633,6 +1633,7 @@ model ConsultantEarnings {
   payment           Payment           @relation(fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   payout            Payout?           @relation(fields: [payoutId], references: [id])
 
+  @@unique([paymentId, consultantProfileId, role])
   @@index([consultantProfileId, status])
   @@index([status, holdUntil])
   @@index([payoutId])

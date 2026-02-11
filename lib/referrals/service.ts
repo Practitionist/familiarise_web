@@ -1,4 +1,5 @@
 import prisma from "@/lib/prisma";
+import { Prisma as PrismaNamespace } from "@prisma/client";
 import type {
   ReferralCode,
   Referral,
@@ -11,6 +12,36 @@ const DEFAULT_REFERRER_REWARD = 50000; // ₹500 in paise
 const DEFAULT_REFEREE_REWARD = 20000; // ₹200 in paise
 const QUALIFICATION_WINDOW_DAYS = 30;
 const CREDIT_EXPIRY_MONTHS = 6;
+const SERIALIZABLE_MAX_RETRIES = 3;
+
+/**
+ * Retries a function that may fail due to Prisma serialization conflicts (P2034).
+ * Applies exponential backoff between retries.
+ */
+async function withSerializableRetry<T>(
+  fn: () => Promise<T>,
+  maxRetries = SERIALIZABLE_MAX_RETRIES,
+): Promise<T> {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      const isSerializationFailure =
+        error instanceof PrismaNamespace.PrismaClientKnownRequestError &&
+        error.code === "P2034";
+
+      if (!isSerializationFailure || attempt === maxRetries) {
+        throw error;
+      }
+
+      const backoffMs = 50 * 2 ** attempt; // 50ms, 100ms, 200ms
+      await new Promise((resolve) => setTimeout(resolve, backoffMs));
+    }
+  }
+
+  // Unreachable, but satisfies TypeScript
+  throw new Error("withSerializableRetry: exhausted retries");
+}
 
 /**
  * Creates or returns an existing referral code for a user.
@@ -107,7 +138,7 @@ export async function applyReferralCode(
   newUserId: string,
   code: string,
 ): Promise<Referral | null> {
-  return prisma.$transaction(async (tx) => {
+  return withSerializableRetry(() => prisma.$transaction(async (tx) => {
     // Validate inside transaction to prevent TOCTOU race conditions
     const referralCode = await validateReferralCode(code, tx);
     if (!referralCode) return null;
@@ -164,7 +195,7 @@ export async function applyReferralCode(
   }, {
     isolationLevel: "Serializable",
     timeout: 10000,
-  });
+  }));
 }
 
 /**
@@ -177,7 +208,7 @@ export async function processQualifyingAction(
   userId: string,
   action: string,
 ): Promise<void> {
-  await prisma.$transaction(async (tx) => {
+  await withSerializableRetry(() => prisma.$transaction(async (tx) => {
     // Read referral INSIDE transaction to prevent TOCTOU race
     const referral = await tx.referral.findUnique({
       where: { referredUserId: userId },
@@ -244,7 +275,7 @@ export async function processQualifyingAction(
   }, {
     isolationLevel: "Serializable",
     timeout: 10000,
-  });
+  }));
 }
 
 /**
@@ -326,10 +357,16 @@ export async function applyCreditsToPayment(
  * Reverses referral credits that were consumed for a specific payment.
  * Uses the ReferralCreditUsage ledger for accurate per-payment reversal.
  * Called during refund processing to restore credits to the user.
+ *
+ * For partial refunds: restores a proportional fraction of each usage record
+ * (refundAmount / originalPaymentAmount) and reduces the usage amount accordingly.
+ * For full refunds: restores all usage and deletes the usage records.
  */
 export async function reverseCreditsForPayment(
   paymentId: string,
   tx: Prisma.TransactionClient,
+  refundAmount?: number,
+  originalPaymentAmount?: number,
 ): Promise<number> {
   // Find all usage records for this payment from the ledger
   const usageRecords = await tx.referralCreditUsage.findMany({
@@ -338,33 +375,57 @@ export async function reverseCreditsForPayment(
 
   if (usageRecords.length === 0) return 0;
 
+  // Determine if this is a partial refund
+  const isPartialRefund =
+    refundAmount != null &&
+    originalPaymentAmount != null &&
+    originalPaymentAmount > 0 &&
+    refundAmount < originalPaymentAmount;
+
+  const refundRatio = isPartialRefund
+    ? refundAmount / originalPaymentAmount
+    : 1;
+
   let totalRestored = 0;
 
   for (const usage of usageRecords) {
-    const restoreAmount = usage.amount;
+    if (usage.amount <= 0) continue;
+
+    const restoreAmount = isPartialRefund
+      ? Math.round(usage.amount * refundRatio)
+      : usage.amount;
+
     if (restoreAmount <= 0) continue;
 
-    // Restore only the amount used from this specific credit for this payment
+    // Restore the appropriate amount to the credit
     await tx.referralCredit.update({
       where: { id: usage.creditId },
       data: {
         usedAmount: { decrement: restoreAmount },
         remainingAmount: { increment: restoreAmount },
-        usedAt: null,
+        ...(restoreAmount >= usage.amount && { usedAt: null }),
       },
     });
 
-    // Remove the usage record (credit is now available again)
-    await tx.referralCreditUsage.delete({
-      where: { id: usage.id },
-    });
+    if (restoreAmount >= usage.amount) {
+      // Full restore — remove the usage record
+      await tx.referralCreditUsage.delete({
+        where: { id: usage.id },
+      });
+    } else {
+      // Partial restore — reduce the usage record amount
+      await tx.referralCreditUsage.update({
+        where: { id: usage.id },
+        data: { amount: { decrement: restoreAmount } },
+      });
+    }
 
     totalRestored += restoreAmount;
   }
 
   if (totalRestored > 0) {
     console.log(
-      `🔄 Restored ${totalRestored} referral credits for refunded payment ${paymentId}`,
+      `🔄 Restored ${totalRestored} referral credits for ${isPartialRefund ? "partially " : ""}refunded payment ${paymentId}`,
     );
   }
 

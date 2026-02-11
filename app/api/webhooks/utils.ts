@@ -92,9 +92,12 @@ export async function handleRefundCreated(
 
     // FIX #4: Extract refund side effects into a helper so they run on BOTH
     // new refund creation AND status transitions (e.g. PENDING → SUCCEEDED).
+    // FIX P2-1: Accepts refund amount for partial-refund-aware credit restoration.
     const runRefundSideEffects = async (
       paymentId: string,
       refundStatus: string,
+      refundAmt?: number,
+      originalPaymentAmt?: number,
     ) => {
       if (mapRefundStatus(refundStatus) !== "SUCCEEDED") return;
 
@@ -111,7 +114,12 @@ export async function handleRefundCreated(
       }
 
       try {
-        const restored = await reverseCreditsForPayment(paymentId, tx);
+        const restored = await reverseCreditsForPayment(
+          paymentId,
+          tx,
+          refundAmt,
+          originalPaymentAmt,
+        );
         if (restored > 0) {
           console.log(
             `🔄 Reversed ${restored} referral credits for refunded payment ${paymentId}`,
@@ -142,7 +150,7 @@ export async function handleRefundCreated(
 
         // Run side effects when transitioning TO SUCCEEDED (but not if already SUCCEEDED)
         if (!wasSucceeded) {
-          await runRefundSideEffects(payment.id, status);
+          await runRefundSideEffects(payment.id, status, amount, payment.amount);
         }
       }
       return;
@@ -163,7 +171,7 @@ export async function handleRefundCreated(
     console.log(`✅ Refund ${refundId} created for payment ${payment.id}`);
 
     // Run side effects for new refunds that are already SUCCEEDED
-    await runRefundSideEffects(payment.id, status);
+    await runRefundSideEffects(payment.id, status, amount, payment.amount);
 
     // --- Novu notification (fire-and-forget) ---
     void notifyRefundProcessed(payment.userId, {
