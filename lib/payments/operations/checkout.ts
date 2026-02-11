@@ -1575,13 +1575,14 @@ export async function handleCheckout(
               );
             }
 
-            // If fewer credits were available than expected, the payment amount
-            // was already set based on the pre-lock value. The difference is small
-            // and covered by the payment gateway's authorized amount.
+            // FIX #2: If fewer credits were available than expected (due to concurrent
+            // checkout consuming them between TX1 and TX2), abort the transaction.
+            // The payment intent was created with a reduced amount based on TX1's
+            // credit calculation, so proceeding would undercharge the user.
             if (actualCreditsApplied < creditsApplied) {
-              console.warn(
-                `⚠️ Credit shortfall: expected ${creditsApplied} but only ${actualCreditsApplied} available. ` +
-                `Payment ${payment.id} may need adjustment.`,
+              throw new Error(
+                `CREDIT_SHORTFALL: expected ${creditsApplied} credits but only ${actualCreditsApplied} available. ` +
+                `Payment ${payment.id} amount is stale. Aborting for retry.`,
               );
             }
           }

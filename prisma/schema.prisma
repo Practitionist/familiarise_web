@@ -1479,8 +1479,9 @@ model Payment {
   disputes Dispute[] // Disputes associated with this payment
 
   // Payout relations
-  earnings ConsultantEarnings[]
-  invoice  Invoice?
+  earnings     ConsultantEarnings[]
+  creditUsages ReferralCreditUsage[]
+  invoice      Invoice?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1837,15 +1838,29 @@ model ReferralCredit {
   remainingAmount Int // amount - usedAmount
   expiresAt       DateTime?
   usedAt          DateTime?
-  usedOnPaymentId String?
 
-  user User @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  user   User                   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  usages ReferralCreditUsage[]
 
   createdAt DateTime @default(now())
 
   @@index([userId])
   @@index([expiresAt])
   @@index([userId, expiresAt])
+}
+
+model ReferralCreditUsage {
+  id        String   @id @default(cuid())
+  creditId  String
+  paymentId String
+  amount    Int // Amount used from this credit for this payment (in paise)
+  createdAt DateTime @default(now())
+
+  credit  ReferralCredit @relation(fields: [creditId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  payment Payment        @relation(fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+
+  @@unique([creditId, paymentId])
+  @@index([paymentId])
 }
 
 enum ReferralStatus {

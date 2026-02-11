@@ -16,6 +16,7 @@ import {
   razorpayPaymentFailedEventSchema,
   razorpayOrderPaidEventSchema,
 } from "../../../../schemas/webhooks/razorpay";
+import { razorpayClient } from "@/lib/payments/core/razorpay";
 
 export async function POST(req: NextRequest) {
   const secret = process.env.RAZORPAY_WEBHOOK_SECRET;
@@ -94,12 +95,30 @@ export async function POST(req: NextRequest) {
           break;
 
         // Refund events
+        // FIX #5: Razorpay refunds use payment_id, but our DB stores order_id as
+        // paymentIntent. Resolve payment_id → order_id via Razorpay API first.
         case "refund.created":
         case "refund.processed": {
           const refundEvent = event.payload.refund.entity;
+          let paymentIntentId = refundEvent.payment_id;
+
+          if (razorpayClient) {
+            try {
+              const rzpPayment = await razorpayClient.payments.fetch(refundEvent.payment_id);
+              if (rzpPayment.order_id) {
+                paymentIntentId = rzpPayment.order_id;
+              }
+            } catch (lookupError) {
+              console.error(
+                `Failed to resolve Razorpay payment_id ${refundEvent.payment_id} to order_id:`,
+                lookupError,
+              );
+            }
+          }
+
           await handleRefundCreated(
             refundEvent.id,
-            refundEvent.payment_id,
+            paymentIntentId,
             refundEvent.amount,
             refundEvent.currency || "INR",
             refundEvent.status,
@@ -110,9 +129,25 @@ export async function POST(req: NextRequest) {
 
         case "refund.failed": {
           const failedRefundEvent = event.payload.refund.entity;
+          let failedPaymentIntentId = failedRefundEvent.payment_id;
+
+          if (razorpayClient) {
+            try {
+              const rzpPayment = await razorpayClient.payments.fetch(failedRefundEvent.payment_id);
+              if (rzpPayment.order_id) {
+                failedPaymentIntentId = rzpPayment.order_id;
+              }
+            } catch (lookupError) {
+              console.error(
+                `Failed to resolve Razorpay payment_id ${failedRefundEvent.payment_id} to order_id:`,
+                lookupError,
+              );
+            }
+          }
+
           await handleRefundCreated(
             failedRefundEvent.id,
-            failedRefundEvent.payment_id,
+            failedPaymentIntentId,
             failedRefundEvent.amount,
             failedRefundEvent.currency || "INR",
             "failed",

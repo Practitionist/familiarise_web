@@ -101,74 +101,76 @@ export async function createEarningsFromPayment({
     splits = await calculateRevenueSplit(planType, planId, totalConsultantPool);
   }
 
-  // M2 FIX: Wrap create in try-catch to handle P2002 unique constraint violation
-  // gracefully. The `paymentId` column has a unique constraint on `ConsultantEarnings`,
-  // so concurrent calls (e.g., duplicate webhook + background sync job) may collide.
-  // Instead of throwing, we treat it as an idempotent success.
+  // FIX #9: Wrap earnings creation + balance updates in a transaction for atomicity.
+  // Also handles P2002 unique constraint violations gracefully for idempotency.
   try {
     if (splits.length > 0) {
-      // Multi-party payment: create earnings for owner and each collaborator
-      let ownerEarningsId: string | null = null;
+      // Multi-party payment: create earnings for owner and each collaborator atomically
+      const ownerEarningsId = await prisma.$transaction(async (tx) => {
+        let ownerId: string | null = null;
 
-      for (const split of splits) {
-        const isOwner = split.role === "OWNER";
-        const sharePercentage = isOwner
-          ? (split.share / totalConsultantPool) * 100
-          : (split.share / totalConsultantPool) * 100;
+        for (const split of splits) {
+          const isOwner = split.role === "OWNER";
+          const sharePercentage = (split.share / totalConsultantPool) * 100;
 
-        const earnings = await prisma.consultantEarnings.create({
+          const earnings = await tx.consultantEarnings.create({
+            data: {
+              consultantProfileId: split.consultantProfileId,
+              paymentId: payment.id,
+              grossAmount: isOwner ? grossAmount : 0,
+              platformFee: isOwner ? platformFee : 0,
+              consultantShare: split.share,
+              role: isOwner ? EarningRole.OWNER : EarningRole.COLLABORATOR,
+              sharePercentage: Math.round(sharePercentage * 100) / 100,
+              status: EarningStatus.PENDING,
+              holdUntil,
+            },
+          });
+
+          await tx.consultantProfile.update({
+            where: { id: split.consultantProfileId },
+            data: {
+              pendingRevenue: { increment: split.share },
+            },
+          });
+
+          if (split.role === "OWNER") {
+            ownerId = earnings.id;
+          }
+
+          console.log(
+            `💰 Earnings created for ${split.role} (${split.consultantProfileId}): ₹${split.share / 100} from payment ${payment.id}`,
+          );
+        }
+
+        return ownerId;
+      });
+
+      return ownerEarningsId;
+    } else {
+      // Single-owner payment (no collaborators or not a webinar/class)
+      return await prisma.$transaction(async (tx) => {
+        const earnings = await tx.consultantEarnings.create({
           data: {
-            consultantProfileId: split.consultantProfileId,
+            consultantProfileId,
             paymentId: payment.id,
-            grossAmount: isOwner ? grossAmount : 0,
-            platformFee: isOwner ? platformFee : 0,
-            consultantShare: split.share,
-            role: isOwner ? EarningRole.OWNER : EarningRole.COLLABORATOR,
-            sharePercentage: Math.round(sharePercentage * 100) / 100,
+            grossAmount,
+            platformFee,
+            consultantShare: totalConsultantPool,
             status: EarningStatus.PENDING,
             holdUntil,
           },
         });
 
-        await prisma.consultantProfile.update({
-          where: { id: split.consultantProfileId },
+        await tx.consultantProfile.update({
+          where: { id: consultantProfileId },
           data: {
-            pendingRevenue: { increment: split.share },
+            pendingRevenue: { increment: totalConsultantPool },
           },
         });
 
-        if (split.role === "OWNER") {
-          ownerEarningsId = earnings.id;
-        }
-
-        console.log(
-          `💰 Earnings created for ${split.role} (${split.consultantProfileId}): ₹${split.share / 100} from payment ${payment.id}`,
-        );
-      }
-
-      return ownerEarningsId;
-    } else {
-      // Single-owner payment (no collaborators or not a webinar/class)
-      const earnings = await prisma.consultantEarnings.create({
-        data: {
-          consultantProfileId,
-          paymentId: payment.id,
-          grossAmount,
-          platformFee,
-          consultantShare: totalConsultantPool,
-          status: EarningStatus.PENDING,
-          holdUntil,
-        },
+        return earnings.id;
       });
-
-      await prisma.consultantProfile.update({
-        where: { id: consultantProfileId },
-        data: {
-          pendingRevenue: { increment: totalConsultantPool },
-        },
-      });
-
-      return earnings.id;
     }
   } catch (error) {
     if (

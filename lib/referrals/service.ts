@@ -99,6 +99,10 @@ export async function validateReferralCode(
  * Applies a referral code to a newly signed-up user.
  * Creates the Referral record and gives the referee their welcome bonus.
  */
+/**
+ * FIX #8: Uses Serializable isolation to prevent concurrent code applications
+ * from exceeding the maxReferrals cap.
+ */
 export async function applyReferralCode(
   newUserId: string,
   code: string,
@@ -157,41 +161,48 @@ export async function applyReferralCode(
     }
 
     return ref;
+  }, {
+    isolationLevel: "Serializable",
+    timeout: 10000,
   });
 }
 
 /**
  * Called after a user's first paid booking to qualify their referral.
  * Rewards the referrer if the referral is within the qualification window.
+ * FIX #7: Entire flow runs in a serializable transaction with conditional status guard
+ * to prevent duplicate rewards from concurrent webhook execution.
  */
 export async function processQualifyingAction(
   userId: string,
   action: string,
 ): Promise<void> {
-  const referral = await prisma.referral.findUnique({
-    where: { referredUserId: userId },
-    include: { referralCode: true },
-  });
-
-  if (!referral || referral.status !== "SIGNED_UP") return;
-
-  // Check if within qualification window
-  const daysSinceSignup = Math.floor(
-    (Date.now() - referral.signedUpAt.getTime()) / (1000 * 60 * 60 * 24),
-  );
-
-  if (daysSinceSignup > QUALIFICATION_WINDOW_DAYS) {
-    await prisma.referral.update({
-      where: { id: referral.id },
-      data: { status: "EXPIRED" },
-    });
-    return;
-  }
-
-  // Mark as qualified and reward referrer in a transaction
   await prisma.$transaction(async (tx) => {
-    await tx.referral.update({
-      where: { id: referral.id },
+    // Read referral INSIDE transaction to prevent TOCTOU race
+    const referral = await tx.referral.findUnique({
+      where: { referredUserId: userId },
+      include: { referralCode: true },
+    });
+
+    if (!referral || referral.status !== "SIGNED_UP") return;
+
+    // Check if within qualification window
+    const daysSinceSignup = Math.floor(
+      (Date.now() - referral.signedUpAt.getTime()) / (1000 * 60 * 60 * 24),
+    );
+
+    if (daysSinceSignup > QUALIFICATION_WINDOW_DAYS) {
+      await tx.referral.update({
+        where: { id: referral.id },
+        data: { status: "EXPIRED" },
+      });
+      return;
+    }
+
+    // Conditional update: only succeeds if status is still SIGNED_UP.
+    // This prevents concurrent calls from both creating rewards.
+    const updated = await tx.referral.updateMany({
+      where: { id: referral.id, status: "SIGNED_UP" },
       data: {
         status: "REWARDED",
         qualifiedAt: new Date(),
@@ -199,6 +210,9 @@ export async function processQualifyingAction(
         referrerRewardPaidAt: new Date(),
       },
     });
+
+    // If no rows updated, another concurrent call already processed this
+    if (updated.count === 0) return;
 
     // Give referrer their bonus
     const referrerReward = referral.referrerRewardAmount;
@@ -227,6 +241,9 @@ export async function processQualifyingAction(
         },
       });
     }
+  }, {
+    isolationLevel: "Serializable",
+    timeout: 10000,
   });
 }
 
@@ -257,6 +274,7 @@ export async function getUserCredits(
 /**
  * Applies referral credits to a payment at checkout.
  * Uses FIFO ordering by expiry date (expiring soonest first).
+ * Creates per-payment usage records in ReferralCreditUsage ledger for accurate reversal.
  * Returns the total credits used and the remaining amount to pay.
  */
 export async function applyCreditsToPayment(
@@ -283,10 +301,19 @@ export async function applyCreditsToPayment(
         ...(credit.remainingAmount - useAmount === 0 && {
           usedAt: new Date(),
         }),
-        // Audit trail: link credit usage to the payment
-        ...(paymentId && { usedOnPaymentId: paymentId }),
       },
     });
+
+    // Create ledger entry for accurate per-payment tracking and reversal
+    if (paymentId) {
+      await tx.referralCreditUsage.create({
+        data: {
+          creditId: credit.id,
+          paymentId,
+          amount: useAmount,
+        },
+      });
+    }
 
     creditsUsed += useAmount;
     remainingToPay -= useAmount;
@@ -297,34 +324,39 @@ export async function applyCreditsToPayment(
 
 /**
  * Reverses referral credits that were consumed for a specific payment.
+ * Uses the ReferralCreditUsage ledger for accurate per-payment reversal.
  * Called during refund processing to restore credits to the user.
  */
 export async function reverseCreditsForPayment(
   paymentId: string,
   tx: Prisma.TransactionClient,
 ): Promise<number> {
-  // Find all credits used on this payment
-  const usedCredits = await tx.referralCredit.findMany({
-    where: { usedOnPaymentId: paymentId },
+  // Find all usage records for this payment from the ledger
+  const usageRecords = await tx.referralCreditUsage.findMany({
+    where: { paymentId },
   });
 
-  if (usedCredits.length === 0) return 0;
+  if (usageRecords.length === 0) return 0;
 
   let totalRestored = 0;
 
-  for (const credit of usedCredits) {
-    // Restore the amount that was used (usedAmount tracks total usage)
-    const restoreAmount = credit.usedAmount;
+  for (const usage of usageRecords) {
+    const restoreAmount = usage.amount;
     if (restoreAmount <= 0) continue;
 
+    // Restore only the amount used from this specific credit for this payment
     await tx.referralCredit.update({
-      where: { id: credit.id },
+      where: { id: usage.creditId },
       data: {
-        usedAmount: 0,
+        usedAmount: { decrement: restoreAmount },
         remainingAmount: { increment: restoreAmount },
         usedAt: null,
-        usedOnPaymentId: null,
       },
+    });
+
+    // Remove the usage record (credit is now available again)
+    await tx.referralCreditUsage.delete({
+      where: { id: usage.id },
     });
 
     totalRestored += restoreAmount;

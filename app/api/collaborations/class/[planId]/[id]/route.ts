@@ -36,7 +36,7 @@ export async function PATCH(
 
     const body = await req.json();
 
-    const collab = await updateCollaborator("class", id, body);
+    const collab = await updateCollaborator("class", id, planId, body);
     if (!collab) {
       return NextResponse.json(
         { error: "Failed to update collaborator" },
@@ -81,7 +81,7 @@ export async function DELETE(
       );
     }
 
-    const collab = await removeCollaborator("class", id);
+    const collab = await removeCollaborator("class", id, planId);
     if (!collab) {
       return NextResponse.json(
         { error: "Failed to remove collaborator" },

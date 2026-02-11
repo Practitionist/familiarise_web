@@ -42,16 +42,30 @@ export async function inviteCollaborator(
     );
     if (!valid) return null;
 
-    // Check for existing active collaboration (not REMOVED/DECLINED)
+    // FIX #6: Check for ANY existing collaboration (including REMOVED/DECLINED).
+    // If REMOVED/DECLINED, re-activate instead of creating to respect unique constraint.
     if (planType === "webinar") {
       const existing = await tx.webinarCollaborator.findFirst({
-        where: {
-          webinarPlanId: planId,
-          consultantProfileId,
-          status: { notIn: ["REMOVED", "DECLINED"] },
-        },
+        where: { webinarPlanId: planId, consultantProfileId },
       });
-      if (existing) return null;
+
+      if (existing) {
+        if (existing.status === "REMOVED" || existing.status === "DECLINED") {
+          // Re-activate with new parameters
+          return tx.webinarCollaborator.update({
+            where: { id: existing.id },
+            data: {
+              role: role as WebinarCollaboratorRole,
+              revenueSharePercentage,
+              status: "PENDING",
+              invitedById,
+              respondedAt: null,
+            },
+          });
+        }
+        // PENDING or ACCEPTED — already active
+        return null;
+      }
 
       return tx.webinarCollaborator.create({
         data: {
@@ -65,13 +79,26 @@ export async function inviteCollaborator(
       });
     } else {
       const existing = await tx.classCollaborator.findFirst({
-        where: {
-          classPlanId: planId,
-          consultantProfileId,
-          status: { notIn: ["REMOVED", "DECLINED"] },
-        },
+        where: { classPlanId: planId, consultantProfileId },
       });
-      if (existing) return null;
+
+      if (existing) {
+        if (existing.status === "REMOVED" || existing.status === "DECLINED") {
+          // Re-activate with new parameters
+          return tx.classCollaborator.update({
+            where: { id: existing.id },
+            data: {
+              role: role as ClassCollaboratorRole,
+              revenueSharePercentage,
+              status: "PENDING",
+              invitedById,
+              respondedAt: null,
+            },
+          });
+        }
+        // PENDING or ACCEPTED — already active
+        return null;
+      }
 
       return tx.classCollaborator.create({
         data: {
@@ -153,17 +180,29 @@ export async function respondToInvitation(
 
 /**
  * Remove a collaborator (soft-delete: set status to REMOVED).
+ * Requires planId to prevent IDOR — ensures the collaborator belongs to the specified plan.
  */
 export async function removeCollaborator(
   planType: PlanType,
   collaborationId: string,
+  planId: string,
 ): Promise<WebinarCollaborator | ClassCollaborator | null> {
   if (planType === "webinar") {
+    const collab = await prisma.webinarCollaborator.findFirst({
+      where: { id: collaborationId, webinarPlanId: planId },
+    });
+    if (!collab) return null;
+
     return prisma.webinarCollaborator.update({
       where: { id: collaborationId },
       data: { status: "REMOVED" },
     });
   } else {
+    const collab = await prisma.classCollaborator.findFirst({
+      where: { id: collaborationId, classPlanId: planId },
+    });
+    if (!collab) return null;
+
     return prisma.classCollaborator.update({
       where: { id: collaborationId },
       data: { status: "REMOVED" },
@@ -173,10 +212,12 @@ export async function removeCollaborator(
 
 /**
  * Update a collaborator's revenue share or role.
+ * Requires planId to prevent IDOR — ensures the collaborator belongs to the specified plan.
  */
 export async function updateCollaborator(
   planType: PlanType,
   collaborationId: string,
+  planId: string,
   updates: { revenueSharePercentage?: number; role?: string },
 ): Promise<WebinarCollaborator | ClassCollaborator | null> {
   // Validate percentage range if updating
@@ -188,8 +229,9 @@ export async function updateCollaborator(
 
   return prisma.$transaction(async (tx) => {
     if (planType === "webinar") {
-      const collab = await tx.webinarCollaborator.findUnique({
-        where: { id: collaborationId },
+      // Verify collaborator belongs to this plan (IDOR prevention)
+      const collab = await tx.webinarCollaborator.findFirst({
+        where: { id: collaborationId, webinarPlanId: planId },
       });
       if (!collab) return null;
 
@@ -216,8 +258,9 @@ export async function updateCollaborator(
         },
       });
     } else {
-      const collab = await tx.classCollaborator.findUnique({
-        where: { id: collaborationId },
+      // Verify collaborator belongs to this plan (IDOR prevention)
+      const collab = await tx.classCollaborator.findFirst({
+        where: { id: collaborationId, classPlanId: planId },
       });
       if (!collab) return null;
 

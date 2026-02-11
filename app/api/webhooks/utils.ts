@@ -90,17 +90,60 @@ export async function handleRefundCreated(
       where: { refundId },
     });
 
+    // FIX #4: Extract refund side effects into a helper so they run on BOTH
+    // new refund creation AND status transitions (e.g. PENDING → SUCCEEDED).
+    const runRefundSideEffects = async (
+      paymentId: string,
+      refundStatus: string,
+    ) => {
+      if (mapRefundStatus(refundStatus) !== "SUCCEEDED") return;
+
+      try {
+        await refundEarnings(paymentId);
+        console.log(`💰 Earnings refunded for payment ${paymentId}`);
+      } catch (earningsError) {
+        // Log but don't fail - earnings can be manually updated
+        // refundEarnings already guards against double-refund (checks REFUNDED status)
+        console.error(
+          `⚠️ Failed to refund earnings for payment ${paymentId}:`,
+          earningsError,
+        );
+      }
+
+      try {
+        const restored = await reverseCreditsForPayment(paymentId, tx);
+        if (restored > 0) {
+          console.log(
+            `🔄 Reversed ${restored} referral credits for refunded payment ${paymentId}`,
+          );
+        }
+      } catch (creditError) {
+        console.error(
+          `⚠️ Failed to reverse referral credits for payment ${paymentId}:`,
+          creditError,
+        );
+      }
+    };
+
     if (existingRefund) {
       // Update status if changed
       if (existingRefund.status !== status) {
+        const newStatus = mapRefundStatus(status);
+        const wasSucceeded = existingRefund.status === "SUCCEEDED";
+
         await tx.refund.update({
           where: { refundId },
           data: {
-            status: mapRefundStatus(status),
+            status: newStatus,
             updatedAt: new Date(),
           },
         });
         console.log(`✅ Refund ${refundId} status updated to ${status}`);
+
+        // Run side effects when transitioning TO SUCCEEDED (but not if already SUCCEEDED)
+        if (!wasSucceeded) {
+          await runRefundSideEffects(payment.id, status);
+        }
       }
       return;
     }
@@ -119,34 +162,8 @@ export async function handleRefundCreated(
 
     console.log(`✅ Refund ${refundId} created for payment ${payment.id}`);
 
-    // Update earnings and reverse credits if refund succeeded
-    if (mapRefundStatus(status) === "SUCCEEDED") {
-      try {
-        await refundEarnings(payment.id);
-        console.log(`💰 Earnings refunded for payment ${payment.id}`);
-      } catch (earningsError) {
-        // Log but don't fail - earnings can be manually updated
-        console.error(
-          `⚠️ Failed to refund earnings for payment ${payment.id}:`,
-          earningsError,
-        );
-      }
-
-      // Reverse any referral credits that were applied to this payment
-      try {
-        const restored = await reverseCreditsForPayment(payment.id, tx);
-        if (restored > 0) {
-          console.log(
-            `🔄 Reversed ${restored} referral credits for refunded payment ${payment.id}`,
-          );
-        }
-      } catch (creditError) {
-        console.error(
-          `⚠️ Failed to reverse referral credits for payment ${payment.id}:`,
-          creditError,
-        );
-      }
-    }
+    // Run side effects for new refunds that are already SUCCEEDED
+    await runRefundSideEffects(payment.id, status);
 
     // --- Novu notification (fire-and-forget) ---
     void notifyRefundProcessed(payment.userId, {
