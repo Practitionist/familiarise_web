@@ -33,11 +33,7 @@ export class SlotCalculationService {
 
     if (end < start) return 0;
 
-    // Normalize to midnight for consistency
-    start.setHours(0, 0, 0, 0);
-    end.setHours(0, 0, 0, 0);
-
-    // Find the Sunday of the week containing start and end
+    // Find the Sunday of the week containing start and end (UTC-based)
     const startSunday = this.startOfWeekSunday(start);
     const endSunday = this.startOfWeekSunday(end);
 
@@ -45,7 +41,7 @@ export class SlotCalculationService {
     let weeks = 1;
     let cursor = new Date(startSunday);
     while (cursor < endSunday) {
-      cursor.setDate(cursor.getDate() + 7);
+      cursor.setUTCDate(cursor.getUTCDate() + 7);
       weeks += 1;
     }
     return weeks;
@@ -56,12 +52,19 @@ export class SlotCalculationService {
    */
   static startOfWeekSunday(d: Date): Date {
     const date = new Date(d);
-    const day = date.getDay(); // 0 = Sunday
+    const day = date.getUTCDay(); // 0 = Sunday
     const diff = day; // days since Sunday
-    const sunday = new Date(date);
-    sunday.setDate(date.getDate() - diff);
-    sunday.setHours(0, 0, 0, 0);
-    return sunday;
+    return new Date(
+      Date.UTC(
+        date.getUTCFullYear(),
+        date.getUTCMonth(),
+        date.getUTCDate() - diff,
+        0,
+        0,
+        0,
+        0,
+      ),
+    );
   }
 
   /**
@@ -110,7 +113,7 @@ export class SlotCalculationService {
     // Additional sanity check: duration should be reasonable (0.5 to 24 hours)
     if (duration > 24) {
       console.warn(
-        `⚠️ ${fieldName} is unusually large (${duration} hours). Maximum expected is 24 hours.`,
+        `${fieldName} is unusually large (${duration} hours). Maximum expected is 24 hours.`,
       );
     }
 
@@ -145,7 +148,7 @@ export class SlotCalculationService {
         const duration = config.durationInHours;
         if (!duration || duration <= 0) {
           console.warn(
-            "⚠️ Consultation duration missing or invalid. Using default: 1 hour",
+            "Consultation duration missing or invalid. Using default: 1 hour",
           );
           return Math.ceil(1 / 0.5); // Default 1 hour = 2 slots
         }
@@ -173,7 +176,7 @@ export class SlotCalculationService {
         let sessionDuration = config.sessionDurationInHours;
         if (!sessionDuration || sessionDuration <= 0) {
           console.warn(
-            "⚠️ Subscription session duration missing or invalid. Using default: 1 hour",
+            "Subscription session duration missing or invalid. Using default: 1 hour",
           );
           sessionDuration = 1; // Default 1 hour
         }

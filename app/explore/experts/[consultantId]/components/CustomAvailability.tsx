@@ -1,6 +1,7 @@
 import React from "react";
 import { TSlotTiming } from "@/types/slots";
 import { DayOfWeek } from "@prisma/client";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { roundTime, timeToMinutes } from "../utils/time";
 
 // Better typing for original slot data
@@ -29,6 +30,8 @@ interface DayWithSlots {
 
 interface CustomAvailabilityProps {
   days: DayWithSlots[];
+  onPrevWeek?: () => void;
+  onNextWeek?: () => void;
 }
 
 // Day mapping for TSlotTiming
@@ -44,6 +47,8 @@ const dayMap: Record<number, DayOfWeek> = {
 
 export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
   days,
+  onPrevWeek,
+  onNextWeek,
 }) => {
   // Sort slots chronologically for each day
   const sortedDays = React.useMemo(() => {
@@ -77,102 +82,136 @@ export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
           Custom Availability
         </h3>
 
-        {/* Date headers with glossy effect */}
-        <div className="grid grid-cols-7 gap-4 mb-6">
-          {sortedDays.map(({ date }) => (
-            <div key={date.toISOString()} className="text-center">
-              <div className="bg-gradient-to-b from-gray-100 to-gray-200/80 px-3 py-2 rounded-xl border border-gray-300/50 shadow-sm">
-                <div className="text-sm font-semibold text-gray-800">
-                  {date.toLocaleDateString(undefined, { weekday: "short" })}
-                </div>
-                <div className="text-xs text-gray-600 mt-1">
-                  {date.toLocaleDateString(undefined, {
-                    month: "short",
-                    day: "numeric",
-                  })}
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
+        {/* Navigation and grid content */}
+        <div className="flex items-start gap-2">
+          {/* Left arrow */}
+          <button
+            onClick={onPrevWeek}
+            disabled={!onPrevWeek}
+            className={`flex-shrink-0 mt-2 p-2 rounded-xl border shadow-sm transition-all ${
+              onPrevWeek
+                ? "bg-gradient-to-b from-gray-100 to-gray-200/80 border-gray-300/50 text-gray-700 hover:from-gray-200 hover:to-gray-300/80 cursor-pointer"
+                : "bg-gray-50 border-gray-200/50 text-gray-300 cursor-not-allowed"
+            }`}
+            aria-label="Previous week"
+          >
+            <ChevronLeft className="w-5 h-5" />
+          </button>
 
-        {/* Slots grid */}
-        <div className="grid grid-cols-7 gap-4">
-          {sortedDays.map(({ date, slots: daySlots }) => (
-            <div key={date.toISOString()} className="space-y-2">
-              {daySlots.length > 0 ? (
-                daySlots.map((slot) => {
-                  const bookingStatus = slot.bookingStatus || "available";
-                  const isFullyBooked = bookingStatus === "fully-booked";
-                  const isPartiallyBooked =
-                    bookingStatus === "partially-booked";
-                  const bookedDate =
-                    isFullyBooked || isPartiallyBooked || slot.isAllocated
-                      ? getBookedSlotDate(slot)
-                      : "";
-
-                  return (
-                    <div
-                      key={slot.id}
-                      className={`
-                        w-full min-h-[4.5rem] px-2 py-2 text-xs rounded-xl
-                        border shadow-lg backdrop-blur-sm relative overflow-hidden
-                        ${
-                          isFullyBooked
-                            ? "bg-gradient-to-br from-gray-300 to-gray-400 text-gray-600 border-gray-300 shadow-gray-400/20"
-                            : isPartiallyBooked
-                              ? "bg-gradient-to-br from-amber-200 to-amber-300 border-amber-400 text-amber-900 shadow-amber-400/25"
-                              : slot.isAllocated
-                                ? "bg-gradient-to-br from-orange-200 to-orange-300 border-orange-400 text-orange-900 shadow-orange-400/20"
-                                : "bg-gradient-to-br from-emerald-100 to-emerald-200 text-emerald-800 border-emerald-300 shadow-emerald-400/20"
-                        }
-                      `}
-                    >
-                      {/* Glossy overlay for buttons */}
-                      <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent rounded-xl pointer-events-none" />
-
-                      <div className="relative flex flex-col items-center justify-center h-full space-y-1">
-                        {/* Time range in one line */}
-                        <div className="font-medium leading-tight text-center text-[11px]">
-                          {roundTime(slot.localStartTime)} -{" "}
-                          {roundTime(slot.localEndTime)}
-                        </div>
-
-                        {/* Status and date for booked/allocated slots */}
-                        {isFullyBooked && (
-                          <div className="text-[10px] font-semibold opacity-90 text-center leading-tight">
-                            Booked
-                            <br />
-                            {bookedDate && `(${bookedDate})`}
-                          </div>
-                        )}
-                        {isPartiallyBooked && (
-                          <div className="text-[10px] font-semibold opacity-90 text-center leading-tight">
-                            Partially
-                            <br />
-                            Booked {bookedDate && `(${bookedDate})`}
-                          </div>
-                        )}
-                        {slot.isAllocated &&
-                          !isFullyBooked &&
-                          !isPartiallyBooked && (
-                            <div className="text-[10px] font-semibold opacity-90 text-center leading-tight">
-                              Request
-                              <br />
-                              Approval {bookedDate && `(${bookedDate})`}
-                            </div>
-                          )}
-                      </div>
+          {/* Date headers and slots */}
+          <div className="flex-1 min-w-0">
+            {/* Date headers */}
+            <div className="grid grid-cols-7 gap-4 mb-6">
+              {sortedDays.map(({ date }) => (
+                <div key={date.toISOString()} className="text-center">
+                  <div className="bg-gradient-to-b from-gray-100 to-gray-200/80 px-3 py-2 rounded-xl border border-gray-300/50 shadow-sm">
+                    <div className="text-sm font-semibold text-gray-800">
+                      {date.toLocaleDateString(undefined, { weekday: "short" })}
                     </div>
-                  );
-                })
-              ) : (
-                <div className="min-h-[4.5rem] flex items-center justify-center text-xs text-gray-400 bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl border border-gray-200 shadow-sm">
-                  No slots
+                    <div className="text-xs text-gray-600 mt-1">
+                      {date.toLocaleDateString(undefined, {
+                        month: "short",
+                        day: "numeric",
+                      })}
+                    </div>
+                  </div>
                 </div>
-              )}
+              ))}
             </div>
-          ))}
+
+            {/* Slots grid */}
+            <div className="grid grid-cols-7 gap-4">
+              {sortedDays.map(({ date, slots: daySlots }) => (
+                <div key={date.toISOString()} className="space-y-2">
+                  {daySlots.length > 0 ? (
+                    daySlots.map((slot) => {
+                      const bookingStatus = slot.bookingStatus || "available";
+                      const isFullyBooked = bookingStatus === "fully-booked";
+                      const isPartiallyBooked =
+                        bookingStatus === "partially-booked";
+                      const bookedDate =
+                        isFullyBooked || isPartiallyBooked || slot.isAllocated
+                          ? getBookedSlotDate(slot)
+                          : "";
+
+                      return (
+                        <div
+                          key={slot.id}
+                          className={`
+                            w-full min-h-[4.5rem] px-2 py-2 text-xs rounded-xl
+                            border shadow-lg backdrop-blur-sm relative overflow-hidden
+                            ${
+                              isFullyBooked
+                                ? "bg-gradient-to-br from-gray-300 to-gray-400 text-gray-600 border-gray-300 shadow-gray-400/20"
+                                : isPartiallyBooked
+                                  ? "bg-gradient-to-br from-amber-200 to-amber-300 border-amber-400 text-amber-900 shadow-amber-400/25"
+                                  : slot.isAllocated
+                                    ? "bg-gradient-to-br from-orange-200 to-orange-300 border-orange-400 text-orange-900 shadow-orange-400/20"
+                                    : "bg-gradient-to-br from-emerald-100 to-emerald-200 text-emerald-800 border-emerald-300 shadow-emerald-400/20"
+                            }
+                          `}
+                        >
+                          {/* Glossy overlay for buttons */}
+                          <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent rounded-xl pointer-events-none" />
+
+                          <div className="relative flex flex-col items-center justify-center h-full space-y-1">
+                            {/* Time range in one line */}
+                            <div className="font-medium leading-tight text-center text-[11px]">
+                              {roundTime(slot.localStartTime)} -{" "}
+                              {roundTime(slot.localEndTime)}
+                            </div>
+
+                            {/* Status and date for booked/allocated slots */}
+                            {isFullyBooked && (
+                              <div className="text-[10px] font-semibold opacity-90 text-center leading-tight">
+                                Booked
+                                <br />
+                                {bookedDate && `(${bookedDate})`}
+                              </div>
+                            )}
+                            {isPartiallyBooked && (
+                              <div className="text-[10px] font-semibold opacity-90 text-center leading-tight">
+                                Partially
+                                <br />
+                                Booked {bookedDate && `(${bookedDate})`}
+                              </div>
+                            )}
+                            {slot.isAllocated &&
+                              !isFullyBooked &&
+                              !isPartiallyBooked && (
+                                <div className="text-[10px] font-semibold opacity-90 text-center leading-tight">
+                                  Request
+                                  <br />
+                                  Approval {bookedDate && `(${bookedDate})`}
+                                </div>
+                              )}
+                          </div>
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <div className="min-h-[4.5rem] flex items-center justify-center text-xs text-gray-400 bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl border border-gray-200 shadow-sm">
+                      No slots
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Right arrow */}
+          <button
+            onClick={onNextWeek}
+            disabled={!onNextWeek}
+            className={`flex-shrink-0 mt-2 p-2 rounded-xl border shadow-sm transition-all ${
+              onNextWeek
+                ? "bg-gradient-to-b from-gray-100 to-gray-200/80 border-gray-300/50 text-gray-700 hover:from-gray-200 hover:to-gray-300/80 cursor-pointer"
+                : "bg-gray-50 border-gray-200/50 text-gray-300 cursor-not-allowed"
+            }`}
+            aria-label="Next week"
+          >
+            <ChevronRight className="w-5 h-5" />
+          </button>
         </div>
       </div>
     </div>

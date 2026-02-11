@@ -27,43 +27,18 @@ interface ProfileVerification {
   rejectionReason?: string | null;
   feedbackDetails?: string | null;
   submittedAt: string;
-  consultantProfile: {
-    id: string;
-    description: string | null;
-    headline: string | null;
+  consultant: {
+    profileId: string;
+    userId: string;
+    name: string | null;
+    email: string;
+    image?: string | null;
+    linkedinUrl?: string | null;
+    domain: string;
     experience: number | null;
-    user: {
-      id: string;
-      name: string | null;
-      email: string;
-      image?: string | null;
-      linkedinUrl?: string | null;
-      bio?: string | null;
-    };
-    domain?: { id: string; name: string } | null;
-    subDomains?: { id: string; name: string }[];
-    workExperiences?: {
-      id: string;
-      company: string;
-      title: string;
-      startDate: string;
-      endDate?: string | null;
-      current: boolean;
-    }[];
-    education?: {
-      id: string;
-      institution: string;
-      degree: string;
-      field: string;
-      startYear: number;
-      endYear?: number | null;
-    }[];
-    certifications?: {
-      id: string;
-      name: string;
-      issuer: string;
-      issueDate: string;
-    }[];
+    headline: string | null;
+    isVerified: boolean;
+    verificationStatus: string;
   };
   documents: Document[];
 }
@@ -199,20 +174,15 @@ export function VerificationQueue({
         </div>
 
         {verifications.map((verification) => {
-          const profile = verification.consultantProfile;
-          // Skip verifications with missing profile or user data
-          if (!profile || !profile.user) {
+          const consultant = verification.consultant;
+          // Skip verifications with missing consultant data
+          if (!consultant) {
             console.warn(
-              "Skipping verification with missing profile data:",
+              "Skipping verification with missing consultant data:",
               verification.id,
             );
             return null;
           }
-          const user = profile.user;
-
-          // Use subDomains for specialization display
-          const subDomainNames =
-            profile.subDomains?.map((s: { name: string }) => s.name) || [];
 
           return (
             <Card
@@ -224,9 +194,9 @@ export function VerificationQueue({
                 <div className="flex items-start justify-between">
                   <div className="flex items-center gap-4">
                     <Avatar className="h-12 w-12">
-                      <AvatarImage src={user.image || ""} />
+                      <AvatarImage src={consultant.image || ""} />
                       <AvatarFallback>
-                        {(user.name || "?")
+                        {(consultant.name || "?")
                           .split(" ")
                           .map((n: string) => n[0])
                           .join("")
@@ -235,29 +205,13 @@ export function VerificationQueue({
                       </AvatarFallback>
                     </Avatar>
                     <div>
-                      <p className="font-medium">{user.name || "Unnamed"}</p>
-                      <p className="text-sm text-zinc-500">{user.email}</p>
+                      <p className="font-medium">{consultant.name || "Unnamed"}</p>
+                      <p className="text-sm text-zinc-500">{consultant.email}</p>
                       <div className="flex items-center gap-2 mt-1 flex-wrap">
-                        {profile.domain && (
+                        {consultant.domain && (
                           <Badge variant="outline" className="text-xs">
-                            {profile.domain.name}
+                            {consultant.domain}
                           </Badge>
-                        )}
-                        {subDomainNames
-                          .slice(0, 2)
-                          .map((s: string, idx: number) => (
-                            <Badge
-                              key={idx}
-                              variant="secondary"
-                              className="text-xs"
-                            >
-                              {s}
-                            </Badge>
-                          ))}
-                        {subDomainNames.length > 2 && (
-                          <span className="text-xs text-zinc-400">
-                            +{subDomainNames.length - 2} more
-                          </span>
                         )}
                       </div>
                     </div>
@@ -276,8 +230,8 @@ export function VerificationQueue({
                 <div className="mt-3 flex items-center gap-4 text-sm text-zinc-500">
                   <div className="flex items-center gap-1">
                     <User className="h-4 w-4" />
-                    {profile.experience
-                      ? `${profile.experience} yrs exp`
+                    {consultant.experience
+                      ? `${consultant.experience} yrs exp`
                       : "No exp listed"}
                   </div>
                   <div className="flex items-center gap-1">

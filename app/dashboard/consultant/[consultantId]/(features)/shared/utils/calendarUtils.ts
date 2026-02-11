@@ -7,6 +7,7 @@ import {
   AppointmentsType,
 } from "@prisma/client";
 import { startOfWeek } from "date-fns";
+import { SlotCalculationService } from "@/utils/slotAllocation/SlotCalculationService";
 
 // Core types for the unified calendar system
 export interface TimeSlot {
@@ -136,15 +137,18 @@ export function mapWeeklySlots(
 
       // FIXED: Create new date objects to avoid mutations
       const slotStartTime = new Date(iterDate);
-      slotStartTime.setHours(
-        startTime.getHours(),
-        startTime.getMinutes(),
+      // FIX: Use UTC methods to match server-side SlotValidationService which
+      // uses getUTCHours(). Previously used local-time .setHours() which caused
+      // timezone-dependent mismatches between calendar display and server validation.
+      slotStartTime.setUTCHours(
+        startTime.getUTCHours(),
+        startTime.getUTCMinutes(),
         0,
         0,
       );
 
       const slotEndTime = new Date(iterDate);
-      slotEndTime.setHours(endTime.getHours(), endTime.getMinutes(), 0, 0);
+      slotEndTime.setUTCHours(endTime.getUTCHours(), endTime.getUTCMinutes(), 0, 0);
 
       // Handle slots that cross midnight
       if (slotEndTime <= slotStartTime) {
@@ -298,9 +302,12 @@ export function getSlotStatus(
         });
 
         // Determine booking status
+        // FIX: Previously only marked as booked on exact time match. A 30-min
+        // interval fully within a 60-min appointment showed as "partially booked"
+        // instead of "booked". Now checks if slot is fully contained in appointment.
         if (
-          slotStart.getTime() === apptStart.getTime() &&
-          slotEnd.getTime() === apptEnd.getTime()
+          slotStart.getTime() >= apptStart.getTime() &&
+          slotEnd.getTime() <= apptEnd.getTime()
         ) {
           isBooked = true;
         } else {
@@ -334,35 +341,9 @@ export function formatSlotsForAPI(slots: TimeSlot[]): string[] {
 }
 
 /**
- * Calculates the total number of 30-minute slots required for an event.
- *
- * IMPORTANT: This function returns SLOT COUNT, not call/session count.
- *
- * For different event types:
- * - CONSULTATIONS: Returns slots needed for the session duration (e.g., 2 slots for 1 hour)
- * - WEBINARS: Returns slots needed for the session duration (e.g., 2 slots for 1 hour)
- * - CLASSES: Computes weeks → sessions → slots using Sunday-boundary week counting
- *   - Requires startDate and endDate
- * - SUBSCRIPTIONS: Computes weeks → calls → slots using Sunday-boundary week counting
- *   - Requires startDate and endDate
- *
- * Example: A 6-month subscription with 3 calls/week and 1-hour sessions:
- * - Weeks: 26 (using Sunday boundaries)
- * - Calls: 26 × 3 = 78 calls
- * - Slots per call: 1 hour ÷ 0.5 hours = 2 slots
- * - Total slots: 78 × 2 = 156 slots
- */
-/**
- * Calculate required slots for different event types
- * @param eventType - Type of event (consultation, subscription, webinar, class)
- * @param durationInMonths - Duration in months (for subscriptions/classes)
- * @param callsPerWeek - Number of calls per week (for subscriptions/classes)
- * @param durationInHours - Duration in hours
- *   - For consultations/webinars: Total event duration
- *   - For subscriptions/classes: Per-session duration
- * @param startDate - Start date (for subscriptions/classes)
- * @param endDate - End date (for subscriptions/classes)
- * @returns Number of 30-minute slots required
+ * Calculate required 30-minute slots for different event types.
+ * Delegates to SlotCalculationService as the single source of truth,
+ * adapting the legacy parameter signature for backward compatibility.
  */
 export function calculateRequiredSlots(
   eventType: "consultation" | "subscription" | "webinar" | "class",
@@ -372,116 +353,27 @@ export function calculateRequiredSlots(
   startDate?: Date,
   endDate?: Date,
 ): number {
-  if (!eventType) {
-    throw new Error("Event type is required");
-  }
-
-  switch (eventType) {
-    case "consultation":
-      // For consultations, calculate based on total consultation duration
-      if (!durationInHours || durationInHours <= 0) {
-        return Math.ceil(1 / 0.5); // Default 1 hour = 2 slots
-      }
-      return Math.ceil(durationInHours / 0.5); // 30-minute intervals
-
-    case "webinar":
-      // For webinars, calculate based on total webinar duration
-      if (!durationInHours || durationInHours <= 0) {
-        return Math.ceil(1 / 0.5); // Default 1 hour = 2 slots
-      }
-      return Math.ceil(durationInHours / 0.5); // 30-minute intervals
-
-    case "subscription": {
-      if (!startDate || !endDate) {
-        throw new Error(
-          "Start date and end date are required for subscription slot calculation",
-        );
-      }
-
-      if (durationInHours && durationInHours <= 0) {
-        throw new Error(
-          "Session duration must be a positive number for subscriptions",
-        );
-      }
-
-      // For subscriptions, durationInHours represents per-session duration
-      const slotsPerCall = Math.ceil((durationInHours || 1) / 0.5);
-      const totalWeeks = countSundayWeeksInclusive(startDate, endDate);
-      const totalCalls = totalWeeks * (callsPerWeek || 1);
-      return totalCalls * slotsPerCall;
-    }
-
-    case "class": {
-      // Number of slots required = (weeks × classesPerWeek) × slotsPerSession
-      if (!startDate || !endDate) {
-        throw new Error(
-          "Start date and end date are required for class slot calculation",
-        );
-      }
-
-      if (!callsPerWeek || callsPerWeek <= 0) {
-        throw new Error("Calls per week must be a positive number for classes");
-      }
-
-      if (!durationInHours || durationInHours <= 0) {
-        throw new Error(
-          "Session duration must be a positive number for classes",
-        );
-      }
-
-      // For classes, durationInHours represents per-session duration
-      const slotsPerSession = Math.ceil(durationInHours / 0.5);
-      const totalWeeks = countSundayWeeksInclusive(startDate, endDate);
-      const totalSessions = totalWeeks * callsPerWeek;
-      return totalSessions * slotsPerSession;
-    }
-
-    default:
-      throw new Error(`Invalid event type: ${eventType}`);
-  }
+  return SlotCalculationService.calculateRequiredSlots(eventType, {
+    durationInMonths,
+    callsPerWeek,
+    durationInHours,
+    sessionDurationInHours: durationInHours,
+    schedulingPeriodStartsAt: startDate,
+    schedulingPeriodEndsAt: endDate,
+  });
 }
 
 /**
  * Count the number of distinct Sunday-start weeks overlapping [start, end].
- * The first week is the Sunday of the week containing startDate.
- * The last week is the Sunday of the week containing endDate.
+ * Delegates to SlotCalculationService.countWeeks as the single source of truth.
  */
-export function countSundayWeeksInclusive(
-  startDate: Date,
-  endDate: Date,
-): number {
-  const start = new Date(startDate);
-  const end = new Date(endDate);
-  if (end < start) return 0;
+export const countSundayWeeksInclusive = SlotCalculationService.countWeeks.bind(SlotCalculationService);
 
-  // Normalize to midnight for consistency
-  start.setHours(0, 0, 0, 0);
-  end.setHours(0, 0, 0, 0);
-
-  // Find the Sunday of the week containing start and end
-  const startSunday = startOfWeekSunday(start);
-  const endSunday = startOfWeekSunday(end);
-
-  // Count number of Sundays from startSunday to endSunday inclusive
-  let weeks = 1;
-  let cursor = new Date(startSunday);
-  while (cursor < endSunday) {
-    cursor.setDate(cursor.getDate() + 7);
-    weeks += 1;
-  }
-  return weeks;
-}
-
-/** Get the Sunday at 00:00:00 of the week that contains the given date. */
-export function startOfWeekSunday(d: Date): Date {
-  const date = new Date(d);
-  const day = date.getDay(); // 0 = Sunday
-  const diff = day; // days since Sunday
-  const sunday = new Date(date);
-  sunday.setDate(date.getDate() - diff);
-  sunday.setHours(0, 0, 0, 0);
-  return sunday;
-}
+/**
+ * Get the Sunday at 00:00:00 of the week that contains the given date.
+ * Delegates to SlotCalculationService.startOfWeekSunday as the single source of truth.
+ */
+export const startOfWeekSunday = SlotCalculationService.startOfWeekSunday.bind(SlotCalculationService);
 
 /**
  * Validates selected slots for a specific event type
@@ -631,16 +523,16 @@ export function groupSlotsByWeek(slots: TimeSlot[]): Map<string, TimeSlot[]> {
  */
 export function validateSlotDistribution(
   slots: TimeSlot[],
-  callsPerWeek: number,
+  slotsPerWeek: number,
 ): { isValid: boolean; errorMessage?: string } {
   const slotsByWeek = groupSlotsByWeek(slots);
 
   for (const [weekKey, weekSlots] of Array.from(slotsByWeek.entries())) {
-    if (weekSlots.length > callsPerWeek) {
+    if (weekSlots.length > slotsPerWeek) {
       const weekDate = new Date(weekKey);
       return {
         isValid: false,
-        errorMessage: `Too many slots selected for week of ${weekDate.toLocaleDateString()} (max ${callsPerWeek} allowed)`,
+        errorMessage: `Too many slots selected for week of ${weekDate.toLocaleDateString()} (max ${slotsPerWeek} allowed)`,
       };
     }
   }

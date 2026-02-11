@@ -154,26 +154,6 @@ export class SlotAllocationService {
           throw new Error(`Validation failed: ${validation.errors.join("; ")}`);
         }
 
-        // CRITICAL FIX: Validate all slots are within configured scheduling period
-        // This prevents slots from being allocated before schedulingPeriodStartsAt or after schedulingPeriodEndsAt
-        if (config.schedulingPeriodStartsAt && config.schedulingPeriodEndsAt) {
-          const slotsOutsidePeriod = selectedSlots.filter(
-            (slot) =>
-              slot < config.schedulingPeriodStartsAt! ||
-              slot > config.schedulingPeriodEndsAt!,
-          );
-
-          if (slotsOutsidePeriod.length > 0) {
-            const firstBad = slotsOutsidePeriod[0];
-            throw new Error(
-              `Cannot allocate slots outside scheduling period. ` +
-                `Period: ${config.schedulingPeriodStartsAt.toISOString()} to ${config.schedulingPeriodEndsAt.toISOString()}. ` +
-                `Found slot at: ${firstBad.toISOString()} (${firstBad < config.schedulingPeriodStartsAt! ? "before start" : "after end"}). ` +
-                `Total violations: ${slotsOutsidePeriod.length}`,
-            );
-          }
-        }
-
         // CRITICAL FIX: Delete existing appointments before creating new ones
         // For reschedules: only delete appointments with tentative slots (preserve confirmed ones)
         // For initial allocation: delete all (shouldn't be any, but safety measure)
@@ -211,7 +191,7 @@ export class SlotAllocationService {
         };
       },
       {
-        timeout: 60000, // 60 seconds - handles large allocations (200+ slots)
+        timeout: 120000, // 120 seconds (2 min) - handles large allocations (200+ slots)
       },
     );
   }
@@ -253,8 +233,17 @@ export class SlotAllocationService {
 
         const { consultant, config, consulteeUserId } = eventData;
 
-        // Convert to Date objects
-        const slots = slotStrings.map((s) => new Date(s));
+        // Convert to Date objects with validation
+        const slots = slotStrings.map((s, i) => {
+          const date = new Date(s);
+          if (isNaN(date.getTime())) {
+            throw new Error(
+              `Invalid date string at position ${i + 1}: "${s}". ` +
+                `Expected ISO 8601 format (e.g., "2026-03-01T09:00:00.000Z").`,
+            );
+          }
+          return date;
+        });
 
         // FIX: Detect and reject duplicate slots
         // Duplicates can cause validation errors, inflated counts, and DB anomalies
@@ -265,9 +254,13 @@ export class SlotAllocationService {
         if (uniqueSlots.length !== slots.length) {
           throw new Error(
             `Duplicate slots detected: ${slots.length} slots provided but only ` +
-              `${uniqueSlots.length} are unique. Each slot can only be selected once.`,
+            `${uniqueSlots.length} are unique. Each slot can only be selected once.`,
           );
         }
+
+        // Sort slots chronologically to ensure correct grouping into appointments
+        // and correct schedulingPeriodStartsAt derivation from slots[0]
+        slots.sort((a, b) => a.getTime() - b.getTime());
 
         // CRITICAL FIX: Validate slot count matches session duration requirements
         // This prevents incomplete appointments from being created
@@ -280,9 +273,26 @@ export class SlotAllocationService {
             config.sessionDurationInHours || config.durationInHours || 1;
           throw new Error(
             `Invalid slot count: ${slots.length} slots provided, but ${sessionDuration}-hour ` +
-              `sessions require multiples of ${slotsPerCall} slots (30 minutes each). ` +
-              `Valid counts: ${slotsPerCall}, ${slotsPerCall * 2}, ${slotsPerCall * 3}, etc.`,
+            `sessions require multiples of ${slotsPerCall} slots (30 minutes each). ` +
+            `Valid counts: ${slotsPerCall}, ${slotsPerCall * 2}, ${slotsPerCall * 3}, etc.`,
           );
+        }
+
+        // Validate total slot count for recurring event types
+        // Ensures the consultant provides exactly the right number of slots
+        // (not fewer, which would leave the event under-allocated but marked APPROVED)
+        if (eventType === "subscription" || eventType === "class") {
+          if (config.schedulingPeriodStartsAt && config.schedulingPeriodEndsAt) {
+            const requiredSlots =
+              SlotCalculationService.calculateRequiredSlots(eventType, config);
+            if (slots.length !== requiredSlots) {
+              throw new Error(
+                `This ${eventType} requires exactly ${requiredSlots} slots ` +
+                `(based on the scheduling period and session configuration), ` +
+                `but ${slots.length} were provided.`,
+              );
+            }
+          }
         }
 
         // Validate
@@ -323,7 +333,7 @@ export class SlotAllocationService {
         };
       },
       {
-        timeout: 60000, // 60 seconds - handles large allocations (200+ slots)
+        timeout: 120000, // 120 seconds (2 min) - handles large allocations (200+ slots)
       },
     );
   }
@@ -377,8 +387,8 @@ export class SlotAllocationService {
         if (existingAppointments.length === 0) {
           throw new Error(
             "Cannot approve requested slots: No appointments found. " +
-              "The consultee may not have created appointments yet, or they were deleted. " +
-              "Please ask the consultee to resubmit their request.",
+            "The consultee may not have created appointments yet, or they were deleted. " +
+            "Please ask the consultee to resubmit their request.",
           );
         }
 
@@ -391,8 +401,8 @@ export class SlotAllocationService {
         if (existingSlotCount !== requestedSlots.length) {
           throw new Error(
             `Appointment mismatch: Found ${existingSlotCount} slots in appointments ` +
-              `but ${requestedSlots.length} requested slots. ` +
-              `The appointments may have been modified. Please review and try again.`,
+            `but ${requestedSlots.length} requested slots. ` +
+            `The appointments may have been modified. Please review and try again.`,
           );
         }
 
@@ -436,9 +446,50 @@ export class SlotAllocationService {
         };
       },
       {
-        timeout: 60000, // 60 seconds - handles large allocations (200+ slots)
+        timeout: 120000, // 120 seconds (2 min) - handles large allocations (200+ slots)
       },
     );
+  }
+
+  /**
+   * Check if a 30-minute candidate slot falls within the consultant's availability.
+   * Replaces the pre-computed availableSlotsSet to eliminate the 8-week cap.
+   */
+  private static isWithinAvailability(
+    candidate: Date,
+    consultant: ConsultantAllocationData,
+  ): boolean {
+    if (consultant.scheduleType === ScheduleType.WEEKLY) {
+      return consultant.slotsOfAvailabilityWeekly.some((slot) => {
+        const slotStart = new Date(slot.availabilityStartsAt);
+        const slotEnd = new Date(slot.availabilityEndsAt);
+
+        // Must match day of week (UTC)
+        if (candidate.getUTCDay() !== slotStart.getUTCDay()) return false;
+
+        // Candidate time must be within [slotStart time, slotEnd time) in UTC
+        const candidateMinutes =
+          candidate.getUTCHours() * 60 + candidate.getUTCMinutes();
+        const startMinutes =
+          slotStart.getUTCHours() * 60 + slotStart.getUTCMinutes();
+        const endMinutes =
+          slotEnd.getUTCHours() * 60 + slotEnd.getUTCMinutes();
+
+        return candidateMinutes >= startMinutes && candidateMinutes < endMinutes;
+      });
+    } else {
+      // CUSTOM schedule: candidate must fall within a specific date range
+      const thirtyMinMs = 30 * 60 * 1000;
+      return consultant.slotsOfAvailabilityCustom.some((slot) => {
+        const slotStart = new Date(slot.availabilityStartsAt);
+        const slotEnd = new Date(slot.availabilityEndsAt);
+
+        return (
+          candidate >= slotStart &&
+          candidate.getTime() + thirtyMinMs <= slotEnd.getTime()
+        );
+      });
+    }
   }
 
   /**
@@ -453,13 +504,26 @@ export class SlotAllocationService {
     config: EventConfig,
   ): Promise<Date[]> {
     // Get all existing booked slots for this consultant
+    // Include PENDING consultations/subscriptions to prevent double-booking
     const existingAppointments = await (tx as any).appointment.findMany({
       where: {
         AND: [
           {
             OR: [
-              { subscription: { requestStatus: RequestStatus.APPROVED } },
-              { consultation: { requestStatus: RequestStatus.APPROVED } },
+              {
+                subscription: {
+                  requestStatus: {
+                    in: [RequestStatus.APPROVED, RequestStatus.PENDING],
+                  },
+                },
+              },
+              {
+                consultation: {
+                  requestStatus: {
+                    in: [RequestStatus.APPROVED, RequestStatus.PENDING],
+                  },
+                },
+              },
               { webinar: { status: "SCHEDULED" } },
               { class: { status: "SCHEDULED" } },
             ],
@@ -498,108 +562,98 @@ export class SlotAllocationService {
       throw new Error("No availability slots configured for consultant");
     }
 
-    // Sort by time of day to prioritize earlier slots
+    // Sort by UTC time of day to prioritize earlier slots
     const sortedSlots = [...availableTimeSlots].sort((a, b) => {
-      const timeA = new Date(a.availabilityStartsAt).getHours();
-      const timeB = new Date(b.availabilityStartsAt).getHours();
+      const timeA =
+        new Date(a.availabilityStartsAt).getUTCHours() * 60 +
+        new Date(a.availabilityStartsAt).getUTCMinutes();
+      const timeB =
+        new Date(b.availabilityStartsAt).getUTCHours() * 60 +
+        new Date(b.availabilityStartsAt).getUTCMinutes();
       return timeA - timeB;
     });
 
     const now = new Date();
     const selectedSlots: Date[] = [];
 
-    // FIX BUG #2: Create lookup set for fast availability checking
-    // Without this, the algorithm blindly increments time without verifying
-    // each slot exists in the consultant's availability schedule
-    const availableSlotsSet = new Set<string>();
-
-    // For WEEKLY schedules, we need to generate all future occurrences
-    if (consultant.scheduleType === ScheduleType.WEEKLY) {
-      // Generate next 8 weeks of occurrences for each weekly slot
-      for (const slot of availableTimeSlots) {
-        // CRITICAL FIX: Get base occurrence once, then create new Date objects for each week
-        // Previous bug: Called getNextOccurrence() inside loop, which returned the same Date
-        // object repeatedly, then mutated it. Result: only final occurrence (week 7) was added.
-        const baseOccurrence = this.getNextOccurrence(
-          slot.availabilityStartsAt,
-          consultant.scheduleType,
-        );
-
-        // CRITICAL FIX: Break down each availability slot into 30-minute blocks
-        // Availability slots can be any duration (e.g., 1 hour, 2 hours)
-        // But algorithm searches for 30-minute consecutive slots
-        // Example: 9:00-10:00 (1hr) should add: 9:00, 9:30
-        const slotStart = new Date(slot.availabilityStartsAt);
-        const slotEnd = new Date(slot.availabilityEndsAt);
-        const slotDurationMs = slotEnd.getTime() - slotStart.getTime();
-        const thirtyMinutesMs = 30 * 60 * 1000;
-        const blocksPerSlot = Math.floor(slotDurationMs / thirtyMinutesMs);
-
-        for (let week = 0; week < 8; week++) {
-          // Create NEW Date object for each week to avoid mutation bug
-          const weekOccurrence = new Date(baseOccurrence);
-          weekOccurrence.setDate(weekOccurrence.getDate() + week * 7);
-
-          // Add all 30-minute blocks within this slot
-          for (let block = 0; block < blocksPerSlot; block++) {
-            const blockTime = new Date(
-              weekOccurrence.getTime() + block * thirtyMinutesMs,
-            );
-            availableSlotsSet.add(blockTime.toISOString());
-          }
-        }
-      }
-    } else {
-      // For CUSTOM schedules, break down each slot into 30-minute blocks
-      for (const slot of availableTimeSlots) {
-        const slotStart = new Date(slot.availabilityStartsAt);
-        const slotEnd = new Date(slot.availabilityEndsAt);
-        const slotDurationMs = slotEnd.getTime() - slotStart.getTime();
-        const thirtyMinutesMs = 30 * 60 * 1000;
-        const blocksPerSlot = Math.floor(slotDurationMs / thirtyMinutesMs);
-
-        for (let block = 0; block < blocksPerSlot; block++) {
-          const blockTime = new Date(
-            slotStart.getTime() + block * thirtyMinutesMs,
-          );
-          availableSlotsSet.add(blockTime.toISOString());
-        }
-      }
-    }
-
-    // For consultations/webinars: find one consecutive block
+    // For consultations/webinars: find one consecutive block, searching multiple weeks
     if (eventType === "consultation" || eventType === "webinar") {
-      for (const slot of sortedSlots) {
-        const slotStart = this.getNextOccurrence(
-          slot.availabilityStartsAt,
-          consultant.scheduleType,
-        );
+      const maxWeeksToSearch = eventType === "consultation" ? 8 : 4;
 
-        if (slotStart < now || bookedSlots.has(slotStart.toISOString())) {
-          continue;
-        }
+      if (consultant.scheduleType === ScheduleType.WEEKLY) {
+        for (let week = 0; week < maxWeeksToSearch; week++) {
+          for (const slot of sortedSlots) {
+            const baseStart = this.getNextOccurrence(
+              slot.availabilityStartsAt,
+              consultant.scheduleType,
+            );
 
-        // Try to build consecutive block
-        const consecutiveBlock: Date[] = [];
-        let currentTime = new Date(slotStart);
+            const candidateStart = new Date(baseStart);
+            if (week > 0) {
+              candidateStart.setUTCDate(
+                candidateStart.getUTCDate() + week * 7,
+              );
+            }
 
-        for (let i = 0; i < slotsPerCall; i++) {
-          const currentTimeStr = currentTime.toISOString();
+            if (
+              candidateStart < now ||
+              bookedSlots.has(candidateStart.toISOString())
+            ) {
+              continue;
+            }
 
-          // FIX BUG #2: Check both booked slots AND availability
-          if (
-            bookedSlots.has(currentTimeStr) ||
-            !availableSlotsSet.has(currentTimeStr) ||
-            currentTime < now
-          ) {
-            break;
+            // Try to build consecutive block
+            const consecutiveBlock: Date[] = [];
+            let currentTime = new Date(candidateStart);
+
+            for (let i = 0; i < slotsPerCall; i++) {
+              const currentTimeStr = currentTime.toISOString();
+
+              if (
+                bookedSlots.has(currentTimeStr) ||
+                !this.isWithinAvailability(currentTime, consultant) ||
+                currentTime < now
+              ) {
+                break;
+              }
+              consecutiveBlock.push(new Date(currentTime));
+              currentTime = new Date(currentTime.getTime() + 30 * 60 * 1000);
+            }
+
+            if (consecutiveBlock.length === slotsPerCall) {
+              return consecutiveBlock;
+            }
           }
-          consecutiveBlock.push(new Date(currentTime));
-          currentTime = new Date(currentTime.getTime() + 30 * 60 * 1000);
         }
+      } else {
+        // CUSTOM schedule: iterate all available slots directly
+        for (const slot of sortedSlots) {
+          const slotStart = new Date(slot.availabilityStartsAt);
 
-        if (consecutiveBlock.length === slotsPerCall) {
-          return consecutiveBlock;
+          if (slotStart < now || bookedSlots.has(slotStart.toISOString())) {
+            continue;
+          }
+
+          const consecutiveBlock: Date[] = [];
+          let currentTime = new Date(slotStart);
+
+          for (let i = 0; i < slotsPerCall; i++) {
+            const currentTimeStr = currentTime.toISOString();
+
+            if (
+              bookedSlots.has(currentTimeStr) ||
+              !this.isWithinAvailability(currentTime, consultant) ||
+              currentTime < now
+            ) {
+              break;
+            }
+            consecutiveBlock.push(new Date(currentTime));
+            currentTime = new Date(currentTime.getTime() + 30 * 60 * 1000);
+          }
+
+          if (consecutiveBlock.length === slotsPerCall) {
+            return consecutiveBlock;
+          }
         }
       }
 
@@ -615,8 +669,6 @@ export class SlotAllocationService {
       addMonths(startDate, config.durationInMonths || 1);
     const callsPerWeek = config.callsPerWeek || 1;
 
-    // FIX: Start from the week containing schedulingPeriodStartsAt, but ensure we don't
-    // allocate slots before the actual schedulingPeriodStartsAt (even if they're in the same week)
     let currentWeek = SlotCalculationService.startOfWeekSunday(startDate);
     const totalWeeks = SlotCalculationService.countWeeks(startDate, endDate);
 
@@ -625,11 +677,11 @@ export class SlotAllocationService {
       week < totalWeeks && selectedSlots.length < totalSlotsNeeded;
       week++
     ) {
-      let slotsThisWeek = 0;
+      let callsThisWeek = 0;
 
-      for (let day = 0; day < 7 && slotsThisWeek < callsPerWeek; day++) {
+      for (let day = 0; day < 7 && callsThisWeek < callsPerWeek; day++) {
         const currentDay = new Date(currentWeek);
-        currentDay.setDate(currentDay.getDate() + day);
+        currentDay.setUTCDate(currentDay.getUTCDate() + day);
 
         // Find first available slot on this day
         for (const slot of sortedSlots) {
@@ -654,10 +706,9 @@ export class SlotAllocationService {
 
           for (let i = 0; i < slotsPerCall; i++) {
             const currentTimeStr = currentTime.toISOString();
-            // FIX BUG #2: Check both booked slots AND availability
             if (
               bookedSlots.has(currentTimeStr) ||
-              !availableSlotsSet.has(currentTimeStr) ||
+              !this.isWithinAvailability(currentTime, consultant) ||
               currentTime < now
             ) {
               break;
@@ -669,7 +720,7 @@ export class SlotAllocationService {
           if (callSlots.length === slotsPerCall) {
             selectedSlots.push(...callSlots);
             callSlots.forEach((s) => bookedSlots.add(s.toISOString()));
-            slotsThisWeek++;
+            callsThisWeek++;
             break; // Found slot for this day, move to next day
           }
         }
@@ -805,8 +856,8 @@ export class SlotAllocationService {
     if (slots.length % slotsPerCall !== 0) {
       throw new Error(
         `INTERNAL ERROR: Cannot create appointments - ${slots.length} slots ` +
-          `cannot be evenly divided into ${slotsPerCall}-slot sessions. ` +
-          `This indicates a validation bug.`,
+        `cannot be evenly divided into ${slotsPerCall}-slot sessions. ` +
+        `This indicates a validation bug.`,
       );
     }
 
@@ -823,7 +874,7 @@ export class SlotAllocationService {
     ) {
       throw new Error(
         `INTERNAL ERROR: ${eventType} should create exactly 1 appointment, but ${calls.length} were grouped. ` +
-          `This indicates non-consecutive slots were provided. Slots: ${slots.map((s) => s.toISOString()).join(", ")}`,
+        `This indicates non-consecutive slots were provided. Slots: ${slots.map((s) => s.toISOString()).join(", ")}`,
       );
     }
 
@@ -1025,9 +1076,9 @@ export class SlotAllocationService {
         const sessionDuration =
           classContents.length > 0
             ? classContents.reduce(
-                (sum: number, c: any) => sum + c.hoursAllotted,
-                0,
-              ) / classContents.length
+              (sum: number, c: any) => sum + c.hoursAllotted,
+              0,
+            ) / classContents.length
             : event.classPlan?.sessionDurationInHours || 1;
 
         config = {
@@ -1050,8 +1101,8 @@ export class SlotAllocationService {
       if (config.schedulingPeriodStartsAt >= config.schedulingPeriodEndsAt) {
         throw new Error(
           `Invalid date range: schedulingPeriodStartsAt (${config.schedulingPeriodStartsAt.toISOString()}) ` +
-            `must be before schedulingPeriodEndsAt (${config.schedulingPeriodEndsAt.toISOString()}). ` +
-            `Please check the ${eventType} configuration.`,
+          `must be before schedulingPeriodEndsAt (${config.schedulingPeriodEndsAt.toISOString()}). ` +
+          `Please check the ${eventType} configuration.`,
         );
       }
     }

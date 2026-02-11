@@ -56,20 +56,20 @@ interface ProfileVerification {
   rejectionReason?: string | null;
   feedbackDetails?: string | null;
   submittedAt: string;
-  consultantProfile: {
-    id: string;
-    description: string | null;
-    headline: string | null;
+  consultant: {
+    profileId: string;
+    userId: string;
+    name: string | null;
+    email: string;
+    image?: string | null;
+    linkedinUrl?: string | null;
+    bio?: string | null;
+    domain: string;
     experience: number | null;
-    user: {
-      id: string;
-      name: string | null;
-      email: string;
-      image?: string | null;
-      linkedinUrl?: string | null;
-      bio?: string | null;
-    };
-    domain?: { id: string; name: string } | null;
+    headline: string | null;
+    description?: string | null;
+    isVerified: boolean;
+    verificationStatus: string;
     subDomains?: { id: string; name: string }[];
     workExperiences?: {
       id: string;
@@ -240,8 +240,7 @@ export function VerificationReviewModal({
 
   if (!verification) return null;
 
-  const profile = verification.consultantProfile;
-  const user = profile.user;
+  const consultant = verification.consultant;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -260,9 +259,9 @@ export function VerificationReviewModal({
           {/* Profile Header */}
           <div className="flex items-center gap-4 p-4 rounded-lg bg-zinc-50 dark:bg-zinc-900">
             <Avatar className="h-16 w-16">
-              <AvatarImage src={user.image || ""} />
+              <AvatarImage src={consultant.image || ""} />
               <AvatarFallback className="text-lg">
-                {(user.name || "?")
+                {(consultant.name || "?")
                   .split(" ")
                   .map((n: string) => n[0])
                   .join("")
@@ -272,12 +271,12 @@ export function VerificationReviewModal({
             </Avatar>
             <div className="flex-1">
               <h3 className="text-lg font-semibold">
-                {user.name || "Unnamed"}
+                {consultant.name || "Unnamed"}
               </h3>
-              <p className="text-sm text-zinc-500">{user.email}</p>
-              {user.linkedinUrl && (
+              <p className="text-sm text-zinc-500">{consultant.email}</p>
+              {consultant.linkedinUrl && (
                 <a
-                  href={user.linkedinUrl}
+                  href={consultant.linkedinUrl}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="flex items-center gap-1 text-sm text-blue-600 hover:text-blue-700 hover:underline mt-0.5"
@@ -292,12 +291,12 @@ export function VerificationReviewModal({
                 </a>
               )}
               <div className="flex items-center gap-2 mt-1">
-                {profile.domain && (
-                  <Badge variant="secondary">{profile.domain.name}</Badge>
+                {consultant.domain && (
+                  <Badge variant="secondary">{consultant.domain}</Badge>
                 )}
-                {profile.experience && (
+                {consultant.experience != null && (
                   <span className="text-xs text-zinc-500">
-                    {profile.experience} years exp.
+                    {consultant.experience} years exp.
                   </span>
                 )}
               </div>
@@ -329,45 +328,45 @@ export function VerificationReviewModal({
           )}
 
           {/* Professional Headline */}
-          {profile.headline && (
+          {consultant.headline && (
             <div>
               <Label className="text-sm font-medium">
                 Professional Headline
               </Label>
               <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100 mt-1">
-                {profile.headline}
+                {consultant.headline}
               </p>
             </div>
           )}
 
           {/* Short Bio */}
-          {user.bio && (
+          {consultant.bio && (
             <div>
               <Label className="text-sm font-medium">Short Bio</Label>
               <p className="text-sm text-zinc-600 dark:text-zinc-400 mt-1">
-                {user.bio}
+                {consultant.bio}
               </p>
             </div>
           )}
 
           {/* Professional Summary (Description) */}
-          {profile.description && (
+          {consultant.description && (
             <div>
               <Label className="text-sm font-medium">
                 Professional Summary
               </Label>
               <p className="text-sm text-zinc-600 dark:text-zinc-400 mt-1 whitespace-pre-wrap">
-                {profile.description}
+                {consultant.description}
               </p>
             </div>
           )}
 
           {/* Specializations (Sub-domains) */}
-          {profile.subDomains && profile.subDomains.length > 0 && (
+          {consultant.subDomains && consultant.subDomains.length > 0 && (
             <div>
               <Label className="text-sm font-medium">Specializations</Label>
               <div className="flex flex-wrap gap-2 mt-1">
-                {profile.subDomains.map((subDomain, idx) => (
+                {consultant.subDomains.map((subDomain, idx) => (
                   <Badge key={idx} variant="outline">
                     {subDomain.name}
                   </Badge>
@@ -377,15 +376,15 @@ export function VerificationReviewModal({
           )}
 
           {/* Work Experience */}
-          {profile.workExperiences && profile.workExperiences.length > 0 && (
+          {consultant.workExperiences && consultant.workExperiences.length > 0 && (
             <Collapsible>
               <CollapsibleTrigger className="flex items-center gap-2 text-sm font-medium w-full">
                 <Briefcase className="h-4 w-4" />
-                Work Experience ({profile.workExperiences.length})
+                Work Experience ({consultant.workExperiences.length})
                 <ChevronDown className="h-4 w-4 ml-auto" />
               </CollapsibleTrigger>
               <CollapsibleContent className="mt-2 space-y-2">
-                {profile.workExperiences.map((exp) => (
+                {consultant.workExperiences.map((exp) => (
                   <Card key={exp.id}>
                     <CardContent className="p-3">
                       <p className="font-medium">{exp.title}</p>
@@ -406,15 +405,15 @@ export function VerificationReviewModal({
           )}
 
           {/* Education */}
-          {profile.education && profile.education.length > 0 && (
+          {consultant.education && consultant.education.length > 0 && (
             <Collapsible>
               <CollapsibleTrigger className="flex items-center gap-2 text-sm font-medium w-full">
                 <GraduationCap className="h-4 w-4" />
-                Education ({profile.education.length})
+                Education ({consultant.education.length})
                 <ChevronDown className="h-4 w-4 ml-auto" />
               </CollapsibleTrigger>
               <CollapsibleContent className="mt-2 space-y-2">
-                {profile.education.map((edu) => (
+                {consultant.education.map((edu) => (
                   <Card key={edu.id}>
                     <CardContent className="p-3">
                       <p className="font-medium">
@@ -432,15 +431,15 @@ export function VerificationReviewModal({
           )}
 
           {/* Certifications */}
-          {profile.certifications && profile.certifications.length > 0 && (
+          {consultant.certifications && consultant.certifications.length > 0 && (
             <Collapsible>
               <CollapsibleTrigger className="flex items-center gap-2 text-sm font-medium w-full">
                 <Award className="h-4 w-4" />
-                Certifications ({profile.certifications.length})
+                Certifications ({consultant.certifications.length})
                 <ChevronDown className="h-4 w-4 ml-auto" />
               </CollapsibleTrigger>
               <CollapsibleContent className="mt-2 space-y-2">
-                {profile.certifications.map((cert) => (
+                {consultant.certifications.map((cert) => (
                   <Card key={cert.id}>
                     <CardContent className="p-3">
                       <p className="font-medium">{cert.name}</p>

@@ -17,7 +17,7 @@ import { useSession } from "@/lib/auth-client";
 import { useMemo, useState } from "react";
 import { PricingOption } from "../defaults";
 import { TSlotTiming } from "@/types/slots";
-import { breakDownSlotsByDuration } from "@/utils/timeSlotsProcessing";
+import { breakDownSlotsByDuration, mergeConsecutiveSlots } from "@/utils/timeSlotsProcessing";
 import { useToast } from "@/hooks/use-toast";
 import { useCurrency } from "@/lib/hooks/useCurrency";
 
@@ -83,8 +83,9 @@ export default function ConsultationPricingToggle({
       isAllocated: slot.isAllocated || false,
     }));
 
+    const mergedSlots = mergeConsecutiveSlots(slotsWithAllocation);
     const brokenDownSlots = breakDownSlotsByDuration(
-      slotsWithAllocation,
+      mergedSlots,
       selectedDuration,
       [],
       timezone,

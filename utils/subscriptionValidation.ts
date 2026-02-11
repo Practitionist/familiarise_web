@@ -1,6 +1,6 @@
 import { PrismaClient, Prisma, RequestStatus } from "@prisma/client";
-import { addWeeks, startOfWeek, endOfWeek, isWithinInterval } from "date-fns";
-import { countSundayWeeksInclusive } from "@/app/dashboard/consultant/[consultantId]/(features)/shared/utils/calendarUtils";
+import { addWeeks, endOfWeek, isWithinInterval } from "date-fns";
+import { SlotCalculationService } from "@/utils/slotAllocation/SlotCalculationService";
 
 type AppointmentSlotRecord = { startsAt: Date };
 type AppointmentWithSlots = {
@@ -12,6 +12,7 @@ interface WeeklyCallInfo {
   weekStart: Date;
   weekEnd: Date;
   existingCalls: number;
+  proposedCalls: number;
   maxCalls: number;
   canScheduleMore: boolean;
   availableSlots: number;
@@ -80,7 +81,7 @@ export class SubscriptionValidationService {
     const proposedSlotDates = proposedSlots.map((slot) => new Date(slot));
 
     // FIXED: Use the correct Sunday-to-Saturday week counting logic
-    const exactWeeks = countSundayWeeksInclusive(
+    const exactWeeks = SlotCalculationService.countWeeks(
       subscription.schedulingPeriodStartsAt,
       subscription.schedulingPeriodEndsAt,
     );
@@ -145,10 +146,13 @@ export class SubscriptionValidationService {
 
     // Validate weekly limits
     const weeklyValidation = this.validateWeeklyLimits(weeklyInfo);
+    // FIX: Always push warnings (e.g. "fully booked" notices) regardless of error state.
+    // Previously warnings were only pushed inside the `if (!isValid)` block, which
+    // silently discarded them when no errors existed.
+    result.warnings.push(...weeklyValidation.warnings);
     if (!weeklyValidation.isValid) {
       result.isValid = false;
       result.errors.push(...weeklyValidation.errors);
-      result.warnings.push(...weeklyValidation.warnings);
     }
 
     // Validate total call limits
@@ -217,7 +221,7 @@ export class SubscriptionValidationService {
   }
 
   /**
-   * Groups appointments by week
+   * Groups appointments by week, counting each appointment as one call.
    */
   private groupAppointmentsByWeek(
     appointments: AppointmentWithSlots[],
@@ -225,12 +229,18 @@ export class SubscriptionValidationService {
     const weeklyCallCount = new Map<string, number>();
 
     for (const appointment of appointments) {
-      for (const slot of appointment.slotsOfAppointment) {
-        const weekStart = startOfWeek(new Date(slot.startsAt));
-        const weekKey = weekStart.toISOString();
+      if (appointment.slotsOfAppointment.length === 0) continue;
 
-        weeklyCallCount.set(weekKey, (weeklyCallCount.get(weekKey) || 0) + 1);
-      }
+      // FIX: Previously iterated over each slot and incremented by 1 per slot.
+      // A 1-hour session (2 slots) was counted as 2 calls instead of 1.
+      // Now counts each appointment as 1 call using the earliest slot's week.
+      const firstSlot = appointment.slotsOfAppointment.reduce((earliest, slot) =>
+        new Date(slot.startsAt) < new Date(earliest.startsAt) ? slot : earliest
+      );
+      const weekStart = SlotCalculationService.startOfWeekSunday(new Date(firstSlot.startsAt));
+      const weekKey = weekStart.toISOString();
+
+      weeklyCallCount.set(weekKey, (weeklyCallCount.get(weekKey) || 0) + 1);
     }
 
     return weeklyCallCount;
@@ -255,10 +265,12 @@ export class SubscriptionValidationService {
       slotsByDay.get(dayKey)!.push(slotDate);
     }
 
-    // Helper function to generate week string
     const getWeekString = (date: Date): string => {
-      const weekStart = startOfWeek(date);
-      return weekStart.toISOString().split("T")[0]; // YYYY-MM-DD format
+      const weekStart = SlotCalculationService.startOfWeekSunday(date);
+      // FIX: Use full ISO format to match generateWeeklyInfo and groupAppointmentsByWeek.
+      // Previously used .split("T")[0] (YYYY-MM-DD) which never matched the full ISO
+      // keys used elsewhere, causing proposed weekly limits to never be enforced.
+      return weekStart.toISOString();
     };
 
     // Helper function to check if slots form a complete call
@@ -331,7 +343,7 @@ export class SubscriptionValidationService {
     let weekCount = 0;
 
     const weeklyInfo: WeeklyCallInfo[] = [];
-    let currentWeek = startOfWeek(subscriptionStart);
+    let currentWeek = SlotCalculationService.startOfWeekSunday(subscriptionStart);
 
     while (currentWeek <= subscriptionEnd) {
       weekCount++;
@@ -363,6 +375,7 @@ export class SubscriptionValidationService {
         weekStart: new Date(currentWeek),
         weekEnd: new Date(weekEnd),
         existingCalls: effectiveExistingCalls,
+        proposedCalls: proposedCallCount,
         maxCalls: callsPerWeek,
         canScheduleMore: !isPastWeek && totalCalls < callsPerWeek,
         availableSlots: isPastWeek ? 0 : Math.max(0, callsPerWeek - totalCalls),
@@ -375,7 +388,7 @@ export class SubscriptionValidationService {
   }
 
   /**
-   * Validates weekly call limits
+   * Validates weekly call limits.
    */
   private validateWeeklyLimits(weeklyInfo: WeeklyCallInfo[]): {
     isValid: boolean;
@@ -386,7 +399,10 @@ export class SubscriptionValidationService {
     const warnings: string[] = [];
 
     for (const week of weeklyInfo) {
-      const totalCallsForWeek = week.maxCalls - week.availableSlots; // calls accounted for (existing + proposed)
+      // FIX: Previously computed (maxCalls - availableSlots) then checked > maxCalls.
+      // Since availableSlots = Math.max(0, maxCalls - totalCalls), that condition
+      // was mathematically impossible — the validation never caught violations.
+      const totalCallsForWeek = week.existingCalls + week.proposedCalls;
 
       if (totalCallsForWeek > week.maxCalls) {
         errors.push(
@@ -395,7 +411,7 @@ export class SubscriptionValidationService {
         );
       }
 
-      if (week.existingCalls === week.maxCalls) {
+      if (week.existingCalls >= week.maxCalls && week.proposedCalls === 0) {
         warnings.push(
           `Week of ${week.weekStart.toLocaleDateString()} is fully booked. ` +
             `${week.existingCalls}/${week.maxCalls} calls scheduled.`,
@@ -408,38 +424,6 @@ export class SubscriptionValidationService {
       errors,
       warnings,
     };
-  }
-
-  /**
-   * Calculates total number of confirmed calls (existing + proposed)
-   */
-  private calculateTotalCalls(
-    existingAppointments: AppointmentWithSlots[],
-    proposedSlots: Date[],
-    sessionDurationInHours: number,
-  ): number {
-    const slotsPerCall = Math.ceil(sessionDurationInHours / 0.5);
-
-    // Count existing confirmed calls (complete appointments)
-    let existingCalls = 0;
-    for (const appointment of existingAppointments) {
-      const appointmentSlots = appointment.slotsOfAppointment.length;
-      if (appointmentSlots === slotsPerCall) {
-        existingCalls += 1; // Only count complete calls
-      }
-    }
-
-    // Count proposed confirmed calls using the same logic as groupSlotsByWeek
-    const proposedCallsMap = this.groupSlotsByWeek(
-      proposedSlots,
-      sessionDurationInHours,
-    );
-    const proposedCalls = Array.from(proposedCallsMap.values()).reduce(
-      (sum, calls) => sum + calls,
-      0,
-    );
-
-    return existingCalls + proposedCalls;
   }
 
   /**
@@ -463,7 +447,7 @@ export class SubscriptionValidationService {
     weekDate: Date,
     additionalCalls: number = 1,
   ): Promise<boolean> {
-    const weekStart = startOfWeek(weekDate);
+    const weekStart = SlotCalculationService.startOfWeekSunday(weekDate);
     const validationResult = await this.validateSubscriptionSlots(
       subscriptionId,
       [],
@@ -484,8 +468,8 @@ export function getSubscriptionWeek(
   targetDate: Date,
   subscriptionStartDate: Date,
 ): number {
-  const weekStart = startOfWeek(subscriptionStartDate);
-  const targetWeekStart = startOfWeek(targetDate);
+  const weekStart = SlotCalculationService.startOfWeekSunday(subscriptionStartDate);
+  const targetWeekStart = SlotCalculationService.startOfWeekSunday(targetDate);
 
   const diffInWeeks = Math.floor(
     (targetWeekStart.getTime() - weekStart.getTime()) /
