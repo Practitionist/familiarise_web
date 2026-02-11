@@ -256,16 +256,15 @@ export default function SubscriptionPricingToggle({
     >
       {/* Duration Toggle - Black/Silver Theme */}
       <TabsList className="flex w-full p-1 bg-zinc-800/50 backdrop-blur-sm rounded-xl border border-zinc-700/50">
-        {subscriptionOptions.map((option) => (
+        {subscriptionOptions.map((option, index) => (
           <TabsTrigger
-            key={option.durationInMonths}
+            key={`sub-tab-${index}`}
             value={option.title.toLowerCase().replace(" ", "-")}
-            className={`${
-              activeSubscriptionOption ===
+            className={`${activeSubscriptionOption ===
               option.title.toLowerCase().replace(" ", "-")
-                ? "bg-white text-zinc-900 shadow-sm"
-                : "text-zinc-400 hover:text-white hover:bg-zinc-700/50"
-            } flex-1 px-2 sm:px-4 py-2 rounded-lg font-medium text-xs sm:text-sm transition-all duration-200 whitespace-nowrap`}
+              ? "bg-white text-zinc-900 shadow-sm"
+              : "text-zinc-400 hover:text-white hover:bg-zinc-700/50"
+              } flex-1 px-2 sm:px-4 py-2 rounded-lg font-medium text-xs sm:text-sm transition-all duration-200 whitespace-nowrap`}
           >
             {option.title}
           </TabsTrigger>
@@ -273,14 +272,14 @@ export default function SubscriptionPricingToggle({
       </TabsList>
 
       <div className="grid grid-cols-1 gap-4">
-        {subscriptionOptions.map((option) => (
+        {subscriptionOptions.map((option, index) => (
           <motion.div
-            key={option.durationInMonths}
+            key={`sub-card-${index}`}
             initial={{ opacity: 0, y: 10 }}
             animate={{
               opacity:
                 activeSubscriptionOption ===
-                option.title.toLowerCase().replace(" ", "-")
+                  option.title.toLowerCase().replace(" ", "-")
                   ? 1
                   : 0,
               y: 0,
@@ -288,7 +287,7 @@ export default function SubscriptionPricingToggle({
             transition={{ duration: 0.2 }}
             className={
               activeSubscriptionOption ===
-              option.title.toLowerCase().replace(" ", "-")
+                option.title.toLowerCase().replace(" ", "-")
                 ? "block"
                 : "hidden"
             }
@@ -326,11 +325,10 @@ export default function SubscriptionPricingToggle({
               {/* Free Trial Button */}
               {selectedPlanDetails?.freeTrialEnabled && (
                 <Button
-                  className={`w-full mb-3 font-medium rounded-xl h-11 ${
-                    trialEligibility.isEligible && !trialEligibility.isLoading
-                      ? "bg-emerald-600 text-white hover:bg-emerald-500"
-                      : "bg-zinc-600 text-zinc-400 cursor-not-allowed"
-                  }`}
+                  className={`w-full mb-3 font-medium rounded-xl h-11 ${trialEligibility.isEligible && !trialEligibility.isLoading
+                    ? "bg-emerald-600 text-white hover:bg-emerald-500"
+                    : "bg-zinc-600 text-zinc-400 cursor-not-allowed"
+                    }`}
                   disabled={
                     !trialEligibility.isEligible || trialEligibility.isLoading
                   }
@@ -469,7 +467,7 @@ export default function SubscriptionPricingToggle({
                   Duration: ~
                   {Math.round(
                     differenceInDays(schedulingEndDate, schedulingStartDate) /
-                      30,
+                    30,
                   )}{" "}
                   month(s)
                 </p>
