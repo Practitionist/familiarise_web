@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { SubscriptionPlanSchema } from "@/schemas/plans";
 import { findOrCreateTopics, transformTopicsToStrings } from "@/lib/topics";
+import { SlotCalculationService } from "@/utils/slotAllocation/SlotCalculationService";
 
 import { getSession } from "@/lib/auth-server";
 export async function GET(
@@ -138,7 +139,13 @@ export async function PUT(
       const sessionDurationInHours =
         body.sessionDurationInHours ?? existingPlan.sessionDurationInHours;
 
-      totalSessions = callsPerWeek * durationInMonths * 4;
+      // Use accurate week counting instead of fixed * 4 approximation
+      const metricStartDate = new Date();
+      metricStartDate.setHours(0, 0, 0, 0);
+      const metricEndDate = new Date(metricStartDate);
+      metricEndDate.setMonth(metricEndDate.getMonth() + durationInMonths);
+      const estimatedWeeks = SlotCalculationService.countWeeks(metricStartDate, metricEndDate);
+      totalSessions = callsPerWeek * estimatedWeeks;
       totalHours = totalSessions * sessionDurationInHours;
     }
 

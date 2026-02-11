@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { DayOfWeek } from "@prisma/client";
 import { TConsultantProfile } from "@/types/consultant";
 import { TSlotTiming } from "@/types/slots";
@@ -58,6 +58,15 @@ export function ConsultantAvailability({
     >
   >({});
   const [isLoading, setIsLoading] = useState(false);
+  const [weekOffset, setWeekOffset] = useState(0);
+
+  const handlePrevWeek = useCallback(() => {
+    setWeekOffset((w) => Math.max(0, w - 1));
+  }, []);
+
+  const handleNextWeek = useCallback(() => {
+    setWeekOffset((w) => w + 1);
+  }, []);
 
   // Fetch unified availability data with allocation status
   useEffect(() => {
@@ -66,10 +75,11 @@ export function ConsultantAvailability({
 
       setIsLoading(true);
       try {
-        // Fetch slots for the next 7 days to cover both weekly and custom availability
+        // Fetch slots for the 7-day window based on weekOffset
         const today = new Date();
-        const startDateInUtc = startOfDay(today);
-        const endDateInUtc = endOfDay(addDays(today, 6));
+        const windowStart = addDays(today, weekOffset * 7);
+        const startDateInUtc = startOfDay(windowStart);
+        const endDateInUtc = endOfDay(addDays(windowStart, 6));
 
         const response = await fetch(
           `/api/slots/availability-with-allocation/${consultantDetails.id}?startDateInUtc=${startDateInUtc.toISOString()}&endDateInUtc=${endDateInUtc.toISOString()}&timezone=${timezone}`,
@@ -90,7 +100,7 @@ export function ConsultantAvailability({
     };
 
     fetchAvailabilityData();
-  }, [consultantDetails?.id, timezone]);
+  }, [consultantDetails?.id, timezone, weekOffset]);
 
   // Process data for WeeklyAvailability component (group by day of week)
   const processedWeeklySlots = useMemo((): ProcessedSlotsByDay => {
@@ -135,8 +145,9 @@ export function ConsultantAvailability({
   // Note: Allow custom slots for all schedule types to support one-off availability
   const processedCustomSlots = useMemo((): DayWithSlots[] => {
     const today = new Date();
+    const windowStart = addDays(today, weekOffset * 7);
     const days: DayWithSlots[] = Array.from({ length: 7 }, (_, i) => {
-      const date = addDays(startOfDay(toZonedTime(today, timezone)), i);
+      const date = addDays(startOfDay(toZonedTime(windowStart, timezone)), i);
       const dateKey = formatTz(date, "yyyy-MM-dd", { timeZone: timezone });
 
       const slots: ProcessedSlot[] = (availabilityData[dateKey] || [])
@@ -161,7 +172,7 @@ export function ConsultantAvailability({
     });
 
     return days;
-  }, [availabilityData, timezone]);
+  }, [availabilityData, timezone, weekOffset]);
 
   if (isLoading) {
     return (
@@ -191,14 +202,18 @@ export function ConsultantAvailability({
         <p className="text-sm text-gray-600 bg-gradient-to-br from-gray-50 to-white px-4 py-2 rounded-xl border border-gray-200/50 shadow-sm inline-block">
           {consultantDetails.scheduleType === "WEEKLY"
             ? "Weekly schedule. Use the 'Book Now' button to schedule a meeting."
-            : "Custom schedule for the next 7 days. Use the 'Book Now' button to schedule a meeting."}
+            : "Custom schedule. Use the arrows to navigate weeks. Use the 'Book Now' button to schedule a meeting."}
         </p>
       </div>
 
       {consultantDetails.scheduleType === "WEEKLY" ? (
         <WeeklyAvailability slotsByDay={processedWeeklySlots} />
       ) : (
-        <CustomAvailability days={processedCustomSlots} />
+        <CustomAvailability
+          days={processedCustomSlots}
+          onPrevWeek={weekOffset > 0 ? handlePrevWeek : undefined}
+          onNextWeek={handleNextWeek}
+        />
       )}
     </div>
   );

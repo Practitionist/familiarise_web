@@ -269,8 +269,8 @@ export interface UseEventSlotAllocationReturn {
   // SLOT MANAGEMENT FUNCTIONS
   // ==========================================
 
-  /** Toggle slot selection with event-specific validation */
-  toggleSlot: (slot: TimeSlot) => void;
+  /** Toggle slot selection with event-specific validation. Pass autoExpandedGroup to add/remove multiple consecutive slots at once. */
+  toggleSlot: (slot: TimeSlot, autoExpandedGroup?: TimeSlot[]) => void;
 
   /** Clear all selected slots */
   clearSlots: () => void;
@@ -634,7 +634,7 @@ function validateEventSlots(
         result.isValid = false;
         result.errors.push(
           subscriptionValidation.weeklyCallsError ||
-            "Weekly call limit exceeded",
+          "Weekly call limit exceeded",
         );
       }
 
@@ -684,6 +684,7 @@ function validateEventSlots(
     result.weeklyDistributionValid = validateWeeklyDistribution(
       slots,
       options.callsPerWeek,
+      limits.slotsPerSession,
     );
     if (!result.weeklyDistributionValid) {
       result.warnings.push(
@@ -953,6 +954,7 @@ function validateTotalCalls(slots: TimeSlot[], maxCalls?: number): boolean {
 function validateWeeklyDistribution(
   slots: TimeSlot[],
   callsPerWeek: number,
+  slotsPerSession?: number,
 ): boolean {
   // Group slots by week
   const weeklySlots = new Map<string, number>();
@@ -964,9 +966,10 @@ function validateWeeklyDistribution(
     weeklySlots.set(weekKey, (weeklySlots.get(weekKey) || 0) + 1);
   });
 
-  // Check if any week exceeds the limit
+  // Convert slot count to call count before comparing against callsPerWeek
+  const slotMultiplier = slotsPerSession || 1;
   return Array.from(weeklySlots.values()).every(
-    (count) => count <= callsPerWeek,
+    (slotCount) => Math.floor(slotCount / slotMultiplier) <= callsPerWeek,
   );
 }
 
@@ -997,6 +1000,50 @@ function isCompleteCall(daySlots: TimeSlot[], slotsPerCall: number): boolean {
   }
 
   return true;
+}
+
+/**
+ * Finds the maximal consecutive group of slots that contains the given slot,
+ * within a sorted array of same-day slots.
+ * Used for group deselection: clicking any slot in a session deselects the entire session.
+ */
+function findConsecutiveGroupContaining(
+  targetSlot: TimeSlot,
+  sortedDaySlots: TimeSlot[],
+): TimeSlot[] {
+  if (sortedDaySlots.length === 0) return [targetSlot];
+
+  const targetIndex = sortedDaySlots.findIndex(
+    (s) => s.startTime.getTime() === targetSlot.startTime.getTime(),
+  );
+
+  if (targetIndex === -1) return [targetSlot];
+
+  // Expand backward from target
+  let startIdx = targetIndex;
+  while (startIdx > 0) {
+    const prev = sortedDaySlots[startIdx - 1];
+    const curr = sortedDaySlots[startIdx];
+    if (prev.endTime.getTime() === curr.startTime.getTime()) {
+      startIdx--;
+    } else {
+      break;
+    }
+  }
+
+  // Expand forward from target
+  let endIdx = targetIndex;
+  while (endIdx < sortedDaySlots.length - 1) {
+    const curr = sortedDaySlots[endIdx];
+    const next = sortedDaySlots[endIdx + 1];
+    if (curr.endTime.getTime() === next.startTime.getTime()) {
+      endIdx++;
+    } else {
+      break;
+    }
+  }
+
+  return sortedDaySlots.slice(startIdx, endIdx + 1);
 }
 
 function validateSubscriptionSlots(
@@ -1279,7 +1326,7 @@ export function useEventSlotAllocation(
    * Toggle slot selection with event-specific validation
    */
   const toggleSlot = useCallback(
-    (slot: TimeSlot) => {
+    (slot: TimeSlot, autoExpandedGroup?: TimeSlot[]) => {
       setSelectedSlots((current) => {
         // Safety check to ensure current is always an array
         const currentSlots = current || [];
@@ -1289,13 +1336,28 @@ export function useEventSlotAllocation(
         );
 
         if (isSelected) {
-          // Remove slot
+          // Remove the entire consecutive group containing this slot
+          const dayKey = slot.startTime.toDateString();
+          const daySlots = currentSlots
+            .filter((s) => s.startTime.toDateString() === dayKey)
+            .sort(
+              (a, b) => a.startTime.getTime() - b.startTime.getTime(),
+            );
+
+          const group = findConsecutiveGroupContaining(slot, daySlots);
+          const removeTimestamps = new Set(
+            group.map((s) => s.startTime.getTime()),
+          );
           return currentSlots.filter(
-            (s) => s.startTime.getTime() !== slot.startTime.getTime(),
+            (s) => !removeTimestamps.has(s.startTime.getTime()),
           );
         } else {
-          // Add slot with event-specific limits
-          const newSelection = [...currentSlots, slot];
+          // Add slot(s) with event-specific limits
+          const slotsToAdd =
+            autoExpandedGroup && autoExpandedGroup.length > 0
+              ? autoExpandedGroup
+              : [slot];
+          const newSelection = [...currentSlots, ...slotsToAdd];
 
           // FIXED: Enhanced subscription validation - check weekly limits and complete calls only
           if (eventType === "subscription") {
@@ -1510,8 +1572,8 @@ export function useEventSlotAllocation(
 
             // Simple week tracking - no need for pre-generated array
 
-            // Simple confirmed call tracking per week
-            const weeklyConfirmedCalls = new Map<string, boolean>();
+            // Confirmed call counting per week (counts actual calls, not just boolean)
+            const weeklyConfirmedCallCounts = new Map<string, number>();
 
             // Group slots by day
             const slotsByDay = groupSlotsByDay(newSelection);
@@ -1519,14 +1581,14 @@ export function useEventSlotAllocation(
             // First, check existing confirmed calls WITHOUT the new slot
             const existingSlotsByDay = groupSlotsByDay(currentSlots);
 
-            const existingWeeklyConfirmedCalls = new Map<string, boolean>();
+            const existingWeeklyConfirmedCallCounts = new Map<string, number>();
             existingSlotsByDay.forEach((daySlots) => {
               if (
                 daySlots.length === slotsPerCall &&
                 isCompleteCall(daySlots, slotsPerCall)
               ) {
                 const weekString = getWeekString(daySlots[0].startTime);
-                existingWeeklyConfirmedCalls.set(weekString, true);
+                existingWeeklyConfirmedCallCounts.set(weekString, (existingWeeklyConfirmedCallCounts.get(weekString) || 0) + 1);
               }
             });
 
@@ -1537,7 +1599,7 @@ export function useEventSlotAllocation(
                 isCompleteCall(daySlots, slotsPerCall)
               ) {
                 const weekString = getWeekString(daySlots[0].startTime);
-                weeklyConfirmedCalls.set(weekString, true);
+                weeklyConfirmedCallCounts.set(weekString, (weeklyConfirmedCallCounts.get(weekString) || 0) + 1);
               }
             });
 
@@ -1550,18 +1612,18 @@ export function useEventSlotAllocation(
               ...(slotsByDay.get(weeklyConfirmedSlotDay) || []),
             ];
 
-            // Only block if adding this slot COMPLETES a call and there's already a complete call this week
+            // Block if adding this slot COMPLETES a call and the week is already at its callsPerWeek limit
+            const existingCallsThisWeek = existingWeeklyConfirmedCallCounts.get(weeklyConfirmedSlotWeek) || 0;
             if (
               dayWithNewSlot.length === slotsPerCall &&
               isCompleteCall(dayWithNewSlot, slotsPerCall) &&
-              existingWeeklyConfirmedCalls.has(weeklyConfirmedSlotWeek) &&
-              callsPerWeek === 1
+              existingCallsThisWeek >= callsPerWeek
             ) {
               setTimeout(() => {
                 setPendingToast({
                   variant: "destructive",
                   title: "Weekly Limit Reached",
-                  description: `This week already has a confirmed call. Only ${callsPerWeek} call per week allowed.`,
+                  description: `This week already has ${existingCallsThisWeek} confirmed call(s). Only ${callsPerWeek} call(s) per week allowed.`,
                 });
               }, 0);
               return currentSlots;
@@ -1597,7 +1659,7 @@ export function useEventSlotAllocation(
               // Calculate weeks passed since subscription started
               const weeksPassed = Math.floor(
                 (currentDate.getTime() - subscriptionStartDate.getTime()) /
-                  (7 * 24 * 60 * 60 * 1000),
+                (7 * 24 * 60 * 60 * 1000),
               );
               pastCallsCompleted = Math.min(
                 weeksPassed * callsPerWeek,
@@ -1607,44 +1669,34 @@ export function useEventSlotAllocation(
 
             // FIXED: Simple validation: count confirmed calls + past completed calls
             // But don't count the call we're about to complete if it's completing an existing incomplete call
-            const totalConfirmedCalls = weeklyConfirmedCalls.size;
+            // FIXED: Validating total calls using simplified usage logic
+            // Calculate usage from newSelection directly to avoid double counting
+            const newSelectionByDay = groupSlotsByDay(newSelection);
+            let currentUsage = 0;
 
-            // Check if this slot would complete an existing incomplete call
-            const effectiveCallsSlotDay = slot.startTime.toDateString();
-            const existingDaySlots = currentSlots.filter(
-              (selectedSlot) =>
-                selectedSlot.startTime.toDateString() === effectiveCallsSlotDay,
-            );
+            newSelectionByDay.forEach((daySlots) => {
+              // Subscriptions max 1 call per day logic:
+              // Any slots on a day (complete or partial) count as 1 usage
+              if (daySlots.length > 0) {
+                currentUsage++;
+              }
+            });
 
-            let effectiveConfirmedCalls = totalConfirmedCalls;
-
-            // If this would complete an existing incomplete call, don't count it twice
-            if (
-              existingDaySlots.length > 0 &&
-              existingDaySlots.length < slotsPerCall
-            ) {
-              // This is completing an existing incomplete call
-              // Don't add 1 to the count since we're just completing what's already started
-              effectiveConfirmedCalls = totalConfirmedCalls;
-            } else if (existingDaySlots.length === 0) {
-              // This is starting a new call
-              // Add 1 to the count since we're creating a new call
-              effectiveConfirmedCalls = totalConfirmedCalls + 1;
-            }
-
-            const totalCallsIncludingPast =
-              effectiveConfirmedCalls + pastCallsCompleted;
+            // For Total calls limit, we count "usage" (days with at least 1 slot)
+            const totalCallsIncludingPast = currentUsage + pastCallsCompleted;
 
             if (totalCallsIncludingPast > maxTotalCalls) {
               setTimeout(() => {
                 setPendingToast({
                   variant: "destructive",
                   title: "Call Limit Reached",
-                  description: `Maximum ${maxTotalCalls} calls allowed for this subscription (${pastCallsCompleted} past calls + ${effectiveConfirmedCalls} confirmed = ${totalCallsIncludingPast} total)`,
+                  description: `Maximum ${maxTotalCalls} calls allowed for this subscription (${pastCallsCompleted} past calls + ${currentUsage} scheduled = ${totalCallsIncludingPast} total)`,
                 });
               }, 0);
               return currentSlots;
             }
+
+            const effectiveCallsSlotDay = slot.startTime.toDateString();
 
             // Check daily call limit BEFORE adding the new slot
             // effectiveCallsSlotDay already declared above

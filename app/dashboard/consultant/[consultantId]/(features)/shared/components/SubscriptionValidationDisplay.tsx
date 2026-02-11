@@ -16,6 +16,7 @@ interface WeeklyCallInfo {
   weekStart: Date;
   weekEnd: Date;
   existingCalls: number;
+  proposedCalls: number;
   maxCalls: number;
   canScheduleMore: boolean;
   availableSlots: number;
