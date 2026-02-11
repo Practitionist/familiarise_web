@@ -1851,11 +1851,12 @@ model ReferralCredit {
 }
 
 model ReferralCreditUsage {
-  id        String   @id @default(cuid())
-  creditId  String
-  paymentId String
-  amount    Int // Amount used from this credit for this payment (in paise)
-  createdAt DateTime @default(now())
+  id             String   @id @default(cuid())
+  creditId       String
+  paymentId      String
+  amount         Int // Current remaining usage (decremented on partial refund restores)
+  originalAmount Int // Original amount at creation (never changes, used for ratio calculations)
+  createdAt      DateTime @default(now())
 
   credit  ReferralCredit @relation(fields: [creditId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   payment Payment        @relation(fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: Cascade)

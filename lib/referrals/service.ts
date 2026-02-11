@@ -342,6 +342,7 @@ export async function applyCreditsToPayment(
           creditId: credit.id,
           paymentId,
           amount: useAmount,
+          originalAmount: useAmount,
         },
       });
     }
@@ -392,7 +393,7 @@ export async function reverseCreditsForPayment(
     if (usage.amount <= 0) continue;
 
     const restoreAmount = isPartialRefund
-      ? Math.round(usage.amount * refundRatio)
+      ? Math.min(Math.round(usage.originalAmount * refundRatio), usage.amount)
       : usage.amount;
 
     if (restoreAmount <= 0) continue;
