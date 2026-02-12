@@ -348,6 +348,22 @@ export async function getMyCollaborations(consultantProfileId: string) {
             consultantProfile: {
               select: { user: { select: { name: true, image: true } } },
             },
+            collaborators: {
+              where: { status: { in: ["PENDING", "ACCEPTED"] } },
+              select: {
+                id: true,
+                role: true,
+                revenueSharePercentage: true,
+                status: true,
+                consultantProfile: {
+                  select: {
+                    id: true,
+                    user: { select: { name: true, image: true } },
+                  },
+                },
+              },
+              orderBy: { createdAt: "asc" },
+            },
             webinars: {
               where: { status: { in: ["SCHEDULED", "IN_PROGRESS"] } },
               include: {
@@ -394,6 +410,22 @@ export async function getMyCollaborations(consultantProfileId: string) {
             consultantProfile: {
               select: { user: { select: { name: true, image: true } } },
             },
+            collaborators: {
+              where: { status: { in: ["PENDING", "ACCEPTED"] } },
+              select: {
+                id: true,
+                role: true,
+                revenueSharePercentage: true,
+                status: true,
+                consultantProfile: {
+                  select: {
+                    id: true,
+                    user: { select: { name: true, image: true } },
+                  },
+                },
+              },
+              orderBy: { createdAt: "asc" },
+            },
             classes: {
               where: { status: { in: ["SCHEDULED", "IN_PROGRESS"] } },
               include: {
@@ -428,6 +460,111 @@ export async function getMyCollaborations(consultantProfileId: string) {
     webinarCollaborations: webinarCollabs,
     classCollaborations: classCollabs,
   };
+}
+
+/**
+ * Get all plans owned by this consultant that have collaborators.
+ * Returns plans with their collaborator lists and schedule data (host perspective).
+ */
+export async function getHostedCollaborations(consultantProfileId: string) {
+  const [webinarPlans, classPlans] = await Promise.all([
+    prisma.webinarPlan.findMany({
+      where: {
+        consultantProfileId,
+        collaborators: {
+          some: { status: { in: ["PENDING", "ACCEPTED"] } },
+        },
+      },
+      select: {
+        id: true,
+        title: true,
+        price: true,
+        durationInHours: true,
+        maxParticipants: true,
+        language: true,
+        level: true,
+        collaborators: {
+          where: { status: { in: ["PENDING", "ACCEPTED"] } },
+          include: {
+            consultantProfile: {
+              include: { user: { select: { name: true, image: true } } },
+            },
+          },
+          orderBy: { createdAt: "asc" },
+        },
+        webinars: {
+          where: { status: { in: ["SCHEDULED", "IN_PROGRESS"] } },
+          include: {
+            appointment: {
+              include: {
+                slotsOfAppointment: {
+                  select: {
+                    startsAt: true,
+                    endsAt: true,
+                    isTentative: true,
+                    _count: { select: { user: true } },
+                  },
+                },
+              },
+            },
+          },
+          orderBy: { createdAt: "desc" },
+          take: 5,
+        },
+      },
+      orderBy: { createdAt: "desc" },
+    }),
+    prisma.classPlan.findMany({
+      where: {
+        consultantProfileId,
+        collaborators: {
+          some: { status: { in: ["PENDING", "ACCEPTED"] } },
+        },
+      },
+      select: {
+        id: true,
+        title: true,
+        price: true,
+        sessionDurationInHours: true,
+        maxParticipants: true,
+        meetingsPerWeek: true,
+        durationInMonths: true,
+        totalSessions: true,
+        collaborators: {
+          where: { status: { in: ["PENDING", "ACCEPTED"] } },
+          include: {
+            consultantProfile: {
+              include: { user: { select: { name: true, image: true } } },
+            },
+          },
+          orderBy: { createdAt: "asc" },
+        },
+        classes: {
+          where: { status: { in: ["SCHEDULED", "IN_PROGRESS"] } },
+          include: {
+            appointments: {
+              include: {
+                slotsOfAppointment: {
+                  select: {
+                    startsAt: true,
+                    endsAt: true,
+                    isTentative: true,
+                    _count: { select: { user: true } },
+                  },
+                  orderBy: { startsAt: "asc" },
+                },
+              },
+            },
+          },
+          orderBy: { createdAt: "desc" },
+          take: 5,
+        },
+      },
+      orderBy: { createdAt: "desc" },
+    }),
+  ]);
+
+  return { webinarPlans, classPlans };
 }
 
 /**

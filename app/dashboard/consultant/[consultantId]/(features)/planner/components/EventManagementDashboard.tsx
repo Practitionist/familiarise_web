@@ -9,6 +9,8 @@ import { EventPlanner } from "./EventPlanner";
 import {
   WebinarEvent,
   ClassEvent,
+  PlannerWebinarEvent,
+  PlannerClassEvent,
   ConsultationPlanEvent,
   SubscriptionPlanEvent,
   Event,
@@ -37,8 +39,8 @@ import {
 import { cn } from "@/utils/tailwind";
 
 interface PlannerData {
-  webinars: WebinarEvent[];
-  classes: ClassEvent[];
+  webinars: PlannerWebinarEvent[];
+  classes: PlannerClassEvent[];
   participantCounts: Record<string, number>;
 }
 import { addMonths, startOfMonth, endOfMonth } from "date-fns";
@@ -52,10 +54,10 @@ export function EventManagementDashboard({
   consultantId,
   initialData,
 }: Readonly<Props>) {
-  const [webinars, setWebinars] = useState<WebinarEvent[]>(
+  const [webinars, setWebinars] = useState<PlannerWebinarEvent[]>(
     initialData?.webinars || [],
   );
-  const [classes, setClasses] = useState<ClassEvent[]>(
+  const [classes, setClasses] = useState<PlannerClassEvent[]>(
     initialData?.classes || [],
   );
   const [isWebinarDialogOpen, setIsWebinarDialogOpen] = useState(false);
@@ -160,8 +162,9 @@ export function EventManagementDashboard({
           PlannerService.fetchClasses(consultantId, startDate, endDate),
         ]);
 
-        setWebinars(fetchedWebinars);
-        setClasses(fetchedClasses);
+        // Annotate with default role (owned plans from PlannerService)
+        setWebinars(fetchedWebinars.map((w) => ({ ...w, collaboratorRole: "HOST", isCollaborated: false })));
+        setClasses(fetchedClasses.map((c) => ({ ...c, collaboratorRole: "HOST", isCollaborated: false })));
       } catch (err) {
         setError(err instanceof Error ? err.message : "An error occurred");
         console.error("Error fetching events:", err);
@@ -235,12 +238,12 @@ export function EventManagementDashboard({
     }
   };
 
-  const handleEditWebinar = (webinar: WebinarEvent) => {
+  const handleEditWebinar = (webinar: PlannerWebinarEvent) => {
     setEditingEvent(webinar);
     setIsWebinarDialogOpen(true);
   };
 
-  const handleEditClass = (classEvent: ClassEvent) => {
+  const handleEditClass = (classEvent: PlannerClassEvent) => {
     setEditingEvent(classEvent);
     setIsClassDialogOpen(true);
   };

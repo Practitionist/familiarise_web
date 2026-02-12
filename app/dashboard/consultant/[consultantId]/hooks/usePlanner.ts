@@ -5,14 +5,16 @@ import { useToast } from "@/hooks/use-toast";
 import {
   WebinarEvent,
   ClassEvent,
+  PlannerWebinarEvent,
+  PlannerClassEvent,
   ConsultationPlanEvent,
   SubscriptionPlanEvent,
 } from "../(features)/planner/types/event";
 import { ConsultationPlan, SubscriptionPlan } from "@/schemas/plans";
 
 interface PlannerData {
-  webinars: WebinarEvent[];
-  classes: ClassEvent[];
+  webinars: PlannerWebinarEvent[];
+  classes: PlannerClassEvent[];
   consultationPlans: ConsultationPlanEvent[];
   subscriptionPlans: SubscriptionPlanEvent[];
   participantCounts: Record<string, number>;

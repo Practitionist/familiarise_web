@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth-server";
 import prisma from "@/lib/prisma";
-import { getMyCollaborations } from "@/lib/collaborators/service";
+import { getMyCollaborations, getHostedCollaborations } from "@/lib/collaborators/service";
 
 export async function GET() {
   try {
@@ -15,11 +15,32 @@ export async function GET() {
     });
 
     if (!consultantProfile) {
-      return NextResponse.json({ data: { webinarCollaborations: [], classCollaborations: [] } });
+      return NextResponse.json({
+        data: {
+          webinarCollaborations: [],
+          classCollaborations: [],
+          hostedWebinarPlans: [],
+          hostedClassPlans: [],
+        },
+      });
     }
 
-    const collaborations = await getMyCollaborations(consultantProfile.id);
-    return NextResponse.json({ data: collaborations });
+    const [collaborations, hosted] = await Promise.all([
+      getMyCollaborations(consultantProfile.id),
+      getHostedCollaborations(consultantProfile.id),
+    ]);
+
+    return NextResponse.json({
+      data: {
+        ...collaborations,
+        hostedWebinarPlans: hosted.webinarPlans,
+        hostedClassPlans: hosted.classPlans,
+        hostUser: {
+          name: session.user.name ?? null,
+          image: session.user.image ?? null,
+        },
+      },
+    });
   } catch (error) {
     console.error("Error fetching collaborations:", error);
     return NextResponse.json(

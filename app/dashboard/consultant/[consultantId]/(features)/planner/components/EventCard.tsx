@@ -31,9 +31,22 @@ interface EventCardProps {
   eventType: EventType;
   participantCount: number;
   pendingTrialCount?: number;
+  collaboratorRole?: string;
+  isCollaborated?: boolean;
   onEdit: () => void;
   onDelete: () => void;
   onTrialsClick?: () => void;
+}
+
+function formatCollaboratorRole(role: string): string {
+  const labels: Record<string, string> = {
+    HOST: "Host",
+    CO_HOST: "Co-Host",
+    MODERATOR: "Moderator",
+    CO_INSTRUCTOR: "Co-Instructor",
+    TEACHING_ASSISTANT: "TA",
+  };
+  return labels[role] || role;
 }
 
 // Type guards
@@ -223,6 +236,8 @@ export function EventCard({
   eventType,
   participantCount,
   pendingTrialCount,
+  collaboratorRole,
+  isCollaborated,
   onEdit,
   onDelete,
   onTrialsClick,
@@ -261,31 +276,33 @@ export function EventCard({
         )}
       />
 
-      {/* Hover action buttons - always visible on mobile */}
-      <div className="absolute top-3 right-3 sm:top-4 sm:right-4 flex items-center gap-1.5 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all duration-200 sm:transform sm:translate-y-1 sm:group-hover:translate-y-0 z-10">
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8 sm:h-9 sm:w-9 bg-white/90 backdrop-blur-sm shadow-sm hover:bg-white border border-zinc-200/60"
-          onClick={(e) => {
-            e.stopPropagation();
-            onEdit();
-          }}
-        >
-          <Edit className="h-4 w-4 text-zinc-600" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8 sm:h-9 sm:w-9 bg-white/90 backdrop-blur-sm shadow-sm hover:bg-red-50 border border-zinc-200/60"
-          onClick={(e) => {
-            e.stopPropagation();
-            onDelete();
-          }}
-        >
-          <Trash2 className="h-4 w-4 text-zinc-400 hover:text-red-500" />
-        </Button>
-      </div>
+      {/* Hover action buttons - hidden for collaborated plans */}
+      {!isCollaborated && (
+        <div className="absolute top-3 right-3 sm:top-4 sm:right-4 flex items-center gap-1.5 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all duration-200 sm:transform sm:translate-y-1 sm:group-hover:translate-y-0 z-10">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 sm:h-9 sm:w-9 bg-white/90 backdrop-blur-sm shadow-sm hover:bg-white border border-zinc-200/60"
+            onClick={(e) => {
+              e.stopPropagation();
+              onEdit();
+            }}
+          >
+            <Edit className="h-4 w-4 text-zinc-600" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 sm:h-9 sm:w-9 bg-white/90 backdrop-blur-sm shadow-sm hover:bg-red-50 border border-zinc-200/60"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete();
+            }}
+          >
+            <Trash2 className="h-4 w-4 text-zinc-400 hover:text-red-500" />
+          </Button>
+        </div>
+      )}
 
       {/* Main content */}
       <div className="flex items-start gap-3 sm:gap-4">
@@ -304,6 +321,15 @@ export function EventCard({
           <h3 className="font-semibold text-zinc-900 text-base sm:text-lg leading-tight line-clamp-2">
             {title}
           </h3>
+          {collaboratorRole && (
+            <span className={`inline-block mt-1 text-xs font-medium px-2 py-0.5 rounded-full ${
+              isCollaborated
+                ? "bg-purple-50 text-purple-700"
+                : "bg-zinc-100 text-zinc-600"
+            }`}>
+              {formatCollaboratorRole(collaboratorRole)}
+            </span>
+          )}
         </div>
       </div>
 

@@ -14,6 +14,8 @@ import { cn } from "@/utils/tailwind";
 import {
   WebinarEvent,
   ClassEvent,
+  PlannerWebinarEvent,
+  PlannerClassEvent,
   ConsultationPlanEvent,
   SubscriptionPlanEvent,
   Event,
@@ -22,16 +24,16 @@ import { EventCard } from "./EventCard";
 import { FormConfirmationDialog } from "./form-fields/FormConfirmationDialog";
 
 interface WebinarCarouselProps {
-  events: WebinarEvent[];
-  onEdit: (event: WebinarEvent) => void;
+  events: PlannerWebinarEvent[];
+  onEdit: (event: PlannerWebinarEvent) => void;
   onDelete: (eventId: string) => Promise<void>;
   eventType: "webinar";
   participantCounts: Record<string, number>;
 }
 
 interface ClassCarouselProps {
-  events: ClassEvent[];
-  onEdit: (event: ClassEvent) => void;
+  events: PlannerClassEvent[];
+  onEdit: (event: PlannerClassEvent) => void;
   onDelete: (eventId: string) => Promise<void>;
   eventType: "class";
   participantCounts: Record<string, number>;
@@ -185,9 +187,9 @@ export function EventCarousel({
 
   const handleEdit = (event: Event) => {
     if (eventType === "webinar" && isWebinarEvent(event)) {
-      onEdit(event);
+      (onEdit as (e: PlannerWebinarEvent) => void)(event as PlannerWebinarEvent);
     } else if (eventType === "class" && isClassEvent(event)) {
-      onEdit(event);
+      (onEdit as (e: PlannerClassEvent) => void)(event as PlannerClassEvent);
     } else if (eventType === "consultation" && isConsultationPlanEvent(event)) {
       onEdit(event);
     } else if (eventType === "subscription" && isSubscriptionPlanEvent(event)) {
@@ -272,6 +274,8 @@ export function EventCarousel({
                   ? pendingTrialCounts[event.id ?? ""]
                   : undefined
               }
+              collaboratorRole={"collaboratorRole" in event ? (event as { collaboratorRole: string }).collaboratorRole : undefined}
+              isCollaborated={"isCollaborated" in event ? (event as { isCollaborated: boolean }).isCollaborated : undefined}
               onEdit={() => handleEdit(event)}
               onDelete={() => handleDeleteClick(event)}
               onTrialsClick={

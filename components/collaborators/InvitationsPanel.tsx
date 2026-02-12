@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -17,6 +18,8 @@ import {
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { formatCurrencyAmount } from "@/lib/utils";
+
+// ─── Shared schedule types ───────────────────────────────────────────────────
 
 interface SlotSchedule {
   startsAt: string;
@@ -43,8 +46,21 @@ interface ClassEventSchedule {
   }[];
 }
 
+// ─── Collaborator perspective types ──────────────────────────────────────────
+
 interface PlanOwner {
   user: { name: string | null; image: string | null };
+}
+
+interface PlanCollaboratorInfo {
+  id: string;
+  role: string;
+  revenueSharePercentage: number;
+  status: "PENDING" | "ACCEPTED";
+  consultantProfile: {
+    id: string;
+    user: { name: string | null; image: string | null };
+  };
 }
 
 interface Collaboration {
@@ -63,6 +79,7 @@ interface Collaboration {
     level: string | null;
     webinars: WebinarEventSchedule[];
     consultantProfile: PlanOwner | null;
+    collaborators: PlanCollaboratorInfo[];
   };
   classPlan?: {
     id: string;
@@ -75,16 +92,62 @@ interface Collaboration {
     totalSessions: number;
     classes: ClassEventSchedule[];
     consultantProfile: PlanOwner | null;
+    collaborators: PlanCollaboratorInfo[];
   };
   invitedBy: {
     user: { name: string | null };
   };
 }
 
+// ─── Host perspective types ──────────────────────────────────────────────────
+
+interface CollaboratorInfo {
+  id: string;
+  role: string;
+  revenueSharePercentage: number;
+  status: "PENDING" | "ACCEPTED";
+  consultantProfile: {
+    id: string;
+    user: { name: string | null; image: string | null };
+  };
+}
+
+interface HostedWebinarPlan {
+  id: string;
+  title: string;
+  price: number;
+  durationInHours: number;
+  maxParticipants: number;
+  language: string | null;
+  level: string | null;
+  collaborators: CollaboratorInfo[];
+  webinars: WebinarEventSchedule[];
+}
+
+interface HostedClassPlan {
+  id: string;
+  title: string;
+  price: number;
+  sessionDurationInHours: number;
+  maxParticipants: number;
+  meetingsPerWeek: number;
+  durationInMonths: number;
+  totalSessions: number;
+  collaborators: CollaboratorInfo[];
+  classes: ClassEventSchedule[];
+}
+
+// ─── Combined data from API ──────────────────────────────────────────────────
+
 interface CollaborationsData {
   webinarCollaborations: Collaboration[];
   classCollaborations: Collaboration[];
+  hostedWebinarPlans: HostedWebinarPlan[];
+  hostedClassPlans: HostedClassPlan[];
+  hostUser?: { name: string | null; image: string | null };
 }
+
+// ─── Formatting helpers ──────────────────────────────────────────────────────
 
 function formatDateTime(dateStr: string) {
   const d = new Date(dateStr);
@@ -105,10 +168,40 @@ function formatTime(dateStr: string) {
   });
 }
 
+function formatRole(role: string): string {
+  const labels: Record<string, string> = {
+    CO_HOST: "Co-Host",
+    MODERATOR: "Moderator",
+    GUEST_SPEAKER: "Guest Speaker",
+    TECHNICAL_SUPPORT: "Technical Support",
+    CO_INSTRUCTOR: "Co-Instructor",
+    TEACHING_ASSISTANT: "TA",
+    GUEST_LECTURER: "Guest Lecturer",
+    CONTENT_CREATOR: "Content Creator",
+  };
+  return labels[role] || role.replace(/_/g, " ");
+}
+
+// ─── Schedule summary components (shared) ────────────────────────────────────
+
+interface WebinarPlanSchedule {
+  durationInHours: number;
+  maxParticipants: number;
+  webinars: WebinarEventSchedule[];
+}
+
+interface ClassPlanSchedule {
+  sessionDurationInHours: number;
+  maxParticipants: number;
+  meetingsPerWeek: number;
+  totalSessions: number;
+  classes: ClassEventSchedule[];
+}
+
 function WebinarScheduleSummary({
   plan,
 }: {
-  plan: NonNullable<Collaboration["webinarPlan"]>;
+  plan: WebinarPlanSchedule;
 }) {
   const webinar = plan.webinars[0];
   const slot = webinar?.appointment?.slotsOfAppointment[0];
@@ -177,7 +270,7 @@ function WebinarScheduleSummary({
 function WebinarEventList({
   plan,
 }: {
-  plan: NonNullable<Collaboration["webinarPlan"]>;
+  plan: WebinarPlanSchedule;
 }) {
   return (
     <div className="space-y-2">
@@ -239,7 +332,7 @@ function WebinarEventList({
 function ClassScheduleSummary({
   plan,
 }: {
-  plan: NonNullable<Collaboration["classPlan"]>;
+  plan: ClassPlanSchedule;
 }) {
   if (plan.classes.length === 0) {
     return (
@@ -247,7 +340,6 @@ function ClassScheduleSummary({
     );
   }
 
-  // Show summary for the most relevant class (first IN_PROGRESS, or first SCHEDULED)
   const activeClass =
     plan.classes.find((c) => c.status === "IN_PROGRESS") ?? plan.classes[0];
   const allSlots = activeClass.appointments.flatMap(
@@ -389,7 +481,7 @@ function ClassSessionList({ cls }: { cls: ClassEventSchedule }) {
 
 function ClassEventCard({ cls, plan }: {
   cls: ClassEventSchedule;
-  plan: NonNullable<Collaboration["classPlan"]>;
+  plan: ClassPlanSchedule;
 }) {
   const [sessionsExpanded, setSessionsExpanded] = useState(false);
   const allSlots = cls.appointments.flatMap((a) => a.slotsOfAppointment);
@@ -462,7 +554,7 @@ function ClassEventCard({ cls, plan }: {
 function ClassEventList({
   plan,
 }: {
-  plan: NonNullable<Collaboration["classPlan"]>;
+  plan: ClassPlanSchedule;
 }) {
   return (
     <div className="space-y-2">
@@ -473,8 +565,11 @@ function ClassEventList({
   );
 }
 
+// ─── Collaborator perspective card ───────────────────────────────────────────
+
 function ActiveCollaborationCard({
   collab,
+  currentUser,
 }: {
   collab: {
     id: string;
@@ -486,6 +581,7 @@ function ActiveCollaborationCard({
     webinarPlan?: Collaboration["webinarPlan"];
     classPlan?: Collaboration["classPlan"];
   };
+  currentUser?: { name: string | null; image: string | null };
 }) {
   const [slotsExpanded, setSlotsExpanded] = useState(false);
 
@@ -493,6 +589,16 @@ function ActiveCollaborationCard({
     collab.planType === "webinar"
       ? collab.webinarPlan?.consultantProfile
       : collab.classPlan?.consultantProfile;
+
+  // Filter out the current user from the collaborators list (they're shown in the banner)
+  const allCollaboratorsOnPlan = (
+    collab.planType === "webinar"
+      ? collab.webinarPlan?.collaborators
+      : collab.classPlan?.collaborators
+  ) ?? [];
+  const otherCollaborators = allCollaboratorsOnPlan.filter(
+    (c) => c.id !== collab.id,
+  );
 
   const hasExpandableDetails =
     (collab.planType === "webinar" &&
@@ -503,38 +609,119 @@ function ActiveCollaborationCard({
       collab.classPlan.classes.length > 1);
 
   return (
-    <div className="bg-white border border-zinc-200 rounded-lg overflow-hidden p-3">
-      {/* Header — always visible */}
+    <div className="bg-white border border-zinc-200 rounded-lg overflow-hidden">
+      {/* Role banner */}
+      <div className="bg-purple-600 px-3 py-1.5 flex items-center justify-between">
+        <span className="text-xs font-semibold text-white tracking-wide uppercase">{formatRole(collab.role)}</span>
+        <Badge variant="secondary" className="text-[10px] bg-purple-500 text-purple-100 border-purple-400">
+          {collab.planType === "webinar" ? "Webinar" : "Class"}
+        </Badge>
+      </div>
+
+      <div className="p-3">
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div className="min-w-0">
           <p className="text-sm font-medium text-zinc-800 truncate">
             {collab.planTitle}
           </p>
           <p className="text-xs text-zinc-500">
-            {collab.role.replace(/_/g, " ")} &middot;{" "}
-            {collab.revenueSharePercentage}% share
-            {owner?.user.name && (
-              <>
-                {" "}
-                &middot; by {owner.user.name}
-              </>
-            )}
+            by {owner?.user.name ?? "Unknown"}
           </p>
-        </div>
-        <div className="flex items-center gap-2 ml-3 shrink-0">
-          <Badge variant="secondary" className="text-xs">
-            {collab.planType === "webinar" ? "Webinar" : "Class"}
-          </Badge>
-          <Badge
-            variant="default"
-            className="bg-emerald-50 text-emerald-700 border-emerald-200"
-          >
-            Active
-          </Badge>
         </div>
       </div>
 
-      {/* Schedule summary — always visible */}
+      {/* Revenue share */}
+      <div className="flex items-center gap-2 mt-2 px-2 py-1.5 bg-zinc-50 rounded-md border border-zinc-100">
+        <div className="flex items-center gap-1.5 text-xs text-zinc-600">
+          {currentUser && (
+            <Avatar className="w-5 h-5">
+              <AvatarImage src={currentUser.image ?? undefined} />
+              <AvatarFallback className="text-[8px]">
+                {(currentUser.name ?? "Y").charAt(0)}
+              </AvatarFallback>
+            </Avatar>
+          )}
+          <span className="font-medium">You {collab.revenueSharePercentage}%</span>
+          {owner && (
+            <span>&middot; {owner.user.name} {100 - collab.revenueSharePercentage}%</span>
+          )}
+        </div>
+      </div>
+
+      {/* Team — host + other collaborators (excludes self) */}
+      <div className="border-t border-zinc-100 mt-3 pt-3">
+        <p className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider mb-2">
+          Team ({1 + otherCollaborators.length})
+        </p>
+        <div className="space-y-2">
+          {/* Host (plan owner) */}
+          {owner && (
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <Avatar className="w-7 h-7">
+                  <AvatarImage src={owner.user.image ?? undefined} />
+                  <AvatarFallback className="text-[10px]">
+                    {(owner.user.name ?? "H").charAt(0)}
+                  </AvatarFallback>
+                </Avatar>
+                <div>
+                  <p className="text-xs font-medium text-zinc-800">
+                    {owner.user.name ?? "Unknown"}
+                  </p>
+                  <p className="text-[11px] text-zinc-500">
+                    Host &middot; {100 - allCollaboratorsOnPlan.reduce((sum, c) => sum + c.revenueSharePercentage, 0)}% share
+                  </p>
+                </div>
+              </div>
+              <Badge
+                variant="default"
+                className="bg-zinc-100 text-zinc-700 border-zinc-200 text-[10px]"
+              >
+                Owner
+              </Badge>
+            </div>
+          )}
+          {/* Other collaborators (not the current user) */}
+          {otherCollaborators.map((c) => (
+            <div
+              key={c.id}
+              className="flex items-center justify-between"
+            >
+              <div className="flex items-center gap-2.5">
+                <Avatar className="w-7 h-7">
+                  <AvatarImage
+                    src={c.consultantProfile.user.image ?? undefined}
+                  />
+                  <AvatarFallback className="text-[10px]">
+                    {(c.consultantProfile.user.name ?? "?").charAt(0)}
+                  </AvatarFallback>
+                </Avatar>
+                <div>
+                  <p className="text-xs font-medium text-zinc-800">
+                    {c.consultantProfile.user.name ?? "Unknown"}
+                  </p>
+                  <p className="text-[11px] text-zinc-500">
+                    {formatRole(c.role)} &middot; {c.revenueSharePercentage}% share
+                  </p>
+                </div>
+              </div>
+              <Badge
+                variant={c.status === "ACCEPTED" ? "default" : "secondary"}
+                className={
+                  c.status === "ACCEPTED"
+                    ? "bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px]"
+                    : "text-[10px]"
+                }
+              >
+                {c.status === "ACCEPTED" ? "Accepted" : "Pending"}
+              </Badge>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Schedule summary */}
       <div className="border-t border-zinc-100 mt-3 pt-3">
         <p className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider mb-2">
           Schedule
@@ -550,7 +737,7 @@ function ActiveCollaborationCard({
         )}
       </div>
 
-      {/* All events — collapsible (multiple webinars or multiple class batches) */}
+      {/* All events — collapsible */}
       {hasExpandableDetails && (
         <div className="mt-2">
           <button
@@ -576,9 +763,205 @@ function ActiveCollaborationCard({
           )}
         </div>
       )}
+      </div>
     </div>
   );
 }
+
+// ─── Host perspective card ───────────────────────────────────────────────────
+
+function HostedPlanCard({
+  plan,
+  hostUser,
+}: {
+  plan: {
+    planType: "webinar" | "class";
+    title: string;
+    price: number;
+    collaborators: CollaboratorInfo[];
+    webinarPlan?: HostedWebinarPlan;
+    classPlan?: HostedClassPlan;
+  };
+  hostUser?: { name: string | null; image: string | null };
+}) {
+  const [eventsExpanded, setEventsExpanded] = useState(false);
+
+  const totalCollabShare = plan.collaborators
+    .filter((c) => c.status === "PENDING" || c.status === "ACCEPTED")
+    .reduce((sum, c) => sum + c.revenueSharePercentage, 0);
+  const hostShare = 100 - totalCollabShare;
+
+  const pendingCollabs = plan.collaborators.filter((c) => c.status === "PENDING");
+  const acceptedCollabs = plan.collaborators.filter((c) => c.status === "ACCEPTED");
+
+  const hasExpandableDetails =
+    (plan.planType === "webinar" &&
+      plan.webinarPlan &&
+      plan.webinarPlan.webinars.length > 1) ||
+    (plan.planType === "class" &&
+      plan.classPlan &&
+      plan.classPlan.classes.length > 1);
+
+  return (
+    <div className="bg-white border border-zinc-200 rounded-lg overflow-hidden">
+      {/* Role banner */}
+      <div className="bg-zinc-800 px-3 py-1.5 flex items-center justify-between">
+        <span className="text-xs font-semibold text-white tracking-wide uppercase">Host</span>
+        <Badge variant="secondary" className="text-[10px] bg-zinc-700 text-zinc-200 border-zinc-600">
+          {plan.planType === "webinar" ? "Webinar" : "Class"}
+        </Badge>
+      </div>
+
+      <div className="p-3">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-zinc-800 truncate">
+            {plan.title}
+          </p>
+          {plan.price > 0 && (
+            <p className="text-xs text-zinc-500">
+              {formatCurrencyAmount(plan.price, "INR")}
+            </p>
+          )}
+        </div>
+      </div>
+
+      {/* Revenue split */}
+      <div className="flex items-center gap-2 mt-2 px-2 py-1.5 bg-zinc-50 rounded-md border border-zinc-100">
+        <div className="flex items-center gap-1.5 text-xs text-zinc-600">
+          {hostUser && (
+            <Avatar className="w-5 h-5">
+              <AvatarImage src={hostUser.image ?? undefined} />
+              <AvatarFallback className="text-[8px]">
+                {(hostUser.name ?? "H").charAt(0)}
+              </AvatarFallback>
+            </Avatar>
+          )}
+          <span className="font-medium">You {hostShare}%</span>
+          <span>&middot; Collaborators {totalCollabShare}%</span>
+        </div>
+      </div>
+
+      {/* Collaborators list */}
+      <div className="border-t border-zinc-100 mt-3 pt-3">
+        <p className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider mb-2">
+          Collaborators ({plan.collaborators.length})
+        </p>
+        <div className="space-y-2">
+          {acceptedCollabs.map((collab) => (
+            <div
+              key={collab.id}
+              className="flex items-center justify-between"
+            >
+              <div className="flex items-center gap-2.5">
+                <Avatar className="w-7 h-7">
+                  <AvatarImage
+                    src={collab.consultantProfile.user.image ?? undefined}
+                  />
+                  <AvatarFallback className="text-[10px]">
+                    {(collab.consultantProfile.user.name ?? "?").charAt(0)}
+                  </AvatarFallback>
+                </Avatar>
+                <div>
+                  <p className="text-xs font-medium text-zinc-800">
+                    {collab.consultantProfile.user.name ?? "Unknown"}
+                  </p>
+                  <p className="text-[11px] text-zinc-500">
+                    {formatRole(collab.role)} &middot; {collab.revenueSharePercentage}% share
+                  </p>
+                </div>
+              </div>
+              <Badge
+                variant="default"
+                className="bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px]"
+              >
+                Accepted
+              </Badge>
+            </div>
+          ))}
+          {pendingCollabs.map((collab) => (
+            <div
+              key={collab.id}
+              className="flex items-center justify-between"
+            >
+              <div className="flex items-center gap-2.5">
+                <Avatar className="w-7 h-7">
+                  <AvatarImage
+                    src={collab.consultantProfile.user.image ?? undefined}
+                  />
+                  <AvatarFallback className="text-[10px]">
+                    {(collab.consultantProfile.user.name ?? "?").charAt(0)}
+                  </AvatarFallback>
+                </Avatar>
+                <div>
+                  <p className="text-xs font-medium text-zinc-800">
+                    {collab.consultantProfile.user.name ?? "Unknown"}
+                  </p>
+                  <p className="text-[11px] text-zinc-500">
+                    {formatRole(collab.role)} &middot; {collab.revenueSharePercentage}% share
+                  </p>
+                </div>
+              </div>
+              <Badge
+                variant="secondary"
+                className="text-[10px]"
+              >
+                Pending
+              </Badge>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Schedule summary */}
+      <div className="border-t border-zinc-100 mt-3 pt-3">
+        <p className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider mb-2">
+          Schedule
+        </p>
+        {plan.planType === "webinar" && plan.webinarPlan ? (
+          <WebinarScheduleSummary plan={plan.webinarPlan} />
+        ) : plan.planType === "class" && plan.classPlan ? (
+          <ClassScheduleSummary plan={plan.classPlan} />
+        ) : (
+          <p className="text-xs text-zinc-400 italic">
+            No schedule data available
+          </p>
+        )}
+      </div>
+
+      {/* All events — collapsible */}
+      {hasExpandableDetails && (
+        <div className="mt-2">
+          <button
+            type="button"
+            onClick={() => setEventsExpanded((prev) => !prev)}
+            className="flex items-center gap-1 text-[11px] text-zinc-500 hover:text-zinc-700 transition-colors"
+          >
+            {eventsExpanded ? (
+              <ChevronUp className="w-3 h-3" />
+            ) : (
+              <ChevronDown className="w-3 h-3" />
+            )}
+            {eventsExpanded ? "Hide" : "Show"} all events
+          </button>
+          {eventsExpanded && (
+            <div className="mt-2 border-t border-zinc-100 pt-2">
+              {plan.planType === "webinar" && plan.webinarPlan ? (
+                <WebinarEventList plan={plan.webinarPlan} />
+              ) : plan.planType === "class" && plan.classPlan ? (
+                <ClassEventList plan={plan.classPlan} />
+              ) : null}
+            </div>
+          )}
+        </div>
+      )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Main component ──────────────────────────────────────────────────────────
 
 export function InvitationsPanel() {
   const { toast } = useToast();
@@ -630,6 +1013,7 @@ export function InvitationsPanel() {
     },
   });
 
+  // ── Collaborator perspective data ──
   const allCollaborations = [
     ...(data?.webinarCollaborations.map((c) => ({
       ...c,
@@ -648,6 +1032,28 @@ export function InvitationsPanel() {
   const pending = allCollaborations.filter((c) => c.status === "PENDING");
   const accepted = allCollaborations.filter((c) => c.status === "ACCEPTED");
 
+  // ── Host perspective data ──
+  const hostedPlans = [
+    ...(data?.hostedWebinarPlans?.map((p) => ({
+      planType: "webinar" as const,
+      title: p.title,
+      price: p.price,
+      collaborators: p.collaborators,
+      webinarPlan: p,
+      classPlan: undefined as HostedClassPlan | undefined,
+    })) ?? []),
+    ...(data?.hostedClassPlans?.map((p) => ({
+      planType: "class" as const,
+      title: p.title,
+      price: p.price,
+      collaborators: p.collaborators,
+      webinarPlan: undefined as HostedWebinarPlan | undefined,
+      classPlan: p,
+    })) ?? []),
+  ];
+
+  const hasAnyData = allCollaborations.length > 0 || hostedPlans.length > 0;
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-8">
@@ -656,14 +1062,14 @@ export function InvitationsPanel() {
     );
   }
 
-  if (allCollaborations.length === 0) {
+  if (!hasAnyData) {
     return (
       <div className="text-center py-12 text-zinc-500">
         <Inbox className="w-10 h-10 mx-auto mb-3 text-zinc-300" />
         <p className="font-medium">No collaborations</p>
         <p className="text-sm mt-1">
-          When another consultant invites you to collaborate, it will appear
-          here.
+          When you invite collaborators to your plans or another consultant
+          invites you, it will appear here.
         </p>
       </div>
     );
@@ -671,7 +1077,25 @@ export function InvitationsPanel() {
 
   return (
     <div className="space-y-6">
-      {/* Pending invitations */}
+      {/* ── Host section: My Plans with Collaborators ── */}
+      {hostedPlans.length > 0 && (
+        <div>
+          <h3 className="text-sm font-semibold text-zinc-700 mb-3">
+            My Plans with Collaborators ({hostedPlans.length})
+          </h3>
+          <div className="space-y-2">
+            {hostedPlans.map((plan) => (
+              <HostedPlanCard
+                key={`${plan.planType}-${plan.webinarPlan?.id ?? plan.classPlan?.id}`}
+                plan={plan}
+                hostUser={data?.hostUser}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Collaborator section: Pending Invitations ── */}
       {pending.length > 0 && (
         <div>
           <h3 className="text-sm font-semibold text-zinc-700 mb-3">
@@ -699,7 +1123,7 @@ export function InvitationsPanel() {
                         {collab.planType === "webinar" ? "Webinar" : "Class"}
                       </Badge>
                       <Badge variant="outline" className="text-xs">
-                        {collab.role.replace(/_/g, " ")}
+                        {formatRole(collab.role)}
                       </Badge>
                       <span className="text-xs text-zinc-500">
                         {collab.revenueSharePercentage}% revenue share
@@ -751,7 +1175,7 @@ export function InvitationsPanel() {
         </div>
       )}
 
-      {/* Accepted collaborations */}
+      {/* ── Collaborator section: Active Collaborations ── */}
       {accepted.length > 0 && (
         <div>
           <h3 className="text-sm font-semibold text-zinc-700 mb-3">
@@ -759,7 +1183,7 @@ export function InvitationsPanel() {
           </h3>
           <div className="space-y-2">
             {accepted.map((collab) => (
-              <ActiveCollaborationCard key={collab.id} collab={collab} />
+              <ActiveCollaborationCard key={collab.id} collab={collab} currentUser={data?.hostUser} />
             ))}
           </div>
         </div>
