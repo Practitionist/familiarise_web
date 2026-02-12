@@ -1,6 +1,78 @@
 import { format } from "date-fns";
 import { TAppointment } from "@/types/appointment";
 
+// =============================================================================
+// Collaborator Role Helpers
+// =============================================================================
+
+/**
+ * Determine the collaborator role for the current consultant on a webinar/class appointment.
+ * Returns null for consultations/subscriptions (no collaborators) or solo events without collaborators.
+ */
+export function getCollaboratorRole(
+  appointment: TAppointment,
+  consultantId: string,
+): string | null {
+  if (appointment.appointmentType === "WEBINAR" && appointment.webinar) {
+    const plan = appointment.webinar.webinarPlan;
+    if (plan?.consultantProfileId === consultantId) {
+      // Only show "Host" badge if there are collaborators
+      const collaborators = (plan as Record<string, unknown>).collaborators;
+      if (Array.isArray(collaborators) && collaborators.length > 0) {
+        return "HOST";
+      }
+      return null; // Solo event
+    }
+    const collaborators = (plan as Record<string, unknown>).collaborators;
+    if (Array.isArray(collaborators)) {
+      const collab = collaborators.find(
+        (c: Record<string, unknown>) => c.consultantProfileId === consultantId,
+      );
+      if (collab) return (collab as Record<string, unknown>).role as string;
+    }
+  }
+  if (appointment.appointmentType === "CLASS" && appointment.class) {
+    const plan = appointment.class.classPlan;
+    if (plan?.consultantProfileId === consultantId) {
+      const collaborators = (plan as Record<string, unknown>).collaborators;
+      if (Array.isArray(collaborators) && collaborators.length > 0) {
+        return "HOST";
+      }
+      return null;
+    }
+    const collaborators = (plan as Record<string, unknown>).collaborators;
+    if (Array.isArray(collaborators)) {
+      const collab = collaborators.find(
+        (c: Record<string, unknown>) => c.consultantProfileId === consultantId,
+      );
+      if (collab) return (collab as Record<string, unknown>).role as string;
+    }
+  }
+  return null;
+}
+
+/** Format a collaborator role enum value to a human-readable label */
+export function formatCollaboratorRole(role: string): string {
+  const labels: Record<string, string> = {
+    HOST: "Host",
+    CO_HOST: "Co-Host",
+    MODERATOR: "Moderator",
+    GUEST_SPEAKER: "Guest Speaker",
+    TECHNICAL_SUPPORT: "Tech Support",
+    CO_INSTRUCTOR: "Co-Instructor",
+    TEACHING_ASSISTANT: "TA",
+    GUEST_LECTURER: "Guest Lecturer",
+    CONTENT_CREATOR: "Content Creator",
+  };
+  return labels[role] || role;
+}
+
+/** Get the CSS class for a collaborator role badge */
+export function getRoleBadgeStyle(role: string): string {
+  if (role === "HOST") return "bg-gray-900 text-white";
+  return "bg-purple-100 text-purple-800";
+}
+
 /**
  * Type for appointment slot that supports both API response formats
  * - startsAt: Standard Prisma field from direct queries

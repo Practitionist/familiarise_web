@@ -83,6 +83,22 @@ const appointmentInclude = {
               },
             },
           },
+          collaborators: {
+            where: { status: "ACCEPTED" },
+            include: {
+              consultantProfile: {
+                include: {
+                  user: {
+                    select: {
+                      id: true,
+                      name: true,
+                      image: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
         },
       },
     },
@@ -95,6 +111,22 @@ const appointmentInclude = {
             include: {
               user: {
                 select: userSelectFields,
+              },
+            },
+          },
+          collaborators: {
+            where: { status: "ACCEPTED" },
+            include: {
+              consultantProfile: {
+                include: {
+                  user: {
+                    select: {
+                      id: true,
+                      name: true,
+                      image: true,
+                    },
+                  },
+                },
               },
             },
           },
@@ -307,8 +339,36 @@ export async function GET(
               },
             },
             {
+              // Collaborated webinars (co-host, moderator, etc.)
+              webinar: {
+                webinarPlan: {
+                  collaborators: {
+                    some: {
+                      consultantProfileId,
+                      status: "ACCEPTED",
+                    },
+                  },
+                },
+                status: "SCHEDULED",
+              },
+            },
+            {
               class: {
                 classPlan: { consultantProfileId },
+                status: "SCHEDULED",
+              },
+            },
+            {
+              // Collaborated classes (co-instructor, TA, etc.)
+              class: {
+                classPlan: {
+                  collaborators: {
+                    some: {
+                      consultantProfileId,
+                      status: "ACCEPTED",
+                    },
+                  },
+                },
                 status: "SCHEDULED",
               },
             },
@@ -440,6 +500,8 @@ export async function GET(
                 ...appointment.webinar.webinarPlan,
                 consultantProfile:
                   appointment.webinar.webinarPlan.consultantProfile,
+                collaborators:
+                  appointment.webinar.webinarPlan.collaborators ?? [],
               },
               status: appointment.webinar.status,
             }
@@ -451,6 +513,8 @@ export async function GET(
                 ...appointment.class.classPlan,
                 consultantProfile:
                   appointment.class.classPlan.consultantProfile,
+                collaborators:
+                  appointment.class.classPlan.collaborators ?? [],
               },
               status: appointment.class.status,
             }

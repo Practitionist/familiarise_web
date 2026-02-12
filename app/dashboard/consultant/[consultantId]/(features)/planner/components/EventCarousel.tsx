@@ -29,6 +29,9 @@ interface WebinarCarouselProps {
   onDelete: (eventId: string) => Promise<void>;
   eventType: "webinar";
   participantCounts: Record<string, number>;
+  onJoinMeeting?: (event: PlannerWebinarEvent) => void;
+  joinableEventIds?: Set<string>;
+  joiningEventId?: string | null;
 }
 
 interface ClassCarouselProps {
@@ -37,6 +40,9 @@ interface ClassCarouselProps {
   onDelete: (eventId: string) => Promise<void>;
   eventType: "class";
   participantCounts: Record<string, number>;
+  onJoinMeeting?: (event: PlannerClassEvent) => void;
+  joinableEventIds?: Set<string>;
+  joiningEventId?: string | null;
 }
 
 interface ConsultationCarouselProps {
@@ -155,6 +161,26 @@ export function EventCarousel({
     eventType === "subscription"
       ? (props as SubscriptionCarouselProps).onTrialsClick
       : undefined;
+
+  // Extract join meeting props for webinar/class
+  const onJoinMeeting =
+    eventType === "webinar"
+      ? (props as WebinarCarouselProps).onJoinMeeting
+      : eventType === "class"
+        ? (props as ClassCarouselProps).onJoinMeeting
+        : undefined;
+  const joinableEventIds =
+    eventType === "webinar"
+      ? (props as WebinarCarouselProps).joinableEventIds
+      : eventType === "class"
+        ? (props as ClassCarouselProps).joinableEventIds
+        : undefined;
+  const joiningEventId =
+    eventType === "webinar"
+      ? (props as WebinarCarouselProps).joiningEventId
+      : eventType === "class"
+        ? (props as ClassCarouselProps).joiningEventId
+        : undefined;
   const [currentPage, setCurrentPage] = React.useState(1);
   const itemsPerPage = 8;
 
@@ -285,6 +311,13 @@ export function EventCarousel({
                   ? onTrialsClick
                   : undefined
               }
+              onJoinMeeting={
+                onJoinMeeting && (eventType === "webinar" || eventType === "class")
+                  ? () => onJoinMeeting(event as PlannerWebinarEvent & PlannerClassEvent)
+                  : undefined
+              }
+              canJoinNow={joinableEventIds?.has(event.id ?? "") ?? false}
+              isJoiningMeeting={joiningEventId === event.id}
             />
           </motion.div>
         ))}

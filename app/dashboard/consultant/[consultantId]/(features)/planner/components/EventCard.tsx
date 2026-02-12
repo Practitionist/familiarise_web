@@ -13,6 +13,7 @@ import {
   GraduationCap,
   Users,
   Gift,
+  Loader2,
 } from "lucide-react";
 import { cn } from "@/utils/tailwind";
 import { WebinarStatus, ClassStatus } from "@prisma/client";
@@ -36,6 +37,9 @@ interface EventCardProps {
   onEdit: () => void;
   onDelete: () => void;
   onTrialsClick?: () => void;
+  onJoinMeeting?: () => void;
+  canJoinNow?: boolean;
+  isJoiningMeeting?: boolean;
 }
 
 function formatCollaboratorRole(role: string): string {
@@ -241,6 +245,9 @@ export function EventCard({
   onEdit,
   onDelete,
   onTrialsClick,
+  onJoinMeeting,
+  canJoinNow,
+  isJoiningMeeting,
 }: Readonly<EventCardProps>) {
   const config = eventTypeConfig[eventType];
   const Icon = config.icon;
@@ -349,6 +356,46 @@ export function EventCard({
               {status.toString().replace("_", " ")}
             </Badge>
           )}
+        </div>
+      )}
+
+      {/* Join Meeting button for live sessions */}
+      {isLiveSession && onJoinMeeting && (
+        <div className="mt-3">
+          <Button
+            onClick={(e) => {
+              e.stopPropagation();
+              onJoinMeeting();
+            }}
+            disabled={
+              process.env.NODE_ENV === "production"
+                ? !canJoinNow || isJoiningMeeting
+                : isJoiningMeeting
+            }
+            className={cn(
+              "w-full gap-2 font-medium",
+              canJoinNow
+                ? "bg-emerald-600 hover:bg-emerald-700 text-white"
+                : "bg-zinc-100 text-zinc-500",
+            )}
+            size="sm"
+          >
+            {isJoiningMeeting ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Joining...
+              </>
+            ) : (
+              <>
+                <Video className="h-4 w-4" />
+                {process.env.NODE_ENV === "production"
+                  ? canJoinNow
+                    ? "Join Meeting"
+                    : "Not Available Yet"
+                  : "Join (Dev)"}
+              </>
+            )}
+          </Button>
         </div>
       )}
 

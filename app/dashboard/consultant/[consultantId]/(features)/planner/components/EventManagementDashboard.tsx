@@ -1,11 +1,17 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { useRouter } from "next/navigation";
 import { EventCarousel } from "./EventCarousel";
 import { EventPlanner } from "./EventPlanner";
+import { useStreamVideoClient } from "@stream-io/video-react-sdk";
+import {
+  getOrCreateAppointmentMeeting,
+  MeetingAppointment,
+  MeetingSlot,
+} from "@/lib/meeting";
 import {
   WebinarEvent,
   ClassEvent,
@@ -94,6 +100,186 @@ export function EventManagementDashboard({
   const { refreshPlanner } = usePlannerRefresh(consultantId);
   const [currentDate, setCurrentDate] = useState(new Date());
   const router = useRouter();
+  const streamClient = useStreamVideoClient();
+  const [joiningEventId, setJoiningEventId] = useState<string | null>(null);
+
+  // Compute which webinar/class events are currently joinable (within 10 min before start to end)
+  const joinableEventIds = useMemo(() => {
+    const now = new Date();
+    const ids = new Set<string>();
+
+    for (const webinar of webinars) {
+      const startTimeStr =
+        webinar.appointment?.slotsOfAppointment?.[0]?.startsAt;
+      const endTimeStr = webinar.appointment?.slotsOfAppointment?.[0]?.endsAt;
+      if (startTimeStr) {
+        const startTime = new Date(startTimeStr);
+        const endTime = endTimeStr
+          ? new Date(endTimeStr)
+          : new Date(
+              startTime.getTime() +
+                (webinar.webinarPlan.durationInHours ?? 1) * 60 * 60 * 1000,
+            );
+        const joinWindow = new Date(startTime.getTime() - 10 * 60 * 1000);
+        if (now >= joinWindow && now <= endTime && webinar.id) {
+          ids.add(webinar.id);
+        }
+      }
+    }
+
+    for (const cls of classes) {
+      // For classes, check the nearest upcoming appointment
+      const appointments = cls.appointments ?? [];
+      for (const appt of appointments) {
+        const startTimeStr = appt.slotsOfAppointment?.[0]?.startsAt;
+        const endTimeStr = appt.slotsOfAppointment?.[0]?.endsAt;
+        if (startTimeStr) {
+          const startTime = new Date(startTimeStr);
+          const endTime = endTimeStr
+            ? new Date(endTimeStr)
+            : new Date(startTime.getTime() + 60 * 60 * 1000);
+          const joinWindow = new Date(startTime.getTime() - 10 * 60 * 1000);
+          if (now >= joinWindow && now <= endTime && cls.id) {
+            ids.add(cls.id);
+          }
+        }
+      }
+    }
+
+    return ids;
+  }, [webinars, classes]);
+
+  // Handle joining a meeting from the planner
+  const handleJoinWebinarMeeting = async (webinar: PlannerWebinarEvent) => {
+    if (!streamClient) {
+      toast({
+        title: "Not signed in",
+        description: "Video client not initialized. Please sign in to join.",
+        variant: "warning",
+      });
+      return;
+    }
+
+    const slot = webinar.appointment?.slotsOfAppointment?.[0];
+    if (!slot || !webinar.appointment) {
+      toast({
+        title: "Error",
+        description: "Meeting slot information is not available.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setJoiningEventId(webinar.id ?? null);
+    try {
+      const meetingSlot: MeetingSlot = {
+        id: slot.id,
+        startsAt: slot.startsAt,
+        endsAt: slot.endsAt,
+        appointmentId: webinar.appointment.id,
+      };
+      const meetingAppointment: MeetingAppointment = {
+        id: webinar.appointment.id,
+        appointmentType: "WEBINAR",
+        slotsOfAppointment: [meetingSlot],
+        webinar: { webinarPlan: { title: webinar.webinarPlan.title } },
+      };
+      const meetingId = await getOrCreateAppointmentMeeting(
+        streamClient,
+        meetingAppointment,
+        meetingSlot,
+      );
+      toast({
+        title: "Joining meeting",
+        description: "Redirecting to the meeting room.",
+      });
+      router.push(`/meetings/${meetingId}`);
+    } catch (error) {
+      console.error("Error joining webinar meeting:", error);
+      toast({
+        title: "Error joining meeting",
+        description: error instanceof Error ? error.message : "Unknown error",
+        variant: "destructive",
+      });
+      setJoiningEventId(null);
+    }
+  };
+
+  const handleJoinClassMeeting = async (classEvent: PlannerClassEvent) => {
+    if (!streamClient) {
+      toast({
+        title: "Not signed in",
+        description: "Video client not initialized. Please sign in to join.",
+        variant: "warning",
+      });
+      return;
+    }
+
+    // Find the nearest joinable appointment for this class
+    const now = new Date();
+    const appointments = classEvent.appointments ?? [];
+    let targetAppt = null;
+    let targetSlot = null;
+
+    for (const appt of appointments) {
+      const slot = appt.slotsOfAppointment?.[0];
+      if (slot?.startsAt) {
+        const startTime = new Date(slot.startsAt);
+        const endTime = slot.endsAt
+          ? new Date(slot.endsAt)
+          : new Date(startTime.getTime() + 60 * 60 * 1000);
+        const joinWindow = new Date(startTime.getTime() - 10 * 60 * 1000);
+        if (now >= joinWindow && now <= endTime) {
+          targetAppt = appt;
+          targetSlot = slot;
+          break;
+        }
+      }
+    }
+
+    if (!targetAppt || !targetSlot) {
+      toast({
+        title: "Error",
+        description: "No joinable session found for this class.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setJoiningEventId(classEvent.id ?? null);
+    try {
+      const meetingSlot: MeetingSlot = {
+        id: targetSlot.id,
+        startsAt: targetSlot.startsAt,
+        endsAt: targetSlot.endsAt,
+        appointmentId: targetAppt.id,
+      };
+      const meetingAppointment: MeetingAppointment = {
+        id: targetAppt.id,
+        appointmentType: "CLASS",
+        slotsOfAppointment: [meetingSlot],
+        class: { classPlan: { title: classEvent.classPlan.title } },
+      };
+      const meetingId = await getOrCreateAppointmentMeeting(
+        streamClient,
+        meetingAppointment,
+        meetingSlot,
+      );
+      toast({
+        title: "Joining meeting",
+        description: "Redirecting to the meeting room.",
+      });
+      router.push(`/meetings/${meetingId}`);
+    } catch (error) {
+      console.error("Error joining class meeting:", error);
+      toast({
+        title: "Error joining meeting",
+        description: error instanceof Error ? error.message : "Unknown error",
+        variant: "destructive",
+      });
+      setJoiningEventId(null);
+    }
+  };
 
   // Trial management state - just counts for badge display
   const [pendingTrialCounts, setPendingTrialCounts] = useState<
@@ -656,6 +842,9 @@ export function EventManagementDashboard({
               onDelete={handleWebinarDelete}
               eventType="webinar"
               participantCounts={initialData?.participantCounts || {}}
+              onJoinMeeting={handleJoinWebinarMeeting}
+              joinableEventIds={joinableEventIds}
+              joiningEventId={joiningEventId}
             />
           </div>
 
@@ -689,6 +878,9 @@ export function EventManagementDashboard({
               onDelete={handleClassDelete}
               eventType="class"
               participantCounts={initialData?.participantCounts || {}}
+              onJoinMeeting={handleJoinClassMeeting}
+              joinableEventIds={joinableEventIds}
+              joiningEventId={joiningEventId}
             />
           </div>
         </motion.section>
