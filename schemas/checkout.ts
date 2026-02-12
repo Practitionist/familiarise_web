@@ -302,6 +302,7 @@ export const createCheckoutData = (params: {
   discountCode?: string;
   notes?: string;
   fromWaitlist?: string;
+  useReferralCredits?: boolean;
 }): CheckoutInput => {
   return {
     appointmentType: params.appointmentType,
@@ -317,5 +318,6 @@ export const createCheckoutData = (params: {
     discountCode: params.discountCode,
     notes: params.notes,
     fromWaitlist: params.fromWaitlist,
+    useReferralCredits: params.useReferralCredits,
   };
 };

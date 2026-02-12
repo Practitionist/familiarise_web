@@ -388,8 +388,9 @@ export async function calculateAmountAndValidate(
     if (validatedData.useReferralCredits && amount > 0) {
       const { totalAvailable } = await getUserCredits(userId, tx);
       if (totalAvailable > 0) {
-        // Credits are stored in paise, amount is also in paise
-        creditsApplied = Math.min(totalAvailable, amount);
+        // Credits are stored in paise, amount is in rupees — convert to rupees for comparison
+        const creditsInRupees = Math.floor(totalAvailable / 100);
+        creditsApplied = Math.min(creditsInRupees, amount);
         amount = amount - creditsApplied;
       }
     }
@@ -1564,14 +1565,17 @@ export async function handleCheckout(
           let actualCreditsApplied = 0;
           if (creditsApplied > 0) {
             const { totalAvailable } = await getUserCredits(userId, tx);
-            actualCreditsApplied = Math.min(totalAvailable, creditsApplied);
+            // creditsApplied is in rupees (from TX1), convert to paise for comparison
+            // with totalAvailable (paise) and for applyCreditsToPayment (works in paise)
+            const creditsAppliedInPaise = creditsApplied * 100;
+            const actualCreditsInPaise = Math.min(totalAvailable, creditsAppliedInPaise);
 
-            if (actualCreditsApplied > 0) {
-              await applyCreditsToPayment(userId, actualCreditsApplied, tx, payment.id);
+            if (actualCreditsInPaise > 0) {
+              await applyCreditsToPayment(userId, actualCreditsInPaise, tx, payment.id);
               console.log(
-                `🎁 Applied ${actualCreditsApplied} referral credits for user ${userId}` +
-                (actualCreditsApplied !== creditsApplied
-                  ? ` (requested ${creditsApplied}, available ${totalAvailable})`
+                `🎁 Applied ${actualCreditsInPaise} paise (₹${creditsApplied}) referral credits for user ${userId}` +
+                (actualCreditsInPaise !== creditsAppliedInPaise
+                  ? ` (requested ${creditsAppliedInPaise} paise, available ${totalAvailable} paise)`
                   : ""),
               );
             }
@@ -1580,12 +1584,13 @@ export async function handleCheckout(
             // checkout consuming them between TX1 and TX2), abort the transaction.
             // The payment intent was created with a reduced amount based on TX1's
             // credit calculation, so proceeding would undercharge the user.
-            if (actualCreditsApplied < creditsApplied) {
+            if (actualCreditsInPaise < creditsAppliedInPaise) {
               throw new Error(
-                `CREDIT_SHORTFALL: expected ${creditsApplied} credits but only ${actualCreditsApplied} available. ` +
+                `CREDIT_SHORTFALL: expected ${creditsAppliedInPaise} paise credits but only ${actualCreditsInPaise} available. ` +
                 `Payment ${payment.id} amount is stale. Aborting for retry.`,
               );
             }
+            actualCreditsApplied = creditsApplied; // In rupees for return value
           }
 
           return { appointmentId: createdAppointment?.id, creditsApplied: actualCreditsApplied };
