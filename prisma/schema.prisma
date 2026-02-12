@@ -1457,7 +1457,8 @@ enum Platform {
 
 model Payment {
   id             String         @id @default(uuid())
-  amount         Int
+  amount         Int // Final amount charged (after discounts + credits)
+  originalAmount Int? // Original plan price before discounts/credits (null for legacy payments)
   currency       String
   description    String?
   receiptUrl     String?

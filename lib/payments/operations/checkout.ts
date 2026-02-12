@@ -323,6 +323,10 @@ export async function calculateAmountAndValidate(
         throw new Error("Invalid appointment type");
     }
 
+    // Capture original plan price before any discounts/credits
+    // This is used for consultant earnings — discounts are platform-funded, not consultant-funded
+    const originalAmount = amount;
+
     // Apply discount if provided - with full backend re-validation
     let discountCodeId = null;
     if (validatedData.discountCode) {
@@ -397,6 +401,7 @@ export async function calculateAmountAndValidate(
 
     return {
       amount,
+      originalAmount,
       currency,
       discountCodeId,
       consulteeProfileId: user.consulteeProfile.id,
@@ -1415,7 +1420,7 @@ export async function handleCheckout(
 
   try {
     // STEP 1: Calculate amount and fetch plan data (OUTSIDE LOCK - just pricing)
-    const { amount, currency, discountCodeId, consulteeProfileId, creditsApplied } =
+    const { amount, originalAmount, currency, discountCodeId, consulteeProfileId, creditsApplied } =
       await calculateAmountAndValidate(validatedData, userId);
 
     // Get plan data for consultant ID (needed for lock acquisition)
@@ -1529,6 +1534,7 @@ export async function handleCheckout(
           const payment = await tx.payment.create({
             data: {
               amount,
+              originalAmount,
               currency,
               paymentMethod: "CARD",
               paymentIntent: paymentResponse!.id,
