@@ -337,7 +337,37 @@ export async function getMyCollaborations(consultantProfileId: string) {
       },
       include: {
         webinarPlan: {
-          select: { id: true, title: true, price: true },
+          select: {
+            id: true,
+            title: true,
+            price: true,
+            durationInHours: true,
+            maxParticipants: true,
+            language: true,
+            level: true,
+            consultantProfile: {
+              select: { user: { select: { name: true, image: true } } },
+            },
+            webinars: {
+              where: { status: { in: ["SCHEDULED", "IN_PROGRESS"] } },
+              include: {
+                appointment: {
+                  include: {
+                    slotsOfAppointment: {
+                      select: {
+                        startsAt: true,
+                        endsAt: true,
+                        isTentative: true,
+                        _count: { select: { user: true } },
+                      },
+                    },
+                  },
+                },
+              },
+              orderBy: { createdAt: "desc" },
+              take: 5,
+            },
+          },
         },
         invitedBy: {
           include: { user: { select: { name: true } } },
@@ -352,7 +382,39 @@ export async function getMyCollaborations(consultantProfileId: string) {
       },
       include: {
         classPlan: {
-          select: { id: true, title: true, price: true },
+          select: {
+            id: true,
+            title: true,
+            price: true,
+            sessionDurationInHours: true,
+            maxParticipants: true,
+            meetingsPerWeek: true,
+            durationInMonths: true,
+            totalSessions: true,
+            consultantProfile: {
+              select: { user: { select: { name: true, image: true } } },
+            },
+            classes: {
+              where: { status: { in: ["SCHEDULED", "IN_PROGRESS"] } },
+              include: {
+                appointments: {
+                  include: {
+                    slotsOfAppointment: {
+                      select: {
+                        startsAt: true,
+                        endsAt: true,
+                        isTentative: true,
+                        _count: { select: { user: true } },
+                      },
+                      orderBy: { startsAt: "asc" },
+                    },
+                  },
+                },
+              },
+              orderBy: { createdAt: "desc" },
+              take: 5,
+            },
+          },
         },
         invitedBy: {
           include: { user: { select: { name: true } } },
