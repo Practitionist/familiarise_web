@@ -32,6 +32,7 @@ import { markWaitlistAsBooked } from "@/lib/waitlist/slot-handler";
 import {
   applyCreditsToPayment,
   getUserCredits,
+  processQualifyingAction,
 } from "@/lib/referrals/service";
 
 // Re-export for backward compatibility
@@ -73,7 +74,7 @@ type SubscriptionCheckoutResult = {
 function buildPaymentMetadata(
   data: CheckoutInput,
   userId: string,
-): { appointmentId: string; appointmentType: string; [key: string]: string } {
+): { appointmentId: string; appointmentType: string;[key: string]: string } {
   return {
     appointmentId: "pending",
     appointmentType: data.appointmentType,
@@ -456,14 +457,14 @@ export async function validateSlotAvailability(
         // FIX: Filter by consultant - only check slots belonging to this consultant
         ...(consultantUserId
           ? [
-              {
-                user: {
-                  some: {
-                    id: consultantUserId,
-                  },
+            {
+              user: {
+                some: {
+                  id: consultantUserId,
                 },
               },
-            ]
+            },
+          ]
           : []),
       ],
     },
@@ -498,14 +499,14 @@ export async function validateSlotAvailability(
           // FIX: Filter by consultant - only check tentative slots for this consultant
           ...(consultantUserId
             ? [
-                {
-                  user: {
-                    some: {
-                      id: consultantUserId,
-                    },
+              {
+                user: {
+                  some: {
+                    id: consultantUserId,
                   },
                 },
-              ]
+              },
+            ]
             : []),
           {
             appointment: {
@@ -569,14 +570,14 @@ export async function validateSlotAvailability(
         // FIX: Filter by consultant - only count tentative slots for this consultant
         ...(consultantUserId
           ? [
-              {
-                user: {
-                  some: {
-                    id: consultantUserId,
-                  },
+            {
+              user: {
+                some: {
+                  id: consultantUserId,
                 },
               },
-            ]
+            },
+          ]
           : []),
         {
           appointment: {
@@ -1614,20 +1615,35 @@ export async function handleCheckout(
         }),
       );
 
-      // Update waitlist status if coming from waitlist flow
-      if (isMockPayment && validatedData.fromWaitlist) {
+      // Mock payment post-processing: referral qualifying action + waitlist
+      // Real payments handle this via handlePaymentSuccess() in the webhook,
+      // but mock payments bypass webhooks entirely.
+      if (isMockPayment) {
+        // Trigger referral reward if this is the user's first paid booking
         try {
-          await markWaitlistAsBooked(validatedData.fromWaitlist);
-          console.log(
-            JSON.stringify({
-              event: "waitlist_booking_completed",
-              waitlistId: validatedData.fromWaitlist,
-              timestamp: new Date().toISOString(),
-            }),
+          await processQualifyingAction(userId, "first_paid_booking");
+        } catch (referralError) {
+          console.error(
+            `⚠️ Failed to process referral qualifying action for user ${userId}:`,
+            referralError,
           );
-        } catch (waitlistError) {
-          // Log but don't fail the checkout - payment was successful
-          console.error("Failed to update waitlist status:", waitlistError);
+        }
+
+        // Update waitlist status if coming from waitlist flow
+        if (validatedData.fromWaitlist) {
+          try {
+            await markWaitlistAsBooked(validatedData.fromWaitlist);
+            console.log(
+              JSON.stringify({
+                event: "waitlist_booking_completed",
+                waitlistId: validatedData.fromWaitlist,
+                timestamp: new Date().toISOString(),
+              }),
+            );
+          } catch (waitlistError) {
+            // Log but don't fail the checkout - payment was successful
+            console.error("Failed to update waitlist status:", waitlistError);
+          }
         }
       }
 
