@@ -60,8 +60,8 @@ export async function createEarningsFromPayment({
     return null;
   }
 
-  // Calculate revenue split using original amount (before platform-funded discounts/credits)
-  const grossAmount = payment.originalAmount ?? payment.amount;
+  // Calculate revenue split using original plan price (before platform-funded discounts/credits/tax)
+  const grossAmount = payment.originalAmount;
   const platformFee = Math.round(
     (grossAmount * PAYOUT_CONSTANTS.PLATFORM_FEE_PERCENTAGE) / 100,
   );

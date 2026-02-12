@@ -67,7 +67,7 @@ function calculateEarningsData(
   payment: {
     id: string;
     amount: number;
-    originalAmount: number | null;
+    originalAmount: number;
     createdAt: Date;
     appointment: {
       appointmentType: AppointmentsType;
@@ -75,8 +75,8 @@ function calculateEarningsData(
   },
   consultantProfileId: string,
 ) {
-  // Use original amount (before platform-funded discounts/credits) for earnings calculation
-  const grossAmount = payment.originalAmount ?? payment.amount;
+  // Use original plan price (before platform-funded discounts/credits/tax) for earnings
+  const grossAmount = payment.originalAmount;
   const platformFee = Math.round(
     (grossAmount * PAYOUT_CONSTANTS.PLATFORM_FEE_PERCENTAGE) / 100,
   );

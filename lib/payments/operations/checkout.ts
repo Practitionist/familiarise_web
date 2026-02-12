@@ -34,6 +34,7 @@ import {
   getUserCredits,
   processQualifyingAction,
 } from "@/lib/referrals/service";
+import { TAX_CONSTANTS } from "@/lib/payments/payouts/constants";
 
 // Re-export for backward compatibility
 export const unifiedCheckoutSchema = checkoutSchema;
@@ -387,7 +388,11 @@ export async function calculateAmountAndValidate(
         currency = validatedData.paymentGateway === "RAZORPAY" ? "INR" : "USD";
     }
 
-    // Apply referral credits if requested
+    // Calculate GST on the discounted price (tax-exclusive: plan.price + 18% GST)
+    const taxAmount = Math.round((amount * TAX_CONSTANTS.GST_RATE) / 100);
+    amount = amount + taxAmount;
+
+    // Apply referral credits AFTER tax (credits act as a payment method, not a trade discount)
     let creditsApplied = 0;
     if (validatedData.useReferralCredits && amount > 0) {
       const { totalAvailable } = await getUserCredits(userId, tx);
@@ -402,6 +407,7 @@ export async function calculateAmountAndValidate(
     return {
       amount,
       originalAmount,
+      taxAmount,
       currency,
       discountCodeId,
       consulteeProfileId: user.consulteeProfile.id,
@@ -1420,7 +1426,7 @@ export async function handleCheckout(
 
   try {
     // STEP 1: Calculate amount and fetch plan data (OUTSIDE LOCK - just pricing)
-    const { amount, originalAmount, currency, discountCodeId, consulteeProfileId, creditsApplied } =
+    const { amount, originalAmount, taxAmount, currency, discountCodeId, consulteeProfileId, creditsApplied } =
       await calculateAmountAndValidate(validatedData, userId);
 
     // Get plan data for consultant ID (needed for lock acquisition)
@@ -1535,6 +1541,7 @@ export async function handleCheckout(
             data: {
               amount,
               originalAmount,
+              taxAmount,
               currency,
               paymentMethod: "CARD",
               paymentIntent: paymentResponse!.id,
