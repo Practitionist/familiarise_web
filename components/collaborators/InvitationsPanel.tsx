@@ -174,7 +174,7 @@ function WebinarScheduleSummary({
   );
 }
 
-function WebinarSlotDetails({
+function WebinarEventList({
   plan,
 }: {
   plan: NonNullable<Collaboration["webinarPlan"]>;
@@ -187,35 +187,47 @@ function WebinarSlotDetails({
         return (
           <div
             key={webinar.id}
-            className="flex items-center justify-between text-xs text-zinc-600 py-1.5 border-b border-zinc-50 last:border-0"
+            className="rounded-md border border-zinc-100 bg-zinc-50/50 px-3 py-2"
           >
-            <div className="flex items-center gap-3">
-              <Badge
-                variant="outline"
-                className={
-                  webinar.status === "IN_PROGRESS"
-                    ? "border-green-300 text-green-700 bg-green-50 text-[10px]"
-                    : "border-blue-300 text-blue-700 bg-blue-50 text-[10px]"
-                }
-              >
-                {webinar.status === "IN_PROGRESS" ? "Live" : "Scheduled"}
-              </Badge>
-              <span>{formatDateTime(slot.startsAt)}</span>
-              <span className="text-zinc-400">
-                {formatTime(slot.startsAt)} &ndash; {formatTime(slot.endsAt)}
-              </span>
-            </div>
-            <div className="flex items-center gap-1.5 text-zinc-400">
-              <Users className="w-3 h-3" />
-              <span>{slot._count.user} / {plan.maxParticipants}</span>
-              {slot.isTentative && (
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
                 <Badge
                   variant="outline"
-                  className="border-amber-300 text-amber-700 bg-amber-50 text-[10px] ml-1"
+                  className={
+                    webinar.status === "IN_PROGRESS"
+                      ? "border-green-300 text-green-700 bg-green-50 text-[10px]"
+                      : "border-blue-300 text-blue-700 bg-blue-50 text-[10px]"
+                  }
                 >
-                  Tentative
+                  {webinar.status === "IN_PROGRESS" ? "Live" : "Scheduled"}
                 </Badge>
-              )}
+                {slot.isTentative && (
+                  <Badge
+                    variant="outline"
+                    className="border-amber-300 text-amber-700 bg-amber-50 text-[10px]"
+                  >
+                    Tentative
+                  </Badge>
+                )}
+              </div>
+              <div className="flex items-center gap-1.5 text-xs text-zinc-500">
+                <Users className="w-3 h-3" />
+                <span>
+                  {slot._count.user} / {plan.maxParticipants}
+                </span>
+              </div>
+            </div>
+            <div className="flex items-center gap-3 mt-1.5 text-xs text-zinc-600">
+              <div className="flex items-center gap-1.5">
+                <Calendar className="w-3 h-3 text-zinc-400" />
+                <span>{formatDateTime(slot.startsAt)}</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <Clock className="w-3 h-3 text-zinc-400" />
+                <span>
+                  {formatTime(slot.startsAt)} &ndash; {formatTime(slot.endsAt)}
+                </span>
+              </div>
             </div>
           </div>
         );
@@ -229,15 +241,18 @@ function ClassScheduleSummary({
 }: {
   plan: NonNullable<Collaboration["classPlan"]>;
 }) {
-  const cls = plan.classes[0];
-
-  if (!cls) {
+  if (plan.classes.length === 0) {
     return (
       <p className="text-xs text-zinc-400 italic">No classes scheduled yet</p>
     );
   }
 
-  const allSlots = cls.appointments.flatMap((a) => a.slotsOfAppointment);
+  // Show summary for the most relevant class (first IN_PROGRESS, or first SCHEDULED)
+  const activeClass =
+    plan.classes.find((c) => c.status === "IN_PROGRESS") ?? plan.classes[0];
+  const allSlots = activeClass.appointments.flatMap(
+    (a) => a.slotsOfAppointment,
+  );
   const now = new Date();
   const upcomingSlots = allSlots.filter((s) => new Date(s.startsAt) > now);
   const nextSlot = upcomingSlots[0];
@@ -249,25 +264,31 @@ function ClassScheduleSummary({
         <Badge
           variant="outline"
           className={
-            cls.status === "IN_PROGRESS"
+            activeClass.status === "IN_PROGRESS"
               ? "border-green-300 text-green-700 bg-green-50 text-[11px]"
               : "border-blue-300 text-blue-700 bg-blue-50 text-[11px]"
           }
         >
-          {cls.status === "IN_PROGRESS" ? "In Progress" : "Scheduled"}
+          {activeClass.status === "IN_PROGRESS" ? "In Progress" : "Scheduled"}
         </Badge>
+        {plan.classes.length > 1 && (
+          <span className="text-[11px] text-zinc-400">
+            ({plan.classes.length} batches)
+          </span>
+        )}
       </div>
 
       <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-zinc-600">
-        {cls.schedulingPeriodStartsAt && cls.schedulingPeriodEndsAt && (
-          <div className="flex items-center gap-1.5 col-span-2">
-            <Calendar className="w-3 h-3 text-zinc-400" />
-            <span>
-              {formatDateTime(cls.schedulingPeriodStartsAt)} &ndash;{" "}
-              {formatDateTime(cls.schedulingPeriodEndsAt)}
-            </span>
-          </div>
-        )}
+        {activeClass.schedulingPeriodStartsAt &&
+          activeClass.schedulingPeriodEndsAt && (
+            <div className="flex items-center gap-1.5 col-span-2">
+              <Calendar className="w-3 h-3 text-zinc-400" />
+              <span>
+                {formatDateTime(activeClass.schedulingPeriodStartsAt)} &ndash;{" "}
+                {formatDateTime(activeClass.schedulingPeriodEndsAt)}
+              </span>
+            </div>
+          )}
         <div className="flex items-center gap-1.5">
           <Clock className="w-3 h-3 text-zinc-400" />
           <span>
@@ -298,7 +319,7 @@ function ClassScheduleSummary({
         )}
       </div>
 
-      {!cls.schedulingPeriodStartsAt && allSlots.length === 0 && (
+      {!activeClass.schedulingPeriodStartsAt && allSlots.length === 0 && (
         <p className="text-xs text-zinc-400 italic">
           Sessions not yet scheduled
         </p>
@@ -307,16 +328,15 @@ function ClassScheduleSummary({
   );
 }
 
-function ClassSlotDetails({
-  plan,
-}: {
-  plan: NonNullable<Collaboration["classPlan"]>;
-}) {
-  const cls = plan.classes[0];
-  if (!cls) return null;
-
+function ClassSessionList({ cls }: { cls: ClassEventSchedule }) {
   const allSlots = cls.appointments.flatMap((a) => a.slotsOfAppointment);
-  if (allSlots.length === 0) return null;
+  if (allSlots.length === 0) {
+    return (
+      <p className="text-xs text-zinc-400 italic py-1">
+        Sessions not yet scheduled
+      </p>
+    );
+  }
 
   const now = new Date();
 
@@ -367,6 +387,92 @@ function ClassSlotDetails({
   );
 }
 
+function ClassEventCard({ cls, plan }: {
+  cls: ClassEventSchedule;
+  plan: NonNullable<Collaboration["classPlan"]>;
+}) {
+  const [sessionsExpanded, setSessionsExpanded] = useState(false);
+  const allSlots = cls.appointments.flatMap((a) => a.slotsOfAppointment);
+  const totalEnrolled = allSlots[0]?._count.user ?? 0;
+
+  return (
+    <div className="rounded-md border border-zinc-100 bg-zinc-50/50 px-3 py-2">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Badge
+            variant="outline"
+            className={
+              cls.status === "IN_PROGRESS"
+                ? "border-green-300 text-green-700 bg-green-50 text-[10px]"
+                : "border-blue-300 text-blue-700 bg-blue-50 text-[10px]"
+            }
+          >
+            {cls.status === "IN_PROGRESS" ? "In Progress" : "Scheduled"}
+          </Badge>
+        </div>
+        <div className="flex items-center gap-1.5 text-xs text-zinc-500">
+          <Users className="w-3 h-3" />
+          <span>
+            {totalEnrolled} / {plan.maxParticipants}
+          </span>
+        </div>
+      </div>
+      <div className="flex items-center gap-3 mt-1.5 text-xs text-zinc-600">
+        {cls.schedulingPeriodStartsAt && cls.schedulingPeriodEndsAt && (
+          <div className="flex items-center gap-1.5">
+            <Calendar className="w-3 h-3 text-zinc-400" />
+            <span>
+              {formatDateTime(cls.schedulingPeriodStartsAt)} &ndash;{" "}
+              {formatDateTime(cls.schedulingPeriodEndsAt)}
+            </span>
+          </div>
+        )}
+        <div className="flex items-center gap-1.5 text-zinc-400">
+          <Clock className="w-3 h-3" />
+          <span>
+            {allSlots.length} / {plan.totalSessions} sessions
+          </span>
+        </div>
+      </div>
+      {allSlots.length > 0 && (
+        <div className="mt-2">
+          <button
+            type="button"
+            onClick={() => setSessionsExpanded((prev) => !prev)}
+            className="flex items-center gap-1 text-[11px] text-zinc-500 hover:text-zinc-700 transition-colors"
+          >
+            {sessionsExpanded ? (
+              <ChevronUp className="w-3 h-3" />
+            ) : (
+              <ChevronDown className="w-3 h-3" />
+            )}
+            {sessionsExpanded ? "Hide" : "Show"} sessions
+          </button>
+          {sessionsExpanded && (
+            <div className="mt-1.5 border-t border-zinc-100 pt-1.5">
+              <ClassSessionList cls={cls} />
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ClassEventList({
+  plan,
+}: {
+  plan: NonNullable<Collaboration["classPlan"]>;
+}) {
+  return (
+    <div className="space-y-2">
+      {plan.classes.map((cls) => (
+        <ClassEventCard key={cls.id} cls={cls} plan={plan} />
+      ))}
+    </div>
+  );
+}
+
 function ActiveCollaborationCard({
   collab,
 }: {
@@ -388,15 +494,13 @@ function ActiveCollaborationCard({
       ? collab.webinarPlan?.consultantProfile
       : collab.classPlan?.consultantProfile;
 
-  const hasSlotDetails =
+  const hasExpandableDetails =
     (collab.planType === "webinar" &&
       collab.webinarPlan &&
       collab.webinarPlan.webinars.length > 1) ||
     (collab.planType === "class" &&
       collab.classPlan &&
-      collab.classPlan.classes[0]?.appointments.some(
-        (a) => a.slotsOfAppointment.length > 0,
-      ));
+      collab.classPlan.classes.length > 1);
 
   return (
     <div className="bg-white border border-zinc-200 rounded-lg overflow-hidden p-3">
@@ -446,8 +550,8 @@ function ActiveCollaborationCard({
         )}
       </div>
 
-      {/* Detailed slots — collapsible */}
-      {hasSlotDetails && (
+      {/* All events — collapsible (multiple webinars or multiple class batches) */}
+      {hasExpandableDetails && (
         <div className="mt-2">
           <button
             type="button"
@@ -459,14 +563,14 @@ function ActiveCollaborationCard({
             ) : (
               <ChevronDown className="w-3 h-3" />
             )}
-            {slotsExpanded ? "Hide" : "Show"} all sessions
+            {slotsExpanded ? "Hide" : "Show"} all events
           </button>
           {slotsExpanded && (
             <div className="mt-2 border-t border-zinc-100 pt-2">
               {collab.planType === "webinar" && collab.webinarPlan ? (
-                <WebinarSlotDetails plan={collab.webinarPlan} />
+                <WebinarEventList plan={collab.webinarPlan} />
               ) : collab.planType === "class" && collab.classPlan ? (
-                <ClassSlotDetails plan={collab.classPlan} />
+                <ClassEventList plan={collab.classPlan} />
               ) : null}
             </div>
           )}
