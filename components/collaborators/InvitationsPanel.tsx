@@ -105,7 +105,7 @@ function formatTime(dateStr: string) {
   });
 }
 
-function WebinarSchedule({
+function WebinarScheduleSummary({
   plan,
 }: {
   plan: NonNullable<Collaboration["webinarPlan"]>;
@@ -170,18 +170,61 @@ function WebinarSchedule({
           Event exists but no time slot set
         </p>
       )}
-
-      {plan.webinars.length > 1 && (
-        <p className="text-[11px] text-zinc-400">
-          +{plan.webinars.length - 1} more event
-          {plan.webinars.length > 2 ? "s" : ""}
-        </p>
-      )}
     </div>
   );
 }
 
-function ClassSchedule({
+function WebinarSlotDetails({
+  plan,
+}: {
+  plan: NonNullable<Collaboration["webinarPlan"]>;
+}) {
+  return (
+    <div className="space-y-2">
+      {plan.webinars.map((webinar) => {
+        const slot = webinar.appointment?.slotsOfAppointment[0];
+        if (!slot) return null;
+        return (
+          <div
+            key={webinar.id}
+            className="flex items-center justify-between text-xs text-zinc-600 py-1.5 border-b border-zinc-50 last:border-0"
+          >
+            <div className="flex items-center gap-3">
+              <Badge
+                variant="outline"
+                className={
+                  webinar.status === "IN_PROGRESS"
+                    ? "border-green-300 text-green-700 bg-green-50 text-[10px]"
+                    : "border-blue-300 text-blue-700 bg-blue-50 text-[10px]"
+                }
+              >
+                {webinar.status === "IN_PROGRESS" ? "Live" : "Scheduled"}
+              </Badge>
+              <span>{formatDateTime(slot.startsAt)}</span>
+              <span className="text-zinc-400">
+                {formatTime(slot.startsAt)} &ndash; {formatTime(slot.endsAt)}
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5 text-zinc-400">
+              <Users className="w-3 h-3" />
+              <span>{slot._count.user} / {plan.maxParticipants}</span>
+              {slot.isTentative && (
+                <Badge
+                  variant="outline"
+                  className="border-amber-300 text-amber-700 bg-amber-50 text-[10px] ml-1"
+                >
+                  Tentative
+                </Badge>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ClassScheduleSummary({
   plan,
 }: {
   plan: NonNullable<Collaboration["classPlan"]>;
@@ -264,6 +307,66 @@ function ClassSchedule({
   );
 }
 
+function ClassSlotDetails({
+  plan,
+}: {
+  plan: NonNullable<Collaboration["classPlan"]>;
+}) {
+  const cls = plan.classes[0];
+  if (!cls) return null;
+
+  const allSlots = cls.appointments.flatMap((a) => a.slotsOfAppointment);
+  if (allSlots.length === 0) return null;
+
+  const now = new Date();
+
+  return (
+    <div className="space-y-1">
+      {allSlots.map((slot, i) => {
+        const isPast = new Date(slot.endsAt) < now;
+        return (
+          <div
+            key={i}
+            className={`flex items-center justify-between text-xs py-1.5 border-b border-zinc-50 last:border-0 ${
+              isPast ? "text-zinc-400" : "text-zinc-600"
+            }`}
+          >
+            <div className="flex items-center gap-3">
+              <span className="w-5 text-center text-[10px] text-zinc-400">
+                {i + 1}
+              </span>
+              <span>{formatDateTime(slot.startsAt)}</span>
+              <span className="text-zinc-400">
+                {formatTime(slot.startsAt)} &ndash; {formatTime(slot.endsAt)}
+              </span>
+              {isPast && (
+                <Badge
+                  variant="outline"
+                  className="border-zinc-200 text-zinc-400 text-[10px]"
+                >
+                  Done
+                </Badge>
+              )}
+            </div>
+            <div className="flex items-center gap-1.5 text-zinc-400">
+              <Users className="w-3 h-3" />
+              <span>{slot._count.user}</span>
+              {slot.isTentative && (
+                <Badge
+                  variant="outline"
+                  className="border-amber-300 text-amber-700 bg-amber-50 text-[10px] ml-1"
+                >
+                  Tentative
+                </Badge>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function ActiveCollaborationCard({
   collab,
 }: {
@@ -278,20 +381,27 @@ function ActiveCollaborationCard({
     classPlan?: Collaboration["classPlan"];
   };
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [slotsExpanded, setSlotsExpanded] = useState(false);
 
   const owner =
     collab.planType === "webinar"
       ? collab.webinarPlan?.consultantProfile
       : collab.classPlan?.consultantProfile;
 
+  const hasSlotDetails =
+    (collab.planType === "webinar" &&
+      collab.webinarPlan &&
+      collab.webinarPlan.webinars.length > 1) ||
+    (collab.planType === "class" &&
+      collab.classPlan &&
+      collab.classPlan.classes[0]?.appointments.some(
+        (a) => a.slotsOfAppointment.length > 0,
+      ));
+
   return (
-    <div className="bg-white border border-zinc-200 rounded-lg overflow-hidden">
-      <button
-        type="button"
-        onClick={() => setExpanded((prev) => !prev)}
-        className="w-full p-3 flex items-center justify-between text-left hover:bg-zinc-50 transition-colors"
-      >
+    <div className="bg-white border border-zinc-200 rounded-lg overflow-hidden p-3">
+      {/* Header — always visible */}
+      <div className="flex items-center justify-between">
         <div className="min-w-0">
           <p className="text-sm font-medium text-zinc-800 truncate">
             {collab.planTitle}
@@ -317,30 +427,49 @@ function ActiveCollaborationCard({
           >
             Active
           </Badge>
-          {expanded ? (
-            <ChevronUp className="w-4 h-4 text-zinc-400" />
-          ) : (
-            <ChevronDown className="w-4 h-4 text-zinc-400" />
-          )}
         </div>
-      </button>
+      </div>
 
-      {expanded && (
-        <div className="px-3 pb-3 pt-0">
-          <div className="border-t border-zinc-100 pt-3">
-            <p className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider mb-2">
-              Schedule
-            </p>
-            {collab.planType === "webinar" && collab.webinarPlan ? (
-              <WebinarSchedule plan={collab.webinarPlan} />
-            ) : collab.planType === "class" && collab.classPlan ? (
-              <ClassSchedule plan={collab.classPlan} />
+      {/* Schedule summary — always visible */}
+      <div className="border-t border-zinc-100 mt-3 pt-3">
+        <p className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider mb-2">
+          Schedule
+        </p>
+        {collab.planType === "webinar" && collab.webinarPlan ? (
+          <WebinarScheduleSummary plan={collab.webinarPlan} />
+        ) : collab.planType === "class" && collab.classPlan ? (
+          <ClassScheduleSummary plan={collab.classPlan} />
+        ) : (
+          <p className="text-xs text-zinc-400 italic">
+            No schedule data available
+          </p>
+        )}
+      </div>
+
+      {/* Detailed slots — collapsible */}
+      {hasSlotDetails && (
+        <div className="mt-2">
+          <button
+            type="button"
+            onClick={() => setSlotsExpanded((prev) => !prev)}
+            className="flex items-center gap-1 text-[11px] text-zinc-500 hover:text-zinc-700 transition-colors"
+          >
+            {slotsExpanded ? (
+              <ChevronUp className="w-3 h-3" />
             ) : (
-              <p className="text-xs text-zinc-400 italic">
-                No schedule data available
-              </p>
+              <ChevronDown className="w-3 h-3" />
             )}
-          </div>
+            {slotsExpanded ? "Hide" : "Show"} all sessions
+          </button>
+          {slotsExpanded && (
+            <div className="mt-2 border-t border-zinc-100 pt-2">
+              {collab.planType === "webinar" && collab.webinarPlan ? (
+                <WebinarSlotDetails plan={collab.webinarPlan} />
+              ) : collab.planType === "class" && collab.classPlan ? (
+                <ClassSlotDetails plan={collab.classPlan} />
+              ) : null}
+            </div>
+          )}
         </div>
       )}
     </div>
