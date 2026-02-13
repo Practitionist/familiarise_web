@@ -30,7 +30,7 @@ export function ConsultantSearchInput({
   const [isOpen, setIsOpen] = useState(false);
   const [selected, setSelected] = useState<ConsultantResult | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const debounceRef = useRef<NodeJS.Timeout | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const search = useCallback(
     async (q: string) => {
