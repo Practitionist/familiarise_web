@@ -43,6 +43,7 @@ interface EarningRecord {
   payment: {
     id: string;
     amount: number;
+    originalAmount: number;
     currency: string;
     createdAt: string;
     appointment: {
@@ -290,7 +291,7 @@ export default function EarningsPage({
                       Role
                     </th>
                     <th className="text-right px-4 py-3 font-medium text-zinc-600">
-                      Payment
+                      Plan Price
                     </th>
                     <th className="text-right px-4 py-3 font-medium text-zinc-600">
                       Your Earnings
@@ -338,7 +339,7 @@ export default function EarningsPage({
                           </span>
                         </td>
                         <td className="px-4 py-3 text-right text-zinc-600">
-                          {formatEarningAmount((earning.payment?.amount ?? 0) * 100, earning.payment?.currency ?? "INR")}
+                          {formatEarningAmount((earning.payment?.originalAmount ?? 0) * 100, earning.payment?.currency ?? "INR")}
                         </td>
                         <td className="px-4 py-3 text-right font-medium text-zinc-900">
                           {formatEarningAmount(earning.consultantShare, earning.payment?.currency ?? "INR")}

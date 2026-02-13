@@ -286,6 +286,7 @@ export async function getConsultantEarnings(
           select: {
             id: true,
             amount: true,
+            originalAmount: true,
             currency: true,
             createdAt: true,
             appointment: {
