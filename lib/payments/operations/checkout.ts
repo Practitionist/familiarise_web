@@ -35,6 +35,10 @@ import {
   processQualifyingAction,
 } from "@/lib/referrals/service";
 import { TAX_CONSTANTS } from "@/lib/payments/payouts/constants";
+import {
+  createEarningsFromPayment,
+  type AppointmentType,
+} from "@/lib/payments/payouts";
 
 // Re-export for backward compatibility
 export const unifiedCheckoutSchema = checkoutSchema;
@@ -1644,6 +1648,106 @@ export async function handleCheckout(
           console.error(
             `⚠️ Failed to process referral qualifying action for user ${userId}:`,
             referralError,
+          );
+        }
+
+        // Create consultant earnings (mock payments bypass webhooks, so earnings must be created here)
+        try {
+          const paymentWithAppointment = await prisma.payment.findUnique({
+            where: { paymentIntent: paymentResponse!.id },
+            include: {
+              appointment: {
+                include: {
+                  consultation: {
+                    include: {
+                      consultationPlan: {
+                        include: { consultantProfile: true },
+                      },
+                    },
+                  },
+                  subscription: {
+                    include: {
+                      subscriptionPlan: {
+                        include: { consultantProfile: true },
+                      },
+                    },
+                  },
+                  webinar: {
+                    select: {
+                      id: true,
+                      webinarPlanId: true,
+                      webinarPlan: {
+                        include: { consultantProfile: true },
+                      },
+                    },
+                  },
+                  class: {
+                    select: {
+                      id: true,
+                      classPlanId: true,
+                      classPlan: {
+                        include: { consultantProfile: true },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          });
+
+          if (paymentWithAppointment?.appointment) {
+            const consultantProfile =
+              paymentWithAppointment.appointment.consultation?.consultationPlan
+                ?.consultantProfile ||
+              paymentWithAppointment.appointment.subscription?.subscriptionPlan
+                ?.consultantProfile ||
+              paymentWithAppointment.appointment.webinar?.webinarPlan
+                ?.consultantProfile ||
+              paymentWithAppointment.appointment.class?.classPlan
+                ?.consultantProfile;
+
+            if (consultantProfile) {
+              const appointmentTypeMap: Record<string, AppointmentType> = {
+                CONSULTATION: "CONSULTATION",
+                SUBSCRIPTION: "SUBSCRIPTION",
+                WEBINAR: "WEBINAR",
+                CLASS: "CLASS",
+              };
+
+              const earningsAppointmentType =
+                appointmentTypeMap[validatedData.appointmentType] || "CONSULTATION";
+
+              const paymentForEarnings = {
+                ...paymentWithAppointment,
+                appointment: {
+                  ...paymentWithAppointment.appointment,
+                  consultantProfile: { id: consultantProfile.id },
+                  webinar: paymentWithAppointment.appointment.webinar
+                    ? { webinarPlanId: paymentWithAppointment.appointment.webinar.webinarPlanId }
+                    : null,
+                  class: paymentWithAppointment.appointment.class
+                    ? { classPlanId: paymentWithAppointment.appointment.class.classPlanId }
+                    : null,
+                },
+              };
+
+              await createEarningsFromPayment({
+                payment: paymentForEarnings as Parameters<
+                  typeof createEarningsFromPayment
+                >[0]["payment"],
+                appointmentType: earningsAppointmentType,
+              });
+
+              console.log(
+                `💰 Mock payment earnings created for consultant ${consultantProfile.id}`,
+              );
+            }
+          }
+        } catch (earningsError) {
+          // Log but don't fail — sync-payment-earnings job will pick up the gap
+          console.error(
+            `⚠️ Failed to create earnings for mock payment:`,
+            earningsError,
           );
         }
 

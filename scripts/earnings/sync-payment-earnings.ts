@@ -76,7 +76,8 @@ function calculateEarningsData(
   consultantProfileId: string,
 ) {
   // Use original plan price (before platform-funded discounts/credits/tax) for earnings
-  const grossAmount = payment.originalAmount;
+  // Payment.originalAmount is stored in rupees (major unit); earnings must be in paise (smallest unit)
+  const grossAmount = payment.originalAmount * 100;
   const platformFee = Math.round(
     (grossAmount * PAYOUT_CONSTANTS.PLATFORM_FEE_PERCENTAGE) / 100,
   );
