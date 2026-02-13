@@ -11,6 +11,7 @@ import {
   GraduationCap,
   Calendar,
   Upload,
+  Users,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -47,6 +48,7 @@ import { TopicsMultiSelect } from "./TopicsMultiSelect";
 import { PlannerService } from "../services/planner";
 import { WebinarEvent, WebinarPlannerProps } from "../types/event";
 import { PlanMaterialsUpload } from "./PlanMaterialsUpload";
+import { CollaboratorsTab } from "@/components/collaborators/CollaboratorsTab";
 
 // Form-specific schema - all required fields explicitly defined
 const WebinarFormSchema = z.object({
@@ -632,6 +634,26 @@ export function EventPlannerForWebinar({
                   </Button>
                 </FormSection>
               )}
+
+              {/* Collaborators Section */}
+              <FormSection
+                title="Collaborators"
+                description="Invite other consultants to co-host this webinar"
+                icon={Users}
+              >
+                {initialData?.webinarPlan?.id ? (
+                  <CollaboratorsTab
+                    planType="webinar"
+                    planId={initialData.webinarPlan.id}
+                    isOwner={true}
+                    excludeId={consultantId}
+                  />
+                ) : (
+                  <p className="text-sm text-zinc-500 text-center py-4">
+                    Save this webinar first to add collaborators
+                  </p>
+                )}
+              </FormSection>
 
               <DialogFooter className="pt-6 border-t">
                 <Button

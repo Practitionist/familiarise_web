@@ -5,14 +5,6 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -28,7 +20,9 @@ import {
   Loader2,
   Users,
   Percent,
+  ChevronUp,
 } from "lucide-react";
+import { ConsultantSearchInput } from "./ConsultantSearchInput";
 
 interface Collaborator {
   id: string;
@@ -48,6 +42,7 @@ interface CollaboratorsTabProps {
   planType: "webinar" | "class";
   planId: string;
   isOwner: boolean;
+  excludeId?: string;
 }
 
 const WEBINAR_ROLES = [
@@ -78,6 +73,7 @@ export function CollaboratorsTab({
   planType,
   planId,
   isOwner,
+  excludeId,
 }: CollaboratorsTabProps) {
   const [isInviteOpen, setIsInviteOpen] = useState(false);
   const [inviteProfileId, setInviteProfileId] = useState("");
@@ -188,7 +184,7 @@ export function CollaboratorsTab({
 
       {/* Collaborator list */}
       {collaborators.length === 0 ? (
-        <div className="text-center py-8 text-zinc-500">
+        <div className="text-center py-6 text-zinc-500">
           <Users className="w-8 h-8 mx-auto mb-2 text-zinc-300" />
           <p className="text-sm">No collaborators yet</p>
           {isOwner && (
@@ -232,6 +228,7 @@ export function CollaboratorsTab({
                   <Badge variant={config.variant}>{config.label}</Badge>
                   {isOwner && collab.status !== "REMOVED" && (
                     <Button
+                      type="button"
                       variant="ghost"
                       size="icon"
                       className="h-7 w-7 text-zinc-400 hover:text-red-500"
@@ -248,9 +245,10 @@ export function CollaboratorsTab({
         </div>
       )}
 
-      {/* Invite button */}
-      {isOwner && (
+      {/* Inline invite form — expands in place, no dialog */}
+      {isOwner && !isInviteOpen && (
         <Button
+          type="button"
           variant="outline"
           className="w-full"
           onClick={() => setIsInviteOpen(true)}
@@ -260,37 +258,45 @@ export function CollaboratorsTab({
         </Button>
       )}
 
-      {/* Invite dialog */}
-      <Dialog open={isInviteOpen} onOpenChange={setIsInviteOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Invite Collaborator</DialogTitle>
-            <DialogDescription>
-              Invite another consultant to collaborate on this{" "}
-              {planType === "webinar" ? "webinar" : "class"}.
-            </DialogDescription>
-          </DialogHeader>
+      {isOwner && isInviteOpen && (
+        <div className="border border-zinc-200 rounded-lg p-4 space-y-3 bg-zinc-50/50">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-medium text-zinc-700">
+              Invite Collaborator
+            </p>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 text-zinc-400"
+              onClick={() => {
+                setIsInviteOpen(false);
+                setInviteProfileId("");
+                setInviteRole("");
+                setInviteShare(10);
+              }}
+            >
+              <ChevronUp className="w-4 h-4" />
+            </Button>
+          </div>
 
-          <div className="space-y-4 py-4">
-            <div>
-              <label className="text-sm font-medium text-zinc-700">
-                Consultant Profile ID
-              </label>
-              <Input
-                placeholder="Enter consultant profile ID"
-                value={inviteProfileId}
-                onChange={(e) => setInviteProfileId(e.target.value)}
-                className="mt-1"
+          <div>
+            <label className="text-xs font-medium text-zinc-600">
+              Search Consultant
+            </label>
+            <div className="mt-1">
+              <ConsultantSearchInput
+                excludeId={excludeId}
+                onSelect={(id) => setInviteProfileId(id)}
               />
-              <p className="text-xs text-zinc-500 mt-1">
-                The consultant&apos;s profile ID from their dashboard URL
-              </p>
             </div>
+          </div>
 
+          <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-sm font-medium text-zinc-700">Role</label>
+              <label className="text-xs font-medium text-zinc-600">Role</label>
               <Select value={inviteRole} onValueChange={setInviteRole}>
-                <SelectTrigger className="mt-1">
+                <SelectTrigger className="mt-1 h-9">
                   <SelectValue placeholder="Select role" />
                 </SelectTrigger>
                 <SelectContent>
@@ -304,7 +310,7 @@ export function CollaboratorsTab({
             </div>
 
             <div>
-              <label className="text-sm font-medium text-zinc-700">
+              <label className="text-xs font-medium text-zinc-600">
                 Revenue Share (%)
               </label>
               <Input
@@ -313,37 +319,34 @@ export function CollaboratorsTab({
                 max={90 - totalShare}
                 value={inviteShare}
                 onChange={(e) => setInviteShare(Number(e.target.value))}
-                className="mt-1"
+                className="mt-1 h-9"
               />
-              <p className="text-xs text-zinc-500 mt-1">
-                Max {90 - totalShare}% available (host keeps minimum 10%)
+              <p className="text-[10px] text-zinc-400 mt-0.5">
+                Max {90 - totalShare}% available
               </p>
             </div>
           </div>
 
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsInviteOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              onClick={() => inviteMutation.mutate()}
-              disabled={
-                !inviteProfileId ||
-                !inviteRole ||
-                inviteShare < 1 ||
-                inviteMutation.isPending
-              }
-            >
-              {inviteMutation.isPending ? (
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-              ) : (
-                <UserPlus className="w-4 h-4 mr-2" />
-              )}
-              Send Invitation
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          <Button
+            type="button"
+            className="w-full"
+            onClick={() => inviteMutation.mutate()}
+            disabled={
+              !inviteProfileId ||
+              !inviteRole ||
+              inviteShare < 1 ||
+              inviteMutation.isPending
+            }
+          >
+            {inviteMutation.isPending ? (
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+            ) : (
+              <UserPlus className="w-4 h-4 mr-2" />
+            )}
+            Send Invitation
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
