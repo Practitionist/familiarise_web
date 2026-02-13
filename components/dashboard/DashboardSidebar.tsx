@@ -102,6 +102,7 @@ interface DashboardSidebarProps {
   navSections?: NavSection[];
   isLoading?: boolean;
   bottomNavItems?: NavItem[];
+  hideBottomActions?: boolean;
 }
 
 export function DashboardSidebar({
@@ -113,6 +114,7 @@ export function DashboardSidebar({
   navSections = [],
   isLoading = false,
   bottomNavItems = [],
+  hideBottomActions = false,
 }: DashboardSidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
@@ -315,60 +317,62 @@ export function DashboardSidebar({
       </nav>
 
       {/* Bottom Section */}
-      <div className="border-t border-zinc-800/50 p-3 space-y-1">
-        <Link
-          href="/"
-          className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-100 transition-all"
-        >
-          <span className="flex h-8 w-8 items-center justify-center rounded-md bg-zinc-800/50 text-zinc-500">
-            <ArrowLeft className="w-5 h-5" />
-          </span>
-          <span>Back to Home</span>
-        </Link>
+      {!hideBottomActions && (
+        <div className="border-t border-zinc-800/50 p-3 space-y-1">
+          <Link
+            href="/"
+            className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-100 transition-all"
+          >
+            <span className="flex h-8 w-8 items-center justify-center rounded-md bg-zinc-800/50 text-zinc-500">
+              <ArrowLeft className="w-5 h-5" />
+            </span>
+            <span>Back to Home</span>
+          </Link>
 
-        {bottomNavItems.map((item) => {
-          const isActive =
-            relativePath === item.path ||
-            relativePath.startsWith(item.path + "/");
+          {bottomNavItems.map((item) => {
+            const isActive =
+              relativePath === item.path ||
+              relativePath.startsWith(item.path + "/");
 
-          return (
-            <Link
-              key={item.path}
-              href={`${basePath}/${item.path}`}
-              className={cn(
-                "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all",
-                isActive
-                  ? "bg-zinc-800 text-white"
-                  : "text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-100",
-              )}
-              prefetch={true}
-              onMouseEnter={() => handleNavHover(item.path)}
-            >
-              <span
+            return (
+              <Link
+                key={item.path}
+                href={`${basePath}/${item.path}`}
                 className={cn(
-                  "flex h-8 w-8 items-center justify-center rounded-md",
+                  "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all",
                   isActive
-                    ? "bg-zinc-700 text-white"
-                    : "bg-zinc-800/50 text-zinc-500",
+                    ? "bg-zinc-800 text-white"
+                    : "text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-100",
                 )}
+                prefetch={true}
+                onMouseEnter={() => handleNavHover(item.path)}
               >
-                {renderIcon(item.path)}
-              </span>
-              <span>{item.name}</span>
-            </Link>
-          );
-        })}
+                <span
+                  className={cn(
+                    "flex h-8 w-8 items-center justify-center rounded-md",
+                    isActive
+                      ? "bg-zinc-700 text-white"
+                      : "bg-zinc-800/50 text-zinc-500",
+                  )}
+                >
+                  {renderIcon(item.path)}
+                </span>
+                <span>{item.name}</span>
+              </Link>
+            );
+          })}
 
-        <button
-          onClick={() => signOut()}
-          className="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-all"
-        >
-          <span className="flex h-8 w-8 items-center justify-center rounded-md bg-red-500/10 text-red-500">
-            <LogOut className="w-5 h-5" />
-          </span>
-          <span>Sign Out</span>
-        </button>
-      </div>
+          <button
+            onClick={() => signOut()}
+            className="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-all"
+          >
+            <span className="flex h-8 w-8 items-center justify-center rounded-md bg-red-500/10 text-red-500">
+              <LogOut className="w-5 h-5" />
+            </span>
+            <span>Sign Out</span>
+          </button>
+        </div>
+      )}
     </div>
   );
 }

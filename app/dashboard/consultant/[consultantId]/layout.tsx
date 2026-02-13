@@ -12,6 +12,7 @@ import {
   DashboardSidebar,
   type NavItem,
 } from "@/components/dashboard/DashboardSidebar";
+import { DashboardNavbar } from "@/components/dashboard/DashboardNavbar";
 import { useSession } from "@/lib/auth-client";
 import { usePathname, useRouter } from "next/navigation";
 import { use, useEffect, useMemo } from "react";
@@ -26,18 +27,16 @@ const NAV_ITEMS: NavItem[] = [
   { name: "Home", path: "home", icon: "home" },
   { name: "Chats", path: "chats", icon: "chats" },
   { name: "Appointments", path: "appointments", icon: "appointments" },
-  { name: "Recordings", path: "recordings", icon: "recordings" },
   { name: "Event Planner", path: "planner", icon: "planner" },
   { name: "Requests", path: "requests", icon: "requests" },
-  { name: "Free Trials", path: "trials", icon: "trials" },
-  { name: "Earnings", path: "earnings", icon: "wallet" },
-  { name: "Collaborations", path: "collaborations", icon: "users" },
-  { name: "Referrals", path: "referrals", icon: "users" },
+  { name: "Recordings", path: "recordings", icon: "recordings" },
   { name: "Documents", path: "documents", icon: "documents" },
-  { name: "Help", path: "help", icon: "help" },
+  { name: "Earnings", path: "earnings", icon: "wallet" },
+  { name: "Analytics", path: "analytics", icon: "analytics" },
+  { name: "Collaborations", path: "collaborations", icon: "users" },
+  { name: "Free Trials", path: "trials", icon: "trials" },
+  { name: "Referrals", path: "referrals", icon: "users" },
 ];
-
-const BOTTOM_NAV_ITEMS: NavItem[] = [{ name: "Settings", path: "settings" }];
 
 interface PageProps {
   children: React.ReactNode;
@@ -544,8 +543,19 @@ export default function ConsultantLayout({
       userRole="CONSULTANT"
       basePath={`/dashboard/consultant/${consultantId}`}
       navItems={NAV_ITEMS}
-      bottomNavItems={BOTTOM_NAV_ITEMS}
+      hideBottomActions={true}
       isLoading={isLoading}
+    />
+  );
+
+  // Build top navbar
+  const navbar = (
+    <DashboardNavbar
+      userName={consultantData?.user?.name}
+      userImage={consultantData?.user?.image}
+      userRole="CONSULTANT"
+      settingsPath={`/dashboard/consultant/${consultantId}/settings`}
+      helpPath={`/dashboard/consultant/${consultantId}/help`}
     />
   );
 
@@ -566,7 +576,11 @@ export default function ConsultantLayout({
           resubmitUrl={`/dashboard/consultant/${consultantId}/settings`}
         />
       )}
-      <DashboardShell sidebar={sidebar} headerActions={<NotificationInbox />}>
+      <DashboardShell
+        sidebar={sidebar}
+        navbar={navbar}
+        headerActions={<NotificationInbox />}
+      >
         {memoizedStreamContent}
       </DashboardShell>
     </NovuProvider>
