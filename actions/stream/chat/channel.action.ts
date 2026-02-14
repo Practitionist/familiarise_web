@@ -493,6 +493,109 @@ export async function initializeAllChannels() {
 }
 
 /**
+ * Create a collaborator channel for a webinar or class plan.
+ * Called when a collaborator accepts an invitation.
+ * Members: host + all accepted collaborators.
+ */
+export async function createCollaboratorChannel(
+  planType: "webinar" | "class",
+  planId: string,
+) {
+  channelIdSchema.parse(planId);
+
+  const collaboratorWhere = {
+    status: "ACCEPTED" as const,
+  };
+
+  const collaboratorInclude = {
+    consultantProfile: {
+      include: { user: { select: { id: true } } },
+    },
+  };
+
+  let title: string;
+  let hostUserId: string | undefined;
+  let collaboratorUserIds: string[];
+
+  if (planType === "webinar") {
+    const plan = await prisma.webinarPlan.findUnique({
+      where: { id: planId },
+      include: {
+        consultantProfile: {
+          include: { user: { select: { id: true } } },
+        },
+        collaborators: {
+          where: collaboratorWhere,
+          include: collaboratorInclude,
+        },
+      },
+    });
+
+    if (!plan) throw new Error(`Webinar plan not found: ${planId}`);
+    title = plan.title;
+    hostUserId = plan.consultantProfile?.user?.id;
+    collaboratorUserIds = plan.collaborators
+      .map((c) => c.consultantProfile.user.id)
+      .filter(Boolean);
+  } else {
+    const plan = await prisma.classPlan.findUnique({
+      where: { id: planId },
+      include: {
+        consultantProfile: {
+          include: { user: { select: { id: true } } },
+        },
+        collaborators: {
+          where: collaboratorWhere,
+          include: collaboratorInclude,
+        },
+      },
+    });
+
+    if (!plan) throw new Error(`Class plan not found: ${planId}`);
+    title = plan.title;
+    hostUserId = plan.consultantProfile?.user?.id;
+    collaboratorUserIds = plan.collaborators
+      .map((c) => c.consultantProfile.user.id)
+      .filter(Boolean);
+  }
+
+  if (!hostUserId) {
+    throw new Error(`Host not found for ${planType} plan: ${planId}`);
+  }
+
+  const allMemberIds = [hostUserId, ...collaboratorUserIds];
+
+  if (allMemberIds.length < 2) {
+    streamLogger.debug("Skipping collaborator channel - not enough members", {
+      planType,
+      planId,
+    });
+    return null;
+  }
+
+  const channelId = `collab-${planType}-${planId}`;
+
+  streamLogger.debug("Creating collaborator channel", {
+    channelId,
+    planType,
+    planId,
+    memberCount: allMemberIds.length,
+  });
+
+  return createChannel({
+    channelType: "messaging",
+    channelId,
+    channelName: `${title} - Collaborators`,
+    members: allMemberIds,
+    createdById: hostUserId,
+    additionalData: {
+      [`${planType}_plan_id`]: planId,
+      is_collaborator_channel: true,
+    },
+  });
+}
+
+/**
  * Adds a user to a specific channel
  */
 export async function addMemberToChannel(channelId: string, userId: string) {
@@ -504,7 +607,8 @@ export async function addMemberToChannel(channelId: string, userId: string) {
   // Infer channel type from ID pattern
   const channelType =
     channelId.startsWith("consultation-") ||
-    channelId.startsWith("subscription-")
+    channelId.startsWith("subscription-") ||
+    channelId.startsWith("collab-")
       ? "messaging"
       : "team";
 

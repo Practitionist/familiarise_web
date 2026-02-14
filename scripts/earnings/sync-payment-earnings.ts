@@ -67,6 +67,7 @@ function calculateEarningsData(
   payment: {
     id: string;
     amount: number;
+    originalAmount: number;
     createdAt: Date;
     appointment: {
       appointmentType: AppointmentsType;
@@ -74,7 +75,9 @@ function calculateEarningsData(
   },
   consultantProfileId: string,
 ) {
-  const grossAmount = payment.amount;
+  // Use original plan price (before platform-funded discounts/credits/tax) for earnings
+  // Payment.originalAmount is stored in rupees (major unit); earnings must be in paise (smallest unit)
+  const grossAmount = payment.originalAmount * 100;
   const platformFee = Math.round(
     (grossAmount * PAYOUT_CONSTANTS.PLATFORM_FEE_PERCENTAGE) / 100,
   );
@@ -141,7 +144,7 @@ export async function syncPaymentEarnings(): Promise<PaymentEarningSyncResult> {
       where: {
         paymentStatus: PaymentStatus.SUCCEEDED,
         createdAt: { gte: thirtyDaysAgo },
-        earnings: null, // No linked earnings
+        earnings: { none: {} }, // No linked earnings
       },
       take: BATCH_SIZE,
       skip,

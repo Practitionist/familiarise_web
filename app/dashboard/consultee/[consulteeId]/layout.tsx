@@ -46,6 +46,7 @@ const NAV_ITEMS: NavItem[] = [
   { name: "History", path: "history" },
   { name: "Recordings", path: "recordings" },
   { name: "Messages", path: "messages" },
+  { name: "Referrals", path: "referrals" },
   { name: "Support", path: "feedback" },
   { name: "Settings", path: "settings" },
 ];

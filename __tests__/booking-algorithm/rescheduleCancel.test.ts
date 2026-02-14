@@ -29,15 +29,9 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 
-// Mock next-auth
-jest.mock("next-auth", () => ({
-  getServerSession: jest.fn(),
-}));
-
-// Mock auth options (bracket path — literal directory name)
-jest.mock("../../app/api/auth/[...nextauth]/options", () => ({
-  __esModule: true,
-  default: {},
+// Mock auth-server (better-auth)
+jest.mock("../../lib/auth-server", () => ({
+  getSession: jest.fn(),
 }));
 
 // Mock waitlist handler
@@ -53,7 +47,7 @@ jest.mock("../../lib/novu", () => ({
 // ─── Imports ────────────────────────────────────────────────────────────────
 
 import prisma from "@/lib/prisma";
-import { getServerSession } from "next-auth";
+import { getSession } from "@/lib/auth-server";
 import { handleSlotOpening } from "@/lib/waitlist/slot-handler";
 import { notifyAppointmentCancelled } from "@/lib/novu";
 import { POST as rescheduleHandler } from "@/app/api/appointments/[appointmentId]/reschedule/route";
@@ -389,7 +383,7 @@ describe("Reschedule Route Handler - POST", () => {
     mockTx = makeMockTx();
 
     // Default: authenticated user
-    (getServerSession as jest.Mock).mockResolvedValue({
+    (getSession as jest.Mock).mockResolvedValue({
       user: { id: "user-1", name: "John Doe" },
     });
 
@@ -402,7 +396,7 @@ describe("Reschedule Route Handler - POST", () => {
   // ─── Authentication ─────────────────────────────────────────────────────
 
   it("should return 401 when not authenticated", async () => {
-    (getServerSession as jest.Mock).mockResolvedValue(null);
+    (getSession as jest.Mock).mockResolvedValue(null);
 
     const req = makeRescheduleRequest("apt-1", "CONSULTATION");
     const res = await rescheduleHandler(req, makeParams("apt-1"));
@@ -413,7 +407,7 @@ describe("Reschedule Route Handler - POST", () => {
   });
 
   it("should return 401 when session has no user", async () => {
-    (getServerSession as jest.Mock).mockResolvedValue({ user: null });
+    (getSession as jest.Mock).mockResolvedValue({ user: null });
 
     const req = makeRescheduleRequest("apt-1", "CONSULTATION");
     const res = await rescheduleHandler(req, makeParams("apt-1"));
@@ -761,7 +755,7 @@ describe("Cancel Route Handler - POST", () => {
     mockTx = makeMockTx();
 
     // Default: authenticated
-    (getServerSession as jest.Mock).mockResolvedValue({
+    (getSession as jest.Mock).mockResolvedValue({
       user: { id: "user-1", name: "John Doe" },
     });
 
@@ -779,7 +773,7 @@ describe("Cancel Route Handler - POST", () => {
   // ─── Authentication ─────────────────────────────────────────────────────
 
   it("should return 401 when not authenticated", async () => {
-    (getServerSession as jest.Mock).mockResolvedValue(null);
+    (getSession as jest.Mock).mockResolvedValue(null);
 
     const req = makeCancelRequest("apt-1");
     const res = await cancelHandler(req, makeParams("apt-1"));
@@ -1057,7 +1051,7 @@ describe("Cancel Route Handler - POST", () => {
 
   it("should identify canceller as consultant when consultant cancels", async () => {
     // Session user is the consultant
-    (getServerSession as jest.Mock).mockResolvedValue({
+    (getSession as jest.Mock).mockResolvedValue({
       user: { id: "consultant-1", name: "Dr. Smith" },
     });
     (prisma.appointment.findUnique as jest.Mock).mockResolvedValue(
@@ -1077,7 +1071,7 @@ describe("Cancel Route Handler - POST", () => {
 
   it("should identify canceller as consultee when consultee cancels", async () => {
     // Session user is the consultee (user-1)
-    (getServerSession as jest.Mock).mockResolvedValue({
+    (getSession as jest.Mock).mockResolvedValue({
       user: { id: "user-1", name: "John Doe" },
     });
     (prisma.appointment.findUnique as jest.Mock).mockResolvedValue(

@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
+import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { fetchReviews } from "@/lib/user";
 import {
@@ -94,6 +95,9 @@ export default function WebinarCheckoutPage({
     useState<AppliedDiscount | null>(null);
   const [isApplyingDiscount, setIsApplyingDiscount] = useState(false);
   const [discountError, setDiscountError] = useState<string | null>(null);
+  const [useReferralCredits, setUseReferralCredits] = useState(false);
+  const [availableCredits, setAvailableCredits] = useState(0);
+  const [isLoadingCredits, setIsLoadingCredits] = useState(true);
 
   const { toast } = useToast();
 
@@ -142,6 +146,24 @@ export default function WebinarCheckoutPage({
     }
   };
 
+  // Fetch available referral credits
+  useEffect(() => {
+    async function fetchCredits() {
+      try {
+        const response = await fetch("/api/referrals/credits/available");
+        if (response.ok) {
+          const data = await response.json();
+          setAvailableCredits(Math.floor((data.data.totalAvailable || 0) / 100));
+        }
+      } catch (error) {
+        console.error("Error fetching referral credits:", error);
+      } finally {
+        setIsLoadingCredits(false);
+      }
+    }
+    fetchCredits();
+  }, []);
+
   // Create utility functions using the toast instance
   const handleApiError = createHandleApiError(toast);
   const handleCheckoutSuccess = createHandleCheckoutSuccess(toast, "WEBINAR");
@@ -183,6 +205,7 @@ export default function WebinarCheckoutPage({
           discountCode: appliedDiscount?.code,
           paymentGateway: gateway,
           fromWaitlist,
+          useReferralCredits,
         });
 
         // Handle unified checkout flow using the utility
@@ -238,6 +261,7 @@ export default function WebinarCheckoutPage({
       handleCheckoutSuccess,
       toast,
       appliedDiscount,
+      useReferralCredits,
     ],
   );
 
@@ -300,8 +324,9 @@ export default function WebinarCheckoutPage({
     return calculatePricing(basePrice, {
       discountPercent: discountAmount > 0 ? 0 : discountPercent,
       discountAmount,
+      creditsApplied: useReferralCredits ? availableCredits : 0,
     });
-  }, [planData?.data?.price, appliedDiscount]);
+  }, [planData?.data?.price, appliedDiscount, useReferralCredits, availableCredits]);
 
   if (isLoading) {
     return (
@@ -501,6 +526,32 @@ export default function WebinarCheckoutPage({
             </div>
           </div>
         </div>
+        <Separator className="bg-zinc-200" />
+        <div className="grid gap-4">
+          <div className="font-semibold">Referral Credits</div>
+          {isLoadingCredits ? (
+            <div className="text-sm text-muted-foreground">Loading credits...</div>
+          ) : availableCredits > 0 ? (
+            <div className="flex items-center justify-between bg-blue-50 p-3 rounded-lg border border-blue-200">
+              <div>
+                <div className="font-medium text-blue-700">
+                  {formatPrice(availableCredits)} available
+                </div>
+                <div className="text-sm text-blue-600">
+                  Apply to this purchase
+                </div>
+              </div>
+              <Switch
+                checked={useReferralCredits}
+                onCheckedChange={setUseReferralCredits}
+              />
+            </div>
+          ) : (
+            <div className="text-sm text-muted-foreground">
+              No referral credits available
+            </div>
+          )}
+        </div>
       </div>
       <div className="flex flex-col gap-8 p-8 bg-white">
         <Card className="border-zinc-200 shadow-sm">
@@ -545,6 +596,12 @@ export default function WebinarCheckoutPage({
                       `(${formatPercentage(pricing.discountPercent)})`}
                   </div>
                   <div>-{formatPrice(pricing.discountAmount)}</div>
+                </div>
+              )}
+              {pricing.creditsApplied > 0 && (
+                <div className="flex items-center justify-between text-blue-600">
+                  <div>Referral Credits</div>
+                  <div>-{formatPrice(pricing.creditsApplied)}</div>
                 </div>
               )}
               <Separator className="bg-zinc-200" />
@@ -617,6 +674,7 @@ export default function WebinarCheckoutPage({
                             eventId: planDetails.webinars[0]?.id,
                             paymentGateway: "RAZORPAY",
                             discountCode: appliedDiscount?.code,
+                            useReferralCredits,
                           })}
                           onPaymentSuccess={razorpayHandlers.onPaymentSuccess}
                           onPaymentError={razorpayHandlers.onPaymentError}
@@ -629,6 +687,7 @@ export default function WebinarCheckoutPage({
                             eventId: planDetails.webinars[0]?.id,
                             paymentGateway: "STRIPE",
                             discountCode: appliedDiscount?.code,
+                            useReferralCredits,
                           })}
                           onPaymentSuccess={stripeHandlers.onPaymentSuccess}
                           onPaymentError={stripeHandlers.onPaymentError}

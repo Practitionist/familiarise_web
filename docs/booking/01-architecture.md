@@ -178,12 +178,12 @@ erDiagram
     ConsultationPlan ||--o{ Consultation : creates
     SubscriptionPlan ||--o{ Subscription : creates
     WebinarPlan ||--o{ Webinar : creates
-    ClassPlan ||--o{ Class : creates
+    ClassPlan ||--o{ ClassEvent : creates
 
     Consultation ||--o| Appointment : "has one"
     Subscription ||--o{ Appointment : "has many"
     Webinar ||--o| Appointment : "has one"
-    Class ||--o{ Appointment : "has many"
+    ClassEvent ||--o{ Appointment : "has many"
 
     Appointment ||--|{ SlotOfAppointment : contains
 
@@ -211,6 +211,7 @@ erDiagram
         string appointmentId FK
     }
 ```
+> Note: we are using ClassEvent instead of Class because Class is a reserved keyword in Mermaid.
 
 **Key relationships**:
 

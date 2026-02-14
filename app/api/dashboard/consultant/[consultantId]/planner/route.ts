@@ -47,9 +47,17 @@ type PlannerWebinar = Prisma.WebinarGetPayload<{
 }>;
 type PlannerClass = Prisma.ClassGetPayload<{ include: typeof classInclude }>;
 
-// Response types with discriminators
-type WebinarEvent = PlannerWebinar & { type: "webinar" };
-type ClassEvent = PlannerClass & { type: "class" };
+// Response types with discriminators and role annotations
+type WebinarEvent = PlannerWebinar & {
+  type: "webinar";
+  collaboratorRole: string;
+  isCollaborated: boolean;
+};
+type ClassEvent = PlannerClass & {
+  type: "class";
+  collaboratorRole: string;
+  isCollaborated: boolean;
+};
 
 interface PlannerData {
   webinars: WebinarEvent[];
@@ -159,13 +167,31 @@ export async function GET(
       );
     }
 
-    // PERFORMANCE FIX #364: Use direct Prisma queries instead of internal HTTP fetches
-    // This eliminates network overhead and reduces response time significantly
-    const [webinarsRaw, classesRaw] = await Promise.all([
+    // Fetch owned plans, collaborated plans, and collaborator roles in parallel
+    const [
+      ownedWebinarsRaw,
+      ownedClassesRaw,
+      collabWebinarsRaw,
+      collabClassesRaw,
+      webinarCollabRoles,
+      classCollabRoles,
+    ] = await Promise.all([
+      // Owned plans
+      prisma.webinar.findMany({
+        where: { webinarPlan: { consultantProfileId: consultantId } },
+        include: webinarInclude,
+      }),
+      prisma.class.findMany({
+        where: { classPlan: { consultantProfileId: consultantId } },
+        include: classInclude,
+      }),
+      // Collaborated plans (only ACCEPTED)
       prisma.webinar.findMany({
         where: {
           webinarPlan: {
-            consultantProfileId: consultantId,
+            collaborators: {
+              some: { consultantProfileId: consultantId, status: "ACCEPTED" },
+            },
           },
         },
         include: webinarInclude,
@@ -173,33 +199,76 @@ export async function GET(
       prisma.class.findMany({
         where: {
           classPlan: {
-            consultantProfileId: consultantId,
+            collaborators: {
+              some: { consultantProfileId: consultantId, status: "ACCEPTED" },
+            },
           },
         },
         include: classInclude,
       }),
+      // Collaborator role lookups
+      prisma.webinarCollaborator.findMany({
+        where: { consultantProfileId: consultantId, status: "ACCEPTED" },
+        select: { webinarPlanId: true, role: true },
+      }),
+      prisma.classCollaborator.findMany({
+        where: { consultantProfileId: consultantId, status: "ACCEPTED" },
+        select: { classPlanId: true, role: true },
+      }),
     ]);
 
-    // Transform topics from objects to strings in nested plans (matching original API behavior)
-    const transformedWebinars = webinarsRaw.map((w) =>
-      transformNestedPlanTopics(w, "webinarPlan"),
+    // Build role lookup maps
+    const webinarRoleMap = Object.fromEntries(
+      webinarCollabRoles.map((c) => [c.webinarPlanId, c.role]),
     );
-    const transformedClasses = classesRaw.map((c) =>
-      transformNestedPlanTopics(c, "classPlan"),
+    const classRoleMap = Object.fromEntries(
+      classCollabRoles.map((c) => [c.classPlanId, c.role]),
     );
 
-    // Transform to include type discriminator
-    const webinars: WebinarEvent[] = transformedWebinars.map((webinar) => ({
-      ...webinar,
-      type: "webinar" as const,
-    }));
+    // Collect owned IDs for deduplication
+    const ownedWebinarIds = new Set(ownedWebinarsRaw.map((w) => w.id));
+    const ownedClassIds = new Set(ownedClassesRaw.map((c) => c.id));
 
-    const classes: ClassEvent[] = transformedClasses.map((classEvent) => ({
-      ...classEvent,
-      type: "class" as const,
-    }));
+    // Filter out any collaborated plans that are also owned (defensive)
+    const uniqueCollabWebinars = collabWebinarsRaw.filter(
+      (w) => !ownedWebinarIds.has(w.id),
+    );
+    const uniqueCollabClasses = collabClassesRaw.filter(
+      (c) => !ownedClassIds.has(c.id),
+    );
 
-    // FIX #142: Fetch participant counts using direct Prisma query (not internal API)
+    // Transform topics and annotate with roles
+    const webinars: WebinarEvent[] = [
+      ...ownedWebinarsRaw.map((w) => ({
+        ...transformNestedPlanTopics(w, "webinarPlan"),
+        type: "webinar" as const,
+        collaboratorRole: "HOST",
+        isCollaborated: false,
+      })),
+      ...uniqueCollabWebinars.map((w) => ({
+        ...transformNestedPlanTopics(w, "webinarPlan"),
+        type: "webinar" as const,
+        collaboratorRole: webinarRoleMap[w.webinarPlanId] || "COLLABORATOR",
+        isCollaborated: true,
+      })),
+    ];
+
+    const classes: ClassEvent[] = [
+      ...ownedClassesRaw.map((c) => ({
+        ...transformNestedPlanTopics(c, "classPlan"),
+        type: "class" as const,
+        collaboratorRole: "HOST",
+        isCollaborated: false,
+      })),
+      ...uniqueCollabClasses.map((c) => ({
+        ...transformNestedPlanTopics(c, "classPlan"),
+        type: "class" as const,
+        collaboratorRole: classRoleMap[c.classPlanId] || "COLLABORATOR",
+        isCollaborated: true,
+      })),
+    ];
+
+    // Fetch participant counts for all events (owned + collaborated)
     const webinarIds = webinars.map((w) => w.id);
     const classIds = classes.map((c) => c.id);
 

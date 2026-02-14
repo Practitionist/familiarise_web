@@ -21,6 +21,15 @@ import { useCurrency } from "@/lib/hooks/useCurrency";
 import type { Prisma, Topic } from "@prisma/client";
 import { FeatureItem } from "@/app/explore/programs/plans/components/FeatureItem";
 
+type CollaboratorInfo = {
+  id: string;
+  role: string;
+  consultantProfile: {
+    id: string;
+    user: { id: string; name: string | null; image: string | null };
+  };
+};
+
 export type WebinarPlanData = Prisma.WebinarPlanGetPayload<{
   include: {
     consultantProfile: {
@@ -45,7 +54,9 @@ export type WebinarPlanData = Prisma.WebinarPlanGetPayload<{
       };
     };
   };
-}>;
+}> & {
+  collaborators?: CollaboratorInfo[];
+};
 
 type SessionStatus =
   | "Upcoming"
@@ -328,6 +339,49 @@ export function WebinarDetails({
                   </Link>
                 </CardContent>
               </Card>
+
+              {/* Collaborators */}
+              {plan.collaborators && plan.collaborators.length > 0 && (
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-lg flex items-center gap-2">
+                      <Users className="w-4 h-4" />
+                      Co-Hosts
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    {plan.collaborators.map((collab) => (
+                      <Link
+                        key={collab.id}
+                        href={`/explore/experts/${collab.consultantProfile.id}`}
+                        className="flex items-center gap-3 hover:bg-zinc-50 rounded-lg p-2 -mx-2 transition-colors"
+                      >
+                        <div className="relative h-10 w-10 rounded-full overflow-hidden ring-2 ring-zinc-100">
+                          <Image
+                            src={
+                              collab.consultantProfile.user.image ??
+                              "/placeholder-user.jpg"
+                            }
+                            alt={
+                              collab.consultantProfile.user.name ?? "Co-host"
+                            }
+                            fill
+                            className="object-cover"
+                          />
+                        </div>
+                        <div>
+                          <p className="text-sm font-medium text-zinc-900">
+                            {collab.consultantProfile.user.name}
+                          </p>
+                          <p className="text-xs text-zinc-500">
+                            {collab.role.replace(/_/g, " ")}
+                          </p>
+                        </div>
+                      </Link>
+                    ))}
+                  </CardContent>
+                </Card>
+              )}
 
               {/* Registration Card */}
               <ClientWebinarRegistration
