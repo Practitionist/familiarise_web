@@ -405,7 +405,7 @@ try {
 
 - **[Migration Guide](./01_MIGRATION_GUIDE.md)**: Comprehensive guide for migrating from Redlock
 - **[API Reference](./02_API_REFERENCE.md)**: Complete API documentation with examples
-- **[Legacy Docs](../../payments/pay-later/DISTRIBUTED_LOCKING.md)**: Historical Redlock documentation (archived)
+- **[Legacy Docs](../../payments/approval-payments/04-distributed-locking.md)**: Historical Redlock documentation (archived)
 
 ### External Resources
 

@@ -875,9 +875,9 @@ WHERE request_status = 'APPROVED_PENDING_PAYMENT'
 
 ## Additional Resources
 
-- [Architecture Documentation](./ARCHITECTURE.md)
-- [API Reference](./API_REFERENCE.md)
-- [Testing Guide](./TESTING.md)
-- [Distributed Locking Details](./DISTRIBUTED_LOCKING.md)
-- [Email Notifications](./EMAIL_NOTIFICATIONS.md)
-- [Cron Schedules](./CRON_SCHEDULES.md)
+- [Architecture Documentation](./01-architecture.md)
+- [API Reference](./02-api-reference.md)
+- [Testing Guide](./06-testing.md)
+- [Distributed Locking Details](./04-distributed-locking.md)
+- [Email Notifications](./05-email-notifications.md)
+- [Cron Schedules](./03-cron-schedules.md)

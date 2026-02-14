@@ -301,5 +301,5 @@ stateDiagram-v2
 
 - User deduplication: 5-minute window blocks same-user duplicate attempts
 - Rate limiting: max 3 pending attempts per slot per 30 minutes
-- Cleanup job: runs every 15 minutes, removes appointments abandoned for 30+ minutes
+- Cleanup job: runs every 2 hours, releases tentative slots older than 7 days with no successful payment (see [13-cron-jobs-and-background-tasks.md](./13-cron-jobs-and-background-tasks.md))
 - Expired payment detection: `APPROVED_PENDING_PAYMENT` consultations with expired payments are treated as available slots

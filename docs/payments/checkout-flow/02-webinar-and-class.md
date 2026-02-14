@@ -1092,9 +1092,9 @@ UPDATE SlotOfAppointment SET isTentative = false WHERE id = slotId
 
 ---
 
-## Next: Part 3 - Payment Processing
+## Next: Payment Processing
 
-Continue to [CHECKOUT_FLOW_PART3.md](./CHECKOUT_FLOW_PART3.md) for:
+Continue to [03-payment-processing.md](./03-payment-processing.md) for:
 
 - Unified checkout API flow
 - Payment gateway integration (Stripe, Razorpay, Mock)

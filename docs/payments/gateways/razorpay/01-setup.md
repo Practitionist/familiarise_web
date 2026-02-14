@@ -1,12 +1,14 @@
 # Razorpay Setup Guide
 
+> Setting up Razorpay for payment processing and RazorpayX for consultant payouts on Familiarise.
+
+**Last Updated**: 2026-02-14
+
+---
+
 ## Overview
 
-This guide covers setting up Razorpay for payment processing on Familiarise. Razorpay is our primary payment gateway for Indian customers.
-
-### What is Razorpay?
-
-Razorpay is India's leading payment gateway that supports:
+Razorpay is our primary payment gateway for Indian customers, handling:
 
 - Credit/Debit Cards (Visa, Mastercard, RuPay)
 - UPI (Google Pay, PhonePe, Paytm)
@@ -14,126 +16,89 @@ Razorpay is India's leading payment gateway that supports:
 - Wallets (PayZapp, Mobikwik, etc.)
 - EMI options
 
-### Why Razorpay for Familiarise?
+Razorpay serves two distinct roles in our system:
 
-```
-+------------------+----------------------------------------+
-| Feature          | Why It Matters                         |
-+------------------+----------------------------------------+
-| Route            | Automated payouts to consultants       |
-| UPI Support      | 60%+ of Indian payments are UPI        |
-| Low Fees         | 2% + GST (competitive rates)           |
-| Quick Settlement | T+2 days (funds in bank)               |
-| Indian Focus     | Best support for INR transactions      |
-+------------------+----------------------------------------+
-```
+| Product | Purpose |
+|---------|---------|
+| **Razorpay** (Payments) | Accept payments from consultees |
+| **RazorpayX** (Payouts) | Disburse earnings to consultants |
 
 ---
 
 ## Prerequisites
 
-Before setting up Razorpay, ensure you have:
-
-| Requirement           | Details                                           |
-| --------------------- | ------------------------------------------------- |
+| Requirement | Details |
+|-------------|---------|
 | Business Registration | Sole proprietorship, Partnership, Pvt Ltd, or LLP |
-| PAN Card              | Business PAN or Individual PAN                    |
-| GST Registration      | Optional but recommended (for input tax credit)   |
-| Bank Account          | Current account in business name                  |
-| Website/App           | Live URL for verification                         |
-| Email/Phone           | For account verification                          |
+| PAN Card | Business PAN or Individual PAN |
+| GST Registration | Optional but recommended (for input tax credit) |
+| Bank Account | Current account in business name |
+| Website/App | Live URL for verification |
+| Email/Phone | For account verification |
 
 ---
 
-## Account Setup Steps
+## Account Setup
 
 ### Step 1: Create Razorpay Account
 
-```
-1. Go to https://dashboard.razorpay.com/signup
-2. Enter business email
-3. Create password
-4. Verify email
-```
+1. Sign up at `dashboard.razorpay.com/signup`
+2. Enter business email and create password
+3. Verify email
 
 ### Step 2: Complete Business Verification
 
-```
-Dashboard -> Settings -> Business Settings
+Provide via Dashboard > Settings > Business Settings:
 
-Provide:
-+-- Business Details
-|   +-- Business type (Pvt Ltd, Sole Prop, etc.)
-|   +-- Business name
-|   +-- Business PAN
-|   +-- GSTIN (if registered)
-|
-+-- Bank Details
-|   +-- Account number
-|   +-- IFSC code
-|   +-- Account holder name
-|
-+-- Address Proof
-|   +-- Registered address
-|   +-- Supporting document
-|
-+-- Identity Proof
-    +-- Authorized signatory details
-    +-- Aadhaar/Passport
-```
+- Business type, name, PAN, GSTIN (if registered)
+- Bank account number, IFSC code, account holder name
+- Registered address and supporting document
+- Authorized signatory identity proof (Aadhaar/Passport)
 
-### Step 3: Enable Route Feature
+### Step 3: Enable RazorpayX
 
-Route is required for consultant payouts. Request activation:
+RazorpayX is required for consultant payouts:
 
-```
-Dashboard -> Route -> Request Access
-
-Requirements for Route:
-- Verified Razorpay account
-- Minimum 3 months account age (or business documents)
-- Clear use case explanation
-```
+1. Apply for RazorpayX via the Razorpay dashboard
+2. Complete additional verification if required
+3. Obtain a RazorpayX account number once approved
 
 ### Step 4: Generate API Keys
 
-```
-Dashboard -> Settings -> API Keys -> Generate Key
+Dashboard > Settings > API Keys > Generate Key
 
-You will receive:
-+-- Key ID: rzp_test_xxxxxxxxxxxxx (starts with rzp_test_ or rzp_live_)
-+-- Key Secret: xxxxxxxxxxxxxxxxx (shown only once - SAVE IT!)
-```
+- **Key ID**: starts with `rzp_test_` (test) or `rzp_live_` (live)
+- **Key Secret**: shown only once — save immediately
 
 ---
 
 ## Environment Variables
 
-Add these to your `.env` file:
+### Payment Keys
 
-```env
-# Razorpay Configuration
-RAZORPAY_KEY_ID=rzp_test_xxxxxxxxxxxxx
-RAZORPAY_KEY_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxx
-RAZORPAY_WEBHOOK_SECRET=whsec_xxxxxxxxxxxxx
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `RAZORPAY_KEY_ID` | Server-side API key ID | `rzp_test_xxxxxxxxxxxxx` |
+| `RAZORPAY_SECRET` | Server-side API key secret | `xxxxxxxxxxxxxxxxx` |
+| `NEXT_PUBLIC_RAZORPAY_KEY_ID` | Client-side publishable key | `rzp_test_xxxxxxxxxxxxx` |
 
-# Optional: Separate webhook secret for Route/Payout events
-RAZORPAY_ROUTE_WEBHOOK_SECRET=whsec_xxxxxxxxxxxxx
-```
+### RazorpayX Payout Keys
+
+| Variable | Description | Fallback |
+|----------|-------------|----------|
+| `RAZORPAYX_KEY_ID` | RazorpayX API key ID | Falls back to `RAZORPAY_KEY_ID` |
+| `RAZORPAYX_KEY_SECRET` | RazorpayX API key secret | Falls back to `RAZORPAY_SECRET` |
+| `RAZORPAYX_ACCOUNT_NUMBER` | RazorpayX account number | Required, no fallback |
+| `RAZORPAYX_WEBHOOK_SECRET` | RazorpayX webhook secret | Optional |
 
 ### Test vs Live Keys
 
-```
-+------------------+----------------------------------+
-| Environment      | Key Format                       |
-+------------------+----------------------------------+
-| Test Mode        | rzp_test_xxxxxxxxxxxxx           |
-| Live Mode        | rzp_live_xxxxxxxxxxxxx           |
-+------------------+----------------------------------+
+| Environment | Key Format |
+|-------------|------------|
+| Test Mode | `rzp_test_xxxxxxxxxxxxx` |
+| Live Mode | `rzp_live_xxxxxxxxxxxxx` |
 
-IMPORTANT: Never commit live keys to git!
-Use environment variables or secrets manager.
-```
+Never commit live keys to version control.
 
 ---
 
@@ -141,123 +106,27 @@ Use environment variables or secrets manager.
 
 ### Webhook Setup
 
-```
-Dashboard -> Settings -> Webhooks -> Add New Webhook
+Dashboard > Settings > Webhooks > Add New Webhook
 
-URL: https://yoursite.com/api/webhooks/razorpay
+**URL**: `https://yoursite.com/api/webhooks/razorpay`
 
-Select Events:
-+-- Payment Events
-|   +-- payment.authorized
-|   +-- payment.captured
-|   +-- payment.failed
-|
-+-- Refund Events
-|   +-- refund.created
-|   +-- refund.processed
-|
-+-- Route Events (for payouts)
-    +-- transfer.processed
-    +-- transfer.settled
-    +-- transfer.failed
-```
+**Events to select**:
 
-### Webhook Secret
+| Category | Events |
+|----------|--------|
+| Payment | `payment.captured`, `order.paid`, `payment.failed` |
+| Refund | `refund.created`, `refund.processed`, `refund.failed` |
+| Dispute | `payment.dispute.created`, `payment.dispute.won`, `payment.dispute.lost`, `payment.dispute.closed` |
+| Payout (RazorpayX) | `payout.processed`, `payout.reversed`, `payout.rejected`, `payout.queued`, `payout.pending`, `payout.cancelled` |
 
-After creating webhook, copy the secret:
-
-```
-Webhook Secret: whsec_xxxxxxxxxxxxx
-
-This is used to verify webhook signatures.
-Store in RAZORPAY_WEBHOOK_SECRET env variable.
-```
+Copy the webhook secret after creation and store it in the appropriate environment variable.
 
 ### Test Mode vs Live Mode
 
-```
-Dashboard -> Toggle in top-right corner
+Toggle via top-right corner of the Razorpay dashboard.
 
-Test Mode:
-+-- Uses test API keys
-+-- No real money moved
-+-- Use test card numbers
-+-- Webhooks still fire (to test endpoints)
-
-Live Mode:
-+-- Uses live API keys
-+-- Real transactions
-+-- Real money movement
-+-- Complete verification required
-```
-
----
-
-## SDK Installation
-
-### Install Razorpay Package
-
-```bash
-npm install razorpay
-```
-
-### Initialize Client
-
-```typescript
-// lib/payments/core/razorpay.ts
-
-import Razorpay from "razorpay";
-
-// Initialize Razorpay client
-const razorpay = new Razorpay({
-  key_id: process.env.RAZORPAY_KEY_ID!,
-  key_secret: process.env.RAZORPAY_KEY_SECRET!,
-});
-
-export default razorpay;
-```
-
-### Create Order Example
-
-```typescript
-// Create an order before checkout
-async function createOrder(amount: number) {
-  const order = await razorpay.orders.create({
-    amount: amount * 100, // Razorpay expects paise (100 paise = 1 INR)
-    currency: "INR",
-    receipt: `order_${Date.now()}`,
-    notes: {
-      description: "Consultation booking",
-    },
-  });
-
-  return order;
-}
-```
-
-### Webhook Verification
-
-```typescript
-// lib/payments/webhooks/verify.ts
-
-import crypto from "crypto";
-
-export function verifyRazorpayWebhook(
-  body: string,
-  signature: string,
-  secret: string,
-): boolean {
-  const expectedSignature = crypto
-    .createHmac("sha256", secret)
-    .update(body)
-    .digest("hex");
-
-  return crypto.timingSafeEqual(
-    Buffer.from(signature),
-    Buffer.from(expectedSignature),
-  );
-}
-```
+- **Test Mode**: Uses test API keys, no real money, webhooks still fire
+- **Live Mode**: Real transactions, requires complete verification
 
 ---
 
@@ -265,133 +134,83 @@ export function verifyRazorpayWebhook(
 
 ### Test Card Numbers
 
-```
-+------------------------+------------------+-------------+
-| Card Type              | Number           | CVV/Expiry  |
-+------------------------+------------------+-------------+
-| Mastercard (Success)   | 5267 3181 8797 5449 | Any CVV, Future date |
-| Visa (Success)         | 4111 1111 1111 1111 | Any CVV, Future date |
-| RuPay (Success)        | 6076 6506 0000 0083 | Any CVV, Future date |
-| Card (Failure)         | 4000 0000 0000 0002 | Any CVV, Future date |
-+------------------------+------------------+-------------+
-
-Note: Any future expiry date and any 3-digit CVV works in test mode.
-```
+| Card Type | Number | Notes |
+|-----------|--------|-------|
+| Mastercard (Success) | `5267 3181 8797 5449` | Any CVV, any future expiry |
+| Visa (Success) | `4111 1111 1111 1111` | Any CVV, any future expiry |
+| RuPay (Success) | `6076 6506 0000 0083` | Any CVV, any future expiry |
+| Card (Failure) | `4000 0000 0000 0002` | Any CVV, any future expiry |
 
 ### Test UPI IDs
 
-```
-+------------------------+------------------+
-| Scenario               | UPI ID           |
-+------------------------+------------------+
-| Success                | success@razorpay |
-| Failure                | failure@razorpay |
-+------------------------+------------------+
-```
+| Scenario | UPI ID |
+|----------|--------|
+| Success | `success@razorpay` |
+| Failure | `failure@razorpay` |
 
 ### Test Net Banking
 
+In test mode, any bank selection shows a simulation page where you can choose success or failure.
+
+### Local Webhook Testing
+
+Use ngrok or similar to expose your local server:
+
 ```
-In test mode, any bank selection will show a simulation page
-where you can choose success or failure.
-```
-
-### Testing Webhooks Locally
-
-Use ngrok or similar to expose local server:
-
-```bash
-# Install ngrok
-npm install -g ngrok
-
-# Expose local server
 ngrok http 3000
-
-# Use the ngrok URL for webhook endpoint
-# https://xxxx-xx-xx-xx.ngrok.io/api/webhooks/razorpay
 ```
 
-### Test Transfer (Route)
-
-```typescript
-// In test mode, transfers work the same as live
-// but no real money moves
-
-const transfer = await razorpay.transfers.create({
-  account: "acc_xxxxx", // Linked account ID
-  amount: 10000, // 100 INR in paise
-  currency: "INR",
-});
-```
+Set the ngrok URL as your webhook endpoint in the Razorpay dashboard.
 
 ---
 
 ## Common Issues & Troubleshooting
 
-### Issue: "Invalid API Key"
+### "Invalid API Key"
 
-```
-Cause: Wrong key or environment mismatch
-Fix:
-1. Check if using test key with test mode
-2. Check if key is copied correctly (no spaces)
-3. Verify key hasn't been regenerated
-```
+- Verify test/live key matches the dashboard mode
+- Check key is copied correctly (no whitespace)
+- Verify key hasn't been regenerated
 
-### Issue: "Webhook signature verification failed"
+### "Webhook signature verification failed"
 
-```
-Cause: Wrong webhook secret or body modification
-Fix:
-1. Use raw request body (not parsed JSON)
-2. Verify webhook secret matches dashboard
-3. Check for proxy/middleware modifying body
-```
+- Use raw request body (not parsed JSON) for verification
+- Verify webhook secret matches the dashboard
+- Check for middleware modifying the request body
 
-### Issue: "Route not enabled"
+### "RazorpayX not configured"
 
-```
-Cause: Route feature not activated on account
-Fix:
-1. Apply for Route in dashboard
-2. Wait for Razorpay approval (1-3 days)
-3. Complete any additional verification
-```
-
-### Issue: "Insufficient balance for transfer"
-
-```
-Cause: Trying to transfer more than available
-Fix:
-1. Check settlement status of payments
-2. Wait for T+2 settlement
-3. Use "on_hold" parameter for delayed transfers
-```
+- Ensure `RAZORPAYX_ACCOUNT_NUMBER` is set
+- Verify RazorpayX is approved and active on your account
+- Check that `RAZORPAYX_KEY_ID` and `RAZORPAYX_KEY_SECRET` are set (or fallback keys exist)
 
 ---
 
 ## Security Best Practices
 
-```
-DO:
-+-- Store API keys in environment variables
-+-- Verify webhook signatures
-+-- Use HTTPS for all endpoints
-+-- Log payment events for audit
-+-- Implement idempotency keys
+- Store all API keys in environment variables, never in code
+- Verify webhook signatures on every incoming webhook
+- Use HTTPS for all endpoints
+- Implement idempotency keys for payouts (required since March 2025)
+- Never log full card numbers or sensitive payment data
+- Never trust client-side payment data — always verify server-side
 
-DON'T:
-+-- Commit API keys to git
-+-- Log full card numbers
-+-- Trust client-side payment data
-+-- Skip webhook verification
-+-- Store CVV or full card details
-```
+---
+
+## Source Files
+
+| File | Purpose |
+|------|---------|
+| `lib/payments/core/razorpay.ts` | Client initialization, order creation, refunds, cancellation |
+| `lib/payments/payouts/razorpay-payouts.ts` | RazorpayX Payouts service (contacts, fund accounts, payouts) |
+| `app/api/webhooks/razorpay/route.ts` | Webhook handler (14 event types) |
+| `app/checkout/components/RazorpayCheckout.tsx` | Client-side checkout component |
 
 ---
 
 ## Related Documents
 
-- [02-architecture-and-flow.md](./02-architecture-and-flow.md) - Payment flow details
-- [03-payout-flow.md](./03-payout-flow.md) - Consultant payout system
-- [Razorpay Official Docs](https://razorpay.com/docs/) - API reference
+- [Gateway Overview](../README.md) — Comparison and selection logic
+- [02-architecture-and-flow.md](./02-architecture-and-flow.md) — Payment flow and revenue split
+- [03-payout-flow.md](./03-payout-flow.md) — RazorpayX payout system
+- [04-kyc-and-onboarding.md](./04-kyc-and-onboarding.md) — KYC requirements
