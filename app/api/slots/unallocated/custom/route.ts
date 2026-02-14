@@ -80,52 +80,41 @@ export async function GET(req: NextRequest) {
       });
     });
 
-    // Get all custom slots for the consultant
-    const [customSlots, total] = await Promise.all([
-      prisma.slotOfAvailabilityCustom.findMany({
-        where: {
-          consultantProfileId,
-          ...(startDateInUtc && endDateInUtc
-            ? {
-                availabilityStartsAt: { gte: new Date(startDateInUtc) },
-                availabilityEndsAt: { lte: new Date(endDateInUtc) },
-              }
-            : {}),
-        },
-        orderBy: {
-          availabilityStartsAt: "asc",
-        },
-        include: {
-          consultantProfile: {
-            select: {
-              id: true,
-              user: {
-                select: {
-                  name: true,
-                  email: true,
-                },
+    // Fetch ALL custom slots (no DB-level pagination) so we can filter out
+    // allocated ones first, then paginate the filtered results accurately.
+    const dateFilter =
+      startDateInUtc && endDateInUtc
+        ? {
+            availabilityStartsAt: { gte: new Date(startDateInUtc) },
+            availabilityEndsAt: { lte: new Date(endDateInUtc) },
+          }
+        : {};
+
+    const allCustomSlots = await prisma.slotOfAvailabilityCustom.findMany({
+      where: {
+        consultantProfileId,
+        ...dateFilter,
+      },
+      orderBy: {
+        availabilityStartsAt: "asc",
+      },
+      include: {
+        consultantProfile: {
+          select: {
+            id: true,
+            user: {
+              select: {
+                name: true,
+                email: true,
               },
             },
           },
         },
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-      prisma.slotOfAvailabilityCustom.count({
-        where: {
-          consultantProfileId,
-          ...(startDateInUtc && endDateInUtc
-            ? {
-                availabilityStartsAt: { gte: new Date(startDateInUtc) },
-                availabilityEndsAt: { lte: new Date(endDateInUtc) },
-              }
-            : {}),
-        },
-      }),
-    ]);
+      },
+    });
 
     // FIX Bug #09: Use range overlap check instead of exact key matching
-    const unallocatedSlots = customSlots.filter((slot) => {
+    const allUnallocatedSlots = allCustomSlots.filter((slot) => {
       const hasOverlap = allocatedSlots.some(
         (allocated) =>
           allocated.startsAt < slot.availabilityEndsAt &&
@@ -134,16 +123,20 @@ export async function GET(req: NextRequest) {
       return !hasOverlap;
     });
 
-    // FIX Bug #20: Recompute total after filtering to reflect actual unallocated count
-    // `total` is the count of all configured custom slots (before filtering out allocated ones)
-    const totalUnallocated = unallocatedSlots.length;
+    // Apply pagination in memory after filtering so totals are accurate
+    const totalConfigured = allCustomSlots.length;
+    const totalUnallocated = allUnallocatedSlots.length;
+    const paginatedSlots = allUnallocatedSlots.slice(
+      (page - 1) * limit,
+      page * limit,
+    );
 
     return NextResponse.json(
       {
-        data: unallocatedSlots,
+        data: paginatedSlots,
         meta: {
           totalUnallocated,
-          totalConfigured: total,
+          totalConfigured,
           page,
           limit,
           totalPages: Math.ceil(totalUnallocated / limit),

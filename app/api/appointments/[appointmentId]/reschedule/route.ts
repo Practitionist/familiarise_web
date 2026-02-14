@@ -128,13 +128,14 @@ export async function POST(
             consultantProfileId === subscriptionConsultantId ||
             consulteeProfileId === appointment.subscription.requestedById;
         }
-        // Check webinar relationship
+        // Check webinar relationship — only the consultant (organizer) can reschedule
+        // group events, since rescheduling changes the time for all participants.
         if (appointment.webinar) {
           const webinarConsultantId =
             appointment.webinar.webinarPlan?.consultantProfileId;
           isParticipant = consultantProfileId === webinarConsultantId;
         }
-        // Check class relationship
+        // Check class relationship — same as webinar: consultant-only reschedule
         if (appointment.class) {
           const classConsultantId =
             appointment.class.classPlan?.consultantProfileId;

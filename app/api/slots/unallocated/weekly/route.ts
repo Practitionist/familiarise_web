@@ -62,42 +62,35 @@ export async function GET(req: NextRequest) {
       });
     });
 
-    // Get all weekly slots for the consultant
-    const [weeklySlots, total] = await Promise.all([
-      prisma.slotOfAvailabilityWeekly.findMany({
-        where: {
-          consultantProfileId,
-        },
-        orderBy: [
-          { dayOfWeekForStartsAt: "asc" },
-          { availabilityStartsAt: "asc" },
-        ],
-        include: {
-          consultantProfile: {
-            select: {
-              id: true,
-              user: {
-                select: {
-                  name: true,
-                  email: true,
-                },
+    // Fetch ALL weekly slots (no DB-level pagination) so we can filter out
+    // allocated ones first, then paginate the filtered results accurately.
+    const allWeeklySlots = await prisma.slotOfAvailabilityWeekly.findMany({
+      where: {
+        consultantProfileId,
+      },
+      orderBy: [
+        { dayOfWeekForStartsAt: "asc" },
+        { availabilityStartsAt: "asc" },
+      ],
+      include: {
+        consultantProfile: {
+          select: {
+            id: true,
+            user: {
+              select: {
+                name: true,
+                email: true,
               },
             },
           },
         },
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-      prisma.slotOfAvailabilityWeekly.count({
-        where: { consultantProfileId },
-      }),
-    ]);
+      },
+    });
 
-    // For weekly slots, we need to check if any instance of the weekly slot
-    // in the date range is already allocated
+    // For weekly slots, check if any instance in the date range overlaps an allocated slot.
     // FIX Bug #09: Use range overlap check instead of exact key matching,
-    // and use UTC-consistent date construction instead of local setHours/setMinutes
-    const unallocatedSlots = weeklySlots.filter((slot) => {
+    // and use UTC-consistent date construction instead of local setHours/setMinutes.
+    const allUnallocatedSlots = allWeeklySlots.filter((slot) => {
       const startDate = new Date(startDateInUtc);
       const endDate = new Date(endDateInUtc);
       const currentDate = new Date(startDate);
@@ -145,16 +138,20 @@ export async function GET(req: NextRequest) {
       return true; // Slot is available if no conflicts found
     });
 
-    // FIX Bug #20: Recompute total after filtering to reflect actual unallocated count
-    // `total` is the count of all configured weekly slots (before filtering out allocated ones)
-    const totalUnallocated = unallocatedSlots.length;
+    // Apply pagination in memory after filtering so totals are accurate
+    const totalConfigured = allWeeklySlots.length;
+    const totalUnallocated = allUnallocatedSlots.length;
+    const paginatedSlots = allUnallocatedSlots.slice(
+      (page - 1) * limit,
+      page * limit,
+    );
 
     return NextResponse.json(
       {
-        data: unallocatedSlots,
+        data: paginatedSlots,
         meta: {
           totalUnallocated,
-          totalConfigured: total,
+          totalConfigured,
           page,
           limit,
           totalPages: Math.ceil(totalUnallocated / limit),

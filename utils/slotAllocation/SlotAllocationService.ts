@@ -92,22 +92,26 @@ export class SlotAllocationService {
         // CRITICAL FIX: Check for existing appointments to detect reschedule scenario
         // If tentative slots exist, this is a reschedule and we should preserve the original slot count
         const relationField = this.getEventRelationField(eventType);
-        const existingAppointments = await (tx as any).appointment.findMany({
-          where: { [`${relationField}Id`]: eventId },
+        const existingAppointments = await tx.appointment.findMany({
+          where: {
+            [`${relationField}Id`]: eventId,
+          } as Prisma.AppointmentWhereInput,
           include: { slotsOfAppointment: true },
         });
 
         // Count existing slots by tentative status
         const existingNonTentativeSlotCount = existingAppointments.reduce(
-          (count: number, app: any) =>
+          (count, appointment) =>
             count +
-            app.slotsOfAppointment.filter((s: any) => !s.isTentative).length,
+            appointment.slotsOfAppointment.filter((slot) => !slot.isTentative)
+              .length,
           0,
         );
         const tentativeSlotCount = existingAppointments.reduce(
-          (count: number, app: any) =>
+          (count, appointment) =>
             count +
-            app.slotsOfAppointment.filter((s: any) => s.isTentative).length,
+            appointment.slotsOfAppointment.filter((slot) => slot.isTentative)
+              .length,
           0,
         );
         const isReschedule = tentativeSlotCount > 0;
@@ -141,7 +145,7 @@ export class SlotAllocationService {
         );
 
         // Validate
-        const validator = new SlotValidationService(tx as any);
+        const validator = new SlotValidationService(tx);
         const validation = await validator.validate(
           eventType,
           eventId,
@@ -296,7 +300,7 @@ export class SlotAllocationService {
         }
 
         // Validate
-        const validator = new SlotValidationService(tx as any);
+        const validator = new SlotValidationService(tx);
         const validation = await validator.validate(
           eventType,
           eventId,
@@ -379,8 +383,10 @@ export class SlotAllocationService {
         // CRITICAL FIX: Verify appointments actually exist before approving
         // This prevents approving requests with no actual bookings
         const relationField = this.getEventRelationField(eventType);
-        const existingAppointments = await (tx as any).appointment.findMany({
-          where: { [`${relationField}Id`]: eventId },
+        const existingAppointments = await tx.appointment.findMany({
+          where: {
+            [`${relationField}Id`]: eventId,
+          } as Prisma.AppointmentWhereInput,
           include: { slotsOfAppointment: true },
         });
 
@@ -394,7 +400,7 @@ export class SlotAllocationService {
 
         // Verify appointment slots match requested slots
         const existingSlotCount = existingAppointments.reduce(
-          (sum: number, app: any) => sum + app.slotsOfAppointment.length,
+          (sum, appointment) => sum + appointment.slotsOfAppointment.length,
           0,
         );
 
@@ -407,7 +413,7 @@ export class SlotAllocationService {
         }
 
         // Validate requested slots still meet all requirements
-        const validator = new SlotValidationService(tx as any);
+        const validator = new SlotValidationService(tx);
         const validation = await validator.validate(
           eventType,
           eventId,
@@ -431,7 +437,9 @@ export class SlotAllocationService {
 
         // CRITICAL FIX: Clear isTentative flag on all slots after approval
         // This ensures slots are no longer marked as pending reschedule
-        const appointmentIds = existingAppointments.map((app: any) => app.id);
+        const appointmentIds = existingAppointments.map(
+          (appointment) => appointment.id,
+        );
         await tx.slotOfAppointment.updateMany({
           where: {
             appointmentId: { in: appointmentIds },
@@ -505,7 +513,7 @@ export class SlotAllocationService {
   ): Promise<Date[]> {
     // Get all existing booked slots for this consultant
     // FIX Bug #15: Use centralized occupancy policy for consistent conflict detection
-    const existingAppointments = await (tx as any).appointment.findMany({
+    const existingAppointments = await tx.appointment.findMany({
       where: {
         AND: [
           {
@@ -528,8 +536,8 @@ export class SlotAllocationService {
     });
 
     const bookedSlots = new Set(
-      existingAppointments.flatMap((app: any) =>
-        app.slotsOfAppointment.map((slot: any) =>
+      existingAppointments.flatMap((appointment) =>
+        appointment.slotsOfAppointment.map((slot) =>
           new Date(slot.startsAt).toISOString(),
         ),
       ),
@@ -878,7 +886,7 @@ export class SlotAllocationService {
           };
         });
 
-        return (tx as any).appointment.create({
+        return tx.appointment.create({
           data: {
             appointmentType: this.getAppointmentType(eventType),
             [this.getEventRelationField(eventType)]: {
@@ -1013,6 +1021,9 @@ export class SlotAllocationService {
         break;
     }
 
+    // Dynamic model access by eventType requires type assertion — TypeScript can't
+    // statically verify tx["consultation"] etc. from a computed string.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (tx as any)[eventType].update({
       where: { id: eventId },
       data: updates,
@@ -1033,6 +1044,8 @@ export class SlotAllocationService {
     requestedSlots?: Date[];
   } | null> {
     const include = this.getEventInclude(eventType);
+    // Dynamic model access by eventType — same as updateEventStatus above
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const event = await (tx as any)[eventType].findUnique({
       where: { id: eventId },
       include,
