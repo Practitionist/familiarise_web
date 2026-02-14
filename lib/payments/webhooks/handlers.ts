@@ -53,6 +53,7 @@ interface ConsultationData {
   slotEndTimeInUTC: string;
   notes?: string;
   consulteeProfileId: string;
+  userId: string;
 }
 
 /**
@@ -631,6 +632,7 @@ async function createAppointmentFromWebhook(
         slotEndTimeInUTC,
         notes,
         consulteeProfileId,
+        userId,
       });
       break;
     case AppointmentsType.SUBSCRIPTION:
@@ -701,6 +703,7 @@ async function createConsultation(
           startsAt: new Date(data.slotStartTimeInUTC),
           endsAt: new Date(data.slotEndTimeInUTC),
           isTentative: false,
+          user: { connect: { id: data.userId } },
         },
       },
     },

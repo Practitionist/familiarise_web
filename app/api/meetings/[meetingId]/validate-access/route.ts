@@ -55,12 +55,18 @@ export async function GET(
                     consultationPlan: {
                       select: { consultantProfileId: true },
                     },
+                    requestedBy: {
+                      include: { user: { select: { id: true } } },
+                    },
                   },
                 },
                 subscription: {
                   include: {
                     subscriptionPlan: {
                       select: { consultantProfileId: true },
+                    },
+                    requestedBy: {
+                      include: { user: { select: { id: true } } },
                     },
                   },
                 },
@@ -134,6 +140,21 @@ export async function GET(
     }
 
     if (isParticipant) {
+      return NextResponse.json({
+        hasAccess: true,
+        role: "participant",
+        message: "Access granted as participant",
+      });
+    }
+
+    // Fallback: Check if user is the consultee who requested this appointment
+    // This covers existing consultations/subscriptions where the user was not
+    // connected to the slot via SlotOfAppointmentToUser during creation
+    const isConsultee =
+      appointment.consultation?.requestedBy?.user?.id === userId ||
+      appointment.subscription?.requestedBy?.user?.id === userId;
+
+    if (isConsultee) {
       return NextResponse.json({
         hasAccess: true,
         role: "participant",
