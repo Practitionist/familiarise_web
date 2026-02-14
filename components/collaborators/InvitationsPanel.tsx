@@ -15,6 +15,7 @@ import {
   Users,
   ChevronDown,
   ChevronUp,
+  AlertTriangle,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { formatCurrencyAmount } from "@/lib/utils";
@@ -1080,7 +1081,7 @@ export function InvitationsPanel() {
       {/* ── Host section: My Plans with Collaborators ── */}
       {hostedPlans.length > 0 && (
         <div>
-          <h3 className="text-sm font-semibold text-zinc-700 mb-3">
+          <h3 className="text-base font-semibold text-zinc-700 mb-3">
             My Plans with Collaborators ({hostedPlans.length})
           </h3>
           <div className="space-y-2">
@@ -1098,7 +1099,7 @@ export function InvitationsPanel() {
       {/* ── Collaborator section: Pending Invitations ── */}
       {pending.length > 0 && (
         <div>
-          <h3 className="text-sm font-semibold text-zinc-700 mb-3">
+          <h3 className="text-base font-semibold text-zinc-700 mb-3">
             Pending Invitations ({pending.length})
           </h3>
           <div className="space-y-3">
@@ -1134,6 +1135,13 @@ export function InvitationsPanel() {
                           {formatCurrencyAmount(collab.planPrice, "INR")}
                         </span>
                       )}
+                    </div>
+                    <div className="flex items-center gap-1.5 mt-2 text-xs text-amber-700">
+                      <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                      <span>
+                        You won&apos;t earn from purchases made before you
+                        accept the collaborations request.
+                      </span>
                     </div>
                   </div>
                   <div className="flex gap-2 ml-4">
@@ -1178,7 +1186,7 @@ export function InvitationsPanel() {
       {/* ── Collaborator section: Active Collaborations ── */}
       {accepted.length > 0 && (
         <div>
-          <h3 className="text-sm font-semibold text-zinc-700 mb-3">
+          <h3 className="text-base font-semibold text-zinc-700 mb-3">
             Active Collaborations ({accepted.length})
           </h3>
           <div className="space-y-2">

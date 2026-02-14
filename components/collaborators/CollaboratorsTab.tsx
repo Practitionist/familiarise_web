@@ -21,6 +21,7 @@ import {
   Users,
   Percent,
   ChevronUp,
+  AlertTriangle,
 } from "lucide-react";
 import { ConsultantSearchInput } from "./ConsultantSearchInput";
 
@@ -161,6 +162,8 @@ export function CollaboratorsTab({
 
   const ownerShare = 100 - totalShare;
 
+  const pendingCollabs = collaborators.filter((c) => c.status === "PENDING");
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-8">
@@ -181,6 +184,19 @@ export function CollaboratorsTab({
           </span>
         </div>
       </div>
+
+      {/* Pending collaborator warning */}
+      {pendingCollabs.length > 0 && (
+        <div className="flex items-start gap-3 p-3 bg-amber-50 rounded-lg border border-amber-200">
+          <AlertTriangle className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
+          <p className="text-sm text-amber-800">
+            {pendingCollabs.length} collaborator
+            {pendingCollabs.length > 1 ? "s" : ""} haven&apos;t accepted yet.
+            Purchases made before they accept won&apos;t include their revenue
+            split.
+          </p>
+        </div>
+      )}
 
       {/* Collaborator list */}
       {collaborators.length === 0 ? (
