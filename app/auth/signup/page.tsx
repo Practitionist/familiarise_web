@@ -6,13 +6,8 @@ import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { signIn, signUp, useSession } from "@/lib/auth-client";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-<<<<<<< Updated upstream
-import { useState, useEffect } from "react";
-=======
-import { useState, useEffect, Suspense } from "react";
-import { useSearchParams } from "next/navigation";
->>>>>>> Stashed changes
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
 
 export default function SignUp() {
   return (
