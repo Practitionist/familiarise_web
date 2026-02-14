@@ -20,16 +20,23 @@ Documentation for working, production-ready systems.
 
 ### Booking
 
-Booking system, slot allocation, validation, and scheduling logic.
+Booking system, slot allocation, validation, and scheduling logic for all 5 event types.
 
-- [README.md](./booking/README.md) - System overview, source code map, navigation hub
+- [README.md](./booking/README.md) - System overview, source code map, recommended reading order
 - [01-architecture.md](./booking/01-architecture.md) - Services, data model, data flows, tentative lifecycle
-- [02-event-types-and-validation.md](./booking/02-event-types-and-validation.md) - 4 event types, rules, 3 validation layers
+- [02-event-types-and-validation.md](./booking/02-event-types-and-validation.md) - 5 event types, rules, 3 validation layers
 - [03-slot-math-and-calculations.md](./booking/03-slot-math-and-calculations.md) - 30-min slots, week counting, consecutive validation
 - [04-api-reference.md](./booking/04-api-reference.md) - 8 endpoints, Zod schemas, error codes
 - [05-troubleshooting-and-changelog.md](./booking/05-troubleshooting-and-changelog.md) - Common errors, debugging, recent fixes
-- [06-reschedule-implementation-plan.md](./booking/06-reschedule-implementation-plan.md) - Reschedule implementation plan
-- [07-reschedule-issue-validation.md](./booking/07-reschedule-issue-validation.md) - Reschedule issue validation
+- [06-booking-lifecycle.md](./booking/06-booking-lifecycle.md) - End-to-end booking journey, per-event flows, status transitions
+- [07-rescheduling-flow.md](./booking/07-rescheduling-flow.md) - Reschedule API, slot lifecycle, known issues
+- [08-cancellation-flow.md](./booking/08-cancellation-flow.md) - Cancel API, cascading effects, waitlist and refund triggers
+- [09-trial-sessions.md](./booking/09-trial-sessions.md) - Trial session system, status lifecycle, conversion
+- [10-checkout-payment-integration.md](./booking/10-checkout-payment-integration.md) - How bookings connect to payments
+- [11-waitlist-system.md](./booking/11-waitlist-system.md) - Waitlist for group events (webinars, classes)
+- [12-concurrency-and-locking.md](./booking/12-concurrency-and-locking.md) - Distributed locks, Prisma transactions, race condition prevention
+- [13-cron-jobs-and-background-tasks.md](./booking/13-cron-jobs-and-background-tasks.md) - 6+ background jobs for lifecycle management
+- [14-local-development-and-testing.md](./booking/14-local-development-and-testing.md) - Dev setup, mock payments, test scenarios, debugging
 
 ---
 

@@ -2,18 +2,20 @@
 
 ## Event Type Comparison
 
-| Aspect                   | Consultation              | Subscription                                             | Webinar                   | Class                                                       |
-| ------------------------ | ------------------------- | -------------------------------------------------------- | ------------------------- | ----------------------------------------------------------- |
-| **Relationship**         | 1:1                       | 1:1                                                      | 1:many                    | 1:many                                                      |
-| **Frequency**            | One-time                  | Recurring                                                | One-time                  | Recurring                                                   |
-| **Duration field**       | `durationInHours` (total) | `sessionDurationInHours` (per call) + `durationInMonths` | `durationInHours` (total) | `sessionDurationInHours` (per session) + `durationInMonths` |
-| **Slot grouping**        | Consecutive + same day    | 1 call/day max, consecutive within day                   | Consecutive               | Max 2-3 sessions/day, consecutive within session            |
-| **Scheduling period**    | None                      | Required [startDate, endDate]                            | None                      | Required [startDate, endDate]                               |
-| **Appointments created** | 1                         | 1 per call (many)                                        | 1                         | 1 per session (many)                                        |
-| **Weekly limit**         | N/A                       | `callsPerWeek` (0-7)                                     | N/A                       | `meetingsPerWeek`                                           |
-| **Status field**         | `requestStatus`           | `requestStatus`                                          | `status`                  | `status`                                                    |
-| **Allocation modes**     | auto, manual, requested   | auto, manual, requested                                  | auto, manual              | auto, manual                                                |
-| **Min duration**         | 0.5h                      | 0.5h per session                                         | 0.5h                      | 0.5h per session                                            |
+| Aspect                   | Consultation              | Subscription                                             | Webinar                   | Class                                                       | Trial                                   |
+| ------------------------ | ------------------------- | -------------------------------------------------------- | ------------------------- | ----------------------------------------------------------- | ---------------------------------------- |
+| **Relationship**         | 1:1                       | 1:1                                                      | 1:many                    | 1:many                                                      | 1:1                                      |
+| **Frequency**            | One-time                  | Recurring                                                | One-time                  | Recurring                                                   | One-time (free)                          |
+| **Duration field**       | `durationInHours` (total) | `sessionDurationInHours` (per call) + `durationInMonths` | `durationInHours` (total) | `sessionDurationInHours` (per session) + `durationInMonths` | Fixed 0.5h (1 slot)                      |
+| **Slot grouping**        | Consecutive + same day    | 1 call/day max, consecutive within day                   | Consecutive               | Max 2-3 sessions/day, consecutive within session            | Single slot                              |
+| **Scheduling period**    | None                      | Required [startDate, endDate]                            | None                      | Required [startDate, endDate]                               | None                                     |
+| **Appointments created** | 1                         | 1 per call (many)                                        | 1                         | 1 per session (many)                                        | 1                                        |
+| **Weekly limit**         | N/A                       | `callsPerWeek` (0-7)                                     | N/A                       | `meetingsPerWeek`                                           | N/A                                      |
+| **Status field**         | `requestStatus`           | `requestStatus`                                          | `status`                  | `status`                                                    | `status` (TrialSessionStatus)            |
+| **Allocation modes**     | auto, manual, requested   | auto, manual, requested                                  | auto, manual              | auto, manual                                                | Consultant-scheduled                     |
+| **Min duration**         | 0.5h                      | 0.5h per session                                         | 0.5h                      | 0.5h per session                                            | 0.5h (fixed)                             |
+| **Payment**              | Required                  | Required                                                 | Required                  | Required                                                    | Free                                     |
+| **Uniqueness**           | Multiple allowed          | Multiple allowed                                         | Multiple allowed          | Multiple allowed                                            | One per consultant per consultee         |
 
 ---
 
@@ -117,6 +119,39 @@ flowchart LR
 ```
 
 Consultant-scheduled. Consultees enroll via checkout or join waitlist.
+
+---
+
+## Trial
+
+Free one-time session that lets a consultee try a subscription plan before committing.
+
+**Config**: Fixed 0.5h (1 slot), no payment
+**Slots**: 1 slot per trial
+**Rules**: One trial per consultant per consultee (`@@unique([consulteeProfileId, consultantProfileId])`). Uses `lockTrialSlot()` for concurrency protection.
+
+**Status lifecycle**: `PENDING` -> `SCHEDULED` -> `COMPLETED` -> `CONVERTED` (with `CANCELLED` and `REJECTED` branches)
+
+```mermaid
+flowchart TD
+    A[Validate trial request] --> B{Already had trial with this consultant?}
+    B -->|Yes| X1[Error: one trial per consultant]
+    B -->|No| C{Consultant approved?}
+    C -->|No| X2[Status: REJECTED]
+    C -->|Yes| D[Lock slot via lockTrialSlot]
+    D --> E{Slot available?}
+    E -->|No| X3[Error: slot conflict]
+    E -->|Yes| F[Create appointment, status: SCHEDULED]
+    F --> G[Session happens]
+    G --> H[Auto-complete cron marks COMPLETED]
+    H --> I{Consultee subscribes?}
+    I -->|Yes| J[Status: CONVERTED, link to subscription]
+    I -->|No| K[Remains COMPLETED]
+```
+
+**Data model**: `TrialSession` links to `ConsulteeProfile`, `ConsultantProfile`, `SubscriptionPlan`, and optionally to `Appointment` (when scheduled) and `Subscription` (when converted via `convertedToSubscriptionId`).
+
+For full details see [09-trial-sessions.md](./09-trial-sessions.md).
 
 ---
 
