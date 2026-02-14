@@ -1,18 +1,17 @@
-// Company Information - Update these values with your actual business details
+// Company Information - Update email values when ready
 export const COMPANY_INFO = {
-  name: "[COMPANY NAME]",
-  address: "[ADDRESS]",
+  name: "Practitionist",
   email: "[EMAIL]",
   supportEmail: "[SUPPORT_EMAIL]",
-  phone: "[PHONE]",
-  jurisdiction: "[JURISDICTION]",
+  jurisdiction: "India",
 } as const;
 
 // Policy Dates - Update when policies are revised
 export const POLICY_DATES = {
-  privacyLastUpdated: "[LAST UPDATED]",
-  termsLastUpdated: "[LAST UPDATED]",
-  refundLastUpdated: "[LAST UPDATED]",
+  privacyLastUpdated: "February 2026",
+  termsLastUpdated: "February 2026",
+  refundLastUpdated: "February 2026",
+  contractorLastUpdated: "February 2026",
 } as const;
 
 // Business Hours
@@ -40,6 +39,7 @@ export const SUPPORT_LINKS = [
   { href: "/refund", label: "Cancellation & Refund Policy" },
   { href: "/privacy", label: "Privacy Policy" },
   { href: "/terms", label: "Terms & Conditions" },
+  { href: "/contractors", label: "Contractor Agreement" },
 ] as const;
 
 // Page Meta Information
@@ -71,6 +71,11 @@ export const PAGE_META = {
     title: "Cancellation & Refund Policy",
     description:
       "Understanding our cancellation and refund procedures for all service types",
+  },
+  contractors: {
+    title: "Contractor Agreement",
+    description:
+      "Terms governing the relationship between Familiarise and independent consultants",
   },
 } as const;
 
@@ -145,8 +150,8 @@ export const ABOUT_DATA = {
       description: "Clear pricing with no hidden fees",
     },
     {
-      title: "24/7 Support",
-      description: "Dedicated customer support to help you anytime",
+      title: "Dedicated Support",
+      description: "Customer support to help you when you need it",
     },
   ],
 } as const;
@@ -157,14 +162,14 @@ export const PRICING_DATA = {
     "Consultants set their own rates based on their expertise and market demand",
     "You see the exact price before booking any session",
     "No hidden fees - the displayed price is what you pay",
-    "Platform commission is already included in the price",
+    "Platform service fee is already included in the price",
   ],
   commissionBenefits: [
     "Maintain secure payment processing infrastructure",
     "Provide integrated video conferencing and communication tools",
     "Host and deliver course materials and content",
     "Ensure platform security and data protection",
-    "Offer 24/7 customer support",
+    "Offer customer support",
     "Continuously improve the user experience",
   ],
   paymentMethods: [
@@ -183,7 +188,7 @@ export const PRICING_DATA = {
     {
       question: "Are there any additional fees?",
       answer:
-        "No, there are no hidden fees. The price displayed is the final amount you will pay. The platform commission is already included in the displayed price.",
+        "No, there are no hidden fees. The price displayed is the final amount you will pay. The platform service fee is already included in the displayed price.",
     },
     {
       question: "Can I get a refund if I cancel?",
@@ -198,12 +203,12 @@ export const PRICING_DATA = {
     {
       question: "Do you offer discounts or promotional pricing?",
       answer:
-        "Individual consultants may offer promotional pricing or discounts for their services. These will be clearly displayed on their profiles and during the booking process. We also occasionally run platform-wide promotions - subscribe to our newsletter to stay updated.",
+        "Individual consultants may offer promotional pricing or discounts for their services. These will be clearly displayed on their profiles and during the booking process.",
     },
     {
       question: "How are consultants paid?",
       answer:
-        "Consultants receive their earnings after the session is completed successfully. The platform commission is automatically deducted, and the remaining amount is transferred to the consultant's registered bank account according to the settlement schedule.",
+        "Consultants receive their earnings after the session is completed successfully. The platform service fee is automatically deducted, and the remaining amount is transferred to the consultant's registered bank account according to the settlement schedule.",
     },
   ],
 } as const;
@@ -211,7 +216,3 @@ export const PRICING_DATA = {
 // Helper function to get mailto link
 export const getMailtoLink = (email: string = COMPANY_INFO.email) =>
   `mailto:${email}`;
-
-// Helper function to get tel link
-export const getTelLink = (phone: string = COMPANY_INFO.phone) =>
-  `tel:${phone}`;

@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import { Mail, MapPin, Phone, Clock, MessageSquare } from "lucide-react";
+import { Mail, Clock, MessageSquare } from "lucide-react";
 import {
   COMPANY_INFO,
   PAGE_META,
@@ -20,7 +20,6 @@ import {
   INQUIRY_CATEGORIES,
   SUPPORT_LINKS,
   getMailtoLink,
-  getTelLink,
 } from "../constants";
 
 export default function ContactUsPage() {
@@ -51,23 +50,6 @@ export default function ContactUsPage() {
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
-                {/* Company Address */}
-                <div className="flex items-start gap-4">
-                  <div className="flex-shrink-0 w-10 h-10 rounded-full bg-blue-100 dark:bg-blue-950 flex items-center justify-center">
-                    <MapPin className="h-5 w-5 text-blue-600" />
-                  </div>
-                  <div>
-                    <h3 className="font-semibold mb-1">Address</h3>
-                    <p className="text-sm text-muted-foreground">
-                      {COMPANY_INFO.name}
-                      <br />
-                      {COMPANY_INFO.address}
-                    </p>
-                  </div>
-                </div>
-
-                <Separator />
-
                 {/* Email */}
                 <div className="flex items-start gap-4">
                   <div className="flex-shrink-0 w-10 h-10 rounded-full bg-green-100 dark:bg-green-950 flex items-center justify-center">
@@ -92,29 +74,6 @@ export default function ContactUsPage() {
                       >
                         {COMPANY_INFO.supportEmail}
                       </a>
-                    </p>
-                  </div>
-                </div>
-
-                <Separator />
-
-                {/* Phone */}
-                <div className="flex items-start gap-4">
-                  <div className="flex-shrink-0 w-10 h-10 rounded-full bg-purple-100 dark:bg-purple-950 flex items-center justify-center">
-                    <Phone className="h-5 w-5 text-purple-600" />
-                  </div>
-                  <div>
-                    <h3 className="font-semibold mb-1">Phone</h3>
-                    <p className="text-sm text-muted-foreground">
-                      <a
-                        href={getTelLink()}
-                        className="text-blue-600 hover:underline"
-                      >
-                        {COMPANY_INFO.phone}
-                      </a>
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      (Available during business hours)
                     </p>
                   </div>
                 </div>
@@ -157,7 +116,7 @@ export default function ContactUsPage() {
                         href={link.href}
                         className="text-blue-600 hover:underline"
                       >
-                        • {link.label}
+                        {link.label}
                       </a>
                     </li>
                   ))}
@@ -171,7 +130,7 @@ export default function ContactUsPage() {
             <CardHeader>
               <CardTitle className="text-2xl">Send us a Message</CardTitle>
               <CardDescription>
-                Fill out the form below and we'll get back to you as soon as
+                Fill out the form below and we&apos;ll get back to you as soon as
                 possible
               </CardDescription>
             </CardHeader>
@@ -209,15 +168,6 @@ export default function ContactUsPage() {
                     placeholder="Enter your email"
                     required
                     type="email"
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="phone">Phone (optional)</Label>
-                  <Input
-                    id="phone"
-                    placeholder="Enter your phone number"
-                    type="tel"
                   />
                 </div>
 
@@ -288,9 +238,9 @@ export default function ContactUsPage() {
                   </p>
                 </div>
                 <div>
-                  <h3 className="font-semibold mb-2">Multiple Channels</h3>
+                  <h3 className="font-semibold mb-2">Easy to Reach</h3>
                   <p className="text-sm text-muted-foreground">
-                    Reach us via email, phone, or contact form
+                    Reach us via email or contact form
                   </p>
                 </div>
               </div>
