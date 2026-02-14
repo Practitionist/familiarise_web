@@ -114,19 +114,13 @@ export async function GET(
 
     // Transform payments to include plan title
     const transformedPayments = payments.map((p) => {
-      let planTitle = "Payment";
       const apt = p.appointment;
-      if (apt) {
-        if (apt.consultation?.consultationPlan?.title) {
-          planTitle = apt.consultation.consultationPlan.title;
-        } else if (apt.subscription?.subscriptionPlan?.title) {
-          planTitle = apt.subscription.subscriptionPlan.title;
-        } else if (apt.webinar?.webinarPlan?.title) {
-          planTitle = apt.webinar.webinarPlan.title;
-        } else if (apt.class?.classPlan?.title) {
-          planTitle = apt.class.classPlan.title;
-        }
-      }
+      const planTitle =
+        apt?.consultation?.consultationPlan?.title ??
+        apt?.subscription?.subscriptionPlan?.title ??
+        apt?.webinar?.webinarPlan?.title ??
+        apt?.class?.classPlan?.title ??
+        "Payment";
 
       return {
         id: p.id,

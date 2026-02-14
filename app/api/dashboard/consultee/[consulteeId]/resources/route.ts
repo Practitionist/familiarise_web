@@ -325,33 +325,18 @@ export async function GET(
 }
 
 function extractRecordings(appointments: AppointmentWithSlots[]) {
-  const recordings: {
-    id: string;
-    title: string;
-    durationInMinutes: number;
-    recordedAt: Date;
-    playbackUrl: string | null;
-    thumbnailUrl: string | null;
-    status: string;
-  }[] = [];
-
-  for (const apt of appointments) {
-    for (const slot of apt.slotsOfAppointment) {
-      if (slot.meetingSession?.recordings) {
-        for (const rec of slot.meetingSession.recordings) {
-          recordings.push({
-            id: rec.id,
-            title: rec.title,
-            durationInMinutes: rec.durationInMinutes,
-            recordedAt: rec.recordedAt,
-            playbackUrl: RecordingTransferService.getBestRecordingUrl(rec),
-            thumbnailUrl: rec.thumbnailUrl,
-            status: rec.status,
-          });
-        }
-      }
-    }
-  }
-
-  return recordings;
+  return appointments.flatMap((apt) =>
+    apt.slotsOfAppointment.flatMap(
+      (slot) =>
+        slot.meetingSession?.recordings?.map((rec) => ({
+          id: rec.id,
+          title: rec.title,
+          durationInMinutes: rec.durationInMinutes,
+          recordedAt: rec.recordedAt,
+          playbackUrl: RecordingTransferService.getBestRecordingUrl(rec),
+          thumbnailUrl: rec.thumbnailUrl,
+          status: rec.status,
+        })) ?? [],
+    ),
+  );
 }
