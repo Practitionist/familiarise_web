@@ -79,6 +79,7 @@ const iconMap: Record<string, typeof Home> = {
   waitlists: Timer,
   "system-jobs": Server,
   trials: Gift,
+  gift: Gift,
 };
 
 export interface NavItem {

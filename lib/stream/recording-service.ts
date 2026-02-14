@@ -317,6 +317,51 @@ export class RecordingService {
   }
 
   /**
+   * Get paid webinar/class plan IDs for a user based on successful payments.
+   * Shared by getConsulteeRecordings and the resources API.
+   * @param userId The user ID
+   */
+  static async getPaidPlanIds(userId: string): Promise<{
+    webinarPlanIds: string[];
+    classPlanIds: string[];
+  }> {
+    const enrolledAppointments = await prisma.payment.findMany({
+      where: {
+        userId,
+        paymentStatus: "SUCCEEDED",
+        appointment: {
+          OR: [{ webinar: { isNot: null } }, { class: { isNot: null } }],
+        },
+      },
+      select: {
+        appointment: {
+          select: {
+            webinar: { select: { webinarPlanId: true } },
+            class: { select: { classPlanId: true } },
+          },
+        },
+      },
+    });
+
+    const webinarPlanIds = Array.from(
+      new Set(
+        enrolledAppointments
+          .map((e) => e.appointment?.webinar?.webinarPlanId)
+          .filter((id): id is string => !!id),
+      ),
+    );
+    const classPlanIds = Array.from(
+      new Set(
+        enrolledAppointments
+          .map((e) => e.appointment?.class?.classPlanId)
+          .filter((id): id is string => !!id),
+      ),
+    );
+
+    return { webinarPlanIds, classPlanIds };
+  }
+
+  /**
    * Get all recordings for a consultee (paid enrollments only)
    * @param userId The user ID (for payment lookup)
    * @param filters Optional filters for type
@@ -328,48 +373,8 @@ export class RecordingService {
     },
   ): Promise<ConsulteeRecordingWithDetails[]> {
     try {
-      // Find all enrollments (paid appointments) for this user
-      const enrolledAppointments = await prisma.payment.findMany({
-        where: {
-          userId,
-          paymentStatus: "SUCCEEDED",
-          appointment: {
-            OR: [{ webinar: { isNot: null } }, { class: { isNot: null } }],
-          },
-        },
-        select: {
-          appointment: {
-            select: {
-              webinar: {
-                select: {
-                  webinarPlanId: true,
-                },
-              },
-              class: {
-                select: {
-                  classPlanId: true,
-                },
-              },
-            },
-          },
-        },
-      });
-
-      // Get unique plan IDs from paid enrollments using Set for O(n) performance
-      const webinarPlanIds = Array.from(
-        new Set(
-          enrolledAppointments
-            .map((e) => e.appointment?.webinar?.webinarPlanId)
-            .filter((id): id is string => !!id),
-        ),
-      );
-      const classPlanIds = Array.from(
-        new Set(
-          enrolledAppointments
-            .map((e) => e.appointment?.class?.classPlanId)
-            .filter((id): id is string => !!id),
-        ),
-      );
+      const { webinarPlanIds, classPlanIds } =
+        await this.getPaidPlanIds(userId);
 
       // Build query based on type filter
       const whereConditions = [];

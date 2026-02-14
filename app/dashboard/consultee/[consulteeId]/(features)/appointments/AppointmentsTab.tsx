@@ -6,6 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { createConsulteeQueries } from "@/hooks/useConsulteePrefetchDashboard";
 import { Overview } from "./Overview";
 import { Calendar } from "./Calendar";
+import { BookingHistoryTab } from "../history/BookingHistoryTab";
 import { motion } from "framer-motion";
 
 export default function AppointmentsTab({
@@ -93,14 +94,14 @@ export default function AppointmentsTab({
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5 }}
         >
-          <Tabs defaultValue="overview" className="w-full space-y-6">
+          <Tabs defaultValue="upcoming" className="w-full space-y-6">
             <div className="border-b border-gray-200 bg-white rounded-t-lg">
               <TabsList className="h-auto p-0 bg-transparent w-full justify-start">
                 <TabsTrigger
-                  value="overview"
+                  value="upcoming"
                   className="px-6 py-4 text-sm font-medium border-b-2 border-transparent data-[state=active]:border-blue-500 data-[state=active]:text-blue-600 bg-transparent rounded-none"
                 >
-                  Overview
+                  Upcoming
                 </TabsTrigger>
                 <TabsTrigger
                   value="calendar"
@@ -108,11 +109,17 @@ export default function AppointmentsTab({
                 >
                   Calendar View
                 </TabsTrigger>
+                <TabsTrigger
+                  value="past"
+                  className="px-6 py-4 text-sm font-medium border-b-2 border-transparent data-[state=active]:border-blue-500 data-[state=active]:text-blue-600 bg-transparent rounded-none"
+                >
+                  Past
+                </TabsTrigger>
               </TabsList>
             </div>
 
             <TabsContent
-              value="overview"
+              value="upcoming"
               className="mt-0 border-0 p-0 focus-visible:ring-0"
             >
               <motion.div
@@ -145,6 +152,24 @@ export default function AppointmentsTab({
                   webinars={webinars}
                   classes={classes}
                   trials={trials}
+                />
+              </motion.div>
+            </TabsContent>
+
+            <TabsContent
+              value="past"
+              className="mt-0 border-0 p-0 focus-visible:ring-0"
+            >
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: 0.3 }}
+              >
+                <BookingHistoryTab
+                  consultations={consultations}
+                  subscriptions={subscriptions}
+                  webinars={webinars}
+                  classes={classes}
                 />
               </motion.div>
             </TabsContent>

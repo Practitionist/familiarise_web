@@ -8,60 +8,47 @@ import { getEffectiveUserId } from "@/utils/auth";
 import { Skeleton } from "@/components/ui/skeleton";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import StreamProvider from "@/providers/StreamProvider";
-import {
-  DashboardSidebar,
-  type NavItem,
-} from "@/components/dashboard/DashboardSidebar";
-import { signOut, useSession } from "@/lib/auth-client";
+import { useSession } from "@/lib/auth-client";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { use, useEffect, useMemo } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { UserProvider } from "./UserContext";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import { schedulePrefetch } from "@/lib/dashboard-queries";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Button } from "@/components/ui/button";
+import { UserDropdown } from "@/components/dashboard/UserDropdown";
 import { cn } from "@/utils/tailwind";
 import {
   Home,
   Calendar,
-  History,
   MessageSquare,
   Ticket,
-  Settings,
-  LogOut,
   Menu,
   X,
   Clock,
-  Video,
+  FolderOpen,
+  CreditCard,
+  Gift,
 } from "lucide-react";
 import { useState } from "react";
 
-// Navigation configuration
-const NAV_ITEMS: NavItem[] = [
-  { name: "Home", path: "home" },
-  { name: "Appointments", path: "appointments" },
-  { name: "Waitlists", path: "waitlists" },
-  { name: "History", path: "history" },
-  { name: "Recordings", path: "recordings" },
-  { name: "Messages", path: "messages" },
-  { name: "Referrals", path: "referrals" },
-  { name: "Support", path: "feedback" },
-  { name: "Settings", path: "settings" },
-];
+// Flat navigation items
+interface NavItem {
+  label: string;
+  path: string;
+  icon: typeof Home;
+}
 
-// Icon mapping
-const iconMap: Record<string, typeof Home> = {
-  home: Home,
-  appointments: Calendar,
-  history: History,
-  messages: MessageSquare,
-  feedback: Ticket,
-  settings: Settings,
-  recordings: Video,
-  waitlists: Clock,
-};
+const NAV_ITEMS: NavItem[] = [
+  { label: "Home", path: "home", icon: Home },
+  { label: "Appointments", path: "appointments", icon: Calendar },
+  { label: "Waitlists", path: "waitlists", icon: Clock },
+  { label: "Resources", path: "resources", icon: FolderOpen },
+  { label: "Messages", path: "messages", icon: MessageSquare },
+  { label: "Payments", path: "payments", icon: CreditCard },
+  { label: "Referrals", path: "referrals", icon: Gift },
+  { label: "Support", path: "feedback", icon: Ticket },
+];
 
 interface PageProps {
   children: React.ReactNode;
@@ -148,7 +135,7 @@ function AuthRequired() {
   );
 }
 
-// Modern top navigation for consultee
+// Top navigation for consultee - flat items
 function ConsulteeNav({
   consulteeId,
   currentPath,
@@ -165,15 +152,11 @@ function ConsulteeNav({
   const router = useRouter();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  const handleNavHover = (path: string) => {
-    router.prefetch(`/dashboard/consultee/${consulteeId}/${path}`);
-  };
-
   return (
     <header className="sticky top-0 z-50 bg-white/80 backdrop-blur-xl border-b border-zinc-200/50">
       <div className="w-full px-4 sm:px-6 lg:px-8">
         <div className="flex h-16 items-center">
-          {/* Logo - Left */}
+          {/* Logo */}
           <Link href="/" className="flex items-center gap-2 shrink-0">
             <div className="h-8 w-8 rounded-lg bg-zinc-900 flex items-center justify-center">
               <span className="text-white font-bold text-sm">F</span>
@@ -183,67 +166,49 @@ function ConsulteeNav({
             </span>
           </Link>
 
-          {/* Desktop Navigation - Center */}
+          {/* Desktop Navigation */}
           <nav className="hidden lg:flex items-center justify-center flex-1 gap-1">
             {NAV_ITEMS.map((item) => {
-              const isActive = currentPath === item.path;
-              const Icon = iconMap[item.path];
-
+              const active = currentPath === item.path;
               return (
                 <Link
                   key={item.path}
                   href={`/dashboard/consultee/${consulteeId}/${item.path}`}
                   className={cn(
                     "px-3 py-2 rounded-lg text-sm font-medium transition-all whitespace-nowrap",
-                    isActive
+                    active
                       ? "bg-zinc-900 text-white"
                       : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900",
                   )}
                   prefetch={true}
-                  onMouseEnter={() => handleNavHover(item.path)}
+                  onMouseEnter={() =>
+                    router.prefetch(
+                      `/dashboard/consultee/${consulteeId}/${item.path}`,
+                    )
+                  }
                 >
-                  {item.name}
+                  {item.label}
                 </Link>
               );
             })}
           </nav>
 
-          {/* User Section - Right */}
-          <div className="flex items-center gap-3 shrink-0 ml-auto lg:ml-0">
+          {/* Right section: Notifications + Avatar (UserDropdown) + Mobile menu */}
+          <div className="flex items-center gap-2 shrink-0 ml-auto lg:ml-0">
             {isLoading ? (
-              <Skeleton className="h-10 w-10 rounded-full" />
+              <Skeleton className="h-8 w-8 rounded-full" />
             ) : (
-              <div className="flex items-center gap-3">
-                <span className="hidden xl:block text-sm text-zinc-600">
-                  Welcome,{" "}
-                  <span className="font-medium text-zinc-900">
-                    {userName?.split(" ")[0]}
-                  </span>
-                </span>
+              <div className="flex items-center gap-2">
                 <NotificationInbox />
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => signOut()}
-                  className="text-zinc-500 hover:text-red-600"
-                >
-                  <LogOut className="w-4 h-4" />
-                </Button>
-                <Link href="/profile">
-                  <Avatar className="h-9 w-9 ring-2 ring-zinc-100 hover:ring-zinc-300 transition-all cursor-pointer">
-                    <AvatarImage
-                      src={userImage || "/placeholder-user.jpg"}
-                      alt={userName || ""}
-                    />
-                    <AvatarFallback className="bg-zinc-100 text-zinc-600">
-                      {userName?.charAt(0) || "U"}
-                    </AvatarFallback>
-                  </Avatar>
-                </Link>
+                <UserDropdown
+                  userName={userName}
+                  userImage={userImage}
+                  userRole="CONSULTEE"
+                  settingsPath={`/dashboard/consultee/${consulteeId}/settings`}
+                />
               </div>
             )}
 
-            {/* Mobile menu button */}
             <button
               className="lg:hidden p-2 rounded-lg hover:bg-zinc-100"
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
@@ -258,39 +223,40 @@ function ConsulteeNav({
         </div>
 
         {/* Mobile Navigation */}
-        {mobileMenuOpen && (
-          <motion.nav
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: "auto" }}
-            exit={{ opacity: 0, height: 0 }}
-            className="lg:hidden py-4 border-t border-zinc-100"
-          >
-            <div className="flex flex-col gap-1">
-              {NAV_ITEMS.map((item) => {
-                const isActive = currentPath === item.path;
-                const Icon = iconMap[item.path];
-
-                return (
-                  <Link
-                    key={item.path}
-                    href={`/dashboard/consultee/${consulteeId}/${item.path}`}
-                    className={cn(
-                      "flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-all",
-                      isActive
-                        ? "bg-zinc-900 text-white"
-                        : "text-zinc-600 hover:bg-zinc-100",
-                    )}
-                    prefetch={true}
-                    onClick={() => setMobileMenuOpen(false)}
-                  >
-                    {Icon && <Icon className="w-5 h-5" />}
-                    {item.name}
-                  </Link>
-                );
-              })}
-            </div>
-          </motion.nav>
-        )}
+        <AnimatePresence>
+          {mobileMenuOpen && (
+            <motion.nav
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              className="lg:hidden py-4 border-t border-zinc-100 overflow-hidden"
+            >
+              <div className="flex flex-col gap-1">
+                {NAV_ITEMS.map((item) => {
+                  const active = currentPath === item.path;
+                  const Icon = item.icon;
+                  return (
+                    <Link
+                      key={item.path}
+                      href={`/dashboard/consultee/${consulteeId}/${item.path}`}
+                      className={cn(
+                        "flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-all",
+                        active
+                          ? "bg-zinc-900 text-white"
+                          : "text-zinc-600 hover:bg-zinc-100",
+                      )}
+                      prefetch={true}
+                      onClick={() => setMobileMenuOpen(false)}
+                    >
+                      <Icon className="w-5 h-5" />
+                      {item.label}
+                    </Link>
+                  );
+                })}
+              </div>
+            </motion.nav>
+          )}
+        </AnimatePresence>
       </div>
     </header>
   );
@@ -306,7 +272,7 @@ function DashboardSkeleton() {
           <div className="flex h-16 items-center">
             <Skeleton className="h-8 w-32 shrink-0" />
             <div className="hidden lg:flex items-center justify-center flex-1 gap-2">
-              {[1, 2, 3, 4, 5, 6, 7].map((i) => (
+              {[1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
                 <Skeleton key={i} className="h-9 w-24 rounded-lg" />
               ))}
             </div>
