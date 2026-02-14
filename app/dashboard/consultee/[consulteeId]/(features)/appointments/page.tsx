@@ -7,6 +7,7 @@ import { PageSkeleton } from "@/components/dashboard/DashboardSkeletons";
 import { createConsulteeQueries } from "@/hooks/useConsulteePrefetchDashboard";
 import { Overview } from "./Overview";
 import { Calendar } from "./Calendar";
+import { BookingHistoryTab } from "../history/BookingHistoryTab";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { motion } from "framer-motion";
 
@@ -99,13 +100,14 @@ export default function AppointmentsPage({ params }: Readonly<PageProps>) {
 
   return (
     <DashboardErrorBoundary>
-      <Tabs defaultValue="overview" className="space-y-6">
+      <Tabs defaultValue="upcoming" className="space-y-6">
         <TabsList>
-          <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="upcoming">Upcoming</TabsTrigger>
           <TabsTrigger value="calendar">Calendar</TabsTrigger>
+          <TabsTrigger value="past">Past</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="overview">
+        <TabsContent value="upcoming">
           <Overview
             consultations={consultations}
             subscriptions={subscriptions}
@@ -122,6 +124,15 @@ export default function AppointmentsPage({ params }: Readonly<PageProps>) {
             webinars={webinars}
             classes={classes}
             trials={trials}
+          />
+        </TabsContent>
+
+        <TabsContent value="past">
+          <BookingHistoryTab
+            consultations={consultations}
+            subscriptions={subscriptions}
+            webinars={webinars}
+            classes={classes}
           />
         </TabsContent>
       </Tabs>

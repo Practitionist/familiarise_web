@@ -10,7 +10,7 @@ import { NotificationInbox } from "@/components/notifications/NotificationInbox"
 import { useNovuSubscriberSync } from "@/hooks/useNovuSubscriberSync";
 import {
   DashboardSidebar,
-  type NavItem,
+  type NavSection,
 } from "@/components/dashboard/DashboardSidebar";
 import { DashboardNavbar } from "@/components/dashboard/DashboardNavbar";
 import { useSession } from "@/lib/auth-client";
@@ -22,20 +22,39 @@ import { motion } from "framer-motion";
 import { VerificationPendingOverlay } from "@/components/verification/VerificationPendingOverlay";
 import type { VerificationStatus } from "@/components/verification/VerificationStatusBadge";
 
-// Navigation configuration
-const NAV_ITEMS: NavItem[] = [
-  { name: "Home", path: "home", icon: "home" },
-  { name: "Chats", path: "chats", icon: "chats" },
-  { name: "Appointments", path: "appointments", icon: "appointments" },
-  { name: "Event Planner", path: "planner", icon: "planner" },
-  { name: "Requests", path: "requests", icon: "requests" },
-  { name: "Recordings", path: "recordings", icon: "recordings" },
-  { name: "Documents", path: "documents", icon: "documents" },
-  { name: "Earnings", path: "earnings", icon: "wallet" },
-  { name: "Analytics", path: "analytics", icon: "analytics" },
-  { name: "Collaborations", path: "collaborations", icon: "users" },
-  { name: "Free Trials", path: "trials", icon: "trials" },
-  { name: "Referrals", path: "referrals", icon: "users" },
+// Navigation configuration - grouped sections
+const NAV_SECTIONS: NavSection[] = [
+  {
+    title: null,
+    items: [
+      { name: "Home", path: "home", icon: "home" },
+      { name: "Chats", path: "chats", icon: "chats" },
+      { name: "Appointments", path: "appointments", icon: "appointments" },
+    ],
+  },
+  {
+    title: "Services",
+    items: [
+      { name: "Event Planner", path: "planner", icon: "planner" },
+      { name: "Requests", path: "requests", icon: "requests" },
+      { name: "Collaborations", path: "collaborations", icon: "users" },
+      { name: "Free Trials", path: "trials", icon: "trials" },
+    ],
+  },
+  {
+    title: "Content",
+    items: [
+      { name: "Recordings", path: "recordings", icon: "recordings" },
+      { name: "Documents", path: "documents", icon: "documents" },
+    ],
+  },
+  {
+    title: "Finance",
+    items: [
+      { name: "Earnings", path: "earnings", icon: "wallet" },
+      { name: "Referrals", path: "referrals", icon: "gift" },
+    ],
+  },
 ];
 
 interface PageProps {
@@ -542,7 +561,7 @@ export default function ConsultantLayout({
       userName={consultantData?.user?.name}
       userRole="CONSULTANT"
       basePath={`/dashboard/consultant/${consultantId}`}
-      navItems={NAV_ITEMS}
+      navSections={NAV_SECTIONS}
       hideBottomActions={true}
       isLoading={isLoading}
     />
