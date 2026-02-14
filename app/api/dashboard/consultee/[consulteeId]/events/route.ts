@@ -118,6 +118,22 @@ export async function GET(
                     },
                   },
                 },
+                collaborators: {
+                  where: { status: "ACCEPTED" },
+                  include: {
+                    consultantProfile: {
+                      include: {
+                        user: {
+                          select: {
+                            id: true,
+                            name: true,
+                            image: true,
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
               },
             },
             appointment: {
@@ -156,6 +172,22 @@ export async function GET(
                         name: true,
                         image: true,
                         email: true,
+                      },
+                    },
+                  },
+                },
+                collaborators: {
+                  where: { status: "ACCEPTED" },
+                  include: {
+                    consultantProfile: {
+                      include: {
+                        user: {
+                          select: {
+                            id: true,
+                            name: true,
+                            image: true,
+                          },
+                        },
                       },
                     },
                   },

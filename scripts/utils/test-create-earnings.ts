@@ -160,15 +160,16 @@ async function createEarningsForPayment(
     };
   }
 
-  if (payment.earnings) {
+  if (payment.earnings && payment.earnings.length > 0) {
+    const firstEarning = payment.earnings[0];
     return {
       success: false,
       paymentId,
-      earningsId: payment.earnings.id,
-      grossAmount: payment.earnings.grossAmount,
-      consultantShare: payment.earnings.consultantShare,
-      platformFee: payment.earnings.platformFee,
-      status: payment.earnings.status,
+      earningsId: firstEarning.id,
+      grossAmount: firstEarning.grossAmount,
+      consultantShare: firstEarning.consultantShare,
+      platformFee: firstEarning.platformFee,
+      status: firstEarning.status,
       error: `Earnings already exist for payment ${paymentId}`,
     };
   }
@@ -280,7 +281,7 @@ async function findPendingPayments(): Promise<string[]> {
   const payments = await prisma.payment.findMany({
     where: {
       paymentStatus: PaymentStatus.SUCCEEDED,
-      earnings: null,
+      earnings: { none: {} },
       appointment: { isNot: null },
     },
     select: { id: true },

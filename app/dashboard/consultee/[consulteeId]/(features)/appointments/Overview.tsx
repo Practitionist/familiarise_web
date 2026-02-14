@@ -36,6 +36,12 @@ interface OverviewProps {
   trials: TrialWithPlan[];
 }
 
+interface CollaboratorInfo {
+  name: string;
+  image?: string | null;
+  role: string;
+}
+
 interface DashboardCardProps {
   title: string;
   icon: typeof Calendar;
@@ -60,7 +66,24 @@ interface DashboardCardProps {
     // Booking status for webinars/classes
     bookingStatus?: BookingStatus;
     waitlistPosition?: number;
+    // Collaborators for webinars/classes
+    collaborators?: CollaboratorInfo[];
   }>;
+}
+
+// Extract collaborators from a webinar or class plan (data exists from API but not in the base type)
+function extractCollaborators(
+  plan: Record<string, unknown>,
+): CollaboratorInfo[] {
+  const collaborators = plan?.collaborators;
+  if (!Array.isArray(collaborators)) return [];
+  return collaborators.map(
+    (c: { consultantProfile?: { user?: { name?: string; image?: string | null } }; role: string }) => ({
+      name: c.consultantProfile?.user?.name ?? "Collaborator",
+      image: c.consultantProfile?.user?.image ?? null,
+      role: c.role ?? "",
+    }),
+  );
 }
 
 // Helper functions
@@ -284,6 +307,11 @@ export function Overview({
                 }
               }
 
+              // Extract collaborators for display
+              const collaborators = extractCollaborators(
+                webinar.webinarPlan as unknown as Record<string, unknown>,
+              );
+
               return {
                 id: webinar.id,
                 title: webinar.webinarPlan.title,
@@ -306,6 +334,7 @@ export function Overview({
                 rawSlots,
                 bookingStatus,
                 waitlistPosition,
+                collaborators,
               };
             }),
           )}
@@ -349,6 +378,11 @@ export function Overview({
                 }
               }
 
+              // Extract collaborators for display
+              const collaborators = extractCollaborators(
+                classItem.classPlan as unknown as Record<string, unknown>,
+              );
+
               return {
                 id: classItem.id,
                 title: classItem.classPlan.title,
@@ -373,6 +407,7 @@ export function Overview({
                 rawSlots,
                 bookingStatus,
                 waitlistPosition,
+                collaborators,
               };
             }),
           )}
@@ -581,6 +616,7 @@ function DashboardCard({
                   pendingPaymentUrl={item.pendingPaymentUrl}
                   bookingStatus={item.bookingStatus}
                   waitlistPosition={item.waitlistPosition}
+                  collaborators={item.collaborators}
                 />
               </div>
             ))}
@@ -608,6 +644,7 @@ function DashboardCard({
                   pendingPaymentUrl={item.pendingPaymentUrl}
                   bookingStatus={item.bookingStatus}
                   waitlistPosition={item.waitlistPosition}
+                  collaborators={item.collaborators}
                 />
               </div>
             ))}

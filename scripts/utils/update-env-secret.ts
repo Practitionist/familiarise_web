@@ -19,7 +19,7 @@ import fs from "fs";
 import path from "path";
 import { execSync } from "child_process";
 
-const ENV_FILE_PATH = path.join(__dirname, "..", ".env");
+const ENV_FILE_PATH = path.join(__dirname, "..", "..", ".env");
 const SECRET_NAME = "ENV_FILE";
 
 function main(): void {
@@ -80,7 +80,7 @@ function main(): void {
     const base64Content = Buffer.from(envContent, "utf8").toString("base64");
 
     // Create temporary file for the base64 content
-    const tempFile = path.join(__dirname, ".env.base64.tmp");
+    const tempFile = path.join(__dirname, "..", "..", ".env.base64.tmp");
     fs.writeFileSync(tempFile, base64Content);
 
     try {

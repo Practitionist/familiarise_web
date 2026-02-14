@@ -26,6 +26,12 @@ import {
   type DisputePayload,
   type RecordingPayload,
   type ConsultantApplicationPayload,
+  type ReferralBonusPayload,
+  type RefereeWelcomeBonusPayload,
+  type ReferralCreditsAppliedPayload,
+  type CollaboratorInvitedPayload,
+  type CollaboratorAcceptedPayload,
+  type CollaboratorRemovedPayload,
 } from "./workflows";
 
 // ============================================================================
@@ -468,6 +474,80 @@ export async function notifyRecordingAvailable(
   return triggerForMultiple(
     NOVU_WORKFLOWS.RECORDING_AVAILABLE,
     userIds,
+    payload,
+  );
+}
+
+// ============================================================================
+// Referral Notifications
+// ============================================================================
+
+export async function notifyReferralBonusEarned(
+  referrerUserId: string,
+  payload: ReferralBonusPayload,
+) {
+  return triggerWorkflow(
+    NOVU_WORKFLOWS.REFERRAL_BONUS_EARNED,
+    referrerUserId,
+    payload,
+  );
+}
+
+export async function notifyRefereeWelcomeBonus(
+  refereeUserId: string,
+  payload: RefereeWelcomeBonusPayload,
+) {
+  return triggerWorkflow(
+    NOVU_WORKFLOWS.REFEREE_WELCOME_BONUS,
+    refereeUserId,
+    payload,
+  );
+}
+
+export async function notifyReferralCreditsApplied(
+  userId: string,
+  payload: ReferralCreditsAppliedPayload,
+) {
+  return triggerWorkflow(
+    NOVU_WORKFLOWS.REFERRAL_CREDITS_APPLIED,
+    userId,
+    payload,
+  );
+}
+
+// ============================================================================
+// Collaborator Notifications
+// ============================================================================
+
+export async function notifyCollaboratorInvited(
+  consultantUserId: string,
+  payload: CollaboratorInvitedPayload,
+) {
+  return triggerWorkflow(
+    NOVU_WORKFLOWS.COLLABORATOR_INVITED,
+    consultantUserId,
+    payload,
+  );
+}
+
+export async function notifyCollaboratorAccepted(
+  ownerUserId: string,
+  payload: CollaboratorAcceptedPayload,
+) {
+  return triggerWorkflow(
+    NOVU_WORKFLOWS.COLLABORATOR_ACCEPTED,
+    ownerUserId,
+    payload,
+  );
+}
+
+export async function notifyCollaboratorRemoved(
+  consultantUserId: string,
+  payload: CollaboratorRemovedPayload,
+) {
+  return triggerWorkflow(
+    NOVU_WORKFLOWS.COLLABORATOR_REMOVED,
+    consultantUserId,
     payload,
   );
 }

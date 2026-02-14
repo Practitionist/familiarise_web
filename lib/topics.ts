@@ -7,12 +7,7 @@
  */
 
 import prisma from "@/lib/prisma";
-import { Prisma, PrismaClient } from "@prisma/client";
-
-type PrismaTransaction = Omit<
-  PrismaClient,
-  "$connect" | "$disconnect" | "$on" | "$transaction" | "$use" | "$extends"
->;
+import { Prisma } from "@prisma/client";
 
 /**
  * Find existing topics or create new ones by name
@@ -20,13 +15,11 @@ type PrismaTransaction = Omit<
  */
 export async function findOrCreateTopics(
   topicNames: string[],
-  tx?: PrismaTransaction,
+  db: Prisma.TransactionClient | typeof prisma = prisma,
 ): Promise<string[]> {
   if (!topicNames || topicNames.length === 0) {
     return [];
   }
-
-  const db = tx || prisma;
 
   // Find existing topics
   const existingTopics = await db.topic.findMany({

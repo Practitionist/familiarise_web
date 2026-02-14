@@ -110,25 +110,48 @@ function UpcomingSessionCard({
     >
       {/* Row 1: Avatar + Title/Name + Time Badge - Fixed height 48px */}
       <div className="flex items-center gap-3 h-12 shrink-0">
-        <Avatar className="h-10 w-10 ring-2 ring-zinc-700 shrink-0">
-          <AvatarImage
-            src={event.consultantImage ?? undefined}
-            alt={event.consultantName}
-          />
-          <AvatarFallback className="bg-zinc-700 text-zinc-300 text-xs font-semibold">
-            {event.consultantName
-              .split(" ")
-              .map((n) => n[0])
-              .join("")
-              .slice(0, 2)}
-          </AvatarFallback>
-        </Avatar>
+        <div className="flex items-center -space-x-1.5 shrink-0">
+          <Avatar className="h-10 w-10 ring-2 ring-zinc-800 z-10">
+            <AvatarImage
+              src={event.consultantImage ?? undefined}
+              alt={event.consultantName}
+            />
+            <AvatarFallback className="bg-zinc-700 text-zinc-300 text-xs font-semibold">
+              {event.consultantName
+                .split(" ")
+                .map((n) => n[0])
+                .join("")
+                .slice(0, 2)}
+            </AvatarFallback>
+          </Avatar>
+          {event.collaborators?.slice(0, 1).map((collab, idx) => (
+            <Avatar
+              key={idx}
+              className="h-7 w-7 ring-2 ring-zinc-800 z-0"
+              title={collab.name}
+            >
+              <AvatarImage src={collab.image ?? undefined} alt={collab.name} />
+              <AvatarFallback className="bg-purple-900/50 text-purple-300 text-[9px] font-semibold">
+                {collab.name.split(" ").map((n) => n[0]).join("").slice(0, 2)}
+              </AvatarFallback>
+            </Avatar>
+          ))}
+          {(event.collaborators?.length ?? 0) > 1 && (
+            <div className="h-7 w-7 rounded-full bg-zinc-700 ring-2 ring-zinc-800 flex items-center justify-center text-[9px] font-semibold text-zinc-300 z-0">
+              +{(event.collaborators?.length ?? 0) - 1}
+            </div>
+          )}
+        </div>
         <div className="flex-1 min-w-0 overflow-hidden">
           <h4 className="font-semibold text-white text-sm leading-tight truncate">
             {event.title}
           </h4>
           <p className="text-xs text-zinc-400 truncate">
-            {event.consultantName}
+            {event.collaborators && event.collaborators.length > 0
+              ? event.collaborators.length === 1
+                ? `${event.consultantName} & ${event.collaborators[0].name}`
+                : `${event.consultantName} + ${event.collaborators.length} others`
+              : event.consultantName}
           </p>
         </div>
         <Badge
@@ -239,18 +262,37 @@ function MonthlyEventItem({
         onClick={onToggle}
         className="flex items-center gap-4 p-4 cursor-pointer hover:bg-zinc-50/50 transition-colors"
       >
-        <Avatar className="h-10 w-10 ring-1 ring-zinc-200 flex-shrink-0">
-          <AvatarImage
-            src={event.consultantImage ?? undefined}
-            alt={event.consultantName}
-          />
-          <AvatarFallback className="bg-zinc-100 text-zinc-600 text-xs font-medium">
-            {event.consultantName
-              .split(" ")
-              .map((n) => n[0])
-              .join("")}
-          </AvatarFallback>
-        </Avatar>
+        <div className="flex items-center -space-x-1.5 flex-shrink-0">
+          <Avatar className="h-10 w-10 ring-2 ring-white z-10">
+            <AvatarImage
+              src={event.consultantImage ?? undefined}
+              alt={event.consultantName}
+            />
+            <AvatarFallback className="bg-zinc-100 text-zinc-600 text-xs font-medium">
+              {event.consultantName
+                .split(" ")
+                .map((n) => n[0])
+                .join("")}
+            </AvatarFallback>
+          </Avatar>
+          {event.collaborators?.slice(0, 1).map((collab, idx) => (
+            <Avatar
+              key={idx}
+              className="h-7 w-7 ring-2 ring-white z-0"
+              title={collab.name}
+            >
+              <AvatarImage src={collab.image ?? undefined} alt={collab.name} />
+              <AvatarFallback className="bg-purple-100 text-purple-700 text-[9px] font-medium">
+                {collab.name.split(" ").map((n) => n[0]).join("").slice(0, 2)}
+              </AvatarFallback>
+            </Avatar>
+          ))}
+          {(event.collaborators?.length ?? 0) > 1 && (
+            <div className="h-7 w-7 rounded-full bg-zinc-100 ring-2 ring-white flex items-center justify-center text-[9px] font-medium text-zinc-600 z-0">
+              +{(event.collaborators?.length ?? 0) - 1}
+            </div>
+          )}
+        </div>
         <div className="flex-1 min-w-0">
           {/* Desktop: single row layout */}
           <div className="hidden lg:flex items-center justify-between gap-3">
@@ -259,7 +301,11 @@ function MonthlyEventItem({
                 {event.title}
               </h4>
               <p className="text-xs text-zinc-500 truncate">
-                {event.consultantName}
+                {event.collaborators && event.collaborators.length > 0
+                  ? event.collaborators.length === 1
+                    ? `${event.consultantName} & ${event.collaborators[0].name}`
+                    : `${event.consultantName} + ${event.collaborators.length} others`
+                  : event.consultantName}
               </p>
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
@@ -307,7 +353,11 @@ function MonthlyEventItem({
                   {event.title}
                 </h4>
                 <p className="text-xs text-zinc-500 truncate">
-                  {event.consultantName}
+                  {event.collaborators && event.collaborators.length > 0
+                    ? event.collaborators.length === 1
+                      ? `${event.consultantName} & ${event.collaborators[0].name}`
+                      : `${event.consultantName} + ${event.collaborators.length} others`
+                    : event.consultantName}
                 </p>
               </div>
               <ChevronRight
