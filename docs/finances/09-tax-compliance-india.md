@@ -6,6 +6,52 @@ This document covers tax obligations for Familiarise as an Indian marketplace pl
 
 **Disclaimer**: This is a reference guide. Consult a qualified CA/tax professional for specific advice.
 
+**Recommended Entity:** Sole Proprietorship (see `temp/11-cfo-master-plan.md` for detailed comparison). Section 44AD presumptive taxation makes this the most tax-efficient structure up to ₹2Cr revenue.
+
+---
+
+## Entity Structure & Income Tax
+
+### Recommended: Sole Proprietorship + Section 44AD
+
+Section 44AD allows eligible businesses to declare income at a **presumptive rate** instead of maintaining full books of accounts:
+
+| Parameter | Details |
+|---|---|
+| **Eligible entities** | Individuals, HUFs, Partnership firms (NOT LLP, NOT companies) |
+| **Turnover limit** | ₹2 Crore (₹3 Crore if 95%+ digital receipts/payments) |
+| **Deemed profit rate** | 8% of turnover (6% if 95%+ received digitally) |
+| **Books of account** | NOT required to maintain |
+| **Advance tax** | Single installment by March 15 |
+| **Tax audit** | NOT required (unless opting out of 44AD) |
+
+### Tax Impact at Different Revenue Levels
+
+| Annual Platform Revenue | Deemed Profit (8%) | Income Tax (New Regime) | Effective Tax Rate |
+|---|---|---|---|
+| ₹5L | ₹40,000 | ₹0 (below ₹4L exemption) | **0%** |
+| ₹10L | ₹80,000 | ₹0 (below ₹4L exemption) | **0%** |
+| ₹25L | ₹2,00,000 | ₹0 (below ₹4L exemption) | **0%** |
+| ₹50L | ₹4,00,000 | ₹0 (at ₹4L exemption limit) | **0%** |
+| ₹1Cr | ₹8,00,000 | ~₹31,200 | **0.03%** |
+| ₹2Cr | ₹16,00,000 | ~₹62,400 + cess | **0.03%** |
+
+> **Key insight:** At ₹50L revenue, a Sole Prop pays ₹0 income tax. A Pvt Ltd would pay ~₹10.8L (22% + cess). **Section 44AD saves ₹10+ lakh/year.**
+
+### Comparison: Sole Prop vs Pvt Ltd vs LLP
+
+| | Sole Prop | OPC (Pvt Ltd) | LLP |
+|---|---|---|---|
+| **Setup Cost** | ₹1-3K | ₹9-23K | ₹10-20K |
+| **Annual Compliance** | ₹4-11K | ₹27-56K | ₹12-28K |
+| **Tax Rate** | Slab (0-30%) via 44AD | 22% flat + 4% cess | 30% flat + 4% cess |
+| **Section 44AD** | YES | NO | NO |
+| **VC Funding** | NO | YES | Possible |
+| **Liability** | Unlimited | Limited | Limited |
+| **Razorpay KYC** | Personal PAN | Business PAN | Business PAN |
+
+**When to convert to Pvt Ltd:** When seeking VC funding, or when revenue consistently exceeds ₹2Cr. Conversion cost: ₹15-25K, takes 2-3 months.
+
 ---
 
 ## How Tax Collection Works (The Basics)
@@ -96,14 +142,47 @@ The 56th GST Council meeting introduced a simplified two-rate framework:
 
 **Impact**: Most platform services remain at 18% with Input Tax Credit (ITC) available.
 
+### Reverse Charge Mechanism (RCM) on Foreign SaaS
+
+When GST-registered, you must pay 18% IGST on all imported services (foreign SaaS tools) under RCM. The recipient (you) pays GST instead of the foreign supplier.
+
+| Foreign Service | Monthly (USD) | INR @90.7 | RCM @ 18% | Total INR/mo |
+|---|---|---|---|---|
+| Claude Max (Anthropic) | $100 | ₹9,070 | ₹1,633 | ₹10,703 |
+| Apple Developer (amortized) | $8.25 | ₹748 | ₹135 | ₹883 |
+| Supabase Pro (when upgraded) | $25 | ₹2,268 | ₹408 | ₹2,676 |
+| Stream.io Start (when upgraded) | $399 | ₹36,189 | ₹6,514 | ₹42,703 |
+| Novu Pro (when upgraded) | $30 | ₹2,721 | ₹490 | ₹3,211 |
+| Vercel Pro (when upgraded) | $20 | ₹1,814 | ₹327 | ₹2,141 |
+| Resend Pro (when upgraded) | $20 | ₹1,814 | ₹327 | ₹2,141 |
+
+**Key points:**
+- If NOT GST-registered: You don't pay RCM, but also can't claim ITC
+- If GST-registered: You pay RCM and claim it back as ITC (net zero if collecting GST)
+- RCM is a cash flow timing issue, not an actual cost, when you collect GST from customers
+- File RCM in GSTR-3B Section 3.1(d) and claim ITC in Section 4
+
 ### E-commerce TCS (Tax Collected at Source)
 
 | Provision                    | Rate                 | Notes                       |
 | ---------------------------- | -------------------- | --------------------------- |
 | TCS on supplies via platform | 0.5%                 | Reduced from 1% (July 2024) |
-| Applies to                   | Intra-state supplies | Interstate = IGST           |
+| Split                        | 0.25% CGST + 0.25% SGST | Interstate = 0.5% IGST    |
+| Filing                       | Monthly GSTR-8       | By 10th of next month       |
 
-**When TCS applies**: When e-commerce operator collects payment on behalf of suppliers (consultants).
+**CRITICAL WARNING - E-Commerce Operator Classification:**
+
+Under Section 24 of CGST Act, **e-commerce operators are required to register for GST regardless of turnover**. The ₹20L threshold does NOT apply to marketplace operators.
+
+As Familiarise collects payments on behalf of consultants (suppliers), you may be classified as an e-commerce operator, requiring:
+1. **Mandatory GST registration from Day 1** (no turnover threshold)
+2. **TCS collection at 0.5%** on net value of supplies made through you
+3. **Monthly GSTR-8 filing** (TCS return)
+4. **GSTR-1, GSTR-3B** as normal
+
+**Possible workaround:** If structured as a "service provider" (you provide the consultation platform service, consultants are contractors) rather than "marketplace" (consultants sell through you), TCS obligation may not apply.
+
+**ACTION REQUIRED:** Budget ₹5-10K for a CA consultation specifically on whether Familiarise is classified as an e-commerce operator under GST. This is the single most impactful tax decision before launch.
 
 ---
 
@@ -419,6 +498,7 @@ TDS @ 20% = ₹4,000 (higher rate)
 
 ## Related Documents
 
-- [08-saas-expenditures.md](./08-saas-expenditures.md) - Cost structure
+- [08-saas-expenditures.md](./08-saas-expenditures.md) - Cost structure (with GST/RCM)
 - [04-revenue-distribution.md](./04-revenue-distribution.md) - Revenue split
 - [06-payout-implementation-plan.md](./06-payout-implementation-plan.md) - Payout system
+- `temp/11-cfo-master-plan.md` - Comprehensive CFO financial blueprint (private, not in git)
