@@ -6,7 +6,6 @@ import {
   Menu,
   X,
   Search,
-  BookOpen,
   Users,
   GraduationCap,
   Briefcase,
@@ -257,7 +256,7 @@ function DesktopNavItem({
   showDarkStyle: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
   const handleEnter = useCallback(() => {
