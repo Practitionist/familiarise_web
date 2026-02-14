@@ -1016,9 +1016,9 @@ sequenceDiagram
 
 ---
 
-## Next: Part 2 - Webinar & Class Flows
+## Next: Webinar & Class Flows
 
-Continue to [CHECKOUT_FLOW_PART2.md](./CHECKOUT_FLOW_PART2.md) for:
+Continue to [02-webinar-and-class.md](./02-webinar-and-class.md) for:
 
 - Webinar checkout flow (shared appointment model)
 - Class checkout flow (pre-existing appointments)

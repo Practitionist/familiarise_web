@@ -554,10 +554,9 @@ Before implementing any status change:
 
 ## Related Documentation
 
-- [Payment System Flow](./payments/flow/CHECKOUT_FLOW_PART1.md)
-- [Webhook Monitoring](./webhook-monitoring.md)
-- [Abandoned Payment Solutions](./abandoned-payment-solutions.md)
-- [Cron Setup Guide](./cron-setup.md)
+- [Payment Architecture](./01-architecture.md)
+- [Checkout Flow](./checkout-flow/)
+- [Abandoned Solutions](./04-abandoned-solutions.md)
 - [Booking System](../booking/README.md)
 
 ---

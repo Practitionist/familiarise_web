@@ -213,11 +213,6 @@ International Consultees: Accept via Razorpay (converts to INR)
 International Consultants: NOT SUPPORTED initially
 ```
 
-**Limitations:**
-
-- Cannot pay international consultants
-- All consultants must have Indian bank accounts
-
 ### Use Case 2: India + International (Future)
 
 ```
@@ -226,12 +221,6 @@ International Payments: Stripe
 Indian Payouts: Razorpay Route
 International Payouts: Stripe Connect
 ```
-
-**Requirements:**
-
-- Stripe Atlas (US entity) OR
-- Partner with international payment processor
-- Separate ledger for each currency
 
 ### Use Case 3: Fully Global (Scale)
 
@@ -250,35 +239,13 @@ India Payouts: Razorpay Route (better rates)
 
 All prices in INR, international users pay in INR equivalent.
 
-```
-Consultation: ₹1,000 INR
-(International users see: ~$12 USD*)
-*Currency converted at checkout
-```
-
 ### Option 2: Multi-Currency Display (Better UX)
 
-Detect user location, show local currency:
-
-```javascript
-// Pseudocode
-const userCurrency = detectCurrency(userLocation);
-const localPrice = convertFromINR(basePrice, userCurrency);
-displayPrice(localPrice, userCurrency);
-// Actual charge in user's currency, settles in INR
-```
+Detect user location, show local currency. Actual charge in user's currency, settles in INR.
 
 ### Option 3: Consultant-Set Currency (Complex)
 
-Each consultant sets their own currency:
-
-```
-Consultant A (India): ₹1,000 INR
-Consultant B (USA): $50 USD
-Consultant C (UK): £40 GBP
-```
-
-**Complexity:** High (need multi-currency accounting)
+Each consultant sets their own currency. High complexity (multi-currency accounting).
 
 ---
 
@@ -295,6 +262,6 @@ Consultant C (UK): £40 GBP
 
 ## Related Documents
 
-- [02-payout-architecture.md](./02-payout-architecture.md) - Payout system details
-- [04-revenue-distribution.md](./04-revenue-distribution.md) - Revenue calculations
-- [06-payout-implementation-plan.md](./06-payout-implementation-plan.md) - Technical plan
+- [01-architecture.md](./01-architecture.md) - Payout system design
+- [02-earnings-lifecycle.md](./02-earnings-lifecycle.md) - How earnings flow through the system
+- [06-configuration.md](./06-configuration.md) - Hold periods and payout thresholds

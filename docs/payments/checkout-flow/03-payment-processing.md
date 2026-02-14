@@ -1,6 +1,6 @@
-# Payment System Documentation - Part 3: Payment Processing & Webhooks
+# Payment Processing & Webhooks
 
-> **Navigation:** [Part 1](./CHECKOUT_FLOW_PART1.md) | [Part 2](./CHECKOUT_FLOW_PART2.md) | **Part 3** | [Part 4](./CHECKOUT_FLOW_PART4.md) | [Part 5](./CHECKOUT_FLOW_PART5.md)
+> **Navigation:** [Overview & Consultation](./01-overview-and-consultation.md) | [Webinar & Class](./02-webinar-and-class.md) | **Payment Processing** | [Edge Cases](./04-edge-cases.md) | [Status Flows](./05-status-flows.md)
 
 ## Table of Contents
 
@@ -1685,10 +1685,10 @@ graph TB
 
 ### 🔗 Related Documentation
 
-- **[Part 1: System Overview & Individual Flows](./CHECKOUT_FLOW_PART1.md)** - Architecture principles, consultation & subscription flows
-- **[Part 2: Group Event Flows & Comparisons](./CHECKOUT_FLOW_PART2.md)** - Webinar & class flows, event type comparisons
-- **[Part 4: Refunds & Disputes](./CHECKOUT_FLOW_PART4.md)** - Post-payment operations, admin functions
-- **[Part 5: Edge Cases & Special Scenarios](./CHECKOUT_FLOW_PART5.md)** - Corner cases, race conditions, troubleshooting
+- **[Overview & Consultation](./01-overview-and-consultation.md)** - Architecture principles, consultation & subscription flows
+- **[Webinar & Class](./02-webinar-and-class.md)** - Webinar & class flows, event type comparisons
+- **[Refunds & Disputes](../refunds-disputes/)** - Post-payment operations, refund/dispute handling
+- **[Edge Cases](./04-edge-cases.md)** - Corner cases, race conditions, troubleshooting
 
 ---
 

@@ -1,625 +1,336 @@
-# Razorpay Payout Flow (Route)
+# RazorpayX Payout Flow
+
+> How consultants receive their earnings through RazorpayX Payouts.
+
+**Last Updated**: 2026-02-14
+
+---
 
 ## Overview
 
-This document explains how consultants get paid through Razorpay Route. This is the most important document for understanding our payout system.
+Consultant payouts for Indian consultants are handled through **RazorpayX Payouts** — a separate product from Razorpay Payments. RazorpayX provides direct fund transfers to consultant bank accounts or UPI IDs.
 
-### The Key Question: How Does a Consultant Get Paid?
-
-```
-Short Answer:
-+-- Customer pays us
-+-- We keep our commission (20%)
-+-- Consultant's share (80%) goes to their BANK ACCOUNT
-+-- They don't need a Razorpay account!
-```
+> **Important**: This system uses **RazorpayX Payouts** (Contacts + Fund Accounts + Payouts API), not Razorpay Route (Linked Accounts + Transfers). These are different Razorpay products.
 
 ---
 
-## Key Concept: Linked Accounts
+## Key Concepts
 
-### What is a Linked Account?
-
-```
-Think of it like this:
-
-+--------------------------------------------------+
-|                                                  |
-|   FAMILIARISE has ONE Razorpay account           |
-|   (Master Merchant Account)                      |
-|                                                  |
-|   Under this account, we create "sub-accounts"   |
-|   for each consultant. These are LINKED ACCOUNTS.|
-|                                                  |
-|   Linked Account = Consultant's bank details     |
-|                    stored securely with Razorpay |
-|                                                  |
-+--------------------------------------------------+
-
-The consultant NEVER needs to:
-- Create a Razorpay account
-- Log into any Razorpay dashboard
-- Do anything on Razorpay's website
-
-They just give us their bank details, we handle the rest.
-```
-
-### Visual: Our Account Structure
+### RazorpayX Architecture
 
 ```
 +---------------------------------------------------------------------+
-|                FAMILIARISE RAZORPAY ACCOUNT                         |
-|                    (Master Merchant)                                 |
+|                FAMILIARISE RAZORPAYX ACCOUNT                        |
 |                                                                      |
-|  +---------------+  +---------------+  +---------------+             |
-|  |   Linked      |  |   Linked      |  |   Linked      |  ...       |
-|  |   Account     |  |   Account     |  |   Account     |             |
-|  |               |  |               |  |               |             |
-|  | Priya Sharma  |  | Rahul Verma   |  | Sneha Gupta   |             |
-|  | acc_HjVXtmk   |  | acc_KmNpQrs   |  | acc_LoPqRst   |             |
-|  +-------+-------+  +-------+-------+  +-------+-------+             |
-|          |                  |                  |                     |
-+----------+------------------+------------------+---------------------+
-           |                  |                  |
-           v                  v                  v
-    +-------------+    +-------------+    +-------------+
-    |  HDFC Bank  |    | ICICI Bank  |    |  SBI Bank   |
-    | ********4521|    | ********8976|    | ********3412|
-    | (Priya's)   |    | (Rahul's)   |    | (Sneha's)   |
-    +-------------+    +-------------+    +-------------+
-
-When we transfer to acc_HjVXtmk, money goes to Priya's HDFC account.
-Razorpay handles the actual bank transfer.
+|  +------------------+  +------------------+  +------------------+    |
+|  |    Contact        |  |    Contact        |  |    Contact        |  |
+|  |  (Consultant A)   |  |  (Consultant B)   |  |  (Consultant C)   |  |
+|  +--------+---------+  +--------+---------+  +--------+---------+    |
+|           |                     |                     |              |
+|  +--------+---------+  +--------+---------+  +--------+---------+    |
+|  |  Fund Account     |  |  Fund Account     |  |  Fund Account     |  |
+|  |  Bank: HDFC       |  |  UPI: rahul@upi   |  |  Bank: SBI        |  |
+|  +------------------+  +------------------+  +------------------+    |
++---------------------------------------------------------------------+
+           |                     |                     |
+           v                    v                     v
+   +--------------+    +--------------+    +--------------+
+   |  HDFC Bank   |    |  UPI Wallet  |    |  SBI Bank    |
+   |  ****4521    |    |              |    |  ****3412    |
+   +--------------+    +--------------+    +--------------+
 ```
+
+### Key Terms
+
+| Term | Description |
+|------|-------------|
+| **Contact** | A consultant registered in RazorpayX (holds name, email, phone) |
+| **Fund Account** | A bank account or UPI ID attached to a Contact |
+| **Payout** | A fund transfer from the platform's RazorpayX account to a Fund Account |
+
+The consultant never needs a Razorpay account or dashboard access. We handle everything through the API.
 
 ---
 
-## Consultant Onboarding Flow
+## Consultant Onboarding
 
-### What We Collect From Consultant
+### What We Collect
 
-```
-Step 1: Basic Details
-+---------------------+
-| Full Name           |  Priya Sharma
-| Email               |  priya@email.com
-| Phone               |  +91 98765 43210
-+---------------------+
+1. **Basic details**: Name, email, phone
+2. **Bank details**: Account number, IFSC code, account holder name
+3. **OR UPI ID**: For UPI-based payouts
 
-Step 2: KYC Documents
-+---------------------+
-| PAN Number          |  ABCDE1234F
-| Aadhaar (optional)  |  ************
-+---------------------+
-
-Step 3: Bank Details
-+---------------------+
-| Bank Name           |  HDFC Bank
-| Account Number      |  50100123456789
-| IFSC Code           |  HDFC0001234
-| Account Type        |  Savings / Current
-+---------------------+
-```
-
-### What Happens Behind the Scenes
+### Onboarding Flow
 
 ```
-Consultant fills form on Familiarise
-            |
-            v
-+------------------------+
-| Our server receives    |
-| bank details           |
-+------------------------+
-            |
-            v
-+------------------------+
-| Call Razorpay API      |
-| POST /v2/accounts      |
-+------------------------+
-            |
-            v
-+------------------------+
-| Razorpay creates       |
-| Linked Account         |
-| Returns: acc_HjVXtmk   |
-+------------------------+
-            |
-            v
-+------------------------+
-| We store ONLY the ID   |
-| acc_HjVXtmk            |
-| NOT the bank details!  |
-+------------------------+
-            |
-            v
-+------------------------+
-| Consultant ready for   |
-| payouts!               |
-+------------------------+
-
-IMPORTANT: We never store actual bank account numbers.
-Only the Razorpay linked account ID.
+Consultant provides bank/UPI details
+        |
+        v
+Create Contact in RazorpayX
+(POST /contacts)
+        |
+        v
+Create Fund Account
+(POST /fund_accounts)
+  - bank_account: name, IFSC, account number
+  - OR vpa: UPI address
+        |
+        v
+Optional: Penny Testing Validation
+(POST /fund_accounts/validations)
+  - Sends Rs. 1, immediately reversed
+  - Verifies bank account is valid
+        |
+        v
+Consultant ready for payouts
 ```
 
-### API Call to Create Linked Account
+### What We Store
 
-```typescript
-// What we send to Razorpay
-const linkedAccount = await razorpay.accounts.create({
-  email: "priya@email.com",
-  phone: "+919876543210",
-  legal_business_name: "Priya Sharma",
-  business_type: "individual",
-  contact_name: "Priya Sharma",
-  profile: {
-    category: "education",
-    subcategory: "tutoring_services",
-    addresses: {
-      registered: {
-        street1: "123 MG Road",
-        city: "Bangalore",
-        state: "Karnataka",
-        postal_code: 560001,
-        country: "IN",
-      },
-    },
-  },
-  legal_info: {
-    pan: "ABCDE1234F",
-  },
-  bank_account: {
-    beneficiary_name: "Priya Sharma",
-    account_number: "50100123456789",
-    account_type: "savings",
-    ifsc_code: "HDFC0001234",
-  },
-});
+| We Store | RazorpayX Stores |
+|----------|-----------------|
+| Contact ID | Full personal details |
+| Fund Account ID | Bank account numbers, IFSC |
+| Masked display (e.g., HDFC ****4521) | Beneficiary name |
+| KYC status | Verification status |
+| Payout history | Transaction records |
 
-// What we get back
-{
-  "id": "acc_HjVXtmkFHdMrPT",  // THIS IS WHAT WE STORE
-  "type": "route",
-  "status": "created",
-  "email": "priya@email.com",
-  ...
-}
-```
+We **never** store full bank account numbers. Only RazorpayX IDs and masked display values.
 
 ---
 
-## The Payout Cycle
+## Payout Modes
 
-### Timeline Overview
+RazorpayX supports multiple transfer modes, automatically selected based on amount and account type:
 
-```
-+-----------------------------------------------------------------------+
-|                        WEEKLY PAYOUT CYCLE                             |
-+-----------------------------------------------------------------------+
-|                                                                        |
-|  Mon-Sun: Consultations happen, earnings accumulate                    |
-|           |                                                            |
-|           | Each payment creates an EARNINGS record                    |
-|           | Status: PENDING (in 24hr hold)                             |
-|           v                                                            |
-|  +----------------+                                                    |
-|  | PENDING        |  Rs.776 from Monday's session                      |
-|  | PENDING        |  Rs.1,552 from Tuesday's sessions                  |
-|  | PENDING        |  Rs.776 from Wednesday's session                   |
-|  +----------------+                                                    |
-|           |                                                            |
-|           | After 24 hours, hold releases                              |
-|           v                                                            |
-|  +----------------+                                                    |
-|  | AVAILABLE      |  Rs.776                                            |
-|  | AVAILABLE      |  Rs.1,552                                          |
-|  | AVAILABLE      |  Rs.776                                            |
-|  +----------------+                                                    |
-|           |        Total Available: Rs.3,104                           |
-|           |                                                            |
-|  Monday 11 PM IST: Weekly payout job runs                              |
-|           |                                                            |
-|           v                                                            |
-|  +-------------------+                                                 |
-|  | PAYOUT INITIATED  |  Transfer Rs.3,104 to acc_HjVXtmk              |
-|  +-------------------+                                                 |
-|           |                                                            |
-|           | Razorpay processes transfer                                |
-|           | Status: PROCESSING                                         |
-|           |                                                            |
-|  Wednesday (T+2): Funds settle to bank                                 |
-|           |                                                            |
-|           v                                                            |
-|  +-------------------+                                                 |
-|  | SETTLED           |  Rs.3,104 in Priya's HDFC account              |
-|  +-------------------+                                                 |
-|                                                                        |
-+-----------------------------------------------------------------------+
-```
+| Mode | Speed | Limit | When Used |
+|------|-------|-------|-----------|
+| **UPI** | Instant | Per-bank limits | Fund Account is VPA (UPI ID) |
+| **IMPS** | Instant | Up to Rs. 5,00,000 per transaction | Bank account, amount ≤ Rs. 5L |
+| **NEFT** | Batched (hourly) | No limit | Bank account, amount > Rs. 5L |
+| **RTGS** | Real-time | Rs. 2,00,000 minimum | Available but not auto-selected |
 
-### Why the 24-Hour Hold?
+**Auto-selection logic**:
+
+- VPA fund account → **UPI**
+- Bank account, amount ≤ Rs. 5L → **IMPS**
+- Bank account, amount > Rs. 5L → **NEFT**
+
+---
+
+## Payout Lifecycle
+
+### Earnings Flow
 
 ```
-+----------------------------------------------------------------------+
-|                        WHY WE HOLD EARNINGS                           |
-+----------------------------------------------------------------------+
-|                                                                       |
-|  Scenario: Customer books, pays, then demands refund before session   |
-|                                                                       |
-|  WITHOUT hold:                                                        |
-|  +-- Customer pays Rs.1000                                            |
-|  +-- We immediately pay consultant Rs.776                             |
-|  +-- Customer cancels, wants refund                                   |
-|  +-- We're stuck! Consultant already has the money                    |
-|                                                                       |
-|  WITH 24-hour hold:                                                   |
-|  +-- Customer pays Rs.1000                                            |
-|  +-- Earnings are PENDING (not available yet)                         |
-|  +-- Customer cancels within 24 hours                                 |
-|  +-- We refund from our account, cancel the pending earning           |
-|  +-- No money was sent to consultant yet!                             |
-|                                                                       |
-+----------------------------------------------------------------------+
+Payment captured (webhook)
+        |
+        v
++-------------------+
+|  Earnings: PENDING |  Hold period active
+|  (ON_HOLD)        |
++--------+----------+
+         |
+         | Hold period expires
+         |   - Consultation: 24 hours
+         |   - Webinar: 48 hours
+         |   - Subscription: 7 days
+         |   - Class: 24 hours
+         v
++-------------------+
+|  Earnings: READY  |  Available for payout
++--------+----------+
+         |
+         | Weekly payout job runs
+         v
++-------------------+
+| Earnings: PROCESSING |  Included in payout batch
++--------+----------+
+         |
+         | RazorpayX webhook confirms
+         v
++-------------------+
+|  Earnings: PAID   |  Funds in consultant's bank
++-------------------+
+
+Special states:
+  REFUNDED  — Payment was refunded, earnings cancelled
+  DISPUTED  — Customer raised dispute, earnings frozen
 ```
+
+### Payout Batch Cycle
+
+```
+Weekly payout job runs (cron)
+        |
+        v
+Find all consultants with:
+  - Earnings status = READY
+  - Total >= Rs. 500 (minimum payout)
+  - Active fund account
+        |
+        v
+Create Payout records (one per consultant)
+  - Amount < Rs. 5,000 → auto-approved
+  - Amount >= Rs. 5,000 → needs admin approval
+        |
+        v
+Admin approves pending payouts (if needed)
+        |
+        v
+Process approved payouts:
+  - Call RazorpayX Payouts API
+  - Include idempotency key (required since March 2025)
+  - Auto-select payout mode (IMPS/NEFT/UPI)
+        |
+        v
+RazorpayX processes transfer
+        |
+        v
+Webhook confirms status
+```
+
+### Payout Constants
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| Minimum payout | Rs. 500 | Below this, payout is skipped until next cycle |
+| Auto-approve threshold | Rs. 5,000 | Below this, no admin approval needed |
+| Max retry attempts | 3 | After 3 failures, flagged for manual review |
+| GST rate | 18% | Applied to platform fees |
+| SAC code | 999293 | Service Accounting Code for tax |
+
+**Source**: `lib/payments/payouts/constants.ts`
 
 ---
 
 ## Payout States
 
-### Earnings States
+### RazorpayX Payout Status Mapping
 
-```
-+------------------+     +------------------+     +------------------+
-|    PENDING       | --> |    AVAILABLE     | --> |   PROCESSING     |
-| (In 24hr hold)   |     | (Ready for       |     | (In payout batch)|
-|                  |     |  payout)         |     |                  |
-+------------------+     +------------------+     +--------+---------+
-                                                          |
-                                   +----------------------+
-                                   |
-                                   v
-+------------------+     +------------------+
-|      PAID        | <-- |    (Transfer     |
-| (In bank)        |     |     succeeded)   |
-+------------------+     +------------------+
-
-Special States:
-+------------------+
-|    DISPUTED      |  Customer raised dispute, earnings frozen
-+------------------+
-
-+------------------+
-|    REFUNDED      |  Payment was refunded, earnings cancelled
-+------------------+
-```
-
-### Payout States
-
-```
-PENDING      --> Transfer not yet initiated
-PROCESSING   --> Transfer sent to Razorpay
-SUCCEEDED    --> Razorpay confirmed transfer
-FAILED       --> Transfer failed (will retry)
-SETTLED      --> Money in consultant's bank (T+2)
-REVERSED     --> Bank rejected/returned funds
-```
+| RazorpayX Status | Internal Status | Description |
+|------------------|----------------|-------------|
+| `queued` | PENDING | Queued due to low balance |
+| `pending` | PENDING | Awaiting processing |
+| `processing` | PROCESSING | Being processed by RazorpayX |
+| `processed` | COMPLETED | Funds transferred to bank |
+| `reversed` | FAILED | Bank returned the funds |
+| `rejected` | FAILED | Payout rejected by RazorpayX |
+| `cancelled` | CANCELLED | Payout cancelled |
 
 ---
 
-## Transfer Execution
+## Webhook Events
 
-### When Payouts Happen
+| Event | When It Fires | What We Do |
+|-------|--------------|------------|
+| `payout.processed` | Funds transferred successfully | Mark payout COMPLETED, earnings as PAID |
+| `payout.reversed` | Bank returned funds | Mark payout FAILED, restore available balance |
+| `payout.rejected` | RazorpayX rejected payout | Mark payout FAILED, alert admin |
+| `payout.queued` | Insufficient balance, queued | Update payout status to PENDING |
+| `payout.pending` | Payout pending processing | Update payout status |
+| `payout.cancelled` | Payout cancelled | Mark payout CANCELLED |
 
-```
-+----------------------------------------------------------------------+
-|                     PAYOUT SCHEDULE                                   |
-+----------------------------------------------------------------------+
-|                                                                       |
-|  WHEN: Every Monday at 11:00 PM IST                                   |
-|                                                                       |
-|  WHO: All consultants with:                                           |
-|       +-- Available balance >= Rs.500 (minimum payout)                |
-|       +-- Active linked account (KYC verified)                        |
-|                                                                       |
-|  HOW: GitHub Actions runs our payout job                              |
-|       +-- Finds eligible consultants                                  |
-|       +-- Creates transfer for each                                   |
-|       +-- Updates status to PROCESSING                                |
-|                                                                       |
-|  SETTLEMENT: Wednesday (T+2 business days)                            |
-|                                                                       |
-+----------------------------------------------------------------------+
-```
-
-### Transfer API Call
-
-```typescript
-// For each eligible consultant:
-const transfer = await razorpay.transfers.create({
-  account: "acc_HjVXtmkFHdMrPT", // Consultant's linked account
-  amount: 310400, // Rs.3,104 in paise
-  currency: "INR",
-  notes: {
-    payout_id: "payout_abc123",
-    consultant_id: "consultant_xyz",
-    week: "2024-W49",
-  },
-});
-
-// Response:
-{
-  "id": "trf_xxxxxxxxx",
-  "account": "acc_HjVXtmkFHdMrPT",
-  "amount": 310400,
-  "currency": "INR",
-  "status": "processed",
-  ...
-}
-```
+**Source**: `app/api/webhooks/razorpay/route.ts` (payout event handling section)
 
 ---
 
-## Webhook Events for Payouts
+## Environment Variables
 
-### Events We Handle
-
-```
-+------------------------+--------------------------------------------+
-| Event                  | What Happened                              |
-+------------------------+--------------------------------------------+
-| transfer.processed     | Transfer initiated, being processed        |
-| transfer.settled       | Money reached consultant's bank            |
-| transfer.failed        | Transfer failed, needs attention           |
-| transfer.reversed      | Bank rejected, money returned              |
-+------------------------+--------------------------------------------+
-```
-
-### Webhook Flow
-
-```
-Razorpay                        Our Server
-   |                                 |
-   |  transfer.processed             |
-   |-------------------------------->|  Mark payout as PROCESSING
-   |                                 |  Mark earnings as PROCESSING
-   |                                 |
-   |  transfer.settled (T+2)         |
-   |-------------------------------->|  Mark payout as SETTLED
-   |                                 |  Mark earnings as PAID
-   |                                 |  Update lastPayoutAt
-   |                                 |
-
-   OR if failed:
-
-   |  transfer.failed                |
-   |-------------------------------->|  Mark payout as FAILED
-   |                                 |  Restore available balance
-   |                                 |  Queue for retry
-   |                                 |
-```
+| Variable | Description |
+|----------|-------------|
+| `RAZORPAYX_KEY_ID` | RazorpayX API key (falls back to `RAZORPAY_KEY_ID`) |
+| `RAZORPAYX_KEY_SECRET` | RazorpayX API secret (falls back to `RAZORPAY_SECRET`) |
+| `RAZORPAYX_ACCOUNT_NUMBER` | RazorpayX account number (required, no fallback) |
+| `RAZORPAYX_WEBHOOK_SECRET` | Webhook signature verification secret |
 
 ---
 
-## What Consultant Sees
+## Idempotency
 
-### Dashboard View
+Since March 2025, RazorpayX **requires** an idempotency key on every payout request. This prevents duplicate payouts if a request is retried.
 
-```
-+-----------------------------------------------------------------------+
-|                     CONSULTANT DASHBOARD                               |
-+-----------------------------------------------------------------------+
-|                                                                        |
-|   Earnings Overview                                                    |
-|   +----------------------------------------------------------------+  |
-|   |                                                                |  |
-|   |   Total Earned (December 2024)     Rs. 45,600                  |  |
-|   |                                                                |  |
-|   |   +-------------+  +-------------+  +-------------+            |  |
-|   |   |  ON HOLD    |  |  AVAILABLE  |  |    PAID     |            |  |
-|   |   |  Rs. 2,400  |  |  Rs. 8,200  |  | Rs. 35,000  |            |  |
-|   |   | (24hr wait) |  | (Ready for  |  | (In your    |            |  |
-|   |   |             |  |  payout)    |  |  bank)      |            |  |
-|   |   +-------------+  +-------------+  +-------------+            |  |
-|   |                                                                |  |
-|   +----------------------------------------------------------------+  |
-|                                                                        |
-|   Bank Account                                                         |
-|   +----------------------------------------------------------------+  |
-|   |   Bank: HDFC Bank                                              |  |
-|   |   Account: ************4521                                    |  |
-|   |   Status: Verified                                             |  |
-|   +----------------------------------------------------------------+  |
-|                                                                        |
-|   Next Payout                                                          |
-|   +----------------------------------------------------------------+  |
-|   |   Date: Monday, Dec 9 at 11:00 PM                              |  |
-|   |   Amount: Rs. 8,200                                            |  |
-|   |   Expected in Bank: Wednesday, Dec 11                          |  |
-|   +----------------------------------------------------------------+  |
-|                                                                        |
-|   Recent Payouts                                                       |
-|   +----------------------------------------------------------------+  |
-|   |   Dec 4   Rs. 12,400   Settled (HDFC ****4521)                 |  |
-|   |   Nov 27  Rs. 8,600    Settled (HDFC ****4521)                 |  |
-|   |   Nov 20  Rs. 14,000   Settled (HDFC ****4521)                 |  |
-|   +----------------------------------------------------------------+  |
-|                                                                        |
-+-----------------------------------------------------------------------+
-```
+The system generates idempotency keys using the payout ID and timestamp: `payout_{payoutId}_{timestamp}`
 
-### Balance Breakdown
-
-```
-+------------------+------------------------------------------------+
-| Balance Type     | Meaning                                        |
-+------------------+------------------------------------------------+
-| On Hold          | Earned in last 24 hours, waiting for          |
-|                  | refund window to pass                          |
-+------------------+------------------------------------------------+
-| Available        | Ready to be paid out on Monday                 |
-+------------------+------------------------------------------------+
-| Paid             | Already transferred to your bank               |
-+------------------+------------------------------------------------+
-```
+The key is sent via the `X-Payout-Idempotency` header.
 
 ---
 
 ## Common Scenarios
 
-### Scenario 1: Normal Weekly Payout
+### Normal Weekly Payout
 
 ```
-Monday:    Priya does 2 sessions, earns Rs.1,552
-Tuesday:   1 session, earns Rs.776
-Wednesday: No sessions
-Thursday:  3 sessions, earns Rs.2,328
-Friday:    1 session, earns Rs.776
-           --------------------------
-           Total Available: Rs.5,432
+Mon-Fri:  Sessions happen, earnings accumulate
+          Each payment creates PENDING earnings
 
-Monday 11 PM: Payout job runs
-              Transfer Rs.5,432 to acc_HjVXtmk
++24-168h: Hold periods expire
+          Earnings become READY
 
-Wednesday: Rs.5,432 lands in Priya's HDFC account
+Weekly:   Payout job runs
+          Groups READY earnings by consultant
+          Creates payouts (auto-approve if < Rs. 5,000)
+
++0-2 days: Funds arrive in consultant's bank account
+           Webhook: payout.processed
 ```
 
-### Scenario 2: Customer Refund Before Session
+### Failed Payout
 
 ```
-Monday 10 AM: Customer pays Rs.1,000
-              Priya's earnings: Rs.776 (PENDING)
+Payout initiated → RazorpayX processes → Bank rejects
 
-Monday 2 PM:  Customer cancels, requests refund
-
-              What happens:
-              +-- Refund Rs.1,000 to customer
-              +-- Cancel Priya's earnings record
-              +-- Priya's balance unchanged
-
-              Priya never sees this money because
-              it was still in 24-hour hold.
+Webhook: payout.reversed or payout.rejected
+  - Payout marked FAILED
+  - Earnings restored to READY
+  - Admin alerted
+  - Will retry on next payout cycle (up to 3 attempts)
 ```
 
-### Scenario 3: Refund After Session
+### Refund During Hold Period
 
 ```
-Monday 10 AM: Customer pays Rs.1,000
-Monday 11 AM: Session happens
-Monday 12 PM: Hold released, Rs.776 AVAILABLE
+Customer pays Rs. 1,000
+Earnings created: Rs. 776 (PENDING, in hold)
 
-Tuesday 3 PM: Customer requests refund
-
-              What happens:
-              +-- We decide to refund (policy decision)
-              +-- Refund Rs.1,000 to customer
-              +-- Deduct Rs.776 from Priya's available balance
-
-              If already paid out:
-              +-- Deduct from next payout
-              +-- Or recover manually
-```
-
-### Scenario 4: Failed Transfer
-
-```
-Monday 11 PM: Payout initiated for Rs.5,432
-              Transfer to acc_HjVXtmk
-
-Wednesday:    Razorpay webhook: transfer.failed
-              Reason: "Invalid bank account"
-
-              What happens:
-              +-- Mark payout as FAILED
-              +-- Restore Rs.5,432 to available balance
-              +-- Send email to Priya: "Update bank details"
-              +-- Admin alerted
-
-Next Monday:  After Priya updates bank details,
-              next payout includes this amount
+Customer requests refund before hold expires:
+  - Refund processed
+  - Earnings cancelled (REFUNDED)
+  - Consultant never sees funds
 ```
 
 ---
 
 ## Error Handling
 
-### Common Payout Errors
+| Error | Resolution |
+|-------|------------|
+| Insufficient balance | Queue payout, process when balance available |
+| Invalid fund account | Consultant needs to update bank details |
+| Account closed | Consultant needs new bank details |
+| Rejected by RazorpayX | Check compliance, contact support |
 
-```
-+---------------------------+------------------------------------------+
-| Error                     | Resolution                               |
-+---------------------------+------------------------------------------+
-| INSUFFICIENT_BALANCE      | Wait for more payments to settle         |
-| INVALID_ACCOUNT           | Consultant needs to update bank details  |
-| ACCOUNT_SUSPENDED         | Contact Razorpay, re-verify KYC          |
-| TRANSFER_LIMIT_EXCEEDED   | Split into multiple transfers            |
-| BANK_ACCOUNT_CLOSED       | Consultant needs new bank details        |
-+---------------------------+------------------------------------------+
-```
-
-### Retry Logic
-
-```
-Transfer failed?
-     |
-     v
-Mark as FAILED
-Restore balance
-     |
-     v
-Wait for next Monday
-     |
-     v
-If consultant updated details -> Retry automatically
-If not -> Send reminder email
-     |
-     v
-After 3 failed weeks -> Flag for manual review
-```
+After 3 failed attempts, the payout is flagged for manual review.
 
 ---
 
-## Security & Compliance
+## Source Files
 
-### What We Store vs What Razorpay Stores
-
-```
-+------------------------+------------------------+
-|     WE STORE           |    RAZORPAY STORES     |
-+------------------------+------------------------+
-| Linked Account ID      | Full bank account      |
-| (acc_xxxxx)            | number                 |
-|                        |                        |
-| Masked display         | IFSC code              |
-| (HDFC ****4521)        |                        |
-|                        | Beneficiary name       |
-| KYC status             |                        |
-| (VERIFIED/PENDING)     | PAN details            |
-|                        |                        |
-| Payout history         | Verification status    |
-+------------------------+------------------------+
-
-We NEVER store full bank account numbers.
-This is for security and PCI compliance.
-```
-
-### Audit Trail
-
-```
-Every payout action is logged:
-
-+-- Who initiated (system/admin)
-+-- When (timestamp)
-+-- Amount
-+-- Status changes
-+-- Any errors
-+-- Webhook events received
-```
+| File | Purpose |
+|------|---------|
+| `lib/payments/payouts/razorpay-payouts.ts` | RazorpayPayoutsService class — contacts, fund accounts, payouts |
+| `lib/payments/payouts/payout-service.ts` | Provider-agnostic orchestration — batch creation, approval, processing |
+| `lib/payments/payouts/constants.ts` | Hold periods, minimum amounts, fee percentages |
+| `lib/payments/payouts/earnings-service.ts` | Earnings calculation (flat 20% platform fee) |
+| `app/api/webhooks/razorpay/route.ts` | Webhook handler for payout events |
+| `app/api/consultant/payout-accounts/route.ts` | Consultant API for managing payout accounts |
 
 ---
 
 ## Related Documents
 
-- [01-setup.md](./01-setup.md) - Razorpay setup
-- [02-architecture-and-flow.md](./02-architecture-and-flow.md) - Payment flow
-- [/docs/payments/payouts/razorpay-payouts-code.md](/docs/payments/payouts/razorpay-payouts-code.md) - Code implementation
-- [Razorpay Route Docs](https://razorpay.com/docs/payments/route/)
+- [Gateway Overview](../README.md) — Comparison and selection logic
+- [01-setup.md](./01-setup.md) — Setup and configuration
+- [02-architecture-and-flow.md](./02-architecture-and-flow.md) — Payment flow and revenue split
+- [Payouts Overview](../../payouts/README.md) — Full payout system documentation
+- [Payouts: Razorpay Implementation](../../payouts/07-razorpay-implementation.md) — Detailed implementation reference

@@ -4,7 +4,7 @@ This documentation is organized into logical categories for easy navigation.
 
 ## File Naming Convention
 
-All documentation files follow the `lowercase-with-hyphens.md` naming convention.
+All documentation files follow `NN-kebab-case.md` (e.g., `01-architecture.md`). `README.md` is the only uppercase exception.
 
 ---
 
@@ -28,6 +28,8 @@ Booking system, slot allocation, validation, and scheduling logic.
 - [03-slot-math-and-calculations.md](./booking/03-slot-math-and-calculations.md) - 30-min slots, week counting, consecutive validation
 - [04-api-reference.md](./booking/04-api-reference.md) - 8 endpoints, Zod schemas, error codes
 - [05-troubleshooting-and-changelog.md](./booking/05-troubleshooting-and-changelog.md) - Common errors, debugging, recent fixes
+- [06-reschedule-implementation-plan.md](./booking/06-reschedule-implementation-plan.md) - Reschedule implementation plan
+- [07-reschedule-issue-validation.md](./booking/07-reschedule-issue-validation.md) - Reschedule issue validation
 
 ---
 
@@ -44,76 +46,46 @@ Calendar display, synchronization, and UI components.
 
 ### Payments
 
-Payment system, checkout flows, and gateway integrations.
+Payment system, checkout flows, gateway integrations, payouts, refunds, and more. See [payments/README.md](./payments/README.md) for full index.
 
-- [setup.md](./payments/setup.md) - Payment system setup
-- [architecture.md](./payments/architecture.md) - Payment architecture
-- [abandoned-solutions.md](./payments/abandoned-solutions.md) - Abandoned payment handling
-- [STATUS_ENUMS_REFERENCE.md](./payments/STATUS_ENUMS_REFERENCE.md) - Status enums reference
+- [01-architecture.md](./payments/01-architecture.md) - Payment architecture
+- [02-setup.md](./payments/02-setup.md) - Payment system setup
+- [03-status-enums-reference.md](./payments/03-status-enums-reference.md) - Status enums reference
+- [04-abandoned-solutions.md](./payments/04-abandoned-solutions.md) - Abandoned payment handling
 
 #### Checkout Flow
 
-- [checkout-flow/01-checkout-flow.md](./payments/checkout-flow/01-checkout-flow.md)
-- [checkout-flow/02-checkout-flow.md](./payments/checkout-flow/02-checkout-flow.md)
-- [checkout-flow/03-checkout-flow.md](./payments/checkout-flow/03-checkout-flow.md)
-- [checkout-flow/04-checkout-flow.md](./payments/checkout-flow/04-checkout-flow.md)
-- [checkout-flow/05-checkout-flow.md](./payments/checkout-flow/05-checkout-flow.md)
-- [checkout-flow/06-status-flows.md](./payments/checkout-flow/06-status-flows.md)
-- [checkout-flow/KNOWN_ISSUES_AND_FIXES.md](./payments/checkout-flow/KNOWN_ISSUES_AND_FIXES.md)
+- [checkout-flow/01-overview-and-consultation.md](./payments/checkout-flow/01-overview-and-consultation.md) - System overview, consultation & subscription
+- [checkout-flow/02-webinar-and-class.md](./payments/checkout-flow/02-webinar-and-class.md) - Webinar & class flows
+- [checkout-flow/03-payment-processing.md](./payments/checkout-flow/03-payment-processing.md) - Checkout API, gateway integration
+- [checkout-flow/04-edge-cases.md](./payments/checkout-flow/04-edge-cases.md) - Race conditions, timeouts, mock payments
+- [checkout-flow/05-status-flows.md](./payments/checkout-flow/05-status-flows.md) - Status lifecycle
+- [checkout-flow/06-known-issues.md](./payments/checkout-flow/06-known-issues.md) - Known issues and fixes
 
-#### Gateways — Razorpay
+#### Gateways
 
-- [gateways/razorpay/01-setup.md](./payments/gateways/razorpay/01-setup.md) - Setup
-- [gateways/razorpay/02-architecture-and-flow.md](./payments/gateways/razorpay/02-architecture-and-flow.md) - Architecture
-- [gateways/razorpay/03-payout-flow.md](./payments/gateways/razorpay/03-payout-flow.md) - Payouts
-- [gateways/razorpay/kyc/01-kyc-overview.md](./payments/gateways/razorpay/kyc/01-kyc-overview.md) - KYC overview
-- [gateways/razorpay/kyc/02-business-types-requirements.md](./payments/gateways/razorpay/kyc/02-business-types-requirements.md) - Business requirements
-- [gateways/razorpay/kyc/03-industry-certifications.md](./payments/gateways/razorpay/kyc/03-industry-certifications.md) - Industry certifications
-- [gateways/razorpay/kyc/04-setup-checklist.md](./payments/gateways/razorpay/kyc/04-setup-checklist.md) - Setup checklist
+- [gateways/razorpay/](./payments/gateways/razorpay/) - Razorpay setup, architecture, payout flow, KYC
+- [gateways/stripe/](./payments/gateways/stripe/) - Stripe setup, architecture, payout flow
 
-#### Gateways — Stripe
+#### Approval Payments
 
-- [gateways/stripe/01-setup.md](./payments/gateways/stripe/01-setup.md) - Setup
-- [gateways/stripe/02-architecture-and-flow.md](./payments/gateways/stripe/02-architecture-and-flow.md) - Architecture
-- [gateways/stripe/03-payout-flow.md](./payments/gateways/stripe/03-payout-flow.md) - Payouts
-
-#### Pay Later
-
-- [pay-later/README.md](./payments/pay-later/README.md) - Pay later overview
-- [pay-later/ARCHITECTURE.md](./payments/pay-later/ARCHITECTURE.md) - Architecture
-- [pay-later/API_REFERENCE.md](./payments/pay-later/API_REFERENCE.md) - API reference
-- [pay-later/CRON_SCHEDULES.md](./payments/pay-later/CRON_SCHEDULES.md) - Cron schedules
-- [pay-later/DISTRIBUTED_LOCKING.md](./payments/pay-later/DISTRIBUTED_LOCKING.md) - Distributed locking
-- [pay-later/EMAIL_NOTIFICATIONS.md](./payments/pay-later/EMAIL_NOTIFICATIONS.md) - Email notifications
-- [pay-later/TESTING.md](./payments/pay-later/TESTING.md) - Testing guide
-- [pay-later/TROUBLESHOOTING.md](./payments/pay-later/TROUBLESHOOTING.md) - Troubleshooting
-
-#### Payouts
-
-- [payouts/razorpay-payouts-code.md](./payments/payouts/razorpay-payouts-code.md) - Razorpay payouts code
-- [payouts/stripe-payouts-code.md](./payments/payouts/stripe-payouts-code.md) - Stripe payouts code
+- [approval-payments/](./payments/approval-payments/) - Consultant-approves-first workflow (7 docs)
 
 #### Refunds & Disputes
 
-- [refunds-disputes/README.md](./payments/refunds-disputes/README.md) - Overview
-- [refunds-disputes/01-architecture.md](./payments/refunds-disputes/01-architecture.md) - Architecture
-- [refunds-disputes/02-refund-flow.md](./payments/refunds-disputes/02-refund-flow.md) - Refund flow
-- [refunds-disputes/03-dispute-flow.md](./payments/refunds-disputes/03-dispute-flow.md) - Dispute flow
-- [refunds-disputes/04-api-reference.md](./payments/refunds-disputes/04-api-reference.md) - API reference
-- [refunds-disputes/05-troubleshooting.md](./payments/refunds-disputes/05-troubleshooting.md) - Troubleshooting
+- [refunds-disputes/](./payments/refunds-disputes/) - Two-phase refund pattern, dispute lifecycle (6 docs)
 
----
+#### Cancellations & Rescheduling
 
-### Payouts
+- [cancellations-rescheduling/](./payments/cancellations-rescheduling/) - Refund triggers, payment reuse on reschedule
 
-Payout algorithm and consultant earnings.
+#### Payouts
 
-- [algorithm/00-readme.md](./payouts/algorithm/00-readme.md) - Payout system overview
-- [algorithm/01-architecture.md](./payouts/algorithm/01-architecture.md) - Architecture
-- [algorithm/02-earnings-lifecycle.md](./payouts/algorithm/02-earnings-lifecycle.md) - Earnings lifecycle
-- [algorithm/03-payout-processing.md](./payouts/algorithm/03-payout-processing.md) - Processing
-- [algorithm/04-api-reference.md](./payouts/algorithm/04-api-reference.md) - API reference
-- [algorithm/05-configuration.md](./payouts/algorithm/05-configuration.md) - Configuration
+- [payouts/](./payments/payouts/) - Earnings lifecycle, batch processing, gateway disbursement (8 docs)
+
+#### Webhooks
+
+- [webhooks/](./payments/webhooks/) - Webhook monitoring, Razorpay schema
 
 ---
 
@@ -163,18 +135,6 @@ Redis distributed locking.
 - [redis/locking/03_DISTRIBUTED_LOCKING_DEEP_DIVE.md](./upstash/redis/locking/03_DISTRIBUTED_LOCKING_DEEP_DIVE.md) - Deep dive
 
 ---
-
-### Webhooks
-
-Webhook handlers and schemas.
-
-- [monitoring.md](./webhooks/monitoring.md) - Webhook monitoring
-- [razorpay-webhook-schema.md](./webhooks/razorpay-webhook-schema.md) - Razorpay webhook schema
-
-#### Prototypes
-
-- [prototypes/stripe-webhook-handler.md](./webhooks/prototypes/stripe-webhook-handler.md) - Stripe webhook prototype
-- [prototypes/enhanced-webhook-handler.md](./webhooks/prototypes/enhanced-webhook-handler.md) - Enhanced webhook handler
 
 ---
 
@@ -249,18 +209,15 @@ Generic software architecture patterns and learning material (not Familiarise-sp
 
 ### Finances
 
-Business model, pricing, and compliance documentation.
+CFO-level business documentation. See [finances/README.md](./finances/README.md) for full index.
 
 - [01-business-model.md](./finances/01-business-model.md) - Revenue model
-- [02-payout-architecture.md](./finances/02-payout-architecture.md) - Payout architecture
-- [03-international-payments.md](./finances/03-international-payments.md) - International payments
-- [04-revenue-distribution.md](./finances/04-revenue-distribution.md) - Revenue splitting
+- [02-revenue-distribution.md](./finances/02-revenue-distribution.md) - Revenue splitting
+- [03-pricing-calculator.md](./finances/03-pricing-calculator.md) - Pricing calculator
+- [04-profitability-analysis.md](./finances/04-profitability-analysis.md) - Profitability
 - [05-saas-metrics-monthly.md](./finances/05-saas-metrics-monthly.md) - SaaS metrics
-- [06-payout-implementation-plan.md](./finances/06-payout-implementation-plan.md) - Payout plan
-- [07-pricing-calculator.md](./finances/07-pricing-calculator.md) - Pricing calculator
-- [08-saas-expenditures.md](./finances/08-saas-expenditures.md) - Expenditures
-- [09-tax-compliance-india.md](./finances/09-tax-compliance-india.md) - Tax compliance
-- [10-profitability-minimum-pricing.md](./finances/10-profitability-minimum-pricing.md) - Profitability
+- [06-saas-expenditures.md](./finances/06-saas-expenditures.md) - Expenditures
+- [07-tax-compliance-india.md](./finances/07-tax-compliance-india.md) - Tax compliance
 
 ---
 

@@ -1,6 +1,6 @@
-# Payment System Documentation - Part 5: Edge Cases, Special Flows & Issues
+# Edge Cases, Special Flows & Issues
 
-> **Navigation:** [Part 1](./CHECKOUT_FLOW_PART1.md) | [Part 2](./CHECKOUT_FLOW_PART2.md) | [Part 3](./CHECKOUT_FLOW_PART3.md) | [Part 4](./CHECKOUT_FLOW_PART4.md) | **Part 5**
+> **Navigation:** [Overview & Consultation](./01-overview-and-consultation.md) | [Webinar & Class](./02-webinar-and-class.md) | [Payment Processing](./03-payment-processing.md) | **Edge Cases** | [Status Flows](./05-status-flows.md)
 
 ## Table of Contents
 
@@ -1444,10 +1444,10 @@ console.error(
 
 ### 🔗 Related Documentation
 
-- **[Part 1: System Overview](./CHECKOUT_FLOW_PART1.md)** - Architecture, consultation & subscription
-- **[Part 2: Group Events](./CHECKOUT_FLOW_PART2.md)** - Webinar & class flows
-- **[Part 3: Payment Processing](./CHECKOUT_FLOW_PART3.md)** - Webhooks, success/failure
-- **[Part 4: Refunds & Disputes](./CHECKOUT_FLOW_PART4.md)** - Post-payment operations
+- **[Overview & Consultation](./01-overview-and-consultation.md)** - Architecture, consultation & subscription
+- **[Webinar & Class](./02-webinar-and-class.md)** - Webinar & class flows
+- **[Payment Processing](./03-payment-processing.md)** - Webhooks, success/failure
+- **[Refunds & Disputes](../refunds-disputes/)** - Post-payment operations
 
 ---
 
