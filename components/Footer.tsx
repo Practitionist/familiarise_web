@@ -30,24 +30,26 @@ const FOOTER_LINKS: Record<string, FooterLink[]> = {
     { label: "Marketing", href: "/explore/experts?category=marketing" },
     { label: "Education", href: "/explore/experts?category=education" },
   ],
+  useCases: [
+    { label: "College Students", href: "/use-cases/college-students" },
+    { label: "Early-Career Pros", href: "/use-cases/early-career" },
+    { label: "Career Switchers", href: "/use-cases/career-switchers" },
+    { label: "Long-Term Mentorship", href: "/use-cases/mentorship" },
+  ],
   company: [
     { label: "About", href: "/about" },
-    { label: "Careers", href: "/careers" },
-    { label: "Press", href: "/press" },
     { label: "Contact", href: "/contactus" },
     { label: "Blog", href: "/blog" },
+    { label: "Pricing", href: "/pricing" },
   ],
   resources: [
-    { label: "Help Center", href: "/help" },
-    { label: "Community", href: "/explore/community" },
+    { label: "How It Works", href: "/#how-it-works" },
     { label: "Become an Expert", href: "/form/onboarding" },
-    { label: "Pricing", href: "/pricing" },
   ],
   legal: [
     { label: "Terms of Service", href: "/terms" },
     { label: "Privacy Policy", href: "/privacy" },
     { label: "Refund Policy", href: "/refund" },
-    { label: "Cookie Policy", href: "/cookies" },
   ],
 };
 
@@ -170,7 +172,7 @@ const Footer: React.FC = () => {
 
       {/* Main Footer Content */}
       <div className="container mx-auto px-4 md:px-6 py-16 md:py-20 relative z-10">
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-8 lg:gap-12">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-8 lg:gap-10">
           {/* Brand Column */}
           <div className="col-span-2 md:col-span-3 lg:col-span-2">
             <Link href="/" className="inline-block mb-6">
@@ -211,6 +213,23 @@ const Footer: React.FC = () => {
             <h3 className="font-semibold text-white mb-4">Expertise</h3>
             <ul className="space-y-3">
               {FOOTER_LINKS.expertise.map((link) => (
+                <li key={link.label}>
+                  <Link
+                    href={link.href}
+                    className="text-sm text-zinc-400 hover:text-white transition-colors"
+                  >
+                    {link.label}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          {/* Use Cases Column */}
+          <div>
+            <h3 className="font-semibold text-white mb-4">Use Cases</h3>
+            <ul className="space-y-3">
+              {FOOTER_LINKS.useCases.map((link) => (
                 <li key={link.label}>
                   <Link
                     href={link.href}

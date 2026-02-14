@@ -1,12 +1,29 @@
 "use client";
 
 import { motion, AnimatePresence } from "framer-motion";
-import { ChevronDown, Menu, X } from "lucide-react";
+import {
+  ChevronDown,
+  Menu,
+  X,
+  Search,
+  BookOpen,
+  Users,
+  GraduationCap,
+  Briefcase,
+  ArrowRightLeft,
+  UserCheck,
+  Building2,
+  FileText,
+  HelpCircle,
+  Info,
+  Mail,
+  Presentation,
+} from "lucide-react";
 import { signOut, useSession } from "@/lib/auth-client";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -16,12 +33,278 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
 import { useCurrency, SUPPORTED_CURRENCIES } from "@/lib/hooks/useCurrency";
 import { useAnnouncementBar } from "@/providers/AnnouncementBarProvider";
 import familiariseLogoTransparent from "@/public/avif/static/assets/logos/images/logos/Familiarise-logos_transparent.avif";
 import familiariseLogoWhite from "@/public/avif/static/assets/logos/images/logos/Familiarise-logos_white.avif";
 
 const defaultUserImage = "/avif/static/assets/default-profile.avif";
+
+// ─── Nav Data ────────────────────────────────────────────────────────────────
+
+interface NavDropdownItem {
+  label: string;
+  href: string;
+  description: string;
+  icon: React.ElementType;
+  disabled?: boolean;
+}
+
+interface NavCategoryChip {
+  label: string;
+  href: string;
+}
+
+interface NavDropdownGroup {
+  label: string;
+  items: NavDropdownItem[];
+  categoryChips?: NavCategoryChip[];
+}
+
+const EXPLORE_ITEMS: NavDropdownItem[] = [
+  {
+    label: "Find Experts",
+    href: "/explore/experts",
+    description: "Browse verified consultants across domains",
+    icon: Search,
+  },
+  {
+    label: "Browse Programs",
+    href: "/explore/programs",
+    description: "Webinars, classes, and group sessions",
+    icon: Presentation,
+  },
+];
+
+const EXPLORE_CATEGORIES: NavCategoryChip[] = [
+  { label: "Technology", href: "/explore/experts?category=technology" },
+  { label: "Business", href: "/explore/experts?category=business" },
+  { label: "Design", href: "/explore/experts?category=design" },
+  { label: "Marketing", href: "/explore/experts?category=marketing" },
+  { label: "Education", href: "/explore/experts?category=education" },
+];
+
+const USE_CASE_ITEMS: NavDropdownItem[] = [
+  {
+    label: "For College Students",
+    href: "/use-cases/college-students",
+    description: "Get career guidance before you graduate",
+    icon: GraduationCap,
+  },
+  {
+    label: "For Early-Career Professionals",
+    href: "/use-cases/early-career",
+    description: "Accelerate your first 1–5 years",
+    icon: Briefcase,
+  },
+  {
+    label: "For Career Switchers",
+    href: "/use-cases/career-switchers",
+    description: "Navigate the service-to-product transition",
+    icon: ArrowRightLeft,
+  },
+  {
+    label: "For Long-Term Mentorship",
+    href: "/use-cases/mentorship",
+    description: "Ongoing guidance from industry experts",
+    icon: UserCheck,
+  },
+];
+
+const BUSINESS_ITEMS: NavDropdownItem[] = [
+  {
+    label: "Team Training & Corporate Mentorship",
+    href: "/contactus",
+    description: "Coming soon — contact us to express interest",
+    icon: Building2,
+    disabled: true,
+  },
+];
+
+const RESOURCE_ITEMS: NavDropdownItem[] = [
+  {
+    label: "Community",
+    href: "/explore/community",
+    description: "Connect with peers and mentors",
+    icon: Users,
+  },
+  {
+    label: "Blog",
+    href: "/blog",
+    description: "Insights, tips, and career advice",
+    icon: FileText,
+  },
+  {
+    label: "How It Works",
+    href: "/#how-it-works",
+    description: "See how Familiarise works",
+    icon: HelpCircle,
+  },
+  {
+    label: "About",
+    href: "/about",
+    description: "Our mission and story",
+    icon: Info,
+  },
+  {
+    label: "Contact",
+    href: "/contactus",
+    description: "Get in touch with our team",
+    icon: Mail,
+  },
+];
+
+const NAV_GROUPS: NavDropdownGroup[] = [
+  { label: "Use Cases", items: USE_CASE_ITEMS },
+  { label: "Explore", items: EXPLORE_ITEMS, categoryChips: EXPLORE_CATEGORIES },
+  { label: "For Businesses", items: BUSINESS_ITEMS },
+  { label: "Resources", items: RESOURCE_ITEMS },
+];
+
+// ─── Dropdown Panel (Desktop) ────────────────────────────────────────────────
+
+function DesktopDropdownPanel({
+  group,
+  onClose,
+}: {
+  group: NavDropdownGroup;
+  onClose: () => void;
+}) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: 8 }}
+      transition={{ duration: 0.15 }}
+      className="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-80 bg-white rounded-xl shadow-xl border border-zinc-200 overflow-hidden z-[1100]"
+    >
+      <div className="p-2">
+        {group.items.map((item) => {
+          const Icon = item.icon;
+          return (
+            <Link
+              key={item.href + item.label}
+              href={item.disabled ? "/contactus" : item.href}
+              onClick={onClose}
+              className={`flex items-start gap-3 px-3 py-2.5 rounded-lg transition-colors ${
+                item.disabled
+                  ? "opacity-60 cursor-default"
+                  : "hover:bg-zinc-50"
+              }`}
+            >
+              <div className="mt-0.5 w-8 h-8 rounded-lg bg-zinc-100 flex items-center justify-center shrink-0">
+                <Icon className="w-4 h-4 text-zinc-600" />
+              </div>
+              <div className="min-w-0">
+                <div className="text-sm font-medium text-zinc-900 flex items-center gap-2">
+                  {item.label}
+                  {item.disabled && (
+                    <span className="text-[10px] font-medium uppercase tracking-wider text-zinc-400 bg-zinc-100 px-1.5 py-0.5 rounded">
+                      Soon
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-zinc-500 mt-0.5">
+                  {item.description}
+                </p>
+              </div>
+            </Link>
+          );
+        })}
+      </div>
+
+      {/* Category chips */}
+      {group.categoryChips && group.categoryChips.length > 0 && (
+        <div className="border-t border-zinc-100 px-4 py-3">
+          <p className="text-[10px] font-medium uppercase tracking-wider text-zinc-400 mb-2">
+            By Category
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {group.categoryChips.map((chip) => (
+              <Link
+                key={chip.href}
+                href={chip.href}
+                onClick={onClose}
+                className="text-xs px-2.5 py-1 rounded-full bg-zinc-100 text-zinc-600 hover:bg-zinc-200 hover:text-zinc-900 transition-colors"
+              >
+                {chip.label}
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
+    </motion.div>
+  );
+}
+
+// ─── Desktop Nav Item ────────────────────────────────────────────────────────
+
+function DesktopNavItem({
+  group,
+  showDarkStyle,
+}: {
+  group: NavDropdownGroup;
+  showDarkStyle: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const handleEnter = useCallback(() => {
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    setOpen(true);
+  }, []);
+
+  const handleLeave = useCallback(() => {
+    timeoutRef.current = setTimeout(() => setOpen(false), 150);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    };
+  }, []);
+
+  return (
+    <div
+      ref={containerRef}
+      className="relative"
+      onMouseEnter={handleEnter}
+      onMouseLeave={handleLeave}
+    >
+      <button
+        className={`inline-flex items-center gap-1 px-3 py-2 text-sm font-medium rounded-lg transition-colors ${
+          showDarkStyle
+            ? "text-white hover:bg-white/10"
+            : "text-zinc-700 hover:bg-zinc-100"
+        }`}
+        onClick={() => setOpen((prev) => !prev)}
+        aria-expanded={open}
+      >
+        {group.label}
+        <ChevronDown
+          className={`w-3.5 h-3.5 transition-transform duration-200 ${open ? "rotate-180" : ""}`}
+        />
+      </button>
+      <AnimatePresence>
+        {open && (
+          <DesktopDropdownPanel
+            group={group}
+            onClose={() => setOpen(false)}
+          />
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+// ─── Main Navbar ─────────────────────────────────────────────────────────────
 
 const Navbar = () => {
   const router = useRouter();
@@ -32,7 +315,6 @@ const Navbar = () => {
   const { currency, symbol, setCurrency } = useCurrency();
   const { isVisible: isAnnouncementVisible } = useAnnouncementBar();
 
-  // Check if we're on a page with dark hero (for transparent navbar)
   const darkHeroPages = [
     "/",
     "/explore/experts",
@@ -55,7 +337,6 @@ const Navbar = () => {
     closeMenu();
   };
 
-  // Check if the current route should exclude navbar
   const excludeNavbar =
     pathname.startsWith("/api/") ||
     pathname.startsWith("/auth/") ||
@@ -66,14 +347,6 @@ const Navbar = () => {
     pathname.startsWith("/meetings/");
 
   if (excludeNavbar) return null;
-
-  // Navigation links
-  const navLinks = [
-    { path: "/explore/experts", label: "Experts" },
-    { path: "/explore/programs", label: "Programs" },
-    { path: "/explore/community", label: "Community" },
-    { path: "/blog", label: "Blog" },
-  ];
 
   const handleSignOut = () => {
     signOut();
@@ -86,7 +359,6 @@ const Navbar = () => {
       : defaultUserImage;
   };
 
-  // Determine navbar style based on scroll and page
   const showDarkStyle = hasDarkHero && !isScrolled;
 
   return (
@@ -128,7 +400,7 @@ const Navbar = () => {
             </Link>
 
             {/* Desktop Navigation */}
-            <div className="hidden lg:flex items-center gap-1">
+            <div className="hidden lg:flex items-center gap-0.5">
               {session?.user && (
                 <Link href="/dashboard">
                   <Button
@@ -139,19 +411,27 @@ const Navbar = () => {
                   </Button>
                 </Link>
               )}
-              {navLinks.map((link) => (
-                <Link key={link.path} href={link.path}>
-                  <Button
-                    variant="ghost"
-                    className={`font-medium ${showDarkStyle ? "text-white hover:bg-white/10" : "text-zinc-700 hover:bg-zinc-100"}`}
-                  >
-                    {link.label}
-                  </Button>
-                </Link>
+
+              {NAV_GROUPS.map((group) => (
+                <DesktopNavItem
+                  key={group.label}
+                  group={group}
+                  showDarkStyle={showDarkStyle}
+                />
               ))}
+
+              {/* Pricing — flat link */}
+              <Link href="/pricing">
+                <Button
+                  variant="ghost"
+                  className={`font-medium ${showDarkStyle ? "text-white hover:bg-white/10" : "text-zinc-700 hover:bg-zinc-100"}`}
+                >
+                  Pricing
+                </Button>
+              </Link>
             </div>
 
-            {/* Desktop Auth Buttons */}
+            {/* Desktop Auth / CTA Buttons */}
             <div className="hidden lg:flex items-center gap-3">
               {/* Currency Selector */}
               <DropdownMenu>
@@ -206,20 +486,20 @@ const Navbar = () => {
                 <>
                   <Button
                     variant="ghost"
-                    onClick={() => handleNavigation("/auth/signup")}
+                    onClick={() => handleNavigation("/auth/signin")}
                     className={`font-medium ${showDarkStyle ? "text-white hover:bg-white/10" : "text-zinc-700 hover:bg-zinc-100"}`}
                   >
-                    Sign up
+                    Sign in
                   </Button>
                   <Button
-                    onClick={() => handleNavigation("/auth/signin")}
+                    onClick={() => handleNavigation("/form/onboarding")}
                     className={
                       showDarkStyle
                         ? "bg-white text-zinc-900 hover:bg-zinc-200"
                         : "bg-zinc-900 text-white hover:bg-zinc-800"
                     }
                   >
-                    Sign in
+                    Become an Expert
                   </Button>
                 </>
               )}
@@ -285,31 +565,95 @@ const Navbar = () => {
                 </button>
               </div>
 
-              {/* Navigation Links */}
+              {/* Navigation — Accordion Sections */}
               <div
-                className="flex flex-col p-5 space-y-1 overflow-y-auto"
+                className="flex flex-col p-5 overflow-y-auto"
                 style={{ maxHeight: "calc(100% - 10rem)" }}
               >
                 {session?.user && (
                   <Link
                     href="/dashboard"
-                    className="flex items-center gap-3 px-4 py-3 rounded-xl text-white hover:bg-zinc-800 transition-colors"
+                    className="flex items-center gap-3 px-4 py-3 rounded-xl text-white hover:bg-zinc-800 transition-colors mb-1"
                     onClick={closeMenu}
                   >
-                    <span className="text-zinc-400">🎯</span>
                     <span className="font-medium">Dashboard</span>
                   </Link>
                 )}
-                {navLinks.map((link) => (
-                  <Link
-                    key={link.path}
-                    href={link.path}
-                    className="flex items-center gap-3 px-4 py-3 rounded-xl text-white hover:bg-zinc-800 transition-colors"
-                    onClick={closeMenu}
-                  >
-                    <span className="font-medium">{link.label}</span>
-                  </Link>
-                ))}
+
+                <Accordion type="multiple" className="w-full">
+                  {NAV_GROUPS.map((group) => (
+                    <AccordionItem
+                      key={group.label}
+                      value={group.label}
+                      className="border-b border-zinc-800"
+                    >
+                      <AccordionTrigger className="text-white hover:no-underline px-4 py-3">
+                        {group.label}
+                      </AccordionTrigger>
+                      <AccordionContent className="px-2 pb-2">
+                        <div className="space-y-1">
+                          {group.items.map((item) => (
+                            <Link
+                              key={item.href + item.label}
+                              href={
+                                item.disabled ? "/contactus" : item.href
+                              }
+                              onClick={closeMenu}
+                              className={`block px-4 py-2.5 rounded-lg transition-colors ${
+                                item.disabled
+                                  ? "opacity-50"
+                                  : "hover:bg-zinc-800"
+                              }`}
+                            >
+                              <span className="text-sm font-medium text-white flex items-center gap-2">
+                                {item.label}
+                                {item.disabled && (
+                                  <span className="text-[10px] uppercase tracking-wider text-zinc-500 bg-zinc-800 px-1.5 py-0.5 rounded">
+                                    Soon
+                                  </span>
+                                )}
+                              </span>
+                              <span className="text-xs text-zinc-500 mt-0.5 block">
+                                {item.description}
+                              </span>
+                            </Link>
+                          ))}
+
+                          {/* Category chips on mobile */}
+                          {group.categoryChips &&
+                            group.categoryChips.length > 0 && (
+                              <div className="px-4 pt-2">
+                                <p className="text-[10px] font-medium uppercase tracking-wider text-zinc-500 mb-2">
+                                  By Category
+                                </p>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {group.categoryChips.map((chip) => (
+                                    <Link
+                                      key={chip.href}
+                                      href={chip.href}
+                                      onClick={closeMenu}
+                                      className="text-xs px-2.5 py-1 rounded-full bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-white transition-colors"
+                                    >
+                                      {chip.label}
+                                    </Link>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                        </div>
+                      </AccordionContent>
+                    </AccordionItem>
+                  ))}
+                </Accordion>
+
+                {/* Pricing — flat link */}
+                <Link
+                  href="/pricing"
+                  className="flex items-center gap-3 px-4 py-3 rounded-xl text-white hover:bg-zinc-800 transition-colors mt-1"
+                  onClick={closeMenu}
+                >
+                  <span className="font-medium">Pricing</span>
+                </Link>
 
                 {/* Mobile Currency Selector */}
                 <div className="px-4 pt-4 mt-2 border-t border-zinc-800">
@@ -360,16 +704,16 @@ const Navbar = () => {
                 ) : (
                   <div className="flex flex-col gap-3">
                     <Button
-                      onClick={() => handleNavigation("/auth/signin")}
+                      onClick={() => handleNavigation("/form/onboarding")}
                       className="w-full bg-white text-zinc-900 hover:bg-zinc-200"
                     >
-                      Sign in
+                      Become an Expert
                     </Button>
                     <Button
-                      onClick={() => handleNavigation("/auth/signup")}
+                      onClick={() => handleNavigation("/auth/signin")}
                       className="w-full bg-transparent border border-zinc-700 text-white hover:bg-zinc-800"
                     >
-                      Sign up
+                      Sign in
                     </Button>
                   </div>
                 )}
