@@ -1,414 +1,206 @@
 "use client";
-import Image from "next/image";
-/**
- * v0 by Vercel.
- * @see https://v0.dev/t/AfXYpLG
- */
-import Link from "next/link";
 
-export default function Blog() {
+import { FileText } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+
+interface BlogPost {
+  title: string;
+  teaser: string;
+  readTime: string;
+}
+
+const BLOG_SECTIONS: { category: string; posts: BlogPost[] }[] = [
+  {
+    category: "Career Growth",
+    posts: [
+      {
+        title: "How to Break Into Product Companies From a Service Background",
+        teaser:
+          "The playbook that hundreds of engineers have used to make the switch — and what most advice gets wrong.",
+        readTime: "8 min read",
+      },
+      {
+        title: "Salary Negotiation: What Your Recruiter Won't Tell You",
+        teaser:
+          "Real comp data and negotiation scripts from professionals who've been on both sides of the table.",
+        readTime: "9 min read",
+      },
+      {
+        title: "The Career Ladder Is a Myth — Here's What Actually Works",
+        teaser:
+          "Why linear promotions are the exception, and how to build a career through lateral moves and leverage.",
+        readTime: "7 min read",
+      },
+    ],
+  },
+  {
+    category: "Interview Prep",
+    posts: [
+      {
+        title: "The Mock Interview Mistake That Costs You Offers",
+        teaser:
+          "Why practicing alone isn't working, and how structured feedback from hiring managers changes everything.",
+        readTime: "5 min read",
+      },
+      {
+        title: "System Design Interviews: The Preparation That Actually Works",
+        teaser:
+          "Forget memorizing architectures. Learn the thinking framework that top candidates use.",
+        readTime: "12 min read",
+      },
+      {
+        title: "Behavioral Interviews: Stop Memorizing STAR, Start Telling Stories",
+        teaser:
+          "The difference between a rehearsed answer and a compelling one — with real examples.",
+        readTime: "6 min read",
+      },
+    ],
+  },
+  {
+    category: "Mentorship",
+    posts: [
+      {
+        title: "One-Off Calls vs. Long-Term Mentorship: Which Do You Need?",
+        teaser:
+          "A framework for deciding when you need a quick answer versus an ongoing relationship.",
+        readTime: "6 min read",
+      },
+      {
+        title: "How to Get the Most Out of a 30-Minute Expert Session",
+        teaser:
+          "The preparation ritual, question framework, and follow-up system that maximizes every consultation.",
+        readTime: "4 min read",
+      },
+      {
+        title: "Finding the Right Mentor: It's Not About Pedigree",
+        teaser:
+          "Why the best mentor for you isn't always the most senior person — and how to identify the right fit.",
+        readTime: "5 min read",
+      },
+    ],
+  },
+  {
+    category: "Skill Building",
+    posts: [
+      {
+        title: "The 90-Day Learning Roadmap: How to Actually Close Skill Gaps",
+        teaser:
+          "Stop collecting courses. Here's a structured approach to learning that sticks, with accountability built in.",
+        readTime: "6 min read",
+      },
+      {
+        title: "From Side Gig to Full-Time: A Guide to Going Independent",
+        teaser:
+          "How top experts built sustainable consulting businesses while keeping their day jobs.",
+        readTime: "10 min read",
+      },
+      {
+        title: "The Skills That Actually Matter in Your First 3 Years",
+        teaser:
+          "Senior engineers share what they wish they'd focused on early — and what turned out to be noise.",
+        readTime: "7 min read",
+      },
+    ],
+  },
+];
+
+const FEATURED_POST: BlogPost = {
+  title: "The Complete Guide to Career Transitions in Tech",
+  teaser:
+    "Everything you need to know about switching roles, domains, or companies — from people who've done it. A deep dive into timelines, trade-offs, and the decisions that matter most.",
+  readTime: "15 min read",
+};
+
+function BlurredCard({ post }: { post: BlogPost }) {
   return (
-    <section className="w-full">
-      <main className="container mx-auto px-4 md:px-6 py-8">
-        <section className="mb-8">
-          <h2 className="text-2xl font-bold mb-4">Top Story</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div>
-              <Image
-                alt="Top Story Image"
-                className="w-full h-64 object-cover object-center rounded-lg"
-                height="400"
-                src="/placeholder.svg"
-                style={{
-                  aspectRatio: "600/400",
-                  objectFit: "cover",
-                }}
-                width="600"
-              />
-            </div>
-            <div className="flex flex-col justify-center">
-              <h3 className="text-xl font-bold mb-2">Top Story Headline</h3>
-              <p className="text-zinc-500 dark:text-zinc-400">
-                This is a brief summary of the top story. Click the link to read
-                more.
-              </p>
-              <Link className="text-blue-500 hover:text-blue-700 mt-4" href="#">
-                Read More
-              </Link>
-            </div>
-          </div>
-        </section>
-        <section className="mb-8">
-          <h2 className="text-2xl font-bold mb-4">Politics</h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div>
-              <Image
-                alt="Politics Story Image"
-                className="w-full h-64 object-cover object-center rounded-lg"
-                height="400"
-                src="/placeholder.svg"
-                style={{
-                  aspectRatio: "600/400",
-                  objectFit: "cover",
-                }}
-                width="600"
-              />
-              <h3 className="text-xl font-bold mb-2 mt-4">
-                Politics Story Headline
-              </h3>
-              <p className="text-zinc-500 dark:text-zinc-400">
-                This is a brief summary of the politics story. Click the link to
-                read more.
-              </p>
-              <Link className="text-blue-500 hover:text-blue-700 mt-4" href="#">
-                Read More
-              </Link>
-            </div>
-            <div>
-              <Image
-                alt="Politics Story Image"
-                className="w-full h-64 object-cover object-center rounded-lg"
-                height="400"
-                src="/placeholder.svg"
-                style={{
-                  aspectRatio: "600/400",
-                  objectFit: "cover",
-                }}
-                width="600"
-              />
-              <h3 className="text-xl font-bold mb-2 mt-4">
-                Politics Story Headline
-              </h3>
-              <p className="text-zinc-500 dark:text-zinc-400">
-                This is a brief summary of the politics story. Click the link to
-                read more.
-              </p>
-              <Link className="text-blue-500 hover:text-blue-700 mt-4" href="#">
-                Read More
-              </Link>
-            </div>
-            <div>
-              <Image
-                alt="Politics Story Image"
-                className="w-full h-64 object-cover object-center rounded-lg"
-                height="400"
-                src="/placeholder.svg"
-                style={{
-                  aspectRatio: "600/400",
-                  objectFit: "cover",
-                }}
-                width="600"
-              />
-              <h3 className="text-xl font-bold mb-2 mt-4">
-                Politics Story Headline
-              </h3>
-              <p className="text-zinc-500 dark:text-zinc-400">
-                This is a brief summary of the politics story. Click the link to
-                read more.
-              </p>
-              <Link className="text-blue-500 hover:text-blue-700 mt-4" href="#">
-                Read More
-              </Link>
+    <div className="relative bg-white rounded-2xl border border-zinc-200 overflow-hidden select-none">
+      <div className="blur-[6px] pointer-events-none" aria-hidden>
+        <div className="h-44 bg-gradient-to-br from-zinc-100 to-zinc-200" />
+        <div className="p-5">
+          <h3 className="text-base font-semibold text-zinc-900 mb-2 line-clamp-2">
+            {post.title}
+          </h3>
+          <p className="text-sm text-zinc-500 line-clamp-2 mb-3">
+            {post.teaser}
+          </p>
+          <span className="text-xs text-zinc-400">{post.readTime}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function BlogPage() {
+  return (
+    <div className="w-full">
+      {/* Hero */}
+      <section className="bg-zinc-950 text-white py-20 md:py-28">
+        <div className="container mx-auto px-4 md:px-6 text-center max-w-3xl">
+          <Badge
+            variant="outline"
+            className="border-zinc-700 text-zinc-400 mb-6 text-sm px-4 py-1.5"
+          >
+            Coming Soon
+          </Badge>
+          <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold tracking-tight mb-6">
+            The Familiarise Blog
+          </h1>
+          <p className="text-lg md:text-xl text-zinc-400 leading-relaxed">
+            Career advice, interview strategies, and expert insights — written
+            by the professionals you&apos;ll meet on the platform.
+          </p>
+        </div>
+      </section>
+
+      <main className="container mx-auto px-4 md:px-6 py-12 md:py-16 space-y-16">
+        {/* Featured / Top Story */}
+        <section>
+          <h2 className="text-2xl font-bold mb-6">Featured</h2>
+          <div className="relative bg-white rounded-2xl border border-zinc-200 overflow-hidden select-none">
+            <div className="blur-[6px] pointer-events-none" aria-hidden>
+              <div className="grid grid-cols-1 md:grid-cols-2">
+                <div className="h-64 md:h-auto bg-gradient-to-br from-zinc-100 to-zinc-200" />
+                <div className="p-6 md:p-8 flex flex-col justify-center">
+                  <h3 className="text-xl font-bold text-zinc-900 mb-3">
+                    {FEATURED_POST.title}
+                  </h3>
+                  <p className="text-zinc-500 mb-4">{FEATURED_POST.teaser}</p>
+                  <span className="text-sm text-zinc-400">
+                    {FEATURED_POST.readTime}
+                  </span>
+                </div>
+              </div>
             </div>
           </div>
         </section>
-        <section className="mb-8">
-          <h2 className="text-2xl font-bold mb-4">Business</h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div>
-              <Image
-                alt="Business Story Image"
-                className="w-full h-64 object-cover object-center rounded-lg"
-                height="400"
-                src="/placeholder.svg"
-                style={{
-                  aspectRatio: "600/400",
-                  objectFit: "cover",
-                }}
-                width="600"
-              />
-              <h3 className="text-xl font-bold mb-2 mt-4">
-                Business Story Headline
-              </h3>
-              <p className="text-zinc-500 dark:text-zinc-400">
-                This is a brief summary of the business story. Click the link to
-                read more.
-              </p>
-              <Link className="text-blue-500 hover:text-blue-700 mt-4" href="#">
-                Read More
-              </Link>
+
+        {/* Category sections */}
+        {BLOG_SECTIONS.map((section) => (
+          <section key={section.category}>
+            <h2 className="text-2xl font-bold mb-6">{section.category}</h2>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              {section.posts.map((post, i) => (
+                <BlurredCard key={i} post={post} />
+              ))}
             </div>
-            <div>
-              <Image
-                alt="Business Story Image"
-                className="w-full h-64 object-cover object-center rounded-lg"
-                height="400"
-                src="/placeholder.svg"
-                style={{
-                  aspectRatio: "600/400",
-                  objectFit: "cover",
-                }}
-                width="600"
-              />
-              <h3 className="text-xl font-bold mb-2 mt-4">
-                Business Story Headline
-              </h3>
-              <p className="text-zinc-500 dark:text-zinc-400">
-                This is a brief summary of the business story. Click the link to
-                read more.
-              </p>
-              <Link className="text-blue-500 hover:text-blue-700 mt-4" href="#">
-                Read More
-              </Link>
-            </div>
-            <div>
-              <Image
-                alt="Business Story Image"
-                className="w-full h-64 object-cover object-center rounded-lg"
-                height="400"
-                src="/placeholder.svg"
-                style={{
-                  aspectRatio: "600/400",
-                  objectFit: "cover",
-                }}
-                width="600"
-              />
-              <h3 className="text-xl font-bold mb-2 mt-4">
-                Business Story Headline
-              </h3>
-              <p className="text-zinc-500 dark:text-zinc-400">
-                This is a brief summary of the business story. Click the link to
-                read more.
-              </p>
-              <Link className="text-blue-500 hover:text-blue-700 mt-4" href="#">
-                Read More
-              </Link>
-            </div>
-          </div>
-        </section>
-        <section className="mb-8">
-          <h2 className="text-2xl font-bold mb-4">Tech</h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div>
-              <Image
-                alt="Tech Story Image"
-                className="w-full h-64 object-cover object-center rounded-lg"
-                height="400"
-                src="/placeholder.svg"
-                style={{
-                  aspectRatio: "600/400",
-                  objectFit: "cover",
-                }}
-                width="600"
-              />
-              <h3 className="text-xl font-bold mb-2 mt-4">
-                Tech Story Headline
-              </h3>
-              <p className="text-zinc-500 dark:text-zinc-400">
-                This is a brief summary of the tech story. Click the link to
-                read more.
-              </p>
-              <Link className="text-blue-500 hover:text-blue-700 mt-4" href="#">
-                Read More
-              </Link>
-            </div>
-            <div>
-              <Image
-                alt="Tech Story Image"
-                className="w-full h-64 object-cover object-center rounded-lg"
-                height="400"
-                src="/placeholder.svg"
-                style={{
-                  aspectRatio: "600/400",
-                  objectFit: "cover",
-                }}
-                width="600"
-              />
-              <h3 className="text-xl font-bold mb-2 mt-4">
-                Tech Story Headline
-              </h3>
-              <p className="text-zinc-500 dark:text-zinc-400">
-                This is a brief summary of the tech story. Click the link to
-                read more.
-              </p>
-              <Link className="text-blue-500 hover:text-blue-700 mt-4" href="#">
-                Read More
-              </Link>
-            </div>
-            <div>
-              <Image
-                alt="Tech Story Image"
-                className="w-full h-64 object-cover object-center rounded-lg"
-                height="400"
-                src="/placeholder.svg"
-                style={{
-                  aspectRatio: "600/400",
-                  objectFit: "cover",
-                }}
-                width="600"
-              />
-              <h3 className="text-xl font-bold mb-2 mt-4">
-                Tech Story Headline
-              </h3>
-              <p className="text-zinc-500 dark:text-zinc-400">
-                This is a brief summary of the tech story. Click the link to
-                read more.
-              </p>
-              <Link className="text-blue-500 hover:text-blue-700 mt-4" href="#">
-                Read More
-              </Link>
-            </div>
-          </div>
-        </section>
-        <section className="mb-8">
-          <h2 className="text-2xl font-bold mb-4">Culture</h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div>
-              <Image
-                alt="Culture Story Image"
-                className="w-full h-64 object-cover object-center rounded-lg"
-                height="400"
-                src="/placeholder.svg"
-                style={{
-                  aspectRatio: "600/400",
-                  objectFit: "cover",
-                }}
-                width="600"
-              />
-              <h3 className="text-xl font-bold mb-2 mt-4">
-                Culture Story Headline
-              </h3>
-              <p className="text-zinc-500 dark:text-zinc-400">
-                This is a brief summary of the culture story. Click the link to
-                read more.
-              </p>
-              <Link className="text-blue-500 hover:text-blue-700 mt-4" href="#">
-                Read More
-              </Link>
-            </div>
-            <div>
-              <Image
-                alt="Culture Story Image"
-                className="w-full h-64 object-cover object-center rounded-lg"
-                height="400"
-                src="/placeholder.svg"
-                style={{
-                  aspectRatio: "600/400",
-                  objectFit: "cover",
-                }}
-                width="600"
-              />
-              <h3 className="text-xl font-bold mb-2 mt-4">
-                Culture Story Headline
-              </h3>
-              <p className="text-zinc-500 dark:text-zinc-400">
-                This is a brief summary of the culture story. Click the link to
-                read more.
-              </p>
-              <Link className="text-blue-500 hover:text-blue-700 mt-4" href="#">
-                Read More
-              </Link>
-            </div>
-            <div>
-              <Image
-                alt="Culture Story Image"
-                className="w-full h-64 object-cover object-center rounded-lg"
-                height="400"
-                src="/placeholder.svg"
-                style={{
-                  aspectRatio: "600/400",
-                  objectFit: "cover",
-                }}
-                width="600"
-              />
-              <h3 className="text-xl font-bold mb-2 mt-4">
-                Culture Story Headline
-              </h3>
-              <p className="text-zinc-500 dark:text-zinc-400">
-                This is a brief summary of the culture story. Click the link to
-                read more.
-              </p>
-              <Link className="text-blue-500 hover:text-blue-700 mt-4" href="#">
-                Read More
-              </Link>
-            </div>
-          </div>
-        </section>
-        <section className="mb-8">
-          <h2 className="text-2xl font-bold mb-4">Sports</h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div>
-              <Image
-                alt="Sports Story Image"
-                className="w-full h-64 object-cover object-center rounded-lg"
-                height="400"
-                src="/placeholder.svg"
-                style={{
-                  aspectRatio: "600/400",
-                  objectFit: "cover",
-                }}
-                width="600"
-              />
-              <h3 className="text-xl font-bold mb-2 mt-4">
-                Sports Story Headline
-              </h3>
-              <p className="text-zinc-500 dark:text-zinc-400">
-                This is a brief summary of the sports story. Click the link to
-                read more.
-              </p>
-              <Link className="text-blue-500 hover:text-blue-700 mt-4" href="#">
-                Read More
-              </Link>
-            </div>
-            <div>
-              <Image
-                alt="Sports Story Image"
-                className="w-full h-64 object-cover object-center rounded-lg"
-                height="400"
-                src="/placeholder.svg"
-                style={{
-                  aspectRatio: "600/400",
-                  objectFit: "cover",
-                }}
-                width="600"
-              />
-              <h3 className="text-xl font-bold mb-2 mt-4">
-                Sports Story Headline
-              </h3>
-              <p className="text-zinc-500 dark:text-zinc-400">
-                This is a brief summary of the sports story. Click the link to
-                read more.
-              </p>
-              <Link className="text-blue-500 hover:text-blue-700 mt-4" href="#">
-                Read More
-              </Link>
-            </div>
-            <div>
-              <Image
-                alt="Sports Story Image"
-                className="w-full h-64 object-cover object-center rounded-lg"
-                height="400"
-                src="/placeholder.svg"
-                style={{
-                  aspectRatio: "600/400",
-                  objectFit: "cover",
-                }}
-                width="600"
-              />
-              <h3 className="text-xl font-bold mb-2 mt-4">
-                Sports Story Headline
-              </h3>
-              <p className="text-zinc-500 dark:text-zinc-400">
-                This is a brief summary of the sports story. Click the link to
-                read more.
-              </p>
-              <Link className="text-blue-500 hover:text-blue-700 mt-4" href="#">
-                Read More
-              </Link>
-            </div>
-          </div>
-        </section>
+          </section>
+        ))}
       </main>
-    </section>
+
+      {/* Bottom CTA */}
+      <section className="py-16 md:py-20 bg-zinc-50 border-t border-zinc-200">
+        <div className="container mx-auto px-4 md:px-6 text-center max-w-xl">
+          <FileText className="w-10 h-10 text-zinc-300 mx-auto mb-4" />
+          <h2 className="text-2xl font-bold mb-3">
+            We&apos;re writing the first articles now
+          </h2>
+          <p className="text-zinc-500">
+            Real stories, real advice, from the experts on our platform. No
+            fluff, no filler — just the guidance you&apos;d pay for in a
+            session, for free.
+          </p>
+        </div>
+      </section>
+    </div>
   );
 }

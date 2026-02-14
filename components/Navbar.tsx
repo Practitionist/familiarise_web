@@ -54,6 +54,7 @@ interface NavDropdownItem {
   description: string;
   icon: React.ElementType;
   disabled?: boolean;
+  comingSoon?: boolean;
 }
 
 interface NavCategoryChip {
@@ -83,11 +84,12 @@ const EXPLORE_ITEMS: NavDropdownItem[] = [
 ];
 
 const EXPLORE_CATEGORIES: NavCategoryChip[] = [
-  { label: "Technology", href: "/explore/experts?category=technology" },
-  { label: "Business", href: "/explore/experts?category=business" },
-  { label: "Design", href: "/explore/experts?category=design" },
-  { label: "Marketing", href: "/explore/experts?category=marketing" },
-  { label: "Education", href: "/explore/experts?category=education" },
+  { label: "Technology", href: "/explore/experts?domain=Technology" },
+  { label: "Business", href: "/explore/experts?domain=Business" },
+  { label: "Creative Arts", href: "/explore/experts?domain=Creative Arts" },
+  { label: "Education", href: "/explore/experts?domain=Education" },
+  { label: "Health", href: "/explore/experts?domain=Health" },
+  { label: "Personal Dev", href: "/explore/experts?domain=Personal Development" },
 ];
 
 const USE_CASE_ITEMS: NavDropdownItem[] = [
@@ -133,12 +135,14 @@ const RESOURCE_ITEMS: NavDropdownItem[] = [
     href: "/explore/community",
     description: "Connect with peers and mentors",
     icon: Users,
+    comingSoon: true,
   },
   {
     label: "Blog",
     href: "/blog",
     description: "Insights, tips, and career advice",
     icon: FileText,
+    comingSoon: true,
   },
   {
     label: "How It Works",
@@ -204,7 +208,7 @@ function DesktopDropdownPanel({
               <div className="min-w-0">
                 <div className="text-sm font-medium text-zinc-900 flex items-center gap-2">
                   {item.label}
-                  {item.disabled && (
+                  {(item.disabled || item.comingSoon) && (
                     <span className="text-[10px] font-medium uppercase tracking-wider text-zinc-400 bg-zinc-100 px-1.5 py-0.5 rounded">
                       Soon
                     </span>
@@ -607,7 +611,7 @@ const Navbar = () => {
                             >
                               <span className="text-sm font-medium text-white flex items-center gap-2">
                                 {item.label}
-                                {item.disabled && (
+                                {(item.disabled || item.comingSoon) && (
                                   <span className="text-[10px] uppercase tracking-wider text-zinc-500 bg-zinc-800 px-1.5 py-0.5 rounded">
                                     Soon
                                   </span>

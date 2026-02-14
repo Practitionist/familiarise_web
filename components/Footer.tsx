@@ -24,11 +24,12 @@ interface FooterLink {
 
 const FOOTER_LINKS: Record<string, FooterLink[]> = {
   expertise: [
-    { label: "Technology", href: "/explore/experts?category=technology" },
-    { label: "Business", href: "/explore/experts?category=business" },
-    { label: "Design", href: "/explore/experts?category=design" },
-    { label: "Marketing", href: "/explore/experts?category=marketing" },
-    { label: "Education", href: "/explore/experts?category=education" },
+    { label: "Technology", href: "/explore/experts?domain=Technology" },
+    { label: "Business", href: "/explore/experts?domain=Business" },
+    { label: "Creative Arts", href: "/explore/experts?domain=Creative Arts" },
+    { label: "Education", href: "/explore/experts?domain=Education" },
+    { label: "Health", href: "/explore/experts?domain=Health" },
+    { label: "Personal Development", href: "/explore/experts?domain=Personal Development" },
   ],
   useCases: [
     { label: "College Students", href: "/use-cases/college-students" },

@@ -52,10 +52,10 @@ const data: UseCasePageData = {
     },
   ],
   categories: [
-    { label: "Technology", href: "/explore/experts?category=technology" },
-    { label: "Business", href: "/explore/experts?category=business" },
-    { label: "Design", href: "/explore/experts?category=design" },
-    { label: "Marketing", href: "/explore/experts?category=marketing" },
+    { label: "Technology", href: "/explore/experts?domain=Technology" },
+    { label: "Business", href: "/explore/experts?domain=Business" },
+    { label: "Creative Arts", href: "/explore/experts?domain=Creative Arts" },
+    { label: "Personal Development", href: "/explore/experts?domain=Personal Development" },
   ],
   bottomCtaTitle: "Your Next Chapter Starts Here",
   bottomCtaDescription:

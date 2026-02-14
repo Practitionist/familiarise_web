@@ -52,10 +52,10 @@ const data: UseCasePageData = {
     },
   ],
   categories: [
-    { label: "Technology", href: "/explore/experts?category=technology" },
-    { label: "Business", href: "/explore/experts?category=business" },
-    { label: "Design", href: "/explore/experts?category=design" },
-    { label: "Education", href: "/explore/experts?category=education" },
+    { label: "Technology", href: "/explore/experts?domain=Technology" },
+    { label: "Business", href: "/explore/experts?domain=Business" },
+    { label: "Creative Arts", href: "/explore/experts?domain=Creative Arts" },
+    { label: "Education", href: "/explore/experts?domain=Education" },
   ],
   bottomCtaTitle: "Your Career Starts With One Conversation",
   bottomCtaDescription:
