@@ -1,5 +1,9 @@
 # Referral Program
 
+> **Status: IMPLEMENTED** (Feb 2026) on branch `feat/referral-collaborator-system`
+>
+> **Deviations from spec**: Affiliate system skipped for MVP. Anti-fraud/gaming prevention deferred. Credits use FIFO expiry (6 months). Qualifying action = first paid booking only.
+
 ## Overview
 
 A referral system that rewards users for bringing new consultees and consultants to the platform. Both referrer and referee receive benefits, creating a viral growth loop.

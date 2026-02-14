@@ -4,8 +4,9 @@
  */
 
 import prisma from "@/lib/prisma";
-import { EarningStatus, Payment, Prisma } from "@prisma/client";
+import { EarningRole, EarningStatus, Payment, Prisma } from "@prisma/client";
 import { PAYOUT_CONSTANTS, AppointmentType } from "./constants";
+import { calculateRevenueSplit } from "@/lib/collaborators/service";
 
 // ============================================
 // Types
@@ -26,6 +27,12 @@ export interface CreateEarningsParams {
       consultantProfile?: {
         id: string;
       };
+      webinar?: {
+        webinarPlanId: string;
+      } | null;
+      class?: {
+        classPlanId: string;
+      } | null;
     } | null;
   };
   appointmentType: AppointmentType;
@@ -53,22 +60,13 @@ export async function createEarningsFromPayment({
     return null;
   }
 
-  // Check if earnings already exist for this payment
-  const existingEarnings = await prisma.consultantEarnings.findUnique({
-    where: { paymentId: payment.id },
-  });
-
-  if (existingEarnings) {
-    console.warn(`Earnings already exist for payment ${payment.id}. Skipping.`);
-    return existingEarnings.id;
-  }
-
-  // Calculate revenue split
-  const grossAmount = payment.amount;
+  // Calculate revenue split using original plan price (before platform-funded discounts/credits/tax)
+  // Payment.originalAmount is stored in rupees (major unit); earnings must be in paise (smallest unit)
+  const grossAmount = payment.originalAmount * 100;
   const platformFee = Math.round(
     (grossAmount * PAYOUT_CONSTANTS.PLATFORM_FEE_PERCENTAGE) / 100,
   );
-  const consultantShare = grossAmount - platformFee;
+  const totalConsultantPool = grossAmount - platformFee;
 
   // Calculate hold period
   const holdHours =
@@ -76,32 +74,113 @@ export async function createEarningsFromPayment({
     PAYOUT_CONSTANTS.HOLD_PERIOD_HOURS.CONSULTATION;
   const holdUntil = new Date(Date.now() + holdHours * 60 * 60 * 1000);
 
-  // M2 FIX: Wrap create in try-catch to handle P2002 unique constraint violation
-  // gracefully. The `paymentId` column has a unique constraint on `ConsultantEarnings`,
-  // so concurrent calls (e.g., duplicate webhook + background sync job) may collide.
-  // Instead of throwing, we treat it as an idempotent success.
+  // Determine if this payment involves collaborators (webinars/classes only)
+  let planType: "webinar" | "class" | null = null;
+  let planId: string | null = null;
+
+  if (appointmentType === "WEBINAR" && payment.appointment?.webinar) {
+    planType = "webinar";
+    planId = payment.appointment.webinar.webinarPlanId;
+  } else if (appointmentType === "CLASS" && payment.appointment?.class) {
+    planType = "class";
+    planId = payment.appointment.class.classPlanId;
+  }
+
+  // Calculate collaborator splits if applicable
+  let splits: { consultantProfileId: string; share: number; role: string }[] = [];
+  if (planType && planId) {
+    splits = await calculateRevenueSplit(planType, planId, totalConsultantPool);
+  }
+
+  // FIX #9: Wrap earnings creation + balance updates in a transaction for atomicity.
+  // Also handles P2002 unique constraint violations gracefully for idempotency.
   try {
-    const earnings = await prisma.consultantEarnings.create({
-      data: {
-        consultantProfileId,
-        paymentId: payment.id,
-        grossAmount,
-        platformFee,
-        consultantShare,
-        status: EarningStatus.PENDING,
-        holdUntil,
-      },
-    });
+    if (splits.length > 0) {
+      // Multi-party payment: create earnings for owner and each collaborator atomically
+      const ownerEarningsId = await prisma.$transaction(async (tx) => {
+        // Idempotency check inside transaction to prevent races
+        const existingEarnings = await tx.consultantEarnings.findFirst({
+          where: { paymentId: payment.id, consultantProfileId },
+        });
+        if (existingEarnings) {
+          console.warn(`Earnings already exist for payment ${payment.id}. Skipping.`);
+          return existingEarnings.id;
+        }
 
-    // Update consultant's pending revenue
-    await prisma.consultantProfile.update({
-      where: { id: consultantProfileId },
-      data: {
-        pendingRevenue: { increment: consultantShare },
-      },
-    });
+        let ownerId: string | null = null;
 
-    return earnings.id;
+        for (const split of splits) {
+          const isOwner = split.role === "OWNER";
+          const sharePercentage = (split.share / totalConsultantPool) * 100;
+
+          const earnings = await tx.consultantEarnings.create({
+            data: {
+              consultantProfileId: split.consultantProfileId,
+              paymentId: payment.id,
+              grossAmount: isOwner ? grossAmount : 0,
+              platformFee: isOwner ? platformFee : 0,
+              consultantShare: split.share,
+              role: isOwner ? EarningRole.OWNER : EarningRole.COLLABORATOR,
+              sharePercentage: Math.round(sharePercentage * 100) / 100,
+              status: EarningStatus.PENDING,
+              holdUntil,
+            },
+          });
+
+          await tx.consultantProfile.update({
+            where: { id: split.consultantProfileId },
+            data: {
+              pendingRevenue: { increment: split.share },
+            },
+          });
+
+          if (split.role === "OWNER") {
+            ownerId = earnings.id;
+          }
+
+          console.log(
+            `💰 Earnings created for ${split.role} (${split.consultantProfileId}): ₹${split.share / 100} from payment ${payment.id}`,
+          );
+        }
+
+        return ownerId;
+      });
+
+      return ownerEarningsId;
+    } else {
+      // Single-owner payment (no collaborators or not a webinar/class)
+      return await prisma.$transaction(async (tx) => {
+        // Idempotency check inside transaction to prevent races
+        const existingEarnings = await tx.consultantEarnings.findFirst({
+          where: { paymentId: payment.id, consultantProfileId },
+        });
+        if (existingEarnings) {
+          console.warn(`Earnings already exist for payment ${payment.id}. Skipping.`);
+          return existingEarnings.id;
+        }
+
+        const earnings = await tx.consultantEarnings.create({
+          data: {
+            consultantProfileId,
+            paymentId: payment.id,
+            grossAmount,
+            platformFee,
+            consultantShare: totalConsultantPool,
+            status: EarningStatus.PENDING,
+            holdUntil,
+          },
+        });
+
+        await tx.consultantProfile.update({
+          where: { id: consultantProfileId },
+          data: {
+            pendingRevenue: { increment: totalConsultantPool },
+          },
+        });
+
+        return earnings.id;
+      });
+    }
   } catch (error) {
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
@@ -111,8 +190,8 @@ export async function createEarningsFromPayment({
       console.warn(
         `[Earnings] Duplicate earnings creation for payment ${payment.id} (P2002). Treating as idempotent success.`,
       );
-      const existing = await prisma.consultantEarnings.findUnique({
-        where: { paymentId: payment.id },
+      const existing = await prisma.consultantEarnings.findFirst({
+        where: { paymentId: payment.id, consultantProfileId },
       });
       return existing?.id ?? null;
     }
@@ -207,6 +286,7 @@ export async function getConsultantEarnings(
           select: {
             id: true,
             amount: true,
+            originalAmount: true,
             currency: true,
             createdAt: true,
             appointment: {
@@ -248,48 +328,49 @@ export async function getConsultantEarnings(
  * Refund earnings (called when a payment is refunded)
  */
 export async function refundEarnings(paymentId: string): Promise<boolean> {
-  const earnings = await prisma.consultantEarnings.findUnique({
+  const allEarnings = await prisma.consultantEarnings.findMany({
     where: { paymentId },
   });
 
-  if (!earnings) {
+  if (allEarnings.length === 0) {
     console.warn(`No earnings found for payment ${paymentId}`);
     return false;
   }
 
-  // C7 FIX: Guard against already-refunded earnings.
-  // Without this, a duplicate webhook or API call could decrement
-  // pendingRevenue twice on the consultant profile.
-  if (earnings.status === EarningStatus.REFUNDED) {
-    console.warn(
-      `Earnings ${earnings.id} already refunded for payment ${paymentId}. Skipping.`,
-    );
-    return true; // Already handled — idempotent success
+  // Refund each earnings record (supports multi-party collaborator payments)
+  for (const earnings of allEarnings) {
+    // C7 FIX: Guard against already-refunded earnings.
+    if (earnings.status === EarningStatus.REFUNDED) {
+      console.warn(
+        `Earnings ${earnings.id} already refunded for payment ${paymentId}. Skipping.`,
+      );
+      continue;
+    }
+
+    // Can only refund if not yet paid out
+    if (earnings.status === EarningStatus.PAID) {
+      console.error(
+        `Cannot refund earnings ${earnings.id} - already paid out. Manual intervention required.`,
+      );
+      continue;
+    }
+
+    // Update earnings status to refunded
+    await prisma.consultantEarnings.update({
+      where: { id: earnings.id },
+      data: {
+        status: EarningStatus.REFUNDED,
+      },
+    });
+
+    // Decrease consultant's pending revenue
+    await prisma.consultantProfile.update({
+      where: { id: earnings.consultantProfileId },
+      data: {
+        pendingRevenue: { decrement: earnings.consultantShare },
+      },
+    });
   }
-
-  // Can only refund if not yet paid out
-  if (earnings.status === EarningStatus.PAID) {
-    console.error(
-      `Cannot refund earnings ${earnings.id} - already paid out. Manual intervention required.`,
-    );
-    return false;
-  }
-
-  // Update earnings status to refunded
-  await prisma.consultantEarnings.update({
-    where: { id: earnings.id },
-    data: {
-      status: EarningStatus.REFUNDED,
-    },
-  });
-
-  // Decrease consultant's pending revenue
-  await prisma.consultantProfile.update({
-    where: { id: earnings.consultantProfileId },
-    data: {
-      pendingRevenue: { decrement: earnings.consultantShare },
-    },
-  });
 
   return true;
 }

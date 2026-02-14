@@ -67,7 +67,7 @@ export type TConsulteeSubscription = Prisma.SubscriptionGetPayload<{
   };
 }>;
 
-// Webinar type - includes waitlist and appointment
+// Webinar type - includes waitlist, appointment, and collaborators
 export type TConsulteeWebinar = Prisma.WebinarGetPayload<{
   include: {
     webinarPlan: {
@@ -80,6 +80,22 @@ export type TConsulteeWebinar = Prisma.WebinarGetPayload<{
                 name: true;
                 image: true;
                 email: true;
+              };
+            };
+          };
+        };
+        collaborators: {
+          where: { status: "ACCEPTED" };
+          include: {
+            consultantProfile: {
+              include: {
+                user: {
+                  select: {
+                    id: true;
+                    name: true;
+                    image: true;
+                  };
+                };
               };
             };
           };
@@ -98,7 +114,7 @@ export type TConsulteeWebinar = Prisma.WebinarGetPayload<{
   };
 }>;
 
-// Class type - includes waitlist and multiple appointments
+// Class type - includes waitlist, multiple appointments, and collaborators
 export type TConsulteeClass = Prisma.ClassGetPayload<{
   include: {
     classPlan: {
@@ -111,6 +127,22 @@ export type TConsulteeClass = Prisma.ClassGetPayload<{
                 name: true;
                 image: true;
                 email: true;
+              };
+            };
+          };
+        };
+        collaborators: {
+          where: { status: "ACCEPTED" };
+          include: {
+            consultantProfile: {
+              include: {
+                user: {
+                  select: {
+                    id: true;
+                    name: true;
+                    image: true;
+                  };
+                };
               };
             };
           };

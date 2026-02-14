@@ -18,6 +18,13 @@ import type { BookingStatus } from "@/components/ui/waitlist-status-badge";
 /**
  * Unified event type for display in the dashboard
  */
+// Collaborator info for co-hosts display
+export interface ProcessedCollaborator {
+  name: string;
+  image?: string | null;
+  role: string;
+}
+
 export interface ProcessedEvent {
   id: string;
   type: "consultation" | "subscription" | "class" | "webinar";
@@ -35,6 +42,8 @@ export interface ProcessedEvent {
   // Booking status for webinars/classes (CONFIRMED = paid, WAITLISTED/NOTIFIED = on waitlist)
   bookingStatus?: BookingStatus;
   waitlistPosition?: number;
+  // Collaborators (co-hosts) for webinars/classes
+  collaborators?: ProcessedCollaborator[];
 }
 
 /**
@@ -277,6 +286,15 @@ export function processWebinar(
     }
   }
 
+  // Extract collaborators
+  const collaborators: ProcessedCollaborator[] = (
+    webinar.webinarPlan?.collaborators ?? []
+  ).map((c) => ({
+    name: c.consultantProfile?.user?.name ?? "Collaborator",
+    image: c.consultantProfile?.user?.image,
+    role: c.role,
+  }));
+
   return {
     id: webinar.id,
     type: "webinar",
@@ -293,6 +311,7 @@ export function processWebinar(
     joinableSlot: nextSlot.rawSlot,
     bookingStatus,
     waitlistPosition,
+    collaborators,
   };
 }
 
@@ -373,6 +392,15 @@ export function processClass(
     }
   }
 
+  // Extract collaborators
+  const collaborators: ProcessedCollaborator[] = (
+    classEvent.classPlan?.collaborators ?? []
+  ).map((c) => ({
+    name: c.consultantProfile?.user?.name ?? "Collaborator",
+    image: c.consultantProfile?.user?.image,
+    role: c.role,
+  }));
+
   return {
     id: classEvent.id,
     type: "class",
@@ -389,6 +417,7 @@ export function processClass(
     joinableSlot: nextSlot.rawSlot,
     bookingStatus,
     waitlistPosition,
+    collaborators,
   };
 }
 

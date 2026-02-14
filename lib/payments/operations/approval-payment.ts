@@ -134,6 +134,7 @@ export async function createApprovalPaymentIntent(
     await prisma.payment.create({
       data: {
         amount,
+        originalAmount: amount, // No discounts/credits in approval flow
         currency,
         description: `Payment for ${params.appointmentType.toLowerCase()} - ${plan.title}`,
         paymentMethod: "card",

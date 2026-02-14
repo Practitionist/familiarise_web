@@ -46,6 +46,9 @@ import {
   getUpcomingAppointments,
   groupRecurringAppointments,
   sortAppointmentsByStartTime,
+  getCollaboratorRole,
+  formatCollaboratorRole,
+  getRoleBadgeStyle,
 } from "../../utils/appointmentHelpers";
 
 import { IActivity, IApproval, BADGE_STYLES, getBadgeStyle } from "../../types";
@@ -284,9 +287,24 @@ export function HomeTab({
                               </AvatarFallback>
                             </Avatar>
                             <div className="flex-1 min-w-0">
-                              <h3 className="font-semibold text-zinc-900 truncate">
-                                {userName}
-                              </h3>
+                              <div className="flex items-center gap-2">
+                                <h3 className="font-semibold text-zinc-900 truncate">
+                                  {userName}
+                                </h3>
+                                {(() => {
+                                  const role = getCollaboratorRole(
+                                    appointment,
+                                    consultantId,
+                                  );
+                                  return role ? (
+                                    <Badge
+                                      className={`text-[10px] px-1.5 py-0 h-5 flex-shrink-0 ${getRoleBadgeStyle(role)}`}
+                                    >
+                                      {formatCollaboratorRole(role)}
+                                    </Badge>
+                                  ) : null;
+                                })()}
+                              </div>
                               <p className="text-sm text-zinc-500 truncate">
                                 {getAppointmentTypeAndPlan(appointment)}
                               </p>
@@ -385,6 +403,19 @@ export function HomeTab({
                               <h4 className="font-medium text-zinc-900 truncate">
                                 {userName}
                               </h4>
+                              {(() => {
+                                const role = getCollaboratorRole(
+                                  firstAppointment,
+                                  consultantId,
+                                );
+                                return role ? (
+                                  <Badge
+                                    className={`text-[10px] px-1.5 py-0 h-5 flex-shrink-0 ${getRoleBadgeStyle(role)}`}
+                                  >
+                                    {formatCollaboratorRole(role)}
+                                  </Badge>
+                                ) : null;
+                              })()}
                               {isRecurring && (
                                 <span className="text-xs text-zinc-400">
                                   {completedSessions}/{totalSessions} sessions

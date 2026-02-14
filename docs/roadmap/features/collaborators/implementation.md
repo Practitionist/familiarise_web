@@ -1,9 +1,17 @@
 # Collaborators Implementation Guide
 
-**Last Updated**: 2025-10-12
-**Status**: Architecture Design
-**Purpose**: Implement multi-creator collaboration for webinars, classes, and podcasts with revenue sharing
+**Last Updated**: 2026-02-10
+**Status**: IMPLEMENTED (webinars + classes only)
+**Purpose**: Implement multi-creator collaboration for webinars and classes with revenue sharing
 
+> **Implementation Notes** (Feb 2026, branch `feat/referral-collaborator-system`):
+> - Podcast collaborators not implemented (PodcastPlan model doesn't exist yet)
+> - Scheduling is host-only; collaborators cannot create events
+> - Host sets revenue split, collaborator accepts/declines the package
+> - Minimum 10% host share (collaborator total capped at 90%)
+> - Stream.io chat channels auto-created on collaborator acceptance
+> - Stream video call role assignment deferred (calls created client-side)
+>
 > **📋 Related Documentation**: See `podcast-schema-integration.md` for podcast architecture decisions (ADR-001: Naming Convention using `PodcastPlan` + `PodcastAccess` pattern)
 
 ---

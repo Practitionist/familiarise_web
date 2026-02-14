@@ -136,6 +136,7 @@ export const impossibleCases: ValidationTestCase[] = [
         data: {
           userId: user.id,
           amount: -1000, // Negative amount - should fail
+          originalAmount: -1000,
           currency: "INR",
           paymentMethod: "card",
           paymentIntent: faker.string.uuid(),
@@ -170,6 +171,7 @@ export const impossibleCases: ValidationTestCase[] = [
         data: {
           userId: user.id,
           amount: 10000, // 100 INR
+          originalAmount: 10000,
           currency: "INR",
           paymentMethod: "card",
           paymentIntent: faker.string.uuid(),

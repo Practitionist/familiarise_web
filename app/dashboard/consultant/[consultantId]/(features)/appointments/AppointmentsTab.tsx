@@ -41,6 +41,9 @@ import {
   groupRecurringAppointments,
   groupAppointmentsByType,
   getAppointmentTypeDisplayName,
+  getCollaboratorRole,
+  formatCollaboratorRole,
+  getRoleBadgeStyle,
 } from "../../utils/appointmentHelpers";
 import { EventTimingsCalendar } from "./components/EventTimingsCalendar";
 import {
@@ -56,7 +59,8 @@ export function AppointmentsTab({
   appointments,
   badgeStyles,
   scheduledTrials = [],
-}: Readonly<AppointmentsTabProps>) {
+  consultantId,
+}: Readonly<AppointmentsTabProps & { consultantId?: string }>) {
   const router = useRouter();
   const client = useStreamVideoClient();
   const { toast } = useToast();
@@ -477,9 +481,26 @@ export function AppointmentsTab({
                                 </AvatarFallback>
                               </Avatar>
                               <div>
-                                <h3 className="font-semibold text-gray-800 text-sm">
-                                  {getConsumeeName(firstAppointment)}
-                                </h3>
+                                <div className="flex items-center gap-2">
+                                  <h3 className="font-semibold text-gray-800 text-sm">
+                                    {getConsumeeName(firstAppointment)}
+                                  </h3>
+                                  {consultantId &&
+                                    (() => {
+                                      const role = getCollaboratorRole(
+                                        firstAppointment,
+                                        consultantId,
+                                      );
+                                      return role ? (
+                                        <Badge
+                                          variant="secondary"
+                                          className={`text-[10px] px-1.5 py-0 h-5 ${getRoleBadgeStyle(role)}`}
+                                        >
+                                          {formatCollaboratorRole(role)}
+                                        </Badge>
+                                      ) : null;
+                                    })()}
+                                </div>
                                 <p className="text-xs text-gray-600">
                                   {groupTitle.split("(")[0].trim()}
                                 </p>
@@ -635,9 +656,29 @@ export function AppointmentsTab({
                                         <div className="min-w-0">
                                           {!isRecurring && (
                                             <>
-                                              <h3 className="font-semibold text-gray-800">
-                                                {getConsumeeName(appointment)}
-                                              </h3>
+                                              <div className="flex items-center gap-2">
+                                                <h3 className="font-semibold text-gray-800">
+                                                  {getConsumeeName(appointment)}
+                                                </h3>
+                                                {consultantId &&
+                                                  (() => {
+                                                    const role =
+                                                      getCollaboratorRole(
+                                                        appointment,
+                                                        consultantId,
+                                                      );
+                                                    return role ? (
+                                                      <Badge
+                                                        variant="secondary"
+                                                        className={`text-[10px] px-1.5 py-0 h-5 ${getRoleBadgeStyle(role)}`}
+                                                      >
+                                                        {formatCollaboratorRole(
+                                                          role,
+                                                        )}
+                                                      </Badge>
+                                                    ) : null;
+                                                  })()}
+                                              </div>
                                               <p className="text-sm text-gray-600">
                                                 {getAppointmentTypeAndPlan(
                                                   appointment,
