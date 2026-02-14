@@ -89,13 +89,88 @@ export async function POST(
                 requestedBy: true,
               },
             },
-            webinar: true,
-            class: true,
+            webinar: {
+              include: {
+                webinarPlan: true,
+              },
+            },
+            class: {
+              include: {
+                classPlan: true,
+              },
+            },
           },
         });
 
         if (!appointment) {
           throw new AppointmentNotFoundError("appointment", appointmentId);
+        }
+
+        // Participant authorization check
+        const consultantProfileId = session.user.consultantProfileId;
+        const consulteeProfileId = session.user.consulteeProfileId;
+
+        let isParticipant = false;
+
+        // Check consultation relationship
+        if (appointment.consultation) {
+          const consultationConsultantId =
+            appointment.consultation.consultationPlan?.consultantProfileId;
+          isParticipant =
+            consultantProfileId === consultationConsultantId ||
+            consulteeProfileId === appointment.consultation.requestedById;
+        }
+        // Check subscription relationship
+        if (appointment.subscription) {
+          const subscriptionConsultantId =
+            appointment.subscription.subscriptionPlan?.consultantProfileId;
+          isParticipant =
+            consultantProfileId === subscriptionConsultantId ||
+            consulteeProfileId === appointment.subscription.requestedById;
+        }
+        // Check webinar relationship
+        if (appointment.webinar) {
+          const webinarConsultantId =
+            appointment.webinar.webinarPlan?.consultantProfileId;
+          isParticipant = consultantProfileId === webinarConsultantId;
+        }
+        // Check class relationship
+        if (appointment.class) {
+          const classConsultantId =
+            appointment.class.classPlan?.consultantProfileId;
+          isParticipant = consultantProfileId === classConsultantId;
+        }
+
+        // Allow ADMIN/STAFF bypass
+        const isPrivilegedUser =
+          session.user.role === "ADMIN" || session.user.role === "STAFF";
+
+        if (!isParticipant && !isPrivilegedUser) {
+          return NextResponse.json(
+            {
+              error:
+                "You are not authorized to reschedule this appointment",
+            },
+            { status: 403 },
+          );
+        }
+
+        // Derive type from DB instead of trusting query param
+        const derivedType = appointment.consultation
+          ? "CONSULTATION"
+          : appointment.subscription
+            ? "SUBSCRIPTION"
+            : appointment.webinar
+              ? "WEBINAR"
+              : appointment.class
+                ? "CLASS"
+                : null;
+
+        if (appointmentType && derivedType && appointmentType !== derivedType) {
+          return NextResponse.json(
+            { error: "Appointment type mismatch" },
+            { status: 400 },
+          );
         }
 
         // For SUBSCRIPTION type, we need to get ALL slots across ALL appointments in the subscription

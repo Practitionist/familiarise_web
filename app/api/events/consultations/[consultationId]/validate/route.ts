@@ -19,6 +19,7 @@ import {
 } from "@/schemas/slotAllocation/validationSchemas";
 import { ZodError } from "zod";
 import type { SlotConflictResult } from "@/utils/slotAllocation/types";
+import { requireApiAuth } from "@/lib/auth-helpers";
 
 const consultationInclude = {
   consultationPlan: {
@@ -45,6 +46,9 @@ export async function POST(
   { params }: { params: Promise<{ consultationId: string }> },
 ) {
   try {
+    const authResult = await requireApiAuth();
+    if (authResult.error) return authResult.error;
+
     const { consultationId } = await params;
 
     // LAYER 1: Zod Schema Validation (type-safe, automatic type inference)
@@ -112,7 +116,7 @@ export async function POST(
         });
       }
 
-      // Parse errors to extract conflicts and availability issues
+      // Categorize errors by prefix instead of brittle regex
       const result: SlotConflictResult = {
         conflicts: [],
         outsideAvailability: [],
@@ -120,12 +124,10 @@ export async function POST(
       };
 
       for (const error of validationResult.errors) {
-        if (
-          error.includes("already booked") ||
-          error.includes("conflicts with")
-        ) {
+        if (error.startsWith("[CONFLICT]")) {
+          const message = error.replace("[CONFLICT] ", "");
           // Extract slot time from error message
-          const slotMatch = error.match(
+          const slotMatch = message.match(
             /(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/,
           );
           if (slotMatch) {
@@ -133,7 +135,7 @@ export async function POST(
             result.conflicts.push({
               slot,
               existingAppointment: {
-                type: error.includes("Subscription")
+                type: message.includes("subscription")
                   ? "Subscription"
                   : "Consultation",
                 with: "Another user",
@@ -141,18 +143,16 @@ export async function POST(
               },
             });
           }
-        } else if (
-          error.includes("does not match") ||
-          error.includes("not in consultant's")
-        ) {
-          // Outside availability
-          const slotMatch = error.match(
+        } else if (error.startsWith("[OUTSIDE_AVAILABILITY]")) {
+          const message = error.replace("[OUTSIDE_AVAILABILITY] ", "");
+          const slotMatch = message.match(
             /(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/,
           );
           if (slotMatch) {
             result.outsideAvailability.push({ slot: slotMatch[1] });
           }
         }
+        // [VALIDATION] errors don't need slot-level parsing
       }
 
       // Valid slots are those not in conflicts or outside availability

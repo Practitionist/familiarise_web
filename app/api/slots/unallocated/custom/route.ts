@@ -17,9 +17,33 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    // First get all appointments that overlap with the requested time period
+    // FIX Bug #08: Scope appointment query to the specific consultant
+    // Without this filter, appointments from other consultants could incorrectly
+    // mark this consultant's slots as allocated.
     const appointments = await prisma.appointment.findMany({
       where: {
+        OR: [
+          {
+            consultation: {
+              consultationPlan: { consultantProfileId },
+            },
+          },
+          {
+            subscription: {
+              subscriptionPlan: { consultantProfileId },
+            },
+          },
+          {
+            webinar: {
+              webinarPlan: { consultantProfileId },
+            },
+          },
+          {
+            class: {
+              classPlan: { consultantProfileId },
+            },
+          },
+        ],
         slotsOfAppointment: {
           some: {
             OR: [
@@ -44,16 +68,15 @@ export async function GET(req: NextRequest) {
       },
     });
 
-    // Create a map of allocated time slots (both confirmed and tentative)
-    const allocatedSlots = new Map();
+    // FIX Bug #09: Store allocated slots as array for range overlap checks
+    // instead of exact key matching which misses partial overlaps
+    const allocatedSlots: { startsAt: Date; endsAt: Date }[] = [];
     appointments.forEach((appointment) => {
       appointment.slotsOfAppointment.forEach((slot) => {
-        const start = slot.startsAt;
-        const end = slot.endsAt;
-        allocatedSlots.set(
-          `${start.toISOString()}-${end.toISOString()}`,
-          slot.isTentative,
-        );
+        allocatedSlots.push({
+          startsAt: slot.startsAt,
+          endsAt: slot.endsAt,
+        });
       });
     });
 
@@ -101,20 +124,29 @@ export async function GET(req: NextRequest) {
       }),
     ]);
 
-    // Filter out allocated slots
+    // FIX Bug #09: Use range overlap check instead of exact key matching
     const unallocatedSlots = customSlots.filter((slot) => {
-      const key = `${slot.availabilityStartsAt.toISOString()}-${slot.availabilityEndsAt.toISOString()}`;
-      return !allocatedSlots.has(key);
+      const hasOverlap = allocatedSlots.some(
+        (allocated) =>
+          allocated.startsAt < slot.availabilityEndsAt &&
+          allocated.endsAt > slot.availabilityStartsAt,
+      );
+      return !hasOverlap;
     });
+
+    // FIX Bug #20: Recompute total after filtering to reflect actual unallocated count
+    // `total` is the count of all configured custom slots (before filtering out allocated ones)
+    const totalUnallocated = unallocatedSlots.length;
 
     return NextResponse.json(
       {
         data: unallocatedSlots,
         meta: {
-          total,
+          totalUnallocated,
+          totalConfigured: total,
           page,
           limit,
-          totalPages: Math.ceil(total / limit),
+          totalPages: Math.ceil(totalUnallocated / limit),
         },
       },
       { status: 200 },

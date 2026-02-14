@@ -17,7 +17,6 @@ import { ZodError } from "zod";
 import { sendPaymentSuccessEmail, sendPaymentFailedEmail } from "@/lib/email";
 import {
   createEarningsFromPayment,
-  refundEarnings,
   createInvoiceFromPayment,
   type AppointmentType,
 } from "@/lib/payments/payouts";
@@ -1077,17 +1076,20 @@ async function cleanupFailedPaymentAppointment(
         where: { appointmentId },
       });
       if (remainingSlots === 0) {
+        // Soft-delete: transition to EXPIRED status instead of hard-deleting
+        // to preserve audit trails for support/disputes/refunds
         if (appointment.consultation) {
-          await tx.consultation.delete({
+          await tx.consultation.update({
             where: { id: appointment.consultation.id },
+            data: { requestStatus: RequestStatus.EXPIRED },
           });
         }
         if (appointment.subscription) {
-          await tx.subscription.delete({
+          await tx.subscription.update({
             where: { id: appointment.subscription.id },
+            data: { requestStatus: RequestStatus.EXPIRED },
           });
         }
-        await tx.appointment.delete({ where: { id: appointmentId } });
       }
     }
   }

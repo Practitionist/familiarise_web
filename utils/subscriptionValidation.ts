@@ -1,6 +1,7 @@
 import { PrismaClient, Prisma, RequestStatus } from "@prisma/client";
 import { addWeeks, endOfWeek, isWithinInterval } from "date-fns";
 import { SlotCalculationService } from "@/utils/slotAllocation/SlotCalculationService";
+import { OCCUPIED_REQUEST_STATUSES } from "@/utils/slotAllocation/occupancyPolicy";
 
 type AppointmentSlotRecord = { startsAt: Date };
 type AppointmentWithSlots = {
@@ -208,9 +209,10 @@ export class SubscriptionValidationService {
         id: {
           notIn: excludeAppointmentIds,
         },
+        // FIX Bug #15: Use centralized occupancy statuses for consistency
         subscription: {
           requestStatus: {
-            in: [RequestStatus.APPROVED, RequestStatus.SCHEDULED],
+            in: OCCUPIED_REQUEST_STATUSES,
           },
         },
       },
@@ -273,31 +275,51 @@ export class SubscriptionValidationService {
       return weekStart.toISOString();
     };
 
-    // Helper function to check if slots form a complete call
-    const isCompleteCall = (daySlots: Date[]): boolean => {
-      if (daySlots.length !== slotsPerCall) return false;
+    // FIX: Use 1-second tolerance for floating-point precision issues
+    // Matches SlotValidationService behavior for consistency
+    // WHY: Date arithmetic and timezone conversions can introduce sub-second precision errors
+    const TOLERANCE_MS = 1000; // 1 second tolerance
+
+    /**
+     * Count how many complete calls exist in a day's worth of slots.
+     *
+     * Previously used exact-length equality (daySlots.length === slotsPerCall),
+     * which meant 2 calls on the same day (e.g., 4 slots with slotsPerCall=2)
+     * would count as 0 calls because 4 !== 2.
+     *
+     * Now sorts slots chronologically and greedily groups consecutive slots
+     * into calls of size `slotsPerCall`, correctly counting multiple calls
+     * on the same day.
+     */
+    const countCallsInDay = (daySlots: Date[]): number => {
+      if (daySlots.length < slotsPerCall) return 0;
 
       const sortedSlots = [...daySlots].sort(
         (a, b) => a.getTime() - b.getTime(),
       );
 
-      // FIX: Use 1-second tolerance for floating-point precision issues
-      // Matches SlotValidationService behavior for consistency
-      // WHY: Date arithmetic and timezone conversions can introduce sub-second precision errors
-      const TOLERANCE_MS = 1000; // 1 second tolerance
+      let callCount = 0;
+      let consecutiveCount = 1; // Current run of consecutive slots
 
       for (let i = 1; i < sortedSlots.length; i++) {
         const prevEnd = new Date(sortedSlots[i - 1].getTime() + 30 * 60 * 1000); // Add 30 min
         const currentStart = sortedSlots[i];
         const timeDiff = Math.abs(currentStart.getTime() - prevEnd.getTime());
 
-        // Use tolerance instead of exact equality
-        if (timeDiff > TOLERANCE_MS) {
-          return false;
+        if (timeDiff <= TOLERANCE_MS) {
+          // This slot is consecutive with the previous one
+          consecutiveCount++;
+        } else {
+          // Gap detected — check if the previous run formed complete call(s)
+          callCount += Math.floor(consecutiveCount / slotsPerCall);
+          consecutiveCount = 1;
         }
       }
 
-      return true;
+      // Don't forget the last run
+      callCount += Math.floor(consecutiveCount / slotsPerCall);
+
+      return callCount;
     };
 
     // Process each day to count confirmed calls per week
@@ -311,9 +333,10 @@ export class SubscriptionValidationService {
         weekCalls.set(weekString, 0);
       }
 
-      // Only count as a call if it's complete (correct number of consecutive slots)
-      if (isCompleteCall(daySlots)) {
-        weekCalls.set(weekString, weekCalls.get(weekString)! + 1);
+      // Count all complete calls in this day (handles multiple calls per day)
+      const callsThisDay = countCallsInDay(daySlots);
+      if (callsThisDay > 0) {
+        weekCalls.set(weekString, weekCalls.get(weekString)! + callsThisDay);
       }
     });
 

@@ -77,16 +77,15 @@ export async function GET(
       },
     });
 
-    // Create a map of allocated time slots
-    const allocatedSlots = new Map();
+    // FIX Bug #09: Store allocated slots as array for range overlap checks
+    // instead of exact key matching which misses partial overlaps
+    const allocatedSlots: { startsAt: Date; endsAt: Date }[] = [];
     appointments.forEach((appointment) => {
       appointment.slotsOfAppointment.forEach((slot) => {
-        const start = slot.startsAt;
-        const end = slot.endsAt;
-        allocatedSlots.set(
-          `${start.toISOString()}-${end.toISOString()}`,
-          slot.isTentative,
-        );
+        allocatedSlots.push({
+          startsAt: slot.startsAt,
+          endsAt: slot.endsAt,
+        });
       });
     });
 
@@ -113,10 +112,14 @@ export async function GET(
       ],
     });
 
-    // Filter out allocated custom slots
+    // FIX Bug #09: Use range overlap check instead of exact key matching
     const unallocatedCustomSlots = customSlots.filter((slot) => {
-      const key = `${slot.availabilityStartsAt.toISOString()}-${slot.availabilityEndsAt.toISOString()}`;
-      return !allocatedSlots.has(key);
+      const hasOverlap = allocatedSlots.some(
+        (allocated) =>
+          allocated.startsAt < slot.availabilityEndsAt &&
+          allocated.endsAt > slot.availabilityStartsAt,
+      );
+      return !hasOverlap;
     });
 
     // For weekly slots, generate instances for the date range and filter out allocated ones
@@ -124,26 +127,46 @@ export async function GET(
     const start = new Date(startDateInUtc);
     const end = new Date(endDateInUtc);
 
+    // FIX Bug #09: Use UTC-consistent date construction and range overlap check
     weeklySlots.forEach((weeklySlot) => {
       const currentDate = new Date(start);
 
       while (currentDate <= end) {
-        // Check if this day matches the slot's day
         if (
-          currentDate.getDay() === dayToNumber[weeklySlot.dayOfWeekForStartsAt]
+          currentDate.getUTCDay() ===
+          dayToNumber[weeklySlot.dayOfWeekForStartsAt]
         ) {
-          // Create slot instance for this date
-          const slotStart = new Date(currentDate);
-          slotStart.setHours(weeklySlot.availabilityStartsAt.getHours());
-          slotStart.setMinutes(weeklySlot.availabilityStartsAt.getMinutes());
+          // Use UTC-consistent construction to avoid timezone drift
+          const slotStart = new Date(
+            Date.UTC(
+              currentDate.getUTCFullYear(),
+              currentDate.getUTCMonth(),
+              currentDate.getUTCDate(),
+              weeklySlot.availabilityStartsAt.getUTCHours(),
+              weeklySlot.availabilityStartsAt.getUTCMinutes(),
+              0,
+              0,
+            ),
+          );
 
-          const slotEnd = new Date(currentDate);
-          slotEnd.setHours(weeklySlot.availabilityEndsAt.getHours());
-          slotEnd.setMinutes(weeklySlot.availabilityEndsAt.getMinutes());
+          const slotEnd = new Date(
+            Date.UTC(
+              currentDate.getUTCFullYear(),
+              currentDate.getUTCMonth(),
+              currentDate.getUTCDate(),
+              weeklySlot.availabilityEndsAt.getUTCHours(),
+              weeklySlot.availabilityEndsAt.getUTCMinutes(),
+              0,
+              0,
+            ),
+          );
 
-          // Check if this instance is allocated
-          const key = `${slotStart.toISOString()}-${slotEnd.toISOString()}`;
-          if (!allocatedSlots.has(key)) {
+          // Check for any overlapping allocated slot (partial or full overlap)
+          const hasOverlap = allocatedSlots.some(
+            (allocated) =>
+              allocated.startsAt < slotEnd && allocated.endsAt > slotStart,
+          );
+          if (!hasOverlap) {
             unallocatedWeeklySlots.push({
               slotId: weeklySlot.id,
               dateInISO: currentDate.toISOString(),
@@ -160,7 +183,7 @@ export async function GET(
         }
 
         // Move to next day
-        currentDate.setDate(currentDate.getDate() + 1);
+        currentDate.setUTCDate(currentDate.getUTCDate() + 1);
       }
     });
 

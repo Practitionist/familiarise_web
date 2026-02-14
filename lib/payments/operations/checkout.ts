@@ -449,26 +449,13 @@ export async function validateSlotAvailability(
   }
 
   // 1. Check for confirmed overlapping appointments FOR THIS CONSULTANT ONLY
-  // FIX: Previously checked ALL consultants globally, now filters by specific consultant
+  // FIX Bug #05: Use canonical overlap predicate that catches all 4 overlap shapes
+  // (partial start, partial end, full containment, and exact match)
   const existingBooking = await tx.slotOfAppointment.findFirst({
     where: {
       AND: [
-        {
-          OR: [
-            {
-              AND: [
-                { startsAt: { lte: slotStart } },
-                { endsAt: { gt: slotStart } },
-              ],
-            },
-            {
-              AND: [
-                { startsAt: { lt: slotEnd } },
-                { endsAt: { gte: slotEnd } },
-              ],
-            },
-          ],
-        },
+        { startsAt: { lt: slotEnd } },
+        { endsAt: { gt: slotStart } },
         { isTentative: false }, // Only confirmed bookings
         // FIX: Filter by consultant - only check slots belonging to this consultant
         ...(consultantUserId
@@ -491,26 +478,13 @@ export async function validateSlotAvailability(
   }
 
   // 2. Check for duplicate tentative bookings by the same user FOR THIS CONSULTANT
+  // FIX Bug #05: Use canonical overlap predicate
   if (userId) {
     const recentAttempt = await tx.slotOfAppointment.findFirst({
       where: {
         AND: [
-          {
-            OR: [
-              {
-                AND: [
-                  { startsAt: { lte: slotStart } },
-                  { endsAt: { gt: slotStart } },
-                ],
-              },
-              {
-                AND: [
-                  { startsAt: { lt: slotEnd } },
-                  { endsAt: { gte: slotEnd } },
-                ],
-              },
-            ],
-          },
+          { startsAt: { lt: slotEnd } },
+          { endsAt: { gt: slotStart } },
           { isTentative: true },
           // FIX: Filter by consultant - only check tentative slots for this consultant
           ...(consultantUserId
@@ -563,25 +537,12 @@ export async function validateSlotAvailability(
   }
 
   // 3. Check for excessive tentative bookings (rate limiting) FOR THIS CONSULTANT
+  // FIX Bug #05: Use canonical overlap predicate
   const tentativeCount = await tx.slotOfAppointment.count({
     where: {
       AND: [
-        {
-          OR: [
-            {
-              AND: [
-                { startsAt: { lte: slotStart } },
-                { endsAt: { gt: slotStart } },
-              ],
-            },
-            {
-              AND: [
-                { startsAt: { lt: slotEnd } },
-                { endsAt: { gte: slotEnd } },
-              ],
-            },
-          ],
-        },
+        { startsAt: { lt: slotEnd } },
+        { endsAt: { gt: slotStart } },
         { isTentative: true },
         // FIX: Filter by consultant - only count tentative slots for this consultant
         ...(consultantUserId
@@ -640,17 +601,21 @@ export async function validateSlotAvailability(
 /**
  * Get plan data needed for lock acquisition
  * Returns consultant profile info for slot-based locking
+ *
+ * FIX Bug #04: Changed from userId to id (consultantProfileId) to match
+ * the lock key used in request-for-approval flow. All slot locks must use
+ * the same identity (consultantProfileId) to prevent parallel bypass.
  */
 async function getPlanDataForLock(
   data: CheckoutInput,
-): Promise<{ consultantProfile?: { userId: string } }> {
-  // For CONSULTATION and SUBSCRIPTION, we need consultant ID for slot locking
+): Promise<{ consultantProfile?: { id: string } }> {
+  // For CONSULTATION and SUBSCRIPTION, we need consultant profile ID for slot locking
   if (data.appointmentType === "CONSULTATION") {
     const plan = await prisma.consultationPlan.findUnique({
       where: { id: data.planId },
       select: {
         consultantProfile: {
-          select: { userId: true },
+          select: { id: true },
         },
       },
     });
@@ -663,7 +628,7 @@ async function getPlanDataForLock(
       where: { id: data.planId },
       select: {
         consultantProfile: {
-          select: { userId: true },
+          select: { id: true },
         },
       },
     });
@@ -681,20 +646,20 @@ async function getPlanDataForLock(
  */
 async function acquireCheckoutLock(
   data: CheckoutInput,
-  planData: { consultantProfile?: { userId: string } },
+  planData: { consultantProfile?: { id: string } },
 ): Promise<ApprovalLock | null> {
   const appointmentType = data.appointmentType;
 
   // Strategy A: Slot-based locking (CONSULTATION + direct SUBSCRIPTION)
+  // FIX Bug #04: Use consultantProfileId (not userId) to match request-for-approval lock key
   if (data.slotStartTimeInUTC && data.slotEndTimeInUTC) {
-    // Get consultant user ID from plan
-    let consultantUserId: string;
+    let consultantProfileId: string;
 
     if (
       appointmentType === "CONSULTATION" ||
       appointmentType === "SUBSCRIPTION"
     ) {
-      consultantUserId = planData.consultantProfile!.userId;
+      consultantProfileId = planData.consultantProfile!.id;
     } else {
       // For WEBINAR/CLASS with slots (shouldn't happen but handle gracefully)
       throw new Error(
@@ -707,13 +672,13 @@ async function acquireCheckoutLock(
         event: "checkout_lock_acquiring",
         type: "slot-based",
         appointmentType,
-        consultantUserId,
+        consultantProfileId,
         slot: data.slotStartTimeInUTC,
         timestamp: new Date().toISOString(),
       }),
     );
 
-    return await lockSlotBooking(consultantUserId, data.slotStartTimeInUTC);
+    return await lockSlotBooking(consultantProfileId, data.slotStartTimeInUTC);
   }
 
   // Strategy B: Event-based locking (WEBINAR, CLASS, scheduling-period SUBSCRIPTION)

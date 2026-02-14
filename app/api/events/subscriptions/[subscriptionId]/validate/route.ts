@@ -21,6 +21,7 @@ import {
 } from "@/schemas/slotAllocation/validationSchemas";
 import { ZodError } from "zod";
 import type { SlotConflictResult } from "@/utils/slotAllocation/types";
+import { requireApiAuth } from "@/lib/auth-helpers";
 
 interface ValidationResult extends SlotConflictResult {
   subscriptionValidation?: {
@@ -69,6 +70,9 @@ export async function POST(
   { params }: { params: Promise<{ subscriptionId: string }> },
 ) {
   try {
+    const authResult = await requireApiAuth();
+    if (authResult.error) return authResult.error;
+
     const { subscriptionId } = await params;
 
     // LAYER 1: Zod Schema Validation (type-safe, automatic type inference)
@@ -147,21 +151,19 @@ export async function POST(
         subscriptionValidation,
       };
 
-      // Parse errors if validation failed
+      // Categorize errors by prefix instead of brittle regex
       if (!validationResult.isValid) {
         for (const error of validationResult.errors) {
-          if (
-            error.includes("already booked") ||
-            error.includes("conflicts with")
-          ) {
-            const slotMatch = error.match(
+          if (error.startsWith("[CONFLICT]")) {
+            const message = error.replace("[CONFLICT] ", "");
+            const slotMatch = message.match(
               /(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/,
             );
             if (slotMatch) {
               result.conflicts.push({
                 slot: slotMatch[1],
                 existingAppointment: {
-                  type: error.includes("Subscription")
+                  type: message.includes("subscription")
                     ? "Subscription"
                     : "Consultation",
                   with: "Another user",
@@ -169,17 +171,16 @@ export async function POST(
                 },
               });
             }
-          } else if (
-            error.includes("does not match") ||
-            error.includes("not in consultant's")
-          ) {
-            const slotMatch = error.match(
+          } else if (error.startsWith("[OUTSIDE_AVAILABILITY]")) {
+            const message = error.replace("[OUTSIDE_AVAILABILITY] ", "");
+            const slotMatch = message.match(
               /(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/,
             );
             if (slotMatch) {
               result.outsideAvailability.push({ slot: slotMatch[1] });
             }
           }
+          // [VALIDATION] errors don't need slot-level parsing
         }
 
         // Filter valid slots

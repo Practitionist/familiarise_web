@@ -8,15 +8,14 @@
 import prisma from "@/lib/prisma";
 import {
   AppointmentsType,
+  Prisma,
   RequestStatus,
   ScheduleType,
-  DayOfWeek,
 } from "@prisma/client";
-import { addHours, addWeeks, addMonths } from "date-fns";
+import { addWeeks, addMonths } from "date-fns";
 import {
   AllocationRequest,
   AllocationResult,
-  AllocationMode,
   EventType,
   PrismaTransaction,
   ConsultantAllocationData,
@@ -24,6 +23,7 @@ import {
 } from "./types";
 import { SlotCalculationService } from "./SlotCalculationService";
 import { SlotValidationService } from "./SlotValidationService";
+import { buildOccupiedAppointmentFilter } from "./occupancyPolicy";
 
 /**
  * Main service for slot allocation operations
@@ -504,29 +504,12 @@ export class SlotAllocationService {
     config: EventConfig,
   ): Promise<Date[]> {
     // Get all existing booked slots for this consultant
-    // Include PENDING consultations/subscriptions to prevent double-booking
+    // FIX Bug #15: Use centralized occupancy policy for consistent conflict detection
     const existingAppointments = await (tx as any).appointment.findMany({
       where: {
         AND: [
           {
-            OR: [
-              {
-                subscription: {
-                  requestStatus: {
-                    in: [RequestStatus.APPROVED, RequestStatus.PENDING],
-                  },
-                },
-              },
-              {
-                consultation: {
-                  requestStatus: {
-                    in: [RequestStatus.APPROVED, RequestStatus.PENDING],
-                  },
-                },
-              },
-              { webinar: { status: "SCHEDULED" } },
-              { class: { status: "SCHEDULED" } },
-            ],
+            OR: buildOccupiedAppointmentFilter(),
           },
           {
             slotsOfAppointment: {
@@ -918,9 +901,10 @@ export class SlotAllocationService {
   /**
    * Delete existing appointments for an event
    *
-   * @param onlyTentative - If true, only delete appointments that have at least one tentative slot.
-   *                        This is used for partial reschedules where we want to preserve
-   *                        confirmed appointments and only replace the rescheduled ones.
+   * @param onlyTentative - If true, only delete tentative SlotOfAppointment records,
+   *                        preserving confirmed slots and their parent appointments.
+   *                        Appointments are only deleted if they have zero remaining slots
+   *                        after tentative slot removal. This is used for partial reschedules.
    */
   private static async deleteExistingAppointments(
     tx: PrismaTransaction,
@@ -929,27 +913,53 @@ export class SlotAllocationService {
     onlyTentative: boolean = false,
   ): Promise<void> {
     const relationField = this.getEventRelationField(eventType);
-
-    // Build where clause - optionally filter to only appointments with tentative slots
-    const whereClause: any = { [`${relationField}Id`]: eventId };
+    const whereClause = {
+      [`${relationField}Id`]: eventId,
+    } as Prisma.AppointmentWhereInput;
 
     if (onlyTentative) {
-      // Only delete appointments that have at least one tentative slot
-      // This preserves confirmed appointments during partial reschedules
-      whereClause.slotsOfAppointment = {
-        some: { isTentative: true },
-      };
+      // Find appointments with tentative slots for this event
+      const appointments = await tx.appointment.findMany({
+        where: whereClause,
+        include: { slotsOfAppointment: true },
+      });
+
+      for (const appointment of appointments) {
+        const tentativeSlots = appointment.slotsOfAppointment.filter(
+          (slot) => slot.isTentative,
+        );
+        const confirmedSlots = appointment.slotsOfAppointment.filter(
+          (slot) => !slot.isTentative,
+        );
+
+        if (tentativeSlots.length > 0) {
+          // Delete only tentative slots, preserving confirmed ones
+          await tx.slotOfAppointment.deleteMany({
+            where: {
+              id: { in: tentativeSlots.map((slot) => slot.id) },
+            },
+          });
+
+          // If no confirmed slots remain, delete the now-empty appointment
+          if (confirmedSlots.length === 0) {
+            await tx.appointment.delete({
+              where: { id: appointment.id },
+            });
+          }
+        }
+      }
+    } else {
+      // Full delete: remove all appointments for this event
+      const existingAppointments = await tx.appointment.findMany({
+        where: whereClause,
+      });
+
+      await Promise.all(
+        existingAppointments.map((appointment) =>
+          tx.appointment.delete({ where: { id: appointment.id } }),
+        ),
+      );
     }
-
-    const existing = await (tx as any).appointment.findMany({
-      where: whereClause,
-    });
-
-    await Promise.all(
-      existing.map((app: any) =>
-        (tx as any).appointment.delete({ where: { id: app.id } }),
-      ),
-    );
   }
 
   /**
@@ -993,11 +1003,12 @@ export class SlotAllocationService {
 
       case "class":
         // Class model HAS schedulingPeriod fields
+        // FIX Bug #19: Use addMonths instead of addWeeks * 4 for accurate month boundaries
         updates.status = "SCHEDULED";
         updates.schedulingPeriodStartsAt = firstSlot;
-        updates.schedulingPeriodEndsAt = addWeeks(
+        updates.schedulingPeriodEndsAt = addMonths(
           firstSlot,
-          (config.durationInMonths || 1) * 4,
+          config.durationInMonths || 1,
         );
         break;
     }
