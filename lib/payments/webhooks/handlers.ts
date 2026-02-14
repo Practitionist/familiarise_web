@@ -68,6 +68,7 @@ interface SubscriptionData {
   schedulingPeriodEndsAt?: string;
   notes?: string;
   consulteeProfileId: string;
+  userId: string;
 }
 
 /**
@@ -677,6 +678,7 @@ async function createAppointmentFromWebhook(
         schedulingPeriodEndsAt,
         notes,
         consulteeProfileId,
+        userId,
       });
       break;
     case AppointmentsType.WEBINAR:
@@ -789,6 +791,7 @@ async function createSubscription(
         startsAt: new Date(data.slotStartTimeInUTC),
         endsAt: new Date(data.slotEndTimeInUTC),
         isTentative: false,
+        user: { connect: { id: data.userId } },
       },
     };
   }
