@@ -112,31 +112,27 @@ export async function POST(
 
         let isParticipant = false;
 
-        // Check consultation relationship
+        // Check the single event-type relation (mutually exclusive via if-else)
         if (appointment.consultation) {
           const consultationConsultantId =
             appointment.consultation.consultationPlan?.consultantProfileId;
           isParticipant =
             consultantProfileId === consultationConsultantId ||
             consulteeProfileId === appointment.consultation.requestedById;
-        }
-        // Check subscription relationship
-        if (appointment.subscription) {
+        } else if (appointment.subscription) {
           const subscriptionConsultantId =
             appointment.subscription.subscriptionPlan?.consultantProfileId;
           isParticipant =
             consultantProfileId === subscriptionConsultantId ||
             consulteeProfileId === appointment.subscription.requestedById;
-        }
-        // Check webinar relationship — only the consultant (organizer) can reschedule
-        // group events, since rescheduling changes the time for all participants.
-        if (appointment.webinar) {
+        } else if (appointment.webinar) {
+          // Only the consultant (organizer) can reschedule group events,
+          // since rescheduling changes the time for all participants.
           const webinarConsultantId =
             appointment.webinar.webinarPlan?.consultantProfileId;
           isParticipant = consultantProfileId === webinarConsultantId;
-        }
-        // Check class relationship — same as webinar: consultant-only reschedule
-        if (appointment.class) {
+        } else if (appointment.class) {
+          // Same as webinar: consultant-only reschedule
           const classConsultantId =
             appointment.class.classPlan?.consultantProfileId;
           isParticipant = consultantProfileId === classConsultantId;
