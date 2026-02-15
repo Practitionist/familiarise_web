@@ -70,6 +70,11 @@ export const NOVU_WORKFLOWS = {
   COLLABORATOR_INVITED: "collaborator-invited",
   COLLABORATOR_ACCEPTED: "collaborator-accepted",
   COLLABORATOR_REMOVED: "collaborator-removed",
+
+  // Maintenance
+  MAINTENANCE_SCHEDULED: "maintenance-scheduled",
+  MAINTENANCE_STARTED: "maintenance-started",
+  MAINTENANCE_ENDED: "maintenance-ended",
 } as const;
 
 export type NovuWorkflowId =
@@ -274,4 +279,10 @@ export type CollaboratorRemovedPayload = {
   planTitle: string;
   planType: string;
   dashboardUrl: string;
+};
+
+export type MaintenancePayload = {
+  phase: string;
+  reason?: string;
+  estimatedEnd?: string;
 };

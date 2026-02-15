@@ -1,6 +1,12 @@
 import { getSessionCookie } from "better-auth/cookies";
 import { NextRequest, NextResponse } from "next/server";
 
+import {
+  getMaintenanceState,
+  isMaintenanceExempt,
+  validateBypass,
+} from "@/lib/maintenance";
+
 // Constants for common URLs and route patterns
 const URLS = {
   SIGNIN: "/auth/signin",
@@ -63,6 +69,31 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
     pathname.includes(".")
   ) {
     return NextResponse.next();
+  }
+
+  // Maintenance mode check (fail-open: defaults to OFF if Redis unreachable)
+  const maintenanceState = await getMaintenanceState();
+  if (
+    maintenanceState.phase !== "OFF" &&
+    !isMaintenanceExempt(pathname)
+  ) {
+    if (!validateBypass(req, maintenanceState.bypassSecret)) {
+      if (maintenanceState.phase === "OFFLINE") {
+        return NextResponse.rewrite(new URL("/maintenance", req.url));
+      }
+      // DEGRADED: add headers for client-side banner, continue normally
+      const response = NextResponse.next();
+      response.headers.set("x-maintenance-phase", "degraded");
+      response.headers.set(
+        "x-maintenance-reason",
+        maintenanceState.reason || "",
+      );
+      response.headers.set(
+        "x-maintenance-eta",
+        maintenanceState.estimatedEnd || "",
+      );
+      return response;
+    }
   }
 
   // Handle public API routes first (most common, no auth needed)

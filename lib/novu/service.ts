@@ -32,6 +32,7 @@ import {
   type CollaboratorInvitedPayload,
   type CollaboratorAcceptedPayload,
   type CollaboratorRemovedPayload,
+  type MaintenancePayload,
 } from "./workflows";
 
 // ============================================================================
@@ -550,4 +551,26 @@ export async function notifyCollaboratorRemoved(
     consultantUserId,
     payload,
   );
+}
+
+// Maintenance notifications (broadcast to all users)
+
+export async function notifyMaintenanceScheduled(
+  payload: MaintenancePayload,
+) {
+  return triggerBroadcastWorkflow(
+    NOVU_WORKFLOWS.MAINTENANCE_SCHEDULED,
+    payload,
+  );
+}
+
+export async function notifyMaintenanceStarted(payload: MaintenancePayload) {
+  return triggerBroadcastWorkflow(
+    NOVU_WORKFLOWS.MAINTENANCE_STARTED,
+    payload,
+  );
+}
+
+export async function notifyMaintenanceEnded(payload: MaintenancePayload) {
+  return triggerBroadcastWorkflow(NOVU_WORKFLOWS.MAINTENANCE_ENDED, payload);
 }
