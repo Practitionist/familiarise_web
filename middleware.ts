@@ -5,7 +5,7 @@ import {
   getMaintenanceState,
   isMaintenanceExempt,
   validateBypass,
-} from "@/lib/maintenance";
+} from "@/lib/maintenance-edge";
 
 // Constants for common URLs and route patterns
 const URLS = {
@@ -86,11 +86,11 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
       response.headers.set("x-maintenance-phase", "degraded");
       response.headers.set(
         "x-maintenance-reason",
-        maintenanceState.reason || "",
+        encodeURIComponent(maintenanceState.reason || ""),
       );
       response.headers.set(
         "x-maintenance-eta",
-        maintenanceState.estimatedEnd || "",
+        encodeURIComponent(maintenanceState.estimatedEnd || ""),
       );
       return response;
     }
@@ -119,13 +119,11 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
       : NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // Handle public auth routes
+  // Handle public auth routes — always allow through.
+  // The signin page validates the session client-side via useSession() and
+  // redirects authenticated users itself. Doing it here based on cookie
+  // presence causes infinite loops when the cookie is stale (DB session gone).
   if (matchesAnyPrefix(pathname, ROUTE_PATTERNS.PUBLIC_AUTH_PREFIXES)) {
-    // Redirect authenticated users to dashboard immediately
-    // This prevents the flash of auth page before client-side redirect kicks in
-    if (isAuthenticated) {
-      return NextResponse.redirect(new URL("/dashboard", req.url));
-    }
     return NextResponse.next();
   }
 
@@ -147,8 +145,8 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
 // Optimized matcher to reduce middleware execution
 export const config = {
   matcher: [
-    // Skip all static files and Next.js internals
-    "/((?!_next/static|_next/image|favicon.ico|.*\\..*).+)",
+    // Match root and all paths except static files and Next.js internals
+    "/((?!_next/static|_next/image|favicon.ico|.*\\..*).*)",
     // Include API routes
     "/api/(.*)",
   ],

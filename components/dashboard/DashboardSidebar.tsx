@@ -41,6 +41,7 @@ import {
   Timer,
   Server,
   Gift,
+  Wrench,
 } from "lucide-react";
 import { ReactNode } from "react";
 
@@ -78,6 +79,7 @@ const iconMap: Record<string, typeof Home> = {
   tickets: LifeBuoy,
   waitlists: Timer,
   "system-jobs": Server,
+  maintenance: Wrench,
   trials: Gift,
   gift: Gift,
 };

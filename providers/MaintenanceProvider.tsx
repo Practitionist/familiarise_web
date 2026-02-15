@@ -15,6 +15,8 @@ interface MaintenanceContextType {
   eta: string | null;
   isDismissed: boolean;
   dismiss: () => void;
+  /** Trigger an immediate re-fetch of maintenance state from /api/health */
+  refresh: () => Promise<void>;
 }
 
 const MaintenanceContext = createContext<MaintenanceContextType>({
@@ -23,6 +25,7 @@ const MaintenanceContext = createContext<MaintenanceContextType>({
   eta: null,
   isDismissed: false,
   dismiss: () => {},
+  refresh: async () => {},
 });
 
 export function MaintenanceProvider({
@@ -40,35 +43,36 @@ export function MaintenanceProvider({
     setIsDismissed(false);
   }, []);
 
-  // Poll health endpoint to pick up maintenance state
-  useEffect(() => {
-    const checkMaintenance = async () => {
-      try {
-        const res = await fetch("/api/health");
-        const data = await res.json();
-        const m = data.maintenance;
-        if (m) {
-          setPhase(m.phase === "OFF" ? null : m.phase);
-          setReason(m.reason ?? null);
-          setEta(m.estimatedEnd ?? null);
-          // Re-show banner when state changes
-          if (m.phase !== "OFF") setIsDismissed(false);
-        }
-      } catch {
-        // Health check failed — don't disrupt the user
+  // Fetch maintenance state from health endpoint
+  const checkMaintenance = useCallback(async () => {
+    try {
+      const res = await fetch("/api/health");
+      const data = await res.json();
+      const m = data.maintenance;
+      if (m) {
+        setPhase(m.phase === "OFF" ? null : m.phase);
+        setReason(m.reason ?? null);
+        setEta(m.estimatedEnd ?? null);
+        // Re-show banner when state changes
+        if (m.phase !== "OFF") setIsDismissed(false);
       }
-    };
-
-    checkMaintenance();
-    const interval = setInterval(checkMaintenance, 60_000); // Check every 60s
-    return () => clearInterval(interval);
+    } catch {
+      // Health check failed — don't disrupt the user
+    }
   }, []);
+
+  // Poll every 60s
+  useEffect(() => {
+    checkMaintenance();
+    const interval = setInterval(checkMaintenance, 60_000);
+    return () => clearInterval(interval);
+  }, [checkMaintenance]);
 
   const dismiss = useCallback(() => setIsDismissed(true), []);
 
   const value = useMemo(
-    () => ({ phase, reason, eta, isDismissed, dismiss }),
-    [phase, reason, eta, isDismissed, dismiss],
+    () => ({ phase, reason, eta, isDismissed, dismiss, refresh: checkMaintenance }),
+    [phase, reason, eta, isDismissed, dismiss, checkMaintenance],
   );
 
   return (

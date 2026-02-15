@@ -1,14 +1,47 @@
 "use client";
 
+import { useEffect, useRef } from "react";
+
 import { useMaintenanceState } from "@/providers/MaintenanceProvider";
 
 export default function MaintenanceBanner() {
   const { phase, reason, eta, isDismissed, dismiss } = useMaintenanceState();
+  const bannerRef = useRef<HTMLDivElement>(null);
 
-  if (!phase || phase === "OFF" || isDismissed) return null;
+  const isVisible = !!phase && phase !== "OFF" && !isDismissed;
+
+  // ResizeObserver keeps --maintenance-banner-height in sync with actual
+  // banner size (handles text wrapping on mobile, window resize, etc.)
+  useEffect(() => {
+    if (!isVisible || !bannerRef.current) {
+      document.documentElement.style.setProperty(
+        "--maintenance-banner-height",
+        "0px",
+      );
+      return;
+    }
+
+    const el = bannerRef.current;
+    const observer = new ResizeObserver(([entry]) => {
+      const h =
+        entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height;
+      document.documentElement.style.setProperty(
+        "--maintenance-banner-height",
+        `${h}px`,
+      );
+    });
+
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [isVisible]);
+
+  if (!isVisible) return null;
 
   return (
-    <div className="relative z-50 bg-yellow-50 border-b border-yellow-200 px-4 py-2.5 text-center text-sm text-yellow-800">
+    <div
+      ref={bannerRef}
+      className="fixed top-0 left-0 right-0 z-[10001] bg-yellow-50 border-b border-yellow-200 px-4 py-2.5 text-center text-sm text-yellow-800"
+    >
       <div className="mx-auto flex max-w-5xl items-center justify-center gap-2">
         <svg
           className="h-4 w-4 flex-shrink-0"
