@@ -2,6 +2,7 @@ import prisma from "@/lib/prisma";
 import { TSlotTiming } from "@/types/slots";
 import { DayOfWeek } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
+import { buildOccupiedAppointmentFilter } from "@/utils/slotAllocation/occupancyPolicy";
 
 export async function GET(
   req: NextRequest,
@@ -34,41 +35,15 @@ export async function GET(
       );
     }
 
-    // Get all appointments that overlap with the requested time period
+    // Get all occupied appointments that overlap with the requested time period.
+    // Use canonical overlap predicate to catch all overlap shapes including enclosing.
     const appointments = await prisma.appointment.findMany({
       where: {
-        OR: [
-          {
-            consultation: {
-              consultationPlan: {
-                consultantProfileId: consultantId,
-              },
-            },
-          },
-          {
-            subscription: {
-              subscriptionPlan: {
-                consultantProfileId: consultantId,
-              },
-            },
-          },
-        ],
+        OR: buildOccupiedAppointmentFilter(consultantId),
         slotsOfAppointment: {
           some: {
-            OR: [
-              {
-                startsAt: {
-                  gte: new Date(startDateInUtc),
-                  lte: new Date(endDateInUtc),
-                },
-              },
-              {
-                endsAt: {
-                  gte: new Date(startDateInUtc),
-                  lte: new Date(endDateInUtc),
-                },
-              },
-            ],
+            startsAt: { lt: new Date(endDateInUtc) },
+            endsAt: { gt: new Date(startDateInUtc) },
           },
         },
       },

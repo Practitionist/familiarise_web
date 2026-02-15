@@ -17,7 +17,7 @@ import {
   eventIdSchema,
 } from "@/schemas/slotAllocation/validationSchemas";
 import { ZodError } from "zod";
-import { requireApiAuth } from "@/lib/auth-helpers";
+import { requireApiAuth, authorizeEventAccess } from "@/lib/auth-helpers";
 
 export async function PATCH(
   request: NextRequest,
@@ -29,6 +29,13 @@ export async function PATCH(
     if (authResult.error) return authResult.error;
 
     const { webinarId } = await params;
+
+    const authzError = await authorizeEventAccess(
+      authResult.session,
+      "webinar",
+      webinarId,
+    );
+    if (authzError) return authzError;
 
     // LAYER 1: Zod Schema Validation (type-safe, automatic type inference)
     try {

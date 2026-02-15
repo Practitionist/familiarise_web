@@ -3,6 +3,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth-server";
 import {
   ReschedulePolicyError,
+  RescheduleAuthorizationError,
+  AppointmentTypeMismatchError,
   AppointmentNotFoundError,
 } from "@/utils/errors/RescheduleErrors";
 
@@ -143,13 +145,7 @@ export async function POST(
           session.user.role === "ADMIN" || session.user.role === "STAFF";
 
         if (!isParticipant && !isPrivilegedUser) {
-          return NextResponse.json(
-            {
-              error:
-                "You are not authorized to reschedule this appointment",
-            },
-            { status: 403 },
-          );
+          throw new RescheduleAuthorizationError();
         }
 
         // Derive type from DB instead of trusting query param
@@ -164,17 +160,14 @@ export async function POST(
                 : null;
 
         if (appointmentType && derivedType && appointmentType !== derivedType) {
-          return NextResponse.json(
-            { error: "Appointment type mismatch" },
-            { status: 400 },
-          );
+          throw new AppointmentTypeMismatchError(appointmentType, derivedType);
         }
 
         // For SUBSCRIPTION type, we need to get ALL slots across ALL appointments in the subscription
         // because the UI collects slots from all appointments but only passes one appointmentId
         let allSubscriptionSlots: typeof appointment.slotsOfAppointment = [];
 
-        if (appointmentType === "SUBSCRIPTION" && appointment.subscription) {
+        if (derivedType === "SUBSCRIPTION" && appointment.subscription) {
           // Fetch all appointments for this subscription with their slots
           const allAppointments = await tx.appointment.findMany({
             where: { subscriptionId: appointment.subscription.id },
@@ -190,7 +183,7 @@ export async function POST(
 
         // For SUBSCRIPTION with slotIds, only reschedule the specific slots
         if (
-          appointmentType === "SUBSCRIPTION" &&
+          derivedType === "SUBSCRIPTION" &&
           slotIds &&
           slotIds.length > 0 &&
           appointment.subscription
@@ -225,7 +218,7 @@ export async function POST(
 
         // Mark the appropriate slots as tentative
         if (
-          appointmentType === "SUBSCRIPTION" &&
+          derivedType === "SUBSCRIPTION" &&
           slotIds &&
           slotIds.length > 0 &&
           appointment.subscription
@@ -240,7 +233,7 @@ export async function POST(
             data: { isTentative: true },
           });
         } else if (
-          appointmentType === "SUBSCRIPTION" &&
+          derivedType === "SUBSCRIPTION" &&
           appointment.subscription
         ) {
           // Entire subscription reschedule - mark ALL slots in ALL appointments
@@ -289,7 +282,7 @@ export async function POST(
         // Determine reschedule type for response
         const getRescheduleType = () => {
           if (
-            appointmentType !== "SUBSCRIPTION" ||
+            derivedType !== "SUBSCRIPTION" ||
             !slotIds ||
             slotIds.length === 0
           ) {
@@ -324,6 +317,14 @@ export async function POST(
     console.error("Error requesting reschedule:", error);
 
     // Type-safe error handling using custom error classes
+    if (error instanceof RescheduleAuthorizationError) {
+      return NextResponse.json({ error: error.message }, { status: 403 });
+    }
+
+    if (error instanceof AppointmentTypeMismatchError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+
     if (error instanceof ReschedulePolicyError) {
       return NextResponse.json({ error: error.message }, { status: 400 });
     }

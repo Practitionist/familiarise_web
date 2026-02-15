@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { DayOfWeek } from "@prisma/client";
+import { buildOccupiedAppointmentFilter } from "@/utils/slotAllocation/occupancyPolicy";
 
 export async function GET(req: NextRequest) {
   try {
@@ -25,25 +26,10 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    // Get all appointments for this consultant
+    // Get all occupied appointments for this consultant (all event types + trials)
     const appointments = await prisma.appointment.findMany({
       where: {
-        OR: [
-          {
-            consultation: {
-              consultationPlan: {
-                consultantProfileId,
-              },
-            },
-          },
-          {
-            subscription: {
-              subscriptionPlan: {
-                consultantProfileId,
-              },
-            },
-          },
-        ],
+        OR: buildOccupiedAppointmentFilter(consultantProfileId),
       },
       include: {
         slotsOfAppointment: true,

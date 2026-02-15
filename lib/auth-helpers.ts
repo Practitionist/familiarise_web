@@ -1,6 +1,7 @@
 import { getSession } from "@/lib/auth-server";
 import { NextResponse } from "next/server";
 import type { Session } from "@/lib/auth";
+import prisma from "@/lib/prisma";
 
 /**
  * Requires API authentication and returns the session or an error response.
@@ -82,4 +83,82 @@ export function unauthorizedResponse(message = "Unauthorized"): NextResponse {
  */
 export function unprocessableResponse(message: string): NextResponse {
   return NextResponse.json({ error: message }, { status: 422 });
+}
+
+/**
+ * Authorize access to an event (consultation/subscription/webinar/class).
+ * Checks if the session user is the consultant (plan owner), consultee (requester),
+ * or has a privileged role (ADMIN/STAFF).
+ *
+ * @returns null if authorized, or a 403 NextResponse if not
+ */
+export async function authorizeEventAccess(
+  session: Session,
+  eventType: "consultation" | "subscription" | "webinar" | "class",
+  eventId: string,
+): Promise<NextResponse | null> {
+  if (isPrivileged(session.user.role)) return null;
+
+  const consultantProfileId = session.user.consultantProfileId;
+  const consulteeProfileId = session.user.consulteeProfileId;
+
+  let isAuthorized = false;
+
+  if (eventType === "consultation") {
+    const event = await prisma.consultation.findUnique({
+      where: { id: eventId },
+      select: {
+        requestedById: true,
+        consultationPlan: { select: { consultantProfileId: true } },
+      },
+    });
+    if (event) {
+      isAuthorized =
+        consultantProfileId === event.consultationPlan.consultantProfileId ||
+        consulteeProfileId === event.requestedById;
+    }
+  } else if (eventType === "subscription") {
+    const event = await prisma.subscription.findUnique({
+      where: { id: eventId },
+      select: {
+        requestedById: true,
+        subscriptionPlan: { select: { consultantProfileId: true } },
+      },
+    });
+    if (event) {
+      isAuthorized =
+        consultantProfileId === event.subscriptionPlan.consultantProfileId ||
+        consulteeProfileId === event.requestedById;
+    }
+  } else if (eventType === "webinar") {
+    const event = await prisma.webinar.findUnique({
+      where: { id: eventId },
+      select: {
+        webinarPlan: { select: { consultantProfileId: true } },
+      },
+    });
+    if (event) {
+      isAuthorized =
+        consultantProfileId === event.webinarPlan.consultantProfileId;
+    }
+  } else if (eventType === "class") {
+    const event = await prisma.class.findUnique({
+      where: { id: eventId },
+      select: {
+        classPlan: { select: { consultantProfileId: true } },
+      },
+    });
+    if (event) {
+      isAuthorized =
+        consultantProfileId === event.classPlan.consultantProfileId;
+    }
+  }
+
+  if (!isAuthorized) {
+    return forbiddenResponse(
+      "You are not authorized to access this event",
+    );
+  }
+
+  return null;
 }

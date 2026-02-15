@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { buildOccupiedAppointmentFilter } from "@/utils/slotAllocation/occupancyPolicy";
 
 export async function GET(req: NextRequest) {
   try {
@@ -17,51 +18,21 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    // FIX Bug #08: Scope appointment query to the specific consultant
-    // Without this filter, appointments from other consultants could incorrectly
-    // mark this consultant's slots as allocated.
+    // Get all occupied appointments for this consultant (all event types + trials).
+    // Use canonical overlap predicate to catch all overlap shapes including enclosing.
     const appointments = await prisma.appointment.findMany({
       where: {
-        OR: [
-          {
-            consultation: {
-              consultationPlan: { consultantProfileId },
-            },
-          },
-          {
-            subscription: {
-              subscriptionPlan: { consultantProfileId },
-            },
-          },
-          {
-            webinar: {
-              webinarPlan: { consultantProfileId },
-            },
-          },
-          {
-            class: {
-              classPlan: { consultantProfileId },
-            },
-          },
-        ],
-        slotsOfAppointment: {
-          some: {
-            OR: [
-              {
-                startsAt: {
-                  gte: startDateInUtc ? new Date(startDateInUtc) : undefined,
-                  lte: endDateInUtc ? new Date(endDateInUtc) : undefined,
+        OR: buildOccupiedAppointmentFilter(consultantProfileId),
+        ...(startDateInUtc && endDateInUtc
+          ? {
+              slotsOfAppointment: {
+                some: {
+                  startsAt: { lt: new Date(endDateInUtc) },
+                  endsAt: { gt: new Date(startDateInUtc) },
                 },
               },
-              {
-                endsAt: {
-                  gte: startDateInUtc ? new Date(startDateInUtc) : undefined,
-                  lte: endDateInUtc ? new Date(endDateInUtc) : undefined,
-                },
-              },
-            ],
-          },
-        },
+            }
+          : {}),
       },
       include: {
         slotsOfAppointment: true,

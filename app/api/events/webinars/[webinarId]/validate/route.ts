@@ -18,7 +18,7 @@ import {
 } from "@/schemas/slotAllocation/validationSchemas";
 import { ZodError } from "zod";
 import type { SlotConflictResult } from "@/utils/slotAllocation/types";
-import { requireApiAuth } from "@/lib/auth-helpers";
+import { requireApiAuth, authorizeEventAccess } from "@/lib/auth-helpers";
 
 const webinarInclude = {
   webinarPlan: {
@@ -44,6 +44,13 @@ export async function POST(
     if (authResult.error) return authResult.error;
 
     const { webinarId } = await params;
+
+    const authzError = await authorizeEventAccess(
+      authResult.session,
+      "webinar",
+      webinarId,
+    );
+    if (authzError) return authzError;
 
     // LAYER 1: Zod Schema Validation (type-safe, automatic type inference)
     try {
