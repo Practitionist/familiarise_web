@@ -38,9 +38,12 @@ interface EarningRecord {
   status: EarningStatus;
   holdUntil: string | null;
   createdAt: string;
+  role: "OWNER" | "COLLABORATOR";
+  sharePercentage: number;
   payment: {
     id: string;
     amount: number;
+    originalAmount: number;
     currency: string;
     createdAt: string;
     appointment: {
@@ -284,8 +287,11 @@ export default function EarningsPage({
                     <th className="text-left px-4 py-3 font-medium text-zinc-600">
                       Type
                     </th>
+                    <th className="text-left px-4 py-3 font-medium text-zinc-600">
+                      Role
+                    </th>
                     <th className="text-right px-4 py-3 font-medium text-zinc-600">
-                      Payment
+                      Plan Price
                     </th>
                     <th className="text-right px-4 py-3 font-medium text-zinc-600">
                       Your Earnings
@@ -319,8 +325,21 @@ export default function EarningsPage({
                             {appointmentType.toLowerCase()}
                           </span>
                         </td>
+                        <td className="px-4 py-3">
+                          <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
+                            earning.role === "COLLABORATOR"
+                              ? "bg-purple-50 text-purple-700"
+                              : "bg-zinc-100 text-zinc-600"
+                          }`}>
+                            {earning.role === "COLLABORATOR"
+                              ? `Collab ${earning.sharePercentage}%`
+                              : earning.sharePercentage < 100
+                                ? `Owner ${earning.sharePercentage}%`
+                                : "Owner"}
+                          </span>
+                        </td>
                         <td className="px-4 py-3 text-right text-zinc-600">
-                          {formatEarningAmount(earning.payment?.amount ?? 0, earning.payment?.currency ?? "INR")}
+                          {formatEarningAmount((earning.payment?.originalAmount ?? 0) * 100, earning.payment?.currency ?? "INR")}
                         </td>
                         <td className="px-4 py-3 text-right font-medium text-zinc-900">
                           {formatEarningAmount(earning.consultantShare, earning.payment?.currency ?? "INR")}

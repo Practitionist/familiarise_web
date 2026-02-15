@@ -14,6 +14,7 @@ export interface PricingConfig {
   taxRate?: number; // Override tax rate (0.18 = 18%)
   discountPercent?: number; // Applied discount percentage (0.10 = 10%)
   discountAmount?: number; // Fixed discount amount
+  creditsApplied?: number; // Referral credits applied (in major currency unit)
 }
 
 export interface PricingBreakdown {
@@ -22,6 +23,7 @@ export interface PricingBreakdown {
   taxRate: number;
   discountAmount: number;
   discountPercent: number;
+  creditsApplied: number;
   total: number;
 }
 
@@ -101,7 +103,9 @@ export function calculatePricing(
   );
   const netAmount = calculateNetAmount(subtotal, discountAmount);
   const taxAmount = calculateTax(netAmount, taxRate);
-  const total = calculateTotal(netAmount, taxAmount);
+  const totalBeforeCredits = calculateTotal(netAmount, taxAmount);
+  const creditsApplied = Math.min(config.creditsApplied ?? 0, totalBeforeCredits);
+  const total = Math.round((totalBeforeCredits - creditsApplied) * 100) / 100;
 
   return {
     subtotal,
@@ -109,6 +113,7 @@ export function calculatePricing(
     taxRate,
     discountAmount,
     discountPercent,
+    creditsApplied,
     total,
   };
 }

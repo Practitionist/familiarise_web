@@ -186,8 +186,34 @@ async function getAppointments(
           },
         },
         {
+          // Collaborated webinars (co-host, moderator, etc.)
+          webinar: {
+            webinarPlan: {
+              collaborators: {
+                some: {
+                  consultantProfileId,
+                  status: "ACCEPTED",
+                },
+              },
+            },
+          },
+        },
+        {
           class: {
             classPlan: { consultantProfileId },
+          },
+        },
+        {
+          // Collaborated classes (co-instructor, TA, etc.)
+          class: {
+            classPlan: {
+              collaborators: {
+                some: {
+                  consultantProfileId,
+                  status: "ACCEPTED",
+                },
+              },
+            },
           },
         },
       ],
@@ -311,6 +337,22 @@ async function getAppointments(
                   user: true,
                 },
               },
+              collaborators: {
+                where: { status: "ACCEPTED" },
+                include: {
+                  consultantProfile: {
+                    include: {
+                      user: {
+                        select: {
+                          id: true,
+                          name: true,
+                          image: true,
+                        },
+                      },
+                    },
+                  },
+                },
+              },
             },
           },
         },
@@ -322,6 +364,22 @@ async function getAppointments(
               consultantProfile: {
                 include: {
                   user: true,
+                },
+              },
+              collaborators: {
+                where: { status: "ACCEPTED" },
+                include: {
+                  consultantProfile: {
+                    include: {
+                      user: {
+                        select: {
+                          id: true,
+                          name: true,
+                          image: true,
+                        },
+                      },
+                    },
+                  },
                 },
               },
             },

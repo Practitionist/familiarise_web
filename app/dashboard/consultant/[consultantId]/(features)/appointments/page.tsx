@@ -64,6 +64,7 @@ export default function AppointmentsPage({
         appointments={appointments || []}
         badgeStyles={BADGE_STYLES}
         scheduledTrials={trialsData || []}
+        consultantId={consultantId}
       />
     </DashboardErrorBoundary>
   );

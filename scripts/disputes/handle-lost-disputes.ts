@@ -49,8 +49,10 @@ export async function handleLostDisputes(): Promise<LostDisputeHandlerResult> {
       status: DisputeStatus.LOST,
       payment: {
         earnings: {
-          status: {
-            notIn: [EarningStatus.REFUNDED], // Not already refunded
+          some: {
+            status: {
+              notIn: [EarningStatus.REFUNDED], // Not already refunded
+            },
           },
         },
       },
@@ -77,9 +79,9 @@ export async function handleLostDisputes(): Promise<LostDisputeHandlerResult> {
   );
 
   for (const dispute of lostDisputes) {
-    const earnings = dispute.payment.earnings;
+    const earningsList = dispute.payment.earnings;
 
-    if (!earnings) {
+    if (!earningsList || earningsList.length === 0) {
       console.log(
         `⏭️ Skipping dispute ${dispute.disputeId} - no associated earnings record`,
       );
@@ -87,6 +89,7 @@ export async function handleLostDisputes(): Promise<LostDisputeHandlerResult> {
       continue;
     }
 
+    for (const earnings of earningsList) {
     // Check if earnings were already paid out
     if (earnings.status === EarningStatus.PAID) {
       // This is a critical situation - earnings were paid but dispute was lost
@@ -149,6 +152,7 @@ export async function handleLostDisputes(): Promise<LostDisputeHandlerResult> {
       console.error(`❌ Error updating earnings ${earnings.id}:`, errorMessage);
       errorCount++;
     }
+    } // end for earnings
   }
 
   // Log summary of critical cases

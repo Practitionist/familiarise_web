@@ -46,12 +46,14 @@ export async function cascadeRefundToEarnings(): Promise<RefundEarningCascadeRes
       status: RefundStatus.SUCCEEDED,
       payment: {
         earnings: {
-          status: {
-            in: [
-              EarningStatus.PENDING,
-              EarningStatus.HELD,
-              EarningStatus.READY,
-            ],
+          some: {
+            status: {
+              in: [
+                EarningStatus.PENDING,
+                EarningStatus.HELD,
+                EarningStatus.READY,
+              ],
+            },
           },
         },
       },
@@ -70,9 +72,9 @@ export async function cascadeRefundToEarnings(): Promise<RefundEarningCascadeRes
   );
 
   for (const refund of refundsToProcess) {
-    const earnings = refund.payment.earnings;
+    const earningsList = refund.payment.earnings;
 
-    if (!earnings) {
+    if (!earningsList || earningsList.length === 0) {
       console.log(
         `⏭️ Skipping refund ${refund.id} - no associated earnings record`,
       );
@@ -80,25 +82,27 @@ export async function cascadeRefundToEarnings(): Promise<RefundEarningCascadeRes
       continue;
     }
 
-    try {
-      // Update earnings status to REFUNDED
-      await prisma.consultantEarnings.update({
-        where: { id: earnings.id },
-        data: {
-          status: EarningStatus.REFUNDED,
-        },
-      });
+    for (const earnings of earningsList) {
+      try {
+        // Update earnings status to REFUNDED
+        await prisma.consultantEarnings.update({
+          where: { id: earnings.id },
+          data: {
+            status: EarningStatus.REFUNDED,
+          },
+        });
 
-      console.log(
-        `✅ Updated earnings ${earnings.id} to REFUNDED (refund: ${refund.id})`,
-      );
-      updatedCount++;
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
-      errors.push(`Earnings ${earnings.id}: ${errorMessage}`);
-      console.error(`❌ Error updating earnings ${earnings.id}:`, errorMessage);
-      errorCount++;
+        console.log(
+          `✅ Updated earnings ${earnings.id} to REFUNDED (refund: ${refund.id})`,
+        );
+        updatedCount++;
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : String(error);
+        errors.push(`Earnings ${earnings.id}: ${errorMessage}`);
+        console.error(`❌ Error updating earnings ${earnings.id}:`, errorMessage);
+        errorCount++;
+      }
     }
   }
 
