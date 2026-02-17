@@ -67,6 +67,11 @@ model User {
   reportsReceived   ModerationReport[] @relation("ReportsReceived")
   moderationActions ModerationAction[]
 
+  // Referral system
+  referralCode    ReferralCode?
+  referral        Referral?        @relation("ReferredUser")
+  referralCredits ReferralCredit[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -448,6 +453,12 @@ model ConsultantProfile {
   subscriptionPlans SubscriptionPlan[]
   webinarPlans      WebinarPlan[]
   classPlans        ClassPlan[]
+
+  // Collaborator relations
+  webinarCollaborations     WebinarCollaborator[]  @relation("WebinarCollaborator")
+  classCollaborations       ClassCollaborator[]    @relation("ClassCollaborator")
+  invitedWebinarCollabs     WebinarCollaborator[]  @relation("WebinarCollaboratorInvitedBy")
+  invitedClassCollabs       ClassCollaborator[]    @relation("ClassCollaboratorInvitedBy")
 
   // Trial sessions and activity logs
   trialSessions TrialSession[]
@@ -976,6 +987,7 @@ model WebinarPlan {
   consultantProfileId String?
   webinars            Webinar[]
   materials           PlanMaterial[]
+  collaborators       WebinarCollaborator[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1036,6 +1048,7 @@ model ClassPlan {
   consultantProfileId String?
   classes             Class[]
   materials           PlanMaterial[]
+  collaborators       ClassCollaborator[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1444,7 +1457,9 @@ enum Platform {
 
 model Payment {
   id             String         @id @default(uuid())
-  amount         Int
+  amount         Int // Final amount charged to gateway (after discounts + tax - credits)
+  originalAmount Int // Original plan price before discounts/credits/tax (for earnings)
+  taxAmount      Int            @default(0) // GST amount charged
   currency       String
   description    String?
   receiptUrl     String?
@@ -1466,8 +1481,9 @@ model Payment {
   disputes Dispute[] // Disputes associated with this payment
 
   // Payout relations
-  earnings ConsultantEarnings?
-  invoice  Invoice?
+  earnings     ConsultantEarnings[]
+  creditUsages ReferralCreditUsage[]
+  invoice      Invoice?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1595,13 +1611,17 @@ enum PayoutAccountType {
 model ConsultantEarnings {
   id                  String  @id @default(cuid())
   consultantProfileId String
-  paymentId           String  @unique
+  paymentId           String
   payoutId            String?
 
   // Revenue breakdown
   grossAmount     Int // Total sale price
   platformFee     Int // Platform cut (20%)
   consultantShare Int // Consultant cut (80%)
+
+  // Collaborator support
+  role            EarningRole @default(OWNER)
+  sharePercentage Float       @default(100)
 
   // Status tracking
   status    EarningStatus @default(PENDING)
@@ -1615,9 +1635,11 @@ model ConsultantEarnings {
   payment           Payment           @relation(fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   payout            Payout?           @relation(fields: [payoutId], references: [id])
 
+  @@unique([paymentId, consultantProfileId, role])
   @@index([consultantProfileId, status])
   @@index([status, holdUntil])
   @@index([payoutId])
+  @@index([paymentId])
 }
 
 model Payout {
@@ -1758,6 +1780,181 @@ enum DiscountType {
   PERCENTAGE
   FIXED_AMOUNT
   FREE_SHIPPING
+}
+
+////////////////////////////////////////// REFERRAL SYSTEM //////////////////////////////////////////
+
+model ReferralCode {
+  id                  String   @id @default(cuid())
+  userId              String   @unique
+  code                String   @unique
+  customCode          String?  @unique
+  referrerReward      Int? // Reward for referrer in smallest currency unit (paise)
+  refereeReward       Int? // Reward for new user in smallest currency unit (paise)
+  totalReferrals      Int      @default(0)
+  successfulReferrals Int      @default(0)
+  totalEarned         Int      @default(0)
+  maxReferrals        Int      @default(50) // Maximum referrals allowed per code
+  isActive            Boolean  @default(true)
+
+  user      User       @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  referrals Referral[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([code])
+  @@index([customCode])
+}
+
+model Referral {
+  id                   String         @id @default(cuid())
+  referralCodeId       String
+  referredUserId       String         @unique
+  status               ReferralStatus @default(SIGNED_UP)
+  referrerRewardAmount Int?
+  refereeRewardAmount  Int?
+  referrerRewardPaidAt DateTime?
+  refereeRewardPaidAt  DateTime?
+  signedUpAt           DateTime       @default(now())
+  qualifiedAt          DateTime?
+  qualifyingAction     String?
+
+  referralCode ReferralCode @relation(fields: [referralCodeId], references: [id])
+  referredUser User         @relation("ReferredUser", fields: [referredUserId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([referralCodeId])
+  @@index([status])
+}
+
+model ReferralCredit {
+  id              String       @id @default(cuid())
+  userId          String
+  amount          Int // Credit amount in smallest currency unit (paise)
+  currency        String       @default("INR")
+  source          CreditSource
+  referralId      String?
+  usedAmount      Int          @default(0)
+  remainingAmount Int // amount - usedAmount
+  expiresAt       DateTime?
+  usedAt          DateTime?
+
+  user   User                   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  usages ReferralCreditUsage[]
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@index([userId, expiresAt])
+}
+
+model ReferralCreditUsage {
+  id             String   @id @default(cuid())
+  creditId       String
+  paymentId      String
+  amount         Int // Current remaining usage (decremented on partial refund restores)
+  originalAmount Int // Original amount at creation (never changes, used for ratio calculations)
+  createdAt      DateTime @default(now())
+
+  credit  ReferralCredit @relation(fields: [creditId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  payment Payment        @relation(fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+
+  @@unique([creditId, paymentId])
+  @@index([paymentId])
+}
+
+enum ReferralStatus {
+  SIGNED_UP
+  QUALIFIED
+  REWARDED
+  EXPIRED
+  FRAUDULENT
+}
+
+enum CreditSource {
+  REFERRAL_BONUS
+  REFEREE_BONUS
+  PROMOTION
+  COMPENSATION
+  MANUAL
+}
+
+//////////////////////////////////////////////////// COLLABORATOR SYSTEM ////////////////////////////////////////////////////
+
+model WebinarCollaborator {
+  id                     String                  @id @default(cuid())
+  consultantProfileId    String
+  webinarPlanId          String
+  role                   WebinarCollaboratorRole  @default(CO_HOST)
+  permissions            Json?
+  revenueSharePercentage Float
+  status                 CollaboratorStatus       @default(PENDING)
+  invitedById            String
+  respondedAt            DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  consultantProfile ConsultantProfile @relation("WebinarCollaborator", fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  webinarPlan       WebinarPlan       @relation(fields: [webinarPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  invitedBy         ConsultantProfile @relation("WebinarCollaboratorInvitedBy", fields: [invitedById], references: [id], onUpdate: Cascade, onDelete: Cascade)
+
+  @@unique([consultantProfileId, webinarPlanId])
+  @@index([webinarPlanId])
+  @@index([status])
+}
+
+model ClassCollaborator {
+  id                     String                 @id @default(cuid())
+  consultantProfileId    String
+  classPlanId            String
+  role                   ClassCollaboratorRole   @default(CO_INSTRUCTOR)
+  permissions            Json?
+  revenueSharePercentage Float
+  status                 CollaboratorStatus      @default(PENDING)
+  invitedById            String
+  respondedAt            DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  consultantProfile ConsultantProfile @relation("ClassCollaborator", fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  classPlan         ClassPlan         @relation(fields: [classPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  invitedBy         ConsultantProfile @relation("ClassCollaboratorInvitedBy", fields: [invitedById], references: [id], onUpdate: Cascade, onDelete: Cascade)
+
+  @@unique([consultantProfileId, classPlanId])
+  @@index([classPlanId])
+  @@index([status])
+}
+
+enum CollaboratorStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  REMOVED
+}
+
+enum WebinarCollaboratorRole {
+  CO_HOST
+  MODERATOR
+  GUEST_SPEAKER
+  TECHNICAL_SUPPORT
+}
+
+enum ClassCollaboratorRole {
+  CO_INSTRUCTOR
+  TEACHING_ASSISTANT
+  GUEST_LECTURER
+  CONTENT_CREATOR
+}
+
+enum EarningRole {
+  OWNER
+  COLLABORATOR
 }
 
 //////////////////////////////////////////////////// ENUMS ////////////////////////////////////////////////////

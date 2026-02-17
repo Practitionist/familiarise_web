@@ -154,13 +154,13 @@ async function handleMockPaymentCaptured(
 
     // If release flag is set, immediately mark earnings as READY
     if (release) {
-      const earnings = await prisma.consultantEarnings.findUnique({
+      const earningsList = await prisma.consultantEarnings.findMany({
         where: { paymentId: payment.id },
       });
 
-      if (earnings) {
+      for (const earning of earningsList) {
         await prisma.consultantEarnings.update({
-          where: { id: earnings.id },
+          where: { id: earning.id },
           data: {
             status: EarningStatus.READY,
             holdUntil: new Date(),
@@ -170,7 +170,7 @@ async function handleMockPaymentCaptured(
     }
 
     // Check if earnings were created
-    const earnings = await prisma.consultantEarnings.findUnique({
+    const earnings = await prisma.consultantEarnings.findFirst({
       where: { paymentId: payment.id },
     });
 

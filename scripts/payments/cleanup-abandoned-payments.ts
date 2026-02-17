@@ -19,6 +19,7 @@
 import { PaymentStatus, PaymentGateway, RequestStatus } from "@prisma/client";
 import Stripe from "stripe";
 import { cancelRazorpayOrder } from "../../lib/payments/core/razorpay";
+import { reverseCreditsForPayment } from "@/lib/referrals/service";
 import prisma from "@/lib/prisma";
 
 /**
@@ -228,6 +229,25 @@ export async function cleanupAbandonedPayments(): Promise<CleanupResult> {
                 `Payment cancellation failed for ${payment.paymentIntent}: ${errorMessage}`,
               );
               // Continue cleanup even if payment cancellation fails
+            }
+          }
+
+          // Restore referral credits consumed by these payments BEFORE cascade-deleting
+          // Without this, deleting Appointment cascades to Payment → ReferralCreditUsage,
+          // leaving ReferralCredit.usedAmount/remainingAmount permanently corrupted
+          for (const payment of appointment.payment) {
+            try {
+              const restored = await reverseCreditsForPayment(payment.id, tx);
+              if (restored > 0) {
+                console.log(
+                  `🔄 Restored ${restored} paise of referral credits from abandoned payment ${payment.id}`,
+                );
+              }
+            } catch (creditError) {
+              console.warn(
+                `⚠️ Failed to restore credits for payment ${payment.id}:`,
+                creditError instanceof Error ? creditError.message : creditError,
+              );
             }
           }
 

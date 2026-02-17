@@ -266,12 +266,11 @@ export async function createInvoiceFromPayment(
       hsnCode = TAX_CONSTANTS.HSN_CODES.EDUCATION;
     }
 
-    // Calculate tax breakdown (assuming amount is inclusive of tax for display)
+    // Tax breakdown from stored payment data (tax-exclusive: plan.price + 18% GST)
     const totalAmount = payment.amount;
     const taxRate = TAX_CONSTANTS.GST_RATE;
-    // For GST-inclusive prices: baseAmount = total / (1 + rate/100)
-    const baseAmount = Math.round((totalAmount * 100) / (100 + taxRate));
-    const taxAmount = totalAmount - baseAmount;
+    const taxAmount = payment.taxAmount;
+    const baseAmount = totalAmount - taxAmount;
 
     const items: InvoiceItem[] = [
       {

@@ -178,12 +178,12 @@ erDiagram
     ConsultationPlan ||--o{ Consultation : creates
     SubscriptionPlan ||--o{ Subscription : creates
     WebinarPlan ||--o{ Webinar : creates
-    ClassPlan ||--o{ Class : creates
+    ClassPlan ||--o{ ClassEvent : creates
 
     Consultation ||--o| Appointment : "has one"
     Subscription ||--o{ Appointment : "has many"
     Webinar ||--o| Appointment : "has one"
-    Class ||--o{ Appointment : "has many"
+    ClassEvent ||--o{ Appointment : "has many"
 
     Appointment ||--|{ SlotOfAppointment : contains
 
@@ -211,6 +211,7 @@ erDiagram
         string appointmentId FK
     }
 ```
+> Note: we are using ClassEvent instead of Class because Class is a reserved keyword in Mermaid.
 
 **Key relationships**:
 
@@ -300,5 +301,5 @@ stateDiagram-v2
 
 - User deduplication: 5-minute window blocks same-user duplicate attempts
 - Rate limiting: max 3 pending attempts per slot per 30 minutes
-- Cleanup job: runs every 15 minutes, removes appointments abandoned for 30+ minutes
+- Cleanup job: runs every 2 hours, releases tentative slots older than 7 days with no successful payment (see [13-cron-jobs-and-background-tasks.md](./13-cron-jobs-and-background-tasks.md))
 - Expired payment detection: `APPROVED_PENDING_PAYMENT` consultations with expired payments are treated as available slots

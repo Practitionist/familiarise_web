@@ -69,6 +69,17 @@ export type SubscriptionPlanEvent = {
   };
 };
 
+// Planner-specific event types with role annotations
+export type PlannerWebinarEvent = WebinarEvent & {
+  collaboratorRole: string;
+  isCollaborated: boolean;
+};
+
+export type PlannerClassEvent = ClassEvent & {
+  collaboratorRole: string;
+  isCollaborated: boolean;
+};
+
 // Update base Event type to be a union
 export type Event =
   | WebinarEvent

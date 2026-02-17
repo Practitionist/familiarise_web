@@ -27,6 +27,7 @@ import {
   notifyPaymentFailed,
   notifyAppointmentBooked,
 } from "@/lib/novu";
+import { processQualifyingAction } from "@/lib/referrals/service";
 
 // ============================================================================
 // Type Definitions
@@ -292,14 +293,18 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
               },
             },
             webinar: {
-              include: {
+              select: {
+                id: true,
+                webinarPlanId: true,
                 webinarPlan: {
                   include: { consultantProfile: true },
                 },
               },
             },
             class: {
-              include: {
+              select: {
+                id: true,
+                classPlanId: true,
                 classPlan: {
                   include: { consultantProfile: true },
                 },
@@ -337,6 +342,12 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
           appointment: {
             ...paymentWithAppointment.appointment,
             consultantProfile: { id: consultantProfile.id },
+            webinar: paymentWithAppointment.appointment.webinar
+              ? { webinarPlanId: paymentWithAppointment.appointment.webinar.webinarPlanId }
+              : null,
+            class: paymentWithAppointment.appointment.class
+              ? { classPlanId: paymentWithAppointment.appointment.class.classPlanId }
+              : null,
           },
         };
 
@@ -357,6 +368,16 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
     console.error(
       `⚠️ Failed to create earnings for payment ${paymentId}:`,
       earningsError,
+    );
+  }
+
+  // --- Referral qualifying action (first paid booking triggers referrer reward) ---
+  try {
+    await processQualifyingAction(userId, "first_paid_booking");
+  } catch (referralError) {
+    console.error(
+      `⚠️ Failed to process referral qualifying action for user ${userId}:`,
+      referralError,
     );
   }
 

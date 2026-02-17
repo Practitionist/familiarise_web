@@ -1,0 +1,284 @@
+# Cron Jobs and Background Tasks
+
+## Overview
+
+The booking system relies on several cron jobs to maintain data integrity, expire stale records, and automatically transition appointment statuses. These background tasks handle situations that cannot be resolved synchronously during user interactions, such as:
+
+- Completing appointments after sessions end
+- Releasing slots held by abandoned booking flows
+- Expiring unanswered requests
+- Detecting and cleaning up duplicate or invalid records
+- Reconciling slot availability after payment state changes
+
+### Invocation Model
+
+Each job follows a dual-invocation pattern:
+
+1. **GitHub Actions** (primary) -- Workflows in `.github/workflows/` run on a `schedule` trigger and execute the core script directly via `npx tsx`.
+2. **API endpoints** (secondary) -- Thin wrapper routes in `app/api/cleanup/` allow Vercel Cron, external cron services, or manual `curl` invocations.
+
+Both paths call the same core function exported from `scripts/appointments/`. The API route adds HTTP authentication; the GitHub Actions workflow uses repository secrets for database access.
+
+> **Cross-reference**: See `docs/guides/cron-setup.md` for deployment-specific setup instructions (Vercel Cron, external services, environment variables).
+
+---
+
+## Schedule Overview
+
+| Job | Cron Expression | Human-Readable | Source Script | API Route |
+|-----|----------------|----------------|---------------|-----------|
+| Auto-complete appointments | `0 * * * *` | Every hour, on the hour | `scripts/appointments/auto-complete-appointments.ts` | `/api/cleanup/auto-complete-appointments` |
+| Cleanup tentative slots | `0 */2 * * *` | Every 2 hours | `scripts/appointments/cleanup-tentative-slots.ts` | `/api/cleanup/tentative-slots` |
+| Cleanup stale pending consultations | `30 * * * *` | Every hour, at :30 | `scripts/appointments/cleanup-stale-pending-consultations.ts` | `/api/cleanup/stale-pending-consultations` |
+| Cleanup invalid appointments | `0 * * * *` | Every hour, on the hour | `scripts/appointments/cleanup-invalid-appointments.ts` | `/api/cleanup/invalid-appointments` |
+| Expire stale requests | `0 1 * * *` | Daily at 01:00 UTC | `scripts/appointments/expire-stale-requests.ts` | `/api/cleanup/expire-stale-requests` |
+| Reconcile slot availability | `15 * * * *` | Every hour, at :15 | `scripts/appointments/reconcile-slot-availability.ts` | `/api/cleanup/reconcile-slot-availability` |
+
+---
+
+## Per-Job Documentation
+
+### a. Auto-Complete Appointments
+
+| Field | Value |
+|-------|-------|
+| **Schedule** | `0 * * * *` -- every hour, on the hour |
+| **Source** | `scripts/appointments/auto-complete-appointments.ts` |
+| **API** | `app/api/cleanup/auto-complete-appointments/route.ts` |
+| **GitHub Actions** | `.github/workflows/auto-complete-appointments.yml` |
+| **HTTP Methods** | `GET`, `POST` |
+
+**Purpose**: Transitions appointments to `COMPLETED` status after their session time has passed. Enables downstream processes: feedback collection, payout processing, and reporting.
+
+**Threshold**: 1 hour buffer after the last slot's `endsAt` timestamp (`COMPLETION_BUFFER_HOURS = 1`).
+
+**Records affected**:
+
+| Entity | Source Statuses | Target Status | Criteria |
+|--------|----------------|---------------|----------|
+| Webinar | `SCHEDULED`, `IN_PROGRESS` | `COMPLETED` | All slots ended > 1h ago |
+| Class | `SCHEDULED`, `IN_PROGRESS` | `COMPLETED` | All slots across all appointments ended > 1h ago |
+| Consultation | `APPROVED`, `SCHEDULED` | `COMPLETED` | All slots ended > 1h ago |
+| Subscription | `APPROVED`, `SCHEDULED` | `COMPLETED` | All slots across all appointments ended > 1h ago |
+| TrialSession | `SCHEDULED` | `COMPLETED` | All slots ended > 1h ago; also sets `completedAt` and creates an `ActivityLog` entry |
+
+**Safety**: Per-record `try/catch`. A failure on one record does not prevent processing of others. All errors are collected into a result array and returned. The activity log write for trial sessions has its own nested `try/catch` so a logging failure does not block the completion update.
+
+---
+
+### b. Cleanup Tentative Slots
+
+| Field | Value |
+|-------|-------|
+| **Schedule** | `0 */2 * * *` -- every 2 hours |
+| **Source** | `scripts/appointments/cleanup-tentative-slots.ts` |
+| **API** | `app/api/cleanup/tentative-slots/route.ts` |
+| **GitHub Actions** | `.github/workflows/cleanup-tentative-slots.yml` |
+| **HTTP Methods** | `GET`, `POST` |
+
+**Purpose**: Releases slots marked `isTentative = true` that are associated with abandoned booking flows. These tentative slots block consultant availability; if not cleaned up, abandoned checkouts permanently reduce the consultant's bookable calendar.
+
+**Threshold**: 7 days since slot creation (`TENTATIVE_EXPIRATION_DAYS = 7`).
+
+**Criteria**: Slot has `isTentative = true`, `createdAt` older than 7 days, AND the associated appointment has no payment with `paymentStatus = SUCCEEDED`.
+
+**Action**: Deletes the stale `SlotOfAppointment` records using `deleteMany`. This frees the time range for new bookings.
+
+**Safety**: Single top-level `try/catch` around the entire operation. The query and delete use the same filter criteria, preventing TOCTOU race conditions. Logs user and payment information for each affected slot before deletion.
+
+---
+
+### c. Cleanup Stale Pending Consultations
+
+| Field | Value |
+|-------|-------|
+| **Schedule** | `30 * * * *` -- every hour, at :30 |
+| **Source** | `scripts/appointments/cleanup-stale-pending-consultations.ts` |
+| **API** | `app/api/cleanup/stale-pending-consultations/route.ts` |
+| **GitHub Actions** | `.github/workflows/cleanup-stale-pending-consultations.yml` |
+| **HTTP Methods** | `GET`, `POST` |
+
+**Purpose**: Cancels consultations stuck in `APPROVED` or `APPROVED_PENDING_PAYMENT` where the user never completed payment within the threshold period. Differs from the expire-stale-requests job, which targets `PENDING` requests awaiting consultant response.
+
+**Threshold**: 7 days since last `updatedAt` timestamp (`STALE_THRESHOLD_DAYS = 7`).
+
+**Criteria**: Consultation in `APPROVED` or `APPROVED_PENDING_PAYMENT` status, `updatedAt` older than 7 days, AND either no payment records or all payments in a non-`SUCCEEDED` state.
+
+**Action**: Within a Prisma `$transaction`:
+1. Updates consultation to `requestStatus = CANCELLED` with `cancellationNotes` indicating auto-cancellation and `cancelledAt` timestamp.
+2. Deletes tentative `SlotOfAppointment` records tied to the appointment.
+
+**Safety**: Per-record `try/catch` wrapping the transaction. Each consultation is processed independently. The transaction ensures the status update and slot release are atomic -- if either fails, neither is committed.
+
+---
+
+### d. Cleanup Invalid Appointments
+
+| Field | Value |
+|-------|-------|
+| **Schedule** | `0 * * * *` -- every hour, on the hour |
+| **Source** | `scripts/appointments/cleanup-invalid-appointments.ts` |
+| **API** | `app/api/cleanup/invalid-appointments/route.ts` |
+| **GitHub Actions** | `.github/workflows/cleanup-invalid-appointments.yml` |
+| **HTTP Methods** | `POST` only |
+
+**Purpose**: Detects and cancels duplicate or structurally invalid appointments across four categories.
+
+**Detection categories**:
+
+| Category | Detection Logic | Keeps |
+|----------|----------------|-------|
+| Duplicate consultations (same-day) | Same `requestedById` + `consultationPlanId` + same calendar day | Oldest record |
+| Duplicate consultations (double-submit) | Same user + plan, created within 5 seconds | Oldest record |
+| Duplicate subscriptions (overlapping) | Same `requestedById` + `subscriptionPlanId` + overlapping scheduling periods | Oldest record |
+| Duplicate subscriptions (double-submit) | Same user + plan, created within 5 seconds | Oldest record |
+| Invalid duration consultations | Total slot duration does not match `consultationPlan.durationInHours` (1% tolerance) | N/A -- cancels |
+| Invalid duration subscriptions | Scheduling period months does not match `subscriptionPlan.durationInMonths` | N/A -- cancels |
+
+**Action**: Sets `requestStatus = CANCELLED` on affected records. Also deletes associated `SlotOfAppointment` records to free availability. Records already in terminal states (`CANCELLED`, `REJECTED`, `EXPIRED`) are excluded from processing.
+
+**Safety**: Each of the four sub-tasks has its own `try/catch`. The API route uses `crypto.timingSafeEqual` for authorization header comparison, preventing timing-based attacks. The `runAllCleanupTasks` function handles database disconnection in a `finally` block.
+
+---
+
+### e. Expire Stale Requests
+
+| Field | Value |
+|-------|-------|
+| **Schedule** | `0 1 * * *` -- daily at 01:00 UTC |
+| **Source** | `scripts/appointments/expire-stale-requests.ts` |
+| **API** | `app/api/cleanup/expire-stale-requests/route.ts` |
+| **GitHub Actions** | `.github/workflows/expire-stale-requests.yml` |
+| **HTTP Methods** | `GET`, `POST` |
+
+**Purpose**: Expires consultation and subscription requests that have been ignored or abandoned at the request stage. This covers two distinct scenarios:
+
+| Scenario | Source Status | Threshold | Target Status |
+|----------|-------------|-----------|---------------|
+| Consultant never responded | `PENDING` | 30 days since `requestedAt` (`PENDING_EXPIRATION_DAYS = 30`) | `EXPIRED` |
+| Approved but payment never started | `APPROVED_PENDING_PAYMENT` | 7 days since `updatedAt` (`PAYMENT_PENDING_EXPIRATION_DAYS = 7`) | `EXPIRED` |
+
+**Action**:
+- PENDING requests: Bulk `updateMany` to `EXPIRED` for both consultations and subscriptions.
+- APPROVED_PENDING_PAYMENT requests: Bulk `updateMany` to `EXPIRED` and clears `pendingPaymentUrl` to invalidate stale payment links.
+
+**Safety**: Three separate operations (PENDING consultations, PENDING subscriptions, payment-pending requests), each with its own `try/catch`. Uses bulk `updateMany` rather than per-record updates for efficiency.
+
+---
+
+### f. Reconcile Slot Availability
+
+| Field | Value |
+|-------|-------|
+| **Schedule** | `15 * * * *` -- every hour, at :15 |
+| **Source** | `scripts/appointments/reconcile-slot-availability.ts` |
+| **API** | `app/api/cleanup/reconcile-slot-availability/route.ts` |
+| **GitHub Actions** | `.github/workflows/reconcile-slot-availability.yml` |
+| **HTTP Methods** | `GET`, `POST` |
+
+**Purpose**: Fixes slot availability inconsistencies and detects booking conflicts. Performs two operations:
+
+**Operation 1 -- Clear stale tentative flags**: Finds slots where `isTentative = true` but the appointment has a `SUCCEEDED` payment. This happens when a payment webhook succeeds but the tentative flag was not cleared (race condition, system error). Updates `isTentative = false` via bulk `updateMany`.
+
+**Operation 2 -- Detect double bookings**: Scans all confirmed (non-tentative) future slots with successful payments, groups them by consultant, and checks for time overlaps. Double bookings are reported but **not** auto-resolved -- they require manual intervention.
+
+**Action**:
+- Tentative flag mismatches: Automatically corrected.
+- Double bookings: Logged and returned in the response. The API returns HTTP `207` when double bookings are detected (vs `200` for clean results).
+
+**Safety**: Two independent `try/catch` blocks. The double booking detection is read-only and does not modify data. The GitHub Actions workflow is configured to trigger a failure notification specifically for double booking scenarios.
+
+---
+
+## Job Architecture
+
+All booking cron jobs follow the same three-layer pattern:
+
+```
+scripts/appointments/<job>.ts    -- Core logic (exported function, testable)
+     |
+     v
+app/api/cleanup/<job>/route.ts   -- HTTP wrapper (auth + invoke core function)
+     |
+     v
+.github/workflows/<job>.yml     -- Cron trigger (schedule + environment setup)
+```
+
+The core script has no HTTP or framework dependencies. The API route is a thin wrapper that adds authentication and returns JSON. The GitHub Actions workflow handles scheduling, dependency installation, and failure notifications.
+
+```mermaid
+flowchart TD
+    subgraph Triggers
+        GHA["GitHub Actions<br/>(schedule cron)"]
+        VCRON["Vercel Cron<br/>(vercel.json)"]
+        MANUAL["Manual curl<br/>(POST/GET)"]
+    end
+
+    subgraph "API Layer"
+        ROUTE["app/api/cleanup/*/route.ts<br/>- Verify CRON_SECRET<br/>- Return JSON result"]
+    end
+
+    subgraph "Core Logic"
+        SCRIPT["scripts/appointments/*.ts<br/>- Query database<br/>- Apply business rules<br/>- Update records"]
+    end
+
+    subgraph "GitHub Actions Path"
+        JOB["jobs/appointments/*.ts<br/>- Import core function<br/>- Call + disconnect"]
+    end
+
+    GHA --> JOB
+    VCRON --> ROUTE
+    MANUAL --> ROUTE
+    JOB --> SCRIPT
+    ROUTE --> SCRIPT
+    SCRIPT --> DB[(Database)]
+```
+
+---
+
+## Authentication
+
+All API cleanup endpoints require a bearer token matching the `CRON_SECRET` (or `VERCEL_CRON_SECRET`) environment variable.
+
+**Request format**:
+
+```
+GET /api/cleanup/<job-name>
+Authorization: Bearer <CRON_SECRET>
+```
+
+**Auth check pattern** (most endpoints):
+
+```typescript
+const authHeader = req.headers.get("authorization");
+const cronSecret = process.env.CRON_SECRET || process.env.VERCEL_CRON_SECRET;
+
+if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
+  return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+}
+```
+
+The `invalid-appointments` endpoint uses a stronger `crypto.timingSafeEqual` comparison to prevent timing attacks.
+
+**GitHub Actions** workflows do not use the HTTP endpoints. They execute the core script directly, authenticating to the database via `DATABASE_URL` and `DIRECT_URL` repository secrets.
+
+---
+
+## Response Format
+
+All endpoints return a JSON result object with at minimum:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `success` | `boolean` | `true` if no errors occurred |
+| `errors` | `string[]` | List of error messages (empty on success) |
+| `timestamp` | `string` | ISO 8601 timestamp of completion |
+
+Each job adds additional fields specific to its operation (e.g., `webinarsCompleted`, `slotsReleased`, `doubleBookingsDetected`). HTTP status codes:
+
+| Code | Meaning |
+|------|---------|
+| `200` | Job completed successfully |
+| `207` | Partial success (reconcile-slot-availability: double bookings detected) |
+| `401` | Missing or invalid `CRON_SECRET` |
+| `500` | Job failed or returned errors |

@@ -114,6 +114,6 @@ model Dispute {
 
 ## Related Documentation
 
-- [Status Enums Reference](../../STATUS_ENUMS_REFERENCE.md) - RefundStatus, DisputeStatus
-- [Payment System Overview](../../../app/checkout/payments.md) - Main payment documentation
-- [Troubleshooting Guide](../pay-later/TROUBLESHOOTING.md) - General payment troubleshooting
+- [Status Enums Reference](../03-status-enums-reference.md) - RefundStatus, DisputeStatus
+- [Payment Architecture](../01-architecture.md) - Main payment documentation
+- [Approval Payments Troubleshooting](../approval-payments/07-troubleshooting.md) - General payment troubleshooting

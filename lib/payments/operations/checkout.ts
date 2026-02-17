@@ -29,6 +29,16 @@ import {
   countWebinarParticipants,
 } from "@/lib/payments/utils/participants";
 import { markWaitlistAsBooked } from "@/lib/waitlist/slot-handler";
+import {
+  applyCreditsToPayment,
+  getUserCredits,
+  processQualifyingAction,
+} from "@/lib/referrals/service";
+import { TAX_CONSTANTS } from "@/lib/payments/payouts/constants";
+import {
+  createEarningsFromPayment,
+  type AppointmentType,
+} from "@/lib/payments/payouts";
 
 // Re-export for backward compatibility
 export const unifiedCheckoutSchema = checkoutSchema;
@@ -69,7 +79,7 @@ type SubscriptionCheckoutResult = {
 function buildPaymentMetadata(
   data: CheckoutInput,
   userId: string,
-): { appointmentId: string; appointmentType: string; [key: string]: string } {
+): { appointmentId: string; appointmentType: string;[key: string]: string } {
   return {
     appointmentId: "pending",
     appointmentType: data.appointmentType,
@@ -318,6 +328,10 @@ export async function calculateAmountAndValidate(
         throw new Error("Invalid appointment type");
     }
 
+    // Capture original plan price before any discounts/credits
+    // This is used for consultant earnings — discounts are platform-funded, not consultant-funded
+    const originalAmount = amount;
+
     // Apply discount if provided - with full backend re-validation
     let discountCodeId = null;
     if (validatedData.discountCode) {
@@ -378,11 +392,30 @@ export async function calculateAmountAndValidate(
         currency = validatedData.paymentGateway === "RAZORPAY" ? "INR" : "USD";
     }
 
+    // Calculate GST on the discounted price (tax-exclusive: plan.price + 18% GST)
+    const taxAmount = Math.round((amount * TAX_CONSTANTS.GST_RATE) / 100);
+    amount = amount + taxAmount;
+
+    // Apply referral credits AFTER tax (credits act as a payment method, not a trade discount)
+    let creditsApplied = 0;
+    if (validatedData.useReferralCredits && amount > 0) {
+      const { totalAvailable } = await getUserCredits(userId, tx);
+      if (totalAvailable > 0) {
+        // Credits are stored in paise, amount is in rupees — convert to rupees for comparison
+        const creditsInRupees = Math.floor(totalAvailable / 100);
+        creditsApplied = Math.min(creditsInRupees, amount);
+        amount = amount - creditsApplied;
+      }
+    }
+
     return {
       amount,
+      originalAmount,
+      taxAmount,
       currency,
       discountCodeId,
       consulteeProfileId: user.consulteeProfile.id,
+      creditsApplied,
     };
   });
 }
@@ -440,14 +473,14 @@ export async function validateSlotAvailability(
         // FIX: Filter by consultant - only check slots belonging to this consultant
         ...(consultantUserId
           ? [
-              {
-                user: {
-                  some: {
-                    id: consultantUserId,
-                  },
+            {
+              user: {
+                some: {
+                  id: consultantUserId,
                 },
               },
-            ]
+            },
+          ]
           : []),
       ],
     },
@@ -482,14 +515,14 @@ export async function validateSlotAvailability(
           // FIX: Filter by consultant - only check tentative slots for this consultant
           ...(consultantUserId
             ? [
-                {
-                  user: {
-                    some: {
-                      id: consultantUserId,
-                    },
+              {
+                user: {
+                  some: {
+                    id: consultantUserId,
                   },
                 },
-              ]
+              },
+            ]
             : []),
           {
             appointment: {
@@ -553,14 +586,14 @@ export async function validateSlotAvailability(
         // FIX: Filter by consultant - only count tentative slots for this consultant
         ...(consultantUserId
           ? [
-              {
-                user: {
-                  some: {
-                    id: consultantUserId,
-                  },
+            {
+              user: {
+                some: {
+                  id: consultantUserId,
                 },
               },
-            ]
+            },
+          ]
           : []),
         {
           appointment: {
@@ -1397,7 +1430,7 @@ export async function handleCheckout(
 
   try {
     // STEP 1: Calculate amount and fetch plan data (OUTSIDE LOCK - just pricing)
-    const { amount, currency, discountCodeId, consulteeProfileId } =
+    const { amount, originalAmount, taxAmount, currency, discountCodeId, consulteeProfileId, creditsApplied } =
       await calculateAmountAndValidate(validatedData, userId);
 
     // Get plan data for consultant ID (needed for lock acquisition)
@@ -1511,6 +1544,8 @@ export async function handleCheckout(
           const payment = await tx.payment.create({
             data: {
               amount,
+              originalAmount,
+              taxAmount,
               currency,
               paymentMethod: "CARD",
               paymentIntent: paymentResponse!.id,
@@ -1541,7 +1576,41 @@ export async function handleCheckout(
             });
           }
 
-          return { appointmentId: createdAppointment?.id };
+          // FIX A3: Re-read credits inside the main transaction to prevent stale reads.
+          // creditsApplied was calculated in TX1 (calculateAmountAndValidate), but between
+          // TX1 and TX2, concurrent checkouts may have consumed the credits.
+          let actualCreditsApplied = 0;
+          if (creditsApplied > 0) {
+            const { totalAvailable } = await getUserCredits(userId, tx);
+            // creditsApplied is in rupees (from TX1), convert to paise for comparison
+            // with totalAvailable (paise) and for applyCreditsToPayment (works in paise)
+            const creditsAppliedInPaise = creditsApplied * 100;
+            const actualCreditsInPaise = Math.min(totalAvailable, creditsAppliedInPaise);
+
+            if (actualCreditsInPaise > 0) {
+              await applyCreditsToPayment(userId, actualCreditsInPaise, tx, payment.id);
+              console.log(
+                `🎁 Applied ${actualCreditsInPaise} paise (₹${creditsApplied}) referral credits for user ${userId}` +
+                (actualCreditsInPaise !== creditsAppliedInPaise
+                  ? ` (requested ${creditsAppliedInPaise} paise, available ${totalAvailable} paise)`
+                  : ""),
+              );
+            }
+
+            // FIX #2: If fewer credits were available than expected (due to concurrent
+            // checkout consuming them between TX1 and TX2), abort the transaction.
+            // The payment intent was created with a reduced amount based on TX1's
+            // credit calculation, so proceeding would undercharge the user.
+            if (actualCreditsInPaise < creditsAppliedInPaise) {
+              throw new Error(
+                `CREDIT_SHORTFALL: expected ${creditsAppliedInPaise} paise credits but only ${actualCreditsInPaise} available. ` +
+                `Payment ${payment.id} amount is stale. Aborting for retry.`,
+              );
+            }
+            actualCreditsApplied = creditsApplied; // In rupees for return value
+          }
+
+          return { appointmentId: createdAppointment?.id, creditsApplied: actualCreditsApplied };
         },
         {
           timeout: 25000,
@@ -1568,20 +1637,135 @@ export async function handleCheckout(
         }),
       );
 
-      // Update waitlist status if coming from waitlist flow
-      if (isMockPayment && validatedData.fromWaitlist) {
+      // Mock payment post-processing: referral qualifying action + waitlist
+      // Real payments handle this via handlePaymentSuccess() in the webhook,
+      // but mock payments bypass webhooks entirely.
+      if (isMockPayment) {
+        // Trigger referral reward if this is the user's first paid booking
         try {
-          await markWaitlistAsBooked(validatedData.fromWaitlist);
-          console.log(
-            JSON.stringify({
-              event: "waitlist_booking_completed",
-              waitlistId: validatedData.fromWaitlist,
-              timestamp: new Date().toISOString(),
-            }),
+          await processQualifyingAction(userId, "first_paid_booking");
+        } catch (referralError) {
+          console.error(
+            `⚠️ Failed to process referral qualifying action for user ${userId}:`,
+            referralError,
           );
-        } catch (waitlistError) {
-          // Log but don't fail the checkout - payment was successful
-          console.error("Failed to update waitlist status:", waitlistError);
+        }
+
+        // Create consultant earnings (mock payments bypass webhooks, so earnings must be created here)
+        try {
+          const paymentWithAppointment = await prisma.payment.findUnique({
+            where: { paymentIntent: paymentResponse!.id },
+            include: {
+              appointment: {
+                include: {
+                  consultation: {
+                    include: {
+                      consultationPlan: {
+                        include: { consultantProfile: true },
+                      },
+                    },
+                  },
+                  subscription: {
+                    include: {
+                      subscriptionPlan: {
+                        include: { consultantProfile: true },
+                      },
+                    },
+                  },
+                  webinar: {
+                    select: {
+                      id: true,
+                      webinarPlanId: true,
+                      webinarPlan: {
+                        include: { consultantProfile: true },
+                      },
+                    },
+                  },
+                  class: {
+                    select: {
+                      id: true,
+                      classPlanId: true,
+                      classPlan: {
+                        include: { consultantProfile: true },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          });
+
+          if (paymentWithAppointment?.appointment) {
+            const consultantProfile =
+              paymentWithAppointment.appointment.consultation?.consultationPlan
+                ?.consultantProfile ||
+              paymentWithAppointment.appointment.subscription?.subscriptionPlan
+                ?.consultantProfile ||
+              paymentWithAppointment.appointment.webinar?.webinarPlan
+                ?.consultantProfile ||
+              paymentWithAppointment.appointment.class?.classPlan
+                ?.consultantProfile;
+
+            if (consultantProfile) {
+              const appointmentTypeMap: Record<string, AppointmentType> = {
+                CONSULTATION: "CONSULTATION",
+                SUBSCRIPTION: "SUBSCRIPTION",
+                WEBINAR: "WEBINAR",
+                CLASS: "CLASS",
+              };
+
+              const earningsAppointmentType =
+                appointmentTypeMap[validatedData.appointmentType] || "CONSULTATION";
+
+              const paymentForEarnings = {
+                ...paymentWithAppointment,
+                appointment: {
+                  ...paymentWithAppointment.appointment,
+                  consultantProfile: { id: consultantProfile.id },
+                  webinar: paymentWithAppointment.appointment.webinar
+                    ? { webinarPlanId: paymentWithAppointment.appointment.webinar.webinarPlanId }
+                    : null,
+                  class: paymentWithAppointment.appointment.class
+                    ? { classPlanId: paymentWithAppointment.appointment.class.classPlanId }
+                    : null,
+                },
+              };
+
+              await createEarningsFromPayment({
+                payment: paymentForEarnings as Parameters<
+                  typeof createEarningsFromPayment
+                >[0]["payment"],
+                appointmentType: earningsAppointmentType,
+              });
+
+              console.log(
+                `💰 Mock payment earnings created for consultant ${consultantProfile.id}`,
+              );
+            }
+          }
+        } catch (earningsError) {
+          // Log but don't fail — sync-payment-earnings job will pick up the gap
+          console.error(
+            `⚠️ Failed to create earnings for mock payment:`,
+            earningsError,
+          );
+        }
+
+        // Update waitlist status if coming from waitlist flow
+        if (validatedData.fromWaitlist) {
+          try {
+            await markWaitlistAsBooked(validatedData.fromWaitlist);
+            console.log(
+              JSON.stringify({
+                event: "waitlist_booking_completed",
+                waitlistId: validatedData.fromWaitlist,
+                timestamp: new Date().toISOString(),
+              }),
+            );
+          } catch (waitlistError) {
+            // Log but don't fail the checkout - payment was successful
+            console.error("Failed to update waitlist status:", waitlistError);
+          }
         }
       }
 

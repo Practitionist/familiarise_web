@@ -99,6 +99,7 @@ export async function createPayments(users: UserWithProfiles[]) {
       const paymentData: Prisma.PaymentCreateInput = {
         user: { connect: { id: user.id } },
         amount: finalAmount,
+        originalAmount: amount,
         currency: faker.helpers.arrayElement(["USD", "EUR", "GBP"]),
         description,
         receiptUrl: faker.internet.url(),

@@ -78,11 +78,7 @@ export function BookingHistoryTab({
             <Table>
               <TableHeader>
                 <TableRow className="bg-gray-50">
-                  <TableHead className="font-semibold">Booking Date</TableHead>
-                  <TableHead className="font-semibold">Payment Date</TableHead>
-                  <TableHead className="font-semibold">
-                    Payment Amount
-                  </TableHead>
+                  <TableHead className="font-semibold">Date</TableHead>
                   <TableHead className="font-semibold">Session</TableHead>
                   <TableHead className="font-semibold">Expert</TableHead>
                   <TableHead className="font-semibold">Status</TableHead>
@@ -97,34 +93,6 @@ export function BookingHistoryTab({
                   >
                     <TableCell className="font-medium">
                       {formatDate(getBookingDate(event))}
-                    </TableCell>
-                    <TableCell className="font-medium">
-                      {formatDate(getPaymentDate(event))}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium">
-                          {formatAmount(
-                            getPaymentAmount(event),
-                            getPaymentCurrency(event),
-                          )}
-                        </span>
-                        {getPaymentStatus(event) && (
-                          <Badge
-                            className={`text-xs font-medium ${
-                              getPaymentStatus(event)?.toLowerCase() ===
-                              "succeeded"
-                                ? "bg-teal-50 text-teal-600"
-                                : getPaymentStatus(event)?.toLowerCase() ===
-                                    "failed"
-                                  ? "bg-red-50 text-red-600"
-                                  : "bg-orange-50 text-orange-600"
-                            }`}
-                          >
-                            {getPaymentStatus(event)}
-                          </Badge>
-                        )}
-                      </div>
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-2">
@@ -167,7 +135,7 @@ export function BookingHistoryTab({
                 {allEvents.length === 0 && (
                   <TableRow>
                     <TableCell
-                      colSpan={6}
+                      colSpan={5}
                       className="text-center py-8 text-gray-500"
                     >
                       No bookings found
@@ -242,82 +210,6 @@ function getBookingDate(event: EventWithType): string | null {
     case "Class":
       return event.appointments?.[0]?.createdAt
         ? new Date(event.appointments[0].createdAt).toISOString()
-        : null;
-  }
-}
-
-function formatAmount(amount: number | null, currency: string = "INR"): string {
-  if (amount === null) return "Not available";
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: currency,
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(amount / 100); // Convert from smallest currency unit
-}
-
-function getPaymentStatus(event: EventWithType): string | null {
-  switch (event.type) {
-    case "Consultation":
-    case "Webinar":
-      return event.appointment?.payment?.[0]?.paymentStatus ?? null;
-    case "Subscription":
-    case "Class":
-      return event.appointments?.[0]?.payment?.[0]?.paymentStatus ?? null;
-  }
-}
-
-function getPaymentAmount(event: EventWithType): number | null {
-  switch (event.type) {
-    case "Consultation":
-    case "Webinar":
-      return event.appointment?.payment?.[0]?.amount ?? null;
-    case "Subscription":
-    case "Class":
-      return event.appointments?.[0]?.payment?.[0]?.amount ?? null;
-  }
-}
-
-function getPaymentCurrency(event: EventWithType): string {
-  switch (event.type) {
-    case "Consultation":
-      return (
-        event.appointment?.payment?.[0]?.currency ??
-        event.consultationPlan?.priceCurrency ??
-        "INR"
-      );
-    case "Subscription":
-      return (
-        event.appointments?.[0]?.payment?.[0]?.currency ??
-        event.subscriptionPlan?.priceCurrency ??
-        "INR"
-      );
-    case "Webinar":
-      return (
-        event.appointment?.payment?.[0]?.currency ??
-        event.webinarPlan?.priceCurrency ??
-        "INR"
-      );
-    case "Class":
-      return (
-        event.appointments?.[0]?.payment?.[0]?.currency ??
-        event.classPlan?.priceCurrency ??
-        "INR"
-      );
-  }
-}
-
-function getPaymentDate(event: EventWithType): string | null {
-  switch (event.type) {
-    case "Consultation":
-    case "Webinar":
-      return event.appointment?.payment?.[0]?.createdAt
-        ? new Date(event.appointment.payment[0].createdAt).toISOString()
-        : null;
-    case "Subscription":
-    case "Class":
-      return event.appointments?.[0]?.payment?.[0]?.createdAt
-        ? new Date(event.appointments[0].payment[0].createdAt).toISOString()
         : null;
   }
 }

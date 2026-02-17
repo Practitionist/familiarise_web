@@ -87,6 +87,7 @@ export const checkoutSchema = z
     paymentGateway: paymentGatewaySchema,
     notes: z.string().optional(),
     fromWaitlist: z.string().optional(), // Waitlist ID if coming from waitlist flow
+    useReferralCredits: z.boolean().optional(), // Apply available referral credits
   })
   .superRefine((data, ctx) => {
     // === CONSULTATION validation ===
@@ -301,6 +302,7 @@ export const createCheckoutData = (params: {
   discountCode?: string;
   notes?: string;
   fromWaitlist?: string;
+  useReferralCredits?: boolean;
 }): CheckoutInput => {
   return {
     appointmentType: params.appointmentType,
@@ -316,5 +318,6 @@ export const createCheckoutData = (params: {
     discountCode: params.discountCode,
     notes: params.notes,
     fromWaitlist: params.fromWaitlist,
+    useReferralCredits: params.useReferralCredits,
   };
 };

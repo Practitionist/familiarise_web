@@ -52,6 +52,13 @@ import {
 } from "@/components/ui/waitlist-status-badge";
 import { STATUS_CONFIG } from "../../utils/statusConfig";
 
+// Collaborator info for co-hosts display
+interface CollaboratorInfo {
+  name: string;
+  image?: string | null;
+  role: string;
+}
+
 interface EventCardProps {
   title: string;
   consultant: string;
@@ -72,6 +79,8 @@ interface EventCardProps {
   // Booking status for webinars/classes
   bookingStatus?: BookingStatus;
   waitlistPosition?: number;
+  // Collaborators (co-hosts) for webinars/classes
+  collaborators?: CollaboratorInfo[];
 }
 
 function formatSlotDate(date: Date | string): string {
@@ -105,6 +114,7 @@ export function EventCard({
   pendingPaymentUrl,
   bookingStatus,
   waitlistPosition,
+  collaborators = [],
 }: Readonly<EventCardProps>) {
   const { toast } = useToast();
   const router = useRouter();
@@ -465,16 +475,40 @@ export function EventCard({
       <div className="bg-white rounded-xl border border-zinc-200 p-4 hover:border-zinc-300 hover:shadow-md transition-all duration-200 h-full flex flex-col">
         {/* Header */}
         <div className="flex items-start gap-3 mb-4">
-          <Avatar className="h-11 w-11 ring-2 ring-zinc-100">
-            <AvatarImage alt={consultant} src={image || undefined} />
-            <AvatarFallback className="bg-gradient-to-br from-zinc-100 to-zinc-200 text-zinc-600 text-sm font-semibold">
-              {consultant
-                ?.split(" ")
-                .slice(0, 2)
-                .map((name) => name[0])
-                .join("")}
-            </AvatarFallback>
-          </Avatar>
+          {/* Avatar group: host + co-hosts */}
+          <div className="flex items-center -space-x-2 shrink-0">
+            <Avatar className="h-11 w-11 ring-2 ring-white z-10">
+              <AvatarImage alt={consultant} src={image || undefined} />
+              <AvatarFallback className="bg-gradient-to-br from-zinc-100 to-zinc-200 text-zinc-600 text-sm font-semibold">
+                {consultant
+                  ?.split(" ")
+                  .slice(0, 2)
+                  .map((name) => name[0])
+                  .join("")}
+              </AvatarFallback>
+            </Avatar>
+            {collaborators.slice(0, 2).map((collab, idx) => (
+              <Avatar
+                key={idx}
+                className={cn("h-8 w-8 ring-2 ring-white", idx === 0 ? "z-[5]" : "z-0")}
+                title={`${collab.name} (${collab.role})`}
+              >
+                <AvatarImage alt={collab.name} src={collab.image || undefined} />
+                <AvatarFallback className="bg-purple-100 text-purple-700 text-[10px] font-semibold">
+                  {collab.name
+                    .split(" ")
+                    .slice(0, 2)
+                    .map((n) => n[0])
+                    .join("")}
+                </AvatarFallback>
+              </Avatar>
+            ))}
+            {collaborators.length > 2 && (
+              <div className="h-8 w-8 rounded-full bg-zinc-100 ring-2 ring-white flex items-center justify-center text-[10px] font-semibold text-zinc-600 z-0">
+                +{collaborators.length - 2}
+              </div>
+            )}
+          </div>
           <div className="flex-1 min-w-0">
             <h3
               className="font-semibold text-zinc-900 text-sm leading-tight line-clamp-2 mb-1"
@@ -482,12 +516,24 @@ export function EventCard({
             >
               {title}
             </h3>
-            <p
-              className="text-xs text-zinc-500 line-clamp-1"
-              title={consultant}
-            >
-              {consultant}
-            </p>
+            {collaborators.length > 0 ? (
+              <p
+                className="text-xs text-zinc-500 line-clamp-1"
+                title={[consultant, ...collaborators.map((c) => c.name)].join(", ")}
+              >
+                {consultant}
+                {collaborators.length === 1
+                  ? ` & ${collaborators[0].name}`
+                  : ` + ${collaborators.length} others`}
+              </p>
+            ) : (
+              <p
+                className="text-xs text-zinc-500 line-clamp-1"
+                title={consultant}
+              >
+                {consultant}
+              </p>
+            )}
           </div>
         </div>
 

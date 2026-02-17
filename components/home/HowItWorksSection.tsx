@@ -47,7 +47,7 @@ function HowItWorksStep({
 
 export function HowItWorksSection() {
   return (
-    <section className="py-20 md:py-32 bg-gradient-to-b from-zinc-50 to-white relative overflow-hidden">
+    <section id="how-it-works" className="py-20 md:py-32 bg-gradient-to-b from-zinc-50 to-white relative overflow-hidden scroll-mt-20">
       <div className="absolute inset-0 diagonal-stripes" />
 
       {/* Decorative circles */}

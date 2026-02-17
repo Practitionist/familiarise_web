@@ -30,6 +30,8 @@ interface DashboardShellProps {
   sidebar: ReactNode;
   className?: string;
   headerActions?: ReactNode;
+  navbar?: ReactNode;
+  mobileHeaderActions?: ReactNode;
 }
 
 export function DashboardShell({
@@ -37,6 +39,8 @@ export function DashboardShell({
   sidebar,
   className,
   headerActions,
+  navbar,
+  mobileHeaderActions,
 }: DashboardShellProps) {
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
 
@@ -110,25 +114,29 @@ export function DashboardShell({
             <span className="font-semibold text-zinc-900 flex-1">
               Familiarise
             </span>
-            {headerActions && (
+            {(mobileHeaderActions || headerActions) && (
               <div
                 className="flex items-center gap-2 shrink-0"
                 style={{ overflow: "visible" }}
               >
-                {headerActions}
+                {mobileHeaderActions || headerActions}
               </div>
             )}
           </div>
 
-          {/* Desktop header actions (notification bell etc.) */}
-          {headerActions && (
+          {/* Desktop header - full navbar or simple header actions */}
+          {navbar ? (
+            <div className="hidden lg:block relative" style={{ zIndex: 9999, overflow: "visible" }}>
+              {navbar}
+            </div>
+          ) : headerActions ? (
             <div
               className="hidden lg:flex items-center justify-end gap-2 px-6 py-2 border-b border-zinc-200/50 bg-white/80 backdrop-blur-xl relative"
               style={{ zIndex: 9999, overflow: "visible" }}
             >
               {headerActions}
             </div>
-          )}
+          ) : null}
 
           <AnimatePresence mode="wait">
             <motion.div

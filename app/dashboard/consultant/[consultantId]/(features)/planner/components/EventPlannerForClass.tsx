@@ -14,6 +14,7 @@ import {
   Plus,
   Upload,
   CalendarIcon,
+  Users,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -57,6 +58,7 @@ import { TopicsMultiSelect } from "./TopicsMultiSelect";
 import { PlannerService } from "../services/planner";
 import { ClassEvent, ClassPlannerProps } from "../types/event";
 import { PlanMaterialsUpload } from "./PlanMaterialsUpload";
+import { CollaboratorsTab } from "@/components/collaborators/CollaboratorsTab";
 
 export function EventPlannerForClass({
   isOpen,
@@ -947,6 +949,26 @@ export function EventPlannerForClass({
                   </Button>
                 </FormSection>
               )}
+
+              {/* Collaborators Section */}
+              <FormSection
+                title="Collaborators"
+                description="Invite other consultants to co-teach this class"
+                icon={Users}
+              >
+                {initialData?.classPlan?.id ? (
+                  <CollaboratorsTab
+                    planType="class"
+                    planId={initialData.classPlan.id}
+                    isOwner={true}
+                    excludeId={consultantId}
+                  />
+                ) : (
+                  <p className="text-sm text-zinc-500 text-center py-4">
+                    Save this class first to add collaborators
+                  </p>
+                )}
+              </FormSection>
 
               <DialogFooter className="pt-6 border-t">
                 <Button
