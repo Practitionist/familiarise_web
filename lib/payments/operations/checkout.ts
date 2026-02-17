@@ -974,6 +974,7 @@ export async function handleConsultationCheckout(
   tx: Prisma.TransactionClient,
   data: CheckoutInput,
   consulteeProfileId: string,
+  userId: string,
   skipPayment: boolean,
 ) {
   const plan = await tx.consultationPlan.findUnique({
@@ -1021,6 +1022,7 @@ export async function handleConsultationCheckout(
           startsAt: new Date(data.slotStartTimeInUTC!),
           endsAt: new Date(data.slotEndTimeInUTC!),
           isTentative: !skipPayment,
+          user: { connect: { id: userId } },
         },
       },
     },
@@ -1490,6 +1492,7 @@ export async function handleCheckout(
                 tx,
                 validatedData,
                 consulteeProfileId,
+                userId,
                 isMockPayment, // skipPayment = isMockPayment
               );
               createdAppointment = consultationResult.appointment;
