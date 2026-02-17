@@ -43,11 +43,11 @@ export default function ContractorAgreementPage() {
               </h2>
               <p className="text-lg leading-relaxed">
                 This Independent Contractor Agreement (&quot;Agreement&quot;) governs
-                the relationship between {COMPANY_INFO.name} (&quot;Platform&quot;,
+                the relationship between {COMPANY_INFO.name} (&quot;Company&quot;,
                 &quot;we&quot;, &quot;us&quot;) and independent service providers
                 (&quot;Consultants&quot;, &quot;you&quot;) who offer educational
                 services, consultations, classes, webinars, or other professional
-                services through the Familiarise platform.
+                services through the Familiarise platform (the &quot;Platform&quot;).
               </p>
               <p className="text-lg leading-relaxed">
                 Familiarise is operated by {COMPANY_INFO.name}. By registering as

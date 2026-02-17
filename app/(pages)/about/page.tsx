@@ -141,13 +141,6 @@ export default function AboutPage() {
               <Separator />
               <div>
                 <p className="text-sm font-semibold text-muted-foreground">
-                  Registered Address
-                </p>
-                <p>{COMPANY_INFO.address}</p>
-              </div>
-              <Separator />
-              <div>
-                <p className="text-sm font-semibold text-muted-foreground">
                   Contact Email
                 </p>
                 <p className="text-blue-600">

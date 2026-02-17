@@ -3,7 +3,7 @@ export const COMPANY_INFO = {
   name: "Practitionist",
   email: "[EMAIL]",
   supportEmail: "[SUPPORT_EMAIL]",
-  jurisdiction: "India",
+  jurisdiction: "Bangalore, Karnataka, India",
 } as const;
 
 // Policy Dates - Update when policies are revised
@@ -75,7 +75,7 @@ export const PAGE_META = {
   contractors: {
     title: "Contractor Agreement",
     description:
-      "Terms governing the relationship between Familiarise and independent consultants",
+      "Terms governing the relationship between Practitionist and independent consultants",
   },
 } as const;
 

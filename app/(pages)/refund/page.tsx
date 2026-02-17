@@ -137,9 +137,13 @@ export default function RefundPolicyPage() {
               <ul className="text-lg space-y-2">
                 <li>
                   <strong>Platform Service Fee:</strong> The platform service
-                  fee charged by Familiarise is non-refundable. This fee covers
-                  the cost of maintaining the platform, facilitating bookings,
-                  and providing customer support.
+                  fee charged by Familiarise is generally non-refundable. This
+                  fee covers the cost of maintaining the platform, facilitating
+                  bookings, and providing customer support. However, in cases
+                  where the service is not delivered due to a cancellation
+                  initiated by the Consultant or a technical fault on our
+                  platform, the full amount including the platform service fee
+                  will be refunded.
                 </li>
                 <li>
                   <strong>Payment Gateway Fees:</strong> Transaction processing
