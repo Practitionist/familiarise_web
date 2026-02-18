@@ -223,12 +223,14 @@ export async function POST(
           slotIds.length > 0 &&
           appointment.subscription
         ) {
-          // Individual/multiple session reschedule - only mark the specific slots
-          // Use validated slot IDs from slotsToReschedule (already verified to exist)
-          const validatedSlotIds = slotsToReschedule.map((s) => s.id);
+          // Individual/multiple session reschedule - mark ALL slots of the affected appointments
+          // (e.g. a 1.5h session has 3 consecutive slots; all must be marked tentative together)
+          const affectedAppointmentIds = [
+            ...new Set(slotsToReschedule.map((s) => s.appointmentId)),
+          ];
           await tx.slotOfAppointment.updateMany({
             where: {
-              id: { in: validatedSlotIds },
+              appointmentId: { in: affectedAppointmentIds },
             },
             data: { isTentative: true },
           });
