@@ -774,22 +774,6 @@ export function UnifiedCalendar({
         return timeMatch || stringMatch;
       });
 
-      // Enhanced debug logging
-      if (eventSlots.length > 0 && !isCurrentEventSlot && slot.isBooked) {
-        console.log("[UnifiedCalendar] Slot not matching eventSlots:", {
-          slotTime: slot.startTime.toISOString(),
-          slotTimeMs: slot.startTime.getTime(),
-          eventSlotsCount: eventSlots.length,
-          eventSlotTimes: eventSlots.map((s) => ({
-            time: s.startTime.toISOString(),
-            ms: s.startTime.getTime(),
-            diff: Math.abs(slot.startTime.getTime() - s.startTime.getTime()),
-          })),
-          eventType,
-          eventId,
-        });
-      }
-
       // Check if slot is outside allowed period for subscriptions/classes
       const intervalStart = new Date(status.intervalStartUTCString);
       const intervalEnd = new Date(status.intervalEndUTCString);

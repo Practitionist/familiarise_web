@@ -69,6 +69,9 @@ export function EventTimingsCalendar({
           sessionDurationInHours:
             appointment.subscription?.subscriptionPlan
               ?.sessionDurationInHours || 1,
+          totalSessions:
+            appointment.subscription?.subscriptionPlan?.totalSessions ??
+            undefined,
           title:
             appointment.subscription?.subscriptionPlan?.title || "Subscription",
         };

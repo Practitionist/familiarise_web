@@ -211,20 +211,18 @@ export function useCalendarData(
     if (!consultantId) return;
 
     try {
-      // // Use subscription start date for allocation // Use UI date for viewing
+      // Always start from the view's natural start so pre-period weeks have
+      // availability data (allows "Outside Period" label on consultant's actual
+      // available slots rather than blank disabled cells — UX consistency fix).
       const startDate =
-        mode === "allocate" && allowedStart
-          ? allowedStart
-          : view === "week"
-            ? startOfWeek(currentDate)
-            : startOfMonth(currentDate);
-      // Use subscription end date for allocation // Use UI date for viewing
+        view === "week" ? startOfWeek(currentDate) : startOfMonth(currentDate);
+      // End at allowedEnd in allocate mode to avoid fetching past the period.
       const endDate =
         mode === "allocate" && allowedEnd
           ? allowedEnd
           : view === "week"
             ? endOfWeek(currentDate)
-            : endOfMonth(currentDate); // --- END OF FIX --- ```
+            : endOfMonth(currentDate);
 
       const data = await AllocationService.fetchAvailabilitySlots(
         consultantId,
@@ -286,20 +284,17 @@ export function useCalendarData(
     if (!consultantId) return;
 
     try {
-      // // Use subscription start date for allocation // Use UI date for viewing
+      // Always start from the view's natural start so pre-period weeks have
+      // appointment data for conflict detection (mirrors availability fix).
       const startDate =
-        mode === "allocate" && allowedStart
-          ? allowedStart
-          : view === "week"
-            ? startOfWeek(currentDate)
-            : startOfMonth(currentDate);
-      // Use subscription end date for allocation // Use UI date for viewing
+        view === "week" ? startOfWeek(currentDate) : startOfMonth(currentDate);
+      // End at allowedEnd in allocate mode.
       const endDate =
         mode === "allocate" && allowedEnd
           ? allowedEnd
           : view === "week"
             ? endOfWeek(currentDate)
-            : endOfMonth(currentDate); // --- END OF FIX --- ```
+            : endOfMonth(currentDate);
 
       const data = await AllocationService.fetchAppointments(
         consultantId,
@@ -399,13 +394,6 @@ export function useCalendarData(
     try {
       const data = await AllocationService.fetchEventSlots(eventType, eventId);
 
-      console.log("[useCalendarData] fetchEventSlots response:", {
-        eventType,
-        eventId,
-        dataLength: data?.length,
-        firstAppointment: data?.[0],
-      });
-
       if (data && Array.isArray(data) && data.length > 0) {
         // Filter out cancelled/rejected appointments from event slots
         const activeData = data.filter((appt: any) => {
@@ -464,20 +452,8 @@ export function useCalendarData(
               },
             ),
         );
-        console.log("[useCalendarData] Setting eventSlots:", {
-          slotsCount: slots.length,
-          firstSlot: slots[0]
-            ? {
-                startTime: slots[0].startTime.toISOString(),
-                endTime: slots[0].endTime.toISOString(),
-              }
-            : null,
-        });
         setEventSlots(slots);
       } else {
-        console.log(
-          "[useCalendarData] No event slots found, setting empty array",
-        );
         setEventSlots([]);
       }
     } catch (error) {
@@ -594,23 +570,6 @@ export function useCalendarData(
             })) || [],
       );
 
-      // DEBUG: Log when booked slots have no overlapping appointments (tooltip won't show)
-      if (
-        overlappingSlots.length > 0 &&
-        overlappingSlots[0].bookingStatus === "fully-booked" &&
-        overlappingAppointments.length === 0
-      ) {
-        console.warn(
-          "[getSlotStatusForInterval] Booked slot with no overlapping appointments - tooltip won't show:",
-          {
-            interval: `${interval.hour}:${interval.minute}`,
-            date: date.toDateString(),
-            existingAppointmentsCount: existingAppointments.length,
-            firstAppointmentSlots:
-              existingAppointments[0]?.slotsOfAppointment?.length,
-          },
-        );
-      }
 
       // STEP 5: Determine booking status using SERVER-CALCULATED data
       // FIXED: Use server bookingStatus instead of manual calculation
