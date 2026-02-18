@@ -679,9 +679,24 @@ export class SlotValidationService {
       this.prismaClient as any,
     );
 
+    // Exclude tentative appointments from weekly call count.
+    // During re-allocation after a reschedule, the old tentative slots still
+    // exist in the DB and would otherwise be counted as "existing calls",
+    // causing a false weekly-limit violation when the consultant proposes
+    // the same number of new slots (1 per week).
+    const tentativeAppointments = await this.prismaClient.appointment.findMany({
+      where: {
+        subscriptionId,
+        slotsOfAppointment: { some: { isTentative: true } },
+      },
+      select: { id: true },
+    });
+    const excludeIds = tentativeAppointments.map((a) => a.id);
+
     const result = await validationService.validateSubscriptionSlots(
       subscriptionId,
       slots.map((s) => s.toISOString()),
+      excludeIds,
     );
 
     return {
