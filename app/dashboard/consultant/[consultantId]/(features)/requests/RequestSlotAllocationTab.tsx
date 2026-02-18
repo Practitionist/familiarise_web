@@ -74,6 +74,7 @@ interface Request {
   startDate?: Date;
   endDate?: Date;
   bookingSource?: "DIRECT_CHECKOUT" | "REQUEST_SUBMITTED"; // Booking source - direct checkout or request submitted
+  totalSessions?: number; // Authoritative session count from plan (overrides weeks × callsPerWeek)
   // Reschedule info
   tentativeSlotCount?: number;
   totalSlotCount?: number;
@@ -249,8 +250,14 @@ export function RequestSlotAllocationTab({
                 isTentative: slot.isTentative ?? false,
               })),
               status: subscription.requestStatus,
-              // FIXED: Use accurate week counting instead of hardcoded * 4
+              // Use totalSessions from plan (authoritative) to avoid calendar-week edge cases
               requiredSlots: (() => {
+                const totalSessions =
+                  subscription.subscriptionPlan?.totalSessions;
+                if (totalSessions && totalSessions > 0) {
+                  return totalSessions * slotsPerSession;
+                }
+                // Fallback: week-based calculation
                 const startDate = subscription.schedulingPeriodStartsAt
                   ? new Date(subscription.schedulingPeriodStartsAt)
                   : undefined;
@@ -259,12 +266,10 @@ export function RequestSlotAllocationTab({
                   : undefined;
                 const callsPerWeek =
                   subscription.subscriptionPlan?.callsPerWeek ?? 0;
-
                 if (startDate && endDate) {
                   const weeks = countSundayWeeksInclusive(startDate, endDate);
                   return weeks * callsPerWeek * slotsPerSession;
                 }
-                // Fallback to month-based calculation if dates not set
                 return (
                   callsPerWeek *
                     4 *
@@ -272,6 +277,7 @@ export function RequestSlotAllocationTab({
                     slotsPerSession || 0
                 );
               })(),
+              totalSessions: subscription.subscriptionPlan?.totalSessions,
               durationInMonths: subscription.subscriptionPlan?.durationInMonths,
               callsPerWeek: subscription.subscriptionPlan?.callsPerWeek,
               sessionDurationInHours: sessionDuration,
@@ -708,6 +714,11 @@ export function RequestSlotAllocationTab({
                 }
                 allowedStart={selectedRequest.startDate}
                 allowedEnd={selectedRequest.endDate}
+                totalSessions={
+                  selectedRequest.type === "SUBSCRIPTION"
+                    ? selectedRequest.totalSessions
+                    : undefined
+                }
               />
             )}
           </DialogContent>

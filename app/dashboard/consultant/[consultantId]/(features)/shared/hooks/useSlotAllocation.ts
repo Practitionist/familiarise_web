@@ -1234,6 +1234,14 @@ export function useEventSlotAllocation(
 
   // Required slots calculation
   const requiredSlots = useMemo(() => {
+    // For subscriptions, maxTotalCalls is set to the plan's totalSessions (authoritative).
+    // Derive requiredSlots from it to stay consistent with backend validation.
+    if (eventType === "subscription" && options.maxTotalCalls) {
+      const slotsPerSession = Math.ceil(
+        (options.sessionDurationInHours || 1) / 0.5,
+      );
+      return options.maxTotalCalls * slotsPerSession;
+    }
     // Use the appropriate duration field based on event type
     const duration =
       eventType === "consultation" || eventType === "webinar"
@@ -1250,6 +1258,7 @@ export function useEventSlotAllocation(
     );
   }, [
     eventType,
+    options.maxTotalCalls,
     options.durationInMonths,
     options.callsPerWeek,
     options.durationInHours,
@@ -1896,6 +1905,7 @@ export function useEventSlotAllocation(
         sessionDurationInHours: sessionDuration,
         startDate: options.startDate,
         endDate: options.endDate,
+        totalSessions: options.maxTotalCalls, // maxTotalCalls is already totalSessions-aware
       };
 
       const result = await AllocationAlgorithms.manualAllocate(
@@ -1967,6 +1977,7 @@ export function useEventSlotAllocation(
           sessionDurationInHours: sessionDuration,
           startDate: options.startDate,
           endDate: options.endDate,
+          totalSessions: options.maxTotalCalls, // maxTotalCalls is already totalSessions-aware
         };
 
         const result = await AllocationAlgorithms.autoAllocate(
