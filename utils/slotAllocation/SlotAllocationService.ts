@@ -1082,6 +1082,7 @@ export class SlotAllocationService {
           callsPerWeek: event.subscriptionPlan?.callsPerWeek,
           sessionDurationInHours:
             event.subscriptionPlan?.sessionDurationInHours,
+          totalSessions: event.subscriptionPlan?.totalSessions,
           schedulingPeriodStartsAt: event.schedulingPeriodStartsAt,
           schedulingPeriodEndsAt: event.schedulingPeriodEndsAt,
         };
