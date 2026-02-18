@@ -425,7 +425,7 @@ export function UnifiedCalendar({
     // Provide dynamic maxTotalCalls so validation/toasts show the real limit.
     // Prefer totalSessions from plan (authoritative) over calendar-week calculation.
     maxTotalCalls:
-      eventType === "subscription"
+      (eventType === "subscription" || eventType === "class")
         ? (totalSessions && totalSessions > 0
           ? totalSessions
           : allowedStart && allowedEnd && callsPerWeek

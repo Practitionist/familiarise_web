@@ -223,6 +223,13 @@ export class SlotCalculationService {
         }
 
         const slotsPerSession = Math.ceil(sessionDuration / 0.5);
+
+        // Use totalSessions from plan if available (authoritative plan-defined count).
+        // Prevents over-allocation when scheduling period spans more weeks than planned.
+        if (config.totalSessions && config.totalSessions > 0) {
+          return config.totalSessions * slotsPerSession;
+        }
+
         const totalWeeks = this.countWeeks(
           config.schedulingPeriodStartsAt,
           config.schedulingPeriodEndsAt,
@@ -272,9 +279,9 @@ export class SlotCalculationService {
         // Count complete calls/sessions (full consecutive slot groups)
         scheduled = this.countCompletedCalls(selectedSlots, slotsPerCall);
 
-        // For subscriptions, prefer totalSessions from plan (authoritative count).
-        // For classes, fall back to weeks × callsPerWeek.
-        if (eventType === "subscription" && config.totalSessions && config.totalSessions > 0) {
+        // Prefer totalSessions from plan (authoritative count) for both subscriptions and classes.
+        // Falls back to weeks × callsPerWeek only when totalSessions is not set.
+        if (config.totalSessions && config.totalSessions > 0) {
           required = config.totalSessions;
         } else {
           if (

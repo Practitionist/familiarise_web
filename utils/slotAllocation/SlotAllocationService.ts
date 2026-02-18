@@ -1114,6 +1114,7 @@ export class SlotAllocationService {
           durationInMonths: event.classPlan?.durationInMonths,
           callsPerWeek: event.classPlan?.meetingsPerWeek,
           sessionDurationInHours: sessionDuration,
+          totalSessions: event.classPlan?.totalSessions,
           schedulingPeriodStartsAt: event.schedulingPeriodStartsAt,
           schedulingPeriodEndsAt: event.schedulingPeriodEndsAt,
         };
