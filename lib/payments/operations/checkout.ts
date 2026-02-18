@@ -954,13 +954,22 @@ export async function handleConsultationCheckout(
     throw new Error("Consultation plan not found");
   }
 
+  // Look up the consultee user ID for slot user connections
+  const consulteeProfile = await tx.consulteeProfile.findUnique({
+    where: { id: consulteeProfileId },
+    include: { user: true },
+  });
+  if (!consulteeProfile) throw new Error("Consultee profile not found");
+  const consultantUserId = plan.consultantProfile.user.id;
+  const consulteeUserId = consulteeProfile.user.id;
+
   // Validate slot availability
   // FIX: Pass consultant user ID to filter by consultant
   await validateSlotAvailability(
     tx,
     data,
     consulteeProfileId,
-    plan.consultantProfile.user.id,
+    consultantUserId,
   );
 
   // Create consultation
@@ -976,17 +985,33 @@ export async function handleConsultationCheckout(
     },
   });
 
-  // Create appointment
+  // Create appointment with 30-min slot chunks (consistent with SlotAllocationService).
+  // Each SlotOfAppointment is exactly 30 minutes so conflict detection works correctly.
+  // Both consultant and consultee are connected so the user-scoped conflict filter works.
+  const SLOT_MS = 30 * 60 * 1000;
+  const startTime = new Date(data.slotStartTimeInUTC!);
+  const endTime = new Date(data.slotEndTimeInUTC!);
+  const slotChunks: { startsAt: Date; endsAt: Date }[] = [];
+  let cur = new Date(startTime);
+  while (cur < endTime) {
+    slotChunks.push({ startsAt: new Date(cur), endsAt: new Date(cur.getTime() + SLOT_MS) });
+    cur = new Date(cur.getTime() + SLOT_MS);
+  }
+  if (slotChunks.length === 0) throw new Error("Invalid slot: start must be before end");
+
   const appointment = await tx.appointment.create({
     data: {
       appointmentType: AppointmentsType.CONSULTATION,
       consultationId: consultation.id,
       slotsOfAppointment: {
-        create: {
-          startsAt: new Date(data.slotStartTimeInUTC!),
-          endsAt: new Date(data.slotEndTimeInUTC!),
+        create: slotChunks.map((chunk) => ({
+          startsAt: chunk.startsAt,
+          endsAt: chunk.endsAt,
           isTentative: !skipPayment,
-        },
+          user: {
+            connect: [{ id: consultantUserId }, { id: consulteeUserId }],
+          },
+        })),
       },
     },
   });
