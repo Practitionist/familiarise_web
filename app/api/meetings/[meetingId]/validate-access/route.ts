@@ -99,7 +99,7 @@ export async function GET(
     });
 
     // Check if user is a participant in this slot
-    const isParticipant = meetingSession.slotOfAppointment.user.some(
+    let isParticipant = meetingSession.slotOfAppointment.user.some(
       (u: { id: string }) => u.id === userId,
     );
 
@@ -131,6 +131,27 @@ export async function GET(
         role: "host",
         message: "Access granted as meeting host",
       });
+    }
+
+    // For classes/webinars, the meeting is created on the consultant's allocation
+    // slot, but the consultee is connected to a separate enrollment slot under the
+    // same appointment. Check all appointment slots if the direct slot check fails.
+    if (!isParticipant && (appointment.class || appointment.webinar)) {
+      const appointmentWithSlots = await prisma.appointment.findUnique({
+        where: { id: appointment.id },
+        include: {
+          slotsOfAppointment: {
+            include: {
+              user: { select: { id: true } },
+            },
+          },
+        },
+      });
+
+      isParticipant =
+        appointmentWithSlots?.slotsOfAppointment.some((slot) =>
+          slot.user.some((u) => u.id === userId),
+        ) ?? false;
     }
 
     if (isParticipant) {
