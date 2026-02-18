@@ -218,8 +218,30 @@ export const calculateSessionProgress = (
   remainingSessions: number;
   progressPercentage: number;
 } => {
-  const totalSessions = groupAppointments.length;
-  const completedSessions = groupAppointments.filter((app) => {
+  // `groupRecurringAppointments` expands SUBSCRIPTION/CLASS appointments into one entry per
+  // slot (for per-slot UI display). Deduplicate here to get one entry per session.
+  // Synthetic IDs have format `${originalAppointmentId}-${slotId}` (both cuid — no dashes),
+  // so split at the first `-` to recover the original appointment ID.
+  const appointmentType = groupAppointments[0]?.appointmentType;
+  const isRecurring =
+    appointmentType === "SUBSCRIPTION" || appointmentType === "CLASS";
+
+  let dedupedAppointments: TAppointment[];
+  if (isRecurring) {
+    const seen = new Set<string>();
+    dedupedAppointments = groupAppointments.filter((app) => {
+      const dashIdx = app.id.indexOf("-");
+      const baseId = dashIdx !== -1 ? app.id.substring(0, dashIdx) : app.id;
+      if (seen.has(baseId)) return false;
+      seen.add(baseId);
+      return true;
+    });
+  } else {
+    dedupedAppointments = groupAppointments;
+  }
+
+  const totalSessions = dedupedAppointments.length;
+  const completedSessions = dedupedAppointments.filter((app) => {
     const slotTimes = getSlotTimes(app);
     return (
       slotTimes.length > 0 &&

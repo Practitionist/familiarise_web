@@ -226,7 +226,7 @@ export async function POST(
           // Individual/multiple session reschedule - mark ALL slots of the affected appointments
           // (e.g. a 1.5h session has 3 consecutive slots; all must be marked tentative together)
           const affectedAppointmentIds = [
-            ...new Set(slotsToReschedule.map((s) => s.appointmentId)),
+            ...Array.from(new Set(slotsToReschedule.map((s) => s.appointmentId))),
           ];
           await tx.slotOfAppointment.updateMany({
             where: {

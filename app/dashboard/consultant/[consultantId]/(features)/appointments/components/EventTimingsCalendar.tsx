@@ -8,7 +8,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { useToast } from "@/hooks/use-toast";
 import { useParams } from "next/navigation";
 import { SafeUnifiedCalendar } from "../../shared/components/SafeUnifiedCalendar";
 import { TAppointment } from "@/types/appointment";
@@ -39,7 +38,6 @@ export function EventTimingsCalendar({
   appointment,
 }: EventTimingsCalendarProps) {
   const params = useParams();
-  const { toast } = useToast();
 
   const consultantId = params.consultantId?.toString() || "";
   const getEventDetails = (appointment: TAppointment): EventDetails => {
@@ -118,10 +116,6 @@ export function EventTimingsCalendar({
   // Removed debug logging - production code validates dates server-side
 
   const handleAllocationComplete = () => {
-    toast({
-      title: "Success",
-      description: "Timings allocated successfully",
-    });
     onClose();
   };
 
