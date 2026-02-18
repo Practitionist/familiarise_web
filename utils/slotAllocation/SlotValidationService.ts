@@ -51,6 +51,10 @@ export class SlotValidationService {
   /**
    * Main validation entry point
    * Routes to appropriate validator based on event type
+   *
+   * @param excludeAppointmentIds - Appointment IDs to exclude from conflict checks.
+   *   Used in "use requested slots" flow so an event's own tentative appointments
+   *   are not flagged as conflicts with themselves.
    */
   async validate(
     eventType: EventType,
@@ -58,6 +62,7 @@ export class SlotValidationService {
     slots: Date[],
     consultant: ConsultantAllocationData,
     config: EventConfig,
+    excludeAppointmentIds?: string[],
   ): Promise<ValidationResult> {
     // Universal validations (apply to all event types)
     const futureCheck = this.validateSlotsInFuture(slots);
@@ -77,6 +82,7 @@ export class SlotValidationService {
       slots,
       consultant.userId,
       slotDurationMinutes,
+      excludeAppointmentIds,
     );
     if (!conflictCheck.isValid) return conflictCheck;
 
@@ -184,6 +190,7 @@ export class SlotValidationService {
     slots: Date[],
     consultantUserId: string,
     slotDurationMinutes: number = 30,
+    excludeAppointmentIds?: string[],
   ): Promise<ValidationResult> {
     const errors: string[] = [];
 
@@ -201,6 +208,12 @@ export class SlotValidationService {
               {
                 OR: buildOccupiedAppointmentFilter(),
               },
+              // Exclude the event's own appointments from conflict detection.
+              // Required for "use requested slots" flow: the event's tentative
+              // appointments must not be flagged as conflicts with themselves.
+              ...(excludeAppointmentIds && excludeAppointmentIds.length > 0
+                ? [{ NOT: { id: { in: excludeAppointmentIds } } }]
+                : []),
               {
                 slotsOfAppointment: {
                   some: {

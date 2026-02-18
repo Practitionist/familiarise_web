@@ -412,14 +412,18 @@ export class SlotAllocationService {
           );
         }
 
-        // Validate requested slots still meet all requirements
+        // Validate requested slots still meet all requirements.
+        // Pass existing appointment IDs so the event's own tentative slots
+        // are not flagged as conflicts during self-validation.
         const validator = new SlotValidationService(tx);
+        const existingAppointmentIds = existingAppointments.map((a) => a.id);
         const validation = await validator.validate(
           eventType,
           eventId,
           requestedSlots,
           consultant,
           config,
+          existingAppointmentIds,
         );
 
         if (!validation.isValid) {
