@@ -939,6 +939,7 @@ export async function handleConsultationCheckout(
   tx: Prisma.TransactionClient,
   data: CheckoutInput,
   consulteeProfileId: string,
+  userId: string,
   skipPayment: boolean,
 ) {
   const plan = await tx.consultationPlan.findUnique({
@@ -954,14 +955,9 @@ export async function handleConsultationCheckout(
     throw new Error("Consultation plan not found");
   }
 
-  // Look up the consultee user ID for slot user connections
-  const consulteeProfile = await tx.consulteeProfile.findUnique({
-    where: { id: consulteeProfileId },
-    include: { user: true },
-  });
-  if (!consulteeProfile) throw new Error("Consultee profile not found");
+  // userId is the consultee's user ID (passed by caller — no extra DB lookup needed)
   const consultantUserId = plan.consultantProfile.user.id;
-  const consulteeUserId = consulteeProfile.user.id;
+  const consulteeUserId = userId;
 
   // Validate slot availability
   // FIX: Pass consultant user ID to filter by consultant
@@ -1008,6 +1004,10 @@ export async function handleConsultationCheckout(
           startsAt: chunk.startsAt,
           endsAt: chunk.endsAt,
           isTentative: !skipPayment,
+          // Connect BOTH consultant and consultee so the user-scoped conflict
+          // filter in validateNoConflicts (user.some.id === consultantUserId)
+          // can see this slot. dev branch only connected the consultee, which
+          // left the slot invisible to auto/manual allocation conflict checks.
           user: {
             connect: [{ id: consultantUserId }, { id: consulteeUserId }],
           },
@@ -1480,6 +1480,7 @@ export async function handleCheckout(
                 tx,
                 validatedData,
                 consulteeProfileId,
+                userId,
                 isMockPayment, // skipPayment = isMockPayment
               );
               createdAppointment = consultationResult.appointment;
