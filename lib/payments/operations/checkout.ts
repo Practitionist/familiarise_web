@@ -1256,21 +1256,18 @@ export async function handleWebinarCheckout(
     });
   }
 
-  // Add user to webinar (appointment is guaranteed to exist here)
-  if (appointment) {
-    await tx.slotOfAppointment.create({
-      data: {
-        appointmentId: appointment.id,
-        startsAt:
-          webinar.appointment?.slotsOfAppointment[0]?.startsAt || new Date(),
-        endsAt:
-          webinar.appointment?.slotsOfAppointment[0]?.endsAt || new Date(),
-        isTentative: !skipPayment,
-        user: {
-          connect: { id: userId },
+  // Add user to webinar by linking them to ALL existing slots.
+  // Webinar participants attend the entire session, so they must be
+  // connected to every SlotOfAppointment (not given a new duplicate slot).
+  if (appointment && appointment.slotsOfAppointment.length > 0) {
+    for (const slot of appointment.slotsOfAppointment) {
+      await tx.slotOfAppointment.update({
+        where: { id: slot.id },
+        data: {
+          user: { connect: { id: userId } },
         },
-      },
-    });
+      });
+    }
   }
 
   return { appointment, plan, amount: plan.price };
@@ -1345,39 +1342,20 @@ export async function handleClassCheckout(
     throw new Error("You are already enrolled in this class");
   }
 
-  // Create SlotOfAppointment for the user for ALL class appointments (sessions)
-  const createdSlots = [];
+  // Link user to ALL existing slots of ALL class appointments (sessions).
+  // Class participants attend every session, so they must be connected to
+  // every existing SlotOfAppointment (not given duplicate slots).
+  let linkedSlotCount = 0;
   for (const appointment of classInstance.appointments) {
-    // Get timing from the first existing slot or use appointment times
-    const existingSlot = appointment.slotsOfAppointment[0];
-
-    // Step 1: Create the slot without user connection
-    const slot = await tx.slotOfAppointment.create({
-      data: {
-        appointmentId: appointment.id,
-        startsAt:
-          existingSlot?.startsAt ||
-          appointment.slotsOfAppointment[0]?.startsAt ||
-          new Date(),
-        endsAt:
-          existingSlot?.endsAt ||
-          appointment.slotsOfAppointment[0]?.endsAt ||
-          new Date(),
-        isTentative: !skipPayment,
-      },
-    });
-
-    // Step 2: Connect user to slot in a separate update (fixes FK constraint issue)
-    await tx.slotOfAppointment.update({
-      where: { id: slot.id },
-      data: {
-        user: {
-          connect: { id: userId },
+    for (const slot of appointment.slotsOfAppointment) {
+      await tx.slotOfAppointment.update({
+        where: { id: slot.id },
+        data: {
+          user: { connect: { id: userId } },
         },
-      },
-    });
-
-    createdSlots.push(slot);
+      });
+      linkedSlotCount++;
+    }
   }
 
   // Return the first appointment for compatibility
@@ -1390,7 +1368,7 @@ export async function handleClassCheckout(
     appointment: firstAppointment,
     plan,
     amount: plan.price,
-    slotsCreated: createdSlots.length,
+    slotsLinked: linkedSlotCount,
   };
 }
 
