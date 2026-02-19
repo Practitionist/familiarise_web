@@ -145,6 +145,9 @@ function countCompletedCallsForWeek(
     if (!appt.subscription || appt.subscription.id !== subscriptionId)
       return false;
     const slots = appt.slotsOfAppointment || [];
+    // Skip tentative appointments — during rescheduling, tentative slots are the
+    // OLD slots being replaced and should not count toward the weekly limit.
+    if (slots.some((s: any) => s.isTentative)) return false;
     // A completed call is an appointment that has exactly the per-call slot count
     if (slots.length !== slotsPerCall) return false;
     // FIX: Use correct field names from API (startsAt, not slotStartTimeInUTC)

@@ -298,11 +298,46 @@ export class SlotAllocationService {
           );
         }
 
+        // Detect reschedule scenario: check for existing tentative slots
+        const relationField = this.getEventRelationField(eventType);
+        const existingAppointments = await tx.appointment.findMany({
+          where: {
+            [`${relationField}Id`]: eventId,
+          } as Prisma.AppointmentWhereInput,
+          include: { slotsOfAppointment: true },
+        });
+
+        const tentativeSlotCount = existingAppointments.reduce(
+          (count, appointment) =>
+            count +
+            appointment.slotsOfAppointment.filter((slot) => slot.isTentative)
+              .length,
+          0,
+        );
+        const isReschedule = tentativeSlotCount > 0;
+
+        // Collect tentative appointment IDs for exclusion from conflict detection
+        const tentativeAppointmentIds = isReschedule
+          ? existingAppointments
+              .filter((a) =>
+                a.slotsOfAppointment.some((s) => s.isTentative),
+              )
+              .map((a) => a.id)
+          : [];
+
         // Validate total slot count for recurring event types
-        // Ensures the consultant provides exactly the right number of slots
-        // (not fewer, which would leave the event under-allocated but marked APPROVED)
+        // For reschedule: only require replacement slots for tentative count
+        // For initial allocation: require full plan slot count
         if (eventType === "subscription" || eventType === "class") {
-          if (config.schedulingPeriodStartsAt && config.schedulingPeriodEndsAt) {
+          if (isReschedule) {
+            if (slots.length !== tentativeSlotCount) {
+              throw new Error(
+                `This reschedule requires exactly ${tentativeSlotCount} slots ` +
+                `(replacing ${tentativeSlotCount} tentative slots), ` +
+                `but ${slots.length} were provided.`,
+              );
+            }
+          } else if (config.schedulingPeriodStartsAt && config.schedulingPeriodEndsAt) {
             const requiredSlots =
               SlotCalculationService.calculateRequiredSlots(eventType, config);
             if (slots.length !== requiredSlots) {
@@ -316,6 +351,7 @@ export class SlotAllocationService {
         }
 
         // Validate
+        // Pass tentativeAppointmentIds so their slots don't trigger false conflicts
         const validator = new SlotValidationService(tx);
         const validation = await validator.validate(
           eventType,
@@ -323,14 +359,17 @@ export class SlotAllocationService {
           slots,
           consultant,
           config,
+          tentativeAppointmentIds,
         );
 
         if (!validation.isValid) {
           throw new Error(`Validation failed: ${validation.errors.join("; ")}`);
         }
 
-        // Delete existing appointments if any
-        await this.deleteExistingAppointments(tx, eventType, eventId);
+        // Delete existing appointments
+        // For reschedules: only delete tentative slots (preserve confirmed ones)
+        // For initial allocation: delete all
+        await this.deleteExistingAppointments(tx, eventType, eventId, isReschedule);
 
         // Create appointments
         const appointments = await this.createAppointments(
