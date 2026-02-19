@@ -217,17 +217,15 @@ export class SlotValidationService {
               {
                 slotsOfAppointment: {
                   some: {
-                    // CRITICAL FIX: Check for range overlap instead of exact match
-                    // This prevents double-booking when slots partially overlap
+                    // FIX: All conditions must be inside a single AND array.
+                    // Mixing AND:[...] with a sibling relation filter (user:{})
+                    // at the same level causes Prisma to silently ignore the
+                    // relation condition when using the non-transaction client.
                     AND: [
                       { startsAt: { lt: slotEnd } }, // Existing starts before proposed ends
                       { endsAt: { gt: slot } }, // Existing ends after proposed starts
+                      { user: { some: { id: consultantUserId } } }, // Must be consultant's slot
                     ],
-                    user: {
-                      some: {
-                        id: consultantUserId,
-                      },
-                    },
                   },
                 },
               },
@@ -274,7 +272,8 @@ export class SlotValidationService {
         }
 
         // Slot is genuinely booked - add error
-        let conflictDetails = `${slot.toLocaleString()}`;
+        // FIX: Use ISO string so the validate route regex can extract it for structured conflict reporting
+        let conflictDetails = `${slot.toISOString()}`;
         if (existingAppointment.consultation) {
           conflictDetails += ` (conflicts with consultation for ${existingAppointment.consultation.requestedBy?.user?.name || "unknown"})`;
         } else if (existingAppointment.subscription) {

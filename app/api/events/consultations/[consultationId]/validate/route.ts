@@ -162,11 +162,14 @@ export async function POST(
         // [VALIDATION] errors don't need slot-level parsing
       }
 
-      // Valid slots are those not in conflicts or outside availability
-      result.validSlots = body.slots.filter((slot) => {
+      // Valid slots are those not in conflicts or outside availability.
+      // FIX: Normalize both sides to seconds-precision UTC ISO (strip .000Z suffix)
+      // so "2026-02-23T04:30:00.000Z" and "2026-02-23T04:30:00" compare equal.
+      result.validSlots = body.slots.filter((bodySlot) => {
+        const bodySlotSeconds = new Date(bodySlot).toISOString().slice(0, 19);
         return (
-          !result.conflicts.some((c) => c.slot === slot) &&
-          !result.outsideAvailability.some((o) => o.slot === slot)
+          !result.conflicts.some((c) => c.slot === bodySlotSeconds) &&
+          !result.outsideAvailability.some((o) => o.slot === bodySlotSeconds)
         );
       });
 
