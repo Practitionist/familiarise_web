@@ -116,12 +116,24 @@ export class SlotAllocationService {
         );
         const isReschedule = tentativeSlotCount > 0;
 
-        // Calculate required slots - preserve count during reschedule
+        // Collect tentative appointment IDs for exclusion from conflict detection
+        // During reschedule, the tentative slots will be deleted, so they should not
+        // block availability or count toward weekly limits.
+        const tentativeAppointmentIds = isReschedule
+          ? existingAppointments
+              .filter((a) =>
+                a.slotsOfAppointment.some((s) => s.isTentative),
+              )
+              .map((a) => a.id)
+          : [];
+
+        // Calculate required slots - for reschedule, only replace tentative slots
         let requiredSlots: number;
         if (isReschedule) {
-          // RESCHEDULE: Preserve the original total slot count
-          // This prevents slot count from changing when rescheduling
-          requiredSlots = existingNonTentativeSlotCount + tentativeSlotCount;
+          // RESCHEDULE: Only find replacement slots for the tentative ones.
+          // For full reschedule (all tentative): requiredSlots = all slots
+          // For partial reschedule (some tentative): requiredSlots = tentative count only
+          requiredSlots = tentativeSlotCount;
         } else {
           // INITIAL ALLOCATION: Calculate from config
           requiredSlots = SlotCalculationService.calculateRequiredSlots(
@@ -135,6 +147,7 @@ export class SlotAllocationService {
         );
 
         // Find available slots
+        // Pass tentativeAppointmentIds so their slots are excluded from bookedSlots
         const selectedSlots = await this.findAvailableSlots(
           tx,
           consultant,
@@ -142,9 +155,11 @@ export class SlotAllocationService {
           slotsPerCall,
           eventType,
           config,
+          tentativeAppointmentIds,
         );
 
         // Validate
+        // Pass tentativeAppointmentIds so their slots don't trigger false conflicts
         const validator = new SlotValidationService(tx);
         const validation = await validator.validate(
           eventType,
@@ -152,6 +167,7 @@ export class SlotAllocationService {
           selectedSlots,
           consultant,
           config,
+          tentativeAppointmentIds,
         );
 
         if (!validation.isValid) {
@@ -514,25 +530,36 @@ export class SlotAllocationService {
     slotsPerCall: number,
     eventType: EventType,
     config: EventConfig,
+    excludeAppointmentIds: string[] = [],
   ): Promise<Date[]> {
     // Get all existing booked slots for this consultant
     // FIX Bug #15: Use centralized occupancy policy for consistent conflict detection
-    const existingAppointments = await tx.appointment.findMany({
-      where: {
-        AND: [
-          {
-            OR: buildOccupiedAppointmentFilter(),
-          },
-          {
-            slotsOfAppointment: {
-              some: {
-                user: {
-                  some: { id: consultant.userId },
-                },
-              },
+    const appointmentFilter: Prisma.AppointmentWhereInput[] = [
+      {
+        OR: buildOccupiedAppointmentFilter(),
+      },
+      {
+        slotsOfAppointment: {
+          some: {
+            user: {
+              some: { id: consultant.userId },
             },
           },
-        ],
+        },
+      },
+    ];
+
+    // Exclude tentative appointments during reschedule — they'll be deleted,
+    // so their slots should not block availability or count toward weekly limits.
+    if (excludeAppointmentIds.length > 0) {
+      appointmentFilter.push({
+        NOT: { id: { in: excludeAppointmentIds } },
+      });
+    }
+
+    const existingAppointments = await tx.appointment.findMany({
+      where: {
+        AND: appointmentFilter,
       },
       include: {
         slotsOfAppointment: true,
@@ -664,6 +691,25 @@ export class SlotAllocationService {
       addMonths(startDate, config.durationInMonths || 1);
     const callsPerWeek = config.callsPerWeek || 1;
 
+    // Build a map of existing confirmed calls per week.
+    // During partial reschedule, weeks with confirmed appointments already
+    // have calls that must count toward the weekly limit.
+    const existingCallsPerWeek = new Map<string, number>();
+    for (const apt of existingAppointments) {
+      if (apt.slotsOfAppointment.length === 0) continue;
+      const firstSlot = apt.slotsOfAppointment.reduce((earliest, s) =>
+        new Date(s.startsAt) < new Date(earliest.startsAt) ? s : earliest,
+      );
+      const weekStart = SlotCalculationService.startOfWeekSunday(
+        new Date(firstSlot.startsAt),
+      );
+      const weekKey = weekStart.toISOString();
+      existingCallsPerWeek.set(
+        weekKey,
+        (existingCallsPerWeek.get(weekKey) || 0) + 1,
+      );
+    }
+
     let currentWeek = SlotCalculationService.startOfWeekSunday(startDate);
     const totalWeeks = SlotCalculationService.countWeeks(startDate, endDate);
 
@@ -672,7 +718,9 @@ export class SlotAllocationService {
       week < totalWeeks && selectedSlots.length < totalSlotsNeeded;
       week++
     ) {
-      let callsThisWeek = 0;
+      // Initialize with existing confirmed calls (important during partial reschedule)
+      const weekKey = currentWeek.toISOString();
+      let callsThisWeek = existingCallsPerWeek.get(weekKey) || 0;
 
       for (let day = 0; day < 7 && callsThisWeek < callsPerWeek; day++) {
         const currentDay = new Date(currentWeek);
