@@ -633,7 +633,7 @@ export function EventCard({
               </div>
               <div className="text-sm text-zinc-500">
                 {formatSlotTime(rawSlots[0].startsAt)} -{" "}
-                {formatSlotTime(rawSlots[0].endsAt)}
+                {formatSlotTime(rawSlots[rawSlots.length - 1].endsAt)}
               </div>
             </div>
           ) : type !== "Webinar" ? (
