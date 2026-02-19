@@ -94,6 +94,19 @@ export async function POST(
 
       // LAYER 2: Business Logic Validation (conflicts, availability, consecutive slots, etc.)
       const validationService = new SlotValidationService(prisma);
+
+      // Exclude this consultation's own tentative appointments from conflict
+      // detection. During re-allocation (e.g. "Use Requested Times"), the old
+      // tentative slots still exist and would otherwise be reported as conflicts.
+      const tentativeAppointments = await prisma.appointment.findMany({
+        where: {
+          consultationId,
+          slotsOfAppointment: { some: { isTentative: true } },
+        },
+        select: { id: true },
+      });
+      const excludeIds = tentativeAppointments.map((a) => a.id);
+
       const validationResult = await validationService.validate(
         "consultation",
         consultationId,
@@ -110,6 +123,7 @@ export async function POST(
         {
           durationInHours: consultationPlan.durationInHours,
         },
+        excludeIds,
       );
 
       // If validation passed, all slots are valid
@@ -157,6 +171,16 @@ export async function POST(
           );
           if (slotMatch) {
             result.outsideAvailability.push({ slot: slotMatch[1] });
+          } else {
+            // Error doesn't contain specific ISO timestamps (e.g. weekly schedule
+            // availability check returns "Saturday at 15:00 UTC" format).
+            // Mark ALL provided slots as outside availability.
+            for (const bodySlot of body.slots) {
+              const normalized = new Date(bodySlot).toISOString().slice(0, 19);
+              if (!result.outsideAvailability.some((o) => o.slot === normalized)) {
+                result.outsideAvailability.push({ slot: normalized });
+              }
+            }
           }
         }
         // [VALIDATION] errors don't need slot-level parsing
