@@ -420,10 +420,15 @@ export function useCalendarData(
 
         // Process ALL appointments, not just the first one
         // This ensures all sessions of a subscription/class show as "This Event"
+        // FIX: Skip tentative slots — during rescheduling, tentative slots are the OLD
+        // slots being replaced. They should NOT show as "This Event" on the calendar
+        // because the auto-allocate will delete them. Showing them as "This Event"
+        // misleads the consultant into thinking they're confirmed bookings.
         const slots: TimeSlot[] = activeData.flatMap(
           (appointment: any) =>
-            (appointment.slotsOfAppointment || []).flatMap(
-              (slot: any): TimeSlot[] => {
+            (appointment.slotsOfAppointment || [])
+              .filter((slot: any) => !slot.isTentative)
+              .flatMap((slot: any): TimeSlot[] => {
                 // FIX: Use correct field names from API (startsAt/endsAt)
                 const start = new Date(
                   slot.startsAt || slot.slotStartTimeInUTC,
