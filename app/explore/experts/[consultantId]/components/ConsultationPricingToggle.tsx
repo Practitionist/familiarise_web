@@ -298,7 +298,7 @@ export default function ConsultationPricingToggle({
                     Book Now
                   </Button>
                 </DialogTrigger>
-                <DialogContent className="sm:max-w-[700px] lg:max-w-[950px] xl:max-w-[1050px] max-h-[calc(100vh-100px)] overflow-y-auto top-[80px] translate-y-0 bg-zinc-900 text-white p-0 border border-zinc-800 rounded-2xl shadow-2xl">
+                <DialogContent className="sm:max-w-[700px] lg:max-w-[950px] xl:max-w-[1050px] max-h-[85vh] overflow-y-auto bg-zinc-900 text-white p-0 border border-zinc-800 rounded-2xl shadow-2xl">
                   <DialogHeader className="p-6 lg:p-8 border-b border-zinc-800">
                     <DialogTitle className="text-xl lg:text-2xl font-semibold">
                       Book {option.title} Consultation
