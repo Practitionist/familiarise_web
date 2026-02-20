@@ -104,7 +104,7 @@ export class SlotValidationService {
         return this.validateConsultation(slots, config);
 
       case "subscription":
-        return this.validateSubscription(eventId, slots, config);
+        return this.validateSubscription(eventId, slots, config, excludeAppointmentIds);
 
       case "webinar":
         return this.validateWebinar(slots, config);
@@ -642,6 +642,7 @@ export class SlotValidationService {
     subscriptionId: string,
     slots: Date[],
     config: EventConfig,
+    excludeAppointmentIds?: string[],
   ): Promise<ValidationResult> {
     const errors: string[] = [];
     const warnings: string[] = [];
@@ -690,12 +691,17 @@ export class SlotValidationService {
       },
       select: { id: true },
     });
-    const excludeIds = tentativeAppointments.map((a) => a.id);
+    const tentativeIds = tentativeAppointments.map((a) => a.id);
+    // Merge caller-provided exclusions with tentative lookup for reliability
+    const allExcludeIds = Array.from(new Set([
+      ...(excludeAppointmentIds || []),
+      ...tentativeIds,
+    ]));
 
     const result = await validationService.validateSubscriptionSlots(
       subscriptionId,
       slots.map((s) => s.toISOString()),
-      excludeIds,
+      allExcludeIds,
     );
 
     return {

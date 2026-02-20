@@ -7,10 +7,12 @@
 
 import prisma from "@/lib/prisma";
 import {
+  Appointment,
   AppointmentsType,
   Prisma,
   RequestStatus,
   ScheduleType,
+  SlotOfAppointment,
 } from "@prisma/client";
 import { addWeeks, addMonths } from "date-fns";
 import {
@@ -24,6 +26,8 @@ import {
 import { SlotCalculationService } from "./SlotCalculationService";
 import { SlotValidationService } from "./SlotValidationService";
 import { buildOccupiedAppointmentFilter } from "./occupancyPolicy";
+
+type AppointmentWithSlots = Appointment & { slotsOfAppointment: SlotOfAppointment[] };
 
 /**
  * Main service for slot allocation operations
@@ -92,7 +96,7 @@ export class SlotAllocationService {
         // CRITICAL FIX: Check for existing appointments to detect reschedule scenario
         // If tentative slots exist, this is a reschedule and we should preserve the original slot count
         const relationField = this.getEventRelationField(eventType);
-        const existingAppointments = await tx.appointment.findMany({
+        const existingAppointments: AppointmentWithSlots[] = await tx.appointment.findMany({
           where: {
             [`${relationField}Id`]: eventId,
           } as Prisma.AppointmentWhereInput,
@@ -116,16 +120,16 @@ export class SlotAllocationService {
         );
         const isReschedule = tentativeSlotCount > 0;
 
-        // Collect tentative appointment IDs for exclusion from conflict detection
-        // During reschedule, the tentative slots will be deleted, so they should not
-        // block availability or count toward weekly limits.
-        const tentativeAppointmentIds = isReschedule
+        // Collect appointment IDs to exclude from conflict detection and weekly limits.
+        // For reschedule: exclude tentative appointments (they'll be deleted)
+        // For initial allocation: exclude ALL existing appointments (they'll all be deleted)
+        const appointmentIdsToExclude = isReschedule
           ? existingAppointments
               .filter((a) =>
                 a.slotsOfAppointment.some((s) => s.isTentative),
               )
               .map((a) => a.id)
-          : [];
+          : existingAppointments.map((a) => a.id);
 
         // Calculate required slots - for reschedule, only replace tentative slots
         let requiredSlots: number;
@@ -147,7 +151,7 @@ export class SlotAllocationService {
         );
 
         // Find available slots
-        // Pass tentativeAppointmentIds so their slots are excluded from bookedSlots
+        // Pass appointmentIdsToExclude so their slots are excluded from bookedSlots
         const selectedSlots = await this.findAvailableSlots(
           tx,
           consultant,
@@ -155,11 +159,11 @@ export class SlotAllocationService {
           slotsPerCall,
           eventType,
           config,
-          tentativeAppointmentIds,
+          appointmentIdsToExclude,
         );
 
         // Validate
-        // Pass tentativeAppointmentIds so their slots don't trigger false conflicts
+        // Pass appointmentIdsToExclude so their slots don't trigger false conflicts
         const validator = new SlotValidationService(tx);
         const validation = await validator.validate(
           eventType,
@@ -167,7 +171,7 @@ export class SlotAllocationService {
           selectedSlots,
           consultant,
           config,
-          tentativeAppointmentIds,
+          appointmentIdsToExclude,
         );
 
         if (!validation.isValid) {
@@ -300,7 +304,7 @@ export class SlotAllocationService {
 
         // Detect reschedule scenario: check for existing tentative slots
         const relationField = this.getEventRelationField(eventType);
-        const existingAppointments = await tx.appointment.findMany({
+        const existingAppointments: AppointmentWithSlots[] = await tx.appointment.findMany({
           where: {
             [`${relationField}Id`]: eventId,
           } as Prisma.AppointmentWhereInput,
@@ -316,14 +320,16 @@ export class SlotAllocationService {
         );
         const isReschedule = tentativeSlotCount > 0;
 
-        // Collect tentative appointment IDs for exclusion from conflict detection
-        const tentativeAppointmentIds = isReschedule
+        // Collect appointment IDs to exclude from conflict detection and weekly limits.
+        // For reschedule: exclude tentative appointments (they'll be deleted)
+        // For initial allocation: exclude ALL existing appointments (they'll all be deleted)
+        const appointmentIdsToExclude = isReschedule
           ? existingAppointments
               .filter((a) =>
                 a.slotsOfAppointment.some((s) => s.isTentative),
               )
               .map((a) => a.id)
-          : [];
+          : existingAppointments.map((a) => a.id);
 
         // Validate total slot count for recurring event types
         // For reschedule: only require replacement slots for tentative count
@@ -351,7 +357,7 @@ export class SlotAllocationService {
         }
 
         // Validate
-        // Pass tentativeAppointmentIds so their slots don't trigger false conflicts
+        // Pass appointmentIdsToExclude so their slots don't trigger false conflicts
         const validator = new SlotValidationService(tx);
         const validation = await validator.validate(
           eventType,
@@ -359,7 +365,7 @@ export class SlotAllocationService {
           slots,
           consultant,
           config,
-          tentativeAppointmentIds,
+          appointmentIdsToExclude,
         );
 
         if (!validation.isValid) {
@@ -438,7 +444,7 @@ export class SlotAllocationService {
         // CRITICAL FIX: Verify appointments actually exist before approving
         // This prevents approving requests with no actual bookings
         const relationField = this.getEventRelationField(eventType);
-        const existingAppointments = await tx.appointment.findMany({
+        const existingAppointments: AppointmentWithSlots[] = await tx.appointment.findMany({
           where: {
             [`${relationField}Id`]: eventId,
           } as Prisma.AppointmentWhereInput,
