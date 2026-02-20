@@ -1,6 +1,7 @@
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth-server";
+import { isPrivileged } from "@/lib/auth-helpers";
 import {
   ReschedulePolicyError,
   RescheduleAuthorizationError,
@@ -141,8 +142,7 @@ export async function POST(
         }
 
         // Allow ADMIN/STAFF bypass
-        const isPrivilegedUser =
-          session.user.role === "ADMIN" || session.user.role === "STAFF";
+        const isPrivilegedUser = isPrivileged(session.user.role);
 
         if (!isParticipant && !isPrivilegedUser) {
           throw new RescheduleAuthorizationError();

@@ -6,6 +6,7 @@ import { notifyAppointmentCancelled } from "@/lib/novu";
 import { CancelAppointmentSchema } from "@/schemas/appointments";
 
 import { getSession } from "@/lib/auth-server";
+import { isPrivileged } from "@/lib/auth-helpers";
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ appointmentId: string }> },
@@ -120,8 +121,7 @@ export async function POST(
       isParticipant = consultantProfileId === classConsultantId;
     }
 
-    const isPrivilegedUser =
-      session.user.role === "ADMIN" || session.user.role === "STAFF";
+    const isPrivilegedUser = isPrivileged(session.user.role);
 
     if (!isParticipant && !isPrivilegedUser) {
       return NextResponse.json(
