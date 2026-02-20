@@ -10,6 +10,16 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -135,6 +145,10 @@ export function EventCard({
   // Cancel confirmation dialog state
   const [showCancelDialog, setShowCancelDialog] = React.useState(false);
 
+  // Reschedule confirmation dialog state (for non-subscription types)
+  const [showConfirmReschedule, setShowConfirmReschedule] =
+    React.useState(false);
+
   // Get appointment status and type for issue filtering
   const appointmentStatus: AppointmentStatus =
     status?.toLowerCase() === "completed" ? "COMPLETED" : "UPCOMING";
@@ -235,8 +249,8 @@ export function EventCard({
       setSelectedSlotIds([]);
       setShowRescheduleDialog(true);
     } else {
-      // For consultations or single-session subscriptions, reschedule directly
-      handleReschedule();
+      // For consultations or single-session subscriptions, show confirmation first
+      setShowConfirmReschedule(true);
     }
   };
 
@@ -1064,6 +1078,58 @@ export function EventCard({
           }}
         />
       )}
+
+      {/* Reschedule Confirmation Dialog (non-subscription) */}
+      <AlertDialog
+        open={showConfirmReschedule}
+        onOpenChange={(open) => !open && setShowConfirmReschedule(false)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <CalendarClock className="h-5 w-5 text-zinc-600" />
+              Reschedule {type}?
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2">
+                <p>
+                  Are you sure you want to reschedule{" "}
+                  <strong>&quot;{title}&quot;</strong> with{" "}
+                  <strong>{consultant}</strong>?
+                </p>
+                <p className="text-zinc-600">
+                  Your current time slot will be released and the{" "}
+                  {type === "Consultation"
+                    ? "consultation"
+                    : type?.toLowerCase()}{" "}
+                  status will revert to <strong>Pending</strong> until a new
+                  time is allocated.
+                </p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isLoading}>
+              Keep Current Time
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                setShowConfirmReschedule(false);
+                handleReschedule();
+              }}
+              disabled={isLoading}
+              className="bg-zinc-900 hover:bg-zinc-800"
+            >
+              {isLoading ? (
+                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+              ) : (
+                <CalendarClock className="h-4 w-4 mr-2" />
+              )}
+              Reschedule
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Cancel Confirmation Dialog */}
       <CancelConfirmationDialog
