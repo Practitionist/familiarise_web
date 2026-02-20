@@ -622,7 +622,8 @@ export function EventCard({
                 </AccordionContent>
               </AccordionItem>
             </Accordion>
-          ) : type === "Consultation" && rawSlots.length > 0 ? (
+          ) : (type === "Consultation" || type === "Webinar") &&
+            rawSlots.length > 0 ? (
             <div className="bg-zinc-50 rounded-lg p-3 border border-zinc-100">
               <div className="flex items-center gap-2 text-xs text-zinc-500 mb-1.5">
                 <Calendar className="h-3.5 w-3.5" />
@@ -636,15 +637,17 @@ export function EventCard({
                 {formatSlotTime(rawSlots[rawSlots.length - 1].endsAt)}
               </div>
             </div>
-          ) : type !== "Webinar" ? (
+          ) : (
             <div className="bg-zinc-50 rounded-lg p-3 border border-zinc-100">
               <div className="flex items-center gap-2 text-xs text-zinc-500 mb-1">
                 <Clock className="h-3.5 w-3.5" />
-                <span>Next Session</span>
+                <span>{type === "Webinar" ? "Scheduled Time" : "Next Session"}</span>
               </div>
-              <div className="text-sm text-zinc-700">{date}</div>
+              <div className="text-sm text-zinc-700">
+                {date || "No slots available"}
+              </div>
             </div>
-          ) : null}
+          )}
         </div>
 
         {/* Document Upload - Always render for consistency, disabled when inactive */}
