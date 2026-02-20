@@ -90,11 +90,10 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
 
   // Handle public auth routes
   if (matchesAnyPrefix(pathname, ROUTE_PATTERNS.PUBLIC_AUTH_PREFIXES)) {
-    // Redirect authenticated users to dashboard immediately
-    // This prevents the flash of auth page before client-side redirect kicks in
-    if (isAuthenticated) {
-      return NextResponse.redirect(new URL("/dashboard", req.url));
-    }
+    // Do NOT redirect cookie-present users to /dashboard here.
+    // Cookie presence ≠ session validity — stale cookies cause an infinite
+    // redirect loop: requireOnboarded() → /auth/signin → /dashboard → /auth/signin.
+    // The signin/signup pages already redirect authenticated users via useEffect.
     return NextResponse.next();
   }
 
@@ -103,7 +102,7 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
     if (!isAuthenticated) {
       // Preserve callbackUrl for all protected routes
       const signInUrl = new URL(URLS.SIGNIN, req.url);
-      signInUrl.searchParams.set("callbackUrl", pathname);
+      signInUrl.searchParams.set("callbackUrl", pathname + req.nextUrl.search);
       return NextResponse.redirect(signInUrl);
     }
     return NextResponse.next();
