@@ -1009,7 +1009,7 @@ describe("fetchEventData - config extraction", () => {
         schedulingPeriodStartsAt: expect.any(Date),
         schedulingPeriodEndsAt: expect.any(Date),
       }),
-      expect.any(Array), // tentativeAppointmentIds
+      expect.any(Array), // appointmentIdsToExclude
     );
   });
 
@@ -1029,7 +1029,7 @@ describe("fetchEventData - config extraction", () => {
       expect.any(Array),
       expect.objectContaining({ userId: "consultant-1" }),
       expect.objectContaining({ durationInHours: 1 }),
-      expect.any(Array), // tentativeAppointmentIds
+      expect.any(Array), // appointmentIdsToExclude
     );
   });
 
@@ -1075,7 +1075,7 @@ describe("fetchEventData - config extraction", () => {
         callsPerWeek: 2,
         sessionDurationInHours: 1.5,
       }),
-      expect.any(Array), // tentativeAppointmentIds
+      expect.any(Array), // appointmentIdsToExclude
     );
   });
 });
