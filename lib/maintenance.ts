@@ -136,9 +136,10 @@ export async function setMaintenanceState(
         data: {
           phase,
           reason: config.reason,
-          estimatedEnd: config.estimatedEnd
-            ? new Date(config.estimatedEnd)
-            : undefined,
+          estimatedEnd:
+            config.estimatedEnd && !isNaN(new Date(config.estimatedEnd).getTime())
+              ? new Date(config.estimatedEnd)
+              : undefined,
         },
       });
     } else {
@@ -148,9 +149,10 @@ export async function setMaintenanceState(
           reason: config.reason,
           startedAt: new Date(),
           startedBy: config.startedBy,
-          estimatedEnd: config.estimatedEnd
-            ? new Date(config.estimatedEnd)
-            : undefined,
+          estimatedEnd:
+            config.estimatedEnd && !isNaN(new Date(config.estimatedEnd).getTime())
+              ? new Date(config.estimatedEnd)
+              : undefined,
           bypassSecret: config.bypassSecret,
         },
       });

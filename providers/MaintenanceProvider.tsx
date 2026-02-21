@@ -8,6 +8,7 @@ import React, {
   useMemo,
   useState,
 } from "react";
+import { usePathname } from "next/navigation";
 
 interface MaintenanceContextType {
   phase: string | null;
@@ -37,11 +38,12 @@ export function MaintenanceProvider({
   const [reason, setReason] = useState<string | null>(null);
   const [eta, setEta] = useState<string | null>(null);
   const [isDismissed, setIsDismissed] = useState(false);
+  const pathname = usePathname();
 
   // Re-show banner on navigation
   useEffect(() => {
     setIsDismissed(false);
-  }, []);
+  }, [pathname]);
 
   // Fetch maintenance state from health endpoint
   const checkMaintenance = useCallback(async () => {
