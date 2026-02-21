@@ -1,12 +1,11 @@
 import prisma from "@/lib/prisma";
 import {
-  AppointmentsType,
   PaymentGateway,
   PaymentStatus,
   Prisma,
   RequestStatus,
 } from "@prisma/client";
-import { addMonths, addWeeks, setHours, setMinutes } from "date-fns";
+import { addMonths } from "date-fns";
 import { NextRequest, NextResponse } from "next/server";
 import { createApprovalPaymentIntent } from "@/lib/payments/operations/approval-payment";
 import { APPROVAL_PAYMENT_EXPIRATION_MS } from "@/lib/payments/constants";
@@ -23,6 +22,11 @@ import {
   UpdateSubscriptionSchema,
   PatchSubscriptionStatusSchema,
 } from "@/schemas/subscriptions";
+import {
+  requireApiAuth,
+  isPrivileged,
+  forbiddenResponse,
+} from "@/lib/auth-helpers";
 
 /**
  * Type for subscription with all related details needed for payment processing
@@ -56,9 +60,14 @@ type SubscriptionWithDetails = Prisma.SubscriptionGetPayload<{
 }>;
 
 export async function GET(
-  request: Request,
+  _request: NextRequest,
   { params }: { params: Promise<{ subscriptionId: string }> },
 ) {
+  // Require authentication
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const { session } = authResult;
+
   try {
     const { subscriptionId } = await params;
     const subscriptionData = await prisma.subscription.findUniqueOrThrow({
@@ -111,6 +120,18 @@ export async function GET(
       },
     });
 
+    // Check authorization: must be a participant or privileged
+    const isConsultant =
+      subscriptionData.subscriptionPlan?.consultantProfile?.id ===
+      session.user.consultantProfileId;
+    const isConsultee =
+      subscriptionData.requestedById === session.user.consulteeProfileId;
+    if (!isPrivileged(session.user.role) && !isConsultant && !isConsultee) {
+      return forbiddenResponse(
+        "You can only view subscriptions you are a participant in",
+      );
+    }
+
     return NextResponse.json({ data: subscriptionData }, { status: 200 });
   } catch (error) {
     if (
@@ -131,9 +152,14 @@ export async function GET(
 }
 
 export async function PUT(
-  request: Request,
+  request: NextRequest,
   { params }: { params: Promise<{ subscriptionId: string }> },
 ) {
+  // Require authentication
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const { session } = authResult;
+
   try {
     const { subscriptionId } = await params;
     const body = await request.json();
@@ -145,6 +171,37 @@ export async function PUT(
       );
     }
     const validatedData = result.data;
+
+    // Verify ownership before allowing update
+    const existingSubscription = await prisma.subscription.findUnique({
+      where: { id: subscriptionId },
+      include: {
+        subscriptionPlan: {
+          include: {
+            consultantProfile: true,
+          },
+        },
+      },
+    });
+
+    if (!existingSubscription) {
+      return NextResponse.json(
+        { error: "Subscription not found" },
+        { status: 404 },
+      );
+    }
+
+    // Check authorization: must be a participant or privileged
+    const isConsultant =
+      existingSubscription.subscriptionPlan?.consultantProfile?.id ===
+      session.user.consultantProfileId;
+    const isConsultee =
+      existingSubscription.requestedById === session.user.consulteeProfileId;
+    if (!isPrivileged(session.user.role) && !isConsultant && !isConsultee) {
+      return forbiddenResponse(
+        "You can only modify subscriptions you are a participant in",
+      );
+    }
 
     const subscriptionData = await prisma.subscription.update({
       where: { id: subscriptionId },
@@ -221,9 +278,19 @@ export async function PUT(
 }
 
 export async function DELETE(
-  request: Request,
+  _request: NextRequest,
   { params }: { params: Promise<{ subscriptionId: string }> },
 ) {
+  // Require authentication
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const { session } = authResult;
+
+  // Only ADMIN can delete subscriptions
+  if (session.user.role !== "ADMIN") {
+    return forbiddenResponse("Only administrators can delete subscriptions");
+  }
+
   try {
     const { subscriptionId } = await params;
 
@@ -291,6 +358,11 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ subscriptionId: string }> },
 ) {
+  // Require authentication
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const { session } = authResult;
+
   try {
     const body = await request.json();
     const patchResult = PatchSubscriptionStatusSchema.safeParse(body);
@@ -328,6 +400,18 @@ export async function PATCH(
       return NextResponse.json(
         { error: "Subscription not found" },
         { status: 404 },
+      );
+    }
+
+    // Check authorization: must be a participant or privileged
+    const isConsultant =
+      existingSubscription.subscriptionPlan?.consultantProfile?.id ===
+      session.user.consultantProfileId;
+    const isConsultee =
+      existingSubscription.requestedById === session.user.consulteeProfileId;
+    if (!isPrivileged(session.user.role) && !isConsultant && !isConsultee) {
+      return forbiddenResponse(
+        "You can only modify subscriptions you are a participant in",
       );
     }
 
@@ -478,21 +562,20 @@ export async function PATCH(
                 },
               });
 
-              // Check if tentative appointments already exist
+              // Confirm existing tentative appointments by setting slots to non-tentative.
+              // Appointment slots are created by SlotAllocationService during checkout/allocation,
+              // not by this status handler. If no appointments exist here, that's expected for
+              // approval-pending-payment flows where slots get allocated after payment succeeds.
               if (
                 subscription.appointments &&
                 subscription.appointments.length > 0
               ) {
-                // Confirm existing tentative appointments by setting slots to non-tentative
                 for (const appointment of subscription.appointments) {
                   await tx.slotOfAppointment.updateMany({
                     where: { appointmentId: appointment.id },
                     data: { isTentative: false },
                   });
                 }
-              } else {
-                // Only create new appointments if none exist (direct checkout flow)
-                await createAppointmentsForSubscription(subscription, tx);
               }
               return { data: subscription, duplicate: false };
             } else {
@@ -721,114 +804,3 @@ async function generatePaymentLinkForSubscription(
   });
 }
 
-async function createAppointmentsForSubscription(
-  subscription: SubscriptionWithDetails,
-  tx: Prisma.TransactionClient,
-) {
-  const { subscriptionPlan, requestedBy } = subscription;
-
-  if (!subscriptionPlan?.durationInMonths || !subscriptionPlan?.callsPerWeek) {
-    console.error("Missing subscription plan details:", subscriptionPlan);
-    throw new Error("Invalid subscription plan details");
-  }
-
-  const sessionDuration = subscriptionPlan.sessionDurationInHours ?? 1;
-
-  if (
-    !requestedBy?.user?.id ||
-    !subscriptionPlan?.consultantProfile?.user?.id
-  ) {
-    console.error("Missing user information:", {
-      requestedBy,
-      consultantProfile: subscriptionPlan.consultantProfile,
-    });
-    throw new Error("Missing user information");
-  }
-
-  const startDate = subscription.schedulingPeriodStartsAt || new Date();
-  const endDate =
-    subscription.schedulingPeriodEndsAt ||
-    addMonths(startDate, subscriptionPlan.durationInMonths);
-  const appointments = [];
-
-  // Prepare all appointment data first
-  const allAppointmentData = [];
-  let currentDate = startDate;
-
-  while (currentDate < endDate) {
-    // Create callsPerWeek appointments for this week
-    for (let i = 0; i < subscriptionPlan.callsPerWeek; i++) {
-      const appointmentDate = setHours(setMinutes(currentDate, 0), 10);
-
-      // Check if appointment already exists for this time slot using transaction
-      const existingAppointment = await tx.appointment.findFirst({
-        where: {
-          subscription: { id: subscription.id },
-          slotsOfAppointment: {
-            some: {
-              startsAt: appointmentDate,
-            },
-          },
-        },
-      });
-
-      if (!existingAppointment) {
-        allAppointmentData.push({
-          appointmentType: AppointmentsType.SUBSCRIPTION,
-          subscription: {
-            connect: { id: subscription.id },
-          },
-          slotsOfAppointment: {
-            create: {
-              startsAt: appointmentDate,
-              endsAt: addHours(appointmentDate, sessionDuration),
-              isTentative: false,
-              user: {
-                connect: [
-                  { id: requestedBy.user.id },
-                  { id: subscriptionPlan.consultantProfile.user.id },
-                ],
-              },
-            },
-          },
-        });
-      }
-    }
-    currentDate = addWeeks(currentDate, 1);
-  }
-
-  // Process appointments in batches
-  const batchSize = 10;
-  for (let i = 0; i < allAppointmentData.length; i += batchSize) {
-    const batch = allAppointmentData.slice(i, i + batchSize);
-    try {
-      const createdAppointments = await Promise.all(
-        batch.map((appointmentData) =>
-          tx.appointment.create({
-            data: appointmentData,
-            include: {
-              slotsOfAppointment: {
-                include: {
-                  user: true,
-                },
-              },
-            },
-          }),
-        ),
-      );
-      appointments.push(...createdAppointments);
-    } catch (error) {
-      console.error(
-        `Error creating appointments batch ${i / batchSize + 1}:`,
-        error instanceof Error ? error.message : "Unknown error",
-      );
-      throw error;
-    }
-  }
-
-  return appointments;
-}
-
-function addHours(date: Date, hours: number): Date {
-  return new Date(date.getTime() + hours * 60 * 60 * 1000);
-}

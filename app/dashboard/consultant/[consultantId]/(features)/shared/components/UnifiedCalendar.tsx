@@ -145,6 +145,9 @@ function countCompletedCallsForWeek(
     if (!appt.subscription || appt.subscription.id !== subscriptionId)
       return false;
     const slots = appt.slotsOfAppointment || [];
+    // Skip tentative appointments — during rescheduling, tentative slots are the
+    // OLD slots being replaced and should not count toward the weekly limit.
+    if (slots.some((s: any) => s.isTentative)) return false;
     // A completed call is an appointment that has exactly the per-call slot count
     if (slots.length !== slotsPerCall) return false;
     // FIX: Use correct field names from API (startsAt, not slotStartTimeInUTC)
@@ -194,6 +197,7 @@ function computeSubscriptionFooter(
     allowedEnd?: Date;
     callsPerWeek?: number;
     sessionDurationInHours?: number;
+    totalSessions?: number;
   }>,
 ): string | null {
   const {
@@ -202,11 +206,18 @@ function computeSubscriptionFooter(
     allowedEnd,
     callsPerWeek,
     sessionDurationInHours,
+    totalSessions,
   } = params;
-  if (!allowedStart || !allowedEnd || !callsPerWeek) return null;
 
-  const weeks = countSundayWeeksInclusive(allowedStart, allowedEnd);
-  const maxTotalCalls = weeks * callsPerWeek;
+  // Use totalSessions from plan (authoritative) to avoid calendar-week edge cases
+  let maxTotalCalls: number;
+  if (totalSessions && totalSessions > 0) {
+    maxTotalCalls = totalSessions;
+  } else {
+    if (!allowedStart || !allowedEnd || !callsPerWeek) return null;
+    const weeks = countSundayWeeksInclusive(allowedStart, allowedEnd);
+    maxTotalCalls = weeks * callsPerWeek;
+  }
   const slotsPerCall = getSlotsPerCall(sessionDurationInHours);
   const scheduled = Math.floor(selectedSlots.length / slotsPerCall);
   const remaining = maxTotalCalls - scheduled;
@@ -311,6 +322,7 @@ export interface UnifiedCalendarProps {
   // Optional hard boundaries to restrict interactive selection
   allowedStart?: Date;
   allowedEnd?: Date;
+  totalSessions?: number; // Authoritative session count from plan (overrides weeks × callsPerWeek)
 }
 
 export function UnifiedCalendar({
@@ -331,6 +343,7 @@ export function UnifiedCalendar({
   className = "",
   allowedStart,
   allowedEnd,
+  totalSessions,
 }: UnifiedCalendarProps) {
   const { toast } = useToast();
   // State
@@ -412,11 +425,15 @@ export function UnifiedCalendar({
     sessionDurationInHours,
     startDate: allowedStart,
     endDate: allowedEnd,
-    // Provide dynamic maxTotalCalls so validation/toasts show the real limit
+    // Provide dynamic maxTotalCalls so validation/toasts show the real limit.
+    // Prefer totalSessions from plan (authoritative) over calendar-week calculation.
     maxTotalCalls:
-      eventType === "subscription" && allowedStart && allowedEnd && callsPerWeek
-        ? countSundayWeeksInclusive(allowedStart, allowedEnd) *
-        (callsPerWeek || 1)
+      (eventType === "subscription" || eventType === "class")
+        ? (totalSessions && totalSessions > 0
+          ? totalSessions
+          : allowedStart && allowedEnd && callsPerWeek
+            ? countSundayWeeksInclusive(allowedStart, allowedEnd) * (callsPerWeek || 1)
+            : undefined)
         : undefined,
     onSuccess: handleAllocationSuccess,
   });
@@ -759,22 +776,6 @@ export function UnifiedCalendar({
 
         return timeMatch || stringMatch;
       });
-
-      // Enhanced debug logging
-      if (eventSlots.length > 0 && !isCurrentEventSlot && slot.isBooked) {
-        console.log("[UnifiedCalendar] Slot not matching eventSlots:", {
-          slotTime: slot.startTime.toISOString(),
-          slotTimeMs: slot.startTime.getTime(),
-          eventSlotsCount: eventSlots.length,
-          eventSlotTimes: eventSlots.map((s) => ({
-            time: s.startTime.toISOString(),
-            ms: s.startTime.getTime(),
-            diff: Math.abs(slot.startTime.getTime() - s.startTime.getTime()),
-          })),
-          eventType,
-          eventId,
-        });
-      }
 
       // Check if slot is outside allowed period for subscriptions/classes
       const intervalStart = new Date(status.intervalStartUTCString);
@@ -1225,6 +1226,7 @@ export function UnifiedCalendar({
                     allowedEnd,
                     callsPerWeek,
                     sessionDurationInHours,
+                    totalSessions,
                   });
                   if (computed) return computed;
                   // Fallback to existing text if boundaries not provided

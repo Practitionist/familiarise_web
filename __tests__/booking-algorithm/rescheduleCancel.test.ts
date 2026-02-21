@@ -558,8 +558,11 @@ describe("Reschedule Route Handler - POST", () => {
       expect(body.rescheduleType).toBe("individual_session");
       expect(body.slotsAffected).toBe(1);
 
+      // The route marks ALL slots belonging to the affected appointment(s), not just the
+      // specified slot ID. This ensures multi-slot sessions (e.g. 1.5h = 3 × 30-min slots)
+      // are rescheduled atomically — a partial-tentative session would be inconsistent.
       expect(mockTx.slotOfAppointment.updateMany).toHaveBeenCalledWith({
-        where: { id: { in: ["slot-1"] } },
+        where: { appointmentId: { in: ["apt-1"] } },
         data: { isTentative: true },
       });
     });

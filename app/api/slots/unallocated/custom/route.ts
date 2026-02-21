@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { buildOccupiedAppointmentFilter } from "@/utils/slotAllocation/occupancyPolicy";
 
 export async function GET(req: NextRequest) {
   try {
@@ -17,104 +18,99 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    // First get all appointments that overlap with the requested time period
+    // Get all occupied appointments for this consultant (all event types + trials).
+    // Use canonical overlap predicate to catch all overlap shapes including enclosing.
     const appointments = await prisma.appointment.findMany({
       where: {
-        slotsOfAppointment: {
-          some: {
-            OR: [
-              {
-                startsAt: {
-                  gte: startDateInUtc ? new Date(startDateInUtc) : undefined,
-                  lte: endDateInUtc ? new Date(endDateInUtc) : undefined,
+        OR: buildOccupiedAppointmentFilter(consultantProfileId),
+        ...(startDateInUtc && endDateInUtc
+          ? {
+              slotsOfAppointment: {
+                some: {
+                  startsAt: { lt: new Date(endDateInUtc) },
+                  endsAt: { gt: new Date(startDateInUtc) },
                 },
               },
-              {
-                endsAt: {
-                  gte: startDateInUtc ? new Date(startDateInUtc) : undefined,
-                  lte: endDateInUtc ? new Date(endDateInUtc) : undefined,
-                },
-              },
-            ],
-          },
-        },
+            }
+          : {}),
       },
       include: {
         slotsOfAppointment: true,
       },
     });
 
-    // Create a map of allocated time slots (both confirmed and tentative)
-    const allocatedSlots = new Map();
+    // FIX Bug #09: Store allocated slots as array for range overlap checks
+    // instead of exact key matching which misses partial overlaps
+    const allocatedSlots: { startsAt: Date; endsAt: Date }[] = [];
     appointments.forEach((appointment) => {
       appointment.slotsOfAppointment.forEach((slot) => {
-        const start = slot.startsAt;
-        const end = slot.endsAt;
-        allocatedSlots.set(
-          `${start.toISOString()}-${end.toISOString()}`,
-          slot.isTentative,
-        );
+        allocatedSlots.push({
+          startsAt: slot.startsAt,
+          endsAt: slot.endsAt,
+        });
       });
     });
 
-    // Get all custom slots for the consultant
-    const [customSlots, total] = await Promise.all([
-      prisma.slotOfAvailabilityCustom.findMany({
-        where: {
-          consultantProfileId,
-          ...(startDateInUtc && endDateInUtc
-            ? {
-                availabilityStartsAt: { gte: new Date(startDateInUtc) },
-                availabilityEndsAt: { lte: new Date(endDateInUtc) },
-              }
-            : {}),
-        },
-        orderBy: {
-          availabilityStartsAt: "asc",
-        },
-        include: {
-          consultantProfile: {
-            select: {
-              id: true,
-              user: {
-                select: {
-                  name: true,
-                  email: true,
-                },
+    // Fetch ALL custom slots (no DB-level pagination) so we can filter out
+    // allocated ones first, then paginate the filtered results accurately.
+    const dateFilter =
+      startDateInUtc && endDateInUtc
+        ? {
+            availabilityStartsAt: { gte: new Date(startDateInUtc) },
+            availabilityEndsAt: { lte: new Date(endDateInUtc) },
+          }
+        : {};
+
+    const allCustomSlots = await prisma.slotOfAvailabilityCustom.findMany({
+      where: {
+        consultantProfileId,
+        ...dateFilter,
+      },
+      orderBy: {
+        availabilityStartsAt: "asc",
+      },
+      include: {
+        consultantProfile: {
+          select: {
+            id: true,
+            user: {
+              select: {
+                name: true,
+                email: true,
               },
             },
           },
         },
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-      prisma.slotOfAvailabilityCustom.count({
-        where: {
-          consultantProfileId,
-          ...(startDateInUtc && endDateInUtc
-            ? {
-                availabilityStartsAt: { gte: new Date(startDateInUtc) },
-                availabilityEndsAt: { lte: new Date(endDateInUtc) },
-              }
-            : {}),
-        },
-      }),
-    ]);
-
-    // Filter out allocated slots
-    const unallocatedSlots = customSlots.filter((slot) => {
-      const key = `${slot.availabilityStartsAt.toISOString()}-${slot.availabilityEndsAt.toISOString()}`;
-      return !allocatedSlots.has(key);
+      },
     });
+
+    // FIX Bug #09: Use range overlap check instead of exact key matching
+    const allUnallocatedSlots = allCustomSlots.filter((slot) => {
+      const hasOverlap = allocatedSlots.some(
+        (allocated) =>
+          allocated.startsAt < slot.availabilityEndsAt &&
+          allocated.endsAt > slot.availabilityStartsAt,
+      );
+      return !hasOverlap;
+    });
+
+    // Apply pagination in memory after filtering so totals are accurate
+    const totalConfigured = allCustomSlots.length;
+    const totalUnallocated = allUnallocatedSlots.length;
+    const paginatedSlots = allUnallocatedSlots.slice(
+      (page - 1) * limit,
+      page * limit,
+    );
 
     return NextResponse.json(
       {
-        data: unallocatedSlots,
+        data: paginatedSlots,
         meta: {
-          total,
+          totalUnallocated,
+          totalConfigured,
           page,
           limit,
-          totalPages: Math.ceil(total / limit),
+          totalPages: Math.ceil(totalUnallocated / limit),
         },
       },
       { status: 200 },

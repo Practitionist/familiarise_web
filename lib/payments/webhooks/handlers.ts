@@ -17,7 +17,6 @@ import { ZodError } from "zod";
 import { sendPaymentSuccessEmail, sendPaymentFailedEmail } from "@/lib/email";
 import {
   createEarningsFromPayment,
-  refundEarnings,
   createInvoiceFromPayment,
   type AppointmentType,
 } from "@/lib/payments/payouts";
@@ -54,6 +53,7 @@ interface ConsultationData {
   slotEndTimeInUTC: string;
   notes?: string;
   consulteeProfileId: string;
+  userId: string;
 }
 
 /**
@@ -67,6 +67,7 @@ interface SubscriptionData {
   schedulingPeriodEndsAt?: string;
   notes?: string;
   consulteeProfileId: string;
+  userId: string;
 }
 
 /**
@@ -652,6 +653,7 @@ async function createAppointmentFromWebhook(
         slotEndTimeInUTC,
         notes,
         consulteeProfileId,
+        userId,
       });
       break;
     case AppointmentsType.SUBSCRIPTION:
@@ -675,6 +677,7 @@ async function createAppointmentFromWebhook(
         schedulingPeriodEndsAt,
         notes,
         consulteeProfileId,
+        userId,
       });
       break;
     case AppointmentsType.WEBINAR:
@@ -722,6 +725,7 @@ async function createConsultation(
           startsAt: new Date(data.slotStartTimeInUTC),
           endsAt: new Date(data.slotEndTimeInUTC),
           isTentative: false,
+          user: { connect: { id: data.userId } },
         },
       },
     },
@@ -786,6 +790,7 @@ async function createSubscription(
         startsAt: new Date(data.slotStartTimeInUTC),
         endsAt: new Date(data.slotEndTimeInUTC),
         isTentative: false,
+        user: { connect: { id: data.userId } },
       },
     };
   }
@@ -1077,17 +1082,20 @@ async function cleanupFailedPaymentAppointment(
         where: { appointmentId },
       });
       if (remainingSlots === 0) {
+        // Soft-delete: transition to EXPIRED status instead of hard-deleting
+        // to preserve audit trails for support/disputes/refunds
         if (appointment.consultation) {
-          await tx.consultation.delete({
+          await tx.consultation.update({
             where: { id: appointment.consultation.id },
+            data: { requestStatus: RequestStatus.EXPIRED },
           });
         }
         if (appointment.subscription) {
-          await tx.subscription.delete({
+          await tx.subscription.update({
             where: { id: appointment.subscription.id },
+            data: { requestStatus: RequestStatus.EXPIRED },
           });
         }
-        await tx.appointment.delete({ where: { id: appointmentId } });
       }
     }
   }

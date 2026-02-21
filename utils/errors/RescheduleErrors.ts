@@ -28,6 +28,39 @@ export class ReschedulePolicyError extends Error {
 }
 
 /**
+ * Thrown when the caller is not authorized to reschedule an appointment
+ */
+export class RescheduleAuthorizationError extends Error {
+  constructor() {
+    super("You are not authorized to reschedule this appointment");
+    this.name = "RescheduleAuthorizationError";
+
+    if (Error.captureStackTrace) {
+      Error.captureStackTrace(this, RescheduleAuthorizationError);
+    }
+  }
+}
+
+/**
+ * Thrown when the query param type doesn't match the DB-derived appointment type
+ */
+export class AppointmentTypeMismatchError extends Error {
+  constructor(
+    public readonly queryType: string,
+    public readonly derivedType: string,
+  ) {
+    super(
+      `Appointment type mismatch: query param "${queryType}" does not match actual type "${derivedType}"`,
+    );
+    this.name = "AppointmentTypeMismatchError";
+
+    if (Error.captureStackTrace) {
+      Error.captureStackTrace(this, AppointmentTypeMismatchError);
+    }
+  }
+}
+
+/**
  * Thrown when an appointment or slot is not found
  */
 export class AppointmentNotFoundError extends Error {

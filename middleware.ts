@@ -124,6 +124,10 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
   // redirects authenticated users itself. Doing it here based on cookie
   // presence causes infinite loops when the cookie is stale (DB session gone).
   if (matchesAnyPrefix(pathname, ROUTE_PATTERNS.PUBLIC_AUTH_PREFIXES)) {
+    // Do NOT redirect cookie-present users to /dashboard here.
+    // Cookie presence ≠ session validity — stale cookies cause an infinite
+    // redirect loop: requireOnboarded() → /auth/signin → /dashboard → /auth/signin.
+    // The signin/signup pages already redirect authenticated users via useEffect.
     return NextResponse.next();
   }
 
@@ -132,7 +136,7 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
     if (!isAuthenticated) {
       // Preserve callbackUrl for all protected routes
       const signInUrl = new URL(URLS.SIGNIN, req.url);
-      signInUrl.searchParams.set("callbackUrl", pathname);
+      signInUrl.searchParams.set("callbackUrl", pathname + req.nextUrl.search);
       return NextResponse.redirect(signInUrl);
     }
     return NextResponse.next();

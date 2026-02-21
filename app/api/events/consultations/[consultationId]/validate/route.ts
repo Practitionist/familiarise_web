@@ -19,6 +19,7 @@ import {
 } from "@/schemas/slotAllocation/validationSchemas";
 import { ZodError } from "zod";
 import type { SlotConflictResult } from "@/utils/slotAllocation/types";
+import { requireApiAuth, authorizeEventAccess } from "@/lib/auth-helpers";
 
 const consultationInclude = {
   consultationPlan: {
@@ -45,7 +46,17 @@ export async function POST(
   { params }: { params: Promise<{ consultationId: string }> },
 ) {
   try {
+    const authResult = await requireApiAuth();
+    if (authResult.error) return authResult.error;
+
     const { consultationId } = await params;
+
+    const authzError = await authorizeEventAccess(
+      authResult.session,
+      "consultation",
+      consultationId,
+    );
+    if (authzError) return authzError;
 
     // LAYER 1: Zod Schema Validation (type-safe, automatic type inference)
     try {
@@ -83,6 +94,19 @@ export async function POST(
 
       // LAYER 2: Business Logic Validation (conflicts, availability, consecutive slots, etc.)
       const validationService = new SlotValidationService(prisma);
+
+      // Exclude this consultation's own tentative appointments from conflict
+      // detection. During re-allocation (e.g. "Use Requested Times"), the old
+      // tentative slots still exist and would otherwise be reported as conflicts.
+      const tentativeAppointments = await prisma.appointment.findMany({
+        where: {
+          consultationId,
+          slotsOfAppointment: { some: { isTentative: true } },
+        },
+        select: { id: true },
+      });
+      const excludeIds = tentativeAppointments.map((a) => a.id);
+
       const validationResult = await validationService.validate(
         "consultation",
         consultationId,
@@ -99,6 +123,7 @@ export async function POST(
         {
           durationInHours: consultationPlan.durationInHours,
         },
+        excludeIds,
       );
 
       // If validation passed, all slots are valid
@@ -112,7 +137,7 @@ export async function POST(
         });
       }
 
-      // Parse errors to extract conflicts and availability issues
+      // Categorize errors by prefix instead of brittle regex
       const result: SlotConflictResult = {
         conflicts: [],
         outsideAvailability: [],
@@ -120,12 +145,10 @@ export async function POST(
       };
 
       for (const error of validationResult.errors) {
-        if (
-          error.includes("already booked") ||
-          error.includes("conflicts with")
-        ) {
+        if (error.startsWith("[CONFLICT]")) {
+          const message = error.replace("[CONFLICT] ", "");
           // Extract slot time from error message
-          const slotMatch = error.match(
+          const slotMatch = message.match(
             /(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/,
           );
           if (slotMatch) {
@@ -133,7 +156,7 @@ export async function POST(
             result.conflicts.push({
               slot,
               existingAppointment: {
-                type: error.includes("Subscription")
+                type: message.includes("subscription")
                   ? "Subscription"
                   : "Consultation",
                 with: "Another user",
@@ -141,25 +164,36 @@ export async function POST(
               },
             });
           }
-        } else if (
-          error.includes("does not match") ||
-          error.includes("not in consultant's")
-        ) {
-          // Outside availability
-          const slotMatch = error.match(
+        } else if (error.startsWith("[OUTSIDE_AVAILABILITY]")) {
+          const message = error.replace("[OUTSIDE_AVAILABILITY] ", "");
+          const slotMatch = message.match(
             /(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/,
           );
           if (slotMatch) {
             result.outsideAvailability.push({ slot: slotMatch[1] });
+          } else {
+            // Error doesn't contain specific ISO timestamps (e.g. weekly schedule
+            // availability check returns "Saturday at 15:00 UTC" format).
+            // Mark ALL provided slots as outside availability.
+            for (const bodySlot of body.slots) {
+              const normalized = new Date(bodySlot).toISOString().slice(0, 19);
+              if (!result.outsideAvailability.some((o) => o.slot === normalized)) {
+                result.outsideAvailability.push({ slot: normalized });
+              }
+            }
           }
         }
+        // [VALIDATION] errors don't need slot-level parsing
       }
 
-      // Valid slots are those not in conflicts or outside availability
-      result.validSlots = body.slots.filter((slot) => {
+      // Valid slots are those not in conflicts or outside availability.
+      // FIX: Normalize both sides to seconds-precision UTC ISO (strip .000Z suffix)
+      // so "2026-02-23T04:30:00.000Z" and "2026-02-23T04:30:00" compare equal.
+      result.validSlots = body.slots.filter((bodySlot) => {
+        const bodySlotSeconds = new Date(bodySlot).toISOString().slice(0, 19);
         return (
-          !result.conflicts.some((c) => c.slot === slot) &&
-          !result.outsideAvailability.some((o) => o.slot === slot)
+          !result.conflicts.some((c) => c.slot === bodySlotSeconds) &&
+          !result.outsideAvailability.some((o) => o.slot === bodySlotSeconds)
         );
       });
 
