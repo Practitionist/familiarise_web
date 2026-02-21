@@ -168,6 +168,68 @@ export async function freezeAppointments(
       }
     }
 
+    // Cancel webinar if applicable
+    if (appointment.webinar) {
+      const webinar = appointment.webinar;
+      await prisma.webinar.update({
+        where: { id: webinar.id },
+        data: { status: "CANCELLED" },
+      });
+
+      const consultantUser = webinar.webinarPlan?.consultantProfile?.user;
+      const participantIds = slot.user.map((u) => u.id);
+      const userIds: string[] = [...participantIds];
+      if (consultantUser?.id && !userIds.includes(consultantUser.id)) {
+        userIds.push(consultantUser.id);
+      }
+
+      if (userIds.length > 0) {
+        await notifyAppointmentCancelled(userIds, {
+          appointmentId: appointment.id,
+          appointmentType: "WEBINAR",
+          consultantName: consultantUser?.name || "Consultant",
+          consulteeName: "Participants",
+          planTitle: webinar.webinarPlan?.title || "Webinar",
+          dateTime: slot.startsAt.toISOString(),
+          dashboardUrl: "/dashboard",
+          reason: "Scheduled platform maintenance",
+          cancelledBy: "system",
+        });
+        notified += userIds.length;
+      }
+    }
+
+    // Cancel class if applicable
+    if (appointment.class) {
+      const classEvent = appointment.class;
+      await prisma.class.update({
+        where: { id: classEvent.id },
+        data: { status: "CANCELLED" },
+      });
+
+      const consultantUser = classEvent.classPlan?.consultantProfile?.user;
+      const participantIds = slot.user.map((u) => u.id);
+      const userIds: string[] = [...participantIds];
+      if (consultantUser?.id && !userIds.includes(consultantUser.id)) {
+        userIds.push(consultantUser.id);
+      }
+
+      if (userIds.length > 0) {
+        await notifyAppointmentCancelled(userIds, {
+          appointmentId: appointment.id,
+          appointmentType: "CLASS",
+          consultantName: consultantUser?.name || "Consultant",
+          consulteeName: "Participants",
+          planTitle: classEvent.classPlan?.title || "Class",
+          dateTime: slot.startsAt.toISOString(),
+          dashboardUrl: "/dashboard",
+          reason: "Scheduled platform maintenance",
+          cancelledBy: "system",
+        });
+        notified += userIds.length;
+      }
+    }
+
     // Delete the slot and appointment
     await prisma.slotOfAppointment.delete({ where: { id: slot.id } });
 
