@@ -92,11 +92,28 @@ export async function freezeAppointments(
     return { cancelled: 0, notified: 0 };
   }
 
+  // Group slots by appointment to avoid duplicate cancellations and N+1 queries
+  type AffectedSlot = (typeof affectedSlots)[number];
+  const slotsByAppointment: Record<string, AffectedSlot[]> = {};
+  for (const slot of affectedSlots) {
+    const id = slot.appointment.id;
+    if (slotsByAppointment[id]) {
+      slotsByAppointment[id].push(slot);
+    } else {
+      slotsByAppointment[id] = [slot];
+    }
+  }
+
   let cancelled = 0;
   let notified = 0;
 
-  for (const slot of affectedSlots) {
-    const appointment = slot.appointment;
+  for (const appointmentId of Object.keys(slotsByAppointment)) {
+    const slots = slotsByAppointment[appointmentId];
+    const appointment = slots[0].appointment;
+    const earliestSlot = slots.reduce(
+      (a: AffectedSlot, b: AffectedSlot) =>
+        a.startsAt < b.startsAt ? a : b,
+    );
 
     // Cancel consultation if applicable
     if (appointment.consultation) {
@@ -124,7 +141,7 @@ export async function freezeAppointments(
           consultantName: consultantUser?.name || "Consultant",
           consulteeName: consulteeUser?.name || "User",
           planTitle: consultation.consultationPlan?.title || "Consultation",
-          dateTime: slot.startsAt.toISOString(),
+          dateTime: earliestSlot.startsAt.toISOString(),
           dashboardUrl: "/dashboard",
           reason: "Scheduled platform maintenance",
           cancelledBy: "system",
@@ -159,7 +176,7 @@ export async function freezeAppointments(
           consultantName: consultantUser?.name || "Consultant",
           consulteeName: consulteeUser?.name || "User",
           planTitle: subscription.subscriptionPlan?.title || "Subscription",
-          dateTime: slot.startsAt.toISOString(),
+          dateTime: earliestSlot.startsAt.toISOString(),
           dashboardUrl: "/dashboard",
           reason: "Scheduled platform maintenance",
           cancelledBy: "system",
@@ -177,8 +194,8 @@ export async function freezeAppointments(
       });
 
       const consultantUser = webinar.webinarPlan?.consultantProfile?.user;
-      const participantIds = slot.user.map((u) => u.id);
-      const userIds: string[] = [...participantIds];
+      const participantIds = slots.flatMap((s: AffectedSlot) => s.user.map((u) => u.id));
+      const userIds = Array.from(new Set(participantIds));
       if (consultantUser?.id && !userIds.includes(consultantUser.id)) {
         userIds.push(consultantUser.id);
       }
@@ -190,7 +207,7 @@ export async function freezeAppointments(
           consultantName: consultantUser?.name || "Consultant",
           consulteeName: "Participants",
           planTitle: webinar.webinarPlan?.title || "Webinar",
-          dateTime: slot.startsAt.toISOString(),
+          dateTime: earliestSlot.startsAt.toISOString(),
           dashboardUrl: "/dashboard",
           reason: "Scheduled platform maintenance",
           cancelledBy: "system",
@@ -208,8 +225,8 @@ export async function freezeAppointments(
       });
 
       const consultantUser = classEvent.classPlan?.consultantProfile?.user;
-      const participantIds = slot.user.map((u) => u.id);
-      const userIds: string[] = [...participantIds];
+      const participantIds = slots.flatMap((s: AffectedSlot) => s.user.map((u) => u.id));
+      const userIds = Array.from(new Set(participantIds));
       if (consultantUser?.id && !userIds.includes(consultantUser.id)) {
         userIds.push(consultantUser.id);
       }
@@ -221,7 +238,7 @@ export async function freezeAppointments(
           consultantName: consultantUser?.name || "Consultant",
           consulteeName: "Participants",
           planTitle: classEvent.classPlan?.title || "Class",
-          dateTime: slot.startsAt.toISOString(),
+          dateTime: earliestSlot.startsAt.toISOString(),
           dashboardUrl: "/dashboard",
           reason: "Scheduled platform maintenance",
           cancelledBy: "system",
@@ -230,10 +247,12 @@ export async function freezeAppointments(
       }
     }
 
-    // Delete the slot and appointment
-    await prisma.slotOfAppointment.delete({ where: { id: slot.id } });
+    // Batch delete all affected slots for this appointment
+    await prisma.slotOfAppointment.deleteMany({
+      where: { id: { in: slots.map((s: AffectedSlot) => s.id) } },
+    });
 
-    // Only delete appointment if no other slots remain
+    // Delete appointment if no other slots remain
     const remainingSlots = await prisma.slotOfAppointment.count({
       where: { appointmentId: appointment.id },
     });
