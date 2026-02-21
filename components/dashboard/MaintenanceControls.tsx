@@ -10,6 +10,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { useMaintenanceState } from "@/providers/MaintenanceProvider";
+import { useToast } from "@/hooks/use-toast";
 import {
   Card,
   CardContent,
@@ -55,6 +56,7 @@ function toLocalDatetime(iso: string | null): string {
 
 export default function MaintenanceControls() {
   const { refresh: refreshBanner } = useMaintenanceState();
+  const { toast } = useToast();
 
   const [state, setState] = useState<MaintenanceState | null>(null);
   const [history, setHistory] = useState<MaintenanceWindow[]>([]);
@@ -86,8 +88,14 @@ export default function MaintenanceControls() {
           setBypassSecret(data.state.bypassSecret);
         }
       }
-    } catch {
-      // Silently fail
+    } catch (error) {
+      // API call to /api/admin/maintenance failed — network error or server 5xx
+      console.error("Failed to fetch maintenance state:", error);
+      toast({
+        title: "Something went wrong",
+        description: "Unable to load the current status. Please refresh the page or try again later.",
+        variant: "destructive",
+      });
     } finally {
       setLoading(false);
     }
