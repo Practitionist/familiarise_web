@@ -449,26 +449,13 @@ export async function validateSlotAvailability(
   }
 
   // 1. Check for confirmed overlapping appointments FOR THIS CONSULTANT ONLY
-  // FIX: Previously checked ALL consultants globally, now filters by specific consultant
+  // FIX Bug #05: Use canonical overlap predicate that catches all 4 overlap shapes
+  // (partial start, partial end, full containment, and exact match)
   const existingBooking = await tx.slotOfAppointment.findFirst({
     where: {
       AND: [
-        {
-          OR: [
-            {
-              AND: [
-                { startsAt: { lte: slotStart } },
-                { endsAt: { gt: slotStart } },
-              ],
-            },
-            {
-              AND: [
-                { startsAt: { lt: slotEnd } },
-                { endsAt: { gte: slotEnd } },
-              ],
-            },
-          ],
-        },
+        { startsAt: { lt: slotEnd } },
+        { endsAt: { gt: slotStart } },
         { isTentative: false }, // Only confirmed bookings
         // FIX: Filter by consultant - only check slots belonging to this consultant
         ...(consultantUserId
@@ -491,26 +478,13 @@ export async function validateSlotAvailability(
   }
 
   // 2. Check for duplicate tentative bookings by the same user FOR THIS CONSULTANT
+  // FIX Bug #05: Use canonical overlap predicate
   if (userId) {
     const recentAttempt = await tx.slotOfAppointment.findFirst({
       where: {
         AND: [
-          {
-            OR: [
-              {
-                AND: [
-                  { startsAt: { lte: slotStart } },
-                  { endsAt: { gt: slotStart } },
-                ],
-              },
-              {
-                AND: [
-                  { startsAt: { lt: slotEnd } },
-                  { endsAt: { gte: slotEnd } },
-                ],
-              },
-            ],
-          },
+          { startsAt: { lt: slotEnd } },
+          { endsAt: { gt: slotStart } },
           { isTentative: true },
           // FIX: Filter by consultant - only check tentative slots for this consultant
           ...(consultantUserId
@@ -563,25 +537,12 @@ export async function validateSlotAvailability(
   }
 
   // 3. Check for excessive tentative bookings (rate limiting) FOR THIS CONSULTANT
+  // FIX Bug #05: Use canonical overlap predicate
   const tentativeCount = await tx.slotOfAppointment.count({
     where: {
       AND: [
-        {
-          OR: [
-            {
-              AND: [
-                { startsAt: { lte: slotStart } },
-                { endsAt: { gt: slotStart } },
-              ],
-            },
-            {
-              AND: [
-                { startsAt: { lt: slotEnd } },
-                { endsAt: { gte: slotEnd } },
-              ],
-            },
-          ],
-        },
+        { startsAt: { lt: slotEnd } },
+        { endsAt: { gt: slotStart } },
         { isTentative: true },
         // FIX: Filter by consultant - only count tentative slots for this consultant
         ...(consultantUserId
@@ -640,17 +601,21 @@ export async function validateSlotAvailability(
 /**
  * Get plan data needed for lock acquisition
  * Returns consultant profile info for slot-based locking
+ *
+ * FIX Bug #04: Changed from userId to id (consultantProfileId) to match
+ * the lock key used in request-for-approval flow. All slot locks must use
+ * the same identity (consultantProfileId) to prevent parallel bypass.
  */
 async function getPlanDataForLock(
   data: CheckoutInput,
-): Promise<{ consultantProfile?: { userId: string } }> {
-  // For CONSULTATION and SUBSCRIPTION, we need consultant ID for slot locking
+): Promise<{ consultantProfile?: { id: string } }> {
+  // For CONSULTATION and SUBSCRIPTION, we need consultant profile ID for slot locking
   if (data.appointmentType === "CONSULTATION") {
     const plan = await prisma.consultationPlan.findUnique({
       where: { id: data.planId },
       select: {
         consultantProfile: {
-          select: { userId: true },
+          select: { id: true },
         },
       },
     });
@@ -663,7 +628,7 @@ async function getPlanDataForLock(
       where: { id: data.planId },
       select: {
         consultantProfile: {
-          select: { userId: true },
+          select: { id: true },
         },
       },
     });
@@ -681,20 +646,20 @@ async function getPlanDataForLock(
  */
 async function acquireCheckoutLock(
   data: CheckoutInput,
-  planData: { consultantProfile?: { userId: string } },
+  planData: { consultantProfile?: { id: string } },
 ): Promise<ApprovalLock | null> {
   const appointmentType = data.appointmentType;
 
   // Strategy A: Slot-based locking (CONSULTATION + direct SUBSCRIPTION)
+  // FIX Bug #04: Use consultantProfileId (not userId) to match request-for-approval lock key
   if (data.slotStartTimeInUTC && data.slotEndTimeInUTC) {
-    // Get consultant user ID from plan
-    let consultantUserId: string;
+    let consultantProfileId: string;
 
     if (
       appointmentType === "CONSULTATION" ||
       appointmentType === "SUBSCRIPTION"
     ) {
-      consultantUserId = planData.consultantProfile!.userId;
+      consultantProfileId = planData.consultantProfile!.id;
     } else {
       // For WEBINAR/CLASS with slots (shouldn't happen but handle gracefully)
       throw new Error(
@@ -707,13 +672,13 @@ async function acquireCheckoutLock(
         event: "checkout_lock_acquiring",
         type: "slot-based",
         appointmentType,
-        consultantUserId,
+        consultantProfileId,
         slot: data.slotStartTimeInUTC,
         timestamp: new Date().toISOString(),
       }),
     );
 
-    return await lockSlotBooking(consultantUserId, data.slotStartTimeInUTC);
+    return await lockSlotBooking(consultantProfileId, data.slotStartTimeInUTC);
   }
 
   // Strategy B: Event-based locking (WEBINAR, CLASS, scheduling-period SUBSCRIPTION)
@@ -990,13 +955,17 @@ export async function handleConsultationCheckout(
     throw new Error("Consultation plan not found");
   }
 
+  // userId is the consultee's user ID (passed by caller — no extra DB lookup needed)
+  const consultantUserId = plan.consultantProfile.user.id;
+  const consulteeUserId = userId;
+
   // Validate slot availability
   // FIX: Pass consultant user ID to filter by consultant
   await validateSlotAvailability(
     tx,
     data,
     consulteeProfileId,
-    plan.consultantProfile.user.id,
+    consultantUserId,
   );
 
   // Create consultation
@@ -1012,18 +981,37 @@ export async function handleConsultationCheckout(
     },
   });
 
-  // Create appointment
+  // Create appointment with 30-min slot chunks (consistent with SlotAllocationService).
+  // Each SlotOfAppointment is exactly 30 minutes so conflict detection works correctly.
+  // Both consultant and consultee are connected so the user-scoped conflict filter works.
+  const SLOT_MS = 30 * 60 * 1000;
+  const startTime = new Date(data.slotStartTimeInUTC!);
+  const endTime = new Date(data.slotEndTimeInUTC!);
+  const slotChunks: { startsAt: Date; endsAt: Date }[] = [];
+  let cur = new Date(startTime);
+  while (cur < endTime) {
+    slotChunks.push({ startsAt: new Date(cur), endsAt: new Date(cur.getTime() + SLOT_MS) });
+    cur = new Date(cur.getTime() + SLOT_MS);
+  }
+  if (slotChunks.length === 0) throw new Error("Invalid slot: start must be before end");
+
   const appointment = await tx.appointment.create({
     data: {
       appointmentType: AppointmentsType.CONSULTATION,
       consultationId: consultation.id,
       slotsOfAppointment: {
-        create: {
-          startsAt: new Date(data.slotStartTimeInUTC!),
-          endsAt: new Date(data.slotEndTimeInUTC!),
+        create: slotChunks.map((chunk) => ({
+          startsAt: chunk.startsAt,
+          endsAt: chunk.endsAt,
           isTentative: !skipPayment,
-          user: { connect: { id: userId } },
-        },
+          // Connect BOTH consultant and consultee so the user-scoped conflict
+          // filter in validateNoConflicts (user.some.id === consultantUserId)
+          // can see this slot. dev branch only connected the consultee, which
+          // left the slot invisible to auto/manual allocation conflict checks.
+          user: {
+            connect: [{ id: consultantUserId }, { id: consulteeUserId }],
+          },
+        })),
       },
     },
   });
@@ -1268,21 +1256,18 @@ export async function handleWebinarCheckout(
     });
   }
 
-  // Add user to webinar (appointment is guaranteed to exist here)
-  if (appointment) {
-    await tx.slotOfAppointment.create({
-      data: {
-        appointmentId: appointment.id,
-        startsAt:
-          webinar.appointment?.slotsOfAppointment[0]?.startsAt || new Date(),
-        endsAt:
-          webinar.appointment?.slotsOfAppointment[0]?.endsAt || new Date(),
-        isTentative: !skipPayment,
-        user: {
-          connect: { id: userId },
+  // Add user to webinar by linking them to ALL existing slots.
+  // Webinar participants attend the entire session, so they must be
+  // connected to every SlotOfAppointment (not given a new duplicate slot).
+  if (appointment && appointment.slotsOfAppointment.length > 0) {
+    for (const slot of appointment.slotsOfAppointment) {
+      await tx.slotOfAppointment.update({
+        where: { id: slot.id },
+        data: {
+          user: { connect: { id: userId } },
         },
-      },
-    });
+      });
+    }
   }
 
   return { appointment, plan, amount: plan.price };
@@ -1357,39 +1342,20 @@ export async function handleClassCheckout(
     throw new Error("You are already enrolled in this class");
   }
 
-  // Create SlotOfAppointment for the user for ALL class appointments (sessions)
-  const createdSlots = [];
+  // Link user to ALL existing slots of ALL class appointments (sessions).
+  // Class participants attend every session, so they must be connected to
+  // every existing SlotOfAppointment (not given duplicate slots).
+  let linkedSlotCount = 0;
   for (const appointment of classInstance.appointments) {
-    // Get timing from the first existing slot or use appointment times
-    const existingSlot = appointment.slotsOfAppointment[0];
-
-    // Step 1: Create the slot without user connection
-    const slot = await tx.slotOfAppointment.create({
-      data: {
-        appointmentId: appointment.id,
-        startsAt:
-          existingSlot?.startsAt ||
-          appointment.slotsOfAppointment[0]?.startsAt ||
-          new Date(),
-        endsAt:
-          existingSlot?.endsAt ||
-          appointment.slotsOfAppointment[0]?.endsAt ||
-          new Date(),
-        isTentative: !skipPayment,
-      },
-    });
-
-    // Step 2: Connect user to slot in a separate update (fixes FK constraint issue)
-    await tx.slotOfAppointment.update({
-      where: { id: slot.id },
-      data: {
-        user: {
-          connect: { id: userId },
+    for (const slot of appointment.slotsOfAppointment) {
+      await tx.slotOfAppointment.update({
+        where: { id: slot.id },
+        data: {
+          user: { connect: { id: userId } },
         },
-      },
-    });
-
-    createdSlots.push(slot);
+      });
+      linkedSlotCount++;
+    }
   }
 
   // Return the first appointment for compatibility
@@ -1402,7 +1368,7 @@ export async function handleClassCheckout(
     appointment: firstAppointment,
     plan,
     amount: plan.price,
-    slotsCreated: createdSlots.length,
+    slotsLinked: linkedSlotCount,
   };
 }
 

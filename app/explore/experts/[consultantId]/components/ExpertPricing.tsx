@@ -7,7 +7,9 @@ import { TSlotTiming } from "@/types/slots";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import ConsultationPricingToggle from "./ConsultationPricingToggle";
 import SubscriptionPricingToggle from "./SubscriptionPricingToggle";
-import { Shield, Calendar, MessageSquare } from "lucide-react";
+import { Shield, Calendar, MessageSquare, RotateCcw, CheckCircle } from "lucide-react";
+import { motion } from "framer-motion";
+import { useState } from "react";
 
 import { PricingOption } from "../defaults";
 
@@ -53,6 +55,8 @@ export function ExpertPricing({
   setSelectedSlot,
   timezone,
 }: Readonly<ExpertPricingProps>) {
+  const [activeServiceTab, setActiveServiceTab] = useState<"consultations" | "subscriptions">("consultations");
+
   const formatPricingOptions = (
     plans: (ConsultationPlan | SubscriptionPlan)[],
     type: "consultation" | "subscription",
@@ -145,9 +149,9 @@ export function ExpertPricing({
   const hasSubscriptions = subscriptionOptions.length > 0;
 
   return (
-    <div className="sticky top-24 space-y-6">
-      {/* Profile Image Card */}
-      <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
+    <div className="sticky top-24 space-y-4">
+      {/* Profile Image Card — refined, no flat border */}
+      <div className="rounded-3xl overflow-hidden shadow-2xl shadow-black/30 ring-1 ring-white/10">
         <div className="aspect-[4/3] relative">
           <Image
             alt="Profile"
@@ -159,32 +163,47 @@ export function ExpertPricing({
         </div>
       </div>
 
-      {/* Pricing Card */}
-      <div className="bg-zinc-950 rounded-2xl p-6 shadow-xl">
+      {/* Pricing Card — glassmorphism dark */}
+      <div className="bg-zinc-950/90 backdrop-blur-xl rounded-3xl p-6 shadow-2xl shadow-black/40 border border-white/[0.07] ring-1 ring-white/[0.04]">
         {/* Header */}
-        <div className="text-center mb-6">
-          <h3 className="text-xl font-bold text-white mb-2">Book a Session</h3>
-          <p className="text-sm text-zinc-400">Choose your preferred option</p>
+        <div className="text-center mb-5">
+          <h3 className="text-xl font-bold text-white mb-1">Book a Session</h3>
+          <p className="text-xs text-zinc-500 tracking-wide uppercase font-medium">Choose your preferred option</p>
         </div>
 
         {hasConsultations && hasSubscriptions ? (
-          <Tabs defaultValue="consultations" className="w-full">
-            <TabsList className="grid w-full grid-cols-2 mb-6 bg-zinc-900 p-1 rounded-xl">
-              <TabsTrigger
-                value="consultations"
-                className="rounded-lg data-[state=active]:bg-white data-[state=active]:text-zinc-900 text-zinc-400"
-              >
-                <Calendar className="w-4 h-4 mr-2" />
-                One-time
-              </TabsTrigger>
-              <TabsTrigger
-                value="subscriptions"
-                className="rounded-lg data-[state=active]:bg-white data-[state=active]:text-zinc-900 text-zinc-400"
-              >
-                <MessageSquare className="w-4 h-4 mr-2" />
-                Mentorship
-              </TabsTrigger>
+          <Tabs
+            value={activeServiceTab}
+            onValueChange={(v) => setActiveServiceTab(v as "consultations" | "subscriptions")}
+            className="w-full"
+          >
+            {/* Segmented pill toggle for service type */}
+            <TabsList className="relative flex p-1 bg-white/[0.06] rounded-2xl border border-white/[0.08] backdrop-blur-sm mb-6 h-auto">
+              {(["consultations", "subscriptions"] as const).map((tab) => (
+                <TabsTrigger
+                  key={tab}
+                  value={tab}
+                  className="relative flex-1 py-2.5 text-xs sm:text-sm font-medium rounded-xl flex items-center justify-center gap-2 data-[state=active]:text-zinc-900 data-[state=active]:bg-transparent data-[state=active]:shadow-none text-zinc-400 transition-colors duration-300 z-10 h-auto"
+                >
+                  {activeServiceTab === tab && (
+                    <motion.div
+                      layoutId="service-type-pill"
+                      className="absolute inset-0 bg-white rounded-xl shadow-sm"
+                      transition={{ type: "spring", bounce: 0.15, duration: 0.35 }}
+                    />
+                  )}
+                  <span className="relative z-10 flex items-center gap-2">
+                    {tab === "consultations" ? (
+                      <Calendar className="w-3.5 h-3.5" />
+                    ) : (
+                      <MessageSquare className="w-3.5 h-3.5" />
+                    )}
+                    {tab === "consultations" ? "One-time" : "Mentorship"}
+                  </span>
+                </TabsTrigger>
+              ))}
             </TabsList>
+
             <TabsContent value="consultations">
               <ConsultationPricingToggle
                 consultationOptions={consultationOptions}
@@ -238,11 +257,21 @@ export function ExpertPricing({
           </div>
         )}
 
-        {/* Trust Badges */}
-        <div className="mt-6 pt-6 border-t border-zinc-800">
-          <div className="flex items-center justify-center gap-2 text-sm text-zinc-400">
-            <Shield className="w-4 h-4" />
-            <span>Secure payments • Money-back guarantee</span>
+        {/* Trust Badges — chip style */}
+        <div className="mt-6 pt-5 border-t border-white/[0.06]">
+          <div className="flex items-center justify-center gap-2 flex-wrap">
+            <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/[0.04] border border-white/[0.06] text-xs text-zinc-500">
+              <Shield className="w-3 h-3" />
+              Secure
+            </span>
+            <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/[0.04] border border-white/[0.06] text-xs text-zinc-500">
+              <RotateCcw className="w-3 h-3" />
+              Money-back
+            </span>
+            <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/[0.04] border border-white/[0.06] text-xs text-zinc-500">
+              <CheckCircle className="w-3 h-3" />
+              Verified
+            </span>
           </div>
         </div>
       </div>

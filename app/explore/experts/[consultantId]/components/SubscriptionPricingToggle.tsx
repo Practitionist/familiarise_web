@@ -252,23 +252,31 @@ export default function SubscriptionPricingToggle({
     <Tabs
       value={activeSubscriptionOption}
       onValueChange={setActiveSubscriptionOption}
-      className="w-full space-y-6"
+      className="w-full space-y-5"
     >
-      {/* Duration Toggle - Black/Silver Theme */}
-      <TabsList className="flex w-full p-1 bg-zinc-800/50 backdrop-blur-sm rounded-xl border border-zinc-700/50">
-        {subscriptionOptions.map((option, index) => (
-          <TabsTrigger
-            key={`sub-tab-${index}`}
-            value={option.title.toLowerCase().replace(" ", "-")}
-            className={`${activeSubscriptionOption ===
-              option.title.toLowerCase().replace(" ", "-")
-              ? "bg-white text-zinc-900 shadow-sm"
-              : "text-zinc-400 hover:text-white hover:bg-zinc-700/50"
-              } flex-1 px-2 sm:px-4 py-2 rounded-lg font-medium text-xs sm:text-sm transition-all duration-200 whitespace-nowrap`}
-          >
-            {option.title}
-          </TabsTrigger>
-        ))}
+      {/* Segmented pill duration toggle */}
+      <TabsList className="relative flex p-1 bg-white/[0.06] rounded-2xl border border-white/[0.08] backdrop-blur-sm h-auto">
+        {subscriptionOptions.map((option, index) => {
+          const isActive =
+            activeSubscriptionOption ===
+            option.title.toLowerCase().replace(" ", "-");
+          return (
+            <TabsTrigger
+              key={`sub-tab-${index}`}
+              value={option.title.toLowerCase().replace(" ", "-")}
+              className="relative flex-1 py-2.5 text-xs sm:text-sm font-medium rounded-xl data-[state=active]:text-zinc-900 data-[state=active]:bg-transparent data-[state=active]:shadow-none text-zinc-400 transition-colors duration-300 z-10 h-auto whitespace-nowrap"
+            >
+              {isActive && (
+                <motion.div
+                  layoutId="subscription-duration-pill"
+                  className="absolute inset-0 bg-white rounded-xl shadow-sm"
+                  transition={{ type: "spring", bounce: 0.15, duration: 0.35 }}
+                />
+              )}
+              <span className="relative z-10">{option.title}</span>
+            </TabsTrigger>
+          );
+        })}
       </TabsList>
 
       <div className="grid grid-cols-1 gap-4">
@@ -292,43 +300,49 @@ export default function SubscriptionPricingToggle({
                 : "hidden"
             }
           >
-            {/* Pricing Card - Silver/Zinc Gradient */}
-            <div className="bg-gradient-to-br from-zinc-800/80 to-zinc-900/80 border border-zinc-700/50 rounded-xl p-6 backdrop-blur-sm">
-              <div className="mb-1">
-                <h3 className="text-xl font-bold text-white">{option.title}</h3>
-                <p className="text-sm text-zinc-400">{option.description}</p>
-              </div>
+            {/* Pricing content — lives directly in glass parent */}
+            <div className="space-y-1">
+              <h3 className="text-lg font-bold text-white">{option.title}</h3>
+              <p className="text-xs text-zinc-500">{option.description}</p>
+            </div>
 
-              <div className="my-4">
-                <span className="text-4xl font-bold text-white">
-                  {formatPrice(option.price)}
-                </span>
-              </div>
+            <div className="flex items-end gap-2 my-5">
+              <span className="text-5xl font-bold tracking-tight text-white">
+                {formatPrice(option.price)}
+              </span>
+              <span className="text-zinc-500 text-sm mb-1.5">/ month</span>
+            </div>
 
-              {option.features && option.features.length > 0 && (
-                <div className="space-y-2 mb-6">
-                  <p className="text-sm text-zinc-400">Includes:</p>
+            {option.features && option.features.length > 0 && (
+              <>
+                <div className="border-t border-white/[0.06] mb-4" />
+                <div className="space-y-2 mb-5">
+                  <p className="text-xs text-zinc-500 font-medium uppercase tracking-wider">Includes</p>
                   <ul className="space-y-2">
                     {option.features?.map((feature, index) => (
                       <li
                         key={`feature-${index}`}
-                        className="text-zinc-300 flex items-center text-sm"
+                        className="text-zinc-200 flex items-center text-sm"
                       >
-                        <CheckCircle2 className="w-4 h-4 mr-2 text-zinc-500" />
+                        <CheckCircle2 className="w-4 h-4 mr-2.5 text-emerald-400 flex-shrink-0" />
                         {feature}
                       </li>
                     ))}
                   </ul>
                 </div>
-              )}
+              </>
+            )}
 
+            {/* Button stack with proper spacing */}
+            <div className="space-y-2.5">
               {/* Free Trial Button */}
               {selectedPlanDetails?.freeTrialEnabled && (
                 <Button
-                  className={`w-full mb-3 font-medium rounded-xl h-11 ${trialEligibility.isEligible && !trialEligibility.isLoading
-                    ? "bg-emerald-600 text-white hover:bg-emerald-500"
-                    : "bg-zinc-600 text-zinc-400 cursor-not-allowed"
-                    }`}
+                  className={`w-full font-semibold rounded-xl h-12 text-sm transition-all duration-200 ${
+                    trialEligibility.isEligible && !trialEligibility.isLoading
+                      ? "bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white shadow-lg shadow-emerald-900/30"
+                      : "bg-zinc-700/50 text-zinc-500 cursor-not-allowed"
+                  }`}
                   disabled={
                     !trialEligibility.isEligible || trialEligibility.isLoading
                   }
@@ -361,11 +375,11 @@ export default function SubscriptionPricingToggle({
                 </Button>
               )}
 
-              {/* View Roadmap Button - Only show if plan has curriculum */}
+              {/* View Roadmap Button */}
               {selectedPlanDetails?.subscriptionContents?.length > 0 && (
                 <Button
                   variant="outline"
-                  className="w-full mb-3 bg-zinc-800 border-zinc-600 text-zinc-200 hover:bg-zinc-700 hover:text-white font-medium rounded-xl h-11"
+                  className="w-full bg-white/[0.05] border border-white/[0.12] text-zinc-200 hover:bg-white/[0.10] hover:text-white font-medium rounded-xl h-11 text-sm transition-all duration-200"
                   onClick={() => setIsRoadmapModalOpen(true)}
                 >
                   <BookOpen className="w-4 h-4 mr-2" />
@@ -373,8 +387,9 @@ export default function SubscriptionPricingToggle({
                 </Button>
               )}
 
+              {/* Primary CTA */}
               <Button
-                className="w-full bg-white text-zinc-900 hover:bg-zinc-100 font-medium rounded-xl h-11"
+                className="w-full bg-white text-zinc-900 hover:bg-zinc-100 font-semibold rounded-xl h-12 text-sm tracking-wide transition-all duration-200 hover:shadow-[0_0_20px_rgba(255,255,255,0.15)]"
                 onClick={handleChoosePlan}
               >
                 Choose Plan
@@ -384,7 +399,7 @@ export default function SubscriptionPricingToggle({
         ))}
       </div>
 
-      {/* Scheduling Period Dialog - Outside the loop to prevent duplicates */}
+      {/* Scheduling Period Dialog */}
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
         <DialogContent className="sm:max-w-[550px] lg:max-w-[650px] max-h-[90vh] overflow-y-auto bg-zinc-900 text-white p-0 border border-zinc-800 rounded-2xl shadow-2xl z-[1002] scrollbar-hide">
           <DialogHeader className="p-6 border-b border-zinc-800">

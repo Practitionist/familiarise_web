@@ -8,7 +8,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { useToast } from "@/hooks/use-toast";
 import { useParams } from "next/navigation";
 import { SafeUnifiedCalendar } from "../../shared/components/SafeUnifiedCalendar";
 import { TAppointment } from "@/types/appointment";
@@ -22,6 +21,7 @@ interface EventDetails {
   durationInMonths: number;
   durationInHours: number;
   sessionDurationInHours?: number;
+  totalSessions?: number;
   title: string;
   planType?: ClassPlanType;
 }
@@ -38,7 +38,6 @@ export function EventTimingsCalendar({
   appointment,
 }: EventTimingsCalendarProps) {
   const params = useParams();
-  const { toast } = useToast();
 
   const consultantId = params.consultantId?.toString() || "";
   const getEventDetails = (appointment: TAppointment): EventDetails => {
@@ -68,6 +67,9 @@ export function EventTimingsCalendar({
           sessionDurationInHours:
             appointment.subscription?.subscriptionPlan
               ?.sessionDurationInHours || 1,
+          totalSessions:
+            appointment.subscription?.subscriptionPlan?.totalSessions ??
+            undefined,
           title:
             appointment.subscription?.subscriptionPlan?.title || "Subscription",
         };
@@ -89,7 +91,8 @@ export function EventTimingsCalendar({
           eventId: appointment.class?.id || "",
           meetingsPerWeek: defaults.classesPerWeek,
           durationInMonths: defaults.durationInMonths,
-          durationInHours: defaults.sessionDurationInHours,
+          durationInHours: classPlan?.sessionDurationInHours ?? defaults.sessionDurationInHours,
+          totalSessions: classPlan?.totalSessions ?? undefined,
           title: classPlan?.title || "Class",
           planType: defaults.type,
         };
@@ -113,10 +116,6 @@ export function EventTimingsCalendar({
   // Removed debug logging - production code validates dates server-side
 
   const handleAllocationComplete = () => {
-    toast({
-      title: "Success",
-      description: "Timings allocated successfully",
-    });
     onClose();
   };
 
@@ -169,8 +168,8 @@ export function EventTimingsCalendar({
         {/* Guidance prompt for class rules */}
         {appointment.appointmentType === "CLASS" && (
           <div className="mb-2 rounded-md border bg-muted/30 px-3 py-2 text-xs">
-            Tip: Each class is 2 consecutive 30‑min slots. Complete an
-            in‑progress class before starting another. Max 2 classes per day;
+            Tip: Each class is {Math.ceil((eventDetails.durationInHours || 1) / 0.5)} consecutive 30‑min slots. Complete an
+            in‑progress class before starting another. Max {eventDetails.meetingsPerWeek || 2} classes per day;
             weekly limit applies.
           </div>
         )}
@@ -198,6 +197,7 @@ export function EventTimingsCalendar({
               ? eventDetails.durationInHours
               : undefined
           }
+          totalSessions={eventDetails.totalSessions}
           mode="allocate"
           onAllocationComplete={handleAllocationComplete}
           onClose={onClose}

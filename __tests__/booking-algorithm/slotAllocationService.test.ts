@@ -415,7 +415,11 @@ describe("Manual allocation", () => {
   it("should delete existing appointments before creating new ones", async () => {
     mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
     // Simulate existing appointments to delete
-    mockTx.appointment.findMany.mockResolvedValue([{ id: "old-apt-1" }]);
+    // First findMany: reschedule detection (needs slotsOfAppointment)
+    // Second findMany: deleteExistingAppointments full-delete path
+    mockTx.appointment.findMany.mockResolvedValue([
+      { id: "old-apt-1", slotsOfAppointment: [] },
+    ]);
 
     await SlotAllocationService.allocate({
       eventType: "consultation",
@@ -1005,6 +1009,7 @@ describe("fetchEventData - config extraction", () => {
         schedulingPeriodStartsAt: expect.any(Date),
         schedulingPeriodEndsAt: expect.any(Date),
       }),
+      expect.any(Array), // appointmentIdsToExclude
     );
   });
 
@@ -1024,6 +1029,7 @@ describe("fetchEventData - config extraction", () => {
       expect.any(Array),
       expect.objectContaining({ userId: "consultant-1" }),
       expect.objectContaining({ durationInHours: 1 }),
+      expect.any(Array), // appointmentIdsToExclude
     );
   });
 
@@ -1069,6 +1075,7 @@ describe("fetchEventData - config extraction", () => {
         callsPerWeek: 2,
         sessionDurationInHours: 1.5,
       }),
+      expect.any(Array), // appointmentIdsToExclude
     );
   });
 });
@@ -1283,10 +1290,11 @@ describe("createAppointments - grouping and validation", () => {
 describe("deleteExistingAppointments", () => {
   it("should delete all existing appointments for manual allocation", async () => {
     mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
-    // findMany for delete returns existing appointments
+    // findMany for reschedule detection and delete returns existing appointments
+    // Must include slotsOfAppointment for reschedule detection in manualAllocate
     mockTx.appointment.findMany.mockResolvedValue([
-      { id: "old-1" },
-      { id: "old-2" },
+      { id: "old-1", slotsOfAppointment: [] },
+      { id: "old-2", slotsOfAppointment: [] },
     ]);
 
     await SlotAllocationService.allocate({

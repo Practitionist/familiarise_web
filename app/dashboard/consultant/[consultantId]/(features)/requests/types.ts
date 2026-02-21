@@ -22,6 +22,7 @@ export interface SubscriptionPlanInfo {
   callsPerWeek: number;
   durationInMonths: number;
   sessionDurationInHours: number;
+  totalSessions?: number;
 }
 
 export interface AppointmentSlot {

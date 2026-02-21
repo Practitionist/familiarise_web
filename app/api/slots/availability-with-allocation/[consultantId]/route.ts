@@ -6,6 +6,7 @@ import {
   WeeklySlot,
 } from "@/utils/timeSlotsProcessing";
 import { NextRequest, NextResponse } from "next/server";
+import { buildOccupiedAppointmentFilter } from "@/utils/slotAllocation/occupancyPolicy";
 
 // Helper function to check if a slot is a legitimate overnight slot
 function isValidOvernightSlot(startTime: Date, endTime: Date): boolean {
@@ -117,43 +118,10 @@ export async function GET(
     }
 
     // 2. Fetch all appointments to find allocated slots
-    // FIX: Only include APPROVED consultations/subscriptions and SCHEDULED webinars/classes
-    // COMPLETED/CANCELLED events should not block future availability
+    // FIX Bug #15: Use centralized occupancy policy for consistent conflict detection
     const appointments = await prisma.appointment.findMany({
       where: {
-        OR: [
-          {
-            consultation: {
-              consultationPlan: { consultantProfileId: consultantId },
-              requestStatus: "APPROVED", // Only approved consultations
-            },
-          },
-          {
-            subscription: {
-              subscriptionPlan: { consultantProfileId: consultantId },
-              requestStatus: "APPROVED", // Only approved subscriptions
-            },
-          },
-          {
-            webinar: {
-              webinarPlan: { consultantProfileId: consultantId },
-              status: "SCHEDULED", // Only scheduled webinars (not COMPLETED, CANCELLED)
-            },
-          },
-          {
-            class: {
-              classPlan: { consultantProfileId: consultantId },
-              status: "SCHEDULED", // Only scheduled classes (not COMPLETED, CANCELLED)
-            },
-          },
-          // Include trial sessions that are SCHEDULED
-          {
-            trialSession: {
-              consultantProfileId: consultantId,
-              status: "SCHEDULED", // Only scheduled trials (not COMPLETED, CANCELLED)
-            },
-          },
-        ],
+        OR: buildOccupiedAppointmentFilter(consultantId),
         slotsOfAppointment: {
           some: {
             OR: [

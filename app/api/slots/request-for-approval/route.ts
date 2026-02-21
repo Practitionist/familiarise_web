@@ -97,11 +97,28 @@ export async function POST(req: NextRequest) {
         }),
       );
 
-      // RE-VALIDATE inside lock: Ensure slot is still available
+      // Generate 30-minute slot chunks from startTime to endTime.
+      // SlotOfAppointment records are always 30 minutes each — consistent with
+      // manual and auto allocation paths in SlotAllocationService.
+      const SLOT_DURATION_MS = 30 * 60 * 1000;
+      const slotChunkStarts: Date[] = [];
+      let current = new Date(startTime);
+      while (current < endTime) {
+        slotChunkStarts.push(new Date(current));
+        current = new Date(current.getTime() + SLOT_DURATION_MS);
+      }
+      if (slotChunkStarts.length === 0) {
+        return NextResponse.json(
+          { error: "Invalid slot: start time must be before end time" },
+          { status: 400 },
+        );
+      }
+
+      // RE-VALIDATE inside lock: Ensure ALL 30-min chunks are still available
       // This is the critical missing piece - prevents double-booking even after lock
       const validationService = new SlotValidationService(prisma);
       const validation = await validationService.checkSlotAvailability(
-        [startTime],
+        slotChunkStarts,
         consultationPlan.consultantProfile.user.id,
       );
 
@@ -137,6 +154,20 @@ export async function POST(req: NextRequest) {
       );
 
       // CRITICAL SECTION: Create consultation (protected by lock AND validated)
+      // Create one SlotOfAppointment per 30-min chunk — consistent with
+      // SlotAllocationService which also uses 30-min granularity.
+      const slotChunksToCreate = slotChunkStarts.map((chunkStart) => ({
+        startsAt: chunkStart,
+        endsAt: new Date(chunkStart.getTime() + SLOT_DURATION_MS),
+        isTentative: true, // Mark as tentative since it's pending approval
+        user: {
+          connect: [
+            { id: session.user.id }, // Consultee
+            { id: consultationPlan.consultantProfile.user.id }, // Consultant
+          ],
+        },
+      }));
+
       const consultation = await prisma.consultation.create({
         data: {
           consultationPlanId: consultationPlanId,
@@ -147,17 +178,7 @@ export async function POST(req: NextRequest) {
             create: {
               appointmentType: "CONSULTATION",
               slotsOfAppointment: {
-                create: {
-                  startsAt: startTime,
-                  endsAt: endTime,
-                  isTentative: true, // Mark as tentative since it's pending approval
-                  user: {
-                    connect: [
-                      { id: session.user.id }, // Consultee
-                      { id: consultationPlan.consultantProfile.user.id }, // Consultant
-                    ],
-                  },
-                },
+                create: slotChunksToCreate,
               },
             },
           },

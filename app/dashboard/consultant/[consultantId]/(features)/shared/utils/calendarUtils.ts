@@ -352,6 +352,7 @@ export function calculateRequiredSlots(
   durationInHours?: number,
   startDate?: Date,
   endDate?: Date,
+  totalSessions?: number,
 ): number {
   return SlotCalculationService.calculateRequiredSlots(eventType, {
     durationInMonths,
@@ -360,6 +361,7 @@ export function calculateRequiredSlots(
     sessionDurationInHours: durationInHours,
     schedulingPeriodStartsAt: startDate,
     schedulingPeriodEndsAt: endDate,
+    totalSessions,
   });
 }
 

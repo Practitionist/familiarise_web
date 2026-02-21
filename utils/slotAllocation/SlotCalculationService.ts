@@ -181,12 +181,21 @@ export class SlotCalculationService {
           sessionDuration = 1; // Default 1 hour
         }
 
+        const slotsPerCall = Math.ceil(sessionDuration / 0.5);
+
+        // Use totalSessions from plan if available (authoritative plan-defined count).
+        // This prevents week-boundary edge cases where countWeeks > plan's totalSessions
+        // (e.g. a 28-day period that spans 5 calendar weeks but has only 4 planned sessions).
+        if (config.totalSessions && config.totalSessions > 0) {
+          return config.totalSessions * slotsPerCall;
+        }
+
+        // Fall back to weeks-based calculation when totalSessions is not specified
         const totalWeeks = this.countWeeks(
           config.schedulingPeriodStartsAt,
           config.schedulingPeriodEndsAt,
         );
         const totalCalls = totalWeeks * (config.callsPerWeek || 1);
-        const slotsPerCall = Math.ceil(sessionDuration / 0.5);
         return totalCalls * slotsPerCall;
       }
 
@@ -214,6 +223,13 @@ export class SlotCalculationService {
         }
 
         const slotsPerSession = Math.ceil(sessionDuration / 0.5);
+
+        // Use totalSessions from plan if available (authoritative plan-defined count).
+        // Prevents over-allocation when scheduling period spans more weeks than planned.
+        if (config.totalSessions && config.totalSessions > 0) {
+          return config.totalSessions * slotsPerSession;
+        }
+
         const totalWeeks = this.countWeeks(
           config.schedulingPeriodStartsAt,
           config.schedulingPeriodEndsAt,
@@ -263,22 +279,27 @@ export class SlotCalculationService {
         // Count complete calls/sessions (full consecutive slot groups)
         scheduled = this.countCompletedCalls(selectedSlots, slotsPerCall);
 
-        // Calculate total required calls/sessions
-        if (
-          !config.schedulingPeriodStartsAt ||
-          !config.schedulingPeriodEndsAt ||
-          !config.callsPerWeek
-        ) {
-          throw new Error(
-            "Start date, end date, and calls per week are required for subscription/class progress calculation",
-          );
-        }
+        // Prefer totalSessions from plan (authoritative count) for both subscriptions and classes.
+        // Falls back to weeks × callsPerWeek only when totalSessions is not set.
+        if (config.totalSessions && config.totalSessions > 0) {
+          required = config.totalSessions;
+        } else {
+          if (
+            !config.schedulingPeriodStartsAt ||
+            !config.schedulingPeriodEndsAt ||
+            !config.callsPerWeek
+          ) {
+            throw new Error(
+              "Start date, end date, and calls per week are required for subscription/class progress calculation",
+            );
+          }
 
-        const weeks = this.countWeeks(
-          config.schedulingPeriodStartsAt,
-          config.schedulingPeriodEndsAt,
-        );
-        required = weeks * config.callsPerWeek;
+          const weeks = this.countWeeks(
+            config.schedulingPeriodStartsAt,
+            config.schedulingPeriodEndsAt,
+          );
+          required = weeks * config.callsPerWeek;
+        }
         break;
       }
     }

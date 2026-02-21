@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { DayOfWeek } from "@prisma/client";
+import { buildOccupiedAppointmentFilter } from "@/utils/slotAllocation/occupancyPolicy";
 
 export async function GET(req: NextRequest) {
   try {
@@ -25,116 +26,121 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    // Get all appointments for this consultant
+    // Get all occupied appointments for this consultant (all event types + trials)
     const appointments = await prisma.appointment.findMany({
       where: {
-        OR: [
-          {
-            consultation: {
-              consultationPlan: {
-                consultantProfileId,
-              },
-            },
-          },
-          {
-            subscription: {
-              subscriptionPlan: {
-                consultantProfileId,
-              },
-            },
-          },
-        ],
+        OR: buildOccupiedAppointmentFilter(consultantProfileId),
       },
       include: {
         slotsOfAppointment: true,
       },
     });
 
-    // Create a map of allocated time slots (both confirmed and tentative)
-    const allocatedSlots = new Map();
+    // FIX Bug #09: Store allocated slots as array for range overlap checks
+    // instead of exact key matching which misses partial overlaps
+    const allocatedSlots: { startsAt: Date; endsAt: Date }[] = [];
     appointments.forEach((appointment) => {
       appointment.slotsOfAppointment.forEach((slot) => {
-        const start = slot.startsAt;
-        const end = slot.endsAt;
-        allocatedSlots.set(
-          `${start.toISOString()}-${end.toISOString()}`,
-          slot.isTentative,
-        );
+        allocatedSlots.push({
+          startsAt: slot.startsAt,
+          endsAt: slot.endsAt,
+        });
       });
     });
 
-    // Get all weekly slots for the consultant
-    const [weeklySlots, total] = await Promise.all([
-      prisma.slotOfAvailabilityWeekly.findMany({
-        where: {
-          consultantProfileId,
-        },
-        orderBy: [
-          { dayOfWeekForStartsAt: "asc" },
-          { availabilityStartsAt: "asc" },
-        ],
-        include: {
-          consultantProfile: {
-            select: {
-              id: true,
-              user: {
-                select: {
-                  name: true,
-                  email: true,
-                },
+    // Fetch ALL weekly slots (no DB-level pagination) so we can filter out
+    // allocated ones first, then paginate the filtered results accurately.
+    const allWeeklySlots = await prisma.slotOfAvailabilityWeekly.findMany({
+      where: {
+        consultantProfileId,
+      },
+      orderBy: [
+        { dayOfWeekForStartsAt: "asc" },
+        { availabilityStartsAt: "asc" },
+      ],
+      include: {
+        consultantProfile: {
+          select: {
+            id: true,
+            user: {
+              select: {
+                name: true,
+                email: true,
               },
             },
           },
         },
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-      prisma.slotOfAvailabilityWeekly.count({
-        where: { consultantProfileId },
-      }),
-    ]);
+      },
+    });
 
-    // For weekly slots, we need to check if any instance of the weekly slot
-    // in the next few weeks is already allocated
-    const unallocatedSlots = weeklySlots.filter((slot) => {
-      // Check slots within the requested date range
+    // For weekly slots, check if any instance in the date range overlaps an allocated slot.
+    // FIX Bug #09: Use range overlap check instead of exact key matching,
+    // and use UTC-consistent date construction instead of local setHours/setMinutes.
+    const allUnallocatedSlots = allWeeklySlots.filter((slot) => {
       const startDate = new Date(startDateInUtc);
       const endDate = new Date(endDateInUtc);
       const currentDate = new Date(startDate);
 
       while (currentDate <= endDate) {
-        // Check if current date matches the slot's day
-        if (currentDate.getDay() === dayToNumber[slot.dayOfWeekForStartsAt]) {
-          // Set the time from the slot
-          const start = new Date(currentDate);
-          start.setHours(slot.availabilityStartsAt.getHours());
-          start.setMinutes(slot.availabilityStartsAt.getMinutes());
+        if (currentDate.getUTCDay() === dayToNumber[slot.dayOfWeekForStartsAt]) {
+          // Use UTC-consistent construction to avoid timezone drift
+          const slotStart = new Date(
+            Date.UTC(
+              currentDate.getUTCFullYear(),
+              currentDate.getUTCMonth(),
+              currentDate.getUTCDate(),
+              slot.availabilityStartsAt.getUTCHours(),
+              slot.availabilityStartsAt.getUTCMinutes(),
+              0,
+              0,
+            ),
+          );
 
-          const end = new Date(currentDate);
-          end.setHours(slot.availabilityEndsAt.getHours());
-          end.setMinutes(slot.availabilityEndsAt.getMinutes());
+          const slotEnd = new Date(
+            Date.UTC(
+              currentDate.getUTCFullYear(),
+              currentDate.getUTCMonth(),
+              currentDate.getUTCDate(),
+              slot.availabilityEndsAt.getUTCHours(),
+              slot.availabilityEndsAt.getUTCMinutes(),
+              0,
+              0,
+            ),
+          );
 
-          // Check if this instance is allocated
-          const key = `${start.toISOString()}-${end.toISOString()}`;
-          if (allocatedSlots.has(key)) {
+          // Check for any overlapping allocated slot (partial or full overlap)
+          const hasOverlap = allocatedSlots.some(
+            (allocated) =>
+              allocated.startsAt < slotEnd && allocated.endsAt > slotStart,
+          );
+          if (hasOverlap) {
             return false;
           }
         }
 
         // Move to next day
-        currentDate.setDate(currentDate.getDate() + 1);
+        currentDate.setUTCDate(currentDate.getUTCDate() + 1);
       }
       return true; // Slot is available if no conflicts found
     });
 
+    // Apply pagination in memory after filtering so totals are accurate
+    const totalConfigured = allWeeklySlots.length;
+    const totalUnallocated = allUnallocatedSlots.length;
+    const paginatedSlots = allUnallocatedSlots.slice(
+      (page - 1) * limit,
+      page * limit,
+    );
+
     return NextResponse.json(
       {
-        data: unallocatedSlots,
+        data: paginatedSlots,
         meta: {
-          total,
+          totalUnallocated,
+          totalConfigured,
           page,
           limit,
-          totalPages: Math.ceil(total / limit),
+          totalPages: Math.ceil(totalUnallocated / limit),
         },
       },
       { status: 200 },
