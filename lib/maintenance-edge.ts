@@ -101,6 +101,47 @@ export function isMaintenanceExempt(pathname: string): boolean {
   return EXEMPT_PREFIXES.some((prefix) => pathname.startsWith(prefix));
 }
 
+// Transactional write routes to block during DEGRADED maintenance.
+// Read-only methods (GET, HEAD, OPTIONS) are always allowed.
+// Patterns support a single '*' wildcard segment (e.g. /api/events/*/allocate).
+const WRITE_BLOCKED_IN_DEGRADED = [
+  "/api/checkout",
+  "/api/appointments/*/cancel",
+  "/api/appointments/*/reschedule",
+  "/api/appointments/*/documents",
+  "/api/events/consultations",
+  "/api/events/subscriptions",
+  "/api/events/webinars",
+  "/api/events/classes",
+  "/api/events/*/allocate",
+  "/api/trials",
+  "/api/plans/*/materials",
+];
+
+const READ_ONLY_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+/**
+ * Returns true if the route+method combination should be blocked in DEGRADED mode.
+ * Prevents transactional writes (bookings, payments, cancellations) during
+ * partial maintenance while still allowing users to browse and read data.
+ */
+export function isWriteBlockedInDegraded(
+  pathname: string,
+  method: string,
+): boolean {
+  if (READ_ONLY_METHODS.has(method.toUpperCase())) return false;
+
+  return WRITE_BLOCKED_IN_DEGRADED.some((pattern) => {
+    if (!pattern.includes("*")) {
+      // Exact prefix match
+      return pathname === pattern || pathname.startsWith(pattern + "/");
+    }
+    // Wildcard: split on '*' and check prefix + suffix
+    const [prefix, suffix] = pattern.split("*");
+    return pathname.startsWith(prefix) && pathname.endsWith(suffix);
+  });
+}
+
 /**
  * Validate maintenance bypass via header or cookie.
  */

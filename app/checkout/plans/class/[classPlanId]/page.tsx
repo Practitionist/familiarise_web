@@ -658,18 +658,7 @@ export default function ClassCheckoutPage({
               gateway: "RAZORPAY" as const,
               isActive: true,
             },
-            {
-              name: "Lemon Squeezy",
-              description: "Global payments in USD (Coming Soon)",
-              gateway: "LEMON_SQUEEZY" as const,
-              isActive: false,
-            },
-            {
-              name: "Xflow",
-              description: "Secure payments in USD (Coming Soon)",
-              gateway: "XFLOW" as const,
-              isActive: false,
-            },
+            // TODO: Add Lemon Squeezy and XFlow when webhook appointment creation is implemented
           ].map((gateway) => (
             <Card key={gateway.name} className="border-zinc-200">
               <CardHeader>

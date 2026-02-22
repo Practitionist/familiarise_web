@@ -85,6 +85,7 @@ const SOCIAL_LINKS = [
 const Footer: React.FC = () => {
   const pathname = usePathname();
   const [email, setEmail] = useState("");
+  const [newsletterStatus, setNewsletterStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
 
   // Check if we're on the home page
   const isHomePage = pathname === "/";
@@ -101,10 +102,23 @@ const Footer: React.FC = () => {
 
   if (excludeFooter) return null;
 
-  const handleNewsletterSubmit = (e: React.FormEvent) => {
+  const handleNewsletterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log("Newsletter signup:", email);
-    setEmail("");
+    if (!email || newsletterStatus === "loading") return;
+
+    setNewsletterStatus("loading");
+    try {
+      const res = await fetch("/api/newsletter/subscribe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      if (!res.ok) throw new Error("Failed");
+      setEmail("");
+      setNewsletterStatus("success");
+    } catch {
+      setNewsletterStatus("error");
+    }
   };
 
   return (
@@ -151,11 +165,16 @@ const Footer: React.FC = () => {
                 <Button
                   type="submit"
                   size="lg"
+                  disabled={newsletterStatus === "loading" || newsletterStatus === "success"}
                   className="h-14 bg-white text-zinc-900 hover:bg-zinc-200 px-8 rounded-xl font-medium shrink-0"
                 >
-                  Subscribe
+                  {newsletterStatus === "loading" ? "Subscribing..." : newsletterStatus === "success" ? "Subscribed!" : "Subscribe"}
                 </Button>
               </form>
+
+              {newsletterStatus === "error" && (
+                <p className="text-sm text-red-400 mt-2">Something went wrong. Please try again.</p>
+              )}
 
               <p className="text-sm text-zinc-600 mt-4">
                 No spam, unsubscribe anytime.{" "}

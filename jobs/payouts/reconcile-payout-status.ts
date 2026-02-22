@@ -13,6 +13,7 @@ import {
   type PayoutReconciliationResult,
 } from "../../scripts/payouts/reconcile-payout-status";
 import fs from "fs";
+import { abortIfMaintenance } from "../../lib/maintenance-cron";
 
 /**
  * Output results to GitHub Actions
@@ -64,6 +65,7 @@ function outputToGitHubActions(result: PayoutReconciliationResult): void {
  * Main entry point
  */
 async function main(): Promise<void> {
+  await abortIfMaintenance("reconcile-payout-status");
   console.log("🔄 Starting payout status reconciliation job...");
   console.log(`Timestamp: ${new Date().toISOString()}`);
 

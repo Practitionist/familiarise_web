@@ -238,7 +238,7 @@ export default function ConsultationCheckoutPage({
 
   const handleCheckout = useCallback(
     async (
-      gateway: "STRIPE" | "RAZORPAY" | "LEMON_SQUEEZY" | "XFLOW",
+      gateway: "STRIPE" | "RAZORPAY",
       isMockPayment: boolean = false,
     ) => {
       // Prevent double-clicks and multiple simultaneous requests
@@ -349,10 +349,7 @@ export default function ConsultationCheckoutPage({
                 // This case shouldn't be reached since Razorpay has its own component
                 break;
 
-              case "LEMON_SQUEEZY":
-              case "XFLOW":
-                window.location.href = data.paymentIntent.client_secret; // This would be the checkout URL for these gateways
-                break;
+              // TODO: Add Lemon Squeezy and XFlow cases when webhook handlers are implemented
             }
           }, 1000);
         }
@@ -749,18 +746,7 @@ export default function ConsultationCheckoutPage({
               gateway: "RAZORPAY" as const,
               isActive: true,
             },
-            {
-              name: "Lemon Squeezy",
-              description: "Global payments in USD (Coming Soon)",
-              gateway: "LEMON_SQUEEZY" as const,
-              isActive: false,
-            },
-            {
-              name: "Xflow",
-              description: "Secure payments in USD (Coming Soon)",
-              gateway: "XFLOW" as const,
-              isActive: false,
-            },
+            // TODO: Add Lemon Squeezy and XFlow when webhook appointment creation is implemented
           ].map((gateway) => (
             <Card key={gateway.name} className="border-zinc-200">
               <CardHeader>

@@ -9,6 +9,7 @@ import {
   logWebhookEvent,
   markWebhookEventProcessed,
   handleRazorpayPayoutWebhook,
+  isDbHealthy,
 } from "../utils";
 import {
   razorpayBaseEventSchema,
@@ -35,6 +36,15 @@ export async function POST(req: NextRequest) {
   );
   if (!isValid) {
     return NextResponse.json({ error: "Invalid signature" }, { status: 400 });
+  }
+
+  // DB health check — return 503 if DB is unreachable so Razorpay retries
+  if (!(await isDbHealthy())) {
+    console.warn("[razorpay webhook] DB unhealthy — returning 503 for Razorpay retry");
+    return NextResponse.json(
+      { error: "Service temporarily unavailable" },
+      { status: 503 },
+    );
   }
 
   try {

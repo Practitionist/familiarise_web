@@ -8,6 +8,7 @@
 import prisma from "@/lib/prisma";
 import { WaitlistStatus } from "@prisma/client";
 import { sendWaitlistExpiringEmail } from "@/lib/waitlist/notifications";
+import { abortIfMaintenance } from "../../lib/maintenance-cron";
 
 export interface SendRemindersResult {
   found: number;
@@ -24,6 +25,7 @@ export interface SendRemindersResult {
  * 3. Mark as reminded
  */
 export async function sendExpirationRemindersJob(): Promise<SendRemindersResult> {
+  await abortIfMaintenance("send-expiration-reminders");
   const startTime = Date.now();
   const errors: Array<{ id: string; error: string }> = [];
 

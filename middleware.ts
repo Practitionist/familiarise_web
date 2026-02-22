@@ -5,6 +5,7 @@ import {
   getMaintenanceState,
   isMaintenanceExempt,
   validateBypass,
+  isWriteBlockedInDegraded,
 } from "@/lib/maintenance-edge";
 
 // Constants for common URLs and route patterns
@@ -81,7 +82,18 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
       if (maintenanceState.phase === "OFFLINE") {
         return NextResponse.rewrite(new URL("/maintenance", req.url));
       }
-      // DEGRADED: add headers for client-side banner, continue normally
+      // DEGRADED: block transactional writes; allow reads with banner headers
+      if (isWriteBlockedInDegraded(pathname, req.method)) {
+        return NextResponse.json(
+          {
+            error: "Writes are temporarily unavailable during maintenance",
+            phase: "DEGRADED",
+            reason: maintenanceState.reason || null,
+            estimatedEnd: maintenanceState.estimatedEnd || null,
+          },
+          { status: 503 },
+        );
+      }
       const response = NextResponse.next();
       response.headers.set("x-maintenance-phase", "degraded");
       response.headers.set(

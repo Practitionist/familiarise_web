@@ -9,6 +9,7 @@ import {
   logWebhookEvent,
   markWebhookEventProcessed,
   handleStripePayoutWebhook,
+  isDbHealthy,
 } from "../utils";
 import {
   stripeBaseEventSchema,
@@ -29,6 +30,15 @@ export async function POST(req: NextRequest) {
   const { isValid, body } = await verifyWebhookSignature(req, secret, "stripe");
   if (!isValid) {
     return NextResponse.json({ error: "Invalid signature" }, { status: 400 });
+  }
+
+  // DB health check — return 503 if DB is unreachable so Stripe retries
+  if (!(await isDbHealthy())) {
+    console.warn("[stripe webhook] DB unhealthy — returning 503 for Stripe retry");
+    return NextResponse.json(
+      { error: "Service temporarily unavailable" },
+      { status: 503 },
+    );
   }
 
   try {

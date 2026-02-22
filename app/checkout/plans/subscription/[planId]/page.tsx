@@ -43,7 +43,6 @@ import RazorpayCheckout from "../../../components/RazorpayCheckout";
 import StripeCheckout from "../../../components/StripeCheckout";
 import {
   createHandleApiError,
-  paymentGateways,
   createStripeCheckoutHandlers,
   createRazorpayCheckoutHandlers,
 } from "../../utils";
@@ -272,12 +271,7 @@ export default function SubscriptionCheckoutPage({
                   });
                   break;
 
-                case "LEMON_SQUEEZY":
-                case "XFLOW":
-                  if (data.checkoutUrl) {
-                    window.location.href = data.checkoutUrl;
-                  }
-                  break;
+                // TODO: Add Lemon Squeezy and XFlow cases when webhook handlers are implemented
               }
             }, 1000);
           }
@@ -707,18 +701,7 @@ export default function SubscriptionCheckoutPage({
               gateway: "RAZORPAY" as const,
               isActive: true,
             },
-            {
-              name: "Lemon Squeezy",
-              description: "Global payments in USD (Coming Soon)",
-              gateway: "LEMON_SQUEEZY" as const,
-              isActive: false,
-            },
-            {
-              name: "Xflow",
-              description: "Secure payments in USD (Coming Soon)",
-              gateway: "XFLOW" as const,
-              isActive: false,
-            },
+            // TODO: Add Lemon Squeezy and XFlow when webhook appointment creation is implemented
           ].map((gateway) => (
             <Card key={gateway.gateway} className="border-zinc-200">
               <CardHeader>

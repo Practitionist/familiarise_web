@@ -14,6 +14,7 @@ import {
   type LostDisputeHandlerResult,
 } from "../../scripts/disputes/handle-lost-disputes";
 import fs from "fs";
+import { abortIfMaintenance } from "../../lib/maintenance-cron";
 
 /**
  * Output results to GitHub Actions
@@ -53,6 +54,7 @@ function outputToGitHubActions(result: LostDisputeHandlerResult): void {
  * Main entry point
  */
 async function main(): Promise<void> {
+  await abortIfMaintenance("handle-lost-disputes");
   console.log("🔄 Starting lost dispute handler job...");
   console.log(`Timestamp: ${new Date().toISOString()}`);
 

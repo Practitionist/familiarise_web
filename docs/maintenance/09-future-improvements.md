@@ -1,8 +1,10 @@
 # Future Improvements
 
-Recommended code changes to improve maintenance mode protection. These are documented for future implementation, not implemented now.
+Recommended code changes to improve maintenance mode protection.
 
 > **Already implemented**: BetterStack incident management (auto-create on OFFLINE, auto-resolve on end) is complete. See [Architecture](./01-architecture.md#betterstack-integration) and [BetterStack Setup Guide](./00-betterstack-setup.md).
+>
+> **Sprint 1 completed (Feb 2026)**: Items 1, 2, 3, and new items A, B below are **fully implemented**. The Implementation Priority table at the bottom reflects the updated status.
 
 ## 1. DEGRADED Write-Blocking
 
@@ -252,15 +254,48 @@ export function useMaintenanceGuard() {
 
 ---
 
+## New Gaps Discovered (Feb 2026 audit)
+
+### A. Admin System-Jobs DEGRADED Blocking ✅ IMPLEMENTED
+
+**Problem**: `/api/admin/system-jobs/run` allowed all system jobs during DEGRADED, including financial jobs that call external payment APIs.
+
+**Implemented**: Financial job IDs are blocked in DEGRADED (503 response). All jobs blocked in OFFLINE.
+File: `app/api/admin/system-jobs/run/route.ts`
+
+---
+
+### B. Stream.io Webhook DB Health Check ✅ IMPLEMENTED
+
+**Problem**: `app/api/stream/webhooks/route.ts` wrote recording metadata and session events to the DB during migrations without a health check.
+
+**Implemented**: Added `isDbHealthy()` check (reusing `app/api/webhooks/utils.ts`). Returns 503 on DB failure so Stream retries.
+
+---
+
+### C. `reconcile-document-storage` Safety Risk
+
+**Problem**: The daily document storage reconciliation job (`jobs/cleanup/reconcile-document-storage.ts`) deletes files it considers orphaned. If Supabase Storage is temporarily unreachable (e.g. during migration), it may falsely mark valid files as orphaned and delete them.
+
+**Proposed Change**: Before the deletion loop, verify storage is reachable with a lightweight probe (e.g. list a single known bucket). If unreachable, abort with a warning rather than deleting.
+
+**Files to Modify**: `jobs/cleanup/reconcile-document-storage.ts`
+
+**Effort**: 1-2 hours
+**Priority**: MEDIUM — Risk only materialises if Supabase Storage has an outage concurrent with a migration
+
+---
+
 ## Implementation Priority Order
 
-| # | Improvement | Priority | Effort | Risk Reduction |
-|---|-------------|----------|--------|----------------|
-| 2 | Cron job maintenance guard | CRITICAL | 4-6h | Prevents data corruption from all 27 jobs |
-| 1 | DEGRADED write-blocking | HIGH | 2-4h | Prevents payments during DEGRADED |
-| 3 | Webhook DB health check | HIGH | 2-3h | Leverages gateway retries instead of failing |
-| 4 | UI maintenance guard hook | MEDIUM | 3-5h | Better UX, prevents user confusion |
-| 5 | Admin pre-flight API | MEDIUM | 4-6h | Reduces manual pre-maintenance checks |
-| 6 | Scheduled maintenance | LOW | 8-12h | Convenience for planned maintenance |
-
-**Recommended first sprint**: Items 2 + 1 + 3 (8-13 hours total). These three changes close the most critical gaps.
+| # | Improvement | Priority | Status |
+|---|-------------|----------|--------|
+| 2 | Cron job maintenance guard | CRITICAL | ✅ Done |
+| 1 | DEGRADED write-blocking | HIGH | ✅ Done |
+| 3 | Webhook DB health check (Stripe/Razorpay/LS/XFlow) | HIGH | ✅ Done |
+| A | Admin system-jobs DEGRADED blocking | MEDIUM | ✅ Done |
+| B | Stream.io webhook DB health check | MEDIUM | ✅ Done |
+| C | `reconcile-document-storage` storage probe | MEDIUM | Pending |
+| 4 | UI maintenance guard hook | MEDIUM | Pending |
+| 5 | Admin pre-flight API | MEDIUM | Pending |
+| 6 | Scheduled maintenance | LOW | Pending |

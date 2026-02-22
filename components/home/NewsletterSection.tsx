@@ -10,12 +10,25 @@ import { Input } from "@/components/ui/input";
 
 export function NewsletterSection() {
   const [email, setEmail] = useState("");
+  const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    // Handle newsletter signup
-    console.log("Newsletter signup:", email);
-    setEmail("");
+    if (!email || status === "loading") return;
+
+    setStatus("loading");
+    try {
+      const res = await fetch("/api/newsletter/subscribe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      if (!res.ok) throw new Error("Failed");
+      setEmail("");
+      setStatus("success");
+    } catch {
+      setStatus("error");
+    }
   };
 
   return (
@@ -60,11 +73,16 @@ export function NewsletterSection() {
             <Button
               type="submit"
               size="lg"
+              disabled={status === "loading" || status === "success"}
               className="h-14 bg-white text-zinc-900 hover:bg-zinc-200 px-8 rounded-xl font-medium shrink-0"
             >
-              Subscribe
+              {status === "loading" ? "Subscribing..." : status === "success" ? "Subscribed!" : "Subscribe"}
             </Button>
           </form>
+
+          {status === "error" && (
+            <p className="text-sm text-red-400 mt-2">Something went wrong. Please try again.</p>
+          )}
 
           <p className="text-sm text-zinc-600 mt-4">
             No spam, unsubscribe anytime.{" "}

@@ -107,160 +107,214 @@ export async function freezeAppointments(
   let cancelled = 0;
   let notified = 0;
 
-  for (const appointmentId of Object.keys(slotsByAppointment)) {
-    const slots = slotsByAppointment[appointmentId];
-    const appointment = slots[0].appointment;
-    const earliestSlot = slots.reduce(
-      (a: AffectedSlot, b: AffectedSlot) =>
-        a.startsAt < b.startsAt ? a : b,
-    );
+  // Collect notification payloads to send AFTER the transaction commits.
+  // External API calls (Novu) cannot be rolled back, so they must run
+  // outside the transaction to avoid notifying users about cancellations
+  // that were later rolled back.
+  type NotificationPayload = {
+    userIds: string[];
+    data: Parameters<typeof notifyAppointmentCancelled>[1];
+  };
+  const pendingNotifications: NotificationPayload[] = [];
 
-    // Cancel consultation if applicable
-    if (appointment.consultation) {
-      const consultation = appointment.consultation;
-      await prisma.consultation.update({
-        where: { id: consultation.id },
-        data: {
-          requestStatus: "CANCELLED",
-          cancellationReason: "TECHNICAL_ISSUE",
-          cancellationNotes: "Cancelled due to scheduled platform maintenance",
-          cancelledAt: new Date(),
-        },
-      });
+  // Wrap all DB writes in a single transaction for atomicity.
+  // If any appointment cancel fails mid-loop, all prior cancellations
+  // in this batch are rolled back — preventing partial freeze state.
+  await prisma.$transaction(
+    async (tx) => {
+      for (const appointmentId of Object.keys(slotsByAppointment)) {
+        const slots = slotsByAppointment[appointmentId];
+        const appointment = slots[0].appointment;
+        const earliestSlot = slots.reduce(
+          (a: AffectedSlot, b: AffectedSlot) =>
+            a.startsAt < b.startsAt ? a : b,
+        );
 
-      const consultantUser = consultation.consultationPlan?.consultantProfile?.user;
-      const consulteeUser = consultation.requestedBy?.user;
-      const userIds: string[] = [];
-      if (consulteeUser?.id) userIds.push(consulteeUser.id);
-      if (consultantUser?.id) userIds.push(consultantUser.id);
+        // Cancel consultation if applicable
+        if (appointment.consultation) {
+          const consultation = appointment.consultation;
+          await tx.consultation.update({
+            where: { id: consultation.id },
+            data: {
+              requestStatus: "CANCELLED",
+              cancellationReason: "TECHNICAL_ISSUE",
+              cancellationNotes:
+                "Cancelled due to scheduled platform maintenance",
+              cancelledAt: new Date(),
+            },
+          });
 
-      if (userIds.length > 0) {
-        await notifyAppointmentCancelled(userIds, {
-          appointmentId: appointment.id,
-          appointmentType: "CONSULTATION",
-          consultantName: consultantUser?.name || "Consultant",
-          consulteeName: consulteeUser?.name || "User",
-          planTitle: consultation.consultationPlan?.title || "Consultation",
-          dateTime: earliestSlot.startsAt.toISOString(),
-          dashboardUrl: "/dashboard",
-          reason: "Scheduled platform maintenance",
-          cancelledBy: "system",
+          const consultantUser =
+            consultation.consultationPlan?.consultantProfile?.user;
+          const consulteeUser = consultation.requestedBy?.user;
+          const userIds: string[] = [];
+          if (consulteeUser?.id) userIds.push(consulteeUser.id);
+          if (consultantUser?.id) userIds.push(consultantUser.id);
+
+          if (userIds.length > 0) {
+            pendingNotifications.push({
+              userIds,
+              data: {
+                appointmentId: appointment.id,
+                appointmentType: "CONSULTATION",
+                consultantName: consultantUser?.name || "Consultant",
+                consulteeName: consulteeUser?.name || "User",
+                planTitle:
+                  consultation.consultationPlan?.title || "Consultation",
+                dateTime: earliestSlot.startsAt.toISOString(),
+                dashboardUrl: "/dashboard",
+                reason: "Scheduled platform maintenance",
+                cancelledBy: "system",
+              },
+            });
+          }
+        }
+
+        // Cancel subscription appointment if applicable
+        if (appointment.subscription) {
+          const subscription = appointment.subscription;
+          await tx.subscription.update({
+            where: { id: subscription.id },
+            data: {
+              requestStatus: "CANCELLED",
+              cancellationReason: "TECHNICAL_ISSUE",
+              cancellationNotes:
+                "Cancelled due to scheduled platform maintenance",
+              cancelledAt: new Date(),
+            },
+          });
+
+          const consultantUser =
+            subscription.subscriptionPlan?.consultantProfile?.user;
+          const consulteeUser = subscription.requestedBy?.user;
+          const userIds: string[] = [];
+          if (consulteeUser?.id) userIds.push(consulteeUser.id);
+          if (consultantUser?.id) userIds.push(consultantUser.id);
+
+          if (userIds.length > 0) {
+            pendingNotifications.push({
+              userIds,
+              data: {
+                appointmentId: appointment.id,
+                appointmentType: "SUBSCRIPTION",
+                consultantName: consultantUser?.name || "Consultant",
+                consulteeName: consulteeUser?.name || "User",
+                planTitle:
+                  subscription.subscriptionPlan?.title || "Subscription",
+                dateTime: earliestSlot.startsAt.toISOString(),
+                dashboardUrl: "/dashboard",
+                reason: "Scheduled platform maintenance",
+                cancelledBy: "system",
+              },
+            });
+          }
+        }
+
+        // Cancel webinar if applicable
+        if (appointment.webinar) {
+          const webinar = appointment.webinar;
+          await tx.webinar.update({
+            where: { id: webinar.id },
+            data: { status: "CANCELLED" },
+          });
+
+          const consultantUser = webinar.webinarPlan?.consultantProfile?.user;
+          const participantIds = slots.flatMap((s: AffectedSlot) =>
+            s.user.map((u) => u.id),
+          );
+          const userIds = Array.from(new Set(participantIds));
+          if (consultantUser?.id && !userIds.includes(consultantUser.id)) {
+            userIds.push(consultantUser.id);
+          }
+
+          if (userIds.length > 0) {
+            pendingNotifications.push({
+              userIds,
+              data: {
+                appointmentId: appointment.id,
+                appointmentType: "WEBINAR",
+                consultantName: consultantUser?.name || "Consultant",
+                consulteeName: "Participants",
+                planTitle: webinar.webinarPlan?.title || "Webinar",
+                dateTime: earliestSlot.startsAt.toISOString(),
+                dashboardUrl: "/dashboard",
+                reason: "Scheduled platform maintenance",
+                cancelledBy: "system",
+              },
+            });
+          }
+        }
+
+        // Cancel class if applicable
+        if (appointment.class) {
+          const classEvent = appointment.class;
+          await tx.class.update({
+            where: { id: classEvent.id },
+            data: { status: "CANCELLED" },
+          });
+
+          const consultantUser = classEvent.classPlan?.consultantProfile?.user;
+          const participantIds = slots.flatMap((s: AffectedSlot) =>
+            s.user.map((u) => u.id),
+          );
+          const userIds = Array.from(new Set(participantIds));
+          if (consultantUser?.id && !userIds.includes(consultantUser.id)) {
+            userIds.push(consultantUser.id);
+          }
+
+          if (userIds.length > 0) {
+            pendingNotifications.push({
+              userIds,
+              data: {
+                appointmentId: appointment.id,
+                appointmentType: "CLASS",
+                consultantName: consultantUser?.name || "Consultant",
+                consulteeName: "Participants",
+                planTitle: classEvent.classPlan?.title || "Class",
+                dateTime: earliestSlot.startsAt.toISOString(),
+                dashboardUrl: "/dashboard",
+                reason: "Scheduled platform maintenance",
+                cancelledBy: "system",
+              },
+            });
+          }
+        }
+
+        // Batch delete all affected slots for this appointment
+        await tx.slotOfAppointment.deleteMany({
+          where: { id: { in: slots.map((s: AffectedSlot) => s.id) } },
         });
-        notified += userIds.length;
-      }
-    }
 
-    // Cancel subscription appointment if applicable
-    if (appointment.subscription) {
-      const subscription = appointment.subscription;
-      await prisma.subscription.update({
-        where: { id: subscription.id },
-        data: {
-          requestStatus: "CANCELLED",
-          cancellationReason: "TECHNICAL_ISSUE",
-          cancellationNotes: "Cancelled due to scheduled platform maintenance",
-          cancelledAt: new Date(),
-        },
-      });
-
-      const consultantUser = subscription.subscriptionPlan?.consultantProfile?.user;
-      const consulteeUser = subscription.requestedBy?.user;
-      const userIds: string[] = [];
-      if (consulteeUser?.id) userIds.push(consulteeUser.id);
-      if (consultantUser?.id) userIds.push(consultantUser.id);
-
-      if (userIds.length > 0) {
-        await notifyAppointmentCancelled(userIds, {
-          appointmentId: appointment.id,
-          appointmentType: "SUBSCRIPTION",
-          consultantName: consultantUser?.name || "Consultant",
-          consulteeName: consulteeUser?.name || "User",
-          planTitle: subscription.subscriptionPlan?.title || "Subscription",
-          dateTime: earliestSlot.startsAt.toISOString(),
-          dashboardUrl: "/dashboard",
-          reason: "Scheduled platform maintenance",
-          cancelledBy: "system",
+        // Delete appointment if no other slots remain
+        const remainingSlots = await tx.slotOfAppointment.count({
+          where: { appointmentId: appointment.id },
         });
-        notified += userIds.length;
+        if (remainingSlots === 0) {
+          await tx.appointment.delete({ where: { id: appointment.id } });
+        }
+
+        cancelled++;
       }
+    },
+    { maxWait: 30000, timeout: 60000 },
+  );
+
+  // Send all notifications AFTER the transaction commits.
+  // Fire-and-forget: notification failures don't affect the freeze result.
+  for (const { userIds, data } of pendingNotifications) {
+    try {
+      await notifyAppointmentCancelled(userIds, data);
+      notified += userIds.length;
+    } catch (err) {
+      console.error(
+        JSON.stringify({
+          event: "maintenance_freeze_notification_failed",
+          appointmentId: data.appointmentId,
+          error: err instanceof Error ? err.message : String(err),
+          timestamp: new Date().toISOString(),
+        }),
+      );
     }
-
-    // Cancel webinar if applicable
-    if (appointment.webinar) {
-      const webinar = appointment.webinar;
-      await prisma.webinar.update({
-        where: { id: webinar.id },
-        data: { status: "CANCELLED" },
-      });
-
-      const consultantUser = webinar.webinarPlan?.consultantProfile?.user;
-      const participantIds = slots.flatMap((s: AffectedSlot) => s.user.map((u) => u.id));
-      const userIds = Array.from(new Set(participantIds));
-      if (consultantUser?.id && !userIds.includes(consultantUser.id)) {
-        userIds.push(consultantUser.id);
-      }
-
-      if (userIds.length > 0) {
-        await notifyAppointmentCancelled(userIds, {
-          appointmentId: appointment.id,
-          appointmentType: "WEBINAR",
-          consultantName: consultantUser?.name || "Consultant",
-          consulteeName: "Participants",
-          planTitle: webinar.webinarPlan?.title || "Webinar",
-          dateTime: earliestSlot.startsAt.toISOString(),
-          dashboardUrl: "/dashboard",
-          reason: "Scheduled platform maintenance",
-          cancelledBy: "system",
-        });
-        notified += userIds.length;
-      }
-    }
-
-    // Cancel class if applicable
-    if (appointment.class) {
-      const classEvent = appointment.class;
-      await prisma.class.update({
-        where: { id: classEvent.id },
-        data: { status: "CANCELLED" },
-      });
-
-      const consultantUser = classEvent.classPlan?.consultantProfile?.user;
-      const participantIds = slots.flatMap((s: AffectedSlot) => s.user.map((u) => u.id));
-      const userIds = Array.from(new Set(participantIds));
-      if (consultantUser?.id && !userIds.includes(consultantUser.id)) {
-        userIds.push(consultantUser.id);
-      }
-
-      if (userIds.length > 0) {
-        await notifyAppointmentCancelled(userIds, {
-          appointmentId: appointment.id,
-          appointmentType: "CLASS",
-          consultantName: consultantUser?.name || "Consultant",
-          consulteeName: "Participants",
-          planTitle: classEvent.classPlan?.title || "Class",
-          dateTime: earliestSlot.startsAt.toISOString(),
-          dashboardUrl: "/dashboard",
-          reason: "Scheduled platform maintenance",
-          cancelledBy: "system",
-        });
-        notified += userIds.length;
-      }
-    }
-
-    // Batch delete all affected slots for this appointment
-    await prisma.slotOfAppointment.deleteMany({
-      where: { id: { in: slots.map((s: AffectedSlot) => s.id) } },
-    });
-
-    // Delete appointment if no other slots remain
-    const remainingSlots = await prisma.slotOfAppointment.count({
-      where: { appointmentId: appointment.id },
-    });
-    if (remainingSlots === 0) {
-      await prisma.appointment.delete({ where: { id: appointment.id } });
-    }
-
-    cancelled++;
   }
 
   console.log(

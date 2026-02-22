@@ -13,6 +13,7 @@ import {
   type DocumentReconciliationResult,
 } from "../../scripts/cleanup/reconcile-document-storage";
 import fs from "fs";
+import { abortIfMaintenance } from "../../lib/maintenance-cron";
 
 /**
  * Output results to GitHub Actions
@@ -55,6 +56,7 @@ function outputToGitHubActions(result: DocumentReconciliationResult): void {
  * Main entry point
  */
 async function main(): Promise<void> {
+  await abortIfMaintenance("reconcile-document-storage");
   console.log("📂 Starting document storage reconciliation job...");
   console.log(`Timestamp: ${new Date().toISOString()}`);
 

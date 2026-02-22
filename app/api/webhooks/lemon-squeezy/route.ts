@@ -32,6 +32,17 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // DB health check — return 503 if DB is unreachable so Lemon Squeezy retries
+    try {
+      await prisma.$queryRaw`SELECT 1`;
+    } catch {
+      console.warn("[lemon-squeezy webhook] DB unhealthy — returning 503 for retry");
+      return NextResponse.json(
+        { error: "Service temporarily unavailable" },
+        { status: 503 },
+      );
+    }
+
     const event = JSON.parse(body);
 
     // Log webhook events

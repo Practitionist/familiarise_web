@@ -14,6 +14,7 @@ import {
 } from "../../scripts/payouts/create-payout-batch";
 
 import fs from "fs";
+import { abortIfMaintenance } from "../../lib/maintenance-cron";
 
 /**
  * Output results to GitHub Actions using environment files
@@ -48,6 +49,7 @@ function outputToGitHubActions(result: BatchResult): void {
  * Entry point for GitHub Actions
  */
 async function main(): Promise<void> {
+  await abortIfMaintenance("create-payout-batch");
   const startTime = Date.now();
   console.log(
     `🚀 Starting payout batch creation job at ${new Date().toISOString()}`,
