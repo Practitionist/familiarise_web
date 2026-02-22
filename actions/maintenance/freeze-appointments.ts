@@ -102,7 +102,7 @@ export async function freezeAppointments(
   });
 
   if (affectedSlots.length === 0) {
-    return { cancelled: 0, notified: 0, refundsIssued: 0, refundErrors: 0 };
+    return { cancelled: 0, notified: 0, refundsIssued: 0, refundErrors: 0, subscriptionsExtended: 0 };
   }
 
   // Group slots by appointment to avoid duplicate cancellations and N+1 queries
@@ -121,6 +121,10 @@ export async function freezeAppointments(
   let notified = 0;
   let refundsIssued = 0;
   let refundErrors = 0;
+  let subscriptionsExtended = 0;
+
+  // Track subscription IDs affected by cancellation for scheduling period extension
+  const affectedSubscriptionIds = new Set<string>();
 
   // Collect payment data to refund AFTER the transaction commits.
   // Payments linked to appointments that have SUCCEEDED payments are kept alive
@@ -204,6 +208,8 @@ export async function freezeAppointments(
               cancelledAt: new Date(),
             },
           });
+
+          affectedSubscriptionIds.add(subscription.id);
 
           const consultantUser =
             subscription.subscriptionPlan?.consultantProfile?.user;
@@ -388,6 +394,41 @@ export async function freezeAppointments(
     }
   }
 
+  // Extend scheduling period for affected subscriptions.
+  // Only extend subscriptions that still have future slots (partial cancellation).
+  const subscriptionIdList = Array.from(affectedSubscriptionIds);
+  if (subscriptionIdList.length > 0) {
+    const maintenanceDurationMs = windowEnd.getTime() - maintenanceStart.getTime();
+    for (const subId of subscriptionIdList) {
+      try {
+        const sub = await prisma.subscription.findUnique({
+          where: { id: subId },
+          select: { schedulingPeriodEndsAt: true },
+        });
+        if (sub?.schedulingPeriodEndsAt) {
+          await prisma.subscription.update({
+            where: { id: subId },
+            data: {
+              schedulingPeriodEndsAt: new Date(
+                sub.schedulingPeriodEndsAt.getTime() + maintenanceDurationMs,
+              ),
+            },
+          });
+          subscriptionsExtended++;
+        }
+      } catch (err) {
+        console.error(
+          JSON.stringify({
+            event: "maintenance_subscription_extend_failed",
+            subscriptionId: subId,
+            error: err instanceof Error ? err.message : String(err),
+            timestamp: new Date().toISOString(),
+          }),
+        );
+      }
+    }
+  }
+
   // Send all notifications AFTER the transaction commits.
   // Fire-and-forget: notification failures don't affect the freeze result.
   for (const { userIds, data } of pendingNotifications) {
@@ -413,11 +454,12 @@ export async function freezeAppointments(
       notified,
       refundsIssued,
       refundErrors,
+      subscriptionsExtended,
       windowStart: maintenanceStart.toISOString(),
       windowEnd: windowEnd.toISOString(),
       timestamp: new Date().toISOString(),
     }),
   );
 
-  return { cancelled, notified, refundsIssued, refundErrors };
+  return { cancelled, notified, refundsIssued, refundErrors, subscriptionsExtended };
 }

@@ -116,6 +116,7 @@ const WRITE_BLOCKED_IN_DEGRADED = [
   "/api/events/*/allocate",
   "/api/trials",
   "/api/plans/*/materials",
+  "/api/stream/meetings", // Block new video call creation
 ];
 
 const READ_ONLY_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);

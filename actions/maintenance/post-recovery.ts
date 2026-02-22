@@ -12,6 +12,7 @@
 import { notifyMaintenanceEnded } from "@/lib/novu/service";
 import prisma from "@/lib/prisma";
 import { checkRedisHealth } from "@/lib/redis";
+import { restoreDiscountCodes } from "@/actions/maintenance/pause-discount-codes";
 import { reconcilePaymentStatus } from "@/scripts/payments/reconcile-payment-status";
 import { reconcilePendingRefunds } from "@/scripts/refunds/reconcile-pending-refunds";
 import { reconcileDisputes } from "@/scripts/disputes/reconcile-disputes";
@@ -45,7 +46,25 @@ export async function runPostRecovery(): Promise<RecoveryResult> {
     );
   }
 
-  // 2. Run reconciliation jobs to catch anything that drifted during maintenance
+  // 2. Restore discount codes that were paused before maintenance
+  if (result.database) {
+    try {
+      const discountResult = await restoreDiscountCodes();
+      console.log(
+        JSON.stringify({
+          event: "maintenance_discount_codes_restored_in_recovery",
+          ...discountResult,
+          timestamp: new Date().toISOString(),
+        }),
+      );
+    } catch (error) {
+      result.errors.push(
+        `Discount restore: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  // 3. Run reconciliation jobs to catch anything that drifted during maintenance
   if (result.database) {
     const JOB_NAMES = [
       "reconcile-payment-status",
@@ -74,7 +93,7 @@ export async function runPostRecovery(): Promise<RecoveryResult> {
     });
   }
 
-  // 3. Check Redis health
+  // 4. Check Redis health
   try {
     result.redis = await checkRedisHealth();
     if (!result.redis) {
@@ -86,7 +105,7 @@ export async function runPostRecovery(): Promise<RecoveryResult> {
     );
   }
 
-  // 4. Send "we're back" broadcast notification
+  // 5. Send "we're back" broadcast notification
   try {
     const notifResult = await notifyMaintenanceEnded({
       phase: "OFF",

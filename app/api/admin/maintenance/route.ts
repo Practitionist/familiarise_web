@@ -7,7 +7,10 @@ import { getSession } from "@/lib/auth-server";
 import { createIncident, resolveIncident } from "@/lib/betterstack";
 import { getMaintenanceState, setMaintenanceState } from "@/lib/maintenance";
 import prisma from "@/lib/prisma";
+import { drainActiveSessions } from "@/actions/maintenance/drain-sessions";
 import { freezeAppointments } from "@/actions/maintenance/freeze-appointments";
+import { pauseDiscountCodes } from "@/actions/maintenance/pause-discount-codes";
+import { pauseWaitlistExpiry } from "@/actions/maintenance/pause-waitlist-expiry";
 import { runPostRecovery } from "@/actions/maintenance/post-recovery";
 
 async function requireAdmin() {
@@ -108,11 +111,21 @@ export async function POST(request: NextRequest) {
     betterstackIncidentId: betterstackIncidentId ?? undefined,
   });
 
+  let drainResult: Awaited<ReturnType<typeof drainActiveSessions>> | undefined;
   let freezeResult: Awaited<ReturnType<typeof freezeAppointments>> | undefined;
   if (targetPhase === MaintenancePhase.OFFLINE) {
+    // Drain active video calls before freezing appointments
+    drainResult = await drainActiveSessions();
+
     const start = new Date();
     const end = estimatedEnd ? new Date(estimatedEnd) : null;
     freezeResult = await freezeAppointments(start, end);
+
+    // Pause active discount codes so they can't be used during maintenance
+    await pauseDiscountCodes();
+
+    // Extend waitlist claim windows that overlap with maintenance
+    await pauseWaitlistExpiry(start, end ?? new Date(start.getTime() + 4 * 60 * 60 * 1000));
   }
 
   return NextResponse.json({
@@ -120,6 +133,7 @@ export async function POST(request: NextRequest) {
     bypassSecret,
     betterstackIncidentId,
     message: `Maintenance mode set to ${targetPhase}`,
+    ...(drainResult !== undefined ? { drain: drainResult } : {}),
     ...(freezeResult !== undefined ? { freeze: freezeResult } : {}),
   });
 }

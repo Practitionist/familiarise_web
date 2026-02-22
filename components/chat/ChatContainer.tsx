@@ -10,9 +10,11 @@ import {
   Window,
   useChatContext,
 } from "stream-chat-react";
+import { AlertTriangle } from "lucide-react";
 import { CustomChannelHeader } from "./CustomChannelHeader";
 import { CustomMessage } from "./CustomMessage";
 import { StreamChatErrorBoundary } from "@/components/stream/StreamErrorBoundary";
+import { useMaintenanceState } from "@/providers/MaintenanceProvider";
 
 // Empty state component for when no channel is selected
 const EmptyChannelState = () => (
@@ -33,8 +35,11 @@ const EmptyChannelState = () => (
 
 export const ChatContainer = () => {
   const { channel } = useChatContext();
+  const { phase } = useMaintenanceState();
   const [hasChannel, setHasChannel] = useState(false);
   const [shouldUseVirtualized, setShouldUseVirtualized] = useState(false);
+
+  const isChatReadOnly = phase === "DEGRADED" || phase === "OFFLINE";
 
   useEffect(() => {
     setHasChannel(!!channel);
@@ -95,7 +100,14 @@ export const ChatContainer = () => {
           <Window>
             <CustomChannelHeader />
             <MessageListComponent {...messageListProps} />
-            <MessageInput focus />
+            {isChatReadOnly ? (
+              <div className="flex items-center justify-center gap-2 px-4 py-3 bg-yellow-50 border-t border-yellow-200 text-sm text-yellow-800">
+                <AlertTriangle className="h-4 w-4 shrink-0" />
+                <span>Chat is temporarily read-only during maintenance.</span>
+              </div>
+            ) : (
+              <MessageInput focus />
+            )}
           </Window>
         </Channel>
       </div>
