@@ -12,11 +12,18 @@
 import { notifyMaintenanceEnded } from "@/lib/novu/service";
 import prisma from "@/lib/prisma";
 import { checkRedisHealth } from "@/lib/redis";
+import { reconcilePaymentStatus } from "@/scripts/payments/reconcile-payment-status";
+import { reconcilePendingRefunds } from "@/scripts/refunds/reconcile-pending-refunds";
+import { reconcileDisputes } from "@/scripts/disputes/reconcile-disputes";
+import { reconcilePayoutStatus } from "@/scripts/payouts/reconcile-payout-status";
+import { reconcileSlotAvailability } from "@/scripts/appointments/reconcile-slot-availability";
+import { reconcileDocumentStorage } from "@/scripts/cleanup/reconcile-document-storage";
 
 interface RecoveryResult {
   database: boolean;
   redis: boolean;
   notification: boolean;
+  reconciliation?: { job: string; success: boolean }[];
   errors: string[];
 }
 
@@ -38,7 +45,36 @@ export async function runPostRecovery(): Promise<RecoveryResult> {
     );
   }
 
-  // 2. Check Redis health
+  // 2. Run reconciliation jobs to catch anything that drifted during maintenance
+  if (result.database) {
+    const JOB_NAMES = [
+      "reconcile-payment-status",
+      "reconcile-pending-refunds",
+      "reconcile-disputes",
+      "reconcile-payout-status",
+      "reconcile-slot-availability",
+      "reconcile-document-storage",
+    ];
+    const reconciliationRuns = await Promise.allSettled([
+      reconcilePaymentStatus(),
+      reconcilePendingRefunds(),
+      reconcileDisputes(),
+      reconcilePayoutStatus(),
+      reconcileSlotAvailability(),
+      reconcileDocumentStorage(),
+    ]);
+    result.reconciliation = reconciliationRuns.map((r, i) => ({
+      job: JOB_NAMES[i],
+      success: r.status === "fulfilled" && (r.value as { success?: boolean })?.success === true,
+    }));
+    reconciliationRuns.forEach((r, i) => {
+      if (r.status === "rejected") {
+        result.errors.push(`${JOB_NAMES[i]}: ${String(r.reason)}`);
+      }
+    });
+  }
+
+  // 3. Check Redis health
   try {
     result.redis = await checkRedisHealth();
     if (!result.redis) {
@@ -50,7 +86,7 @@ export async function runPostRecovery(): Promise<RecoveryResult> {
     );
   }
 
-  // 3. Send "we're back" broadcast notification
+  // 4. Send "we're back" broadcast notification
   try {
     const notifResult = await notifyMaintenanceEnded({
       phase: "OFF",

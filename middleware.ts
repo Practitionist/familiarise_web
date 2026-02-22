@@ -80,10 +80,24 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
   ) {
     if (!validateBypass(req, maintenanceState.bypassSecret)) {
       if (maintenanceState.phase === "OFFLINE") {
-        return NextResponse.rewrite(new URL("/maintenance", req.url));
+        const response = NextResponse.rewrite(new URL("/maintenance", req.url));
+        if (maintenanceState.estimatedEnd) {
+          const retryAfterSecs = Math.ceil(
+            (new Date(maintenanceState.estimatedEnd).getTime() - Date.now()) / 1000,
+          );
+          if (retryAfterSecs > 0) response.headers.set("Retry-After", String(retryAfterSecs));
+        }
+        return response;
       }
       // DEGRADED: block transactional writes; allow reads with banner headers
       if (isWriteBlockedInDegraded(pathname, req.method)) {
+        const degradedHeaders: Record<string, string> = {};
+        if (maintenanceState.estimatedEnd) {
+          const retryAfterSecs = Math.ceil(
+            (new Date(maintenanceState.estimatedEnd).getTime() - Date.now()) / 1000,
+          );
+          if (retryAfterSecs > 0) degradedHeaders["Retry-After"] = String(retryAfterSecs);
+        }
         return NextResponse.json(
           {
             error: "Writes are temporarily unavailable during maintenance",
@@ -91,7 +105,7 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
             reason: maintenanceState.reason || null,
             estimatedEnd: maintenanceState.estimatedEnd || null,
           },
-          { status: 503 },
+          { status: 503, headers: degradedHeaders },
         );
       }
       const response = NextResponse.next();

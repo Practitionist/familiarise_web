@@ -7,6 +7,8 @@ import { getSession } from "@/lib/auth-server";
 import { createIncident, resolveIncident } from "@/lib/betterstack";
 import { getMaintenanceState, setMaintenanceState } from "@/lib/maintenance";
 import prisma from "@/lib/prisma";
+import { freezeAppointments } from "@/actions/maintenance/freeze-appointments";
+import { runPostRecovery } from "@/actions/maintenance/post-recovery";
 
 async function requireAdmin() {
   const session = await getSession();
@@ -54,11 +56,34 @@ export async function POST(request: NextRequest) {
   if ("error" in auth && auth.error) return auth.error;
 
   const body = await request.json();
-  const { phase, reason, estimatedEnd } = body as {
+  const { phase, reason, estimatedEnd, bypassDisputeCheck } = body as {
     phase?: string;
     reason?: string;
     estimatedEnd?: string;
+    bypassDisputeCheck?: boolean;
   };
+
+  // Block if open disputes have response deadlines within the maintenance window (+48h buffer)
+  if (estimatedEnd && !bypassDisputeCheck) {
+    const bufferEnd = new Date(new Date(estimatedEnd).getTime() + 48 * 60 * 60 * 1000);
+    const urgentDisputes = await prisma.dispute.findMany({
+      where: {
+        status: { in: ["NEEDS_RESPONSE", "WARNING_NEEDS_RESPONSE"] },
+        dueBy: { gte: new Date(), lte: bufferEnd },
+      },
+      select: { id: true, dueBy: true, amount: true, currency: true },
+      orderBy: { dueBy: "asc" },
+    });
+    if (urgentDisputes.length > 0) {
+      return NextResponse.json(
+        {
+          error: `${urgentDisputes.length} dispute(s) have response deadlines within the maintenance window. Resolve them first or pass bypassDisputeCheck: true to override.`,
+          disputes: urgentDisputes,
+        },
+        { status: 409 },
+      );
+    }
+  }
 
   const targetPhase =
     phase === "DEGRADED"
@@ -83,11 +108,19 @@ export async function POST(request: NextRequest) {
     betterstackIncidentId: betterstackIncidentId ?? undefined,
   });
 
+  let freezeResult: Awaited<ReturnType<typeof freezeAppointments>> | undefined;
+  if (targetPhase === MaintenancePhase.OFFLINE) {
+    const start = new Date();
+    const end = estimatedEnd ? new Date(estimatedEnd) : null;
+    freezeResult = await freezeAppointments(start, end);
+  }
+
   return NextResponse.json({
     phase: targetPhase,
     bypassSecret,
     betterstackIncidentId,
     message: `Maintenance mode set to ${targetPhase}`,
+    ...(freezeResult !== undefined ? { freeze: freezeResult } : {}),
   });
 }
 
@@ -148,8 +181,10 @@ export async function DELETE() {
     endedBy: auth.userId,
   });
 
+  const recoveryResult = await runPostRecovery();
   return NextResponse.json({
     phase: "OFF",
     message: "Maintenance mode ended",
+    recovery: recoveryResult,
   });
 }

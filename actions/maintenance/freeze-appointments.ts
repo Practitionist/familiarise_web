@@ -7,7 +7,10 @@
  * cancels them with a system-initiated reason, and notifies affected users.
  */
 
+import crypto from "crypto";
+
 import { notifyAppointmentCancelled } from "@/lib/novu/service";
+import { createRefund } from "@/lib/payments";
 import prisma from "@/lib/prisma";
 
 export async function freezeAppointments(
@@ -82,6 +85,16 @@ export async function freezeAppointments(
               },
             },
           },
+          payment: {
+            where: { paymentStatus: "SUCCEEDED" },
+            select: {
+              id: true,
+              amount: true,
+              currency: true,
+              paymentIntent: true,
+              paymentGateway: true,
+            },
+          },
         },
       },
       user: { select: { id: true } },
@@ -89,7 +102,7 @@ export async function freezeAppointments(
   });
 
   if (affectedSlots.length === 0) {
-    return { cancelled: 0, notified: 0 };
+    return { cancelled: 0, notified: 0, refundsIssued: 0, refundErrors: 0 };
   }
 
   // Group slots by appointment to avoid duplicate cancellations and N+1 queries
@@ -106,6 +119,14 @@ export async function freezeAppointments(
 
   let cancelled = 0;
   let notified = 0;
+  let refundsIssued = 0;
+  let refundErrors = 0;
+
+  // Collect payment data to refund AFTER the transaction commits.
+  // Payments linked to appointments that have SUCCEEDED payments are kept alive
+  // (appointment not deleted) so refund records can reference them.
+  type PendingRefundPayment = AffectedSlot["appointment"]["payment"][number];
+  const pendingRefunds: PendingRefundPayment[] = [];
 
   // Collect notification payloads to send AFTER the transaction commits.
   // External API calls (Novu) cannot be rolled back, so they must run
@@ -280,16 +301,24 @@ export async function freezeAppointments(
           }
         }
 
+        // Collect SUCCEEDED payments for refund processing after the transaction.
+        // We must gather these before slot/appointment deletion so the data is available.
+        for (const payment of appointment.payment) {
+          pendingRefunds.push(payment);
+        }
+
         // Batch delete all affected slots for this appointment
         await tx.slotOfAppointment.deleteMany({
           where: { id: { in: slots.map((s: AffectedSlot) => s.id) } },
         });
 
-        // Delete appointment if no other slots remain
+        // Delete appointment if no other slots remain AND no payments need refunding.
+        // Appointments with payments are kept alive so refund records can reference
+        // the Payment FK — cascade deletion would otherwise orphan the refund.
         const remainingSlots = await tx.slotOfAppointment.count({
           where: { appointmentId: appointment.id },
         });
-        if (remainingSlots === 0) {
+        if (remainingSlots === 0 && appointment.payment.length === 0) {
           await tx.appointment.delete({ where: { id: appointment.id } });
         }
 
@@ -298,6 +327,66 @@ export async function freezeAppointments(
     },
     { maxWait: 30000, timeout: 60000 },
   );
+
+  // Issue refunds AFTER the transaction commits.
+  // The Payment records still exist (appointments with payments were not deleted).
+  // On gateway failure a PENDING placeholder is created for the reconcile cron to retry.
+  for (const payment of pendingRefunds) {
+    try {
+      const result = await createRefund({
+        paymentIntentId: payment.paymentIntent,
+        amount: payment.amount,
+        reason: "Scheduled platform maintenance",
+      });
+      await prisma.refund.create({
+        data: {
+          amount: payment.amount,
+          currency: payment.currency,
+          reason: "Scheduled platform maintenance",
+          status: result.status,
+          refundId: result.refundId,
+          paymentGateway: payment.paymentGateway,
+          paymentId: payment.id,
+          ...(result.metadata ? { metadata: result.metadata as Record<string, string> } : {}),
+        },
+      });
+      refundsIssued++;
+    } catch (err) {
+      console.error(
+        JSON.stringify({
+          event: "maintenance_refund_failed",
+          paymentId: payment.id,
+          error: err instanceof Error ? err.message : String(err),
+          timestamp: new Date().toISOString(),
+        }),
+      );
+      // Create a PENDING placeholder so the reconcile-pending-refunds cron can retry
+      try {
+        await prisma.refund.create({
+          data: {
+            amount: payment.amount,
+            currency: payment.currency,
+            reason: "Scheduled platform maintenance",
+            status: "PENDING",
+            refundId: `pending_${crypto.randomUUID()}`,
+            paymentGateway: payment.paymentGateway,
+            paymentId: payment.id,
+            metadata: { error: String(err) },
+          },
+        });
+      } catch (dbErr) {
+        console.error(
+          JSON.stringify({
+            event: "maintenance_refund_record_failed",
+            paymentId: payment.id,
+            error: dbErr instanceof Error ? dbErr.message : String(dbErr),
+            timestamp: new Date().toISOString(),
+          }),
+        );
+      }
+      refundErrors++;
+    }
+  }
 
   // Send all notifications AFTER the transaction commits.
   // Fire-and-forget: notification failures don't affect the freeze result.
@@ -322,11 +411,13 @@ export async function freezeAppointments(
       event: "maintenance_appointments_frozen",
       cancelled,
       notified,
+      refundsIssued,
+      refundErrors,
       windowStart: maintenanceStart.toISOString(),
       windowEnd: windowEnd.toISOString(),
       timestamp: new Date().toISOString(),
     }),
   );
 
-  return { cancelled, notified };
+  return { cancelled, notified, refundsIssued, refundErrors };
 }
