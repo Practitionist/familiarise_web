@@ -85,6 +85,21 @@ export async function freezeAppointments(
               },
             },
           },
+          trialSession: {
+            include: {
+              subscriptionPlan: {
+                select: {
+                  title: true,
+                },
+              },
+              consultantProfile: {
+                select: { user: { select: { id: true, name: true } } },
+              },
+              consulteeProfile: {
+                select: { user: { select: { id: true, name: true } } },
+              },
+            },
+          },
           payment: {
             where: { paymentStatus: "SUCCEEDED" },
             select: {
@@ -298,6 +313,39 @@ export async function freezeAppointments(
                 consultantName: consultantUser?.name || "Consultant",
                 consulteeName: "Participants",
                 planTitle: classEvent.classPlan?.title || "Class",
+                dateTime: earliestSlot.startsAt.toISOString(),
+                dashboardUrl: "/dashboard",
+                reason: "Scheduled platform maintenance",
+                cancelledBy: "system",
+              },
+            });
+          }
+        }
+
+        // Cancel trial session if applicable
+        if (appointment.trialSession) {
+          const trial = appointment.trialSession;
+          await tx.trialSession.update({
+            where: { id: trial.id },
+            data: { status: "CANCELLED" },
+          });
+
+          const consultantUser = trial.consultantProfile?.user;
+          const consulteeUser = trial.consulteeProfile?.user;
+          const userIds: string[] = [];
+          if (consulteeUser?.id) userIds.push(consulteeUser.id);
+          if (consultantUser?.id) userIds.push(consultantUser.id);
+
+          if (userIds.length > 0) {
+            pendingNotifications.push({
+              userIds,
+              data: {
+                appointmentId: appointment.id,
+                appointmentType: "TRIAL",
+                consultantName: consultantUser?.name || "Consultant",
+                consulteeName: consulteeUser?.name || "User",
+                planTitle:
+                  trial.subscriptionPlan?.title || "Trial Session",
                 dateTime: earliestSlot.startsAt.toISOString(),
                 dashboardUrl: "/dashboard",
                 reason: "Scheduled platform maintenance",

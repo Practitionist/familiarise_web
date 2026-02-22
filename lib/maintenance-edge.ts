@@ -117,6 +117,10 @@ const WRITE_BLOCKED_IN_DEGRADED = [
   "/api/trials",
   "/api/plans/*/materials",
   "/api/stream/meetings", // Block new video call creation
+  "/api/form/onboarding/*", // Block new user registration/onboarding
+  "/api/verification/documents", // Block verification document uploads
+  "/api/verification/submit", // Block verification submission
+  "/api/verification/resubmit", // Block verification resubmission
 ];
 
 const READ_ONLY_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
