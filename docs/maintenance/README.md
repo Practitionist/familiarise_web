@@ -4,16 +4,17 @@ Familiarise's maintenance mode system provides two-tier protection (DEGRADED and
 
 ## Quick Reference
 
-| Mode | User Experience | Reads | Writes | Webhooks | Cron Jobs |
-|------|----------------|-------|--------|----------|-----------|
-| **OFF** | Normal operation | Yes | Yes | Yes | Yes |
-| **DEGRADED** | Warning banner, site functional | Yes | Yes (gap) | Yes | Yes (gap) |
-| **OFFLINE** | Full maintenance page | No | No | Yes (exempt) | Yes (gap) |
+| Mode | User Experience | Reads | Writes | Webhooks | Cron Jobs | BetterStack |
+|------|----------------|-------|--------|----------|-----------|-------------|
+| **OFF** | Normal operation | Yes | Yes | Yes | Yes | No incident |
+| **DEGRADED** | Warning banner, site functional | Yes | Yes (gap) | Yes | Yes (gap) | No incident |
+| **OFFLINE** | Full maintenance page | No | No | Yes (exempt) | Yes (gap) | Auto-creates incident |
 
 **Key gaps**: DEGRADED does not block writes. Cron jobs bypass middleware entirely in all modes.
 
 ## Table of Contents
 
+0. [BetterStack Setup Guide](./00-betterstack-setup.md) -- **Start here**: full from-scratch setup: account, monitors, status page, API token
 1. [Architecture](./01-architecture.md) -- System design, data flow, key files
 2. [DEGRADED vs OFFLINE](./02-degraded-vs-offline.md) -- What each phase blocks (with tables)
 3. [Business Risks](./03-business-risks.md) -- Money-at-stake analysis
@@ -44,4 +45,7 @@ Familiarise's maintenance mode system provides two-tier protection (DEGRADED and
 - Header: `x-maintenance-bypass: <secret>`
 - Cookie: `maintenance_bypass=<secret>`
 
-**Health check**: `GET /api/health` -- returns current maintenance state
+**Health check**: `GET /api/health` -- returns maintenance state + BetterStack connectivity
+```json
+{ "status": "healthy", "maintenance": { "phase": "OFF" }, "betterstack": { "configured": true, "reachable": true, "monitors": [...] } }
+```

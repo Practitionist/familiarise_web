@@ -76,6 +76,29 @@ Complete this checklist before activating maintenance mode. Items are ordered by
   - Use it via header (`x-maintenance-bypass: <secret>`) or cookie (`maintenance_bypass=<secret>`)
   - Share with any team members who need access during maintenance
 
+## 6.5. Verify BetterStack Is Ready
+
+This step ensures the public status page stays in sync when you enter OFFLINE mode.
+
+- [ ] **Confirm `BETTERSTACK_API_KEY` is set**:
+  ```bash
+  curl https://familiarisenow.com/api/health
+  ```
+  Expected: `"betterstack": { "configured": true, "reachable": true, "monitors": [...] }`
+  - If `configured: false` → env var is missing; add it and redeploy before proceeding
+  - If `reachable: false` → API key is wrong or BetterStack is unreachable
+
+- [ ] **Verify both monitors show "Up"** at https://uptime.betterstack.com/team/t332379
+  - `familiarisenow.com` → Up
+  - `familiarisenow.com/api/health` → Up
+  - If either is already down, investigate before activating maintenance
+
+- [ ] **Check the public status page** is accessible: https://familiarise.betteruptime.com
+  - Should show "All systems operational"
+  - If it shows an active incident already, investigate before proceeding
+
+> **Note**: BetterStack incidents are only auto-created for OFFLINE mode, not DEGRADED.
+
 ## 7. Timing Considerations
 
 ### Preferred Times

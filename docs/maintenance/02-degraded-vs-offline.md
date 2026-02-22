@@ -87,6 +87,20 @@
 
 **Impact**: Users in active calls can continue, but if the DB is being migrated, any actions that require DB access (saving notes, marking as complete) will fail silently.
 
+### Gap 4: BetterStack Incident Not Created for DEGRADED
+
+**Problem**: BetterStack auto-creates an incident only when entering OFFLINE mode. DEGRADED mode does not trigger an incident.
+
+**Impact**: If users or external stakeholders check the public status page (https://familiarise.betteruptime.com) during DEGRADED mode, it shows "All systems operational" — which is technically accurate (the site is up and functional) but may be misleading if the team is actively responding to a degradation.
+
+**Current behavior**:
+- **OFFLINE** → `POST /api/admin/maintenance` calls `createIncident()` → incident appears on status page → `DELETE /api/admin/maintenance` calls `resolveIncident()` → status page clears
+- **DEGRADED** → no incident created, no status page update
+
+**When this matters**: If DEGRADED mode is used to respond to an actual service issue (not just planned maintenance), the status page will not reflect the situation.
+
+**Workaround**: Manually create an incident in the BetterStack dashboard at https://uptime.betterstack.com/team/t332379/incidents if you want the status page to reflect DEGRADED mode.
+
 ## Full Route Inventory
 
 ### Checkout & Payment Routes

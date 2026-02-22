@@ -2,6 +2,8 @@
 
 Recommended code changes to improve maintenance mode protection. These are documented for future implementation, not implemented now.
 
+> **Already implemented**: BetterStack incident management (auto-create on OFFLINE, auto-resolve on end) is complete. See [Architecture](./01-architecture.md#betterstack-integration) and [BetterStack Setup Guide](./00-betterstack-setup.md).
+
 ## 1. DEGRADED Write-Blocking
 
 **Problem**: DEGRADED mode currently allows all write operations (POST, PATCH, DELETE). Users can complete checkouts, create events, and modify data during DEGRADED mode.

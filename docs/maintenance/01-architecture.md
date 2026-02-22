@@ -22,7 +22,7 @@ Admin toggles maintenance mode (UI)
 POST /api/admin/maintenance
     |
     +---> Redis: SET maintenance:phase = "OFFLINE"
-    |     Redis: SET maintenance:config = { reason, eta, bypassSecret }
+    |     Redis: SET maintenance:config = { reason, eta, bypassSecret, betterstackIncidentId }
     |
     +---> Prisma: CREATE MaintenanceWindow { phase, reason, startedAt, startedBy, ... }
     |
@@ -60,7 +60,7 @@ Admin ends maintenance
 | `lib/maintenance.ts` | Node.js | Server-side state management. Redis SDK + Prisma writes. |
 | `lib/betterstack.ts` | Node.js | BetterStack incident creation/resolution |
 | `app/api/admin/maintenance/route.ts` | Node.js | Admin CRUD API (GET/POST/PATCH/DELETE) |
-| `app/api/health/route.ts` | Node.js | Public health check, returns maintenance state |
+| `app/api/health/route.ts` | Node.js | Public health check — returns maintenance state + calls BetterStack `/api/v2/monitors` to report `{ configured, reachable, monitors[] }` |
 | `providers/MaintenanceProvider.tsx` | Client | React context, polls `/api/health` every 60s |
 | `components/banners/MaintenanceBanner.tsx` | Client | Dismissible warning banner for DEGRADED mode |
 | `app/maintenance/page.tsx` | Client | Full-screen offline page, auto-refreshes every 30s |
@@ -99,7 +99,9 @@ model MaintenanceWindow {
 | Key | Type | Value |
 |-----|------|-------|
 | `maintenance:phase` | String | `"OFF"`, `"DEGRADED"`, or `"OFFLINE"` |
-| `maintenance:config` | JSON String | `{ reason, estimatedEnd, bypassSecret }` |
+| `maintenance:config` | JSON String | `{ reason, estimatedEnd, bypassSecret, betterstackIncidentId }` |
+
+`betterstackIncidentId` is set when entering OFFLINE mode (incident creation succeeds) and read when ending maintenance (to auto-resolve the incident). It is `null` if DEGRADED was used or if incident creation failed.
 
 ## Bypass Mechanism
 
@@ -115,14 +117,45 @@ Each maintenance window generates a UUID bypass secret (`crypto.randomUUID()`).
 
 ## BetterStack Integration
 
-When entering OFFLINE mode, the system auto-creates a BetterStack incident:
-- Endpoint: `https://uptime.betterstack.com/api/v2/incidents`
-- Requester: `system@familiarise.com`
-- Notifications: Email + Push (no SMS/call)
+BetterStack monitors the platform for uptime and auto-creates incidents during OFFLINE maintenance.
 
-When ending maintenance, the incident is auto-resolved.
+### Monitors
 
-**Required env var**: `BETTERSTACK_API_KEY`
+Two monitors are configured at [https://uptime.betterstack.com/team/t332379](https://uptime.betterstack.com/team/t332379):
+
+| Public Name | URL | Frequency | Alert |
+|-------------|-----|-----------|-------|
+| Website | `https://familiarisenow.com` | Every 3 min | Email |
+| API Health | `https://familiarisenow.com/api/health` | Every 3 min | Email |
+
+### Status Page
+
+Public status page: [https://familiarise.betteruptime.com](https://familiarise.betteruptime.com)
+Shows both monitors and reflects active incidents.
+
+### Incident Lifecycle
+
+**When entering OFFLINE mode** (`POST /api/admin/maintenance`):
+1. `createIncident()` is called in `lib/betterstack.ts`
+2. BetterStack creates an incident at `/api/v2/incidents`
+3. The returned incident ID is stored in Redis under `maintenance:config.betterstackIncidentId`
+4. The POST response includes `betterstackIncidentId` so admins can verify
+
+**When ending maintenance** (`DELETE /api/admin/maintenance`):
+1. `getMaintenanceState()` reads `betterstackIncidentId` from Redis
+2. If an incident ID exists, `resolveIncident(id)` is called
+3. BetterStack marks the incident as resolved
+4. Status page updates to "All systems operational"
+
+**DEGRADED mode** does NOT create an incident — only OFFLINE does.
+
+**Fail-safe**: If BetterStack API is unreachable or the API key is missing, maintenance mode still activates. Only the status page sync is affected.
+
+### Setup
+
+See [00-betterstack-setup.md](./00-betterstack-setup.md) for the full account and monitor setup guide.
+
+**Required env var**: `BETTERSTACK_API_KEY` (now required — `lib/betterstack.ts` logs a warning and skips if missing)
 
 ## Admin API
 
@@ -157,4 +190,4 @@ These routes are never blocked by maintenance mode:
 | `UPSTASH_REDIS_REST_URL` | Yes | Redis endpoint for maintenance state |
 | `UPSTASH_REDIS_REST_TOKEN` | Yes | Redis auth token |
 | `MAINTENANCE_BYPASS_SECRET` | No | Fallback bypass secret |
-| `BETTERSTACK_API_KEY` | No | BetterStack incident management |
+| `BETTERSTACK_API_KEY` | **Yes** | BetterStack incident management. Token from BetterStack Settings → API tokens. |

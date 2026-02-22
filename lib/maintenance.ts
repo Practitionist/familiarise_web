@@ -36,6 +36,7 @@ export interface MaintenanceState {
   reason: string | null;
   estimatedEnd: string | null;
   bypassSecret: string | null;
+  betterstackIncidentId: string | null;
 }
 
 const OFF_STATE: MaintenanceState = {
@@ -43,6 +44,7 @@ const OFF_STATE: MaintenanceState = {
   reason: null,
   estimatedEnd: null,
   bypassSecret: null,
+  betterstackIncidentId: null,
 };
 
 /**
@@ -74,6 +76,7 @@ export async function getMaintenanceState(): Promise<MaintenanceState> {
         reason: config.reason ?? null,
         estimatedEnd: config.estimatedEnd ?? null,
         bypassSecret: config.bypassSecret ?? null,
+        betterstackIncidentId: config.betterstackIncidentId ?? null,
       };
     },
     // Fail-open: site stays up if Redis is down
@@ -92,6 +95,7 @@ export async function setMaintenanceState(
     bypassSecret?: string;
     startedBy?: string;
     endedBy?: string;
+    betterstackIncidentId?: string;
   } = {},
 ): Promise<void> {
   // Write to Redis
@@ -102,6 +106,7 @@ export async function setMaintenanceState(
       reason: config.reason ?? null,
       estimatedEnd: config.estimatedEnd ?? null,
       bypassSecret: config.bypassSecret ?? null,
+      betterstackIncidentId: config.betterstackIncidentId ?? null,
     }),
   );
 

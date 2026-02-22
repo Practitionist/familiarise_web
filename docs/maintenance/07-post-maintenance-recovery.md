@@ -103,10 +103,40 @@ npx tsx jobs/payouts/reconcile-payout-status.ts
 
 ## 5. Verify BetterStack
 
-- [ ] Check that the BetterStack incident was auto-resolved
-  - Path: BetterStack dashboard > Incidents
+- [ ] **Check `/api/health` for BetterStack status**:
+  ```bash
+  curl https://familiarisenow.com/api/health
+  ```
+  Expected response now includes:
+  ```json
+  {
+    "status": "healthy",
+    "maintenance": { "phase": "OFF", "reason": null, "estimatedEnd": null },
+    "betterstack": {
+      "configured": true,
+      "reachable": true,
+      "monitors": [
+        { "name": "https://familiarisenow.com", "status": "up" },
+        { "name": "https://familiarisenow.com/api/health", "status": "up" }
+      ]
+    },
+    "timestamp": "..."
+  }
+  ```
+
+- [ ] **Verify the BetterStack incident was auto-resolved** (OFFLINE mode only):
+  - Path: https://uptime.betterstack.com/team/t332379/incidents
   - The incident created when entering OFFLINE should show as "Resolved"
-  - If not resolved, manually resolve it
+  - Auto-resolution happens via `DELETE /api/admin/maintenance` calling `resolveIncident(betterstackIncidentId)`
+
+- [ ] **Verify the public status page shows "All systems operational"**:
+  - Path: https://familiarise.betteruptime.com
+  - Resolved incidents are reflected within 1-2 minutes
+
+- [ ] **If the incident was NOT auto-resolved** (the `DELETE` response body shows `betterstackIncidentId: null`):
+  - Incident creation failed when maintenance started, or was skipped (DEGRADED mode)
+  - Resolve manually: BetterStack dashboard → Incidents → find the incident → click "Resolve"
+  - Check server logs for `[BetterStack] Failed to create incident:` during the POST call
 
 ## 6. Verify Notifications
 
@@ -118,7 +148,7 @@ npx tsx jobs/payouts/reconcile-payout-status.ts
 
 - [ ] **Monitor application logs** for 30 minutes post-recovery
   - Watch for: database connection errors, Prisma query failures, unexpected 500s
-  - Path: Vercel Dashboard > Deployments > Functions > Logs (or your logging provider)
+  - Path: Netlify Dashboard > Deployments > Functions > Logs (or your logging provider)
 
 - [ ] **Monitor cron job executions** for the next scheduled cycle
   - Check that the next cron job run completes successfully

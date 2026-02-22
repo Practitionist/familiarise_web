@@ -319,6 +319,24 @@ For every major dependency, this document covers: current version, what it's use
 
 ---
 
+## Monitoring & Incident Management
+
+### BetterStack Uptime
+
+| Field | Value |
+|-------|-------|
+| **Current Version** | REST API v2 (no SDK — raw `fetch()`) |
+| **Used For** | Uptime monitoring (2 monitors), auto-create incidents on OFFLINE, auto-resolve on maintenance end, public status page |
+| **Key Files** | `lib/betterstack.ts`, `app/api/admin/maintenance/route.ts`, `app/api/health/route.ts` |
+| **Minor Update** | Safe — API v2 is stable, no client SDK to update |
+| **Major Update** | Needs Testing — if BetterStack releases API v3, update base URL and response shape in `lib/betterstack.ts` and `app/api/health/route.ts` |
+| **How to Test** | Hit `GET /api/health` and verify `betterstack.configured: true` and `betterstack.reachable: true`. Test incident lifecycle via admin dashboard (OFFLINE mode → verify incident created → end maintenance → verify resolved). |
+| **Breaking Changes to Watch** | API endpoint URL change (`/api/v2/` → `/api/v3/`), response JSON shape change, auth header format change |
+| **Config** | `BETTERSTACK_API_KEY` env var. See [BetterStack Setup Guide](./00-betterstack-setup.md). |
+| **Estimated Time** | No routine updates needed — pure REST calls, no SDK. |
+
+---
+
 ## Forms & Validation
 
 ### React Hook Form + Zod

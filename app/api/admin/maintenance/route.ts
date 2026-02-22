@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { MaintenancePhase, UserRole } from "@prisma/client";
 
 import { getSession } from "@/lib/auth-server";
+import { createIncident, resolveIncident } from "@/lib/betterstack";
 import { getMaintenanceState, setMaintenanceState } from "@/lib/maintenance";
 import prisma from "@/lib/prisma";
 
@@ -66,16 +67,26 @@ export async function POST(request: NextRequest) {
 
   const bypassSecret = crypto.randomUUID();
 
+  let betterstackIncidentId: string | null = null;
+  if (targetPhase === MaintenancePhase.OFFLINE) {
+    betterstackIncidentId = await createIncident(
+      "Platform Maintenance",
+      reason || "Scheduled platform maintenance in progress",
+    );
+  }
+
   await setMaintenanceState(targetPhase, {
     reason,
     estimatedEnd,
     bypassSecret,
     startedBy: auth.userId,
+    betterstackIncidentId: betterstackIncidentId ?? undefined,
   });
 
   return NextResponse.json({
     phase: targetPhase,
     bypassSecret,
+    betterstackIncidentId,
     message: `Maintenance mode set to ${targetPhase}`,
   });
 }
@@ -126,6 +137,12 @@ export async function PATCH(request: NextRequest) {
 export async function DELETE() {
   const auth = await requireAdmin();
   if ("error" in auth && auth.error) return auth.error;
+
+  const currentState = await getMaintenanceState();
+
+  if (currentState.betterstackIncidentId) {
+    await resolveIncident(currentState.betterstackIncidentId);
+  }
 
   await setMaintenanceState(MaintenancePhase.OFF, {
     endedBy: auth.userId,
