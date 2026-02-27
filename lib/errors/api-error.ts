@@ -3,18 +3,7 @@ import { NextResponse } from "next/server";
 import {
   classifyError,
   logClassifiedError,
-  ErrorTypes,
-  type ErrorType,
-  type ClassifiedError,
-} from "./error-classification";
-
-export {
-  classifyError,
-  logClassifiedError,
-  ErrorTypes,
-  type ErrorType,
-  type ClassifiedError,
-} from "./error-classification";
+} from "@/lib/errors/classification/payment-error-classification";
 
 interface IApiErrorOptions {
   tag: string; // e.g. "[ClassPlan.GET]"
