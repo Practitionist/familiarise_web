@@ -513,8 +513,7 @@ export async function GET(
                 ...appointment.class.classPlan,
                 consultantProfile:
                   appointment.class.classPlan.consultantProfile,
-                collaborators:
-                  appointment.class.classPlan.collaborators ?? [],
+                collaborators: appointment.class.classPlan.collaborators ?? [],
               },
               status: appointment.class.status,
             }

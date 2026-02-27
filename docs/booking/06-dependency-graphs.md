@@ -350,49 +350,52 @@ Quick reference: what imports what.
 
 ### Backend
 
-| File | Imports From |
-|------|-------------|
-| `types.ts` | _(leaf node - no local deps)_ |
-| `validationSchemas.ts` | _(leaf node - only zod)_ |
-| `SlotCalculationService.ts` | `types.ts` |
-| `SlotValidationService.ts` | `types.ts`, `SlotCalculationService`, `lib/prisma` |
-| `SlotAllocationService.ts` | `types.ts`, `SlotCalculationService`, `SlotValidationService`, `lib/prisma` |
-| `appointmentlock.ts` | `lib/redis`, `errors/SlotLockError` |
-| `*/allocate/route.ts` | `SlotAllocationService`, `types`, `validationSchemas` |
-| `*/validate/route.ts` | `SlotValidationService`, `types`, `validationSchemas`, `lib/prisma` |
-| `*/reschedule/route.ts` | `lib/prisma`, `lib/auth-server` |
+| File                        | Imports From                                                                |
+| --------------------------- | --------------------------------------------------------------------------- |
+| `types.ts`                  | _(leaf node - no local deps)_                                               |
+| `validationSchemas.ts`      | _(leaf node - only zod)_                                                    |
+| `SlotCalculationService.ts` | `types.ts`                                                                  |
+| `SlotValidationService.ts`  | `types.ts`, `SlotCalculationService`, `lib/prisma`                          |
+| `SlotAllocationService.ts`  | `types.ts`, `SlotCalculationService`, `SlotValidationService`, `lib/prisma` |
+| `appointmentlock.ts`        | `lib/redis`, `errors/SlotLockError`                                         |
+| `*/allocate/route.ts`       | `SlotAllocationService`, `types`, `validationSchemas`                       |
+| `*/validate/route.ts`       | `SlotValidationService`, `types`, `validationSchemas`, `lib/prisma`         |
+| `*/reschedule/route.ts`     | `lib/prisma`, `lib/auth-server`                                             |
 
 ### Frontend
 
-| File | Imports From |
-|------|-------------|
-| `calendarUtils.ts` | `@/types/slots` |
-| `allocationService.ts` | `calendarUtils`, `@/utils/slotAllocation/types` |
-| `allocationAlgorithms.ts` | `calendarUtils`, `allocationService` |
-| `useCalendarData.ts` | `allocationService` |
-| `useSlotAllocation.ts` | `calendarUtils`, `allocationAlgorithms` |
-| `useSubscriptionValidation.ts` | _(independent - no local deps)_ |
-| `UnifiedCalendar.tsx` | `calendarUtils`, `useCalendarData`, `useSlotAllocation` |
-| `EventPlannerFor*.tsx` | `types/event`, `services/planner`, form components |
-| `EventCard.tsx` (consultee) | `DocumentUpload`, `ReportIssueDialog`, `CancelConfirmationDialog`, `statusConfig` |
+| File                           | Imports From                                                                      |
+| ------------------------------ | --------------------------------------------------------------------------------- |
+| `calendarUtils.ts`             | `@/types/slots`                                                                   |
+| `allocationService.ts`         | `calendarUtils`, `@/utils/slotAllocation/types`                                   |
+| `allocationAlgorithms.ts`      | `calendarUtils`, `allocationService`                                              |
+| `useCalendarData.ts`           | `allocationService`                                                               |
+| `useSlotAllocation.ts`         | `calendarUtils`, `allocationAlgorithms`                                           |
+| `useSubscriptionValidation.ts` | _(independent - no local deps)_                                                   |
+| `UnifiedCalendar.tsx`          | `calendarUtils`, `useCalendarData`, `useSlotAllocation`                           |
+| `EventPlannerFor*.tsx`         | `types/event`, `services/planner`, form components                                |
+| `EventCard.tsx` (consultee)    | `DocumentUpload`, `ReportIssueDialog`, `CancelConfirmationDialog`, `statusConfig` |
 
 ---
 
 ## How to Read This
 
 **If you want to understand the backend algorithm:**
+
 ```
 types.ts -> SlotCalculationService -> SlotValidationService -> SlotAllocationService
    (4 files, read left to right, ~2500 LOC total)
 ```
 
 **If you want to understand the frontend:**
+
 ```
 calendarUtils -> allocationService -> allocationAlgorithms -> useCalendarData + useSlotAllocation -> UnifiedCalendar
    (6 files, read left to right, ~5400 LOC total)
 ```
 
 **If you want to trace a full request:**
+
 ```
 UnifiedCalendar -> useSlotAllocation -> allocationService -> API route -> SlotAllocationService -> SlotValidationService -> SlotCalculationService -> Prisma -> PostgreSQL
    (follow Diagram 5 above)

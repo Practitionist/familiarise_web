@@ -6,6 +6,7 @@ import { notifyAppointmentCancelled } from "@/lib/novu";
 import { CancelAppointmentSchema } from "@/schemas/appointments";
 
 import { getSession } from "@/lib/auth-server";
+import { isPrivileged } from "@/lib/auth-helpers";
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ appointmentId: string }> },
@@ -69,8 +70,16 @@ export async function POST(
             },
           },
         },
-        webinar: true,
-        class: true,
+        webinar: {
+          include: {
+            webinarPlan: true,
+          },
+        },
+        class: {
+          include: {
+            classPlan: true,
+          },
+        },
         slotsOfAppointment: { take: 1, select: { startsAt: true } },
       },
     });
@@ -79,6 +88,45 @@ export async function POST(
       return NextResponse.json(
         { error: "Appointment not found" },
         { status: 404 },
+      );
+    }
+
+    // Participant authorization check
+    const consultantProfileId = session.user.consultantProfileId;
+    const consulteeProfileId = session.user.consulteeProfileId;
+
+    let isParticipant = false;
+
+    if (appointment.consultation) {
+      const planConsultantProfileId =
+        appointment.consultation.consultationPlan?.consultantProfileId;
+      isParticipant =
+        consultantProfileId === planConsultantProfileId ||
+        consulteeProfileId === appointment.consultation.requestedById;
+    } else if (appointment.subscription) {
+      const planConsultantProfileId =
+        appointment.subscription.subscriptionPlan?.consultantProfileId;
+      isParticipant =
+        consultantProfileId === planConsultantProfileId ||
+        consulteeProfileId === appointment.subscription.requestedById;
+    } else if (appointment.webinar) {
+      // Only the consultant (organizer) can cancel a group event
+      const webinarConsultantId =
+        appointment.webinar.webinarPlan?.consultantProfileId;
+      isParticipant = consultantProfileId === webinarConsultantId;
+    } else if (appointment.class) {
+      // Only the consultant (organizer) can cancel a group event
+      const classConsultantId =
+        appointment.class.classPlan?.consultantProfileId;
+      isParticipant = consultantProfileId === classConsultantId;
+    }
+
+    const isPrivilegedUser = isPrivileged(session.user.role);
+
+    if (!isParticipant && !isPrivilegedUser) {
+      return NextResponse.json(
+        { error: "You are not authorized to cancel this appointment" },
+        { status: 403 },
       );
     }
 

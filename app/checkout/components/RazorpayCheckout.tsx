@@ -16,12 +16,14 @@ interface RazorpayCheckoutProps {
   checkoutData: CheckoutInput;
   onPaymentSuccess: (response: any) => void;
   onPaymentError: (error: any) => void;
+  disabled?: boolean;
 }
 
 export default function RazorpayCheckout({
   checkoutData,
   onPaymentSuccess,
   onPaymentError,
+  disabled,
 }: RazorpayCheckoutProps) {
   const { toast } = useToast();
   const [isProcessing, setIsProcessing] = useState(false);
@@ -105,7 +107,7 @@ export default function RazorpayCheckout({
   };
 
   return (
-    <Button onClick={handleCheckout} disabled={isProcessing}>
+    <Button onClick={handleCheckout} disabled={isProcessing || disabled}>
       {isProcessing ? "Processing..." : "Pay with Razorpay"}
     </Button>
   );

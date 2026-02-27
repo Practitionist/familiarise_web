@@ -188,7 +188,9 @@ export default function DisputeDetailsPage({ params }: PageProps) {
               <div>
                 <p className="font-semibold text-red-900">
                   Urgent: Response due by{" "}
-                  {dispute.dueBy ? new Date(dispute.dueBy).toLocaleDateString() : "N/A"}
+                  {dispute.dueBy
+                    ? new Date(dispute.dueBy).toLocaleDateString()
+                    : "N/A"}
                 </p>
                 <p className="text-sm text-red-700">
                   This dispute requires immediate attention. Submit evidence as

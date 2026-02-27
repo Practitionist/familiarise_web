@@ -14,6 +14,7 @@ import {
   type PaymentEarningSyncResult,
 } from "../../scripts/earnings/sync-payment-earnings";
 import fs from "fs";
+import { abortIfMaintenance } from "../../lib/maintenance-cron";
 
 /**
  * Output results to GitHub Actions
@@ -45,6 +46,7 @@ function outputToGitHubActions(result: PaymentEarningSyncResult): void {
  * Main entry point
  */
 async function main(): Promise<void> {
+  await abortIfMaintenance("sync-payment-earnings");
   console.log("🔄 Starting payment-earning sync job...");
   console.log(`Timestamp: ${new Date().toISOString()}`);
 

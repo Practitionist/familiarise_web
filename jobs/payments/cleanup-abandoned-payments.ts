@@ -15,6 +15,7 @@ import {
 } from "../../scripts/payments/cleanup-abandoned-payments";
 
 import fs from "fs";
+import { abortIfMaintenance } from "../../lib/maintenance-cron";
 
 /**
  * Output results to GitHub Actions using environment files
@@ -54,6 +55,7 @@ function outputToGitHubActions(
  * Entry point for GitHub Actions
  */
 async function main(): Promise<void> {
+  await abortIfMaintenance("cleanup-abandoned-payments");
   const startTime = Date.now();
   console.log(`🚀 Starting cleanup job at ${new Date().toISOString()}`);
 

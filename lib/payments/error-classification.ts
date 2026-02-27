@@ -105,8 +105,7 @@ export const INFRA_ERROR_PATTERNS: ReadonlyArray<{
   {
     patterns: ["Authentication failed", "Invalid API key"],
     errorType: ErrorTypes.PAYMENT_CONFIG,
-    userMessage:
-      "Payment gateway configuration error. Please contact support.",
+    userMessage: "Payment gateway configuration error. Please contact support.",
   },
   {
     patterns: ["Prisma", "database"],

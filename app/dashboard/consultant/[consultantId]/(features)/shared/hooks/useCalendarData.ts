@@ -211,20 +211,18 @@ export function useCalendarData(
     if (!consultantId) return;
 
     try {
-      // // Use subscription start date for allocation // Use UI date for viewing
+      // Always start from the view's natural start so pre-period weeks have
+      // availability data (allows "Outside Period" label on consultant's actual
+      // available slots rather than blank disabled cells — UX consistency fix).
       const startDate =
-        mode === "allocate" && allowedStart
-          ? allowedStart
-          : view === "week"
-            ? startOfWeek(currentDate)
-            : startOfMonth(currentDate);
-      // Use subscription end date for allocation // Use UI date for viewing
+        view === "week" ? startOfWeek(currentDate) : startOfMonth(currentDate);
+      // End at allowedEnd in allocate mode to avoid fetching past the period.
       const endDate =
         mode === "allocate" && allowedEnd
           ? allowedEnd
           : view === "week"
             ? endOfWeek(currentDate)
-            : endOfMonth(currentDate); // --- END OF FIX --- ```
+            : endOfMonth(currentDate);
 
       const data = await AllocationService.fetchAvailabilitySlots(
         consultantId,
@@ -286,20 +284,17 @@ export function useCalendarData(
     if (!consultantId) return;
 
     try {
-      // // Use subscription start date for allocation // Use UI date for viewing
+      // Always start from the view's natural start so pre-period weeks have
+      // appointment data for conflict detection (mirrors availability fix).
       const startDate =
-        mode === "allocate" && allowedStart
-          ? allowedStart
-          : view === "week"
-            ? startOfWeek(currentDate)
-            : startOfMonth(currentDate);
-      // Use subscription end date for allocation // Use UI date for viewing
+        view === "week" ? startOfWeek(currentDate) : startOfMonth(currentDate);
+      // End at allowedEnd in allocate mode.
       const endDate =
         mode === "allocate" && allowedEnd
           ? allowedEnd
           : view === "week"
             ? endOfWeek(currentDate)
-            : endOfMonth(currentDate); // --- END OF FIX --- ```
+            : endOfMonth(currentDate);
 
       const data = await AllocationService.fetchAppointments(
         consultantId,
@@ -357,9 +352,7 @@ export function useCalendarData(
         }
         // Check subscription status
         if (appt.subscription?.requestStatus) {
-          if (
-            inactiveRequestStatuses.includes(appt.subscription.requestStatus)
-          )
+          if (inactiveRequestStatuses.includes(appt.subscription.requestStatus))
             return false;
         }
         // Check webinar status
@@ -399,13 +392,6 @@ export function useCalendarData(
     try {
       const data = await AllocationService.fetchEventSlots(eventType, eventId);
 
-      console.log("[useCalendarData] fetchEventSlots response:", {
-        eventType,
-        eventId,
-        dataLength: data?.length,
-        firstAppointment: data?.[0],
-      });
-
       if (data && Array.isArray(data) && data.length > 0) {
         // Filter out cancelled/rejected appointments from event slots
         const activeData = data.filter((appt: any) => {
@@ -432,52 +418,41 @@ export function useCalendarData(
 
         // Process ALL appointments, not just the first one
         // This ensures all sessions of a subscription/class show as "This Event"
-        const slots: TimeSlot[] = activeData.flatMap(
-          (appointment: any) =>
-            (appointment.slotsOfAppointment || []).flatMap(
-              (slot: any): TimeSlot[] => {
-                // FIX: Use correct field names from API (startsAt/endsAt)
-                const start = new Date(
-                  slot.startsAt || slot.slotStartTimeInUTC,
-                );
-                const end = new Date(slot.endsAt || slot.slotEndTimeInUTC);
-                const durationMinutes =
-                  (end.getTime() - start.getTime()) / (1000 * 60);
-                const numIntervals = Math.round(durationMinutes / 30);
+        // FIX: Skip tentative slots — during rescheduling, tentative slots are the OLD
+        // slots being replaced. They should NOT show as "This Event" on the calendar
+        // because the auto-allocate will delete them. Showing them as "This Event"
+        // misleads the consultant into thinking they're confirmed bookings.
+        const slots: TimeSlot[] = activeData.flatMap((appointment: any) =>
+          (appointment.slotsOfAppointment || [])
+            .filter((slot: any) => !slot.isTentative)
+            .flatMap((slot: any): TimeSlot[] => {
+              // FIX: Use correct field names from API (startsAt/endsAt)
+              const start = new Date(slot.startsAt || slot.slotStartTimeInUTC);
+              const end = new Date(slot.endsAt || slot.slotEndTimeInUTC);
+              const durationMinutes =
+                (end.getTime() - start.getTime()) / (1000 * 60);
+              const numIntervals = Math.round(durationMinutes / 30);
 
-                const intervalSlots: TimeSlot[] = [];
-                for (let i = 0; i < numIntervals; i++) {
-                  const intervalStart = new Date(
-                    start.getTime() + i * 30 * 60 * 1000,
-                  );
-                  const intervalEnd = new Date(
-                    intervalStart.getTime() + 30 * 60 * 1000,
-                  );
-                  intervalSlots.push({
-                    startTime: intervalStart,
-                    endTime: intervalEnd,
-                    isAvailable: true,
-                    isBooked: true, // Event slots are considered booked/allocated
-                  });
-                }
-                return intervalSlots;
-              },
-            ),
-        );
-        console.log("[useCalendarData] Setting eventSlots:", {
-          slotsCount: slots.length,
-          firstSlot: slots[0]
-            ? {
-                startTime: slots[0].startTime.toISOString(),
-                endTime: slots[0].endTime.toISOString(),
+              const intervalSlots: TimeSlot[] = [];
+              for (let i = 0; i < numIntervals; i++) {
+                const intervalStart = new Date(
+                  start.getTime() + i * 30 * 60 * 1000,
+                );
+                const intervalEnd = new Date(
+                  intervalStart.getTime() + 30 * 60 * 1000,
+                );
+                intervalSlots.push({
+                  startTime: intervalStart,
+                  endTime: intervalEnd,
+                  isAvailable: true,
+                  isBooked: true, // Event slots are considered booked/allocated
+                });
               }
-            : null,
-        });
+              return intervalSlots;
+            }),
+        );
         setEventSlots(slots);
       } else {
-        console.log(
-          "[useCalendarData] No event slots found, setting empty array",
-        );
         setEventSlots([]);
       }
     } catch (error) {
@@ -593,24 +568,6 @@ export function useCalendarData(
               with: extractAppointmentParticipant(appointment),
             })) || [],
       );
-
-      // DEBUG: Log when booked slots have no overlapping appointments (tooltip won't show)
-      if (
-        overlappingSlots.length > 0 &&
-        overlappingSlots[0].bookingStatus === "fully-booked" &&
-        overlappingAppointments.length === 0
-      ) {
-        console.warn(
-          "[getSlotStatusForInterval] Booked slot with no overlapping appointments - tooltip won't show:",
-          {
-            interval: `${interval.hour}:${interval.minute}`,
-            date: date.toDateString(),
-            existingAppointmentsCount: existingAppointments.length,
-            firstAppointmentSlots:
-              existingAppointments[0]?.slotsOfAppointment?.length,
-          },
-        );
-      }
 
       // STEP 5: Determine booking status using SERVER-CALCULATED data
       // FIXED: Use server bookingStatus instead of manual calculation

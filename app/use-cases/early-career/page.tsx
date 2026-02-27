@@ -55,7 +55,10 @@ const data: UseCasePageData = {
     { label: "Technology", href: "/explore/experts?domain=Technology" },
     { label: "Business", href: "/explore/experts?domain=Business" },
     { label: "Creative Arts", href: "/explore/experts?domain=Creative Arts" },
-    { label: "Personal Development", href: "/explore/experts?domain=Personal Development" },
+    {
+      label: "Personal Development",
+      href: "/explore/experts?domain=Personal Development",
+    },
   ],
   bottomCtaTitle: "Don't Navigate Your Career Alone",
   bottomCtaDescription:

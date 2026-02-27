@@ -17,6 +17,23 @@ export {
   handlePaymentFailure,
 } from "@/lib/payments/webhooks/handlers";
 
+/**
+ * Lightweight DB health check for webhook handlers.
+ *
+ * Returns false when the DB is unreachable or mid-migration.
+ * Webhook handlers should return 503 when this is false — payment gateways
+ * (Stripe, Razorpay, etc.) will retry the webhook automatically after a
+ * delay, so no events are lost.
+ */
+export async function isDbHealthy(): Promise<boolean> {
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // Generic webhook verification
 export async function verifyWebhookSignature(
   req: Request,
@@ -150,7 +167,12 @@ export async function handleRefundCreated(
 
         // Run side effects when transitioning TO SUCCEEDED (but not if already SUCCEEDED)
         if (!wasSucceeded) {
-          await runRefundSideEffects(payment.id, status, amount, payment.amount);
+          await runRefundSideEffects(
+            payment.id,
+            status,
+            amount,
+            payment.amount,
+          );
         }
       }
       return;

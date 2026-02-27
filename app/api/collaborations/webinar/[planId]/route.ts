@@ -90,7 +90,10 @@ export async function POST(
     });
     if (existingCollab) {
       return NextResponse.json(
-        { error: "This consultant already has an active or pending collaboration on this plan" },
+        {
+          error:
+            "This consultant already has an active or pending collaboration on this plan",
+        },
         { status: 409 },
       );
     }
@@ -106,7 +109,10 @@ export async function POST(
 
     if (!collab) {
       return NextResponse.json(
-        { error: "Failed to invite. Revenue share may exceed limit (max 90% total for collaborators)." },
+        {
+          error:
+            "Failed to invite. Revenue share may exceed limit (max 90% total for collaborators).",
+        },
         { status: 400 },
       );
     }

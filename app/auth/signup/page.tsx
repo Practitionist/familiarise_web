@@ -225,7 +225,9 @@ function SignUpContent() {
             {referralCode && (
               <div className="mt-4 p-3 rounded-md bg-green-900/30 border border-green-700">
                 <p className="text-sm text-green-400">
-                  Referral code <span className="font-semibold">{referralCode}</span> applied! You&apos;ll receive a welcome bonus after signing up.
+                  Referral code{" "}
+                  <span className="font-semibold">{referralCode}</span> applied!
+                  You&apos;ll receive a welcome bonus after signing up.
                 </p>
               </div>
             )}

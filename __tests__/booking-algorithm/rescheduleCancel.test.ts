@@ -80,10 +80,7 @@ function makeRescheduleRequest(
 }
 
 /** Create a Request for the cancel endpoint */
-function makeCancelRequest(
-  appointmentId: string,
-  body?: Record<string, any>,
-) {
+function makeCancelRequest(appointmentId: string, body?: Record<string, any>) {
   const url = `http://localhost/api/appointments/${appointmentId}/cancel`;
   return new Request(url, {
     method: "POST",
@@ -265,9 +262,7 @@ describe("RescheduleErrors", () => {
 
     it("should show slot message for slot type", () => {
       const err = new AppointmentNotFoundError("slot", "slot-456");
-      expect(err.message).toBe(
-        "Specified slot not found in this appointment",
-      );
+      expect(err.message).toBe("Specified slot not found in this appointment");
     });
 
     it("should expose resourceType and resourceId", () => {
@@ -558,8 +553,11 @@ describe("Reschedule Route Handler - POST", () => {
       expect(body.rescheduleType).toBe("individual_session");
       expect(body.slotsAffected).toBe(1);
 
+      // The route marks ALL slots belonging to the affected appointment(s), not just the
+      // specified slot ID. This ensures multi-slot sessions (e.g. 1.5h = 3 × 30-min slots)
+      // are rescheduled atomically — a partial-tentative session would be inconsistent.
       expect(mockTx.slotOfAppointment.updateMany).toHaveBeenCalledWith({
-        where: { id: { in: ["slot-1"] } },
+        where: { appointmentId: { in: ["apt-1"] } },
         data: { isTentative: true },
       });
     });
@@ -956,10 +954,9 @@ describe("Cancel Route Handler - POST", () => {
       makeConsultationAppointment(),
     );
 
-    const req = new Request(
-      "http://localhost/api/appointments/apt-1/cancel",
-      { method: "POST" },
-    ) as any;
+    const req = new Request("http://localhost/api/appointments/apt-1/cancel", {
+      method: "POST",
+    }) as any;
     const res = await cancelHandler(req, makeParams("apt-1"));
 
     expect(res.status).toBe(200);
@@ -1238,8 +1235,6 @@ describe("cleanupTentativeSlots", () => {
 
     await cleanupTentativeSlots();
 
-    expect(
-      (prisma.slotOfAppointment as any).deleteMany,
-    ).not.toHaveBeenCalled();
+    expect((prisma.slotOfAppointment as any).deleteMany).not.toHaveBeenCalled();
   });
 });

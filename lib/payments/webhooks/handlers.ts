@@ -17,7 +17,6 @@ import { ZodError } from "zod";
 import { sendPaymentSuccessEmail, sendPaymentFailedEmail } from "@/lib/email";
 import {
   createEarningsFromPayment,
-  refundEarnings,
   createInvoiceFromPayment,
   type AppointmentType,
 } from "@/lib/payments/payouts";
@@ -54,6 +53,7 @@ interface ConsultationData {
   slotEndTimeInUTC: string;
   notes?: string;
   consulteeProfileId: string;
+  userId: string;
 }
 
 /**
@@ -67,6 +67,7 @@ interface SubscriptionData {
   schedulingPeriodEndsAt?: string;
   notes?: string;
   consulteeProfileId: string;
+  userId: string;
 }
 
 /**
@@ -269,7 +270,8 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
   // Failures here are logged but do NOT roll back the payment.
   // The `sync-payment-earnings` and related background jobs serve as safety nets.
 
-  const { paymentId, appointmentId, userId, userName, amount, currency } = txResult;
+  const { paymentId, appointmentId, userId, userName, amount, currency } =
+    txResult;
 
   // --- Earnings creation ---
   try {
@@ -323,8 +325,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
           ?.consultantProfile ||
         paymentWithAppointment.appointment.webinar?.webinarPlan
           ?.consultantProfile ||
-        paymentWithAppointment.appointment.class?.classPlan
-          ?.consultantProfile;
+        paymentWithAppointment.appointment.class?.classPlan?.consultantProfile;
 
       if (consultantProfile) {
         const appointmentTypeMap: Record<string, AppointmentType> = {
@@ -343,10 +344,16 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
             ...paymentWithAppointment.appointment,
             consultantProfile: { id: consultantProfile.id },
             webinar: paymentWithAppointment.appointment.webinar
-              ? { webinarPlanId: paymentWithAppointment.appointment.webinar.webinarPlanId }
+              ? {
+                  webinarPlanId:
+                    paymentWithAppointment.appointment.webinar.webinarPlanId,
+                }
               : null,
             class: paymentWithAppointment.appointment.class
-              ? { classPlanId: paymentWithAppointment.appointment.class.classPlanId }
+              ? {
+                  classPlanId:
+                    paymentWithAppointment.appointment.class.classPlanId,
+                }
               : null,
           },
         };
@@ -451,10 +458,8 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
     });
 
     const consultantProfileData =
-      appointmentForNotif?.consultation?.consultationPlan
-        ?.consultantProfile ||
-      appointmentForNotif?.subscription?.subscriptionPlan
-        ?.consultantProfile ||
+      appointmentForNotif?.consultation?.consultationPlan?.consultantProfile ||
+      appointmentForNotif?.subscription?.subscriptionPlan?.consultantProfile ||
       appointmentForNotif?.webinar?.webinarPlan?.consultantProfile ||
       appointmentForNotif?.class?.classPlan?.consultantProfile;
 
@@ -652,6 +657,7 @@ async function createAppointmentFromWebhook(
         slotEndTimeInUTC,
         notes,
         consulteeProfileId,
+        userId,
       });
       break;
     case AppointmentsType.SUBSCRIPTION:
@@ -675,6 +681,7 @@ async function createAppointmentFromWebhook(
         schedulingPeriodEndsAt,
         notes,
         consulteeProfileId,
+        userId,
       });
       break;
     case AppointmentsType.WEBINAR:
@@ -722,6 +729,7 @@ async function createConsultation(
           startsAt: new Date(data.slotStartTimeInUTC),
           endsAt: new Date(data.slotEndTimeInUTC),
           isTentative: false,
+          user: { connect: { id: data.userId } },
         },
       },
     },
@@ -786,6 +794,7 @@ async function createSubscription(
         startsAt: new Date(data.slotStartTimeInUTC),
         endsAt: new Date(data.slotEndTimeInUTC),
         isTentative: false,
+        user: { connect: { id: data.userId } },
       },
     };
   }
@@ -1077,17 +1086,20 @@ async function cleanupFailedPaymentAppointment(
         where: { appointmentId },
       });
       if (remainingSlots === 0) {
+        // Soft-delete: transition to EXPIRED status instead of hard-deleting
+        // to preserve audit trails for support/disputes/refunds
         if (appointment.consultation) {
-          await tx.consultation.delete({
+          await tx.consultation.update({
             where: { id: appointment.consultation.id },
+            data: { requestStatus: RequestStatus.EXPIRED },
           });
         }
         if (appointment.subscription) {
-          await tx.subscription.delete({
+          await tx.subscription.update({
             where: { id: appointment.subscription.id },
+            data: { requestStatus: RequestStatus.EXPIRED },
           });
         }
-        await tx.appointment.delete({ where: { id: appointmentId } });
       }
     }
   }

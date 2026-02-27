@@ -13,6 +13,7 @@ import {
 } from "../../scripts/appointments/cleanup-invalid-appointments";
 
 import fs from "fs";
+import { abortIfMaintenance } from "../../lib/maintenance-cron";
 
 /**
  * Output results to GitHub Actions using environment files
@@ -46,6 +47,7 @@ function outputToGitHubActions(result: CleanupResult): void {
  * Entry point for GitHub Actions
  */
 async function main(): Promise<void> {
+  await abortIfMaintenance("cleanup-invalid-appointments");
   const startTime = Date.now();
   console.log(
     `🚀 Starting invalid appointments cleanup job at ${new Date().toISOString()}`,

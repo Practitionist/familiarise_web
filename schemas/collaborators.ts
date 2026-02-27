@@ -1,10 +1,9 @@
 import { z } from "zod";
-import {
-  WebinarCollaboratorRole,
-  ClassCollaboratorRole,
-} from "@prisma/client";
+import { WebinarCollaboratorRole, ClassCollaboratorRole } from "@prisma/client";
 
-export const WebinarCollaboratorRoleEnum = z.nativeEnum(WebinarCollaboratorRole);
+export const WebinarCollaboratorRoleEnum = z.nativeEnum(
+  WebinarCollaboratorRole,
+);
 export const ClassCollaboratorRoleEnum = z.nativeEnum(ClassCollaboratorRole);
 
 export const inviteCollaboratorSchema = z.object({
@@ -24,5 +23,9 @@ export const inviteClassCollaboratorSchema = inviteCollaboratorSchema.extend({
 });
 
 export type InviteCollaboratorInput = z.infer<typeof inviteCollaboratorSchema>;
-export type InviteWebinarCollaboratorInput = z.infer<typeof inviteWebinarCollaboratorSchema>;
-export type InviteClassCollaboratorInput = z.infer<typeof inviteClassCollaboratorSchema>;
+export type InviteWebinarCollaboratorInput = z.infer<
+  typeof inviteWebinarCollaboratorSchema
+>;
+export type InviteClassCollaboratorInput = z.infer<
+  typeof inviteClassCollaboratorSchema
+>;

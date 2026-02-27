@@ -78,7 +78,10 @@ function extractCollaborators(
   const collaborators = plan?.collaborators;
   if (!Array.isArray(collaborators)) return [];
   return collaborators.map(
-    (c: { consultantProfile?: { user?: { name?: string; image?: string | null } }; role: string }) => ({
+    (c: {
+      consultantProfile?: { user?: { name?: string; image?: string | null } };
+      role: string;
+    }) => ({
       name: c.consultantProfile?.user?.name ?? "Collaborator",
       image: c.consultantProfile?.user?.image ?? null,
       role: c.role ?? "",

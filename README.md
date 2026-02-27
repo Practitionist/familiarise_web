@@ -40,8 +40,8 @@ Think of it as the "Airbnb for expertise": a platform where professionals can mo
 | **Smart Scheduling**     | Timezone-aware booking with weekly and custom availability                        |
 | **Secure Payments**      | Stripe (global) and Razorpay (India) with escrow protection                       |
 | **Earnings Dashboard**   | 80/20 revenue split with transparent payout tracking                              |
-| **Referral System**      | Viral growth via referral links, credit rewards for referrer and referee           |
-| **Collaborators**        | Multi-creator webinars and classes with role-based revenue sharing                 |
+| **Referral System**      | Viral growth via referral links, credit rewards for referrer and referee          |
+| **Collaborators**        | Multi-creator webinars and classes with role-based revenue sharing                |
 
 ### Platform Stats
 

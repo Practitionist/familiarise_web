@@ -18,17 +18,17 @@ The collaborator system enables multi-creator content on the Familiarise platfor
 
 ### Key Design Decisions
 
-| Decision | Choice | Rationale |
-|----------|--------|-----------|
-| Scope | Webinars + Classes only | Podcasts model doesn't exist yet |
-| Scheduling | Host-only | Simplicity — only the owner creates events and sets timings |
-| Revenue split | Host sets it, collaborator accepts/declines | Owner controls the deal |
-| Minimum host share | 10% | Prevents giving away entire revenue |
-| Max collaborator total | 90% | Enforced at invite time |
-| Platform fee | Applied per share independently | Each collaborator's share is subject to 20% platform fee |
-| Permissions | Role-based with optional JSON override | Flexible without complexity |
-| Chat channels | Auto-created on acceptance | Collaborators need a place to coordinate |
-| Video roles | Deferred | Calls are created client-side; needs deeper changes |
+| Decision               | Choice                                      | Rationale                                                   |
+| ---------------------- | ------------------------------------------- | ----------------------------------------------------------- |
+| Scope                  | Webinars + Classes only                     | Podcasts model doesn't exist yet                            |
+| Scheduling             | Host-only                                   | Simplicity — only the owner creates events and sets timings |
+| Revenue split          | Host sets it, collaborator accepts/declines | Owner controls the deal                                     |
+| Minimum host share     | 10%                                         | Prevents giving away entire revenue                         |
+| Max collaborator total | 90%                                         | Enforced at invite time                                     |
+| Platform fee           | Applied per share independently             | Each collaborator's share is subject to 20% platform fee    |
+| Permissions            | Role-based with optional JSON override      | Flexible without complexity                                 |
+| Chat channels          | Auto-created on acceptance                  | Collaborators need a place to coordinate                    |
+| Video roles            | Deferred                                    | Calls are created client-side; needs deeper changes         |
 
 ---
 
@@ -103,17 +103,17 @@ ConsultantProfile ────────────────────�
 
 **WebinarCollaborator**
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | String | Primary key (cuid) |
-| `consultantProfileId` | String | The collaborator's profile |
-| `webinarPlanId` | String | The webinar plan |
-| `role` | WebinarCollaboratorRole | CO_HOST, MODERATOR, GUEST_SPEAKER, TECHNICAL_SUPPORT |
-| `permissions` | Json? | Optional permission overrides |
-| `revenueSharePercentage` | Float | Collaborator's share (e.g. 25.0) |
-| `status` | CollaboratorStatus | PENDING, ACCEPTED, DECLINED, REMOVED |
-| `invitedById` | String | The host who sent the invitation |
-| `respondedAt` | DateTime? | When the collaborator responded |
+| Field                    | Type                    | Description                                          |
+| ------------------------ | ----------------------- | ---------------------------------------------------- |
+| `id`                     | String                  | Primary key (cuid)                                   |
+| `consultantProfileId`    | String                  | The collaborator's profile                           |
+| `webinarPlanId`          | String                  | The webinar plan                                     |
+| `role`                   | WebinarCollaboratorRole | CO_HOST, MODERATOR, GUEST_SPEAKER, TECHNICAL_SUPPORT |
+| `permissions`            | Json?                   | Optional permission overrides                        |
+| `revenueSharePercentage` | Float                   | Collaborator's share (e.g. 25.0)                     |
+| `status`                 | CollaboratorStatus      | PENDING, ACCEPTED, DECLINED, REMOVED                 |
+| `invitedById`            | String                  | The host who sent the invitation                     |
+| `respondedAt`            | DateTime?               | When the collaborator responded                      |
 
 Unique constraint: `@@unique([consultantProfileId, webinarPlanId])` — a consultant can only be invited once per plan.
 
@@ -121,11 +121,11 @@ Unique constraint: `@@unique([consultantProfileId, webinarPlanId])` — a consul
 
 **ConsultantEarnings** (modified)
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `role` | EarningRole | `OWNER` or `COLLABORATOR` |
-| `sharePercentage` | Float | The share this earning represents (e.g. 60.0) |
-| `paymentId` | String | No longer unique — multiple earnings per payment |
+| Field             | Type        | Description                                      |
+| ----------------- | ----------- | ------------------------------------------------ |
+| `role`            | EarningRole | `OWNER` or `COLLABORATOR`                        |
+| `sharePercentage` | Float       | The share this earning represents (e.g. 60.0)    |
+| `paymentId`       | String      | No longer unique — multiple earnings per payment |
 
 ### Enums
 
@@ -157,25 +157,25 @@ EarningRole:
 
 ## File Map
 
-| File | Purpose |
-|------|---------|
-| `lib/collaborators/service.ts` | Core business logic (invite, respond, remove, revenue split) |
-| `lib/collaborators/permissions.ts` | Role-based permission checking |
-| `lib/payments/payouts/earnings-service.ts` | `createCollaboratorEarnings()` function |
-| `app/api/collaborations/webinar/[planId]/route.ts` | GET/POST webinar collaborators |
-| `app/api/collaborations/webinar/[planId]/[id]/route.ts` | PATCH/DELETE specific webinar collaborator |
-| `app/api/collaborations/class/[planId]/route.ts` | GET/POST class collaborators |
-| `app/api/collaborations/class/[planId]/[id]/route.ts` | PATCH/DELETE specific class collaborator |
-| `app/api/collaborations/[id]/respond/route.ts` | PATCH accept/decline invitation |
-| `app/api/collaborations/route.ts` | GET all my collaborations |
-| `app/api/collaborations/webinar/[planId]/revenue-split/route.ts` | GET webinar revenue split preview |
-| `app/api/collaborations/class/[planId]/revenue-split/route.ts` | GET class revenue split preview |
-| `app/api/collaborators/[consultantProfileId]/availability/route.ts` | GET co-host availability |
-| `components/collaborators/CollaboratorsTab.tsx` | Reusable UI for managing collaborators |
-| `components/collaborators/InvitationsPanel.tsx` | Invitation management UI |
-| `app/dashboard/consultant/.../collaborations/page.tsx` | Dashboard page |
-| `actions/stream/chat/channel.action.ts` | `createCollaboratorChannel()` |
-| `prisma/seedFiles/14b-create-collaborators.ts` | Seed data |
+| File                                                                | Purpose                                                      |
+| ------------------------------------------------------------------- | ------------------------------------------------------------ |
+| `lib/collaborators/service.ts`                                      | Core business logic (invite, respond, remove, revenue split) |
+| `lib/collaborators/permissions.ts`                                  | Role-based permission checking                               |
+| `lib/payments/payouts/earnings-service.ts`                          | `createCollaboratorEarnings()` function                      |
+| `app/api/collaborations/webinar/[planId]/route.ts`                  | GET/POST webinar collaborators                               |
+| `app/api/collaborations/webinar/[planId]/[id]/route.ts`             | PATCH/DELETE specific webinar collaborator                   |
+| `app/api/collaborations/class/[planId]/route.ts`                    | GET/POST class collaborators                                 |
+| `app/api/collaborations/class/[planId]/[id]/route.ts`               | PATCH/DELETE specific class collaborator                     |
+| `app/api/collaborations/[id]/respond/route.ts`                      | PATCH accept/decline invitation                              |
+| `app/api/collaborations/route.ts`                                   | GET all my collaborations                                    |
+| `app/api/collaborations/webinar/[planId]/revenue-split/route.ts`    | GET webinar revenue split preview                            |
+| `app/api/collaborations/class/[planId]/revenue-split/route.ts`      | GET class revenue split preview                              |
+| `app/api/collaborators/[consultantProfileId]/availability/route.ts` | GET co-host availability                                     |
+| `components/collaborators/CollaboratorsTab.tsx`                     | Reusable UI for managing collaborators                       |
+| `components/collaborators/InvitationsPanel.tsx`                     | Invitation management UI                                     |
+| `app/dashboard/consultant/.../collaborations/page.tsx`              | Dashboard page                                               |
+| `actions/stream/chat/channel.action.ts`                             | `createCollaboratorChannel()`                                |
+| `prisma/seedFiles/14b-create-collaborators.ts`                      | Seed data                                                    |
 
 ---
 

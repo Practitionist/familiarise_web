@@ -49,7 +49,8 @@ const BLOG_SECTIONS: { category: string; posts: BlogPost[] }[] = [
         readTime: "12 min read",
       },
       {
-        title: "Behavioral Interviews: Stop Memorizing STAR, Start Telling Stories",
+        title:
+          "Behavioral Interviews: Stop Memorizing STAR, Start Telling Stories",
         teaser:
           "The difference between a rehearsed answer and a compelling one — with real examples.",
         readTime: "6 min read",

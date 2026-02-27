@@ -140,6 +140,7 @@ When Consultant B logs into their dashboard, they see the invitation on the "Col
 ### The invitation card
 
 Each pending invitation shows:
+
 - Plan title and type (Webinar/Class)
 - Who invited them
 - The proposed role (e.g., "CO HOST")

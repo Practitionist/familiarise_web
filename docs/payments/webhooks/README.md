@@ -6,10 +6,10 @@ Payment webhook handling for Stripe and Razorpay events.
 
 ## Documents
 
-| # | Document | Description |
-|---|----------|-------------|
-| 01 | [Monitoring](./01-monitoring.md) | Webhook activity monitoring, success notifications |
-| 02 | [Razorpay Webhook Schema](./02-razorpay-webhook-schema.md) | Razorpay webhook event schemas and validation |
+| #   | Document                                                   | Description                                        |
+| --- | ---------------------------------------------------------- | -------------------------------------------------- |
+| 01  | [Monitoring](./01-monitoring.md)                           | Webhook activity monitoring, success notifications |
+| 02  | [Razorpay Webhook Schema](./02-razorpay-webhook-schema.md) | Razorpay webhook event schemas and validation      |
 
 ## Related
 

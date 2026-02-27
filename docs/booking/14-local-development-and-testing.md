@@ -4,28 +4,28 @@
 
 ### Required Software
 
-| Tool | Purpose | Install |
-|------|---------|---------|
-| Node.js (v18+) | Runtime | `nvm install 18` |
-| PostgreSQL | Database (via Prisma) | Local install or Docker |
-| Redis | Distributed locking, rate limiting | Upstash (cloud) or local `redis-server` |
+| Tool           | Purpose                            | Install                                 |
+| -------------- | ---------------------------------- | --------------------------------------- |
+| Node.js (v18+) | Runtime                            | `nvm install 18`                        |
+| PostgreSQL     | Database (via Prisma)              | Local install or Docker                 |
+| Redis          | Distributed locking, rate limiting | Upstash (cloud) or local `redis-server` |
 
 ### Environment Variables
 
 The following variables are required for booking flows. Add them to your `.env` or `.env.local` file:
 
-| Variable | Purpose | Example |
-|----------|---------|---------|
-| `DATABASE_URL` | PostgreSQL connection string | `postgresql://user:pass@localhost:5432/familiarise` |
-| `UPSTASH_REDIS_REST_URL` | Redis for distributed locks | `https://xxx.upstash.io` |
-| `UPSTASH_REDIS_REST_TOKEN` | Redis auth token | `AXxx...` |
-| `RAZORPAY_KEY_ID` | Razorpay test key (Indian payments) | `rzp_test_xxx` |
-| `RAZORPAY_KEY_SECRET` | Razorpay test secret | `xxx` |
-| `STRIPE_SECRET_KEY` | Stripe test key (international payments) | `sk_test_xxx` |
-| `STRIPE_PUBLISHABLE_KEY` | Stripe publishable key | `pk_test_xxx` |
-| `CRON_SECRET` | Auth token for cron job endpoints | Any strong random string |
-| `NEXTAUTH_SECRET` | NextAuth session encryption | Any strong random string |
-| `NEXTAUTH_URL` | Base URL for auth callbacks | `http://localhost:3000` |
+| Variable                   | Purpose                                  | Example                                             |
+| -------------------------- | ---------------------------------------- | --------------------------------------------------- |
+| `DATABASE_URL`             | PostgreSQL connection string             | `postgresql://user:pass@localhost:5432/familiarise` |
+| `UPSTASH_REDIS_REST_URL`   | Redis for distributed locks              | `https://xxx.upstash.io`                            |
+| `UPSTASH_REDIS_REST_TOKEN` | Redis auth token                         | `AXxx...`                                           |
+| `RAZORPAY_KEY_ID`          | Razorpay test key (Indian payments)      | `rzp_test_xxx`                                      |
+| `RAZORPAY_KEY_SECRET`      | Razorpay test secret                     | `xxx`                                               |
+| `STRIPE_SECRET_KEY`        | Stripe test key (international payments) | `sk_test_xxx`                                       |
+| `STRIPE_PUBLISHABLE_KEY`   | Stripe publishable key                   | `pk_test_xxx`                                       |
+| `CRON_SECRET`              | Auth token for cron job endpoints        | Any strong random string                            |
+| `NEXTAUTH_SECRET`          | NextAuth session encryption              | Any strong random string                            |
+| `NEXTAUTH_URL`             | Base URL for auth callbacks              | `http://localhost:3000`                             |
 
 ### Database Setup
 
@@ -54,18 +54,18 @@ The `checkoutAction` server action accepts an optional `isMockPayment` parameter
 export async function checkoutAction(
   data: CheckoutInput,
   isMockPayment: boolean = false,
-)
+);
 ```
 
 ### How Mock Payment Flow Differs
 
-| Step | Real Payment | Mock Payment |
-|------|-------------|--------------|
-| Payment intent creation | Calls Razorpay/Stripe API | Calls gateway API but with test keys |
-| Payment status | Stays `PENDING` until webhook confirms | Set to `SUCCEEDED` immediately in the same transaction |
-| Appointment creation | Created with `isTentative = true`, confirmed by webhook | Created with `isTentative = true`, payment marked `SUCCEEDED` inline |
-| Webhook dependency | Required -- appointment not confirmed without it | Not required -- status updated directly in `handleCheckout` |
-| Waitlist update | Handled by webhook | Handled inline when `fromWaitlist` is set |
+| Step                    | Real Payment                                            | Mock Payment                                                         |
+| ----------------------- | ------------------------------------------------------- | -------------------------------------------------------------------- |
+| Payment intent creation | Calls Razorpay/Stripe API                               | Calls gateway API but with test keys                                 |
+| Payment status          | Stays `PENDING` until webhook confirms                  | Set to `SUCCEEDED` immediately in the same transaction               |
+| Appointment creation    | Created with `isTentative = true`, confirmed by webhook | Created with `isTentative = true`, payment marked `SUCCEEDED` inline |
+| Webhook dependency      | Required -- appointment not confirmed without it        | Not required -- status updated directly in `handleCheckout`          |
+| Waitlist update         | Handled by webhook                                      | Handled inline when `fromWaitlist` is set                            |
 
 **File**: `lib/payments/operations/checkout.ts` (lines ~1527-1533)
 
@@ -96,17 +96,17 @@ if (isMockPayment) {
 
 The seeder runs in numbered phases. Booking-relevant phases:
 
-| Phase | Script | What It Creates |
-|-------|--------|-----------------|
-| 1 | `1a-create-users` | Consultant and consultee user accounts with profiles |
-| 4a | `4a-create-consultation-plans` | Consultation plans with duration and pricing |
-| 4b | `4b-create-subscription-plans` | Subscription plans with `callsPerWeek`, `sessionDurationInHours`, `durationInMonths` |
-| 4c | `4c-create-webinar-plans` | Webinar plans with duration |
-| 4d | `4d-create-class-plans` | Class plans with `meetingsPerWeek` and class contents |
-| 5a | `5a-create-slots-of-availability` | Weekly and custom availability slots for consultants |
-| 6a | `6a-create-appointments` | Appointments with slot records across all event types |
-| 8b | `8b-create-payments` | Payment records linked to appointments |
-| 10a | `10a-create-waitlists` | Waitlist entries for webinars and classes |
+| Phase | Script                            | What It Creates                                                                      |
+| ----- | --------------------------------- | ------------------------------------------------------------------------------------ |
+| 1     | `1a-create-users`                 | Consultant and consultee user accounts with profiles                                 |
+| 4a    | `4a-create-consultation-plans`    | Consultation plans with duration and pricing                                         |
+| 4b    | `4b-create-subscription-plans`    | Subscription plans with `callsPerWeek`, `sessionDurationInHours`, `durationInMonths` |
+| 4c    | `4c-create-webinar-plans`         | Webinar plans with duration                                                          |
+| 4d    | `4d-create-class-plans`           | Class plans with `meetingsPerWeek` and class contents                                |
+| 5a    | `5a-create-slots-of-availability` | Weekly and custom availability slots for consultants                                 |
+| 6a    | `6a-create-appointments`          | Appointments with slot records across all event types                                |
+| 8b    | `8b-create-payments`              | Payment records linked to appointments                                               |
+| 10a   | `10a-create-waitlists`            | Waitlist entries for webinars and classes                                            |
 
 ### Running the Seeder
 
@@ -179,13 +179,13 @@ Prisma Studio lets you browse all tables, filter by fields like `isTentative`, `
 
 ### f. Test Auto-Allocation vs Manual Allocation
 
-| Aspect | Auto (`mode: "auto"`) | Manual (`mode: "manual"`) |
-|--------|----------------------|--------------------------|
-| Input | No slots needed | Explicit ISO string array |
-| Strategy | Finds earliest available consecutive slots | Validates provided slots against rules |
-| Subscription | Distributes across weeks optimally | Validates slot count and weekly limits |
-| Reschedule detection | Checks for existing tentative slots | Replaces all existing appointments |
-| Validation | Runs `SlotValidationService.validate` on found slots | Runs validation on provided slots |
+| Aspect               | Auto (`mode: "auto"`)                                | Manual (`mode: "manual"`)              |
+| -------------------- | ---------------------------------------------------- | -------------------------------------- |
+| Input                | No slots needed                                      | Explicit ISO string array              |
+| Strategy             | Finds earliest available consecutive slots           | Validates provided slots against rules |
+| Subscription         | Distributes across weeks optimally                   | Validates slot count and weekly limits |
+| Reschedule detection | Checks for existing tentative slots                  | Replaces all existing appointments     |
+| Validation           | Runs `SlotValidationService.validate` on found slots | Runs validation on provided slots      |
 
 Both paths run inside a 60-second Prisma transaction and call `SlotValidationService.validate` before creating appointments.
 
@@ -225,16 +225,16 @@ npx jest --coverage
 
 ### Test File Reference
 
-| File | What It Tests |
-|------|---------------|
-| `slotAllocationService.test.ts` | `SlotAllocationService.allocate` -- mode routing (auto/manual/requested), duplicate detection, slot count validation, appointment creation, event data extraction, status updates, existing appointment deletion |
-| `slotCalculationService.test.ts` | `SlotCalculationService` -- week counting (`countWeeks`), `startOfWeekSunday`, duration validation, `calculateRequiredSlots` for all event types, `getSlotsPerCall`, `groupSlotsByDay`/`groupSlotsByWeek`, progress calculation |
-| `slotValidationService.test.ts` | `SlotValidationService.validate` -- future slot checks (5-second buffer), weekly/custom schedule matching, scheduling period boundaries, conflict detection, event-specific rules (consultation: same-day + consecutive, webinar: consecutive, class: weekly limits + session grouping), 30-minute fixed slot duration |
-| `allocationAlgorithms.test.ts` | `AllocationAlgorithms` -- `manualAllocate` (validation, business rules), `autoAllocate` (consultation/webinar/subscription strategies, preference filtering: morning/afternoon/evening/weekends), `preAllocate` (requested slot validation and delegation) |
-| `rescheduleCancel.test.ts` | Reschedule and cancel API routes -- authentication (401), 404 handling, 24-hour policy enforcement, per-type slot marking (CONSULTATION/SUBSCRIPTION/WEBINAR/CLASS), partial vs entire reschedule, `CancelAppointmentSchema` validation, cancellation data recording, waitlist notifications, `cleanupTentativeSlots` script |
-| `subscriptionValidation.test.ts` | `SubscriptionValidationService` -- week key format consistency (Bug A fix), appointment-per-call counting (Bug B fix), weekly limit enforcement (Bug C fix), scheduling period validation, weekly info generation, `getAvailableWeeksForSubscription`, `canScheduleInWeek`, incomplete proposed call detection, `excludeAppointmentIds` |
-| `calendarUtils.test.ts` | Calendar utilities -- `mapWeeklySlots`/`mapCustomSlots` (interval generation, UTC consistency), `slotsOverlap`, `getSlotStatus` (booking detection, partial booking, conflicts), `formatSlotsForAPI`, `validateSelectedSlots` (all event types), `groupSlotsByWeek`, `validateSlotDistribution`, `validateDayBasedConsecutiveSlots`, `calculateCallProgress`, `getAppointmentTitle`/`getAppointmentUser` |
-| `booking.mockData.ts` | Shared mock data factories -- `makeTimeSlot`, `makeConsecutiveTimeSlots`, `makeWeekOfAvailability`, `makeSubscriptionPlan`/`makeSubscription`, `makeAppointmentWithSlots`, `makeMockPrisma`, `makeConsultantData`, `makeWeeklyAvailabilitySlot`/`makeCustomAvailabilitySlot` |
+| File                             | What It Tests                                                                                                                                                                                                                                                                                                                                                                                            |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `slotAllocationService.test.ts`  | `SlotAllocationService.allocate` -- mode routing (auto/manual/requested), duplicate detection, slot count validation, appointment creation, event data extraction, status updates, existing appointment deletion                                                                                                                                                                                         |
+| `slotCalculationService.test.ts` | `SlotCalculationService` -- week counting (`countWeeks`), `startOfWeekSunday`, duration validation, `calculateRequiredSlots` for all event types, `getSlotsPerCall`, `groupSlotsByDay`/`groupSlotsByWeek`, progress calculation                                                                                                                                                                          |
+| `slotValidationService.test.ts`  | `SlotValidationService.validate` -- future slot checks (5-second buffer), weekly/custom schedule matching, scheduling period boundaries, conflict detection, event-specific rules (consultation: same-day + consecutive, webinar: consecutive, class: weekly limits + session grouping), 30-minute fixed slot duration                                                                                   |
+| `allocationAlgorithms.test.ts`   | `AllocationAlgorithms` -- `manualAllocate` (validation, business rules), `autoAllocate` (consultation/webinar/subscription strategies, preference filtering: morning/afternoon/evening/weekends), `preAllocate` (requested slot validation and delegation)                                                                                                                                               |
+| `rescheduleCancel.test.ts`       | Reschedule and cancel API routes -- authentication (401), 404 handling, 24-hour policy enforcement, per-type slot marking (CONSULTATION/SUBSCRIPTION/WEBINAR/CLASS), partial vs entire reschedule, `CancelAppointmentSchema` validation, cancellation data recording, waitlist notifications, `cleanupTentativeSlots` script                                                                             |
+| `subscriptionValidation.test.ts` | `SubscriptionValidationService` -- week key format consistency (Bug A fix), appointment-per-call counting (Bug B fix), weekly limit enforcement (Bug C fix), scheduling period validation, weekly info generation, `getAvailableWeeksForSubscription`, `canScheduleInWeek`, incomplete proposed call detection, `excludeAppointmentIds`                                                                  |
+| `calendarUtils.test.ts`          | Calendar utilities -- `mapWeeklySlots`/`mapCustomSlots` (interval generation, UTC consistency), `slotsOverlap`, `getSlotStatus` (booking detection, partial booking, conflicts), `formatSlotsForAPI`, `validateSelectedSlots` (all event types), `groupSlotsByWeek`, `validateSlotDistribution`, `validateDayBasedConsecutiveSlots`, `calculateCallProgress`, `getAppointmentTitle`/`getAppointmentUser` |
+| `booking.mockData.ts`            | Shared mock data factories -- `makeTimeSlot`, `makeConsecutiveTimeSlots`, `makeWeekOfAvailability`, `makeSubscriptionPlan`/`makeSubscription`, `makeAppointmentWithSlots`, `makeMockPrisma`, `makeConsultantData`, `makeWeeklyAvailabilitySlot`/`makeCustomAvailabilitySlot`                                                                                                                             |
 
 ### Test Count
 
@@ -256,16 +256,16 @@ curl -X GET http://localhost:3000/api/cleanup/{job-name} \
 
 ### Booking-Related Cron Endpoints
 
-| Endpoint | Schedule | Purpose |
-|----------|----------|---------|
-| `/api/cleanup/auto-complete-appointments` | `0 * * * *` (hourly) | Transitions appointments to `COMPLETED` after session ends (1-hour buffer) |
-| `/api/cleanup/tentative-slots` | `0 */2 * * *` (every 2h) | Deletes tentative slots older than 7 days with no successful payment |
-| `/api/cleanup/stale-pending-consultations` | `30 * * * *` (hourly at :30) | Cleans up consultations stuck in `PENDING` state |
-| `/api/cleanup/invalid-appointments` | `0 * * * *` (hourly) | Detects and removes duplicate or invalid appointment records |
-| `/api/cleanup/expire-stale-requests` | `0 1 * * *` (daily at 01:00 UTC) | Expires unanswered consultation/subscription requests |
-| `/api/cleanup/reconcile-slot-availability` | `15 * * * *` (hourly at :15) | Reconciles slot availability after payment state changes |
-| `/api/cleanup/approval-payments` | See cron config | Processes approval-based (pay-later) payment flows |
-| `/api/cleanup/abandoned-payments` | See cron config | Cleans up abandoned payment intents |
+| Endpoint                                   | Schedule                         | Purpose                                                                    |
+| ------------------------------------------ | -------------------------------- | -------------------------------------------------------------------------- |
+| `/api/cleanup/auto-complete-appointments`  | `0 * * * *` (hourly)             | Transitions appointments to `COMPLETED` after session ends (1-hour buffer) |
+| `/api/cleanup/tentative-slots`             | `0 */2 * * *` (every 2h)         | Deletes tentative slots older than 7 days with no successful payment       |
+| `/api/cleanup/stale-pending-consultations` | `30 * * * *` (hourly at :30)     | Cleans up consultations stuck in `PENDING` state                           |
+| `/api/cleanup/invalid-appointments`        | `0 * * * *` (hourly)             | Detects and removes duplicate or invalid appointment records               |
+| `/api/cleanup/expire-stale-requests`       | `0 1 * * *` (daily at 01:00 UTC) | Expires unanswered consultation/subscription requests                      |
+| `/api/cleanup/reconcile-slot-availability` | `15 * * * *` (hourly at :15)     | Reconciles slot availability after payment state changes                   |
+| `/api/cleanup/approval-payments`           | See cron config                  | Processes approval-based (pay-later) payment flows                         |
+| `/api/cleanup/abandoned-payments`          | See cron config                  | Cleans up abandoned payment intents                                        |
 
 ### Example: Test Tentative Slot Cleanup
 

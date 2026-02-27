@@ -17,7 +17,8 @@ export async function GET(
 ) {
   try {
     // Rate limit by IP
-    const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+    const ip =
+      req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
     const { success, remaining } = await ratelimit.limit(ip);
 
     if (!success) {

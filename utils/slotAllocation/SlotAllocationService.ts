@@ -7,16 +7,17 @@
 
 import prisma from "@/lib/prisma";
 import {
+  Appointment,
   AppointmentsType,
+  Prisma,
   RequestStatus,
   ScheduleType,
-  DayOfWeek,
+  SlotOfAppointment,
 } from "@prisma/client";
-import { addHours, addWeeks, addMonths } from "date-fns";
+import { addWeeks, addMonths } from "date-fns";
 import {
   AllocationRequest,
   AllocationResult,
-  AllocationMode,
   EventType,
   PrismaTransaction,
   ConsultantAllocationData,
@@ -24,6 +25,11 @@ import {
 } from "./types";
 import { SlotCalculationService } from "./SlotCalculationService";
 import { SlotValidationService } from "./SlotValidationService";
+import { buildOccupiedAppointmentFilter } from "./occupancyPolicy";
+
+type AppointmentWithSlots = Appointment & {
+  slotsOfAppointment: SlotOfAppointment[];
+};
 
 /**
  * Main service for slot allocation operations
@@ -92,32 +98,47 @@ export class SlotAllocationService {
         // CRITICAL FIX: Check for existing appointments to detect reschedule scenario
         // If tentative slots exist, this is a reschedule and we should preserve the original slot count
         const relationField = this.getEventRelationField(eventType);
-        const existingAppointments = await (tx as any).appointment.findMany({
-          where: { [`${relationField}Id`]: eventId },
-          include: { slotsOfAppointment: true },
-        });
+        const existingAppointments: AppointmentWithSlots[] =
+          await tx.appointment.findMany({
+            where: {
+              [`${relationField}Id`]: eventId,
+            } as Prisma.AppointmentWhereInput,
+            include: { slotsOfAppointment: true },
+          });
 
         // Count existing slots by tentative status
         const existingNonTentativeSlotCount = existingAppointments.reduce(
-          (count: number, app: any) =>
+          (count, appointment) =>
             count +
-            app.slotsOfAppointment.filter((s: any) => !s.isTentative).length,
+            appointment.slotsOfAppointment.filter((slot) => !slot.isTentative)
+              .length,
           0,
         );
         const tentativeSlotCount = existingAppointments.reduce(
-          (count: number, app: any) =>
+          (count, appointment) =>
             count +
-            app.slotsOfAppointment.filter((s: any) => s.isTentative).length,
+            appointment.slotsOfAppointment.filter((slot) => slot.isTentative)
+              .length,
           0,
         );
         const isReschedule = tentativeSlotCount > 0;
 
-        // Calculate required slots - preserve count during reschedule
+        // Collect appointment IDs to exclude from conflict detection and weekly limits.
+        // For reschedule: exclude tentative appointments (they'll be deleted)
+        // For initial allocation: exclude ALL existing appointments (they'll all be deleted)
+        const appointmentIdsToExclude = isReschedule
+          ? existingAppointments
+              .filter((a) => a.slotsOfAppointment.some((s) => s.isTentative))
+              .map((a) => a.id)
+          : existingAppointments.map((a) => a.id);
+
+        // Calculate required slots - for reschedule, only replace tentative slots
         let requiredSlots: number;
         if (isReschedule) {
-          // RESCHEDULE: Preserve the original total slot count
-          // This prevents slot count from changing when rescheduling
-          requiredSlots = existingNonTentativeSlotCount + tentativeSlotCount;
+          // RESCHEDULE: Only find replacement slots for the tentative ones.
+          // For full reschedule (all tentative): requiredSlots = all slots
+          // For partial reschedule (some tentative): requiredSlots = tentative count only
+          requiredSlots = tentativeSlotCount;
         } else {
           // INITIAL ALLOCATION: Calculate from config
           requiredSlots = SlotCalculationService.calculateRequiredSlots(
@@ -131,6 +152,7 @@ export class SlotAllocationService {
         );
 
         // Find available slots
+        // Pass appointmentIdsToExclude so their slots are excluded from bookedSlots
         const selectedSlots = await this.findAvailableSlots(
           tx,
           consultant,
@@ -138,16 +160,19 @@ export class SlotAllocationService {
           slotsPerCall,
           eventType,
           config,
+          appointmentIdsToExclude,
         );
 
         // Validate
-        const validator = new SlotValidationService(tx as any);
+        // Pass appointmentIdsToExclude so their slots don't trigger false conflicts
+        const validator = new SlotValidationService(tx);
         const validation = await validator.validate(
           eventType,
           eventId,
           selectedSlots,
           consultant,
           config,
+          appointmentIdsToExclude,
         );
 
         if (!validation.isValid) {
@@ -254,7 +279,7 @@ export class SlotAllocationService {
         if (uniqueSlots.length !== slots.length) {
           throw new Error(
             `Duplicate slots detected: ${slots.length} slots provided but only ` +
-            `${uniqueSlots.length} are unique. Each slot can only be selected once.`,
+              `${uniqueSlots.length} are unique. Each slot can only be selected once.`,
           );
         }
 
@@ -273,44 +298,94 @@ export class SlotAllocationService {
             config.sessionDurationInHours || config.durationInHours || 1;
           throw new Error(
             `Invalid slot count: ${slots.length} slots provided, but ${sessionDuration}-hour ` +
-            `sessions require multiples of ${slotsPerCall} slots (30 minutes each). ` +
-            `Valid counts: ${slotsPerCall}, ${slotsPerCall * 2}, ${slotsPerCall * 3}, etc.`,
+              `sessions require multiples of ${slotsPerCall} slots (30 minutes each). ` +
+              `Valid counts: ${slotsPerCall}, ${slotsPerCall * 2}, ${slotsPerCall * 3}, etc.`,
           );
         }
 
+        // Detect reschedule scenario: check for existing tentative slots
+        const relationField = this.getEventRelationField(eventType);
+        const existingAppointments: AppointmentWithSlots[] =
+          await tx.appointment.findMany({
+            where: {
+              [`${relationField}Id`]: eventId,
+            } as Prisma.AppointmentWhereInput,
+            include: { slotsOfAppointment: true },
+          });
+
+        const tentativeSlotCount = existingAppointments.reduce(
+          (count, appointment) =>
+            count +
+            appointment.slotsOfAppointment.filter((slot) => slot.isTentative)
+              .length,
+          0,
+        );
+        const isReschedule = tentativeSlotCount > 0;
+
+        // Collect appointment IDs to exclude from conflict detection and weekly limits.
+        // For reschedule: exclude tentative appointments (they'll be deleted)
+        // For initial allocation: exclude ALL existing appointments (they'll all be deleted)
+        const appointmentIdsToExclude = isReschedule
+          ? existingAppointments
+              .filter((a) => a.slotsOfAppointment.some((s) => s.isTentative))
+              .map((a) => a.id)
+          : existingAppointments.map((a) => a.id);
+
         // Validate total slot count for recurring event types
-        // Ensures the consultant provides exactly the right number of slots
-        // (not fewer, which would leave the event under-allocated but marked APPROVED)
+        // For reschedule: only require replacement slots for tentative count
+        // For initial allocation: require full plan slot count
         if (eventType === "subscription" || eventType === "class") {
-          if (config.schedulingPeriodStartsAt && config.schedulingPeriodEndsAt) {
-            const requiredSlots =
-              SlotCalculationService.calculateRequiredSlots(eventType, config);
+          if (isReschedule) {
+            if (slots.length !== tentativeSlotCount) {
+              throw new Error(
+                `This reschedule requires exactly ${tentativeSlotCount} slots ` +
+                  `(replacing ${tentativeSlotCount} tentative slots), ` +
+                  `but ${slots.length} were provided.`,
+              );
+            }
+          } else if (
+            config.schedulingPeriodStartsAt &&
+            config.schedulingPeriodEndsAt
+          ) {
+            const requiredSlots = SlotCalculationService.calculateRequiredSlots(
+              eventType,
+              config,
+            );
             if (slots.length !== requiredSlots) {
               throw new Error(
                 `This ${eventType} requires exactly ${requiredSlots} slots ` +
-                `(based on the scheduling period and session configuration), ` +
-                `but ${slots.length} were provided.`,
+                  `(based on the scheduling period and session configuration), ` +
+                  `but ${slots.length} were provided.`,
               );
             }
           }
         }
 
         // Validate
-        const validator = new SlotValidationService(tx as any);
+        // Pass appointmentIdsToExclude so their slots don't trigger false conflicts
+        const validator = new SlotValidationService(tx);
         const validation = await validator.validate(
           eventType,
           eventId,
           slots,
           consultant,
           config,
+          appointmentIdsToExclude,
         );
 
         if (!validation.isValid) {
           throw new Error(`Validation failed: ${validation.errors.join("; ")}`);
         }
 
-        // Delete existing appointments if any
-        await this.deleteExistingAppointments(tx, eventType, eventId);
+        // Delete existing appointments
+        // For reschedules: only delete tentative slots (preserve confirmed ones)
+        // For initial allocation: delete all
+        await this.deleteExistingAppointments(
+          tx,
+          eventType,
+          eventId,
+          isReschedule,
+        );
 
         // Create appointments
         const appointments = await this.createAppointments(
@@ -379,41 +454,48 @@ export class SlotAllocationService {
         // CRITICAL FIX: Verify appointments actually exist before approving
         // This prevents approving requests with no actual bookings
         const relationField = this.getEventRelationField(eventType);
-        const existingAppointments = await (tx as any).appointment.findMany({
-          where: { [`${relationField}Id`]: eventId },
-          include: { slotsOfAppointment: true },
-        });
+        const existingAppointments: AppointmentWithSlots[] =
+          await tx.appointment.findMany({
+            where: {
+              [`${relationField}Id`]: eventId,
+            } as Prisma.AppointmentWhereInput,
+            include: { slotsOfAppointment: true },
+          });
 
         if (existingAppointments.length === 0) {
           throw new Error(
             "Cannot approve requested slots: No appointments found. " +
-            "The consultee may not have created appointments yet, or they were deleted. " +
-            "Please ask the consultee to resubmit their request.",
+              "The consultee may not have created appointments yet, or they were deleted. " +
+              "Please ask the consultee to resubmit their request.",
           );
         }
 
         // Verify appointment slots match requested slots
         const existingSlotCount = existingAppointments.reduce(
-          (sum: number, app: any) => sum + app.slotsOfAppointment.length,
+          (sum, appointment) => sum + appointment.slotsOfAppointment.length,
           0,
         );
 
         if (existingSlotCount !== requestedSlots.length) {
           throw new Error(
             `Appointment mismatch: Found ${existingSlotCount} slots in appointments ` +
-            `but ${requestedSlots.length} requested slots. ` +
-            `The appointments may have been modified. Please review and try again.`,
+              `but ${requestedSlots.length} requested slots. ` +
+              `The appointments may have been modified. Please review and try again.`,
           );
         }
 
-        // Validate requested slots still meet all requirements
-        const validator = new SlotValidationService(tx as any);
+        // Validate requested slots still meet all requirements.
+        // Pass existing appointment IDs so the event's own tentative slots
+        // are not flagged as conflicts during self-validation.
+        const validator = new SlotValidationService(tx);
+        const existingAppointmentIds = existingAppointments.map((a) => a.id);
         const validation = await validator.validate(
           eventType,
           eventId,
           requestedSlots,
           consultant,
           config,
+          existingAppointmentIds,
         );
 
         if (!validation.isValid) {
@@ -431,7 +513,9 @@ export class SlotAllocationService {
 
         // CRITICAL FIX: Clear isTentative flag on all slots after approval
         // This ensures slots are no longer marked as pending reschedule
-        const appointmentIds = existingAppointments.map((app: any) => app.id);
+        const appointmentIds = existingAppointments.map(
+          (appointment) => appointment.id,
+        );
         await tx.slotOfAppointment.updateMany({
           where: {
             appointmentId: { in: appointmentIds },
@@ -472,10 +556,11 @@ export class SlotAllocationService {
           candidate.getUTCHours() * 60 + candidate.getUTCMinutes();
         const startMinutes =
           slotStart.getUTCHours() * 60 + slotStart.getUTCMinutes();
-        const endMinutes =
-          slotEnd.getUTCHours() * 60 + slotEnd.getUTCMinutes();
+        const endMinutes = slotEnd.getUTCHours() * 60 + slotEnd.getUTCMinutes();
 
-        return candidateMinutes >= startMinutes && candidateMinutes < endMinutes;
+        return (
+          candidateMinutes >= startMinutes && candidateMinutes < endMinutes
+        );
       });
     } else {
       // CUSTOM schedule: candidate must fall within a specific date range
@@ -502,42 +587,36 @@ export class SlotAllocationService {
     slotsPerCall: number,
     eventType: EventType,
     config: EventConfig,
+    excludeAppointmentIds: string[] = [],
   ): Promise<Date[]> {
     // Get all existing booked slots for this consultant
-    // Include PENDING consultations/subscriptions to prevent double-booking
-    const existingAppointments = await (tx as any).appointment.findMany({
-      where: {
-        AND: [
-          {
-            OR: [
-              {
-                subscription: {
-                  requestStatus: {
-                    in: [RequestStatus.APPROVED, RequestStatus.PENDING],
-                  },
-                },
-              },
-              {
-                consultation: {
-                  requestStatus: {
-                    in: [RequestStatus.APPROVED, RequestStatus.PENDING],
-                  },
-                },
-              },
-              { webinar: { status: "SCHEDULED" } },
-              { class: { status: "SCHEDULED" } },
-            ],
-          },
-          {
-            slotsOfAppointment: {
-              some: {
-                user: {
-                  some: { id: consultant.userId },
-                },
-              },
+    // FIX Bug #15: Use centralized occupancy policy for consistent conflict detection
+    const appointmentFilter: Prisma.AppointmentWhereInput[] = [
+      {
+        OR: buildOccupiedAppointmentFilter(),
+      },
+      {
+        slotsOfAppointment: {
+          some: {
+            user: {
+              some: { id: consultant.userId },
             },
           },
-        ],
+        },
+      },
+    ];
+
+    // Exclude tentative appointments during reschedule — they'll be deleted,
+    // so their slots should not block availability or count toward weekly limits.
+    if (excludeAppointmentIds.length > 0) {
+      appointmentFilter.push({
+        NOT: { id: { in: excludeAppointmentIds } },
+      });
+    }
+
+    const existingAppointments = await tx.appointment.findMany({
+      where: {
+        AND: appointmentFilter,
       },
       include: {
         slotsOfAppointment: true,
@@ -545,8 +624,8 @@ export class SlotAllocationService {
     });
 
     const bookedSlots = new Set(
-      existingAppointments.flatMap((app: any) =>
-        app.slotsOfAppointment.map((slot: any) =>
+      existingAppointments.flatMap((appointment) =>
+        appointment.slotsOfAppointment.map((slot) =>
           new Date(slot.startsAt).toISOString(),
         ),
       ),
@@ -590,9 +669,7 @@ export class SlotAllocationService {
 
             const candidateStart = new Date(baseStart);
             if (week > 0) {
-              candidateStart.setUTCDate(
-                candidateStart.getUTCDate() + week * 7,
-              );
+              candidateStart.setUTCDate(candidateStart.getUTCDate() + week * 7);
             }
 
             if (
@@ -669,6 +746,25 @@ export class SlotAllocationService {
       addMonths(startDate, config.durationInMonths || 1);
     const callsPerWeek = config.callsPerWeek || 1;
 
+    // Build a map of existing confirmed calls per week.
+    // During partial reschedule, weeks with confirmed appointments already
+    // have calls that must count toward the weekly limit.
+    const existingCallsPerWeek = new Map<string, number>();
+    for (const apt of existingAppointments) {
+      if (apt.slotsOfAppointment.length === 0) continue;
+      const firstSlot = apt.slotsOfAppointment.reduce((earliest, s) =>
+        new Date(s.startsAt) < new Date(earliest.startsAt) ? s : earliest,
+      );
+      const weekStart = SlotCalculationService.startOfWeekSunday(
+        new Date(firstSlot.startsAt),
+      );
+      const weekKey = weekStart.toISOString();
+      existingCallsPerWeek.set(
+        weekKey,
+        (existingCallsPerWeek.get(weekKey) || 0) + 1,
+      );
+    }
+
     let currentWeek = SlotCalculationService.startOfWeekSunday(startDate);
     const totalWeeks = SlotCalculationService.countWeeks(startDate, endDate);
 
@@ -677,7 +773,9 @@ export class SlotAllocationService {
       week < totalWeeks && selectedSlots.length < totalSlotsNeeded;
       week++
     ) {
-      let callsThisWeek = 0;
+      // Initialize with existing confirmed calls (important during partial reschedule)
+      const weekKey = currentWeek.toISOString();
+      let callsThisWeek = existingCallsPerWeek.get(weekKey) || 0;
 
       for (let day = 0; day < 7 && callsThisWeek < callsPerWeek; day++) {
         const currentDay = new Date(currentWeek);
@@ -856,8 +954,8 @@ export class SlotAllocationService {
     if (slots.length % slotsPerCall !== 0) {
       throw new Error(
         `INTERNAL ERROR: Cannot create appointments - ${slots.length} slots ` +
-        `cannot be evenly divided into ${slotsPerCall}-slot sessions. ` +
-        `This indicates a validation bug.`,
+          `cannot be evenly divided into ${slotsPerCall}-slot sessions. ` +
+          `This indicates a validation bug.`,
       );
     }
 
@@ -874,7 +972,7 @@ export class SlotAllocationService {
     ) {
       throw new Error(
         `INTERNAL ERROR: ${eventType} should create exactly 1 appointment, but ${calls.length} were grouped. ` +
-        `This indicates non-consecutive slots were provided. Slots: ${slots.map((s) => s.toISOString()).join(", ")}`,
+          `This indicates non-consecutive slots were provided. Slots: ${slots.map((s) => s.toISOString()).join(", ")}`,
       );
     }
 
@@ -895,7 +993,7 @@ export class SlotAllocationService {
           };
         });
 
-        return (tx as any).appointment.create({
+        return tx.appointment.create({
           data: {
             appointmentType: this.getAppointmentType(eventType),
             [this.getEventRelationField(eventType)]: {
@@ -918,9 +1016,10 @@ export class SlotAllocationService {
   /**
    * Delete existing appointments for an event
    *
-   * @param onlyTentative - If true, only delete appointments that have at least one tentative slot.
-   *                        This is used for partial reschedules where we want to preserve
-   *                        confirmed appointments and only replace the rescheduled ones.
+   * @param onlyTentative - If true, only delete tentative SlotOfAppointment records,
+   *                        preserving confirmed slots and their parent appointments.
+   *                        Appointments are only deleted if they have zero remaining slots
+   *                        after tentative slot removal. This is used for partial reschedules.
    */
   private static async deleteExistingAppointments(
     tx: PrismaTransaction,
@@ -929,27 +1028,53 @@ export class SlotAllocationService {
     onlyTentative: boolean = false,
   ): Promise<void> {
     const relationField = this.getEventRelationField(eventType);
-
-    // Build where clause - optionally filter to only appointments with tentative slots
-    const whereClause: any = { [`${relationField}Id`]: eventId };
+    const whereClause = {
+      [`${relationField}Id`]: eventId,
+    } as Prisma.AppointmentWhereInput;
 
     if (onlyTentative) {
-      // Only delete appointments that have at least one tentative slot
-      // This preserves confirmed appointments during partial reschedules
-      whereClause.slotsOfAppointment = {
-        some: { isTentative: true },
-      };
+      // Find appointments with tentative slots for this event
+      const appointments = await tx.appointment.findMany({
+        where: whereClause,
+        include: { slotsOfAppointment: true },
+      });
+
+      for (const appointment of appointments) {
+        const tentativeSlots = appointment.slotsOfAppointment.filter(
+          (slot) => slot.isTentative,
+        );
+        const confirmedSlots = appointment.slotsOfAppointment.filter(
+          (slot) => !slot.isTentative,
+        );
+
+        if (tentativeSlots.length > 0) {
+          // Delete only tentative slots, preserving confirmed ones
+          await tx.slotOfAppointment.deleteMany({
+            where: {
+              id: { in: tentativeSlots.map((slot) => slot.id) },
+            },
+          });
+
+          // If no confirmed slots remain, delete the now-empty appointment
+          if (confirmedSlots.length === 0) {
+            await tx.appointment.delete({
+              where: { id: appointment.id },
+            });
+          }
+        }
+      }
+    } else {
+      // Full delete: remove all appointments for this event
+      const existingAppointments = await tx.appointment.findMany({
+        where: whereClause,
+      });
+
+      await Promise.all(
+        existingAppointments.map((appointment) =>
+          tx.appointment.delete({ where: { id: appointment.id } }),
+        ),
+      );
     }
-
-    const existing = await (tx as any).appointment.findMany({
-      where: whereClause,
-    });
-
-    await Promise.all(
-      existing.map((app: any) =>
-        (tx as any).appointment.delete({ where: { id: app.id } }),
-      ),
-    );
   }
 
   /**
@@ -993,15 +1118,19 @@ export class SlotAllocationService {
 
       case "class":
         // Class model HAS schedulingPeriod fields
+        // FIX Bug #19: Use addMonths instead of addWeeks * 4 for accurate month boundaries
         updates.status = "SCHEDULED";
         updates.schedulingPeriodStartsAt = firstSlot;
-        updates.schedulingPeriodEndsAt = addWeeks(
+        updates.schedulingPeriodEndsAt = addMonths(
           firstSlot,
-          (config.durationInMonths || 1) * 4,
+          config.durationInMonths || 1,
         );
         break;
     }
 
+    // Dynamic model access by eventType requires type assertion — TypeScript can't
+    // statically verify tx["consultation"] etc. from a computed string.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (tx as any)[eventType].update({
       where: { id: eventId },
       data: updates,
@@ -1022,6 +1151,8 @@ export class SlotAllocationService {
     requestedSlots?: Date[];
   } | null> {
     const include = this.getEventInclude(eventType);
+    // Dynamic model access by eventType — same as updateEventStatus above
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const event = await (tx as any)[eventType].findUnique({
       where: { id: eventId },
       include,
@@ -1054,6 +1185,7 @@ export class SlotAllocationService {
           callsPerWeek: event.subscriptionPlan?.callsPerWeek,
           sessionDurationInHours:
             event.subscriptionPlan?.sessionDurationInHours,
+          totalSessions: event.subscriptionPlan?.totalSessions,
           schedulingPeriodStartsAt: event.schedulingPeriodStartsAt,
           schedulingPeriodEndsAt: event.schedulingPeriodEndsAt,
         };
@@ -1076,15 +1208,16 @@ export class SlotAllocationService {
         const sessionDuration =
           classContents.length > 0
             ? classContents.reduce(
-              (sum: number, c: any) => sum + c.hoursAllotted,
-              0,
-            ) / classContents.length
+                (sum: number, c: any) => sum + c.hoursAllotted,
+                0,
+              ) / classContents.length
             : event.classPlan?.sessionDurationInHours || 1;
 
         config = {
           durationInMonths: event.classPlan?.durationInMonths,
           callsPerWeek: event.classPlan?.meetingsPerWeek,
           sessionDurationInHours: sessionDuration,
+          totalSessions: event.classPlan?.totalSessions,
           schedulingPeriodStartsAt: event.schedulingPeriodStartsAt,
           schedulingPeriodEndsAt: event.schedulingPeriodEndsAt,
         };
@@ -1101,8 +1234,8 @@ export class SlotAllocationService {
       if (config.schedulingPeriodStartsAt >= config.schedulingPeriodEndsAt) {
         throw new Error(
           `Invalid date range: schedulingPeriodStartsAt (${config.schedulingPeriodStartsAt.toISOString()}) ` +
-          `must be before schedulingPeriodEndsAt (${config.schedulingPeriodEndsAt.toISOString()}). ` +
-          `Please check the ${eventType} configuration.`,
+            `must be before schedulingPeriodEndsAt (${config.schedulingPeriodEndsAt.toISOString()}). ` +
+            `Please check the ${eventType} configuration.`,
         );
       }
     }

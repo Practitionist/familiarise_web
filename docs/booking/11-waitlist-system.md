@@ -5,6 +5,7 @@
 The waitlist system manages queued access to multi-participant events (webinars and classes) that have reached their `maxParticipants` capacity. When an event is full, users join a priority-based queue and receive a 48-hour notification window when a spot opens up.
 
 Key characteristics:
+
 - Applies to webinars and classes only (not 1:1 consultations)
 - Priority ordering: higher `priority` value goes first; ties broken by earliest `joinedAt`
 - 48-hour response window on spot availability notifications
@@ -12,6 +13,7 @@ Key characteristics:
 - Integrates with checkout flow for payment completion
 
 **Source files:**
+
 - Slot handler: `lib/waitlist/slot-handler.ts` (joinWaitlist, leaveWaitlist, handleSlotOpening, handleWaitlistResponse, markWaitlistAsBooked, checkEventAvailability)
 - Queue manager: `lib/waitlist/queue-manager.ts` (calculatePosition, getNextInQueue, updatePositions, processExpiredNotifications, getWaitlistStats, getUserWaitlistEntries)
 - Notifications: `lib/waitlist/notifications.ts` (sendWaitlistSpotAvailableEmail)
@@ -23,55 +25,55 @@ Key characteristics:
 
 ### Waitlist
 
-| Field            | Type              | Default     | Description                                                  |
-| ---------------- | ----------------- | ----------- | ------------------------------------------------------------ |
-| `id`             | `String` (uuid)   | auto        | Primary key                                                  |
-| `joinedAt`       | `DateTime`        | `now()`     | When user joined the queue (used for ordering)               |
-| `position`       | `Int?`            | null        | Calculated queue position (1-indexed, null until calculated) |
-| `status`         | `WaitlistStatus`  | `WAITING`   | Current lifecycle status                                     |
-| `priority`       | `Int`             | `0`         | Priority weight; higher value = higher priority (VIP/premium) |
-| `notifiedAt`     | `DateTime?`       | null        | When user was notified of an available spot                  |
-| `expiresAt`      | `DateTime?`       | null        | Notification deadline (48h after `notifiedAt`)               |
-| `reminderSentAt` | `DateTime?`       | null        | When the 12-hour reminder email was sent                     |
-| `bookedAt`       | `DateTime?`       | null        | When user successfully completed booking                     |
-| `respondedAt`    | `DateTime?`       | null        | When user responded to the notification                      |
-| `preferences`    | `Json?`           | null        | User preferences (e.g., `{ preferredDates: [], maxPrice: 500 }`) |
-| `userId`         | `String`          | required    | FK to User                                                   |
-| `webinarId`      | `String?`         | null        | FK to Webinar (mutually exclusive with classId for a given entry) |
-| `classId`        | `String?`         | null        | FK to Class (mutually exclusive with webinarId for a given entry) |
-| `createdAt`      | `DateTime`        | `now()`     | Record creation timestamp                                    |
-| `updatedAt`      | `DateTime`        | auto        | Last update timestamp                                        |
+| Field            | Type             | Default   | Description                                                       |
+| ---------------- | ---------------- | --------- | ----------------------------------------------------------------- |
+| `id`             | `String` (uuid)  | auto      | Primary key                                                       |
+| `joinedAt`       | `DateTime`       | `now()`   | When user joined the queue (used for ordering)                    |
+| `position`       | `Int?`           | null      | Calculated queue position (1-indexed, null until calculated)      |
+| `status`         | `WaitlistStatus` | `WAITING` | Current lifecycle status                                          |
+| `priority`       | `Int`            | `0`       | Priority weight; higher value = higher priority (VIP/premium)     |
+| `notifiedAt`     | `DateTime?`      | null      | When user was notified of an available spot                       |
+| `expiresAt`      | `DateTime?`      | null      | Notification deadline (48h after `notifiedAt`)                    |
+| `reminderSentAt` | `DateTime?`      | null      | When the 12-hour reminder email was sent                          |
+| `bookedAt`       | `DateTime?`      | null      | When user successfully completed booking                          |
+| `respondedAt`    | `DateTime?`      | null      | When user responded to the notification                           |
+| `preferences`    | `Json?`          | null      | User preferences (e.g., `{ preferredDates: [], maxPrice: 500 }`)  |
+| `userId`         | `String`         | required  | FK to User                                                        |
+| `webinarId`      | `String?`        | null      | FK to Webinar (mutually exclusive with classId for a given entry) |
+| `classId`        | `String?`        | null      | FK to Class (mutually exclusive with webinarId for a given entry) |
+| `createdAt`      | `DateTime`       | `now()`   | Record creation timestamp                                         |
+| `updatedAt`      | `DateTime`       | auto      | Last update timestamp                                             |
 
 ### Constraints
 
-| Constraint                    | Type   | Purpose                                       |
-| ----------------------------- | ------ | --------------------------------------------- |
-| `@@unique([userId, webinarId])` | Unique | One active entry per user per webinar          |
-| `@@unique([userId, classId])`   | Unique | One active entry per user per class            |
+| Constraint                      | Type   | Purpose                               |
+| ------------------------------- | ------ | ------------------------------------- |
+| `@@unique([userId, webinarId])` | Unique | One active entry per user per webinar |
+| `@@unique([userId, classId])`   | Unique | One active entry per user per class   |
 
 ### Indexes
 
-| Index                    | Purpose                                              |
-| ------------------------ | ---------------------------------------------------- |
-| `userId`                 | Look up all waitlist entries for a user               |
-| `webinarId`              | Look up waitlist for a specific webinar               |
-| `classId`                | Look up waitlist for a specific class                 |
-| `status`                 | Filter by status across all events                   |
-| `[status, webinarId]`    | Efficient queue queries per webinar                  |
-| `[status, classId]`      | Efficient queue queries per class                    |
-| `expiresAt`              | Cron job: find expired NOTIFIED entries              |
-| `[priority, joinedAt]`   | Queue ordering: priority DESC, joinedAt ASC          |
+| Index                  | Purpose                                     |
+| ---------------------- | ------------------------------------------- |
+| `userId`               | Look up all waitlist entries for a user     |
+| `webinarId`            | Look up waitlist for a specific webinar     |
+| `classId`              | Look up waitlist for a specific class       |
+| `status`               | Filter by status across all events          |
+| `[status, webinarId]`  | Efficient queue queries per webinar         |
+| `[status, classId]`    | Efficient queue queries per class           |
+| `expiresAt`            | Cron job: find expired NOTIFIED entries     |
+| `[priority, joinedAt]` | Queue ordering: priority DESC, joinedAt ASC |
 
 ### WaitlistStatus Enum
 
-| Value       | Description                                     |
-| ----------- | ----------------------------------------------- |
-| `WAITING`   | In queue, waiting for spot                       |
-| `NOTIFIED`  | Spot available, awaiting user response           |
-| `BOOKED`    | Successfully booked the spot                     |
-| `EXPIRED`   | Notification window expired (48h)                |
-| `CANCELLED` | User left waitlist voluntarily                   |
-| `SKIPPED`   | User declined spot, moved to back of queue       |
+| Value       | Description                                |
+| ----------- | ------------------------------------------ |
+| `WAITING`   | In queue, waiting for spot                 |
+| `NOTIFIED`  | Spot available, awaiting user response     |
+| `BOOKED`    | Successfully booked the spot               |
+| `EXPIRED`   | Notification window expired (48h)          |
+| `CANCELLED` | User left waitlist voluntarily             |
+| `SKIPPED`   | User declined spot, moved to back of queue |
 
 ### Entity Relationships
 
@@ -136,14 +138,14 @@ stateDiagram-v2
     CANCELLED --> [*]
 ```
 
-| Status      | Meaning                                   | Trigger                                 |
-| ----------- | ----------------------------------------- | --------------------------------------- |
-| `WAITING`   | In queue, awaiting a spot                 | `joinWaitlist()`                        |
-| `NOTIFIED`  | Spot available, 48-hour response window   | `handleSlotOpening()`                   |
-| `BOOKED`    | Payment completed, booking confirmed      | `markWaitlistAsBooked()`                |
-| `EXPIRED`   | Did not respond within 48 hours           | `processExpiredNotifications()` (cron)  |
-| `CANCELLED` | User left the waitlist voluntarily        | `leaveWaitlist()`                       |
-| `SKIPPED`   | Declined this spot, re-queued at back     | `handleWaitlistResponse(SKIP)`          |
+| Status      | Meaning                                 | Trigger                                |
+| ----------- | --------------------------------------- | -------------------------------------- |
+| `WAITING`   | In queue, awaiting a spot               | `joinWaitlist()`                       |
+| `NOTIFIED`  | Spot available, 48-hour response window | `handleSlotOpening()`                  |
+| `BOOKED`    | Payment completed, booking confirmed    | `markWaitlistAsBooked()`               |
+| `EXPIRED`   | Did not respond within 48 hours         | `processExpiredNotifications()` (cron) |
+| `CANCELLED` | User left the waitlist voluntarily      | `leaveWaitlist()`                      |
+| `SKIPPED`   | Declined this spot, re-queued at back   | `handleWaitlistResponse(SKIP)`         |
 
 ---
 
@@ -155,14 +157,14 @@ Queue ordering is determined by two fields: `priority` (descending) and `joinedA
 
 ### Core Functions
 
-| Function                       | Purpose                                                                                  |
-| ------------------------------ | ---------------------------------------------------------------------------------------- |
-| `calculatePosition`            | Count WAITING entries ahead of a given entry (priority DESC, joinedAt ASC). Returns 1-indexed position. |
-| `getNextInQueue`               | Returns the highest-priority, earliest-joined WAITING entry for an event.                |
-| `updatePositions`              | Recalculates and persists positions for all WAITING entries after a queue change. Uses a Prisma transaction. |
-| `processExpiredNotifications`  | Finds all NOTIFIED entries past `expiresAt`, marks them EXPIRED, and updates positions for affected events. |
-| `getWaitlistStats`             | Returns `totalWaiting`, `byWebinar`, `byClass` counts, and `averageWaitTimeDays` for a consultant's events. |
-| `getUserWaitlistEntries`       | Returns a user's active (WAITING + NOTIFIED) entries with calculated positions, split into `webinars` and `classes`. |
+| Function                      | Purpose                                                                                                              |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `calculatePosition`           | Count WAITING entries ahead of a given entry (priority DESC, joinedAt ASC). Returns 1-indexed position.              |
+| `getNextInQueue`              | Returns the highest-priority, earliest-joined WAITING entry for an event.                                            |
+| `updatePositions`             | Recalculates and persists positions for all WAITING entries after a queue change. Uses a Prisma transaction.         |
+| `processExpiredNotifications` | Finds all NOTIFIED entries past `expiresAt`, marks them EXPIRED, and updates positions for affected events.          |
+| `getWaitlistStats`            | Returns `totalWaiting`, `byWebinar`, `byClass` counts, and `averageWaitTimeDays` for a consultant's events.          |
+| `getUserWaitlistEntries`      | Returns a user's active (WAITING + NOTIFIED) entries with calculated positions, split into `webinars` and `classes`. |
 
 ### Position Calculation
 
@@ -213,11 +215,11 @@ sequenceDiagram
 
 The `handleSlotOpening` function is called when:
 
-| Trigger               | Reason value          | Description                                    |
-| --------------------- | --------------------- | ---------------------------------------------- |
-| Booking cancellation  | `cancellation`        | A participant cancels their booking             |
-| Capacity increase     | `capacity_increase`   | Consultant raises `maxParticipants`             |
-| Participant removal   | `participant_removed` | Consultant removes a participant from the event |
+| Trigger              | Reason value          | Description                                     |
+| -------------------- | --------------------- | ----------------------------------------------- |
+| Booking cancellation | `cancellation`        | A participant cancels their booking             |
+| Capacity increase    | `capacity_increase`   | Consultant raises `maxParticipants`             |
+| Participant removal  | `participant_removed` | Consultant removes a participant from the event |
 
 ---
 
@@ -261,14 +263,14 @@ When a user is notified of an available spot, they can respond in one of three w
 
 Source: `lib/waitlist/slot-handler.ts`
 
-| Function                  | Parameters                                                                  | Returns                                                        | Purpose                                                                                           |
-| ------------------------- | --------------------------------------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `joinWaitlist`            | `userId`, `webinarId?`, `classId?`, `preferences?`                          | `{ success, waitlistId?, position?, message }`                 | Validates user not already queued, checks event is full, creates entry, calculates position        |
-| `leaveWaitlist`           | `waitlistId`, `userId`                                                      | `{ success, message }`                                         | Cancels entry; if status was NOTIFIED, notifies next person in queue. Updates positions.           |
-| `checkEventAvailability`  | `webinarId?`, `classId?`                                                    | `{ available, currentParticipants, maxParticipants, waitlistCount }` | Returns current capacity status; counts unique participants for classes across all appointments    |
-| `markWaitlistAsBooked`    | `waitlistId`                                                                | `void`                                                         | Sets status to BOOKED, records `bookedAt` and `respondedAt`                                       |
-| `handleSlotOpening`       | `webinarId?`, `classId?`, `slotsAvailable?` (default 1), `reason?`          | `{ notified, errors[] }`                                       | Notifies up to N next users in queue; sets NOTIFIED status with 48h expiry                        |
-| `handleWaitlistResponse`  | `waitlistId`, `userId`, `action` (`ACCEPT` / `DECLINE` / `SKIP`)            | `{ success, redirectUrl?, message }`                           | Processes user response; ACCEPT returns checkout URL, DECLINE/SKIP notify next in queue           |
+| Function                 | Parameters                                                         | Returns                                                              | Purpose                                                                                         |
+| ------------------------ | ------------------------------------------------------------------ | -------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `joinWaitlist`           | `userId`, `webinarId?`, `classId?`, `preferences?`                 | `{ success, waitlistId?, position?, message }`                       | Validates user not already queued, checks event is full, creates entry, calculates position     |
+| `leaveWaitlist`          | `waitlistId`, `userId`                                             | `{ success, message }`                                               | Cancels entry; if status was NOTIFIED, notifies next person in queue. Updates positions.        |
+| `checkEventAvailability` | `webinarId?`, `classId?`                                           | `{ available, currentParticipants, maxParticipants, waitlistCount }` | Returns current capacity status; counts unique participants for classes across all appointments |
+| `markWaitlistAsBooked`   | `waitlistId`                                                       | `void`                                                               | Sets status to BOOKED, records `bookedAt` and `respondedAt`                                     |
+| `handleSlotOpening`      | `webinarId?`, `classId?`, `slotsAvailable?` (default 1), `reason?` | `{ notified, errors[] }`                                             | Notifies up to N next users in queue; sets NOTIFIED status with 48h expiry                      |
+| `handleWaitlistResponse` | `waitlistId`, `userId`, `action` (`ACCEPT` / `DECLINE` / `SKIP`)   | `{ success, redirectUrl?, message }`                                 | Processes user response; ACCEPT returns checkout URL, DECLINE/SKIP notify next in queue         |
 
 ### Validation Rules
 
@@ -291,6 +293,7 @@ See: `docs/booking/08-cancellation-flow.md`
 The checkout flow accepts a `fromWaitlist` query parameter containing the waitlist entry ID. After successful payment, the checkout handler calls `markWaitlistAsBooked(waitlistId)` to finalize the waitlist entry.
 
 Checkout URL format:
+
 ```
 /checkout/plans/{eventType}/{planId}?eventId={eventId}&fromWaitlist={waitlistId}
 ```
@@ -299,10 +302,10 @@ See: `docs/booking/10-checkout-payment-integration.md`
 
 ### Cron Jobs
 
-| Job                              | Schedule | Source                                        | Description                                                       |
-| -------------------------------- | -------- | --------------------------------------------- | ----------------------------------------------------------------- |
-| `process-waitlist-expirations`   | Hourly   | `lib/waitlist/queue-manager.ts` (`processExpiredNotifications`) | Finds NOTIFIED entries past `expiresAt`, marks EXPIRED, notifies next in queue |
-| `send-waitlist-reminders`        | Hourly   | `lib/waitlist/notifications.ts`               | Sends 12-hour reminder emails for NOTIFIED entries approaching expiration      |
+| Job                            | Schedule | Source                                                          | Description                                                                    |
+| ------------------------------ | -------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| `process-waitlist-expirations` | Hourly   | `lib/waitlist/queue-manager.ts` (`processExpiredNotifications`) | Finds NOTIFIED entries past `expiresAt`, marks EXPIRED, notifies next in queue |
+| `send-waitlist-reminders`      | Hourly   | `lib/waitlist/notifications.ts`                                 | Sends 12-hour reminder emails for NOTIFIED entries approaching expiration      |
 
 ### Availability Check Flow
 

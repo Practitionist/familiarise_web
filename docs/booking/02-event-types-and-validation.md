@@ -2,20 +2,20 @@
 
 ## Event Type Comparison
 
-| Aspect                   | Consultation              | Subscription                                             | Webinar                   | Class                                                       | Trial                                   |
-| ------------------------ | ------------------------- | -------------------------------------------------------- | ------------------------- | ----------------------------------------------------------- | ---------------------------------------- |
-| **Relationship**         | 1:1                       | 1:1                                                      | 1:many                    | 1:many                                                      | 1:1                                      |
-| **Frequency**            | One-time                  | Recurring                                                | One-time                  | Recurring                                                   | One-time (free)                          |
-| **Duration field**       | `durationInHours` (total) | `sessionDurationInHours` (per call) + `durationInMonths` | `durationInHours` (total) | `sessionDurationInHours` (per session) + `durationInMonths` | Fixed 0.5h (1 slot)                      |
-| **Slot grouping**        | Consecutive + same day    | 1 call/day max, consecutive within day                   | Consecutive               | Max 2-3 sessions/day, consecutive within session            | Single slot                              |
-| **Scheduling period**    | None                      | Required [startDate, endDate]                            | None                      | Required [startDate, endDate]                               | None                                     |
-| **Appointments created** | 1                         | 1 per call (many)                                        | 1                         | 1 per session (many)                                        | 1                                        |
-| **Weekly limit**         | N/A                       | `callsPerWeek` (0-7)                                     | N/A                       | `meetingsPerWeek`                                           | N/A                                      |
-| **Status field**         | `requestStatus`           | `requestStatus`                                          | `status`                  | `status`                                                    | `status` (TrialSessionStatus)            |
-| **Allocation modes**     | auto, manual, requested   | auto, manual, requested                                  | auto, manual              | auto, manual                                                | Consultant-scheduled                     |
-| **Min duration**         | 0.5h                      | 0.5h per session                                         | 0.5h                      | 0.5h per session                                            | 0.5h (fixed)                             |
-| **Payment**              | Required                  | Required                                                 | Required                  | Required                                                    | Free                                     |
-| **Uniqueness**           | Multiple allowed          | Multiple allowed                                         | Multiple allowed          | Multiple allowed                                            | One per consultant per consultee         |
+| Aspect                   | Consultation              | Subscription                                             | Webinar                   | Class                                                       | Trial                            |
+| ------------------------ | ------------------------- | -------------------------------------------------------- | ------------------------- | ----------------------------------------------------------- | -------------------------------- |
+| **Relationship**         | 1:1                       | 1:1                                                      | 1:many                    | 1:many                                                      | 1:1                              |
+| **Frequency**            | One-time                  | Recurring                                                | One-time                  | Recurring                                                   | One-time (free)                  |
+| **Duration field**       | `durationInHours` (total) | `sessionDurationInHours` (per call) + `durationInMonths` | `durationInHours` (total) | `sessionDurationInHours` (per session) + `durationInMonths` | Fixed 0.5h (1 slot)              |
+| **Slot grouping**        | Consecutive + same day    | 1 call/day max, consecutive within day                   | Consecutive               | Max 2-3 sessions/day, consecutive within session            | Single slot                      |
+| **Scheduling period**    | None                      | Required [startDate, endDate]                            | None                      | Required [startDate, endDate]                               | None                             |
+| **Appointments created** | 1                         | 1 per call (many)                                        | 1                         | 1 per session (many)                                        | 1                                |
+| **Weekly limit**         | N/A                       | `callsPerWeek` (0-7)                                     | N/A                       | `meetingsPerWeek`                                           | N/A                              |
+| **Status field**         | `requestStatus`           | `requestStatus`                                          | `status`                  | `status`                                                    | `status` (TrialSessionStatus)    |
+| **Allocation modes**     | auto, manual, requested   | auto, manual, requested                                  | auto, manual              | auto, manual                                                | Consultant-scheduled             |
+| **Min duration**         | 0.5h                      | 0.5h per session                                         | 0.5h                      | 0.5h per session                                            | 0.5h (fixed)                     |
+| **Payment**              | Required                  | Required                                                 | Required                  | Required                                                    | Free                             |
+| **Uniqueness**           | Multiple allowed          | Multiple allowed                                         | Multiple allowed          | Multiple allowed                                            | One per consultant per consultee |
 
 ---
 

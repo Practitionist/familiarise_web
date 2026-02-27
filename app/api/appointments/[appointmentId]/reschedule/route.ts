@@ -1,8 +1,11 @@
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth-server";
+import { isPrivileged } from "@/lib/auth-helpers";
 import {
   ReschedulePolicyError,
+  RescheduleAuthorizationError,
+  AppointmentTypeMismatchError,
   AppointmentNotFoundError,
 } from "@/utils/errors/RescheduleErrors";
 
@@ -89,8 +92,16 @@ export async function POST(
                 requestedBy: true,
               },
             },
-            webinar: true,
-            class: true,
+            webinar: {
+              include: {
+                webinarPlan: true,
+              },
+            },
+            class: {
+              include: {
+                classPlan: true,
+              },
+            },
           },
         });
 
@@ -98,11 +109,65 @@ export async function POST(
           throw new AppointmentNotFoundError("appointment", appointmentId);
         }
 
+        // Participant authorization check
+        const consultantProfileId = session.user.consultantProfileId;
+        const consulteeProfileId = session.user.consulteeProfileId;
+
+        let isParticipant = false;
+
+        // Check the single event-type relation (mutually exclusive via if-else)
+        if (appointment.consultation) {
+          const consultationConsultantId =
+            appointment.consultation.consultationPlan?.consultantProfileId;
+          isParticipant =
+            consultantProfileId === consultationConsultantId ||
+            consulteeProfileId === appointment.consultation.requestedById;
+        } else if (appointment.subscription) {
+          const subscriptionConsultantId =
+            appointment.subscription.subscriptionPlan?.consultantProfileId;
+          isParticipant =
+            consultantProfileId === subscriptionConsultantId ||
+            consulteeProfileId === appointment.subscription.requestedById;
+        } else if (appointment.webinar) {
+          // Only the consultant (organizer) can reschedule group events,
+          // since rescheduling changes the time for all participants.
+          const webinarConsultantId =
+            appointment.webinar.webinarPlan?.consultantProfileId;
+          isParticipant = consultantProfileId === webinarConsultantId;
+        } else if (appointment.class) {
+          // Same as webinar: consultant-only reschedule
+          const classConsultantId =
+            appointment.class.classPlan?.consultantProfileId;
+          isParticipant = consultantProfileId === classConsultantId;
+        }
+
+        // Allow ADMIN/STAFF bypass
+        const isPrivilegedUser = isPrivileged(session.user.role);
+
+        if (!isParticipant && !isPrivilegedUser) {
+          throw new RescheduleAuthorizationError();
+        }
+
+        // Derive type from DB instead of trusting query param
+        const derivedType = appointment.consultation
+          ? "CONSULTATION"
+          : appointment.subscription
+            ? "SUBSCRIPTION"
+            : appointment.webinar
+              ? "WEBINAR"
+              : appointment.class
+                ? "CLASS"
+                : null;
+
+        if (appointmentType && derivedType && appointmentType !== derivedType) {
+          throw new AppointmentTypeMismatchError(appointmentType, derivedType);
+        }
+
         // For SUBSCRIPTION type, we need to get ALL slots across ALL appointments in the subscription
         // because the UI collects slots from all appointments but only passes one appointmentId
         let allSubscriptionSlots: typeof appointment.slotsOfAppointment = [];
 
-        if (appointmentType === "SUBSCRIPTION" && appointment.subscription) {
+        if (derivedType === "SUBSCRIPTION" && appointment.subscription) {
           // Fetch all appointments for this subscription with their slots
           const allAppointments = await tx.appointment.findMany({
             where: { subscriptionId: appointment.subscription.id },
@@ -118,7 +183,7 @@ export async function POST(
 
         // For SUBSCRIPTION with slotIds, only reschedule the specific slots
         if (
-          appointmentType === "SUBSCRIPTION" &&
+          derivedType === "SUBSCRIPTION" &&
           slotIds &&
           slotIds.length > 0 &&
           appointment.subscription
@@ -153,24 +218,23 @@ export async function POST(
 
         // Mark the appropriate slots as tentative
         if (
-          appointmentType === "SUBSCRIPTION" &&
+          derivedType === "SUBSCRIPTION" &&
           slotIds &&
           slotIds.length > 0 &&
           appointment.subscription
         ) {
-          // Individual/multiple session reschedule - only mark the specific slots
-          // Use validated slot IDs from slotsToReschedule (already verified to exist)
-          const validatedSlotIds = slotsToReschedule.map((s) => s.id);
+          // Individual/multiple session reschedule - mark ALL slots of the affected appointments
+          // (e.g. a 1.5h session has 3 consecutive slots; all must be marked tentative together)
+          const affectedAppointmentIds = Array.from(
+            new Set(slotsToReschedule.map((s) => s.appointmentId)),
+          );
           await tx.slotOfAppointment.updateMany({
             where: {
-              id: { in: validatedSlotIds },
+              appointmentId: { in: affectedAppointmentIds },
             },
             data: { isTentative: true },
           });
-        } else if (
-          appointmentType === "SUBSCRIPTION" &&
-          appointment.subscription
-        ) {
+        } else if (derivedType === "SUBSCRIPTION" && appointment.subscription) {
           // Entire subscription reschedule - mark ALL slots in ALL appointments
           const allAppointmentIds = (
             await tx.appointment.findMany({
@@ -217,7 +281,7 @@ export async function POST(
         // Determine reschedule type for response
         const getRescheduleType = () => {
           if (
-            appointmentType !== "SUBSCRIPTION" ||
+            derivedType !== "SUBSCRIPTION" ||
             !slotIds ||
             slotIds.length === 0
           ) {
@@ -252,6 +316,14 @@ export async function POST(
     console.error("Error requesting reschedule:", error);
 
     // Type-safe error handling using custom error classes
+    if (error instanceof RescheduleAuthorizationError) {
+      return NextResponse.json({ error: error.message }, { status: 403 });
+    }
+
+    if (error instanceof AppointmentTypeMismatchError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+
     if (error instanceof ReschedulePolicyError) {
       return NextResponse.json({ error: error.message }, { status: 400 });
     }

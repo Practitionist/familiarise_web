@@ -42,11 +42,11 @@ Consultant payouts for Indian consultants are handled through **RazorpayX Payout
 
 ### Key Terms
 
-| Term | Description |
-|------|-------------|
-| **Contact** | A consultant registered in RazorpayX (holds name, email, phone) |
-| **Fund Account** | A bank account or UPI ID attached to a Contact |
-| **Payout** | A fund transfer from the platform's RazorpayX account to a Fund Account |
+| Term             | Description                                                             |
+| ---------------- | ----------------------------------------------------------------------- |
+| **Contact**      | A consultant registered in RazorpayX (holds name, email, phone)         |
+| **Fund Account** | A bank account or UPI ID attached to a Contact                          |
+| **Payout**       | A fund transfer from the platform's RazorpayX account to a Fund Account |
 
 The consultant never needs a Razorpay account or dashboard access. We handle everything through the API.
 
@@ -87,13 +87,13 @@ Consultant ready for payouts
 
 ### What We Store
 
-| We Store | RazorpayX Stores |
-|----------|-----------------|
-| Contact ID | Full personal details |
-| Fund Account ID | Bank account numbers, IFSC |
-| Masked display (e.g., HDFC ****4521) | Beneficiary name |
-| KYC status | Verification status |
-| Payout history | Transaction records |
+| We Store                                 | RazorpayX Stores           |
+| ---------------------------------------- | -------------------------- |
+| Contact ID                               | Full personal details      |
+| Fund Account ID                          | Bank account numbers, IFSC |
+| Masked display (e.g., HDFC \*\*\*\*4521) | Beneficiary name           |
+| KYC status                               | Verification status        |
+| Payout history                           | Transaction records        |
 
 We **never** store full bank account numbers. Only RazorpayX IDs and masked display values.
 
@@ -103,12 +103,12 @@ We **never** store full bank account numbers. Only RazorpayX IDs and masked disp
 
 RazorpayX supports multiple transfer modes, automatically selected based on amount and account type:
 
-| Mode | Speed | Limit | When Used |
-|------|-------|-------|-----------|
-| **UPI** | Instant | Per-bank limits | Fund Account is VPA (UPI ID) |
-| **IMPS** | Instant | Up to Rs. 5,00,000 per transaction | Bank account, amount ≤ Rs. 5L |
-| **NEFT** | Batched (hourly) | No limit | Bank account, amount > Rs. 5L |
-| **RTGS** | Real-time | Rs. 2,00,000 minimum | Available but not auto-selected |
+| Mode     | Speed            | Limit                              | When Used                       |
+| -------- | ---------------- | ---------------------------------- | ------------------------------- |
+| **UPI**  | Instant          | Per-bank limits                    | Fund Account is VPA (UPI ID)    |
+| **IMPS** | Instant          | Up to Rs. 5,00,000 per transaction | Bank account, amount ≤ Rs. 5L   |
+| **NEFT** | Batched (hourly) | No limit                           | Bank account, amount > Rs. 5L   |
+| **RTGS** | Real-time        | Rs. 2,00,000 minimum               | Available but not auto-selected |
 
 **Auto-selection logic**:
 
@@ -192,13 +192,13 @@ Webhook confirms status
 
 ### Payout Constants
 
-| Constant | Value | Description |
-|----------|-------|-------------|
-| Minimum payout | Rs. 500 | Below this, payout is skipped until next cycle |
-| Auto-approve threshold | Rs. 5,000 | Below this, no admin approval needed |
-| Max retry attempts | 3 | After 3 failures, flagged for manual review |
-| GST rate | 18% | Applied to platform fees |
-| SAC code | 999293 | Service Accounting Code for tax |
+| Constant               | Value     | Description                                    |
+| ---------------------- | --------- | ---------------------------------------------- |
+| Minimum payout         | Rs. 500   | Below this, payout is skipped until next cycle |
+| Auto-approve threshold | Rs. 5,000 | Below this, no admin approval needed           |
+| Max retry attempts     | 3         | After 3 failures, flagged for manual review    |
+| GST rate               | 18%       | Applied to platform fees                       |
+| SAC code               | 999293    | Service Accounting Code for tax                |
 
 **Source**: `lib/payments/payouts/constants.ts`
 
@@ -208,28 +208,28 @@ Webhook confirms status
 
 ### RazorpayX Payout Status Mapping
 
-| RazorpayX Status | Internal Status | Description |
-|------------------|----------------|-------------|
-| `queued` | PENDING | Queued due to low balance |
-| `pending` | PENDING | Awaiting processing |
-| `processing` | PROCESSING | Being processed by RazorpayX |
-| `processed` | COMPLETED | Funds transferred to bank |
-| `reversed` | FAILED | Bank returned the funds |
-| `rejected` | FAILED | Payout rejected by RazorpayX |
-| `cancelled` | CANCELLED | Payout cancelled |
+| RazorpayX Status | Internal Status | Description                  |
+| ---------------- | --------------- | ---------------------------- |
+| `queued`         | PENDING         | Queued due to low balance    |
+| `pending`        | PENDING         | Awaiting processing          |
+| `processing`     | PROCESSING      | Being processed by RazorpayX |
+| `processed`      | COMPLETED       | Funds transferred to bank    |
+| `reversed`       | FAILED          | Bank returned the funds      |
+| `rejected`       | FAILED          | Payout rejected by RazorpayX |
+| `cancelled`      | CANCELLED       | Payout cancelled             |
 
 ---
 
 ## Webhook Events
 
-| Event | When It Fires | What We Do |
-|-------|--------------|------------|
-| `payout.processed` | Funds transferred successfully | Mark payout COMPLETED, earnings as PAID |
-| `payout.reversed` | Bank returned funds | Mark payout FAILED, restore available balance |
-| `payout.rejected` | RazorpayX rejected payout | Mark payout FAILED, alert admin |
-| `payout.queued` | Insufficient balance, queued | Update payout status to PENDING |
-| `payout.pending` | Payout pending processing | Update payout status |
-| `payout.cancelled` | Payout cancelled | Mark payout CANCELLED |
+| Event              | When It Fires                  | What We Do                                    |
+| ------------------ | ------------------------------ | --------------------------------------------- |
+| `payout.processed` | Funds transferred successfully | Mark payout COMPLETED, earnings as PAID       |
+| `payout.reversed`  | Bank returned funds            | Mark payout FAILED, restore available balance |
+| `payout.rejected`  | RazorpayX rejected payout      | Mark payout FAILED, alert admin               |
+| `payout.queued`    | Insufficient balance, queued   | Update payout status to PENDING               |
+| `payout.pending`   | Payout pending processing      | Update payout status                          |
+| `payout.cancelled` | Payout cancelled               | Mark payout CANCELLED                         |
 
 **Source**: `app/api/webhooks/razorpay/route.ts` (payout event handling section)
 
@@ -237,12 +237,12 @@ Webhook confirms status
 
 ## Environment Variables
 
-| Variable | Description |
-|----------|-------------|
-| `RAZORPAYX_KEY_ID` | RazorpayX API key (falls back to `RAZORPAY_KEY_ID`) |
-| `RAZORPAYX_KEY_SECRET` | RazorpayX API secret (falls back to `RAZORPAY_SECRET`) |
-| `RAZORPAYX_ACCOUNT_NUMBER` | RazorpayX account number (required, no fallback) |
-| `RAZORPAYX_WEBHOOK_SECRET` | Webhook signature verification secret |
+| Variable                   | Description                                            |
+| -------------------------- | ------------------------------------------------------ |
+| `RAZORPAYX_KEY_ID`         | RazorpayX API key (falls back to `RAZORPAY_KEY_ID`)    |
+| `RAZORPAYX_KEY_SECRET`     | RazorpayX API secret (falls back to `RAZORPAY_SECRET`) |
+| `RAZORPAYX_ACCOUNT_NUMBER` | RazorpayX account number (required, no fallback)       |
+| `RAZORPAYX_WEBHOOK_SECRET` | Webhook signature verification secret                  |
 
 ---
 
@@ -303,12 +303,12 @@ Customer requests refund before hold expires:
 
 ## Error Handling
 
-| Error | Resolution |
-|-------|------------|
-| Insufficient balance | Queue payout, process when balance available |
-| Invalid fund account | Consultant needs to update bank details |
-| Account closed | Consultant needs new bank details |
-| Rejected by RazorpayX | Check compliance, contact support |
+| Error                 | Resolution                                   |
+| --------------------- | -------------------------------------------- |
+| Insufficient balance  | Queue payout, process when balance available |
+| Invalid fund account  | Consultant needs to update bank details      |
+| Account closed        | Consultant needs new bank details            |
+| Rejected by RazorpayX | Check compliance, contact support            |
 
 After 3 failed attempts, the payout is flagged for manual review.
 
@@ -316,14 +316,14 @@ After 3 failed attempts, the payout is flagged for manual review.
 
 ## Source Files
 
-| File | Purpose |
-|------|---------|
-| `lib/payments/payouts/razorpay-payouts.ts` | RazorpayPayoutsService class — contacts, fund accounts, payouts |
-| `lib/payments/payouts/payout-service.ts` | Provider-agnostic orchestration — batch creation, approval, processing |
-| `lib/payments/payouts/constants.ts` | Hold periods, minimum amounts, fee percentages |
-| `lib/payments/payouts/earnings-service.ts` | Earnings calculation (flat 20% platform fee) |
-| `app/api/webhooks/razorpay/route.ts` | Webhook handler for payout events |
-| `app/api/consultant/payout-accounts/route.ts` | Consultant API for managing payout accounts |
+| File                                          | Purpose                                                                |
+| --------------------------------------------- | ---------------------------------------------------------------------- |
+| `lib/payments/payouts/razorpay-payouts.ts`    | RazorpayPayoutsService class — contacts, fund accounts, payouts        |
+| `lib/payments/payouts/payout-service.ts`      | Provider-agnostic orchestration — batch creation, approval, processing |
+| `lib/payments/payouts/constants.ts`           | Hold periods, minimum amounts, fee percentages                         |
+| `lib/payments/payouts/earnings-service.ts`    | Earnings calculation (flat 20% platform fee)                           |
+| `app/api/webhooks/razorpay/route.ts`          | Webhook handler for payout events                                      |
+| `app/api/consultant/payout-accounts/route.ts` | Consultant API for managing payout accounts                            |
 
 ---
 

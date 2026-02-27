@@ -10,6 +10,7 @@ import {
   DashboardSidebar,
   type NavSection,
 } from "@/components/dashboard/DashboardSidebar";
+import { DashboardNavbar } from "@/components/dashboard/DashboardNavbar";
 import { useSession } from "@/lib/auth-client";
 import { usePathname, useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
@@ -67,11 +68,12 @@ const NAV_SECTIONS: NavSection[] = [
   },
   {
     title: "System",
-    items: [{ name: "System Jobs", path: "system-jobs" }],
+    items: [
+      { name: "System Jobs", path: "system-jobs" },
+      { name: "Maintenance", path: "maintenance" },
+    ],
   },
 ];
-
-const BOTTOM_NAV_ITEMS = [{ name: "Settings", path: "settings" }];
 
 interface PageProps {
   children: React.ReactNode;
@@ -317,14 +319,28 @@ export default function AdminLayout({ children }: Readonly<PageProps>) {
       userRole="ADMIN"
       basePath="/dashboard/admin"
       navSections={NAV_SECTIONS}
-      bottomNavItems={BOTTOM_NAV_ITEMS}
+      hideBottomActions={true}
       isLoading={isLoading}
+    />
+  );
+
+  // Build top navbar (matches consultant dashboard pattern)
+  const navbar = (
+    <DashboardNavbar
+      userName={userData?.name}
+      userImage={userData?.image}
+      userRole="ADMIN"
+      settingsPath="/dashboard/admin/settings"
     />
   );
 
   return (
     <NovuProvider>
-      <DashboardShell sidebar={sidebar} headerActions={<NotificationInbox />}>
+      <DashboardShell
+        sidebar={sidebar}
+        navbar={navbar}
+        headerActions={<NotificationInbox />}
+      >
         <DashboardErrorBoundary>{children}</DashboardErrorBoundary>
       </DashboardShell>
     </NovuProvider>

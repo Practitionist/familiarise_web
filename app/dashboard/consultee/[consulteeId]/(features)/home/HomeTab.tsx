@@ -132,7 +132,11 @@ function UpcomingSessionCard({
             >
               <AvatarImage src={collab.image ?? undefined} alt={collab.name} />
               <AvatarFallback className="bg-purple-900/50 text-purple-300 text-[9px] font-semibold">
-                {collab.name.split(" ").map((n) => n[0]).join("").slice(0, 2)}
+                {collab.name
+                  .split(" ")
+                  .map((n) => n[0])
+                  .join("")
+                  .slice(0, 2)}
               </AvatarFallback>
             </Avatar>
           ))}
@@ -283,7 +287,11 @@ function MonthlyEventItem({
             >
               <AvatarImage src={collab.image ?? undefined} alt={collab.name} />
               <AvatarFallback className="bg-purple-100 text-purple-700 text-[9px] font-medium">
-                {collab.name.split(" ").map((n) => n[0]).join("").slice(0, 2)}
+                {collab.name
+                  .split(" ")
+                  .map((n) => n[0])
+                  .join("")
+                  .slice(0, 2)}
               </AvatarFallback>
             </Avatar>
           ))}

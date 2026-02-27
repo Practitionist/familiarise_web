@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth-server";
 import prisma from "@/lib/prisma";
-import { getMyCollaborations, getHostedCollaborations } from "@/lib/collaborators/service";
+import {
+  getMyCollaborations,
+  getHostedCollaborations,
+} from "@/lib/collaborators/service";
 
 export async function GET() {
   try {

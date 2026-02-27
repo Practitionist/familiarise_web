@@ -13,6 +13,7 @@ import {
   type RefundReconciliationResult,
 } from "../../scripts/refunds/reconcile-pending-refunds";
 import fs from "fs";
+import { abortIfMaintenance } from "../../lib/maintenance-cron";
 
 /**
  * Output results to GitHub Actions
@@ -44,6 +45,7 @@ function outputToGitHubActions(result: RefundReconciliationResult): void {
  * Main entry point
  */
 async function main(): Promise<void> {
+  await abortIfMaintenance("reconcile-pending-refunds");
   console.log("🔄 Starting refund reconciliation job...");
   console.log(`Timestamp: ${new Date().toISOString()}`);
 

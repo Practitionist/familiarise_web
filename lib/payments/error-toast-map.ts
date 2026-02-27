@@ -97,7 +97,8 @@ export function getErrorToast(
   serverMessage?: string,
 ): { title: string; description: string } {
   const entry =
-    ERROR_TOAST_MAP[errorType as ErrorType] ?? ERROR_TOAST_MAP[ErrorTypes.UNKNOWN];
+    ERROR_TOAST_MAP[errorType as ErrorType] ??
+    ERROR_TOAST_MAP[ErrorTypes.UNKNOWN];
 
   const description =
     entry.description ??

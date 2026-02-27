@@ -10,10 +10,10 @@
 
 Razorpay requires KYC (Know Your Customer) verification before live payments can be processed. There are two separate KYC processes:
 
-| KYC For | Purpose | Who Verifies |
-|---------|---------|-------------|
-| **Razorpay Account** (Platform) | Accept payments from customers | Razorpay |
-| **RazorpayX Account** (Platform) | Disburse payouts to consultants | Razorpay |
+| KYC For                          | Purpose                         | Who Verifies |
+| -------------------------------- | ------------------------------- | ------------ |
+| **Razorpay Account** (Platform)  | Accept payments from customers  | Razorpay     |
+| **RazorpayX Account** (Platform) | Disburse payouts to consultants | Razorpay     |
 
 > **Note**: Individual consultants do **not** need their own Razorpay/KYC accounts. We create RazorpayX Contacts and Fund Accounts for them via API. Their bank account/UPI details are stored by RazorpayX, not by us.
 
@@ -23,10 +23,10 @@ Razorpay requires KYC (Know Your Customer) verification before live payments can
 
 ### Test vs Live Mode
 
-| Mode | KYC Required | Real Money | API Keys |
-|------|-------------|------------|----------|
-| **Test** | No | No | `rzp_test_*` |
-| **Live** | Yes | Yes | `rzp_live_*` |
+| Mode     | KYC Required | Real Money | API Keys     |
+| -------- | ------------ | ---------- | ------------ |
+| **Test** | No           | No         | `rzp_test_*` |
+| **Live** | Yes          | Yes        | `rzp_live_*` |
 
 Test mode is fully functional for development without KYC. Live keys are only generated after KYC approval.
 
@@ -39,13 +39,13 @@ Familiarise is an **ed-tech marketplace** platform. The relevant business type f
 
 ### Required Documents
 
-| Category | Documents |
-|----------|-----------|
-| **Business Proof** | Certificate of Incorporation / Partnership Deed / GST Certificate |
-| **Identity Proof** | PAN Card (business or individual) |
-| **Address Proof** | Utility bill, bank statement, or GST certificate showing registered address |
-| **Bank Proof** | Cancelled cheque or bank statement (account in business name) |
-| **Signatory ID** | Aadhaar / Passport / Voter ID of authorized signatory |
+| Category           | Documents                                                                   |
+| ------------------ | --------------------------------------------------------------------------- |
+| **Business Proof** | Certificate of Incorporation / Partnership Deed / GST Certificate           |
+| **Identity Proof** | PAN Card (business or individual)                                           |
+| **Address Proof**  | Utility bill, bank statement, or GST certificate showing registered address |
+| **Bank Proof**     | Cancelled cheque or bank statement (account in business name)               |
+| **Signatory ID**   | Aadhaar / Passport / Voter ID of authorized signatory                       |
 
 ### Submission Process
 
@@ -58,13 +58,13 @@ Familiarise is an **ed-tech marketplace** platform. The relevant business type f
 
 ### Common Rejection Reasons
 
-| Reason | Fix |
-|--------|-----|
-| Document mismatch | Ensure business name matches across all documents |
-| Low quality scan | Re-upload with higher resolution (min 300 DPI) |
-| Expired document | Upload current, valid documents |
-| Missing information | Fill all required fields in business profile |
-| Website content | Ensure website clearly describes services and pricing |
+| Reason              | Fix                                                   |
+| ------------------- | ----------------------------------------------------- |
+| Document mismatch   | Ensure business name matches across all documents     |
+| Low quality scan    | Re-upload with higher resolution (min 300 DPI)        |
+| Expired document    | Upload current, valid documents                       |
+| Missing information | Fill all required fields in business profile          |
+| Website content     | Ensure website clearly describes services and pricing |
 
 ---
 
@@ -94,18 +94,20 @@ This is handled by `app/api/consultant/payout-accounts/route.ts`.
 ### What Consultants Provide
 
 **For bank account payouts**:
+
 - Account holder name
 - Bank account number
 - IFSC code
 
 **For UPI payouts**:
+
 - UPI ID (VPA)
 
 ### What We Store
 
 - RazorpayX Contact ID
 - RazorpayX Fund Account ID
-- Masked account display (e.g., "HDFC ****4521")
+- Masked account display (e.g., "HDFC \*\*\*\*4521")
 - Account status (active/inactive)
 
 We **never** store full bank account numbers or UPI IDs. These are held exclusively by RazorpayX.
@@ -114,12 +116,12 @@ We **never** store full bank account numbers or UPI IDs. These are held exclusiv
 
 ## Timeline Summary
 
-| Step | Duration |
-|------|----------|
-| Platform Razorpay KYC | 2-4 business days |
-| Platform RazorpayX activation | 1-3 business days |
-| Consultant fund account creation | Instant (API call) |
-| Bank account validation (penny test) | 1-2 minutes |
+| Step                                 | Duration           |
+| ------------------------------------ | ------------------ |
+| Platform Razorpay KYC                | 2-4 business days  |
+| Platform RazorpayX activation        | 1-3 business days  |
+| Consultant fund account creation     | Instant (API call) |
+| Bank account validation (penny test) | 1-2 minutes        |
 
 ---
 

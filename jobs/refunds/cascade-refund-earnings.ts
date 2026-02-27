@@ -14,6 +14,7 @@ import {
   type RefundEarningCascadeResult,
 } from "../../scripts/refunds/cascade-refund-earnings";
 import fs from "fs";
+import { abortIfMaintenance } from "../../lib/maintenance-cron";
 
 /**
  * Output results to GitHub Actions
@@ -45,6 +46,7 @@ function outputToGitHubActions(result: RefundEarningCascadeResult): void {
  * Main entry point
  */
 async function main(): Promise<void> {
+  await abortIfMaintenance("cascade-refund-earnings");
   console.log("🔄 Starting refund-earning cascade job...");
   console.log(`Timestamp: ${new Date().toISOString()}`);
 

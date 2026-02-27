@@ -11,11 +11,10 @@
  * - API routes: Can import and call functions directly
  *
  * Cleanup Categories:
- * 1. Duplicate consultations (same user + consultant + plan + same day)
+ * 1. Duplicate consultations (same user + plan + identical slot times + created within 30s)
  * 2. Duplicate subscriptions (overlapping scheduling periods)
- * 3. Exact duplicates (records created within 5 seconds - double-submit bugs)
- * 4. Invalid duration consultations (slot duration != plan duration)
- * 5. Invalid duration subscriptions (period != plan.durationInMonths)
+ * 3. Invalid duration consultations (slot duration != plan duration)
+ * 4. Invalid duration subscriptions (period != plan.durationInMonths)
  *
  * Action: Marks invalid records as CANCELLED (preserves audit trail)
  */
@@ -59,7 +58,11 @@ function monthsDiff(start: Date, end: Date): number {
  * Finds consultations where:
  * - Same requestedById (user)
  * - Same consultationPlanId (plan)
- * - Created on the same day OR within 5 seconds of each other
+ * - Exact same slot times (startsAt/endsAt match) AND created within 30 seconds
+ *
+ * This tightened heuristic avoids cancelling legitimate multiple same-day
+ * bookings (e.g., morning and afternoon sessions). Only true race-condition
+ * duplicates with identical slot times and near-simultaneous creation are flagged.
  *
  * Keeps the oldest record, cancels the newer duplicates.
  */
@@ -72,8 +75,12 @@ export async function cleanupDuplicateConsultations(): Promise<{
   const errors: string[] = [];
   let cancelledCount = 0;
 
+  // Race window: two consultations must be created within this many ms to be
+  // considered duplicates (in addition to having identical slot times).
+  const RACE_WINDOW_MS = 30_000; // 30 seconds
+
   try {
-    // Fetch all non-terminal consultations
+    // Fetch all non-terminal consultations with their slot data
     const consultations = await prisma.consultation.findMany({
       where: { requestStatus: { notIn: TERMINAL_STATUSES } },
       select: {
@@ -81,13 +88,33 @@ export async function cleanupDuplicateConsultations(): Promise<{
         requestedById: true,
         consultationPlanId: true,
         createdAt: true,
+        appointment: {
+          select: {
+            slotsOfAppointment: {
+              select: { startsAt: true, endsAt: true },
+              orderBy: { startsAt: "asc" },
+            },
+          },
+        },
       },
       orderBy: { createdAt: "asc" },
     });
 
     const duplicatesToCancel = new Set<string>();
 
-    // Group by user + plan (like subscriptions) for efficient comparison
+    // Build a fingerprint for a consultation's slot times so we can compare
+    // two consultations for exact slot overlap.
+    const slotFingerprint = (
+      c: (typeof consultations)[number],
+    ): string | null => {
+      const slots = c.appointment?.slotsOfAppointment;
+      if (!slots || slots.length === 0) return null;
+      return slots
+        .map((s) => `${s.startsAt.getTime()}-${s.endsAt.getTime()}`)
+        .join("|");
+    };
+
+    // Group by user + plan for efficient comparison
     const groupedByUserPlan = new Map<string, typeof consultations>();
     for (const c of consultations) {
       const key = `${c.requestedById}-${c.consultationPlanId}`;
@@ -97,33 +124,29 @@ export async function cleanupDuplicateConsultations(): Promise<{
 
     // Check within each group for duplicates
     groupedByUserPlan.forEach((group) => {
-      // Track seen dates for same-day duplicates
-      const seenDates = new Map<string, string>(); // date -> oldest id
-
       for (let i = 0; i < group.length; i++) {
-        const c = group[i];
-        const dateKey = c.createdAt.toISOString().split("T")[0];
+        const c1 = group[i];
+        const fp1 = slotFingerprint(c1);
 
-        // Check same-day duplicate
-        if (seenDates.has(dateKey)) {
-          duplicatesToCancel.add(c.id);
-          console.log(
-            `  Found same-day duplicate: ${c.id} (original: ${seenDates.get(dateKey)})`,
-          );
-        } else {
-          seenDates.set(dateKey, c.id);
-        }
-
-        // Check within-5-second duplicates (break early since sorted by createdAt)
         for (let j = i + 1; j < group.length; j++) {
           const c2 = group[j];
-          if (c2.createdAt.getTime() - c.createdAt.getTime() >= 5000) {
-            break; // No more items within 5 seconds
+
+          // Since sorted by createdAt, once we exceed the race window we can
+          // stop comparing against c1.
+          const timeDiff = c2.createdAt.getTime() - c1.createdAt.getTime();
+          if (timeDiff >= RACE_WINDOW_MS) break;
+
+          const fp2 = slotFingerprint(c2);
+
+          // Both must have slot data and identical slot fingerprints
+          if (fp1 !== null && fp2 !== null && fp1 === fp2) {
+            duplicatesToCancel.add(c2.id);
+            console.log(
+              `  [DUPLICATE] Consultation ${c2.id} is a duplicate of ${c1.id}` +
+                ` | user=${c1.requestedById} plan=${c1.consultationPlanId}` +
+                ` | created ${timeDiff}ms apart | slots=${fp1}`,
+            );
           }
-          duplicatesToCancel.add(c2.id);
-          console.log(
-            `  Found exact duplicate (within 5s): ${c2.id} (original: ${c.id})`,
-          );
         }
       }
     });
@@ -133,6 +156,10 @@ export async function cleanupDuplicateConsultations(): Promise<{
     // Batch cancel duplicates and release their slots
     if (duplicatesToCancel.size > 0) {
       const duplicateIds = Array.from(duplicatesToCancel);
+
+      console.log(
+        `[AUDIT] About to cancel ${duplicateIds.length} duplicate consultations: ${duplicateIds.join(", ")}`,
+      );
 
       // First, release slots associated with these consultations
       const slotsDeleted = await prisma.slotOfAppointment.deleteMany({

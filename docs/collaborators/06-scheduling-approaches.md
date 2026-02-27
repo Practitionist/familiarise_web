@@ -13,6 +13,7 @@ Collaborators with **ACCEPTED** status see a read-only schedule section on each 
 ### What Collaborators See
 
 **Webinar collaborations:**
+
 - Event status badge (Scheduled / Live) and tentative indicator
 - Event date and time (from the first upcoming slot)
 - Duration (from plan's `durationInHours`)
@@ -21,6 +22,7 @@ Collaborators with **ACCEPTED** status see a read-only schedule section on each 
 - Count of additional upcoming events ("+N more events")
 
 **Class collaborations:**
+
 - Class status badge (Scheduled / In Progress)
 - Scheduling period (start date to end date)
 - Session count (completed/scheduled vs. total from plan)
@@ -31,24 +33,26 @@ Collaborators with **ACCEPTED** status see a read-only schedule section on each 
 ### How It Works
 
 **Backend** (`lib/collaborators/service.ts`):
+
 - `getMyCollaborations` expanded to include nested `webinars` / `classes` with their `appointment` and `slotsOfAppointment` data
 - Only fetches events with status `SCHEDULED` or `IN_PROGRESS`
 - Limited to 5 most recent events per plan
 - Includes plan owner via `consultantProfile.user`
 
 **Frontend** (`components/collaborators/InvitationsPanel.tsx`):
+
 - Active collaboration cards are clickable to expand/collapse a "Schedule" section
 - `WebinarSchedule` and `ClassSchedule` components render event details in a grid layout
 - Handles edge cases: no events scheduled, event exists but no time slot, class with no sessions yet
 
 ### Edge Cases Handled
 
-| Scenario | Display |
-|---|---|
-| No webinar events exist | "No events scheduled yet" |
-| Webinar exists but no appointment/slot | "Event exists but no time slot set" |
-| No class instances exist | "No classes scheduled yet" |
-| Class exists but no scheduling period or sessions | "Sessions not yet scheduled" |
+| Scenario                                          | Display                             |
+| ------------------------------------------------- | ----------------------------------- |
+| No webinar events exist                           | "No events scheduled yet"           |
+| Webinar exists but no appointment/slot            | "Event exists but no time slot set" |
+| No class instances exist                          | "No classes scheduled yet"          |
+| Class exists but no scheduling period or sessions | "Sessions not yet scheduled"        |
 
 ---
 
@@ -130,7 +134,10 @@ Senior collaborators (CO_HOST for webinars, CO_INSTRUCTOR for classes) get direc
 Add a `canScheduleOnPlan` permission check:
 
 ```typescript
-function canScheduleOnPlan(role: string, planType: "webinar" | "class"): boolean {
+function canScheduleOnPlan(
+  role: string,
+  planType: "webinar" | "class",
+): boolean {
   if (planType === "webinar") {
     return role === "CO_HOST";
   }
@@ -155,13 +162,13 @@ function canScheduleOnPlan(role: string, planType: "webinar" | "class"): boolean
 
 ## Competitor Research
 
-| Platform | Scheduling Model |
-|---|---|
-| **Zoom** | Only meeting host can schedule; co-hosts have in-meeting powers only |
-| **Thinkific** | Course admin can manage schedule; instructors cannot |
-| **TopMate** | Single-host model, no collaborator concept |
-| **Google Calendar** | Shared calendars with granular read/write permissions per user |
-| **Calendly** | Team events allow round-robin but scheduling is admin-controlled |
+| Platform            | Scheduling Model                                                     |
+| ------------------- | -------------------------------------------------------------------- |
+| **Zoom**            | Only meeting host can schedule; co-hosts have in-meeting powers only |
+| **Thinkific**       | Course admin can manage schedule; instructors cannot                 |
+| **TopMate**         | Single-host model, no collaborator concept                           |
+| **Google Calendar** | Shared calendars with granular read/write permissions per user       |
+| **Calendly**        | Team events allow round-robin but scheduling is admin-controlled     |
 
 **Industry consensus**: Most platforms keep scheduling as a host/admin-only action. Google Calendar's granular permission model is the closest analog to Approach 3, but it's designed for general calendaring, not event management.
 

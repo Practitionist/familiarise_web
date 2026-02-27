@@ -205,8 +205,12 @@ export function VerificationQueue({
                       </AvatarFallback>
                     </Avatar>
                     <div>
-                      <p className="font-medium">{consultant.name || "Unnamed"}</p>
-                      <p className="text-sm text-zinc-500">{consultant.email}</p>
+                      <p className="font-medium">
+                        {consultant.name || "Unnamed"}
+                      </p>
+                      <p className="text-sm text-zinc-500">
+                        {consultant.email}
+                      </p>
                       <div className="flex items-center gap-2 mt-1 flex-wrap">
                         {consultant.domain && (
                           <Badge variant="outline" className="text-xs">

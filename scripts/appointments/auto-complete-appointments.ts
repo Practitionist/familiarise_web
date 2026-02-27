@@ -61,6 +61,9 @@ async function completeWebinars(): Promise<{
       status: { in: [WebinarStatus.SCHEDULED, WebinarStatus.IN_PROGRESS] },
       appointment: {
         slotsOfAppointment: {
+          some: {
+            endsAt: { lt: bufferTime },
+          },
           every: {
             endsAt: { lt: bufferTime },
           },
@@ -128,6 +131,13 @@ async function completeClasses(): Promise<{
     where: {
       status: { in: [ClassStatus.SCHEDULED, ClassStatus.IN_PROGRESS] },
       appointments: {
+        some: {
+          slotsOfAppointment: {
+            some: {
+              endsAt: { lt: bufferTime },
+            },
+          },
+        },
         every: {
           slotsOfAppointment: {
             every: {
@@ -207,6 +217,9 @@ async function completeConsultations(): Promise<{
       requestStatus: { in: [RequestStatus.APPROVED, RequestStatus.SCHEDULED] },
       appointment: {
         slotsOfAppointment: {
+          some: {
+            endsAt: { lt: bufferTime },
+          },
           every: {
             endsAt: { lt: bufferTime },
           },
@@ -276,6 +289,13 @@ async function completeSubscriptions(): Promise<{
     where: {
       requestStatus: { in: [RequestStatus.APPROVED, RequestStatus.SCHEDULED] },
       appointments: {
+        some: {
+          slotsOfAppointment: {
+            some: {
+              endsAt: { lt: bufferTime },
+            },
+          },
+        },
         every: {
           slotsOfAppointment: {
             every: {
@@ -357,6 +377,9 @@ async function completeTrials(): Promise<{
       status: TrialSessionStatus.SCHEDULED,
       appointment: {
         slotsOfAppointment: {
+          some: {
+            endsAt: { lt: bufferTime },
+          },
           every: {
             endsAt: { lt: bufferTime },
           },

@@ -38,14 +38,14 @@ International consultant payouts are handled through **Stripe Connect** using Ex
 
 ### Express Accounts (What We Use)
 
-| Aspect | Detail |
-|--------|--------|
-| Onboarding | Stripe handles everything via hosted UI |
-| Identity verification | Stripe verifies per-country requirements |
-| Tax forms | Stripe collects W-9, W-8BEN, etc. |
-| Bank details | Collected by Stripe directly |
-| Dashboard | Consultant gets limited Stripe Express dashboard |
-| Our responsibility | Create account, generate onboarding link, initiate transfers |
+| Aspect                | Detail                                                       |
+| --------------------- | ------------------------------------------------------------ |
+| Onboarding            | Stripe handles everything via hosted UI                      |
+| Identity verification | Stripe verifies per-country requirements                     |
+| Tax forms             | Stripe collects W-9, W-8BEN, etc.                            |
+| Bank details          | Collected by Stripe directly                                 |
+| Dashboard             | Consultant gets limited Stripe Express dashboard             |
+| Our responsibility    | Create account, generate onboarding link, initiate transfers |
 
 The consultant never needs to sign up for Stripe independently. We create an Express account for them and send an onboarding link.
 
@@ -108,11 +108,11 @@ Familiarise Server              Stripe                    Consultant
 +-------------------+
 ```
 
-| Status | Meaning | Can Receive Transfers |
-|--------|---------|----------------------|
-| `restricted` | Onboarding incomplete, action needed | No |
-| `pending` | Under Stripe review | No |
-| `enabled` | Fully operational | Yes |
+| Status       | Meaning                              | Can Receive Transfers |
+| ------------ | ------------------------------------ | --------------------- |
+| `restricted` | Onboarding incomplete, action needed | No                    |
+| `pending`    | Under Stripe review                  | No                    |
+| `enabled`    | Fully operational                    | Yes                   |
 
 ### Account Requirements Tracking
 
@@ -174,14 +174,14 @@ Webhooks confirm completion
 
 ### Settlement Times by Country
 
-| Country | Settlement |
-|---------|-----------|
-| USA | 2 business days |
-| UK | 3 business days |
-| EU (SEPA) | 4 business days |
-| Australia | 3 business days |
-| Canada | 2 business days |
-| Others | 5-7 business days |
+| Country   | Settlement        |
+| --------- | ----------------- |
+| USA       | 2 business days   |
+| UK        | 3 business days   |
+| EU (SEPA) | 4 business days   |
+| Australia | 3 business days   |
+| Canada    | 2 business days   |
+| Others    | 5-7 business days |
 
 ### Multi-Currency Transfers
 
@@ -209,13 +209,13 @@ Deposited in: Consultant's bank (local currency)
 
 ### Stripe Payout Status Mapping
 
-| Stripe Status | Internal Status | Description |
-|---------------|----------------|-------------|
-| `pending` | PENDING | Payout initiated, awaiting processing |
-| `in_transit` | PROCESSING | Funds being transferred to bank |
-| `paid` | COMPLETED | Funds deposited in bank |
-| `failed` | FAILED | Payout failed |
-| `canceled` | CANCELLED | Payout cancelled |
+| Stripe Status | Internal Status | Description                           |
+| ------------- | --------------- | ------------------------------------- |
+| `pending`     | PENDING         | Payout initiated, awaiting processing |
+| `in_transit`  | PROCESSING      | Funds being transferred to bank       |
+| `paid`        | COMPLETED       | Funds deposited in bank               |
+| `failed`      | FAILED          | Payout failed                         |
+| `canceled`    | CANCELLED       | Payout cancelled                      |
 
 ### Earnings Status Flow
 
@@ -252,15 +252,15 @@ Special states:
 
 ## Webhook Events
 
-| Event | When It Fires | What We Do |
-|-------|--------------|------------|
-| `payout.created` | Payout initiated | Log payout creation |
-| `payout.paid` | Funds in bank | Mark payout COMPLETED, earnings as PAID, notify consultant |
-| `payout.failed` | Payout failed | Mark payout FAILED, revert earnings to AVAILABLE, alert admin |
-| `payout.canceled` | Payout cancelled | Mark payout CANCELLED |
-| `account.updated` | Account status changed | Update consultant's account status, check requirements |
-| `transfer.created` | Transfer initiated | Log transfer, update payout to PROCESSING |
-| `transfer.reversed` | Transfer clawed back | Handle reversal, restore balance |
+| Event               | When It Fires          | What We Do                                                    |
+| ------------------- | ---------------------- | ------------------------------------------------------------- |
+| `payout.created`    | Payout initiated       | Log payout creation                                           |
+| `payout.paid`       | Funds in bank          | Mark payout COMPLETED, earnings as PAID, notify consultant    |
+| `payout.failed`     | Payout failed          | Mark payout FAILED, revert earnings to AVAILABLE, alert admin |
+| `payout.canceled`   | Payout cancelled       | Mark payout CANCELLED                                         |
+| `account.updated`   | Account status changed | Update consultant's account status, check requirements        |
+| `transfer.created`  | Transfer initiated     | Log transfer, update payout to PROCESSING                     |
+| `transfer.reversed` | Transfer clawed back   | Handle reversal, restore balance                              |
 
 **Source**: `app/api/webhooks/stripe/route.ts`
 
@@ -347,13 +347,13 @@ Impact:
 
 ## Source Files
 
-| File | Purpose |
-|------|---------|
-| `lib/payments/payouts/stripe-connect.ts` | StripeConnectService — accounts, transfers, payouts, balance |
-| `lib/payments/payouts/payout-service.ts` | Provider-agnostic orchestration — batch creation, approval, processing |
-| `lib/payments/payouts/constants.ts` | Hold periods, minimum amounts, fee percentages |
-| `lib/payments/payouts/earnings-service.ts` | Earnings calculation (flat 20% platform fee) |
-| `app/api/webhooks/stripe/route.ts` | Webhook handler for Connect events |
+| File                                       | Purpose                                                                |
+| ------------------------------------------ | ---------------------------------------------------------------------- |
+| `lib/payments/payouts/stripe-connect.ts`   | StripeConnectService — accounts, transfers, payouts, balance           |
+| `lib/payments/payouts/payout-service.ts`   | Provider-agnostic orchestration — batch creation, approval, processing |
+| `lib/payments/payouts/constants.ts`        | Hold periods, minimum amounts, fee percentages                         |
+| `lib/payments/payouts/earnings-service.ts` | Earnings calculation (flat 20% platform fee)                           |
+| `app/api/webhooks/stripe/route.ts`         | Webhook handler for Connect events                                     |
 
 ---
 

@@ -130,6 +130,7 @@ export interface EventConfig {
   durationInHours?: number; // For consultations/webinars (total duration)
   sessionDurationInHours?: number; // For subscriptions/classes (per session)
   callsPerWeek?: number; // For subscriptions/classes
+  totalSessions?: number; // Authoritative session count from subscription plan
   schedulingPeriodStartsAt?: Date; // For subscriptions/classes
   schedulingPeriodEndsAt?: Date; // For subscriptions/classes
 }

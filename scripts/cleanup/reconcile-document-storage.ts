@@ -275,6 +275,43 @@ export async function reconcileDocumentStorage(): Promise<DocumentReconciliation
     };
   }
 
+  // Probe storage health before proceeding — if Supabase Storage is transiently
+  // unreachable (e.g. during migration), the reconciliation would falsely mark
+  // valid files as orphaned and delete them.
+  try {
+    const { error: probeError } = await supabase.storage
+      .from("documents")
+      .list("", { limit: 1 });
+    if (probeError) {
+      const msg = `Storage health probe failed: ${probeError.message}. Aborting to prevent false deletions.`;
+      console.warn(`⚠️ ${msg}`);
+      errors.push(msg);
+      return {
+        success: false,
+        orphanedFilesFound,
+        orphanedFilesDeleted,
+        missingFilesFound,
+        missingFilesMarked,
+        errors,
+        timestamp: new Date().toISOString(),
+      };
+    }
+    console.log("   ✅ Storage health probe passed");
+  } catch (probeErr) {
+    const msg = `Storage unreachable: ${probeErr instanceof Error ? probeErr.message : String(probeErr)}. Aborting to prevent false deletions.`;
+    console.warn(`⚠️ ${msg}`);
+    errors.push(msg);
+    return {
+      success: false,
+      orphanedFilesFound,
+      orphanedFilesDeleted,
+      missingFilesFound,
+      missingFilesMarked,
+      errors,
+      timestamp: new Date().toISOString(),
+    };
+  }
+
   try {
     // Find orphaned files in documents bucket
     const orphanedDocuments = await findOrphanedDocuments(supabase);

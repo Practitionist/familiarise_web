@@ -15,12 +15,14 @@ interface StripeCheckoutProps {
   checkoutData: CheckoutInput;
   onPaymentSuccess: (response: any) => void;
   onPaymentError: (error: any) => void;
+  disabled?: boolean;
 }
 
 export default function StripeCheckout({
   checkoutData,
   onPaymentSuccess,
   onPaymentError,
+  disabled,
 }: StripeCheckoutProps) {
   const { toast } = useToast();
   const [isProcessing, setIsProcessing] = useState(false);
@@ -141,7 +143,7 @@ export default function StripeCheckout({
   };
 
   return (
-    <Button onClick={handleCheckout} disabled={isProcessing}>
+    <Button onClick={handleCheckout} disabled={isProcessing || disabled}>
       {isProcessing ? "Processing..." : "Pay with Stripe"}
     </Button>
   );

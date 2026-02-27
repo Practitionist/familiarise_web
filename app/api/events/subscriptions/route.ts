@@ -1,14 +1,24 @@
 import prisma from "@/lib/prisma";
-import { Prisma, RequestStatus, AppointmentsType } from "@prisma/client";
+import { Prisma, RequestStatus } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
-import { addWeeks, addMonths, setHours, setMinutes } from "date-fns";
+import { addMonths } from "date-fns";
 import {
   notifySubscriptionStarted,
   notifySubscriptionCancelled,
 } from "@/lib/novu";
 import { UpdateSubscriptionStatusSchema } from "@/schemas/subscriptions";
+import {
+  requireApiAuth,
+  isPrivileged,
+  forbiddenResponse,
+} from "@/lib/auth-helpers";
 
 export async function GET(request: NextRequest) {
+  // Require authentication
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const { session } = authResult;
+
   const { searchParams } = new URL(request.url);
   const consultantProfileId = searchParams.get("consultantProfileId");
   const consulteeProfileId = searchParams.get("consulteeProfileId");
@@ -19,14 +29,33 @@ export async function GET(request: NextRequest) {
   try {
     const whereClause: Prisma.SubscriptionWhereInput = {};
 
-    if (consultantProfileId) {
-      whereClause.subscriptionPlan = {
-        consultantProfileId,
-      };
-    }
+    // Authorization: filter by ownership for non-privileged users
+    if (!isPrivileged(session.user.role)) {
+      if (session.user.role === "CONSULTANT") {
+        // Consultants can only see their own subscriptions
+        whereClause.subscriptionPlan = {
+          consultantProfile: {
+            id: session.user.consultantProfileId,
+          },
+        };
+      } else if (session.user.role === "CONSULTEE") {
+        // Consultees can only see their own subscriptions
+        whereClause.requestedById = session.user.consulteeProfileId;
+      } else {
+        // Unknown role - deny access
+        return forbiddenResponse("Access denied");
+      }
+    } else {
+      // Privileged users can filter by any profile
+      if (consultantProfileId) {
+        whereClause.subscriptionPlan = {
+          consultantProfileId,
+        };
+      }
 
-    if (consulteeProfileId) {
-      whereClause.requestedById = consulteeProfileId;
+      if (consulteeProfileId) {
+        whereClause.requestedById = consulteeProfileId;
+      }
     }
 
     if (status) {
@@ -101,6 +130,11 @@ export async function GET(request: NextRequest) {
 
 export async function PATCH(request: NextRequest) {
   try {
+    // Require authentication
+    const authResult = await requireApiAuth();
+    if (authResult.error) return authResult.error;
+    const { session } = authResult;
+
     const body = await request.json();
     const result = UpdateSubscriptionStatusSchema.safeParse(body);
     if (!result.success) {
@@ -153,6 +187,18 @@ export async function PATCH(request: NextRequest) {
       );
     }
 
+    // Check authorization: must be a participant or privileged
+    const isConsultant =
+      existingSubscription.subscriptionPlan?.consultantProfile?.id ===
+      session.user.consultantProfileId;
+    const isConsultee =
+      existingSubscription.requestedById === session.user.consulteeProfileId;
+    if (!isPrivileged(session.user.role) && !isConsultant && !isConsultee) {
+      return forbiddenResponse(
+        "You can only modify subscriptions you are a participant in",
+      );
+    }
+
     const startDate = new Date();
     const endDate = addMonths(
       startDate,
@@ -196,10 +242,10 @@ export async function PATCH(request: NextRequest) {
         },
       });
 
-      // If approved, create appointments in batches
+      // If approved, notify consultee
+      // Note: Appointment slots are created through SlotAllocationService during checkout,
+      // not here. This handler only manages status transitions and notifications.
       if (status === RequestStatus.APPROVED) {
-        await createAppointmentsForSubscription(subscription);
-
         // Fire-and-forget: notify consultee that subscription started
         const consulteeUserId = subscription.requestedBy?.user?.id;
         if (consulteeUserId) {
@@ -254,100 +300,4 @@ export async function PATCH(request: NextRequest) {
       { status: 500 },
     );
   }
-}
-
-function addHours(date: Date, hours: number): Date {
-  return new Date(date.getTime() + hours * 60 * 60 * 1000);
-}
-
-async function createAppointmentsForSubscription(subscription: any) {
-  const { subscriptionPlan, requestedBy } = subscription;
-
-  if (!subscriptionPlan?.durationInMonths || !subscriptionPlan?.callsPerWeek) {
-    console.error("Missing subscription plan details:", subscriptionPlan);
-    throw new Error("Invalid subscription plan details");
-  }
-
-  if (
-    !requestedBy?.user?.id ||
-    !subscriptionPlan?.consultantProfile?.user?.id
-  ) {
-    console.error("Missing user information:", {
-      requestedBy,
-      consultantProfile: subscriptionPlan.consultantProfile,
-    });
-    throw new Error("Missing user information");
-  }
-
-  const startDate = subscription.startDate || new Date();
-  const endDate =
-    subscription.endDate ||
-    addMonths(startDate, subscriptionPlan.durationInMonths);
-  const appointments = [];
-
-  // Create appointments for each week
-  let currentDate = startDate;
-  const batchSize = 10; // Process 10 appointments at a time
-  let batch = [];
-
-  while (currentDate < endDate) {
-    // Create callsPerWeek appointments for this week
-    for (let i = 0; i < subscriptionPlan.callsPerWeek; i++) {
-      // Set a default time (e.g., 10 AM) for each appointment
-      const appointmentDate = setHours(setMinutes(currentDate, 0), 10);
-
-      batch.push({
-        appointmentType: AppointmentsType.SUBSCRIPTION,
-        subscription: {
-          connect: { id: subscription.id },
-        },
-        slotsOfAppointment: {
-          create: {
-            startsAt: appointmentDate,
-            endsAt: addHours(appointmentDate, 1),
-            isTentative: false,
-            user: {
-              connect: [
-                { id: requestedBy.user.id },
-                { id: subscriptionPlan.consultantProfile.user.id },
-              ],
-            },
-          },
-        },
-      });
-
-      // When batch is full or we're at the last appointment, create them
-      if (
-        batch.length === batchSize ||
-        (currentDate >= endDate && i === subscriptionPlan.callsPerWeek - 1)
-      ) {
-        try {
-          const createdAppointments = await prisma.$transaction(
-            batch.map((appointmentData) =>
-              prisma.appointment.create({
-                data: appointmentData,
-                include: {
-                  slotsOfAppointment: {
-                    include: {
-                      user: true,
-                    },
-                  },
-                },
-              }),
-            ),
-          );
-          appointments.push(...createdAppointments);
-          batch = []; // Clear the batch
-        } catch (error) {
-          console.error(`Error creating appointments batch:`, error);
-          throw error;
-        }
-      }
-    }
-
-    // Move to next week
-    currentDate = addWeeks(currentDate, 1);
-  }
-
-  return appointments;
 }

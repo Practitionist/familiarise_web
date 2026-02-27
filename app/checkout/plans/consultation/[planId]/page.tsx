@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
+import { useMaintenanceGuard } from "@/hooks/useMaintenanceGuard";
 import { useToast } from "@/hooks/use-toast";
 import { fetchReviews } from "@/lib/user";
 import {
@@ -77,6 +78,10 @@ export default function ConsultationCheckoutPage({
   const [isLoadingCredits, setIsLoadingCredits] = useState(true);
 
   const { toast } = useToast();
+  const {
+    isBlocked: isMaintenanceBlocked,
+    blockReason: maintenanceBlockReason,
+  } = useMaintenanceGuard();
 
   // Apply discount code
   const handleApplyDiscount = async (code?: string) => {
@@ -130,7 +135,9 @@ export default function ConsultationCheckoutPage({
         const response = await fetch("/api/referrals/credits/available");
         if (response.ok) {
           const data = await response.json();
-          setAvailableCredits(Math.floor((data.data.totalAvailable || 0) / 100));
+          setAvailableCredits(
+            Math.floor((data.data.totalAvailable || 0) / 100),
+          );
         }
       } catch (error) {
         console.error("Error fetching referral credits:", error);
@@ -237,10 +244,18 @@ export default function ConsultationCheckoutPage({
   };
 
   const handleCheckout = useCallback(
-    async (
-      gateway: "STRIPE" | "RAZORPAY" | "LEMON_SQUEEZY" | "XFLOW",
-      isMockPayment: boolean = false,
-    ) => {
+    async (gateway: "STRIPE" | "RAZORPAY", isMockPayment: boolean = false) => {
+      // Block checkout during maintenance mode
+      if (isMaintenanceBlocked) {
+        toast({
+          title: "Checkout unavailable",
+          description:
+            maintenanceBlockReason ?? "Service temporarily unavailable",
+          variant: "destructive",
+        });
+        return;
+      }
+
       // Prevent double-clicks and multiple simultaneous requests
       if (isCheckoutProcessing) {
         return;
@@ -255,15 +270,12 @@ export default function ConsultationCheckoutPage({
         const searchParamsValidation =
           consultationSearchParamsSchema.safeParse(resolvedSearchParams);
         if (!searchParamsValidation.success) {
-          const issues = searchParamsValidation.error.issues;
-          const missingFields = issues
-            .map((issue) => {
-              const fieldName = issue.path[0] || "unknown field";
-              return `${fieldName}: ${issue.message}`;
-            })
-            .join(", ");
+          console.warn(
+            "[Checkout] Search params validation failed:",
+            searchParamsValidation.error.flatten().fieldErrors,
+          );
           throw new Error(
-            `Missing required booking information: ${missingFields}. Please select a time slot before proceeding.`,
+            "Please select a time slot from the consultant's availability page before proceeding to checkout.",
           );
         }
 
@@ -349,10 +361,7 @@ export default function ConsultationCheckoutPage({
                 // This case shouldn't be reached since Razorpay has its own component
                 break;
 
-              case "LEMON_SQUEEZY":
-              case "XFLOW":
-                window.location.href = data.paymentIntent.client_secret; // This would be the checkout URL for these gateways
-                break;
+              // TODO: Add Lemon Squeezy and XFlow cases when webhook handlers are implemented
             }
           }, 1000);
         }
@@ -379,6 +388,8 @@ export default function ConsultationCheckoutPage({
       resolvedSearchParams,
       toast,
       isCheckoutProcessing,
+      isMaintenanceBlocked,
+      maintenanceBlockReason,
       appliedDiscount,
       useReferralCredits,
     ],
@@ -392,15 +403,13 @@ export default function ConsultationCheckoutPage({
         const searchParamsValidation =
           consultationSearchParamsSchema.safeParse(resolvedSearchParams);
         if (!searchParamsValidation.success) {
-          const issues = searchParamsValidation.error.issues;
-          const missingFields = issues
-            .map((issue) => {
-              const fieldName = issue.path[0] || "unknown field";
-              return `${fieldName}: ${issue.message}`;
-            })
-            .join(", ");
+          // Log technical details for developers
+          console.warn(
+            "[Checkout] Search params validation failed:",
+            searchParamsValidation.error.flatten().fieldErrors,
+          );
           throw new Error(
-            `Missing required booking information: ${missingFields}. Please select a time slot from the consultant's availability page before proceeding to checkout.`,
+            "Please select a time slot from the consultant's availability page before proceeding to checkout.",
           );
         }
 
@@ -423,20 +432,12 @@ export default function ConsultationCheckoutPage({
         const reviewsData = await fetchReviews(data.data.consultantProfile.id);
         setReviews(reviewsData);
       } catch (error) {
-        console.error("Error fetching event data:", error);
-        let errorMessage = "An unexpected error occurred. Please try again.";
-
-        if (error instanceof Error) {
-          if (error.message.includes("Missing required fields")) {
-            errorMessage =
-              error.message +
-              ". Please ensure you have provided all necessary information.";
-          } else {
-            errorMessage = error.message;
-          }
-        }
-
-        setError(errorMessage);
+        console.error("[Checkout] Error fetching event data:", error);
+        setError(
+          error instanceof Error
+            ? error.message
+            : "An unexpected error occurred. Please try again.",
+        );
       } finally {
         setIsLoading(false);
       }
@@ -471,7 +472,12 @@ export default function ConsultationCheckoutPage({
       discountAmount,
       creditsApplied: useReferralCredits ? availableCredits : 0,
     });
-  }, [eventData?.data?.price, appliedDiscount, useReferralCredits, availableCredits]);
+  }, [
+    eventData?.data?.price,
+    appliedDiscount,
+    useReferralCredits,
+    availableCredits,
+  ]);
 
   if (isLoading) {
     return (
@@ -483,17 +489,34 @@ export default function ConsultationCheckoutPage({
 
   if (error) {
     return (
-      <div className="flex items-center justify-center h-screen bg-zinc-50">
+      <div className="col-span-full flex items-center justify-center min-h-screen bg-zinc-50">
         <div
-          className="bg-zinc-900 border border-zinc-800 text-white p-6 max-w-lg mx-auto text-center rounded-xl shadow-xl"
+          className="bg-zinc-900 border border-zinc-800 text-white p-8 max-w-md w-full mx-4 text-center rounded-xl shadow-xl"
           role="alert"
         >
-          <p className="font-bold text-lg mb-2">Oops! Something went wrong</p>
-          <p className="text-zinc-400">{error}</p>
-          <p className="mt-3 text-zinc-500 text-sm">
-            Please check your selection and try again. If the problem persists,
-            contact support.
-          </p>
+          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-zinc-800">
+            <svg
+              className="h-6 w-6 text-zinc-400"
+              fill="none"
+              viewBox="0 0 24 24"
+              strokeWidth={1.5}
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z"
+              />
+            </svg>
+          </div>
+          <p className="font-semibold text-lg mb-2">Unable to load checkout</p>
+          <p className="text-zinc-400 text-sm">{error}</p>
+          <button
+            onClick={() => window.history.back()}
+            className="mt-5 inline-flex items-center rounded-lg bg-white px-4 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-100 transition-colors"
+          >
+            Go back
+          </button>
         </div>
       </div>
     );
@@ -643,7 +666,9 @@ export default function ConsultationCheckoutPage({
         <div className="grid gap-4">
           <div className="font-semibold">Referral Credits</div>
           {isLoadingCredits ? (
-            <div className="text-sm text-muted-foreground">Loading credits...</div>
+            <div className="text-sm text-muted-foreground">
+              Loading credits...
+            </div>
           ) : availableCredits > 0 ? (
             <div className="flex items-center justify-between bg-blue-50 p-3 rounded-lg border border-blue-200">
               <div>
@@ -749,18 +774,7 @@ export default function ConsultationCheckoutPage({
               gateway: "RAZORPAY" as const,
               isActive: true,
             },
-            {
-              name: "Lemon Squeezy",
-              description: "Global payments in USD (Coming Soon)",
-              gateway: "LEMON_SQUEEZY" as const,
-              isActive: false,
-            },
-            {
-              name: "Xflow",
-              description: "Secure payments in USD (Coming Soon)",
-              gateway: "XFLOW" as const,
-              isActive: false,
-            },
+            // TODO: Add Lemon Squeezy and XFlow when webhook appointment creation is implemented
           ].map((gateway) => (
             <Card key={gateway.name} className="border-zinc-200">
               <CardHeader>
@@ -825,12 +839,13 @@ export default function ConsultationCheckoutPage({
                             });
                             window.location.href = "/dashboard";
                           }}
+                          disabled={isMaintenanceBlocked}
                           onPaymentError={(error: { description: string }) => {
                             toast({
                               title: "Payment Failed",
                               description:
                                 error.description ||
-                                "An unknown error occurred",
+                                "Something went wrong while processing your payment. Please try again.",
                               variant: "destructive",
                             });
                           }}
@@ -878,13 +893,14 @@ export default function ConsultationCheckoutPage({
                             });
                             window.location.href = "/dashboard";
                           }}
+                          disabled={isMaintenanceBlocked}
                           onPaymentError={(error: any) => {
                             toast({
                               title: "Payment Failed",
                               description:
                                 error.message ||
                                 error.description ||
-                                "An unknown error occurred",
+                                "Something went wrong while processing your payment. Please try again.",
                               variant: "destructive",
                             });
                           }}
@@ -894,7 +910,7 @@ export default function ConsultationCheckoutPage({
                       <Button
                         variant="secondary"
                         onClick={() => handleCheckout(gateway.gateway, true)}
-                        disabled={isCheckoutProcessing}
+                        disabled={isCheckoutProcessing || isMaintenanceBlocked}
                       >
                         {isCheckoutProcessing &&
                         processingGateway === `${gateway.gateway}-mock` ? (

@@ -10,6 +10,16 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -135,6 +145,10 @@ export function EventCard({
   // Cancel confirmation dialog state
   const [showCancelDialog, setShowCancelDialog] = React.useState(false);
 
+  // Reschedule confirmation dialog state (for non-subscription types)
+  const [showConfirmReschedule, setShowConfirmReschedule] =
+    React.useState(false);
+
   // Get appointment status and type for issue filtering
   const appointmentStatus: AppointmentStatus =
     status?.toLowerCase() === "completed" ? "COMPLETED" : "UPCOMING";
@@ -235,8 +249,8 @@ export function EventCard({
       setSelectedSlotIds([]);
       setShowRescheduleDialog(true);
     } else {
-      // For consultations or single-session subscriptions, reschedule directly
-      handleReschedule();
+      // For consultations or single-session subscriptions, show confirmation first
+      setShowConfirmReschedule(true);
     }
   };
 
@@ -490,10 +504,16 @@ export function EventCard({
             {collaborators.slice(0, 2).map((collab, idx) => (
               <Avatar
                 key={idx}
-                className={cn("h-8 w-8 ring-2 ring-white", idx === 0 ? "z-[5]" : "z-0")}
+                className={cn(
+                  "h-8 w-8 ring-2 ring-white",
+                  idx === 0 ? "z-[5]" : "z-0",
+                )}
                 title={`${collab.name} (${collab.role})`}
               >
-                <AvatarImage alt={collab.name} src={collab.image || undefined} />
+                <AvatarImage
+                  alt={collab.name}
+                  src={collab.image || undefined}
+                />
                 <AvatarFallback className="bg-purple-100 text-purple-700 text-[10px] font-semibold">
                   {collab.name
                     .split(" ")
@@ -519,7 +539,9 @@ export function EventCard({
             {collaborators.length > 0 ? (
               <p
                 className="text-xs text-zinc-500 line-clamp-1"
-                title={[consultant, ...collaborators.map((c) => c.name)].join(", ")}
+                title={[consultant, ...collaborators.map((c) => c.name)].join(
+                  ", ",
+                )}
               >
                 {consultant}
                 {collaborators.length === 1
@@ -622,7 +644,8 @@ export function EventCard({
                 </AccordionContent>
               </AccordionItem>
             </Accordion>
-          ) : type === "Consultation" && rawSlots.length > 0 ? (
+          ) : (type === "Consultation" || type === "Webinar") &&
+            rawSlots.length > 0 ? (
             <div className="bg-zinc-50 rounded-lg p-3 border border-zinc-100">
               <div className="flex items-center gap-2 text-xs text-zinc-500 mb-1.5">
                 <Calendar className="h-3.5 w-3.5" />
@@ -633,18 +656,22 @@ export function EventCard({
               </div>
               <div className="text-sm text-zinc-500">
                 {formatSlotTime(rawSlots[0].startsAt)} -{" "}
-                {formatSlotTime(rawSlots[0].endsAt)}
+                {formatSlotTime(rawSlots[rawSlots.length - 1].endsAt)}
               </div>
             </div>
-          ) : type !== "Webinar" ? (
+          ) : (
             <div className="bg-zinc-50 rounded-lg p-3 border border-zinc-100">
               <div className="flex items-center gap-2 text-xs text-zinc-500 mb-1">
                 <Clock className="h-3.5 w-3.5" />
-                <span>Next Session</span>
+                <span>
+                  {type === "Webinar" ? "Scheduled Time" : "Next Session"}
+                </span>
               </div>
-              <div className="text-sm text-zinc-700">{date}</div>
+              <div className="text-sm text-zinc-700">
+                {date || "No slots available"}
+              </div>
             </div>
-          ) : null}
+          )}
         </div>
 
         {/* Document Upload - Always render for consistency, disabled when inactive */}
@@ -885,8 +912,8 @@ export function EventCard({
                     Reschedule Entire Subscription
                   </div>
                   <p className="text-xs text-zinc-500 mt-1">
-                    All {groupedSessions.length} sessions will be released. You&apos;ll
-                    need to select new times for all sessions.
+                    All {groupedSessions.length} sessions will be released.
+                    You&apos;ll need to select new times for all sessions.
                   </p>
                 </Label>
               </div>
@@ -895,115 +922,115 @@ export function EventCard({
             {/* Session Selector - shown when "individual" or "multiple" is selected */}
             {(rescheduleType === "individual" ||
               rescheduleType === "multiple") && (
-                <div className="mt-4 space-y-2">
-                  <Label className="text-sm font-medium text-zinc-700">
-                    {rescheduleType === "individual"
-                      ? "Select the session to reschedule:"
-                      : "Select sessions to reschedule:"}
-                  </Label>
-                  <div className="max-h-48 overflow-y-auto space-y-2 rounded-lg border border-zinc-200 p-2">
-                    {sessionsWithDynamicProps.map((session, sessionIndex) => {
-                      // Get all slot IDs for this session
-                      const sessionSlotIds = session.slots.map((s) => s.id);
-                      // Session is selected if ALL its slots are in selectedSlotIds
-                      const isSelected = sessionSlotIds.every((id) =>
-                        selectedSlotIds.includes(id),
-                      );
+              <div className="mt-4 space-y-2">
+                <Label className="text-sm font-medium text-zinc-700">
+                  {rescheduleType === "individual"
+                    ? "Select the session to reschedule:"
+                    : "Select sessions to reschedule:"}
+                </Label>
+                <div className="max-h-48 overflow-y-auto space-y-2 rounded-lg border border-zinc-200 p-2">
+                  {sessionsWithDynamicProps.map((session, sessionIndex) => {
+                    // Get all slot IDs for this session
+                    const sessionSlotIds = session.slots.map((s) => s.id);
+                    // Session is selected if ALL its slots are in selectedSlotIds
+                    const isSelected = sessionSlotIds.every((id) =>
+                      selectedSlotIds.includes(id),
+                    );
 
-                      const handleSessionClick = () => {
-                        if (session.isWithin24Hours) return;
+                    const handleSessionClick = () => {
+                      if (session.isWithin24Hours) return;
 
-                        if (rescheduleType === "individual") {
-                          // Single select mode - select ALL slots in this session
-                          setSelectedSlotIds(sessionSlotIds);
+                      if (rescheduleType === "individual") {
+                        // Single select mode - select ALL slots in this session
+                        setSelectedSlotIds(sessionSlotIds);
+                      } else {
+                        // Multi-select mode - toggle ALL slots in this session
+                        if (isSelected) {
+                          // Deselect all slots in this session
+                          setSelectedSlotIds((prev) =>
+                            prev.filter((id) => !sessionSlotIds.includes(id)),
+                          );
                         } else {
-                          // Multi-select mode - toggle ALL slots in this session
-                          if (isSelected) {
-                            // Deselect all slots in this session
-                            setSelectedSlotIds((prev) =>
-                              prev.filter((id) => !sessionSlotIds.includes(id)),
-                            );
-                          } else {
-                            // Select all slots in this session
-                            setSelectedSlotIds((prev) => {
-                              const combined = [...prev, ...sessionSlotIds];
-                              return Array.from(new Set(combined));
-                            });
-                          }
+                          // Select all slots in this session
+                          setSelectedSlotIds((prev) => {
+                            const combined = [...prev, ...sessionSlotIds];
+                            return Array.from(new Set(combined));
+                          });
                         }
-                      };
+                      }
+                    };
 
-                      return (
-                        <button
-                          key={`session-${sessionIndex}`}
-                          type="button"
-                          onClick={handleSessionClick}
-                          disabled={session.isWithin24Hours}
-                          className={cn(
-                            "w-full flex items-center justify-between p-2.5 rounded-md text-left transition-colors",
-                            isSelected
-                              ? "bg-zinc-900 text-white"
-                              : session.isWithin24Hours
-                                ? "bg-zinc-100 text-zinc-400 cursor-not-allowed"
-                                : "bg-zinc-50 hover:bg-zinc-100 text-zinc-700",
+                    return (
+                      <button
+                        key={`session-${sessionIndex}`}
+                        type="button"
+                        onClick={handleSessionClick}
+                        disabled={session.isWithin24Hours}
+                        className={cn(
+                          "w-full flex items-center justify-between p-2.5 rounded-md text-left transition-colors",
+                          isSelected
+                            ? "bg-zinc-900 text-white"
+                            : session.isWithin24Hours
+                              ? "bg-zinc-100 text-zinc-400 cursor-not-allowed"
+                              : "bg-zinc-50 hover:bg-zinc-100 text-zinc-700",
+                        )}
+                      >
+                        <div className="flex items-center gap-2">
+                          {/* Checkbox indicator for multi-select mode */}
+                          {rescheduleType === "multiple" && (
+                            <div
+                              className={cn(
+                                "w-4 h-4 rounded border flex items-center justify-center",
+                                isSelected
+                                  ? "bg-white border-white"
+                                  : session.isWithin24Hours
+                                    ? "border-zinc-300"
+                                    : "border-zinc-400",
+                              )}
+                            >
+                              {isSelected && (
+                                <Check className="h-3 w-3 text-zinc-900" />
+                              )}
+                            </div>
                           )}
-                        >
-                          <div className="flex items-center gap-2">
-                            {/* Checkbox indicator for multi-select mode */}
-                            {rescheduleType === "multiple" && (
-                              <div
-                                className={cn(
-                                  "w-4 h-4 rounded border flex items-center justify-center",
-                                  isSelected
-                                    ? "bg-white border-white"
-                                    : session.isWithin24Hours
-                                      ? "border-zinc-300"
-                                      : "border-zinc-400",
-                                )}
-                              >
-                                {isSelected && (
-                                  <Check className="h-3 w-3 text-zinc-900" />
-                                )}
-                              </div>
-                            )}
-                            <div>
-                              <div className="text-sm font-medium">
-                                {formatSlotDate(session.startTime)}
-                              </div>
-                              <div
-                                className={cn(
-                                  "text-xs",
-                                  isSelected ? "text-zinc-300" : "text-zinc-500",
-                                )}
-                              >
-                                {formatSlotTime(session.startTime)} -{" "}
-                                {formatSlotTime(session.endTime)}
-                              </div>
+                          <div>
+                            <div className="text-sm font-medium">
+                              {formatSlotDate(session.startTime)}
+                            </div>
+                            <div
+                              className={cn(
+                                "text-xs",
+                                isSelected ? "text-zinc-300" : "text-zinc-500",
+                              )}
+                            >
+                              {formatSlotTime(session.startTime)} -{" "}
+                              {formatSlotTime(session.endTime)}
                             </div>
                           </div>
-                          {session.isWithin24Hours && (
-                            <span className="text-xs bg-orange-100 text-orange-600 px-2 py-0.5 rounded">
-                              Within 24h
-                            </span>
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  {sessionsWithDynamicProps.length === 0 && (
-                    <p className="text-sm text-zinc-500 text-center py-4">
-                      No confirmed sessions available to reschedule.
+                        </div>
+                        {session.isWithin24Hours && (
+                          <span className="text-xs bg-orange-100 text-orange-600 px-2 py-0.5 rounded">
+                            Within 24h
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+                {sessionsWithDynamicProps.length === 0 && (
+                  <p className="text-sm text-zinc-500 text-center py-4">
+                    No confirmed sessions available to reschedule.
+                  </p>
+                )}
+                {rescheduleType === "multiple" &&
+                  selectedSlotIds.length > 0 && (
+                    <p className="text-sm text-zinc-600 font-medium">
+                      {selectedSessionCount} session
+                      {selectedSessionCount > 1 ? "s" : ""} selected
                     </p>
                   )}
-                  {rescheduleType === "multiple" &&
-                    selectedSlotIds.length > 0 && (
-                      <p className="text-sm text-zinc-600 font-medium">
-                        {selectedSessionCount} session
-                        {selectedSessionCount > 1 ? "s" : ""} selected
-                      </p>
-                    )}
-                </div>
-              )}
+              </div>
+            )}
 
             {/* Warning notice */}
             <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
@@ -1061,6 +1088,58 @@ export function EventCard({
           }}
         />
       )}
+
+      {/* Reschedule Confirmation Dialog (non-subscription) */}
+      <AlertDialog
+        open={showConfirmReschedule}
+        onOpenChange={(open) => !open && setShowConfirmReschedule(false)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <CalendarClock className="h-5 w-5 text-zinc-600" />
+              Reschedule {type}?
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2">
+                <p>
+                  Are you sure you want to reschedule{" "}
+                  <strong>&quot;{title}&quot;</strong> with{" "}
+                  <strong>{consultant}</strong>?
+                </p>
+                <p className="text-zinc-600">
+                  Your current time slot will be released and the{" "}
+                  {type === "Consultation"
+                    ? "consultation"
+                    : type?.toLowerCase()}{" "}
+                  status will revert to <strong>Pending</strong> until a new
+                  time is allocated.
+                </p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isLoading}>
+              Keep Current Time
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                setShowConfirmReschedule(false);
+                handleReschedule();
+              }}
+              disabled={isLoading}
+              className="bg-zinc-900 hover:bg-zinc-800"
+            >
+              {isLoading ? (
+                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+              ) : (
+                <CalendarClock className="h-4 w-4 mr-2" />
+              )}
+              Reschedule
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Cancel Confirmation Dialog */}
       <CancelConfirmationDialog

@@ -13,6 +13,7 @@ import {
   type ExpireStaleRequestsResult,
 } from "../../scripts/appointments/expire-stale-requests";
 import fs from "fs";
+import { abortIfMaintenance } from "../../lib/maintenance-cron";
 
 /**
  * Output results to GitHub Actions
@@ -52,6 +53,7 @@ function outputToGitHubActions(result: ExpireStaleRequestsResult): void {
  * Main entry point
  */
 async function main(): Promise<void> {
+  await abortIfMaintenance("expire-stale-requests");
   console.log("🕐 Starting stale request expiration job...");
   console.log(`Timestamp: ${new Date().toISOString()}`);
 

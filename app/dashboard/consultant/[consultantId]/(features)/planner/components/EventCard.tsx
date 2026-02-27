@@ -329,11 +329,13 @@ export function EventCard({
             {title}
           </h3>
           {collaboratorRole && (
-            <span className={`inline-block mt-1 text-xs font-medium px-2 py-0.5 rounded-full ${
-              isCollaborated
-                ? "bg-purple-50 text-purple-700"
-                : "bg-zinc-100 text-zinc-600"
-            }`}>
+            <span
+              className={`inline-block mt-1 text-xs font-medium px-2 py-0.5 rounded-full ${
+                isCollaborated
+                  ? "bg-purple-50 text-purple-700"
+                  : "bg-zinc-100 text-zinc-600"
+              }`}
+            >
               {formatCollaboratorRole(collaboratorRole)}
             </span>
           )}

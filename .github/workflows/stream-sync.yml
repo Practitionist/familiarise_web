@@ -2,8 +2,8 @@ name: Stream User Sync
 
 on:
   schedule:
-    # Run weekly on Sunday at 3 AM UTC (8:30 AM IST)
-    - cron: "0 3 * * 0"
+    # Runs at 03:30 UTC (9:00 AM IST) every day
+    - cron: "30 3 * * *"
   workflow_dispatch: # Allow manual triggering
 
 jobs:

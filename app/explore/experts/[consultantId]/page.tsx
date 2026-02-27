@@ -2,10 +2,7 @@
 
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
-import {
-  fetchConsultantDetails,
-  fetchReviews,
-} from "@/lib/user";
+import { fetchConsultantDetails, fetchReviews } from "@/lib/user";
 import { TConsultantProfile } from "@/types/consultant";
 import { TSlotTiming } from "@/types/slots";
 import { TUserWithProfessionalBackground } from "@/types/user";
