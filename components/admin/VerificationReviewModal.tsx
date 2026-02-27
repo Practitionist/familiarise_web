@@ -376,33 +376,34 @@ export function VerificationReviewModal({
           )}
 
           {/* Work Experience */}
-          {consultant.workExperiences && consultant.workExperiences.length > 0 && (
-            <Collapsible>
-              <CollapsibleTrigger className="flex items-center gap-2 text-sm font-medium w-full">
-                <Briefcase className="h-4 w-4" />
-                Work Experience ({consultant.workExperiences.length})
-                <ChevronDown className="h-4 w-4 ml-auto" />
-              </CollapsibleTrigger>
-              <CollapsibleContent className="mt-2 space-y-2">
-                {consultant.workExperiences.map((exp) => (
-                  <Card key={exp.id}>
-                    <CardContent className="p-3">
-                      <p className="font-medium">{exp.title}</p>
-                      <p className="text-sm text-zinc-500">{exp.company}</p>
-                      <p className="text-xs text-zinc-400">
-                        {new Date(exp.startDate).getFullYear()} -{" "}
-                        {exp.current
-                          ? "Present"
-                          : exp.endDate
-                            ? new Date(exp.endDate).getFullYear()
-                            : ""}
-                      </p>
-                    </CardContent>
-                  </Card>
-                ))}
-              </CollapsibleContent>
-            </Collapsible>
-          )}
+          {consultant.workExperiences &&
+            consultant.workExperiences.length > 0 && (
+              <Collapsible>
+                <CollapsibleTrigger className="flex items-center gap-2 text-sm font-medium w-full">
+                  <Briefcase className="h-4 w-4" />
+                  Work Experience ({consultant.workExperiences.length})
+                  <ChevronDown className="h-4 w-4 ml-auto" />
+                </CollapsibleTrigger>
+                <CollapsibleContent className="mt-2 space-y-2">
+                  {consultant.workExperiences.map((exp) => (
+                    <Card key={exp.id}>
+                      <CardContent className="p-3">
+                        <p className="font-medium">{exp.title}</p>
+                        <p className="text-sm text-zinc-500">{exp.company}</p>
+                        <p className="text-xs text-zinc-400">
+                          {new Date(exp.startDate).getFullYear()} -{" "}
+                          {exp.current
+                            ? "Present"
+                            : exp.endDate
+                              ? new Date(exp.endDate).getFullYear()
+                              : ""}
+                        </p>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </CollapsibleContent>
+              </Collapsible>
+            )}
 
           {/* Education */}
           {consultant.education && consultant.education.length > 0 && (
@@ -431,28 +432,30 @@ export function VerificationReviewModal({
           )}
 
           {/* Certifications */}
-          {consultant.certifications && consultant.certifications.length > 0 && (
-            <Collapsible>
-              <CollapsibleTrigger className="flex items-center gap-2 text-sm font-medium w-full">
-                <Award className="h-4 w-4" />
-                Certifications ({consultant.certifications.length})
-                <ChevronDown className="h-4 w-4 ml-auto" />
-              </CollapsibleTrigger>
-              <CollapsibleContent className="mt-2 space-y-2">
-                {consultant.certifications.map((cert) => (
-                  <Card key={cert.id}>
-                    <CardContent className="p-3">
-                      <p className="font-medium">{cert.name}</p>
-                      <p className="text-sm text-zinc-500">{cert.issuer}</p>
-                      <p className="text-xs text-zinc-400">
-                        Issued: {new Date(cert.issueDate).toLocaleDateString()}
-                      </p>
-                    </CardContent>
-                  </Card>
-                ))}
-              </CollapsibleContent>
-            </Collapsible>
-          )}
+          {consultant.certifications &&
+            consultant.certifications.length > 0 && (
+              <Collapsible>
+                <CollapsibleTrigger className="flex items-center gap-2 text-sm font-medium w-full">
+                  <Award className="h-4 w-4" />
+                  Certifications ({consultant.certifications.length})
+                  <ChevronDown className="h-4 w-4 ml-auto" />
+                </CollapsibleTrigger>
+                <CollapsibleContent className="mt-2 space-y-2">
+                  {consultant.certifications.map((cert) => (
+                    <Card key={cert.id}>
+                      <CardContent className="p-3">
+                        <p className="font-medium">{cert.name}</p>
+                        <p className="text-sm text-zinc-500">{cert.issuer}</p>
+                        <p className="text-xs text-zinc-400">
+                          Issued:{" "}
+                          {new Date(cert.issueDate).toLocaleDateString()}
+                        </p>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </CollapsibleContent>
+              </Collapsible>
+            )}
 
           <Separator />
 

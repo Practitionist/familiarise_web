@@ -555,9 +555,7 @@ export async function notifyCollaboratorRemoved(
 
 // Maintenance notifications (broadcast to all users)
 
-export async function notifyMaintenanceScheduled(
-  payload: MaintenancePayload,
-) {
+export async function notifyMaintenanceScheduled(payload: MaintenancePayload) {
   return triggerBroadcastWorkflow(
     NOVU_WORKFLOWS.MAINTENANCE_SCHEDULED,
     payload,
@@ -565,10 +563,7 @@ export async function notifyMaintenanceScheduled(
 }
 
 export async function notifyMaintenanceStarted(payload: MaintenancePayload) {
-  return triggerBroadcastWorkflow(
-    NOVU_WORKFLOWS.MAINTENANCE_STARTED,
-    payload,
-  );
+  return triggerBroadcastWorkflow(NOVU_WORKFLOWS.MAINTENANCE_STARTED, payload);
 }
 
 export async function notifyMaintenanceEnded(payload: MaintenancePayload) {

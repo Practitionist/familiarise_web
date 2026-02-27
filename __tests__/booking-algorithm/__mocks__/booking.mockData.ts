@@ -183,9 +183,7 @@ export function makeMockPrisma(
 
 // ─── Consultant Mock Data ───────────────────────────────────────────────────
 
-export function makeConsultantData(
-  overrides: Record<string, any> = {},
-): {
+export function makeConsultantData(overrides: Record<string, any> = {}): {
   userId: string;
   scheduleType: string;
   slotsOfAvailabilityWeekly: any[];

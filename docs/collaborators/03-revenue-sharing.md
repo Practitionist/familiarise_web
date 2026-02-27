@@ -8,12 +8,12 @@ When a service (webinar or class) has accepted collaborators, payments for that 
 
 ## Rules
 
-| Rule | Value | Enforcement |
-|------|-------|-------------|
-| Minimum host share | 10% | Validated at invite time: total collaborator shares ≤ 90% |
-| Maximum single collaborator share | 90% | By extension of the above rule |
-| Platform fee | 20% of each party's gross share | Applied independently per earning |
-| Host share calculation | 100% - sum(collaborator shares) | Automatic remainder |
+| Rule                              | Value                           | Enforcement                                               |
+| --------------------------------- | ------------------------------- | --------------------------------------------------------- |
+| Minimum host share                | 10%                             | Validated at invite time: total collaborator shares ≤ 90% |
+| Maximum single collaborator share | 90%                             | By extension of the above rule                            |
+| Platform fee                      | 20% of each party's gross share | Applied independently per earning                         |
+| Host share calculation            | 100% - sum(collaborator shares) | Automatic remainder                                       |
 
 ---
 
@@ -38,6 +38,7 @@ For a payment of amount P with N collaborators:
 ### Example
 
 **Setup**: Webinar priced at ₹1,000. Two collaborators accepted:
+
 - Co-Host A: 25% share
 - Moderator B: 15% share
 - Host gets remainder: 100% - 25% - 15% = 60%
@@ -72,18 +73,21 @@ function validateRevenueShares(
   planType: "webinar" | "class",
   planId: string,
   newSharePercentage: number,
-  excludeCollaboratorId?: string  // For updates
+  excludeCollaboratorId?: string, // For updates
 ): boolean {
   // 1. Get all active collaborators (PENDING + ACCEPTED, excluding removed/declined)
   const existing = getCollaborators(planType, planId)
-    .filter(c => c.status === "PENDING" || c.status === "ACCEPTED")
-    .filter(c => c.id !== excludeCollaboratorId);
+    .filter((c) => c.status === "PENDING" || c.status === "ACCEPTED")
+    .filter((c) => c.id !== excludeCollaboratorId);
 
   // 2. Sum existing shares
-  const existingTotal = existing.reduce((sum, c) => sum + c.revenueSharePercentage, 0);
+  const existingTotal = existing.reduce(
+    (sum, c) => sum + c.revenueSharePercentage,
+    0,
+  );
 
   // 3. Check: existing + new ≤ 90%
-  return (existingTotal + newSharePercentage) <= 90;
+  return existingTotal + newSharePercentage <= 90;
 }
 ```
 
@@ -97,13 +101,14 @@ function validateRevenueShares(
 function calculateRevenueSplit(
   planType: "webinar" | "class",
   planId: string,
-  totalAmount: number
+  totalAmount: number,
 ) {
   const collaborators = getAcceptedCollaborators(planType, planId);
-  const PLATFORM_FEE_RATE = 0.20;
+  const PLATFORM_FEE_RATE = 0.2;
 
   const totalCollabShare = collaborators.reduce(
-    (sum, c) => sum + c.revenueSharePercentage, 0
+    (sum, c) => sum + c.revenueSharePercentage,
+    0,
   );
   const ownerSharePct = 100 - totalCollabShare;
 
@@ -112,17 +117,26 @@ function calculateRevenueSplit(
     {
       role: "OWNER",
       sharePercentage: ownerSharePct,
-      grossAmount: Math.round(totalAmount * ownerSharePct / 100),
-      platformFee: Math.round(totalAmount * ownerSharePct / 100 * PLATFORM_FEE_RATE),
-      netAmount: Math.round(totalAmount * ownerSharePct / 100 * (1 - PLATFORM_FEE_RATE)),
+      grossAmount: Math.round((totalAmount * ownerSharePct) / 100),
+      platformFee: Math.round(
+        ((totalAmount * ownerSharePct) / 100) * PLATFORM_FEE_RATE,
+      ),
+      netAmount: Math.round(
+        ((totalAmount * ownerSharePct) / 100) * (1 - PLATFORM_FEE_RATE),
+      ),
     },
     // Collaborators
-    ...collaborators.map(c => ({
+    ...collaborators.map((c) => ({
       role: "COLLABORATOR",
       sharePercentage: c.revenueSharePercentage,
-      grossAmount: Math.round(totalAmount * c.revenueSharePercentage / 100),
-      platformFee: Math.round(totalAmount * c.revenueSharePercentage / 100 * PLATFORM_FEE_RATE),
-      netAmount: Math.round(totalAmount * c.revenueSharePercentage / 100 * (1 - PLATFORM_FEE_RATE)),
+      grossAmount: Math.round((totalAmount * c.revenueSharePercentage) / 100),
+      platformFee: Math.round(
+        ((totalAmount * c.revenueSharePercentage) / 100) * PLATFORM_FEE_RATE,
+      ),
+      netAmount: Math.round(
+        ((totalAmount * c.revenueSharePercentage) / 100) *
+          (1 - PLATFORM_FEE_RATE),
+      ),
     })),
   ];
 
@@ -158,6 +172,7 @@ Payment ──── 1:many ──── ConsultantEarnings[]
 The `@unique` constraint on `paymentId` was removed. This was the riskiest schema change because every location in the codebase that accessed `payment.earnings` (singular) needed to be updated to handle `payment.earnings[]` (array).
 
 **Affected files**:
+
 - `lib/payments/payouts/earnings-service.ts` — `refundEarnings()` now uses `findMany` + iterates
 - `scripts/refunds/cascade-refund-earnings.ts` — Array iteration
 - `scripts/disputes/handle-lost-disputes.ts` — Array iteration
@@ -195,12 +210,13 @@ Payout Batch Run:
 
 The consultant earnings dashboard now shows a "Role" column:
 
-| Date | Service | Role | Share | Gross | Fee | Net | Status |
-|------|---------|------|-------|-------|-----|-----|--------|
-| Feb 10 | React Webinar | Owner | 60% | ₹600 | ₹120 | ₹480 | Pending |
-| Feb 10 | React Webinar | Collaborator | 25% | ₹250 | ₹50 | ₹200 | Pending |
+| Date   | Service       | Role         | Share | Gross | Fee  | Net  | Status  |
+| ------ | ------------- | ------------ | ----- | ----- | ---- | ---- | ------- |
+| Feb 10 | React Webinar | Owner        | 60%   | ₹600  | ₹120 | ₹480 | Pending |
+| Feb 10 | React Webinar | Collaborator | 25%   | ₹250  | ₹50  | ₹200 | Pending |
 
 Role badges:
+
 - **Owner** — Zinc/gray badge
 - **Collaborator** — Purple badge with percentage (e.g. "Collaborator (25%)")
 
@@ -208,11 +224,11 @@ Role badges:
 
 ## Edge Cases
 
-| Scenario | Behavior |
-|----------|----------|
-| No collaborators accepted | Standard 1:1 earnings (role: OWNER, share: 100%) |
-| Collaborator removed after payment | Existing earnings for past payments remain; future payments use new split |
-| Collaborator declined after being pending | Share freed up, no earnings created |
-| Rounding errors | `Math.round()` applied to each share; total may differ by ±1 paise |
-| Free service (price = 0) | No earnings created for anyone |
-| Refund on collaborative service | All earnings (owner + collaborators) refunded |
+| Scenario                                  | Behavior                                                                  |
+| ----------------------------------------- | ------------------------------------------------------------------------- |
+| No collaborators accepted                 | Standard 1:1 earnings (role: OWNER, share: 100%)                          |
+| Collaborator removed after payment        | Existing earnings for past payments remain; future payments use new split |
+| Collaborator declined after being pending | Share freed up, no earnings created                                       |
+| Rounding errors                           | `Math.round()` applied to each share; total may differ by ±1 paise        |
+| Free service (price = 0)                  | No earnings created for anyone                                            |
+| Refund on collaborative service           | All earnings (owner + collaborators) refunded                             |

@@ -489,10 +489,7 @@ describe("Reschedule — Response shape", () => {
   it("should return multiple_sessions for multiple slotIds in subscription", async () => {
     const twoSlots = [
       makeSlot("slot-1", FUTURE_DATE),
-      makeSlot(
-        "slot-2",
-        new Date(FUTURE_DATE.getTime() + 30 * 60 * 1000),
-      ),
+      makeSlot("slot-2", new Date(FUTURE_DATE.getTime() + 30 * 60 * 1000)),
     ];
     const appointment = makeSubscriptionAppointment(twoSlots);
     const mockTx = makeMockTx(appointment);

@@ -803,4 +803,3 @@ async function generatePaymentLinkForSubscription(
     notes: subscription.requestNotes ?? undefined,
   });
 }
-

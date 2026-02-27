@@ -167,9 +167,7 @@ export default function ConsulteeReferralsPage({
                 <tr className="border-b border-zinc-100 text-zinc-500">
                   <th className="px-6 py-3 text-left font-medium">User</th>
                   <th className="px-6 py-3 text-left font-medium">Status</th>
-                  <th className="px-6 py-3 text-left font-medium">
-                    Signed Up
-                  </th>
+                  <th className="px-6 py-3 text-left font-medium">Signed Up</th>
                   <th className="px-6 py-3 text-right font-medium">Reward</th>
                 </tr>
               </thead>
@@ -221,9 +219,7 @@ export default function ConsulteeReferralsPage({
                 <tr className="border-b border-zinc-100 text-zinc-500">
                   <th className="px-6 py-3 text-left font-medium">Source</th>
                   <th className="px-6 py-3 text-left font-medium">Amount</th>
-                  <th className="px-6 py-3 text-left font-medium">
-                    Remaining
-                  </th>
+                  <th className="px-6 py-3 text-left font-medium">Remaining</th>
                   <th className="px-6 py-3 text-left font-medium">Expires</th>
                 </tr>
               </thead>
@@ -236,9 +232,7 @@ export default function ConsulteeReferralsPage({
                     <td className="px-6 py-3">
                       {credit.source.replace(/_/g, " ")}
                     </td>
-                    <td className="px-6 py-3">
-                      {formatAmount(credit.amount)}
-                    </td>
+                    <td className="px-6 py-3">{formatAmount(credit.amount)}</td>
                     <td className="px-6 py-3">
                       {formatAmount(credit.remainingAmount)}
                     </td>

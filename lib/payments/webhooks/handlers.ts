@@ -270,7 +270,8 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
   // Failures here are logged but do NOT roll back the payment.
   // The `sync-payment-earnings` and related background jobs serve as safety nets.
 
-  const { paymentId, appointmentId, userId, userName, amount, currency } = txResult;
+  const { paymentId, appointmentId, userId, userName, amount, currency } =
+    txResult;
 
   // --- Earnings creation ---
   try {
@@ -324,8 +325,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
           ?.consultantProfile ||
         paymentWithAppointment.appointment.webinar?.webinarPlan
           ?.consultantProfile ||
-        paymentWithAppointment.appointment.class?.classPlan
-          ?.consultantProfile;
+        paymentWithAppointment.appointment.class?.classPlan?.consultantProfile;
 
       if (consultantProfile) {
         const appointmentTypeMap: Record<string, AppointmentType> = {
@@ -344,10 +344,16 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
             ...paymentWithAppointment.appointment,
             consultantProfile: { id: consultantProfile.id },
             webinar: paymentWithAppointment.appointment.webinar
-              ? { webinarPlanId: paymentWithAppointment.appointment.webinar.webinarPlanId }
+              ? {
+                  webinarPlanId:
+                    paymentWithAppointment.appointment.webinar.webinarPlanId,
+                }
               : null,
             class: paymentWithAppointment.appointment.class
-              ? { classPlanId: paymentWithAppointment.appointment.class.classPlanId }
+              ? {
+                  classPlanId:
+                    paymentWithAppointment.appointment.class.classPlanId,
+                }
               : null,
           },
         };
@@ -452,10 +458,8 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
     });
 
     const consultantProfileData =
-      appointmentForNotif?.consultation?.consultationPlan
-        ?.consultantProfile ||
-      appointmentForNotif?.subscription?.subscriptionPlan
-        ?.consultantProfile ||
+      appointmentForNotif?.consultation?.consultationPlan?.consultantProfile ||
+      appointmentForNotif?.subscription?.subscriptionPlan?.consultantProfile ||
       appointmentForNotif?.webinar?.webinarPlan?.consultantProfile ||
       appointmentForNotif?.class?.classPlan?.consultantProfile;
 

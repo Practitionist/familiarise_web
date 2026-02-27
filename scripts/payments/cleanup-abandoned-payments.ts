@@ -246,7 +246,9 @@ export async function cleanupAbandonedPayments(): Promise<CleanupResult> {
             } catch (creditError) {
               console.warn(
                 `⚠️ Failed to restore credits for payment ${payment.id}:`,
-                creditError instanceof Error ? creditError.message : creditError,
+                creditError instanceof Error
+                  ? creditError.message
+                  : creditError,
               );
             }
           }

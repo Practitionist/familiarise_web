@@ -74,7 +74,14 @@ export function MaintenanceProvider({
   const dismiss = useCallback(() => setIsDismissed(true), []);
 
   const value = useMemo(
-    () => ({ phase, reason, eta, isDismissed, dismiss, refresh: checkMaintenance }),
+    () => ({
+      phase,
+      reason,
+      eta,
+      isDismissed,
+      dismiss,
+      refresh: checkMaintenance,
+    }),
     [phase, reason, eta, isDismissed, dismiss, checkMaintenance],
   );
 

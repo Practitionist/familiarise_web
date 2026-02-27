@@ -169,7 +169,9 @@ export async function POST(
         } else if (error.startsWith("[WEEKLY_LIMIT]")) {
           const message = error.replace("[WEEKLY_LIMIT] ", "");
           // Extract week and session count from structured message
-          const sessionsMatch = message.match(/has (\d+) sessions but max is (\d+)/);
+          const sessionsMatch = message.match(
+            /has (\d+) sessions but max is (\d+)/,
+          );
           const weekMatch = message.match(/Week of (.+?) has/);
           if (sessionsMatch && weekMatch) {
             result.weeklyDistributionErrors.push({

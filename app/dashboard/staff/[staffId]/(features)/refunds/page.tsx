@@ -93,8 +93,19 @@ export default function StaffRefundsPage() {
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
-  const { data: refundsData, isLoading: loading, refetch: refetchRefunds, error: refundsError } = useQuery<RefundListResponse>({
-    queryKey: ["staff-refunds", page, debouncedSearch, statusFilter, gatewayFilter],
+  const {
+    data: refundsData,
+    isLoading: loading,
+    refetch: refetchRefunds,
+    error: refundsError,
+  } = useQuery<RefundListResponse>({
+    queryKey: [
+      "staff-refunds",
+      page,
+      debouncedSearch,
+      statusFilter,
+      gatewayFilter,
+    ],
     queryFn: async () => {
       const params = new URLSearchParams();
       params.set("page", page.toString());
@@ -144,7 +155,11 @@ export default function StaffRefundsPage() {
             View and track refund requests
           </p>
         </div>
-        <Button variant="outline" onClick={() => refetchRefunds()} disabled={loading}>
+        <Button
+          variant="outline"
+          onClick={() => refetchRefunds()}
+          disabled={loading}
+        >
           <RefreshCw
             className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`}
           />

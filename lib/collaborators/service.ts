@@ -32,89 +32,92 @@ export async function inviteCollaborator(
 
   // FIX B1: Wrap validation + creation in a serializable transaction
   // to prevent concurrent invites from exceeding the 90% cap.
-  return prisma.$transaction(async (tx) => {
-    // Validate revenue share total <= 90% INSIDE transaction
-    const valid = await validateRevenueSharesTx(
-      tx,
-      planType,
-      planId,
-      revenueSharePercentage,
-    );
-    if (!valid) return null;
+  return prisma.$transaction(
+    async (tx) => {
+      // Validate revenue share total <= 90% INSIDE transaction
+      const valid = await validateRevenueSharesTx(
+        tx,
+        planType,
+        planId,
+        revenueSharePercentage,
+      );
+      if (!valid) return null;
 
-    // FIX #6: Check for ANY existing collaboration (including REMOVED/DECLINED).
-    // If REMOVED/DECLINED, re-activate instead of creating to respect unique constraint.
-    if (planType === "webinar") {
-      const existing = await tx.webinarCollaborator.findFirst({
-        where: { webinarPlanId: planId, consultantProfileId },
-      });
+      // FIX #6: Check for ANY existing collaboration (including REMOVED/DECLINED).
+      // If REMOVED/DECLINED, re-activate instead of creating to respect unique constraint.
+      if (planType === "webinar") {
+        const existing = await tx.webinarCollaborator.findFirst({
+          where: { webinarPlanId: planId, consultantProfileId },
+        });
 
-      if (existing) {
-        if (existing.status === "REMOVED" || existing.status === "DECLINED") {
-          // Re-activate with new parameters
-          return tx.webinarCollaborator.update({
-            where: { id: existing.id },
-            data: {
-              role: role as WebinarCollaboratorRole,
-              revenueSharePercentage,
-              status: "PENDING",
-              invitedById,
-              respondedAt: null,
-            },
-          });
+        if (existing) {
+          if (existing.status === "REMOVED" || existing.status === "DECLINED") {
+            // Re-activate with new parameters
+            return tx.webinarCollaborator.update({
+              where: { id: existing.id },
+              data: {
+                role: role as WebinarCollaboratorRole,
+                revenueSharePercentage,
+                status: "PENDING",
+                invitedById,
+                respondedAt: null,
+              },
+            });
+          }
+          // PENDING or ACCEPTED — already active
+          return null;
         }
-        // PENDING or ACCEPTED — already active
-        return null;
-      }
 
-      return tx.webinarCollaborator.create({
-        data: {
-          consultantProfileId,
-          webinarPlanId: planId,
-          role: role as WebinarCollaboratorRole,
-          revenueSharePercentage,
-          status: "PENDING",
-          invitedById,
-        },
-      });
-    } else {
-      const existing = await tx.classCollaborator.findFirst({
-        where: { classPlanId: planId, consultantProfileId },
-      });
+        return tx.webinarCollaborator.create({
+          data: {
+            consultantProfileId,
+            webinarPlanId: planId,
+            role: role as WebinarCollaboratorRole,
+            revenueSharePercentage,
+            status: "PENDING",
+            invitedById,
+          },
+        });
+      } else {
+        const existing = await tx.classCollaborator.findFirst({
+          where: { classPlanId: planId, consultantProfileId },
+        });
 
-      if (existing) {
-        if (existing.status === "REMOVED" || existing.status === "DECLINED") {
-          // Re-activate with new parameters
-          return tx.classCollaborator.update({
-            where: { id: existing.id },
-            data: {
-              role: role as ClassCollaboratorRole,
-              revenueSharePercentage,
-              status: "PENDING",
-              invitedById,
-              respondedAt: null,
-            },
-          });
+        if (existing) {
+          if (existing.status === "REMOVED" || existing.status === "DECLINED") {
+            // Re-activate with new parameters
+            return tx.classCollaborator.update({
+              where: { id: existing.id },
+              data: {
+                role: role as ClassCollaboratorRole,
+                revenueSharePercentage,
+                status: "PENDING",
+                invitedById,
+                respondedAt: null,
+              },
+            });
+          }
+          // PENDING or ACCEPTED — already active
+          return null;
         }
-        // PENDING or ACCEPTED — already active
-        return null;
-      }
 
-      return tx.classCollaborator.create({
-        data: {
-          consultantProfileId,
-          classPlanId: planId,
-          role: role as ClassCollaboratorRole,
-          revenueSharePercentage,
-          status: "PENDING",
-          invitedById,
-        },
-      });
-    }
-  }, {
-    isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-    timeout: 10000,
-  });
+        return tx.classCollaborator.create({
+          data: {
+            consultantProfileId,
+            classPlanId: planId,
+            role: role as ClassCollaboratorRole,
+            revenueSharePercentage,
+            status: "PENDING",
+            invitedById,
+          },
+        });
+      }
+    },
+    {
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      timeout: 10000,
+    },
+  );
 }
 
 /**
@@ -131,7 +134,8 @@ export async function respondToInvitation(
     const collab = await prisma.webinarCollaborator.findUnique({
       where: { id: collaborationId },
     });
-    if (!collab || collab.consultantProfileId !== consultantProfileId) return null;
+    if (!collab || collab.consultantProfileId !== consultantProfileId)
+      return null;
     if (collab.status !== "PENDING") return null;
 
     const updated = await prisma.webinarCollaborator.update({
@@ -141,9 +145,8 @@ export async function respondToInvitation(
 
     if (response === "ACCEPTED") {
       try {
-        const { createCollaboratorChannel } = await import(
-          "@/actions/stream/chat/channel.action"
-        );
+        const { createCollaboratorChannel } =
+          await import("@/actions/stream/chat/channel.action");
         await createCollaboratorChannel("webinar", collab.webinarPlanId);
       } catch (err) {
         console.error("Failed to create collaborator channel:", err);
@@ -155,7 +158,8 @@ export async function respondToInvitation(
     const collab = await prisma.classCollaborator.findUnique({
       where: { id: collaborationId },
     });
-    if (!collab || collab.consultantProfileId !== consultantProfileId) return null;
+    if (!collab || collab.consultantProfileId !== consultantProfileId)
+      return null;
     if (collab.status !== "PENDING") return null;
 
     const updated = await prisma.classCollaborator.update({
@@ -165,9 +169,8 @@ export async function respondToInvitation(
 
     if (response === "ACCEPTED") {
       try {
-        const { createCollaboratorChannel } = await import(
-          "@/actions/stream/chat/channel.action"
-        );
+        const { createCollaboratorChannel } =
+          await import("@/actions/stream/chat/channel.action");
         await createCollaboratorChannel("class", collab.classPlanId);
       } catch (err) {
         console.error("Failed to create collaborator channel:", err);
@@ -222,84 +225,87 @@ export async function updateCollaborator(
 ): Promise<WebinarCollaborator | ClassCollaborator | null> {
   // Validate percentage range if updating
   if (updates.revenueSharePercentage !== undefined) {
-    if (updates.revenueSharePercentage <= 0 || updates.revenueSharePercentage > 90) {
+    if (
+      updates.revenueSharePercentage <= 0 ||
+      updates.revenueSharePercentage > 90
+    ) {
       return null;
     }
   }
 
-  return prisma.$transaction(async (tx) => {
-    if (planType === "webinar") {
-      // Verify collaborator belongs to this plan (IDOR prevention)
-      const collab = await tx.webinarCollaborator.findFirst({
-        where: { id: collaborationId, webinarPlanId: planId },
-      });
-      if (!collab) return null;
+  return prisma.$transaction(
+    async (tx) => {
+      if (planType === "webinar") {
+        // Verify collaborator belongs to this plan (IDOR prevention)
+        const collab = await tx.webinarCollaborator.findFirst({
+          where: { id: collaborationId, webinarPlanId: planId },
+        });
+        if (!collab) return null;
 
-      if (updates.revenueSharePercentage !== undefined) {
-        const valid = await validateRevenueSharesTx(
-          tx,
-          "webinar",
-          collab.webinarPlanId,
-          updates.revenueSharePercentage,
-          collaborationId,
-        );
-        if (!valid) return null;
+        if (updates.revenueSharePercentage !== undefined) {
+          const valid = await validateRevenueSharesTx(
+            tx,
+            "webinar",
+            collab.webinarPlanId,
+            updates.revenueSharePercentage,
+            collaborationId,
+          );
+          if (!valid) return null;
+        }
+
+        return tx.webinarCollaborator.update({
+          where: { id: collaborationId },
+          data: {
+            ...(updates.revenueSharePercentage !== undefined && {
+              revenueSharePercentage: updates.revenueSharePercentage,
+            }),
+            ...(updates.role && {
+              role: updates.role as WebinarCollaboratorRole,
+            }),
+          },
+        });
+      } else {
+        // Verify collaborator belongs to this plan (IDOR prevention)
+        const collab = await tx.classCollaborator.findFirst({
+          where: { id: collaborationId, classPlanId: planId },
+        });
+        if (!collab) return null;
+
+        if (updates.revenueSharePercentage !== undefined) {
+          const valid = await validateRevenueSharesTx(
+            tx,
+            "class",
+            collab.classPlanId,
+            updates.revenueSharePercentage,
+            collaborationId,
+          );
+          if (!valid) return null;
+        }
+
+        return tx.classCollaborator.update({
+          where: { id: collaborationId },
+          data: {
+            ...(updates.revenueSharePercentage !== undefined && {
+              revenueSharePercentage: updates.revenueSharePercentage,
+            }),
+            ...(updates.role && {
+              role: updates.role as ClassCollaboratorRole,
+            }),
+          },
+        });
       }
-
-      return tx.webinarCollaborator.update({
-        where: { id: collaborationId },
-        data: {
-          ...(updates.revenueSharePercentage !== undefined && {
-            revenueSharePercentage: updates.revenueSharePercentage,
-          }),
-          ...(updates.role && {
-            role: updates.role as WebinarCollaboratorRole,
-          }),
-        },
-      });
-    } else {
-      // Verify collaborator belongs to this plan (IDOR prevention)
-      const collab = await tx.classCollaborator.findFirst({
-        where: { id: collaborationId, classPlanId: planId },
-      });
-      if (!collab) return null;
-
-      if (updates.revenueSharePercentage !== undefined) {
-        const valid = await validateRevenueSharesTx(
-          tx,
-          "class",
-          collab.classPlanId,
-          updates.revenueSharePercentage,
-          collaborationId,
-        );
-        if (!valid) return null;
-      }
-
-      return tx.classCollaborator.update({
-        where: { id: collaborationId },
-        data: {
-          ...(updates.revenueSharePercentage !== undefined && {
-            revenueSharePercentage: updates.revenueSharePercentage,
-          }),
-          ...(updates.role && {
-            role: updates.role as ClassCollaboratorRole,
-          }),
-        },
-      });
-    }
-  }, {
-    isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-    timeout: 10000,
-  });
+    },
+    {
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      timeout: 10000,
+    },
+  );
 }
 
 /**
  * Get all collaborators for a plan.
  */
-export async function getCollaborators(
-  planType: PlanType,
-  planId: string,
-) {
+export async function getCollaborators(planType: PlanType, planId: string) {
   const activeStatuses: CollaboratorStatus[] = ["PENDING", "ACCEPTED"];
 
   if (planType === "webinar") {
@@ -589,7 +595,10 @@ async function validateRevenueSharesTx(
       },
       select: { revenueSharePercentage: true },
     });
-    currentTotal = collabs.reduce((sum, c) => sum + c.revenueSharePercentage, 0);
+    currentTotal = collabs.reduce(
+      (sum, c) => sum + c.revenueSharePercentage,
+      0,
+    );
   } else {
     const collabs = await db.classCollaborator.findMany({
       where: {
@@ -599,7 +608,10 @@ async function validateRevenueSharesTx(
       },
       select: { revenueSharePercentage: true },
     });
-    currentTotal = collabs.reduce((sum, c) => sum + c.revenueSharePercentage, 0);
+    currentTotal = collabs.reduce(
+      (sum, c) => sum + c.revenueSharePercentage,
+      0,
+    );
   }
 
   return currentTotal + newShare <= 100 - MIN_HOST_SHARE;

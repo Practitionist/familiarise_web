@@ -148,7 +148,9 @@ export class AllocationAlgorithms {
         // Calculate slotsPerWeek based on actual session duration
         // slotsPerSession = sessionDurationInHours / 0.5 (since each slot is 30 min)
         // slotsPerWeek = callsPerWeek * slotsPerSession
-        const slotsPerSession = Math.ceil((options.sessionDurationInHours || 1) / 0.5);
+        const slotsPerSession = Math.ceil(
+          (options.sessionDurationInHours || 1) / 0.5,
+        );
         const slotsPerWeek = options.callsPerWeek * slotsPerSession;
 
         const distributionValidation = validateSlotDistribution(
@@ -479,7 +481,10 @@ export class AllocationAlgorithms {
         consecutive1HourSlots.push(currentSlot);
       }
 
-      if (!isConsecutive || consecutive1HourSlots.length < oneHourBlocksNeeded) {
+      if (
+        !isConsecutive ||
+        consecutive1HourSlots.length < oneHourBlocksNeeded
+      ) {
         continue;
       }
 
@@ -591,7 +596,9 @@ export class AllocationAlgorithms {
     // Group slots by week
     const slotsByWeek = new Map<string, TimeSlot[]>();
     futureSlots.forEach((slot) => {
-      const weekStart = SlotCalculationService.startOfWeekSunday(slot.startTime);
+      const weekStart = SlotCalculationService.startOfWeekSunday(
+        slot.startTime,
+      );
       const weekKey = weekStart.toISOString();
 
       if (!slotsByWeek.has(weekKey)) {
@@ -611,7 +618,10 @@ export class AllocationAlgorithms {
     let currentWeek = 0;
 
     for (const weekKey of sortedWeeks) {
-      if (selectedCalls.length >= totalCallsNeeded || currentWeek >= totalWeeks) {
+      if (
+        selectedCalls.length >= totalCallsNeeded ||
+        currentWeek >= totalWeeks
+      ) {
         break;
       }
 
@@ -692,7 +702,10 @@ export class AllocationAlgorithms {
       const blockStart = sortedSlots[blockIndices[0]].startTime;
       const hasConflict = calls.some((existingCall) => {
         const existingStart = existingCall[0].startTime;
-        return Math.abs(blockStart.getTime() - existingStart.getTime()) < minMsBetween;
+        return (
+          Math.abs(blockStart.getTime() - existingStart.getTime()) <
+          minMsBetween
+        );
       });
       if (hasConflict) continue;
 
@@ -797,5 +810,4 @@ export class AllocationAlgorithms {
         return 1;
     }
   }
-
 }

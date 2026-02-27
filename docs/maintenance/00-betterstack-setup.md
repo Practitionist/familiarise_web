@@ -14,6 +14,7 @@ BetterStack provides two things:
 2. **Incident management**: When the platform enters OFFLINE maintenance mode, `lib/betterstack.ts` automatically creates a BetterStack incident. When maintenance ends, it auto-resolves the incident. This keeps the public status page in sync with actual platform state.
 
 **Free plan limitations** (important to know):
+
 - Minimum check frequency: 3 minutes (paid plans go down to 30 seconds)
 - Alert methods: email only (push/SMS/call require paid plan at $29/month)
 - Escalation policies: paid only
@@ -107,6 +108,7 @@ The status page structure uses a standard HTML form. To add both monitors:
 BetterStack auto-adds the first monitor when creating the status page. You'll see it listed as `familiarisenow.com`.
 
 **Rename it to "Website":**
+
 1. In the structure tab, find the resource card for `familiarisenow.com`
 2. Look for a "Public name" field — change it from `familiarisenow.com` to `Website`
 
@@ -116,22 +118,22 @@ Open your browser developer tools console (F12 → Console) while on the Structu
 
 ```javascript
 const form = document.querySelector('form[id^="edit_status_page"]');
-const sectionKey = '1';
-const newKey = 'new_4093822'; // Use the monitor ID from the monitors page URL
+const sectionKey = "1";
+const newKey = "new_4093822"; // Use the monitor ID from the monitors page URL
 const fields = [
-  ['resource_id', '4093822'],           // Monitor ID from monitors page URL
-  ['resource_type', 'Endpoint'],
-  ['resource_index', '1'],
-  ['_destroy', '0'],
-  ['public_name', 'API Health'],
-  ['explanation', ''],
-  ['widget_type', 'history'],
-  ['mark_as_down_for', 'any_incident'],
-  ['mark_as_degraded_for', 'no_incident'],
+  ["resource_id", "4093822"], // Monitor ID from monitors page URL
+  ["resource_type", "Endpoint"],
+  ["resource_index", "1"],
+  ["_destroy", "0"],
+  ["public_name", "API Health"],
+  ["explanation", ""],
+  ["widget_type", "history"],
+  ["mark_as_down_for", "any_incident"],
+  ["mark_as_degraded_for", "no_incident"],
 ];
 fields.forEach(([key, value]) => {
-  const input = document.createElement('input');
-  input.type = 'hidden';
+  const input = document.createElement("input");
+  input.type = "hidden";
   input.name = `status_page[status_page_sections_attributes][${sectionKey}][status_page_resources_attributes][${newKey}][${key}]`;
   input.value = value;
   form.appendChild(input);
@@ -142,6 +144,7 @@ form.submit();
 > **How to find the monitor ID**: Go to the Monitors page and click on `familiarisenow.com/api/health`. The URL will be `https://uptime.betterstack.com/team/t332379/monitors/4093822` — the number at the end is the monitor ID.
 
 After submission, the page refreshes and you'll see:
+
 - `Website` — With status history
 - `API Health` — With status history
 
@@ -245,18 +248,18 @@ This tests the full OFFLINE → incident created → maintenance ended → incid
 
 ## Account Details (Current Setup)
 
-| Item | Value |
-|------|-------|
-| **BetterStack URL** | https://uptime.betterstack.com/team/t332379 |
-| **Email** | teetangh@gmail.com |
-| **Plan** | Free |
-| **Monitor 1** | `https://familiarisenow.com` (public: "Website") |
-| **Monitor 2** | `https://familiarisenow.com/api/health` (public: "API Health") |
-| **Check frequency** | 3 minutes (free plan minimum) |
-| **Alert type** | Email only (push/SMS require paid plan) |
-| **Status page** | https://familiarise.betteruptime.com |
-| **API token name** | "Familiarise Production" |
-| **API base URL** | `https://uptime.betterstack.com/api/v2` |
+| Item                | Value                                                          |
+| ------------------- | -------------------------------------------------------------- |
+| **BetterStack URL** | https://uptime.betterstack.com/team/t332379                    |
+| **Email**           | teetangh@gmail.com                                             |
+| **Plan**            | Free                                                           |
+| **Monitor 1**       | `https://familiarisenow.com` (public: "Website")               |
+| **Monitor 2**       | `https://familiarisenow.com/api/health` (public: "API Health") |
+| **Check frequency** | 3 minutes (free plan minimum)                                  |
+| **Alert type**      | Email only (push/SMS require paid plan)                        |
+| **Status page**     | https://familiarise.betteruptime.com                           |
+| **API token name**  | "Familiarise Production"                                       |
+| **API base URL**    | `https://uptime.betterstack.com/api/v2`                        |
 
 ---
 
@@ -267,6 +270,7 @@ The BetterStack integration lives in two files:
 ### `lib/betterstack.ts`
 
 Exports two functions:
+
 - `createIncident(name, summary?)` — Creates a BetterStack incident. Returns the incident ID (`string | null`).
 - `resolveIncident(incidentId)` — Resolves an incident by ID. Returns `boolean`.
 
@@ -309,12 +313,14 @@ Calls `GET https://uptime.betterstack.com/api/v2/monitors` on every health check
 ### "betterstack.configured: false" in /api/health
 
 The `BETTERSTACK_API_KEY` env var is not set. Check:
+
 - Local: Is it in `.env`?
 - Production: Is it in Netlify environment variables? Was the site redeployed after adding it?
 
 ### "betterstack.reachable: false" in /api/health
 
 The API key exists but the call failed. Check:
+
 - Is the token correct? Verify it in BetterStack Settings → API tokens
 - Did the token get accidentally deleted? Generate a new one and update `.env` + Netlify.
 

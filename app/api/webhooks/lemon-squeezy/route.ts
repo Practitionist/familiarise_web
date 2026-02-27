@@ -35,7 +35,9 @@ export async function POST(req: NextRequest) {
 
     // DB health check — return 503 if DB is unreachable so Lemon Squeezy retries
     if (!(await isDbHealthy())) {
-      console.warn("[lemon-squeezy webhook] DB unhealthy — returning 503 for retry");
+      console.warn(
+        "[lemon-squeezy webhook] DB unhealthy — returning 503 for retry",
+      );
       return NextResponse.json(
         { error: "Service temporarily unavailable" },
         { status: 503 },

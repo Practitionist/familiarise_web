@@ -28,7 +28,10 @@ function buildCancellationNotification(params: {
   consulteeName?: string;
 }): NotificationPayload | null {
   const userIds = [...params.participantIds];
-  if (params.consultantUser?.id && !userIds.includes(params.consultantUser.id)) {
+  if (
+    params.consultantUser?.id &&
+    !userIds.includes(params.consultantUser.id)
+  ) {
     userIds.push(params.consultantUser.id);
   }
   if (userIds.length === 0) return null;
@@ -152,7 +155,13 @@ export async function freezeAppointments(
   });
 
   if (affectedSlots.length === 0) {
-    return { cancelled: 0, notified: 0, refundsIssued: 0, refundErrors: 0, subscriptionsExtended: 0 };
+    return {
+      cancelled: 0,
+      notified: 0,
+      refundsIssued: 0,
+      refundErrors: 0,
+      subscriptionsExtended: 0,
+    };
   }
 
   // Group slots by appointment to avoid duplicate cancellations and N+1 queries
@@ -196,9 +205,8 @@ export async function freezeAppointments(
       for (const appointmentId of Object.keys(slotsByAppointment)) {
         const slots = slotsByAppointment[appointmentId];
         const appointment = slots[0].appointment;
-        const earliestSlot = slots.reduce(
-          (a: AffectedSlot, b: AffectedSlot) =>
-            a.startsAt < b.startsAt ? a : b,
+        const earliestSlot = slots.reduce((a: AffectedSlot, b: AffectedSlot) =>
+          a.startsAt < b.startsAt ? a : b,
         );
 
         // Cancel consultation if applicable
@@ -218,8 +226,11 @@ export async function freezeAppointments(
           const notif = buildCancellationNotification({
             appointmentId: appointment.id,
             appointmentType: "CONSULTATION",
-            consultantUser: consultation.consultationPlan?.consultantProfile?.user,
-            participantIds: consultation.requestedBy?.user?.id ? [consultation.requestedBy.user.id] : [],
+            consultantUser:
+              consultation.consultationPlan?.consultantProfile?.user,
+            participantIds: consultation.requestedBy?.user?.id
+              ? [consultation.requestedBy.user.id]
+              : [],
             planTitle: consultation.consultationPlan?.title || "Consultation",
             dateTime: earliestSlot.startsAt.toISOString(),
             consulteeName: consultation.requestedBy?.user?.name || "User",
@@ -246,8 +257,11 @@ export async function freezeAppointments(
           const notif = buildCancellationNotification({
             appointmentId: appointment.id,
             appointmentType: "SUBSCRIPTION",
-            consultantUser: subscription.subscriptionPlan?.consultantProfile?.user,
-            participantIds: subscription.requestedBy?.user?.id ? [subscription.requestedBy.user.id] : [],
+            consultantUser:
+              subscription.subscriptionPlan?.consultantProfile?.user,
+            participantIds: subscription.requestedBy?.user?.id
+              ? [subscription.requestedBy.user.id]
+              : [],
             planTitle: subscription.subscriptionPlan?.title || "Subscription",
             dateTime: earliestSlot.startsAt.toISOString(),
             consulteeName: subscription.requestedBy?.user?.name || "User",
@@ -263,9 +277,11 @@ export async function freezeAppointments(
             data: { status: "CANCELLED" },
           });
 
-          const webinarParticipantIds = Array.from(new Set(
-            slots.flatMap((s: AffectedSlot) => s.user.map((u) => u.id)),
-          ));
+          const webinarParticipantIds = Array.from(
+            new Set(
+              slots.flatMap((s: AffectedSlot) => s.user.map((u) => u.id)),
+            ),
+          );
           const notif = buildCancellationNotification({
             appointmentId: appointment.id,
             appointmentType: "WEBINAR",
@@ -285,9 +301,11 @@ export async function freezeAppointments(
             data: { status: "CANCELLED" },
           });
 
-          const classParticipantIds = Array.from(new Set(
-            slots.flatMap((s: AffectedSlot) => s.user.map((u) => u.id)),
-          ));
+          const classParticipantIds = Array.from(
+            new Set(
+              slots.flatMap((s: AffectedSlot) => s.user.map((u) => u.id)),
+            ),
+          );
           const notif = buildCancellationNotification({
             appointmentId: appointment.id,
             appointmentType: "CLASS",
@@ -311,7 +329,9 @@ export async function freezeAppointments(
             appointmentId: appointment.id,
             appointmentType: "TRIAL",
             consultantUser: trial.consultantProfile?.user,
-            participantIds: trial.consulteeProfile?.user?.id ? [trial.consulteeProfile.user.id] : [],
+            participantIds: trial.consulteeProfile?.user?.id
+              ? [trial.consulteeProfile.user.id]
+              : [],
             planTitle: trial.subscriptionPlan?.title || "Trial Session",
             dateTime: earliestSlot.startsAt.toISOString(),
             consulteeName: trial.consulteeProfile?.user?.name || "User",
@@ -365,7 +385,9 @@ export async function freezeAppointments(
           refundId: result.refundId,
           paymentGateway: payment.paymentGateway,
           paymentId: payment.id,
-          ...(result.metadata ? { metadata: result.metadata as Record<string, string> } : {}),
+          ...(result.metadata
+            ? { metadata: result.metadata as Record<string, string> }
+            : {}),
         },
       });
       refundsIssued++;
@@ -410,7 +432,8 @@ export async function freezeAppointments(
   // Only extend subscriptions that still have future slots (partial cancellation).
   const subscriptionIdList = Array.from(affectedSubscriptionIds);
   if (subscriptionIdList.length > 0) {
-    const maintenanceDurationMs = windowEnd.getTime() - maintenanceStart.getTime();
+    const maintenanceDurationMs =
+      windowEnd.getTime() - maintenanceStart.getTime();
     for (const subId of subscriptionIdList) {
       try {
         const sub = await prisma.subscription.findUnique({
@@ -473,5 +496,11 @@ export async function freezeAppointments(
     }),
   );
 
-  return { cancelled, notified, refundsIssued, refundErrors, subscriptionsExtended };
+  return {
+    cancelled,
+    notified,
+    refundsIssued,
+    refundErrors,
+    subscriptionsExtended,
+  };
 }

@@ -147,9 +147,7 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
     >
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-zinc-900">Payments</h1>
-        <p className="text-zinc-500 mt-1">
-          Your payment history and credits
-        </p>
+        <p className="text-zinc-500 mt-1">Your payment history and credits</p>
       </div>
 
       {/* Summary Cards */}

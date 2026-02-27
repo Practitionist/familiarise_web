@@ -15,10 +15,12 @@ Recommended code changes to improve maintenance mode protection.
 **Proposed Change**: Add write-blocking logic to the middleware for DEGRADED mode. Block transactional routes while allowing reads.
 
 **Files to Modify**:
+
 - `middleware.ts` -- Add DEGRADED write-blocking check
 - `lib/maintenance-edge.ts` -- Add helper function
 
 **Implementation**:
+
 ```typescript
 // lib/maintenance-edge.ts
 const WRITE_BLOCKED_IN_DEGRADED = [
@@ -26,24 +28,24 @@ const WRITE_BLOCKED_IN_DEGRADED = [
   "/api/appointments/*/cancel",
   "/api/appointments/*/reschedule",
   "/api/appointments/*/documents",
-  "/api/events/consultations",      // POST/PATCH only
-  "/api/events/subscriptions",      // POST only
-  "/api/events/webinars",           // POST only
-  "/api/events/classes",            // POST only
+  "/api/events/consultations", // POST/PATCH only
+  "/api/events/subscriptions", // POST only
+  "/api/events/webinars", // POST only
+  "/api/events/classes", // POST only
   "/api/events/*/allocate",
-  "/api/trials",                    // POST only
-  "/api/plans/*/materials",         // POST only
+  "/api/trials", // POST only
+  "/api/plans/*/materials", // POST only
 ];
 
 export function isWriteBlockedInDegraded(
   pathname: string,
-  method: string
+  method: string,
 ): boolean {
   if (method === "GET" || method === "HEAD" || method === "OPTIONS") {
     return false;
   }
-  return WRITE_BLOCKED_IN_DEGRADED.some(pattern =>
-    matchRoute(pathname, pattern)
+  return WRITE_BLOCKED_IN_DEGRADED.some((pattern) =>
+    matchRoute(pathname, pattern),
   );
 }
 ```
@@ -60,12 +62,15 @@ export function isWriteBlockedInDegraded(
 **Proposed Change**: Create a shared utility that every cron job calls at startup to check maintenance state.
 
 **Files to Create**:
+
 - `lib/maintenance-cron.ts` -- Guard utility
 
 **Files to Modify**:
+
 - All 27 job files in `jobs/` -- Add guard call at entry
 
 **Implementation**:
+
 ```typescript
 // lib/maintenance-cron.ts
 import { Redis } from "@upstash/redis";
@@ -80,19 +85,19 @@ export async function abortIfMaintenance(jobName: string): Promise<void> {
     const phase = await redis.get<string>("maintenance:phase");
     if (phase === "OFFLINE") {
       console.log(
-        `⚠️ [${jobName}] Maintenance mode is OFFLINE. Skipping job execution.`
+        `⚠️ [${jobName}] Maintenance mode is OFFLINE. Skipping job execution.`,
       );
       process.exit(0); // Clean exit, GitHub Actions marks as success
     }
     if (phase === "DEGRADED") {
       console.log(
-        `ℹ️ [${jobName}] Maintenance mode is DEGRADED. Proceeding with caution.`
+        `ℹ️ [${jobName}] Maintenance mode is DEGRADED. Proceeding with caution.`,
       );
     }
   } catch (error) {
     // Fail-open: if Redis is unreachable, proceed with the job
     console.warn(
-      `⚠️ [${jobName}] Could not check maintenance state. Proceeding.`
+      `⚠️ [${jobName}] Could not check maintenance state. Proceeding.`,
     );
   }
 }
@@ -114,12 +119,14 @@ export async function abortIfMaintenance(jobName: string): Promise<void> {
 **Proposed Change**: Add a DB health check at the start of each webhook handler. If the DB is unhealthy, return 503 to trigger the gateway's retry mechanism.
 
 **Files to Modify**:
+
 - `app/api/webhooks/stripe/route.ts`
 - `app/api/webhooks/razorpay/route.ts`
 - `app/api/webhooks/lemon-squeezy/route.ts`
 - `app/api/webhooks/xflow/route.ts`
 
 **Implementation**:
+
 ```typescript
 // Add to each webhook handler before processing:
 async function checkDbHealth(): Promise<boolean> {
@@ -137,7 +144,7 @@ if (!dbHealthy) {
   console.warn("DB unhealthy during webhook processing, returning 503");
   return NextResponse.json(
     { error: "Service temporarily unavailable" },
-    { status: 503 }
+    { status: 503 },
   );
 }
 ```
@@ -154,14 +161,17 @@ if (!dbHealthy) {
 **Implemented**: Created `hooks/useMaintenanceGuard.ts` hook. Wired into all 4 checkout pages (consultation, subscription, webinar, class) to block `handleCheckout` and disable payment buttons during DEGRADED/OFFLINE mode. Shows toast with maintenance message on blocked attempts.
 
 **Files to Create**:
+
 - `hooks/useMaintenanceGuard.ts`
 
 **Files to Modify**:
+
 - Checkout button component
 - Booking/scheduling components
 - Event creation forms
 
 **Implementation**:
+
 ```typescript
 // hooks/useMaintenanceGuard.ts
 import { useMaintenanceContext } from "@/providers/MaintenanceProvider";
@@ -199,9 +209,11 @@ export function useMaintenanceGuard() {
 **Implemented**: Created `GET /api/admin/maintenance/preflight` endpoint that queries active calls, pending payments, upcoming appointments (4h), pending payouts, and open disputes. Returns SAFE/CAUTION/RISKY recommendation with warnings. Integrated into MaintenanceControls UI with a "Run Check" button and stats display.
 
 **Files to Create**:
+
 - `app/api/admin/maintenance/preflight/route.ts`
 
 **Implementation**:
+
 ```typescript
 // GET /api/admin/maintenance/preflight
 // Returns:
@@ -234,15 +246,18 @@ export function useMaintenanceGuard() {
 **Proposed Change**: Support scheduling maintenance windows with future `scheduledAt` time. Send notifications ahead of time.
 
 **Files to Modify**:
+
 - `app/api/admin/maintenance/route.ts` -- Accept `scheduledAt` parameter
 - `lib/maintenance.ts` -- Add scheduling logic
 - `components/dashboard/MaintenanceControls.tsx` -- Add scheduling UI
 - `providers/MaintenanceProvider.tsx` -- Show upcoming maintenance info
 
 **Files to Create**:
+
 - `jobs/maintenance/activate-scheduled-maintenance.ts` -- Cron job to activate when time comes
 
 **Implementation Details**:
+
 1. Admin schedules maintenance: creates `MaintenanceWindow` with `scheduledAt` in the future
 2. 24 hours before: Send Novu notification to all users
 3. 1 hour before: Show banner "Scheduled maintenance in X minutes"
@@ -286,14 +301,14 @@ File: `scripts/cleanup/reconcile-document-storage.ts`
 
 ## Implementation Priority Order
 
-| # | Improvement | Priority | Status |
-|---|-------------|----------|--------|
-| 2 | Cron job maintenance guard | CRITICAL | ✅ Done |
-| 1 | DEGRADED write-blocking | HIGH | ✅ Done |
-| 3 | Webhook DB health check (Stripe/Razorpay/LS/XFlow) | HIGH | ✅ Done |
-| A | Admin system-jobs DEGRADED blocking | MEDIUM | ✅ Done |
-| B | Stream.io webhook DB health check | MEDIUM | ✅ Done |
-| C | `reconcile-document-storage` storage probe | MEDIUM | ✅ Done |
-| 4 | UI maintenance guard hook | MEDIUM | ✅ Done |
-| 5 | Admin pre-flight API | MEDIUM | ✅ Done |
-| 6 | Scheduled maintenance | LOW | Pending |
+| #   | Improvement                                        | Priority | Status  |
+| --- | -------------------------------------------------- | -------- | ------- |
+| 2   | Cron job maintenance guard                         | CRITICAL | ✅ Done |
+| 1   | DEGRADED write-blocking                            | HIGH     | ✅ Done |
+| 3   | Webhook DB health check (Stripe/Razorpay/LS/XFlow) | HIGH     | ✅ Done |
+| A   | Admin system-jobs DEGRADED blocking                | MEDIUM   | ✅ Done |
+| B   | Stream.io webhook DB health check                  | MEDIUM   | ✅ Done |
+| C   | `reconcile-document-storage` storage probe         | MEDIUM   | ✅ Done |
+| 4   | UI maintenance guard hook                          | MEDIUM   | ✅ Done |
+| 5   | Admin pre-flight API                               | MEDIUM   | ✅ Done |
+| 6   | Scheduled maintenance                              | LOW      | Pending |

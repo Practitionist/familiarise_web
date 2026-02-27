@@ -81,16 +81,14 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
 
   // Maintenance mode check (fail-open: defaults to OFF if Redis unreachable)
   const maintenanceState = await getMaintenanceState();
-  if (
-    maintenanceState.phase !== "OFF" &&
-    !isMaintenanceExempt(pathname)
-  ) {
+  if (maintenanceState.phase !== "OFF" && !isMaintenanceExempt(pathname)) {
     if (!validateBypass(req, maintenanceState.bypassSecret)) {
       if (maintenanceState.phase === "OFFLINE") {
         const offlineHeaders: Record<string, string> = {};
         if (maintenanceState.estimatedEnd) {
           const retryAfterSecs = Math.ceil(
-            (new Date(maintenanceState.estimatedEnd).getTime() - Date.now()) / 1000,
+            (new Date(maintenanceState.estimatedEnd).getTime() - Date.now()) /
+              1000,
           );
           if (retryAfterSecs > 0) {
             offlineHeaders["Retry-After"] = String(retryAfterSecs);
@@ -121,9 +119,11 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
         const degradedHeaders: Record<string, string> = {};
         if (maintenanceState.estimatedEnd) {
           const retryAfterSecs = Math.ceil(
-            (new Date(maintenanceState.estimatedEnd).getTime() - Date.now()) / 1000,
+            (new Date(maintenanceState.estimatedEnd).getTime() - Date.now()) /
+              1000,
           );
-          if (retryAfterSecs > 0) degradedHeaders["Retry-After"] = String(retryAfterSecs);
+          if (retryAfterSecs > 0)
+            degradedHeaders["Retry-After"] = String(retryAfterSecs);
         }
         return NextResponse.json(
           {

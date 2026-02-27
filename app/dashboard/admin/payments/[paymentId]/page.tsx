@@ -270,8 +270,14 @@ export default function PaymentDetailsPage({ params }: PageProps) {
                   already-processed refunds to prevent over-refunding */}
               {(() => {
                 const successfulRefunds = (payment.refunds || [])
-                  .filter((r: PaymentDetailRefund) => r.status === "SUCCEEDED" || r.status === "PENDING")
-                  .reduce((sum: number, r: PaymentDetailRefund) => sum + r.amount, 0);
+                  .filter(
+                    (r: PaymentDetailRefund) =>
+                      r.status === "SUCCEEDED" || r.status === "PENDING",
+                  )
+                  .reduce(
+                    (sum: number, r: PaymentDetailRefund) => sum + r.amount,
+                    0,
+                  );
                 const remainingRefundable = payment.amount - successfulRefunds;
                 return (
                   <>
@@ -286,7 +292,16 @@ export default function PaymentDetailsPage({ params }: PageProps) {
                     />
                     {successfulRefunds > 0 && (
                       <p className="text-xs text-muted-foreground mt-1">
-                        Already refunded: {formatCurrencyAmount(successfulRefunds, payment.currency)} • Remaining: {formatCurrencyAmount(remainingRefundable, payment.currency)}
+                        Already refunded:{" "}
+                        {formatCurrencyAmount(
+                          successfulRefunds,
+                          payment.currency,
+                        )}{" "}
+                        • Remaining:{" "}
+                        {formatCurrencyAmount(
+                          remainingRefundable,
+                          payment.currency,
+                        )}
                       </p>
                     )}
                   </>

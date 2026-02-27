@@ -88,10 +88,9 @@ export async function createIncident(
  */
 export async function resolveIncident(incidentId: string): Promise<boolean> {
   try {
-    const res = await betterstackRequest(
-      `/incidents/${incidentId}/resolve`,
-      { method: "POST" },
-    );
+    const res = await betterstackRequest(`/incidents/${incidentId}/resolve`, {
+      method: "POST",
+    });
 
     if (!res) return false;
 

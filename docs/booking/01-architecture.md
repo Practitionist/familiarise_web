@@ -211,6 +211,7 @@ erDiagram
         string appointmentId FK
     }
 ```
+
 > Note: we are using ClassEvent instead of Class because Class is a reserved keyword in Mermaid.
 
 **Key relationships**:

@@ -24,7 +24,7 @@ import { buildOccupiedAppointmentFilter } from "./occupancyPolicy";
 export class SlotValidationService {
   constructor(
     private readonly prismaClient: typeof prisma | PrismaTransaction = prisma,
-  ) { }
+  ) {}
 
   /**
    * Simple slot availability check (used for lock validation)
@@ -104,7 +104,12 @@ export class SlotValidationService {
         return this.validateConsultation(slots, config);
 
       case "subscription":
-        return this.validateSubscription(eventId, slots, config, excludeAppointmentIds);
+        return this.validateSubscription(
+          eventId,
+          slots,
+          config,
+          excludeAppointmentIds,
+        );
 
       case "webinar":
         return this.validateWebinar(slots, config);
@@ -148,8 +153,8 @@ export class SlotValidationService {
         const secondsUntilSlot = (slot.getTime() - now.getTime()) / 1000;
         errors.push(
           `[VALIDATION] Cannot allocate slots in the past or too soon: ${slot.toLocaleString()} ` +
-          `(${secondsUntilSlot >= 0 ? `only ${secondsUntilSlot.toFixed(1)}s` : `${Math.abs(secondsUntilSlot).toFixed(1)}s ago`}). ` +
-          `Slots must be at least 5 seconds in the future to allow for processing time.`,
+            `(${secondsUntilSlot >= 0 ? `only ${secondsUntilSlot.toFixed(1)}s` : `${Math.abs(secondsUntilSlot).toFixed(1)}s ago`}). ` +
+            `Slots must be at least 5 seconds in the future to allow for processing time.`,
         );
       }
     }
@@ -345,8 +350,10 @@ export class SlotValidationService {
             const availDay = dayOfWeekToIndex[availSlot.dayOfWeekForStartsAt];
             const availStart = new Date(availSlot.availabilityStartsAt);
             const availEnd = new Date(availSlot.availabilityEndsAt);
-            const availStartMinutes = availStart.getUTCHours() * 60 + availStart.getUTCMinutes();
-            const availEndMinutes = availEnd.getUTCHours() * 60 + availEnd.getUTCMinutes();
+            const availStartMinutes =
+              availStart.getUTCHours() * 60 + availStart.getUTCMinutes();
+            const availEndMinutes =
+              availEnd.getUTCHours() * 60 + availEnd.getUTCMinutes();
             const isOvernightAvail = availEndMinutes <= availStartMinutes;
 
             // Check for same day match
@@ -356,7 +363,11 @@ export class SlotValidationService {
                 if (slotTimeMinutes >= availStartMinutes) return true;
               } else {
                 // Normal same-day slot
-                if (slotTimeMinutes >= availStartMinutes && slotEndTimeMinutes <= availEndMinutes) return true;
+                if (
+                  slotTimeMinutes >= availStartMinutes &&
+                  slotEndTimeMinutes <= availEndMinutes
+                )
+                  return true;
               }
             }
 
@@ -371,13 +382,20 @@ export class SlotValidationService {
             // in positive-offset timezones (e.g., 21:00 UTC Saturday = 02:30 IST Sunday)
             const nextDayFromSlot = (slotDay + 1) % 7;
             if (nextDayFromSlot === availDay && slotHours >= 18) {
-              if (slotTimeMinutes >= availStartMinutes &&
-                (isOvernightAvail || slotEndTimeMinutes <= availEndMinutes)) return true;
+              if (
+                slotTimeMinutes >= availStartMinutes &&
+                (isOvernightAvail || slotEndTimeMinutes <= availEndMinutes)
+              )
+                return true;
             }
 
             // Check PREVIOUS day for early morning slots
             const prevDayFromSlot = (slotDay + 6) % 7;
-            if (prevDayFromSlot === availDay && slotHours < 6 && isOvernightAvail) {
+            if (
+              prevDayFromSlot === availDay &&
+              slotHours < 6 &&
+              isOvernightAvail
+            ) {
               if (slotEndTimeMinutes <= availEndMinutes) return true;
             }
 
@@ -387,9 +405,7 @@ export class SlotValidationService {
 
         if (!matchesAvailability) {
           const timeStr = `${slotHours.toString().padStart(2, "0")}:${slotMinutes.toString().padStart(2, "0")}`;
-          invalidSlots.push(
-            `${dayNames[slotDay]} at ${timeStr} UTC`,
-          );
+          invalidSlots.push(`${dayNames[slotDay]} at ${timeStr} UTC`);
         }
       }
 
@@ -398,7 +414,7 @@ export class SlotValidationService {
         const verbTense = invalidSlots.length === 1 ? "does" : "do";
         errors.push(
           `[OUTSIDE_AVAILABILITY] The selected ${slotWord} ${verbTense} not match the consultant's available days and times. ` +
-          `Please choose from the green "Available" slots shown in the calendar.`,
+            `Please choose from the green "Available" slots shown in the calendar.`,
         );
       }
     } else {
@@ -452,14 +468,14 @@ export class SlotValidationService {
         if (isConsecutiveIssue) {
           errors.push(
             `[OUTSIDE_AVAILABILITY] The consultant doesn't have enough consecutive availability for this ${slots.length === 2 ? "1-hour" : `${slots.length * 0.5}-hour`} event. ` +
-            `Only ${validSlotCount} of ${slots.length} required time slots ${verbTense} available. ` +
-            `The consultant needs to add more consecutive time slots to their schedule.`,
+              `Only ${validSlotCount} of ${slots.length} required time slots ${verbTense} available. ` +
+              `The consultant needs to add more consecutive time slots to their schedule.`,
           );
         } else {
           errors.push(
             `[OUTSIDE_AVAILABILITY] The selected ${slotWord} ${verbTense} not available in the consultant's schedule. ` +
-            `Please choose from the green "Available" slots shown in the calendar. ` +
-            `Only specific times are available for booking.`,
+              `Please choose from the green "Available" slots shown in the calendar. ` +
+              `Only specific times are available for booking.`,
           );
         }
       }
@@ -497,8 +513,8 @@ export class SlotValidationService {
       if (slot < startDate || slot > endDate) {
         errors.push(
           `[OUTSIDE_AVAILABILITY] Slot ${slot.toLocaleString()} is outside the scheduling period ` +
-          `(${startDate.toLocaleDateString()} - ${endDate.toLocaleDateString()}). ` +
-          `All slots must be scheduled within this date range.`,
+            `(${startDate.toLocaleDateString()} - ${endDate.toLocaleDateString()}). ` +
+            `All slots must be scheduled within this date range.`,
         );
       }
     }
@@ -624,7 +640,9 @@ export class SlotValidationService {
     // Check consecutive
     const consecutiveCheck = this.validateConsecutiveSlots(slots);
     if (!consecutiveCheck.isValid) {
-      errors.push("[VALIDATION] Consultation slots must be consecutive (no gaps allowed)");
+      errors.push(
+        "[VALIDATION] Consultation slots must be consecutive (no gaps allowed)",
+      );
     }
 
     return {
@@ -655,9 +673,7 @@ export class SlotValidationService {
       SlotCalculationService.getSlotsPerCall(sessionDuration);
 
     if (slotsPerSession > 1) {
-      const sortedSlots = [...slots].sort(
-        (a, b) => a.getTime() - b.getTime(),
-      );
+      const sortedSlots = [...slots].sort((a, b) => a.getTime() - b.getTime());
 
       for (let i = 0; i < sortedSlots.length; i += slotsPerSession) {
         const sessionSlots = sortedSlots.slice(i, i + slotsPerSession);
@@ -693,10 +709,9 @@ export class SlotValidationService {
     });
     const tentativeIds = tentativeAppointments.map((a) => a.id);
     // Merge caller-provided exclusions with tentative lookup for reliability
-    const allExcludeIds = Array.from(new Set([
-      ...(excludeAppointmentIds || []),
-      ...tentativeIds,
-    ]));
+    const allExcludeIds = Array.from(
+      new Set([...(excludeAppointmentIds || []), ...tentativeIds]),
+    );
 
     const result = await validationService.validateSubscriptionSlots(
       subscriptionId,
@@ -776,7 +791,9 @@ export class SlotValidationService {
     if (!config.callsPerWeek) {
       return {
         isValid: false,
-        errors: ["[VALIDATION] Classes per week is required for class validation"],
+        errors: [
+          "[VALIDATION] Classes per week is required for class validation",
+        ],
         warnings: [],
       };
     }
@@ -784,7 +801,9 @@ export class SlotValidationService {
     if (!config.sessionDurationInHours) {
       return {
         isValid: false,
-        errors: ["[VALIDATION] Session duration is required for class validation"],
+        errors: [
+          "[VALIDATION] Session duration is required for class validation",
+        ],
         warnings: [],
       };
     }

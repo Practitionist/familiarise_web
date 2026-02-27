@@ -180,7 +180,9 @@ export async function POST(req: NextRequest) {
 
   // DB health check — return 503 if DB is unreachable so Stream retries
   if (!(await isDbHealthy())) {
-    console.warn("[stream webhook] DB unhealthy — returning 503 for Stream retry");
+    console.warn(
+      "[stream webhook] DB unhealthy — returning 503 for Stream retry",
+    );
     return NextResponse.json(
       { error: "Service temporarily unavailable" },
       { status: 503 },

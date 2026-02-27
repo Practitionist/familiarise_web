@@ -96,7 +96,11 @@ function formatDate(dateStr: string): string {
 
 const statusConfig: Record<
   EarningStatus,
-  { label: string; variant: "default" | "secondary" | "destructive" | "outline"; className: string }
+  {
+    label: string;
+    variant: "default" | "secondary" | "destructive" | "outline";
+    className: string;
+  }
 > = {
   PENDING: {
     label: "Pending",
@@ -210,7 +214,7 @@ export default function EarningsPage({
             subtitle={
               eligibility?.isEligible
                 ? "Eligible for payout"
-                : eligibility?.reason ?? undefined
+                : (eligibility?.reason ?? undefined)
             }
           />
           <StatCard
@@ -326,11 +330,13 @@ export default function EarningsPage({
                           </span>
                         </td>
                         <td className="px-4 py-3">
-                          <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
-                            earning.role === "COLLABORATOR"
-                              ? "bg-purple-50 text-purple-700"
-                              : "bg-zinc-100 text-zinc-600"
-                          }`}>
+                          <span
+                            className={`text-xs font-medium px-2 py-0.5 rounded-full ${
+                              earning.role === "COLLABORATOR"
+                                ? "bg-purple-50 text-purple-700"
+                                : "bg-zinc-100 text-zinc-600"
+                            }`}
+                          >
                             {earning.role === "COLLABORATOR"
                               ? `Collab ${earning.sharePercentage}%`
                               : earning.sharePercentage < 100
@@ -339,13 +345,22 @@ export default function EarningsPage({
                           </span>
                         </td>
                         <td className="px-4 py-3 text-right text-zinc-600">
-                          {formatEarningAmount((earning.payment?.originalAmount ?? 0) * 100, earning.payment?.currency ?? "INR")}
+                          {formatEarningAmount(
+                            (earning.payment?.originalAmount ?? 0) * 100,
+                            earning.payment?.currency ?? "INR",
+                          )}
                         </td>
                         <td className="px-4 py-3 text-right font-medium text-zinc-900">
-                          {formatEarningAmount(earning.consultantShare, earning.payment?.currency ?? "INR")}
+                          {formatEarningAmount(
+                            earning.consultantShare,
+                            earning.payment?.currency ?? "INR",
+                          )}
                         </td>
                         <td className="px-4 py-3 text-right text-zinc-400">
-                          {formatEarningAmount(earning.platformFee, earning.payment?.currency ?? "INR")}
+                          {formatEarningAmount(
+                            earning.platformFee,
+                            earning.payment?.currency ?? "INR",
+                          )}
                         </td>
                         <td className="px-4 py-3">
                           <Badge
@@ -419,8 +434,8 @@ export default function EarningsPage({
                 <p className="text-xs text-zinc-500 mt-1">
                   {eligibility.isEligible
                     ? `You have ${formatSummaryAmount(eligibility.readyAmount)} ready for payout. Payouts are processed weekly.`
-                    : eligibility.reason ??
-                      `Minimum payout threshold is ${formatSummaryAmount(eligibility.minimumAmount)}.`}
+                    : (eligibility.reason ??
+                      `Minimum payout threshold is ${formatSummaryAmount(eligibility.minimumAmount)}.`)}
                 </p>
               </div>
             </div>

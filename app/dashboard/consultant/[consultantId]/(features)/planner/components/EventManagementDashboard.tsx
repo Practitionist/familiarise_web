@@ -349,8 +349,20 @@ export function EventManagementDashboard({
         ]);
 
         // Annotate with default role (owned plans from PlannerService)
-        setWebinars(fetchedWebinars.map((w) => ({ ...w, collaboratorRole: "HOST", isCollaborated: false })));
-        setClasses(fetchedClasses.map((c) => ({ ...c, collaboratorRole: "HOST", isCollaborated: false })));
+        setWebinars(
+          fetchedWebinars.map((w) => ({
+            ...w,
+            collaboratorRole: "HOST",
+            isCollaborated: false,
+          })),
+        );
+        setClasses(
+          fetchedClasses.map((c) => ({
+            ...c,
+            collaboratorRole: "HOST",
+            isCollaborated: false,
+          })),
+        );
       } catch (err) {
         setError(err instanceof Error ? err.message : "An error occurred");
         console.error("Error fetching events:", err);

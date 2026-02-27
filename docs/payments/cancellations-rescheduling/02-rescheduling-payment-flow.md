@@ -29,39 +29,42 @@ When an appointment is rescheduled, the **existing payment is reused** — no ne
 
 ## What Stays Unchanged
 
-| Concern | Behavior on Reschedule |
-|---------|----------------------|
-| **Payment record** | Stays `SUCCEEDED`, no modification |
-| **Payment amount** | Same (no price difference logic) |
-| **Consultant earnings** | Status unchanged (PENDING/READY/PAID) |
-| **Hold period** | Not reset (still based on original payment time) |
-| **Invoice** | Unchanged, original invoice remains valid |
+| Concern                 | Behavior on Reschedule                           |
+| ----------------------- | ------------------------------------------------ |
+| **Payment record**      | Stays `SUCCEEDED`, no modification               |
+| **Payment amount**      | Same (no price difference logic)                 |
+| **Consultant earnings** | Status unchanged (PENDING/READY/PAID)            |
+| **Hold period**         | Not reset (still based on original payment time) |
+| **Invoice**             | Unchanged, original invoice remains valid        |
 
 ---
 
 ## What Changes
 
-| Concern | Behavior on Reschedule |
-|---------|----------------------|
+| Concern                | Behavior on Reschedule                                                       |
+| ---------------------- | ---------------------------------------------------------------------------- |
 | **Appointment status** | Reverted to `PENDING` (full reschedule) or stays `APPROVED` (single session) |
-| **Slot records** | Marked `isTentative: true` until new times confirmed |
-| **Slot timing** | Old slots released, new slots acquired |
+| **Slot records**       | Marked `isTentative: true` until new times confirmed                         |
+| **Slot timing**        | Old slots released, new slots acquired                                       |
 
 ---
 
 ## Reschedule Types
 
 ### 1. Entire Booking Reschedule
+
 - Status → `PENDING`
 - ALL slots across all appointments marked tentative
 - User must select entirely new times
 
 ### 2. Individual Session Reschedule (Subscriptions)
+
 - Status stays `APPROVED` (only for single-session reschedule)
 - Only specified slot(s) marked tentative
 - Other sessions unaffected
 
 ### 3. Multiple Session Reschedule (Subscriptions)
+
 - Status → `PENDING`
 - Specified slots marked tentative
 - Non-specified sessions unaffected

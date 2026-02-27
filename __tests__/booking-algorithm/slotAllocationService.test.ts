@@ -147,8 +147,8 @@ beforeEach(() => {
   jest.setSystemTime(new Date("2025-01-01T00:00:00Z"));
 
   mockTx = makeMockTx();
-  (prisma.$transaction as jest.Mock).mockImplementation(
-    async (callback: any) => callback(mockTx),
+  (prisma.$transaction as jest.Mock).mockImplementation(async (callback: any) =>
+    callback(mockTx),
   );
 
   mockValidateFn.mockReset();
@@ -355,10 +355,7 @@ describe("Manual allocation", () => {
       createCall.data.slotsOfAppointment.create[0].user.connect;
 
     expect(userConnect).toEqual(
-      expect.arrayContaining([
-        { id: "consultant-1" },
-        { id: "consultee-1" },
-      ]),
+      expect.arrayContaining([{ id: "consultant-1" }, { id: "consultee-1" }]),
     );
   });
 
@@ -463,9 +460,7 @@ describe("Manual allocation", () => {
     });
 
     const createCall = mockTx.appointment.create.mock.calls[0][0];
-    expect(createCall.data.appointmentType).toBe(
-      AppointmentsType.SUBSCRIPTION,
-    );
+    expect(createCall.data.appointmentType).toBe(AppointmentsType.SUBSCRIPTION);
     expect(createCall.data.subscription).toEqual({
       connect: { id: "sub-1" },
     });
@@ -530,9 +525,7 @@ describe("Requested slot allocation", () => {
     mockTx.consultation.findUnique.mockResolvedValue(
       makeConsultationEvent({
         appointment: {
-          slotsOfAppointment: [
-            { startsAt: new Date("2025-01-06T10:00:00Z") },
-          ],
+          slotsOfAppointment: [{ startsAt: new Date("2025-01-06T10:00:00Z") }],
         },
       }),
     );
@@ -1041,10 +1034,7 @@ describe("fetchEventData - config extraction", () => {
           meetingsPerWeek: 2,
           sessionDurationInHours: 1.5,
           consultantProfile: makeConsultantProfile(),
-          classContents: [
-            { hoursAllotted: 1 },
-            { hoursAllotted: 2 },
-          ],
+          classContents: [{ hoursAllotted: 1 }, { hoursAllotted: 2 }],
         },
         // 1 week with meetingsPerWeek=2, 1.5hr sessions (3 slots each) → requires 6 slots
         schedulingPeriodEndsAt: new Date("2025-01-10T00:00:00Z"),
@@ -1247,8 +1237,7 @@ describe("createAppointments - grouping and validation", () => {
     });
 
     const slotsCreated =
-      mockTx.appointment.create.mock.calls[0][0].data.slotsOfAppointment
-        .create;
+      mockTx.appointment.create.mock.calls[0][0].data.slotsOfAppointment.create;
     for (const slot of slotsCreated) {
       expect(slot.isTentative).toBe(false);
     }
@@ -1349,8 +1338,7 @@ describe("Edge cases", () => {
 
     expect(result.success).toBe(true);
     const slotsCreated =
-      mockTx.appointment.create.mock.calls[0][0].data.slotsOfAppointment
-        .create;
+      mockTx.appointment.create.mock.calls[0][0].data.slotsOfAppointment.create;
     expect(slotsCreated).toHaveLength(1);
   });
 
@@ -1438,8 +1426,8 @@ describe("Edge cases", () => {
       "class",
     ] as const) {
       const freshTx = makeMockTx();
-      (prisma.$transaction as jest.Mock).mockImplementation(
-        async (cb: any) => cb(freshTx),
+      (prisma.$transaction as jest.Mock).mockImplementation(async (cb: any) =>
+        cb(freshTx),
       );
 
       const eventFactories = {

@@ -105,12 +105,12 @@ Platform Commission (20% of net):      Rs. 194
 Consultant Earnings (80% of net):      Rs. 776
 ```
 
-| Party | Amount | Percentage |
-|-------|--------|------------|
-| Razorpay | Rs. 30 | ~3% of total |
-| Familiarise | Rs. 194 | 20% of net |
-| Consultant | Rs. 776 | 80% of net |
-| **Total** | **Rs. 1,000** | **100%** |
+| Party       | Amount        | Percentage   |
+| ----------- | ------------- | ------------ |
+| Razorpay    | Rs. 30        | ~3% of total |
+| Familiarise | Rs. 194       | 20% of net   |
+| Consultant  | Rs. 776       | 80% of net   |
+| **Total**   | **Rs. 1,000** | **100%**     |
 
 **Source**: `lib/payments/payouts/constants.ts` and `lib/payments/payouts/earnings-service.ts`
 
@@ -155,29 +155,29 @@ In our system, these map to `PaymentStatus`: `PENDING` (created/authorized), `SU
 
 ### Events Handled
 
-| Event | When It Fires | What We Do |
-|-------|--------------|------------|
-| `payment.captured` | Payment successfully captured | Update payment to SUCCEEDED, create earnings record, send confirmation |
-| `order.paid` | Order fully paid | Same as payment.captured (alternative trigger) |
-| `payment.failed` | Payment declined/errored | Update payment to FAILED, send failure notification |
-| `refund.created` | Refund initiated | Create refund record with PENDING status |
-| `refund.processed` | Refund completed | Update refund to SUCCEEDED, mark earnings as REFUNDED |
-| `refund.failed` | Refund processing failed | Update refund to FAILED |
-| `payment.dispute.created` | Customer raised chargeback | Create dispute record, notify admin via Novu |
-| `payment.dispute.won` | Merchant won the dispute | Update dispute status to WON |
-| `payment.dispute.lost` | Customer won the dispute | Update dispute status to LOST |
-| `payment.dispute.closed` | Dispute resolved | Update dispute status |
+| Event                     | When It Fires                 | What We Do                                                             |
+| ------------------------- | ----------------------------- | ---------------------------------------------------------------------- |
+| `payment.captured`        | Payment successfully captured | Update payment to SUCCEEDED, create earnings record, send confirmation |
+| `order.paid`              | Order fully paid              | Same as payment.captured (alternative trigger)                         |
+| `payment.failed`          | Payment declined/errored      | Update payment to FAILED, send failure notification                    |
+| `refund.created`          | Refund initiated              | Create refund record with PENDING status                               |
+| `refund.processed`        | Refund completed              | Update refund to SUCCEEDED, mark earnings as REFUNDED                  |
+| `refund.failed`           | Refund processing failed      | Update refund to FAILED                                                |
+| `payment.dispute.created` | Customer raised chargeback    | Create dispute record, notify admin via Novu                           |
+| `payment.dispute.won`     | Merchant won the dispute      | Update dispute status to WON                                           |
+| `payment.dispute.lost`    | Customer won the dispute      | Update dispute status to LOST                                          |
+| `payment.dispute.closed`  | Dispute resolved              | Update dispute status                                                  |
 
 ### RazorpayX Payout Events (separate product)
 
-| Event | When It Fires | What We Do |
-|-------|--------------|------------|
-| `payout.processed` | Payout completed | Update payout to COMPLETED, mark earnings as PAID |
-| `payout.reversed` | Bank returned funds | Update payout to FAILED, restore available balance |
-| `payout.rejected` | Payout rejected | Update payout to FAILED |
-| `payout.queued` | Payout queued (low balance) | Update payout status |
-| `payout.pending` | Payout pending processing | Update payout status |
-| `payout.cancelled` | Payout cancelled | Update payout to CANCELLED |
+| Event              | When It Fires               | What We Do                                         |
+| ------------------ | --------------------------- | -------------------------------------------------- |
+| `payout.processed` | Payout completed            | Update payout to COMPLETED, mark earnings as PAID  |
+| `payout.reversed`  | Bank returned funds         | Update payout to FAILED, restore available balance |
+| `payout.rejected`  | Payout rejected             | Update payout to FAILED                            |
+| `payout.queued`    | Payout queued (low balance) | Update payout status                               |
+| `payout.pending`   | Payout pending processing   | Update payout status                               |
+| `payout.cancelled` | Payout cancelled            | Update payout to CANCELLED                         |
 
 **Source**: `app/api/webhooks/razorpay/route.ts`
 
@@ -205,12 +205,12 @@ This differs from Stripe, which provides full dispute management APIs.
 
 ## Error Handling
 
-| Error | Description |
-|-------|-------------|
-| `BAD_REQUEST_ERROR` | Invalid request parameters or authentication failure |
-| `GATEWAY_ERROR` | Payment gateway temporarily unavailable |
-| `PAYMENT_FAILED` | Customer's payment method declined |
-| `SIGNATURE_MISMATCH` | Webhook secret mismatch |
+| Error                | Description                                          |
+| -------------------- | ---------------------------------------------------- |
+| `BAD_REQUEST_ERROR`  | Invalid request parameters or authentication failure |
+| `GATEWAY_ERROR`      | Payment gateway temporarily unavailable              |
+| `PAYMENT_FAILED`     | Customer's payment method declined                   |
+| `SIGNATURE_MISMATCH` | Webhook secret mismatch                              |
 
 **Source**: `lib/payments/core/razorpay.ts` (error handling section)
 

@@ -7,6 +7,7 @@
 **Trigger**: User pays 1 minute before OFFLINE mode activates. Payment gateway processes the charge. Webhook fires during DB migration.
 
 **What happens**:
+
 1. User clicks "Pay" -> Stripe/Razorpay creates payment intent
 2. Admin activates OFFLINE mode
 3. Payment gateway charges the user
@@ -24,6 +25,7 @@
 **Trigger**: `reconcile-slot-availability` cron job runs during DB migration.
 
 **What happens**:
+
 1. OFFLINE mode active, DB migration running
 2. Cron job fires on schedule (every hour at :15)
 3. Job queries slot data from partially-migrated tables
@@ -38,6 +40,7 @@
 **Trigger**: `cleanup-abandoned-payments` cron job runs during migration.
 
 **What happens**:
+
 1. OFFLINE mode active
 2. Cleanup job runs (every 15 minutes)
 3. Finds payment intents >30 min old with no confirmed appointment
@@ -52,6 +55,7 @@
 **Trigger**: User is in a paid consultation video call when OFFLINE mode activates.
 
 **What happens**:
+
 1. Consultant and consultee are in a Stream.io video call
 2. Admin activates OFFLINE mode
 3. Video call continues (Stream infrastructure is external)
@@ -66,6 +70,7 @@
 **Trigger**: User completes checkout while DEGRADED mode is active.
 
 **What happens**:
+
 1. DEGRADED mode active (banner shown but site functional)
 2. User clicks "Pay" on checkout page
 3. Payment intent created, user charged
@@ -80,6 +85,7 @@
 **Trigger**: `process-payouts` cron job runs during OFFLINE mode (Monday 9 PM UTC).
 
 **What happens**:
+
 1. Weekly payout batch was created at 8 PM
 2. Admin starts OFFLINE maintenance at 8:30 PM
 3. Process-payouts job fires at 9 PM
@@ -91,38 +97,40 @@
 
 ## Risk Matrix
 
-| # | Scenario | Likelihood | Financial Impact | Current Mitigation | Recommended Mitigation |
-|---|----------|------------|------------------|-------------------|----------------------|
-| 1 | Payment succeeds, appointment fails | Medium | HIGH (user charged, no service) | Webhook retries (3 days) | Pre-flight: block checkout 5 min before OFFLINE |
-| 2 | Slot reconciliation during migration | High | HIGH (corrupted slot state) | None | Cron job maintenance guard |
-| 3 | Abandoned payment cleanup during migration | High | MEDIUM (valid payments cancelled) | None | Cron job maintenance guard |
-| 4 | Active video call quality degradation | Low | LOW (session continues, features limited) | Stream external infrastructure | Pre-flight: check active calls |
-| 5 | Checkout during DEGRADED with escalation | Medium | HIGH (payment/schema mismatch) | None | Block writes in DEGRADED mode |
-| 6 | Payout processing during maintenance | Low (timing-specific) | HIGH (incorrect payouts) | None | Never schedule maintenance on Monday 8-10 PM UTC |
+| #   | Scenario                                   | Likelihood            | Financial Impact                          | Current Mitigation             | Recommended Mitigation                           |
+| --- | ------------------------------------------ | --------------------- | ----------------------------------------- | ------------------------------ | ------------------------------------------------ |
+| 1   | Payment succeeds, appointment fails        | Medium                | HIGH (user charged, no service)           | Webhook retries (3 days)       | Pre-flight: block checkout 5 min before OFFLINE  |
+| 2   | Slot reconciliation during migration       | High                  | HIGH (corrupted slot state)               | None                           | Cron job maintenance guard                       |
+| 3   | Abandoned payment cleanup during migration | High                  | MEDIUM (valid payments cancelled)         | None                           | Cron job maintenance guard                       |
+| 4   | Active video call quality degradation      | Low                   | LOW (session continues, features limited) | Stream external infrastructure | Pre-flight: check active calls                   |
+| 5   | Checkout during DEGRADED with escalation   | Medium                | HIGH (payment/schema mismatch)            | None                           | Block writes in DEGRADED mode                    |
+| 6   | Payout processing during maintenance       | Low (timing-specific) | HIGH (incorrect payouts)                  | None                           | Never schedule maintenance on Monday 8-10 PM UTC |
 
 ## Worst-Case Financial Exposure
 
 **Per-incident estimates** (based on typical transaction volumes):
 
-| Scenario | Per-Incident Cost | Recovery Effort |
-|----------|-------------------|-----------------|
-| Failed appointment after payment | INR 500-5,000 per user | Manual refund + reschedule (30 min/case) |
-| Corrupted slot state | INR 0 direct, but booking failures for hours | Manual DB fix + slot reconciliation (2-4 hours) |
-| Cancelled valid payments | INR 500-5,000 per user | Re-process payments + customer support (1 hour/case) |
-| Missed call completion | INR 0 direct | Manual status update (15 min/case) |
-| Schema mismatch on checkout | INR 500-5,000 per user | Manual reconciliation (1-2 hours) |
-| Incorrect payouts | INR 1,000-50,000+ total | Manual reversal + consultant communication (4+ hours) |
+| Scenario                         | Per-Incident Cost                            | Recovery Effort                                       |
+| -------------------------------- | -------------------------------------------- | ----------------------------------------------------- |
+| Failed appointment after payment | INR 500-5,000 per user                       | Manual refund + reschedule (30 min/case)              |
+| Corrupted slot state             | INR 0 direct, but booking failures for hours | Manual DB fix + slot reconciliation (2-4 hours)       |
+| Cancelled valid payments         | INR 500-5,000 per user                       | Re-process payments + customer support (1 hour/case)  |
+| Missed call completion           | INR 0 direct                                 | Manual status update (15 min/case)                    |
+| Schema mismatch on checkout      | INR 500-5,000 per user                       | Manual reconciliation (1-2 hours)                     |
+| Incorrect payouts                | INR 1,000-50,000+ total                      | Manual reversal + consultant communication (4+ hours) |
 
 **Key insight**: Most risks are mitigated by keeping maintenance windows short (<1 hour) and running them during low-traffic periods (e.g., 2-4 AM IST on weekdays).
 
 ## Timing Recommendations
 
 ### Avoid These Windows
+
 - **Monday 8-10 PM UTC** (payout processing)
 - **Peak hours** (varies by user base, check analytics)
 - **During active appointments** (check calendar)
 
 ### Preferred Windows
+
 - **Weekday 2-4 AM IST** (21:30-23:30 UTC previous day) -- lowest traffic
 - **Sunday 2-4 AM IST** -- no payout processing, low traffic
 - **After payout processing completes** (Monday 10 PM+ UTC)

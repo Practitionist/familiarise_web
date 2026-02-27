@@ -88,7 +88,10 @@ const EXPLORE_CATEGORIES: NavCategoryChip[] = [
   { label: "Creative Arts", href: "/explore/experts?domain=Creative Arts" },
   { label: "Education", href: "/explore/experts?domain=Education" },
   { label: "Health", href: "/explore/experts?domain=Health" },
-  { label: "Personal Dev", href: "/explore/experts?domain=Personal Development" },
+  {
+    label: "Personal Dev",
+    href: "/explore/experts?domain=Personal Development",
+  },
 ];
 
 const USE_CASE_ITEMS: NavDropdownItem[] = [
@@ -196,9 +199,7 @@ function DesktopDropdownPanel({
               href={item.disabled ? "/contactus" : item.href}
               onClick={onClose}
               className={`flex items-start gap-3 px-3 py-2.5 rounded-lg transition-colors ${
-                item.disabled
-                  ? "opacity-60 cursor-default"
-                  : "hover:bg-zinc-50"
+                item.disabled ? "opacity-60 cursor-default" : "hover:bg-zinc-50"
               }`}
             >
               <div className="mt-0.5 w-8 h-8 rounded-lg bg-zinc-100 flex items-center justify-center shrink-0">
@@ -297,10 +298,7 @@ function DesktopNavItem({
       </button>
       <AnimatePresence>
         {open && (
-          <DesktopDropdownPanel
-            group={group}
-            onClose={() => setOpen(false)}
-          />
+          <DesktopDropdownPanel group={group} onClose={() => setOpen(false)} />
         )}
       </AnimatePresence>
     </div>
@@ -602,9 +600,7 @@ const Navbar = () => {
                           {group.items.map((item) => (
                             <Link
                               key={item.href + item.label}
-                              href={
-                                item.disabled ? "/contactus" : item.href
-                              }
+                              href={item.disabled ? "/contactus" : item.href}
                               onClick={closeMenu}
                               className={`block px-4 py-2.5 rounded-lg transition-colors ${
                                 item.disabled

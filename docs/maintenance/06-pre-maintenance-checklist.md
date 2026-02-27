@@ -16,7 +16,7 @@ Complete this checklist before activating maintenance mode. Items are ordered by
 - [ ] **Estimate duration**: How long will the maintenance window be?
   - <15 minutes: Low risk, webhook retries cover it
   - 15-60 minutes: Medium risk, follow full checklist
-  - >60 minutes: High risk, consider off-peak timing and extended notifications
+  - > 60 minutes: High risk, consider off-peak timing and extended notifications
 
 ## 2. Check Active Sessions
 
@@ -81,9 +81,11 @@ Complete this checklist before activating maintenance mode. Items are ordered by
 This step ensures the public status page stays in sync when you enter OFFLINE mode.
 
 - [ ] **Confirm `BETTERSTACK_API_KEY` is set**:
+
   ```bash
   curl https://familiarisenow.com/api/health
   ```
+
   Expected: `"betterstack": { "configured": true, "reachable": true, "monitors": [...] }`
   - If `configured: false` → env var is missing; add it and redeploy before proceeding
   - If `reachable: false` → API key is wrong or BetterStack is unreachable
@@ -102,11 +104,13 @@ This step ensures the public status page stays in sync when you enter OFFLINE mo
 ## 7. Timing Considerations
 
 ### Preferred Times
+
 - **Best**: Weekday 2-4 AM IST (21:30-23:30 UTC previous day)
 - **Good**: Sunday 2-4 AM IST
 - **Acceptable**: Any low-traffic period (check analytics)
 
 ### Times to Avoid
+
 - Monday 8-10 PM UTC (payout processing)
 - Peak traffic hours (check analytics)
 - During scheduled appointments

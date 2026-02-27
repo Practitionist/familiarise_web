@@ -4,11 +4,11 @@ Familiarise's maintenance mode system provides two-tier protection (DEGRADED and
 
 ## Quick Reference
 
-| Mode | User Experience | Reads | Writes | Webhooks | Cron Jobs | BetterStack |
-|------|----------------|-------|--------|----------|-----------|-------------|
-| **OFF** | Normal operation | Yes | Yes | Yes | Yes | No incident |
-| **DEGRADED** | Warning banner, site functional | Yes | Yes (gap) | Yes | Yes (gap) | No incident |
-| **OFFLINE** | Full maintenance page | No | No | Yes (exempt) | Yes (gap) | Auto-creates incident |
+| Mode         | User Experience                 | Reads | Writes    | Webhooks     | Cron Jobs | BetterStack           |
+| ------------ | ------------------------------- | ----- | --------- | ------------ | --------- | --------------------- |
+| **OFF**      | Normal operation                | Yes   | Yes       | Yes          | Yes       | No incident           |
+| **DEGRADED** | Warning banner, site functional | Yes   | Yes (gap) | Yes          | Yes (gap) | No incident           |
+| **OFFLINE**  | Full maintenance page           | No    | No        | Yes (exempt) | Yes (gap) | Auto-creates incident |
 
 **Key gaps**: DEGRADED does not block writes. Cron jobs bypass middleware entirely in all modes.
 
@@ -27,11 +27,11 @@ Familiarise's maintenance mode system provides two-tier protection (DEGRADED and
 
 ## Emergency Contacts
 
-| Role | Contact | Notes |
-|------|---------|-------|
-| Platform Admin | _TBD_ | Primary escalation for maintenance decisions |
-| DevOps Lead | _TBD_ | Infrastructure and deployment issues |
-| Payment Ops | _TBD_ | Payment reconciliation and refund issues |
+| Role           | Contact | Notes                                        |
+| -------------- | ------- | -------------------------------------------- |
+| Platform Admin | _TBD_   | Primary escalation for maintenance decisions |
+| DevOps Lead    | _TBD_   | Infrastructure and deployment issues         |
+| Payment Ops    | _TBD_   | Payment reconciliation and refund issues     |
 
 ## Quick Commands
 
@@ -42,10 +42,12 @@ Familiarise's maintenance mode system provides two-tier protection (DEGRADED and
 `Dashboard > Maintenance > Start Offline Mode`
 
 **Bypass during maintenance** (for admin testing):
+
 - Header: `x-maintenance-bypass: <secret>`
 - Cookie: `maintenance_bypass=<secret>`
 
 **Health check**: `GET /api/health` -- returns maintenance state + BetterStack connectivity
+
 ```json
 { "status": "healthy", "maintenance": { "phase": "OFF" }, "betterstack": { "configured": true, "reachable": true, "monitors": [...] } }
 ```

@@ -167,7 +167,12 @@ export async function handleRefundCreated(
 
         // Run side effects when transitioning TO SUCCEEDED (but not if already SUCCEEDED)
         if (!wasSucceeded) {
-          await runRefundSideEffects(payment.id, status, amount, payment.amount);
+          await runRefundSideEffects(
+            payment.id,
+            status,
+            amount,
+            payment.amount,
+          );
         }
       }
       return;

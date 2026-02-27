@@ -236,10 +236,15 @@ export class SubscriptionValidationService {
       // FIX: Previously iterated over each slot and incremented by 1 per slot.
       // A 1-hour session (2 slots) was counted as 2 calls instead of 1.
       // Now counts each appointment as 1 call using the earliest slot's week.
-      const firstSlot = appointment.slotsOfAppointment.reduce((earliest, slot) =>
-        new Date(slot.startsAt) < new Date(earliest.startsAt) ? slot : earliest
+      const firstSlot = appointment.slotsOfAppointment.reduce(
+        (earliest, slot) =>
+          new Date(slot.startsAt) < new Date(earliest.startsAt)
+            ? slot
+            : earliest,
       );
-      const weekStart = SlotCalculationService.startOfWeekSunday(new Date(firstSlot.startsAt));
+      const weekStart = SlotCalculationService.startOfWeekSunday(
+        new Date(firstSlot.startsAt),
+      );
       const weekKey = weekStart.toISOString();
 
       weeklyCallCount.set(weekKey, (weeklyCallCount.get(weekKey) || 0) + 1);
@@ -366,7 +371,8 @@ export class SubscriptionValidationService {
     let weekCount = 0;
 
     const weeklyInfo: WeeklyCallInfo[] = [];
-    let currentWeek = SlotCalculationService.startOfWeekSunday(subscriptionStart);
+    let currentWeek =
+      SlotCalculationService.startOfWeekSunday(subscriptionStart);
 
     while (currentWeek <= subscriptionEnd) {
       weekCount++;
@@ -491,7 +497,9 @@ export function getSubscriptionWeek(
   targetDate: Date,
   subscriptionStartDate: Date,
 ): number {
-  const weekStart = SlotCalculationService.startOfWeekSunday(subscriptionStartDate);
+  const weekStart = SlotCalculationService.startOfWeekSunday(
+    subscriptionStartDate,
+  );
   const targetWeekStart = SlotCalculationService.startOfWeekSunday(targetDate);
 
   const diffInWeeks = Math.floor(

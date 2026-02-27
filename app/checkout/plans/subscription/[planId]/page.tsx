@@ -82,7 +82,10 @@ export default function SubscriptionCheckoutPage({
   const [isLoadingCredits, setIsLoadingCredits] = useState(true);
 
   const { toast } = useToast();
-  const { isBlocked: isMaintenanceBlocked, blockReason: maintenanceBlockReason } = useMaintenanceGuard();
+  const {
+    isBlocked: isMaintenanceBlocked,
+    blockReason: maintenanceBlockReason,
+  } = useMaintenanceGuard();
 
   // Apply discount code
   const handleApplyDiscount = async (code?: string) => {
@@ -136,7 +139,9 @@ export default function SubscriptionCheckoutPage({
         const response = await fetch("/api/referrals/credits/available");
         if (response.ok) {
           const data = await response.json();
-          setAvailableCredits(Math.floor((data.data.totalAvailable || 0) / 100));
+          setAvailableCredits(
+            Math.floor((data.data.totalAvailable || 0) / 100),
+          );
         }
       } catch (error) {
         console.error("Error fetching referral credits:", error);
@@ -170,7 +175,12 @@ export default function SubscriptionCheckoutPage({
     async (gateway: PaymentGateway, isMockPayment: boolean = false) => {
       // Block checkout during maintenance mode
       if (isMaintenanceBlocked) {
-        toast({ title: "Checkout unavailable", description: maintenanceBlockReason ?? "Service temporarily unavailable", variant: "destructive" });
+        toast({
+          title: "Checkout unavailable",
+          description:
+            maintenanceBlockReason ?? "Service temporarily unavailable",
+          variant: "destructive",
+        });
         return;
       }
 
@@ -371,7 +381,12 @@ export default function SubscriptionCheckoutPage({
       discountAmount,
       creditsApplied: useReferralCredits ? availableCredits : 0,
     });
-  }, [planData?.data?.price, appliedDiscount, useReferralCredits, availableCredits]);
+  }, [
+    planData?.data?.price,
+    appliedDiscount,
+    useReferralCredits,
+    availableCredits,
+  ]);
 
   if (isLoading) {
     return (
@@ -389,8 +404,18 @@ export default function SubscriptionCheckoutPage({
           role="alert"
         >
           <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-zinc-800">
-            <svg className="h-6 w-6 text-zinc-400" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z" />
+            <svg
+              className="h-6 w-6 text-zinc-400"
+              fill="none"
+              viewBox="0 0 24 24"
+              strokeWidth={1.5}
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z"
+              />
             </svg>
           </div>
           <p className="font-semibold text-lg mb-2">Unable to load checkout</p>
@@ -594,7 +619,9 @@ export default function SubscriptionCheckoutPage({
         <div className="grid gap-4">
           <div className="font-semibold">Referral Credits</div>
           {isLoadingCredits ? (
-            <div className="text-sm text-muted-foreground">Loading credits...</div>
+            <div className="text-sm text-muted-foreground">
+              Loading credits...
+            </div>
           ) : availableCredits > 0 ? (
             <div className="flex items-center justify-between bg-blue-50 p-3 rounded-lg border border-blue-200">
               <div>

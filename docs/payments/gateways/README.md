@@ -10,10 +10,10 @@
 
 Familiarise uses two payment gateways to serve customers globally:
 
-| Gateway | Region | Currency | Payouts Product |
-|---------|--------|----------|-----------------|
-| **Razorpay** | India | INR | RazorpayX Payouts |
-| **Stripe** | International | USD | Stripe Connect (Express) |
+| Gateway      | Region        | Currency | Payouts Product          |
+| ------------ | ------------- | -------- | ------------------------ |
+| **Razorpay** | India         | INR      | RazorpayX Payouts        |
+| **Stripe**   | International | USD      | Stripe Connect (Express) |
 
 Two additional gateways are registered in the codebase but **not yet production-ready**:
 
@@ -33,9 +33,9 @@ Gateway selection is **user-driven** via the checkout UI. The customer explicitl
 
 **Gateway detection from payment IDs**:
 
-| ID Prefix | Gateway |
-|-----------|---------|
-| `cs_` or `pi_` | Stripe |
+| ID Prefix          | Gateway  |
+| ------------------ | -------- |
+| `cs_` or `pi_`     | Stripe   |
 | `order_` or `pay_` | Razorpay |
 
 **Source files**:
@@ -48,16 +48,16 @@ Gateway selection is **user-driven** via the checkout UI. The customer explicitl
 
 ## Feature Comparison
 
-| Feature | Razorpay | Stripe |
-|---------|----------|--------|
-| **Checkout** | Order → Modal (client-side SDK) | Checkout Session → Redirect (hosted page) |
-| **Refunds** | Full API (create, get, list) | Full API (create, get, list) |
-| **Disputes** | Webhook-only (no API management) | Full API (get, submit evidence, list) |
-| **Payouts** | RazorpayX: Contacts + Fund Accounts + Payouts API | Stripe Connect: Express accounts + Transfers |
-| **KYC** | Platform collects data, creates accounts via API | Stripe handles everything via hosted onboarding |
-| **Payment methods** | Cards, UPI, Net Banking, Wallets, EMI | Cards, Apple Pay, Google Pay, ACH, SEPA |
-| **Gateway fee** | ~2% + 18% GST (~2.36%) | 2.9% + $0.30 (US), varies by region |
-| **Settlement** | T+2 business days | 2-7 business days (varies by country) |
+| Feature             | Razorpay                                          | Stripe                                          |
+| ------------------- | ------------------------------------------------- | ----------------------------------------------- |
+| **Checkout**        | Order → Modal (client-side SDK)                   | Checkout Session → Redirect (hosted page)       |
+| **Refunds**         | Full API (create, get, list)                      | Full API (create, get, list)                    |
+| **Disputes**        | Webhook-only (no API management)                  | Full API (get, submit evidence, list)           |
+| **Payouts**         | RazorpayX: Contacts + Fund Accounts + Payouts API | Stripe Connect: Express accounts + Transfers    |
+| **KYC**             | Platform collects data, creates accounts via API  | Stripe handles everything via hosted onboarding |
+| **Payment methods** | Cards, UPI, Net Banking, Wallets, EMI             | Cards, Apple Pay, Google Pay, ACH, SEPA         |
+| **Gateway fee**     | ~2% + 18% GST (~2.36%)                            | 2.9% + $0.30 (US), varies by region             |
+| **Settlement**      | T+2 business days                                 | 2-7 business days (varies by country)           |
 
 ---
 
@@ -87,34 +87,34 @@ Net amount to platform
 
 ### Razorpay (Payments)
 
-| Variable | Purpose |
-|----------|---------|
-| `RAZORPAY_KEY_ID` | Server-side API key ID |
-| `RAZORPAY_SECRET` | Server-side API key secret |
+| Variable                      | Purpose                     |
+| ----------------------------- | --------------------------- |
+| `RAZORPAY_KEY_ID`             | Server-side API key ID      |
+| `RAZORPAY_SECRET`             | Server-side API key secret  |
 | `NEXT_PUBLIC_RAZORPAY_KEY_ID` | Client-side publishable key |
 
 ### RazorpayX (Payouts)
 
-| Variable | Purpose |
-|----------|---------|
-| `RAZORPAYX_KEY_ID` | RazorpayX API key (falls back to `RAZORPAY_KEY_ID`) |
-| `RAZORPAYX_KEY_SECRET` | RazorpayX API secret (falls back to `RAZORPAY_SECRET`) |
-| `RAZORPAYX_ACCOUNT_NUMBER` | RazorpayX account number for payouts |
-| `RAZORPAYX_WEBHOOK_SECRET` | RazorpayX webhook signature verification |
+| Variable                   | Purpose                                                |
+| -------------------------- | ------------------------------------------------------ |
+| `RAZORPAYX_KEY_ID`         | RazorpayX API key (falls back to `RAZORPAY_KEY_ID`)    |
+| `RAZORPAYX_KEY_SECRET`     | RazorpayX API secret (falls back to `RAZORPAY_SECRET`) |
+| `RAZORPAYX_ACCOUNT_NUMBER` | RazorpayX account number for payouts                   |
+| `RAZORPAYX_WEBHOOK_SECRET` | RazorpayX webhook signature verification               |
 
 ### Stripe (Payments)
 
-| Variable | Purpose |
-|----------|---------|
-| `STRIPE_SECRET_KEY` | Server-side secret key |
-| `STRIPE_WEBHOOK_SECRET` | Webhook signature verification |
-| `NEXT_PUBLIC_STRIPE_KEY` | Client-side publishable key |
+| Variable                 | Purpose                        |
+| ------------------------ | ------------------------------ |
+| `STRIPE_SECRET_KEY`      | Server-side secret key         |
+| `STRIPE_WEBHOOK_SECRET`  | Webhook signature verification |
+| `NEXT_PUBLIC_STRIPE_KEY` | Client-side publishable key    |
 
 ### Stripe Connect (Payouts)
 
-| Variable | Purpose |
-|----------|---------|
-| `STRIPE_CONNECT_CLIENT_ID` | OAuth client ID for Connect |
+| Variable                        | Purpose                                |
+| ------------------------------- | -------------------------------------- |
+| `STRIPE_CONNECT_CLIENT_ID`      | OAuth client ID for Connect            |
 | `STRIPE_CONNECT_WEBHOOK_SECRET` | Connect webhook signature verification |
 
 ---
@@ -123,13 +123,13 @@ Net amount to platform
 
 Both gateways share a common abstraction layer:
 
-| File | Purpose |
-|------|---------|
-| `lib/payments/index.ts` | Unified orchestration — routes `createPaymentIntent()`, `cancelPaymentIntent()`, `createRefund()` to the correct gateway |
-| `lib/payments/core/types.ts` | Shared types (`PaymentIntent`, `RefundResult`, `DisputeResult`), error classes (`PaymentError`, `RefundError`, `DisputeError`), `CURRENCY_MULTIPLIERS` |
-| `lib/payments/payouts/payout-service.ts` | Provider-agnostic payout orchestration (batch creation, admin approval, processing) |
-| `lib/payments/payouts/earnings-service.ts` | Earnings calculation with flat 20% platform fee |
-| `lib/payments/payouts/constants.ts` | Hold periods, minimum amounts, fee percentages, payout mode limits |
+| File                                       | Purpose                                                                                                                                                |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `lib/payments/index.ts`                    | Unified orchestration — routes `createPaymentIntent()`, `cancelPaymentIntent()`, `createRefund()` to the correct gateway                               |
+| `lib/payments/core/types.ts`               | Shared types (`PaymentIntent`, `RefundResult`, `DisputeResult`), error classes (`PaymentError`, `RefundError`, `DisputeError`), `CURRENCY_MULTIPLIERS` |
+| `lib/payments/payouts/payout-service.ts`   | Provider-agnostic payout orchestration (batch creation, admin approval, processing)                                                                    |
+| `lib/payments/payouts/earnings-service.ts` | Earnings calculation with flat 20% platform fee                                                                                                        |
+| `lib/payments/payouts/constants.ts`        | Hold periods, minimum amounts, fee percentages, payout mode limits                                                                                     |
 
 ---
 

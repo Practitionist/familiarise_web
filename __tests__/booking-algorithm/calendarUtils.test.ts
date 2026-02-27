@@ -109,11 +109,7 @@ describe("mapWeeklySlots", () => {
       ],
     });
 
-    const slots = mapWeeklySlots(
-      data as any,
-      new Date("2025-01-15"),
-      "month",
-    );
+    const slots = mapWeeklySlots(data as any, new Date("2025-01-15"), "month");
     // January has 4-5 Wednesdays
     expect(slots.length).toBeGreaterThanOrEqual(4); // at least 2 slots × 4 Wednesdays
   });
@@ -185,10 +181,7 @@ describe("mapCustomSlots", () => {
 
 describe("slotsOverlap", () => {
   it("should detect overlapping slots", () => {
-    const slot1 = makeTimeSlot(
-      "2025-01-06T09:00:00Z",
-      "2025-01-06T09:30:00Z",
-    );
+    const slot1 = makeTimeSlot("2025-01-06T09:00:00Z", "2025-01-06T09:30:00Z");
     const apptSlot = {
       startsAt: "2025-01-06T09:00:00Z",
       endsAt: "2025-01-06T10:00:00Z",
@@ -197,10 +190,7 @@ describe("slotsOverlap", () => {
   });
 
   it("should detect non-overlapping slots", () => {
-    const slot1 = makeTimeSlot(
-      "2025-01-06T09:00:00Z",
-      "2025-01-06T09:30:00Z",
-    );
+    const slot1 = makeTimeSlot("2025-01-06T09:00:00Z", "2025-01-06T09:30:00Z");
     const apptSlot = {
       startsAt: "2025-01-06T10:00:00Z",
       endsAt: "2025-01-06T10:30:00Z",
@@ -209,10 +199,7 @@ describe("slotsOverlap", () => {
   });
 
   it("should not count back-to-back as overlapping", () => {
-    const slot1 = makeTimeSlot(
-      "2025-01-06T09:00:00Z",
-      "2025-01-06T09:30:00Z",
-    );
+    const slot1 = makeTimeSlot("2025-01-06T09:00:00Z", "2025-01-06T09:30:00Z");
     const apptSlot = {
       startsAt: "2025-01-06T09:30:00Z",
       endsAt: "2025-01-06T10:00:00Z",
@@ -385,12 +372,7 @@ describe("getSlotStatus", () => {
   });
 
   it("should include interval start/end UTC strings", () => {
-    const status = getSlotStatus(
-      { hour: 10, minute: 30 },
-      baseDate,
-      [],
-      [],
-    );
+    const status = getSlotStatus({ hour: 10, minute: 30 }, baseDate, [], []);
     expect(status.intervalStartUTCString).toContain("T");
     expect(status.intervalEndUTCString).toContain("T");
   });
@@ -450,10 +432,7 @@ describe("calculateRequiredSlots (calendarUtils wrapper)", () => {
 describe("Delegated week functions", () => {
   it("countSundayWeeksInclusive should match SlotCalculationService", () => {
     expect(
-      countSundayWeeksInclusive(
-        new Date("2025-01-06"),
-        new Date("2025-01-31"),
-      ),
+      countSundayWeeksInclusive(new Date("2025-01-06"), new Date("2025-01-31")),
     ).toBe(4);
   });
 
@@ -483,10 +462,7 @@ describe("validateSelectedSlots", () => {
 
   it("should reject past slots", () => {
     const pastSlots: TimeSlot[] = [
-      makeTimeSlot(
-        "2024-01-01T09:00:00Z",
-        "2024-01-01T09:30:00Z",
-      ) as TimeSlot,
+      makeTimeSlot("2024-01-01T09:00:00Z", "2024-01-01T09:30:00Z") as TimeSlot,
     ];
     const result = validateSelectedSlots(pastSlots, "webinar", 1, 0.5);
     expect(result.isValid).toBe(false);
@@ -602,10 +578,7 @@ describe("validateSelectedSlots", () => {
 
   it("should reject invalid event type", () => {
     const slots = makeConsecutiveTimeSlots("2025-06-01T09:00:00Z", 1);
-    const result = validateSelectedSlots(
-      slots as TimeSlot[],
-      "invalid" as any,
-    );
+    const result = validateSelectedSlots(slots as TimeSlot[], "invalid" as any);
     expect(result.isValid).toBe(false);
   });
 });
@@ -615,14 +588,8 @@ describe("validateSelectedSlots", () => {
 describe("groupSlotsByWeek", () => {
   it("should group slots by week using startOfWeek", () => {
     const slots: TimeSlot[] = [
-      makeTimeSlot(
-        "2025-01-06T09:00:00Z",
-        "2025-01-06T09:30:00Z",
-      ) as TimeSlot,
-      makeTimeSlot(
-        "2025-01-13T09:00:00Z",
-        "2025-01-13T09:30:00Z",
-      ) as TimeSlot,
+      makeTimeSlot("2025-01-06T09:00:00Z", "2025-01-06T09:30:00Z") as TimeSlot,
+      makeTimeSlot("2025-01-13T09:00:00Z", "2025-01-13T09:30:00Z") as TimeSlot,
     ];
 
     const grouped = groupSlotsByWeek(slots);
@@ -631,14 +598,8 @@ describe("groupSlotsByWeek", () => {
 
   it("should keep same-week slots together", () => {
     const slots: TimeSlot[] = [
-      makeTimeSlot(
-        "2025-01-06T09:00:00Z",
-        "2025-01-06T09:30:00Z",
-      ) as TimeSlot,
-      makeTimeSlot(
-        "2025-01-08T09:00:00Z",
-        "2025-01-08T09:30:00Z",
-      ) as TimeSlot,
+      makeTimeSlot("2025-01-06T09:00:00Z", "2025-01-06T09:30:00Z") as TimeSlot,
+      makeTimeSlot("2025-01-08T09:00:00Z", "2025-01-08T09:30:00Z") as TimeSlot,
     ];
 
     const grouped = groupSlotsByWeek(slots);
@@ -653,14 +614,8 @@ describe("groupSlotsByWeek", () => {
 describe("validateSlotDistribution", () => {
   it("should pass when slots per week are within limit", () => {
     const slots: TimeSlot[] = [
-      makeTimeSlot(
-        "2025-01-06T09:00:00Z",
-        "2025-01-06T09:30:00Z",
-      ) as TimeSlot,
-      makeTimeSlot(
-        "2025-01-13T09:00:00Z",
-        "2025-01-13T09:30:00Z",
-      ) as TimeSlot,
+      makeTimeSlot("2025-01-06T09:00:00Z", "2025-01-06T09:30:00Z") as TimeSlot,
+      makeTimeSlot("2025-01-13T09:00:00Z", "2025-01-13T09:30:00Z") as TimeSlot,
     ];
 
     const result = validateSlotDistribution(slots, 1);
@@ -669,18 +624,9 @@ describe("validateSlotDistribution", () => {
 
   it("should fail when a week exceeds the limit", () => {
     const slots: TimeSlot[] = [
-      makeTimeSlot(
-        "2025-01-06T09:00:00Z",
-        "2025-01-06T09:30:00Z",
-      ) as TimeSlot,
-      makeTimeSlot(
-        "2025-01-07T09:00:00Z",
-        "2025-01-07T09:30:00Z",
-      ) as TimeSlot,
-      makeTimeSlot(
-        "2025-01-08T09:00:00Z",
-        "2025-01-08T09:30:00Z",
-      ) as TimeSlot,
+      makeTimeSlot("2025-01-06T09:00:00Z", "2025-01-06T09:30:00Z") as TimeSlot,
+      makeTimeSlot("2025-01-07T09:00:00Z", "2025-01-07T09:30:00Z") as TimeSlot,
+      makeTimeSlot("2025-01-08T09:00:00Z", "2025-01-08T09:30:00Z") as TimeSlot,
     ];
 
     const result = validateSlotDistribution(slots, 2);
@@ -694,10 +640,7 @@ describe("validateSlotDistribution", () => {
 describe("validateDayBasedConsecutiveSlots", () => {
   it("should return true for single slot", () => {
     const slots: TimeSlot[] = [
-      makeTimeSlot(
-        "2025-01-06T09:00:00Z",
-        "2025-01-06T09:30:00Z",
-      ) as TimeSlot,
+      makeTimeSlot("2025-01-06T09:00:00Z", "2025-01-06T09:30:00Z") as TimeSlot,
     ];
     expect(validateDayBasedConsecutiveSlots(slots)).toBe(true);
   });
@@ -709,28 +652,16 @@ describe("validateDayBasedConsecutiveSlots", () => {
 
   it("should return false for non-consecutive slots", () => {
     const slots: TimeSlot[] = [
-      makeTimeSlot(
-        "2025-01-06T09:00:00Z",
-        "2025-01-06T09:30:00Z",
-      ) as TimeSlot,
-      makeTimeSlot(
-        "2025-01-06T10:00:00Z",
-        "2025-01-06T10:30:00Z",
-      ) as TimeSlot,
+      makeTimeSlot("2025-01-06T09:00:00Z", "2025-01-06T09:30:00Z") as TimeSlot,
+      makeTimeSlot("2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z") as TimeSlot,
     ];
     expect(validateDayBasedConsecutiveSlots(slots)).toBe(false);
   });
 
   it("should return false for slots on different days", () => {
     const slots: TimeSlot[] = [
-      makeTimeSlot(
-        "2025-01-06T09:00:00Z",
-        "2025-01-06T09:30:00Z",
-      ) as TimeSlot,
-      makeTimeSlot(
-        "2025-01-07T09:30:00Z",
-        "2025-01-07T10:00:00Z",
-      ) as TimeSlot,
+      makeTimeSlot("2025-01-06T09:00:00Z", "2025-01-06T09:30:00Z") as TimeSlot,
+      makeTimeSlot("2025-01-07T09:30:00Z", "2025-01-07T10:00:00Z") as TimeSlot,
     ];
     expect(validateDayBasedConsecutiveSlots(slots)).toBe(false);
   });
@@ -838,7 +769,7 @@ describe("getAppointmentTitle", () => {
     expect(getAppointmentTitle(apt)).toBe("Yoga");
   });
 
-  it('should return fallback for unknown type', () => {
+  it("should return fallback for unknown type", () => {
     const apt: Appointment = {
       id: "1",
       appointmentType: "UNKNOWN" as any,

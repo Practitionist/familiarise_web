@@ -1,18 +1,12 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth-server";
-import {
-  getReferralCode,
-  createReferralCode,
-} from "@/lib/referrals/service";
+import { getReferralCode, createReferralCode } from "@/lib/referrals/service";
 
 export async function GET() {
   try {
     const session = await getSession();
     if (!session?.user?.id) {
-      return NextResponse.json(
-        { error: "Unauthorized" },
-        { status: 401 },
-      );
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     const code = await getReferralCode(session.user.id);
@@ -30,10 +24,7 @@ export async function POST() {
   try {
     const session = await getSession();
     if (!session?.user?.id) {
-      return NextResponse.json(
-        { error: "Unauthorized" },
-        { status: 401 },
-      );
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     const code = await createReferralCode(session.user.id);

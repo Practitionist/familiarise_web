@@ -8,13 +8,13 @@ Referral credits are a platform currency denominated in paise (100 paise = 1 INR
 
 ## Credit Sources
 
-| Source | Recipient | Amount | Trigger |
-|--------|-----------|--------|---------|
-| `REFEREE_BONUS` | New user (referee) | ₹200 (20,000 paise) | Signs up via referral link |
-| `REFERRAL_BONUS` | Existing user (referrer) | ₹500 (50,000 paise) | Referee makes first paid booking |
-| `PROMOTION` | Any user | Variable | Platform campaign (admin-created) |
-| `COMPENSATION` | Any user | Variable | Customer support resolution |
-| `MANUAL` | Any user | Variable | Staff/admin manual entry |
+| Source           | Recipient                | Amount              | Trigger                           |
+| ---------------- | ------------------------ | ------------------- | --------------------------------- |
+| `REFEREE_BONUS`  | New user (referee)       | ₹200 (20,000 paise) | Signs up via referral link        |
+| `REFERRAL_BONUS` | Existing user (referrer) | ₹500 (50,000 paise) | Referee makes first paid booking  |
+| `PROMOTION`      | Any user                 | Variable            | Platform campaign (admin-created) |
+| `COMPENSATION`   | Any user                 | Variable            | Customer support resolution       |
+| `MANUAL`         | Any user                 | Variable            | Staff/admin manual entry          |
 
 ---
 
@@ -42,6 +42,7 @@ Referral credits are a platform currency denominated in paise (100 paise = 1 INR
 ```
 
 There is no explicit `status` field on ReferralCredit. Status is inferred:
+
 - **Active**: `remainingAmount > 0` and (`expiresAt IS NULL` or `expiresAt > now`)
 - **Partially Used**: `usedAmount > 0` and `remainingAmount > 0`
 - **Consumed**: `remainingAmount = 0` and `usedAt IS NOT NULL`
@@ -62,12 +63,9 @@ async function applyCreditsToPayment(userId: string, amount: number) {
     where: {
       userId,
       remainingAmount: { gt: 0 },
-      OR: [
-        { expiresAt: null },
-        { expiresAt: { gt: new Date() } },
-      ],
+      OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
     },
-    orderBy: { expiresAt: "asc" },  // Earliest expiry first
+    orderBy: { expiresAt: "asc" }, // Earliest expiry first
   });
 
   let remaining = amount;
@@ -100,11 +98,11 @@ async function applyCreditsToPayment(userId: string, amount: number) {
 
 User has 3 credits:
 
-| Credit | Amount | Remaining | Expires |
-|--------|--------|-----------|---------|
-| A | ₹200 | ₹200 | 2026-06-15 |
-| B | ₹500 | ₹300 | 2026-08-01 |
-| C | ₹100 | ₹100 | never |
+| Credit | Amount | Remaining | Expires    |
+| ------ | ------ | --------- | ---------- |
+| A      | ₹200   | ₹200      | 2026-06-15 |
+| B      | ₹500   | ₹300      | 2026-08-01 |
+| C      | ₹100   | ₹100      | never      |
 
 User wants to apply ₹400 at checkout:
 
@@ -161,13 +159,13 @@ This is what `GET /api/referrals/credits/available` returns.
 
 Shown on both consultant and consultee referral dashboard pages:
 
-| Column | Source |
-|--------|--------|
-| Amount | `amount` formatted as INR |
-| Source | `source` enum label |
+| Column    | Source                             |
+| --------- | ---------------------------------- |
+| Amount    | `amount` formatted as INR          |
+| Source    | `source` enum label                |
 | Remaining | `remainingAmount` formatted as INR |
-| Expires | `expiresAt` formatted, or "Never" |
-| Status | Derived: Active / Used / Expired |
+| Expires   | `expiresAt` formatted, or "Never"  |
+| Status    | Derived: Active / Used / Expired   |
 
 ### Available Balance Card
 
@@ -185,10 +183,10 @@ Prominent stat card showing total available credits:
 
 ## Edge Cases
 
-| Scenario | Behavior |
-|----------|----------|
-| Credits exceed order total | Only apply up to order total |
-| All credits expired | Toggle hidden, no credits applied |
-| Credit expires mid-checkout | Caught at payment time; partial application |
-| User has credits from multiple sources | All treated equally in FIFO queue |
-| Concurrent credit usage (race condition) | Transactional updates prevent double-spend |
+| Scenario                                 | Behavior                                    |
+| ---------------------------------------- | ------------------------------------------- |
+| Credits exceed order total               | Only apply up to order total                |
+| All credits expired                      | Toggle hidden, no credits applied           |
+| Credit expires mid-checkout              | Caught at payment time; partial application |
+| User has credits from multiple sources   | All treated equally in FIFO queue           |
+| Concurrent credit usage (race condition) | Transactional updates prevent double-spend  |

@@ -108,7 +108,7 @@ export async function POST(req: NextRequest) {
         throw new Error(
           "Cannot refund: consultant earnings have already been paid out. " +
             "Issuing this refund means the platform absorbs the loss. " +
-            'Set forceRefund: true to proceed, or initiate a clawback from the consultant first.',
+            "Set forceRefund: true to proceed, or initiate a clawback from the consultant first.",
         );
       }
 

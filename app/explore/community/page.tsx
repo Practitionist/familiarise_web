@@ -59,14 +59,16 @@ const PLACEHOLDER_DISCUSSIONS = [
   },
   {
     channel: "Interview Prep",
-    title: "My system design interview template (got offers from 3 FAANG companies)",
+    title:
+      "My system design interview template (got offers from 3 FAANG companies)",
     replies: 124,
     author: "Arjun M.",
     role: "Senior SDE",
   },
   {
     channel: "Resume Reviews",
-    title: "Reviewed 200+ resumes this year. Here are the top 5 mistakes I see.",
+    title:
+      "Reviewed 200+ resumes this year. Here are the top 5 mistakes I see.",
     replies: 89,
     author: "Neha K.",
     role: "Tech Recruiter",
@@ -94,7 +96,8 @@ const PLACEHOLDER_DISCUSSIONS = [
   },
   {
     channel: "Mentorship",
-    title: "Finding a mentor changed my career trajectory. Here's how I did it.",
+    title:
+      "Finding a mentor changed my career trajectory. Here's how I did it.",
     replies: 38,
     author: "Sanya T.",
     role: "Data Scientist",
@@ -198,7 +201,10 @@ export default function CommunityPage() {
                 key={i}
                 className="relative bg-white rounded-xl border border-zinc-200 overflow-hidden select-none"
               >
-                <div className="blur-[6px] pointer-events-none flex items-start gap-4 p-4" aria-hidden>
+                <div
+                  className="blur-[6px] pointer-events-none flex items-start gap-4 p-4"
+                  aria-hidden
+                >
                   <div className="w-10 h-10 rounded-full bg-zinc-100 flex items-center justify-center shrink-0 text-sm font-bold text-zinc-400">
                     {post.author.charAt(0)}
                   </div>
@@ -212,8 +218,8 @@ export default function CommunityPage() {
                       {post.title}
                     </h3>
                     <p className="text-xs text-zinc-500 mt-1">
-                      {post.author} &middot; {post.role} &middot;{" "}
-                      {post.replies} replies
+                      {post.author} &middot; {post.role} &middot; {post.replies}{" "}
+                      replies
                     </p>
                   </div>
                 </div>

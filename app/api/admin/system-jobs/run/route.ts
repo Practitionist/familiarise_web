@@ -393,10 +393,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
     // 5. Check maintenance mode — block financial jobs in DEGRADED
     const maintenanceState = await getMaintenanceState();
-    if (
-      maintenanceState.phase === "DEGRADED" &&
-      FINANCIAL_JOB_IDS.has(jobId)
-    ) {
+    if (maintenanceState.phase === "DEGRADED" && FINANCIAL_JOB_IDS.has(jobId)) {
       return NextResponse.json(
         {
           error: `Job "${jobId}" is blocked during DEGRADED maintenance to protect payment integrity. End maintenance mode first.`,

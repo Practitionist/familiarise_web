@@ -180,9 +180,7 @@ export function DashboardHeader({
   breadcrumbs,
 }: DashboardHeaderProps) {
   return (
-    <div
-      className="sticky top-maintenance z-20 bg-white/80 backdrop-blur-xl border-b border-zinc-200/50"
-    >
+    <div className="sticky top-maintenance z-20 bg-white/80 backdrop-blur-xl border-b border-zinc-200/50">
       <div className="px-4 sm:px-6 py-3 sm:py-4 lg:px-8">
         {breadcrumbs && breadcrumbs.length > 0 && (
           <nav className="flex items-center gap-2 text-sm text-zinc-500 mb-2">

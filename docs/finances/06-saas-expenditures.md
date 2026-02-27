@@ -14,12 +14,12 @@ This document details all SaaS and infrastructure costs for Familiarise. Updated
 
 ### Non-Negotiable Costs (Paid)
 
-| Service                                                          | Plan     | Monthly (USD) | INR @90.7 | GST 18% (RCM) | Total INR/mo | Annual (INR) | Purpose                                       |
-| ---------------------------------------------------------------- | -------- | ------------- | --------- | -------------- | ------------ | ------------ | --------------------------------------------- |
-| [Claude Max](https://claude.com/pricing) (Anthropic)             | Max $100 | $100          | ₹9,070    | ₹1,633         | ₹10,703      | ~₹1,28,436   | AI coding assistant, primary development tool |
-| [Apple Developer Program](https://developer.apple.com/programs/) | Annual   | $8.25/mo      | ₹748      | ₹135           | ₹883         | ₹10,596      | Required to publish on iOS App Store          |
-| Domain (.com/.in)                                                | Annual   | ~$1.20/mo     | ₹109      | -              | ₹109         | ~₹1,308      | Platform identity                             |
-| **Subtotal (Non-Negotiable)**                                    |          | **~$109.45**  | **₹9,927**| **₹1,768**     | **₹11,695**  | **~₹1,40,340** |                                             |
+| Service                                                          | Plan     | Monthly (USD) | INR @90.7  | GST 18% (RCM) | Total INR/mo | Annual (INR)   | Purpose                                       |
+| ---------------------------------------------------------------- | -------- | ------------- | ---------- | ------------- | ------------ | -------------- | --------------------------------------------- |
+| [Claude Max](https://claude.com/pricing) (Anthropic)             | Max $100 | $100          | ₹9,070     | ₹1,633        | ₹10,703      | ~₹1,28,436     | AI coding assistant, primary development tool |
+| [Apple Developer Program](https://developer.apple.com/programs/) | Annual   | $8.25/mo      | ₹748       | ₹135          | ₹883         | ₹10,596        | Required to publish on iOS App Store          |
+| Domain (.com/.in)                                                | Annual   | ~$1.20/mo     | ₹109       | -             | ₹109         | ~₹1,308        | Platform identity                             |
+| **Subtotal (Non-Negotiable)**                                    |          | **~$109.45**  | **₹9,927** | **₹1,768**    | **₹11,695**  | **~₹1,40,340** |                                               |
 
 > **Note on GST:** The GST (RCM) column applies only if GST-registered. If unregistered, actual cost = ₹9,927/month. GST paid under RCM is fully claimable as ITC, making it net-zero when collecting GST from customers.
 >
@@ -49,7 +49,7 @@ This document details all SaaS and infrastructure costs for Familiarise. Updated
 
 ### Total Current Monthly SaaS Burn
 
-| Category                    | Pre-GST (INR) | With GST (INR) |
+| Category                    | Pre-GST (INR)  | With GST (INR) |
 | --------------------------- | -------------- | -------------- |
 | Claude Max (Anthropic)      | ₹9,070         | ₹10,703        |
 | Apple Developer (amortized) | ₹748           | ₹883           |
@@ -156,94 +156,94 @@ You lose access when ANY of these happen:
 ### Stage 1: Pre-Launch & Launch (₹0 GMV)
 
 | Service                      | Monthly (Pre-GST) | Monthly (With GST) |
-| ---------------------------- | ------------------ | ------------------- |
-| Claude Max                   | ₹9,070             | ₹10,703             |
-| Apple Developer (amortized)  | ₹748               | ₹883                |
-| Domain                       | ₹109               | ₹109                |
-| Novu (free tier)             | ₹0                 | ₹0                  |
-| Everything else (free tiers) | ₹0                 | ₹0                  |
+| ---------------------------- | ----------------- | ------------------ |
+| Claude Max                   | ₹9,070            | ₹10,703            |
+| Apple Developer (amortized)  | ₹748              | ₹883               |
+| Domain                       | ₹109              | ₹109               |
+| Novu (free tier)             | ₹0                | ₹0                 |
+| Everything else (free tiers) | ₹0                | ₹0                 |
 | **Total**                    | **~₹9,927/mo**    | **~₹11,695/mo**    |
 
 ### Stage 2: Early Revenue (₹25K-₹1L GMV/month)
 
-| Service                           | Monthly (Pre-GST)          | Monthly (With GST)          |
-| --------------------------------- | -------------------------- | --------------------------- |
-| Claude Max                        | ₹9,070                     | ₹10,703                     |
-| Apple Developer                   | ₹748                       | ₹883                        |
-| Domain                            | ₹109                       | ₹109                        |
-| Supabase (still free tier likely) | ₹0                         | ₹0                          |
-| Stream.io (still Maker)           | ₹0                         | ₹0                          |
-| Novu (still free tier)            | ₹0                         | ₹0                          |
-| Resend (approaching limit)        | ₹0-₹1,814                 | ₹0-₹2,141                  |
+| Service                           | Monthly (Pre-GST)        | Monthly (With GST)        |
+| --------------------------------- | ------------------------ | ------------------------- |
+| Claude Max                        | ₹9,070                   | ₹10,703                   |
+| Apple Developer                   | ₹748                     | ₹883                      |
+| Domain                            | ₹109                     | ₹109                      |
+| Supabase (still free tier likely) | ₹0                       | ₹0                        |
+| Stream.io (still Maker)           | ₹0                       | ₹0                        |
+| Novu (still free tier)            | ₹0                       | ₹0                        |
+| Resend (approaching limit)        | ₹0-₹1,814                | ₹0-₹2,141                 |
 | **Total**                         | **~₹9,927 - ₹11,741/mo** | **~₹11,695 - ₹13,836/mo** |
 
 ### Stage 3: Growth (₹1L-₹5L GMV/month)
 
-| Service                              | Monthly (Pre-GST)           | Monthly (With GST)           |
-| ------------------------------------ | --------------------------- | ---------------------------- |
-| Claude Max                           | ₹9,070                      | ₹10,703                      |
-| Supabase Pro ($25)                   | ₹2,268                      | ₹2,676                       |
-| Vercel Pro (2 seats, $40)            | ₹3,628                      | ₹4,281                       |
-| Stream.io (Start plan, $399)         | ₹36,189                     | ₹42,703                      |
-| Novu Pro ($30)                       | ₹2,721                      | ₹3,211                       |
-| Resend Pro ($20)                     | ₹1,814                      | ₹2,141                       |
-| Apple Developer                      | ₹748                        | ₹883                         |
-| Domain + misc                        | ₹500                        | ₹500                         |
-| **Total**                            | **~₹56,938/mo**            | **~₹67,098/mo**             |
+| Service                      | Monthly (Pre-GST) | Monthly (With GST) |
+| ---------------------------- | ----------------- | ------------------ |
+| Claude Max                   | ₹9,070            | ₹10,703            |
+| Supabase Pro ($25)           | ₹2,268            | ₹2,676             |
+| Vercel Pro (2 seats, $40)    | ₹3,628            | ₹4,281             |
+| Stream.io (Start plan, $399) | ₹36,189           | ₹42,703            |
+| Novu Pro ($30)               | ₹2,721            | ₹3,211             |
+| Resend Pro ($20)             | ₹1,814            | ₹2,141             |
+| Apple Developer              | ₹748              | ₹883               |
+| Domain + misc                | ₹500              | ₹500               |
+| **Total**                    | **~₹56,938/mo**   | **~₹67,098/mo**    |
 
 > **The Free Tier Cliff:** Going from Stage 2 (~₹10-12K) to Stage 3 (~₹57-67K) is a **5-6x cost jump**. Stream.io alone goes from ₹0 to ₹36-43K. This happens when you hit ₹8.5L/month revenue OR $100K funding OR >5 team members.
 
 ### Stage 4: Scale (₹5L-₹20L GMV/month)
 
-| Service                     | Monthly (Pre-GST)           | Monthly (With GST)           |
-| --------------------------- | --------------------------- | ---------------------------- |
-| Claude Max                  | ₹9,070                      | ₹10,703                      |
-| Supabase Pro + compute      | ₹5,443-₹9,070              | ₹6,423-₹10,703              |
-| Vercel Pro (4 seats, $80)   | ₹7,256                      | ₹8,562                       |
-| Stream.io (paid plan)       | ₹16,326-₹42,703            | ₹19,265-₹50,390             |
-| Novu Pro/Team ($30-$250)    | ₹2,721-₹22,675             | ₹3,211-₹26,757              |
-| Resend Pro ($20-$50)        | ₹1,814-₹4,535              | ₹2,141-₹5,351               |
-| Sentry Team ($26)           | ₹2,358                      | ₹2,782                       |
-| PostHog (if over free tier) | ₹0-₹9,070                  | ₹0-₹10,703                  |
-| Apple Developer             | ₹748                        | ₹883                         |
-| Domain + misc               | ₹500                        | ₹500                         |
+| Service                     | Monthly (Pre-GST)           | Monthly (With GST)          |
+| --------------------------- | --------------------------- | --------------------------- |
+| Claude Max                  | ₹9,070                      | ₹10,703                     |
+| Supabase Pro + compute      | ₹5,443-₹9,070               | ₹6,423-₹10,703              |
+| Vercel Pro (4 seats, $80)   | ₹7,256                      | ₹8,562                      |
+| Stream.io (paid plan)       | ₹16,326-₹42,703             | ₹19,265-₹50,390             |
+| Novu Pro/Team ($30-$250)    | ₹2,721-₹22,675              | ₹3,211-₹26,757              |
+| Resend Pro ($20-$50)        | ₹1,814-₹4,535               | ₹2,141-₹5,351               |
+| Sentry Team ($26)           | ₹2,358                      | ₹2,782                      |
+| PostHog (if over free tier) | ₹0-₹9,070                   | ₹0-₹10,703                  |
+| Apple Developer             | ₹748                        | ₹883                        |
+| Domain + misc               | ₹500                        | ₹500                        |
 | **Total**                   | **~₹46,236 - ₹1,07,985/mo** | **~₹54,470 - ₹1,27,534/mo** |
 
 ### Stage 5: Enterprise (₹20L+ GMV/month)
 
-| Service               | Monthly (Pre-GST)      | Monthly (With GST)      |
-| --------------------- | ---------------------- | ----------------------- |
-| All services at scale | ₹1,10,000-₹2,70,000+  | ₹1,30,000-₹3,20,000+   |
+| Service               | Monthly (Pre-GST)    | Monthly (With GST)   |
+| --------------------- | -------------------- | -------------------- |
+| All services at scale | ₹1,10,000-₹2,70,000+ | ₹1,30,000-₹3,20,000+ |
 
 ---
 
 ## Free Tier Expiry Risk Matrix
 
-| Service             | Trigger to Outgrow                      | Risk Level | Cost Jump (Pre-GST)      | Mitigation                                                      |
-| ------------------- | --------------------------------------- | ---------- | ------------------------ | --------------------------------------------------------------- |
-| **Stream.io Maker** | $10K revenue, $100K funding, or >5 team | HIGH       | ₹0 → ₹36,189-₹42,703/mo | Largest single cost increase. Budget for this at ₹8.5L+ GMV     |
+| Service             | Trigger to Outgrow                      | Risk Level | Cost Jump (Pre-GST)     | Mitigation                                                       |
+| ------------------- | --------------------------------------- | ---------- | ----------------------- | ---------------------------------------------------------------- |
+| **Stream.io Maker** | $10K revenue, $100K funding, or >5 team | HIGH       | ₹0 → ₹36,189-₹42,703/mo | Largest single cost increase. Budget for this at ₹8.5L+ GMV      |
 | **Novu**            | 10K workflow runs/month                 | MEDIUM     | ₹0 → ₹2,721/mo          | ~500-1K bookings/month triggers upgrade. Each booking = 5-8 runs |
 | **Supabase**        | 500MB DB or 50K MAU                     | MEDIUM     | ₹0 → ₹2,268/mo          | DB growth is gradual; monitor usage dashboard weekly             |
-| **Resend**          | 100 emails/day or 3K/month              | MEDIUM     | ₹0 → ₹1,814/mo          | At ~50+ bookings/day (each generates 2-3 emails)                |
-| **Vercel**          | Need team features or bandwidth         | LOW        | ₹0 → ₹1,814/seat        | Can stay on hobby plan for a long time with single developer    |
-| **PostHog**         | 1M events/month                         | LOW        | ₹0 → usage-based        | Very generous free tier; unlikely to hit in Year 1              |
-| **Sentry**          | 5K errors/month                         | LOW        | ₹0 → ₹2,358/mo          | If hitting 5K errors, you have bigger problems                  |
+| **Resend**          | 100 emails/day or 3K/month              | MEDIUM     | ₹0 → ₹1,814/mo          | At ~50+ bookings/day (each generates 2-3 emails)                 |
+| **Vercel**          | Need team features or bandwidth         | LOW        | ₹0 → ₹1,814/seat        | Can stay on hobby plan for a long time with single developer     |
+| **PostHog**         | 1M events/month                         | LOW        | ₹0 → usage-based        | Very generous free tier; unlikely to hit in Year 1               |
+| **Sentry**          | 5K errors/month                         | LOW        | ₹0 → ₹2,358/mo          | If hitting 5K errors, you have bigger problems                   |
 
 ---
 
 ## Cost Comparison: Previous Estimates vs Reality
 
-| Line Item         | Previous Doc Estimate    | Actual Cost (Feb 2026, Pre-GST) | Difference                                                                         |
-| ----------------- | ------------------------ | ------------------------------- | ---------------------------------------------------------------------------------- |
-| Vercel            | ₹3,400/mo (Pro, 2 seats) | ₹0 (free tier)                  | -₹3,400                                                                            |
-| Supabase          | ₹2,100/mo (Pro)          | ₹0 (free tier)                  | -₹2,100                                                                            |
-| Stream.io / Video | ₹10,000-25,000/mo        | ₹0 (Maker Account)              | -₹10,000+                                                                          |
-| Claude Max        | Not listed               | ₹9,070/mo                       | +₹9,070                                                                            |
-| Apple Developer   | Not listed               | ₹748/mo                         | +₹748                                                                              |
-| Novu              | Not listed               | ₹0 (free tier)                  | ₹0                                                                                 |
-| Google Play       | Not listed               | ~₹189/mo (amortized one-time)   | +₹189                                                                              |
-| Globe.dev         | Not listed               | ₹0 (free tier)                  | ₹0                                                                                 |
-| Email (Resend)    | ₹850-2,550               | ₹0 (free tier)                  | -₹850+                                                                             |
+| Line Item         | Previous Doc Estimate    | Actual Cost (Feb 2026, Pre-GST) | Difference                                                                        |
+| ----------------- | ------------------------ | ------------------------------- | --------------------------------------------------------------------------------- |
+| Vercel            | ₹3,400/mo (Pro, 2 seats) | ₹0 (free tier)                  | -₹3,400                                                                           |
+| Supabase          | ₹2,100/mo (Pro)          | ₹0 (free tier)                  | -₹2,100                                                                           |
+| Stream.io / Video | ₹10,000-25,000/mo        | ₹0 (Maker Account)              | -₹10,000+                                                                         |
+| Claude Max        | Not listed               | ₹9,070/mo                       | +₹9,070                                                                           |
+| Apple Developer   | Not listed               | ₹748/mo                         | +₹748                                                                             |
+| Novu              | Not listed               | ₹0 (free tier)                  | ₹0                                                                                |
+| Google Play       | Not listed               | ~₹189/mo (amortized one-time)   | +₹189                                                                             |
+| Globe.dev         | Not listed               | ₹0 (free tier)                  | ₹0                                                                                |
+| Email (Resend)    | ₹850-2,550               | ₹0 (free tier)                  | -₹850+                                                                            |
 | **Total**         | **~₹6,850-29,550**       | **~₹9,927**                     | **Significantly lower than estimated for infrastructure, but Claude adds ₹9,070** |
 
 **Key takeaway:** The previous document overestimated infrastructure costs (assumed paid tiers for everything) but completely missed the ₹9,070/month Claude Max expense. The net effect is that actual costs are within the same range but allocated very differently. If GST-registered, add 18% RCM on foreign SaaS (₹1,768/month currently), but this is claimable as ITC.
@@ -284,12 +284,12 @@ When GST-registered, you must pay 18% IGST on all imported services (foreign Saa
 
 ### RCM Liability by Stage
 
-| Stage | Foreign SaaS (Pre-GST) | RCM @ 18% | Total With GST | ITC Claimable |
-|---|---|---|---|---|
-| Pre-Launch | ₹9,818 (Claude + Apple) | ₹1,768 | ₹11,586 | ₹1,768 |
-| Early Revenue | ~₹9,818-₹11,632 | ~₹1,768-₹2,094 | ~₹11,586-₹13,726 | Same |
-| Growth | ~₹56,438 | ~₹10,159 | ~₹66,597 | ₹10,159 |
-| Scale | ~₹45,488-₹1,07,237 | ~₹8,188-₹19,303 | ~₹53,676-₹1,26,540 | Same |
+| Stage         | Foreign SaaS (Pre-GST)  | RCM @ 18%       | Total With GST     | ITC Claimable |
+| ------------- | ----------------------- | --------------- | ------------------ | ------------- |
+| Pre-Launch    | ₹9,818 (Claude + Apple) | ₹1,768          | ₹11,586            | ₹1,768        |
+| Early Revenue | ~₹9,818-₹11,632         | ~₹1,768-₹2,094  | ~₹11,586-₹13,726   | Same          |
+| Growth        | ~₹56,438                | ~₹10,159        | ~₹66,597           | ₹10,159       |
+| Scale         | ~₹45,488-₹1,07,237      | ~₹8,188-₹19,303 | ~₹53,676-₹1,26,540 | Same          |
 
 > **Key insight:** If NOT GST-registered, you don't pay RCM but also can't claim ITC. If GST-registered and collecting GST from customers, the RCM is a cash flow timing issue (pay now, claim back in returns) but not an actual cost.
 
@@ -299,15 +299,15 @@ When GST-registered, you must pay 18% IGST on all imported services (foreign Saa
 
 ### Set Cost Alerts For
 
-| Service   | Where to Monitor            | Alert When                       |
-| --------- | --------------------------- | -------------------------------- |
-| Supabase  | Dashboard → Usage           | 70% of any free tier limit       |
-| Vercel    | Dashboard → Usage & Billing | 75% of bandwidth                 |
+| Service   | Where to Monitor            | Alert When                      |
+| --------- | --------------------------- | ------------------------------- |
+| Supabase  | Dashboard → Usage           | 70% of any free tier limit      |
+| Vercel    | Dashboard → Usage & Billing | 75% of bandwidth                |
 | Stream.io | Dashboard → Usage           | 1,500 MAU (75% of 2K limit)     |
-| Novu      | Dashboard → Usage           | 7,000 runs/month (70% of limit)  |
-| Resend    | Dashboard → Usage           | 70 emails/day (70% of limit)     |
-| Razorpay  | Dashboard → Settlements     | Refund rate > 5%                 |
-| Claude    | Subscription page           | Before renewal each month        |
+| Novu      | Dashboard → Usage           | 7,000 runs/month (70% of limit) |
+| Resend    | Dashboard → Usage           | 70 emails/day (70% of limit)    |
+| Razorpay  | Dashboard → Settlements     | Refund rate > 5%                |
+| Claude    | Subscription page           | Before renewal each month       |
 
 ---
 

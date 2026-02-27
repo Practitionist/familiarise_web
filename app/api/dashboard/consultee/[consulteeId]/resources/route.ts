@@ -154,11 +154,13 @@ export async function GET(
     const userId = consulteeProfile.userId;
 
     // Get paid plan IDs via shared RecordingService method
-    const { webinarPlanIds: paidWebinarPlanIds, classPlanIds: paidClassPlanIds } =
-      await RecordingService.getPaidPlanIds(userId);
+    const {
+      webinarPlanIds: paidWebinarPlanIds,
+      classPlanIds: paidClassPlanIds,
+    } = await RecordingService.getPaidPlanIds(userId);
 
-    const [consultations, subscriptions, webinars, classes] =
-      await Promise.all([
+    const [consultations, subscriptions, webinars, classes] = await Promise.all(
+      [
         prisma.consultation.findMany({
           where: { requestedById: consulteeId },
           include: consultationInclude,
@@ -260,7 +262,8 @@ export async function GET(
           include: classInclude,
           orderBy: { createdAt: "desc" },
         }),
-      ]);
+      ],
+    );
 
     const transform = {
       consultations: consultations.map((c: ConsultationWithResources) => ({
@@ -269,12 +272,9 @@ export async function GET(
         consultantName: c.consultationPlan.consultantProfile.user.name,
         consultantImage: c.consultationPlan.consultantProfile.user.image,
         status: c.requestStatus,
-        date:
-          c.appointment?.slotsOfAppointment?.[0]?.startsAt || c.requestedAt,
+        date: c.appointment?.slotsOfAppointment?.[0]?.startsAt || c.requestedAt,
         materials: c.consultationPlan.materials,
-        recordings: extractRecordings(
-          c.appointment ? [c.appointment] : [],
-        ),
+        recordings: extractRecordings(c.appointment ? [c.appointment] : []),
       })),
       subscriptions: subscriptions.map((s: SubscriptionWithResources) => ({
         id: s.id,
@@ -292,12 +292,9 @@ export async function GET(
         consultantName: w.webinarPlan.consultantProfile?.user.name ?? null,
         consultantImage: w.webinarPlan.consultantProfile?.user.image ?? null,
         status: w.status,
-        date:
-          w.appointment?.slotsOfAppointment?.[0]?.startsAt || w.createdAt,
+        date: w.appointment?.slotsOfAppointment?.[0]?.startsAt || w.createdAt,
         materials: w.webinarPlan.materials,
-        recordings: extractRecordings(
-          w.appointment ? [w.appointment] : [],
-        ),
+        recordings: extractRecordings(w.appointment ? [w.appointment] : []),
       })),
       classes: classes.map((cl: ClassWithResources) => ({
         id: cl.id,

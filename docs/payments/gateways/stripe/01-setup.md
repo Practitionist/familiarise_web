@@ -18,32 +18,32 @@ Stripe is our payment gateway for international customers (outside India), handl
 
 Stripe serves two roles in our system:
 
-| Product | Purpose |
-|---------|---------|
-| **Stripe Payments** | Accept payments from international consultees |
-| **Stripe Connect** | Disburse earnings to international consultants |
+| Product             | Purpose                                        |
+| ------------------- | ---------------------------------------------- |
+| **Stripe Payments** | Accept payments from international consultees  |
+| **Stripe Connect**  | Disburse earnings to international consultants |
 
 ### When to Use Stripe vs Razorpay
 
-| Customer From | Gateway | Why |
-|---------------|---------|-----|
-| India | Razorpay | UPI support, lower fees |
-| USA | Stripe | ACH, US cards |
-| Europe | Stripe | SEPA, iDEAL |
-| UK | Stripe | GBP, UK cards |
-| Others | Stripe | Global support |
+| Customer From | Gateway  | Why                     |
+| ------------- | -------- | ----------------------- |
+| India         | Razorpay | UPI support, lower fees |
+| USA           | Stripe   | ACH, US cards           |
+| Europe        | Stripe   | SEPA, iDEAL             |
+| UK            | Stripe   | GBP, UK cards           |
+| Others        | Stripe   | Global support          |
 
 ---
 
 ## Prerequisites
 
-| Requirement | Details |
-|-------------|---------|
-| Business Entity | Registered business or individual |
-| Bank Account | For receiving payouts from Stripe |
-| Website | Live URL with clear product/service description |
-| Email | For account verification |
-| Government ID | For identity verification |
+| Requirement     | Details                                         |
+| --------------- | ----------------------------------------------- |
+| Business Entity | Registered business or individual               |
+| Bank Account    | For receiving payouts from Stripe               |
+| Website         | Live URL with clear product/service description |
+| Email           | For account verification                        |
+| Government ID   | For identity verification                       |
 
 ---
 
@@ -89,25 +89,25 @@ Dashboard > Developers > API keys
 
 ### Payment Keys
 
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `STRIPE_SECRET_KEY` | Server-side secret key | `sk_test_xxxxx` |
-| `STRIPE_WEBHOOK_SECRET` | Webhook signature verification | `whsec_xxxxx` |
-| `NEXT_PUBLIC_STRIPE_KEY` | Client-side publishable key | `pk_test_xxxxx` |
+| Variable                 | Description                    | Example         |
+| ------------------------ | ------------------------------ | --------------- |
+| `STRIPE_SECRET_KEY`      | Server-side secret key         | `sk_test_xxxxx` |
+| `STRIPE_WEBHOOK_SECRET`  | Webhook signature verification | `whsec_xxxxx`   |
+| `NEXT_PUBLIC_STRIPE_KEY` | Client-side publishable key    | `pk_test_xxxxx` |
 
 ### Connect Keys (Payouts)
 
-| Variable | Description |
-|----------|-------------|
-| `STRIPE_CONNECT_CLIENT_ID` | OAuth client ID for Connect |
+| Variable                        | Description                            |
+| ------------------------------- | -------------------------------------- |
+| `STRIPE_CONNECT_CLIENT_ID`      | OAuth client ID for Connect            |
 | `STRIPE_CONNECT_WEBHOOK_SECRET` | Connect webhook signature verification |
 
 ### Test vs Live Keys
 
-| Environment | Key Format |
-|-------------|------------|
-| Test Mode | `sk_test_xxxx` / `pk_test_xxxx` |
-| Live Mode | `sk_live_xxxx` / `pk_live_xxxx` |
+| Environment | Key Format                      |
+| ----------- | ------------------------------- |
+| Test Mode   | `sk_test_xxxx` / `pk_test_xxxx` |
+| Live Mode   | `sk_live_xxxx` / `pk_live_xxxx` |
 
 Never expose secret keys in client-side code.
 
@@ -127,14 +127,14 @@ Dashboard > Developers > Webhooks > Add endpoint
 
 **Events to select**:
 
-| Category | Events |
-|----------|--------|
-| Payment | `payment_intent.succeeded`, `payment_intent.payment_failed` |
-| Refund | `charge.refunded` |
-| Dispute | `charge.dispute.created`, `charge.dispute.updated`, `charge.dispute.closed` |
-| Connect Payout | `payout.created`, `payout.paid`, `payout.failed`, `payout.canceled` |
-| Connect Account | `account.updated` |
-| Transfer | `transfer.created`, `transfer.reversed` |
+| Category        | Events                                                                      |
+| --------------- | --------------------------------------------------------------------------- |
+| Payment         | `payment_intent.succeeded`, `payment_intent.payment_failed`                 |
+| Refund          | `charge.refunded`                                                           |
+| Dispute         | `charge.dispute.created`, `charge.dispute.updated`, `charge.dispute.closed` |
+| Connect Payout  | `payout.created`, `payout.paid`, `payout.failed`, `payout.canceled`         |
+| Connect Account | `account.updated`                                                           |
+| Transfer        | `transfer.created`, `transfer.reversed`                                     |
 
 ### Test Mode vs Live Mode
 
@@ -149,12 +149,12 @@ Toggle "Viewing test data" switch in the dashboard.
 
 ### Test Card Numbers
 
-| Scenario | Card Number | Notes |
-|----------|-------------|-------|
-| Success | `4242 4242 4242 4242` | Any CVC, any future expiry |
-| Requires 3DS | `4000 0027 6000 3184` | Triggers authentication |
-| Declined | `4000 0000 0000 0002` | Always declined |
-| Insufficient Funds | `4000 0000 0000 9995` | Balance too low |
+| Scenario           | Card Number           | Notes                      |
+| ------------------ | --------------------- | -------------------------- |
+| Success            | `4242 4242 4242 4242` | Any CVC, any future expiry |
+| Requires 3DS       | `4000 0027 6000 3184` | Triggers authentication    |
+| Declined           | `4000 0000 0000 0002` | Always declined            |
+| Insufficient Funds | `4000 0000 0000 9995` | Balance too low            |
 
 ### Testing with Stripe CLI
 
@@ -185,12 +185,12 @@ stripe accounts create --type express --country US --email test@example.com
 
 Stripe uses smallest currency units (cents, pence, etc.):
 
-| Currency | Unit | $50 Amount |
-|----------|------|------------|
-| USD | cents | 5000 |
-| EUR | cents | 5000 |
-| GBP | pence | 5000 |
-| JPY | yen (no decimal) | 5000 |
+| Currency | Unit             | $50 Amount |
+| -------- | ---------------- | ---------- |
+| USD      | cents            | 5000       |
+| EUR      | cents            | 5000       |
+| GBP      | pence            | 5000       |
+| JPY      | yen (no decimal) | 5000       |
 
 All Stripe payments on Familiarise are in **USD**. The checkout logic forces `currency: "USD"` when Stripe is selected.
 
@@ -237,12 +237,12 @@ All Stripe payments on Familiarise are in **USD**. The checkout logic forces `cu
 
 ## Source Files
 
-| File | Purpose |
-|------|---------|
-| `lib/payments/core/stripe.ts` | Client initialization, Checkout Sessions, refunds, disputes |
-| `lib/payments/payouts/stripe-connect.ts` | StripeConnectService — accounts, transfers, payouts |
-| `app/api/webhooks/stripe/route.ts` | Webhook handler (16 event types) |
-| `app/checkout/components/StripeCheckout.tsx` | Client-side checkout component |
+| File                                         | Purpose                                                     |
+| -------------------------------------------- | ----------------------------------------------------------- |
+| `lib/payments/core/stripe.ts`                | Client initialization, Checkout Sessions, refunds, disputes |
+| `lib/payments/payouts/stripe-connect.ts`     | StripeConnectService — accounts, transfers, payouts         |
+| `app/api/webhooks/stripe/route.ts`           | Webhook handler (16 event types)                            |
+| `app/checkout/components/StripeCheckout.tsx` | Client-side checkout component                              |
 
 ---
 

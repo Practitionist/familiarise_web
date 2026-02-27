@@ -7,7 +7,13 @@ import { TSlotTiming } from "@/types/slots";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import ConsultationPricingToggle from "./ConsultationPricingToggle";
 import SubscriptionPricingToggle from "./SubscriptionPricingToggle";
-import { Shield, Calendar, MessageSquare, RotateCcw, CheckCircle } from "lucide-react";
+import {
+  Shield,
+  Calendar,
+  MessageSquare,
+  RotateCcw,
+  CheckCircle,
+} from "lucide-react";
 import { motion } from "framer-motion";
 import { useState } from "react";
 
@@ -55,7 +61,9 @@ export function ExpertPricing({
   setSelectedSlot,
   timezone,
 }: Readonly<ExpertPricingProps>) {
-  const [activeServiceTab, setActiveServiceTab] = useState<"consultations" | "subscriptions">("consultations");
+  const [activeServiceTab, setActiveServiceTab] = useState<
+    "consultations" | "subscriptions"
+  >("consultations");
 
   const formatPricingOptions = (
     plans: (ConsultationPlan | SubscriptionPlan)[],
@@ -168,13 +176,17 @@ export function ExpertPricing({
         {/* Header */}
         <div className="text-center mb-5">
           <h3 className="text-xl font-bold text-white mb-1">Book a Session</h3>
-          <p className="text-xs text-zinc-500 tracking-wide uppercase font-medium">Choose your preferred option</p>
+          <p className="text-xs text-zinc-500 tracking-wide uppercase font-medium">
+            Choose your preferred option
+          </p>
         </div>
 
         {hasConsultations && hasSubscriptions ? (
           <Tabs
             value={activeServiceTab}
-            onValueChange={(v) => setActiveServiceTab(v as "consultations" | "subscriptions")}
+            onValueChange={(v) =>
+              setActiveServiceTab(v as "consultations" | "subscriptions")
+            }
             className="w-full"
           >
             {/* Segmented pill toggle for service type */}
@@ -189,7 +201,11 @@ export function ExpertPricing({
                     <motion.div
                       layoutId="service-type-pill"
                       className="absolute inset-0 bg-white rounded-xl shadow-sm"
-                      transition={{ type: "spring", bounce: 0.15, duration: 0.35 }}
+                      transition={{
+                        type: "spring",
+                        bounce: 0.15,
+                        duration: 0.35,
+                      }}
                     />
                   )}
                   <span className="relative z-10 flex items-center gap-2">

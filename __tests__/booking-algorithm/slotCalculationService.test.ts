@@ -307,9 +307,9 @@ describe("SlotCalculationService.calculateRequiredSlots", () => {
     });
 
     it("should default to 2 slots when duration missing", () => {
-      expect(
-        SlotCalculationService.calculateRequiredSlots("webinar", {}),
-      ).toBe(2);
+      expect(SlotCalculationService.calculateRequiredSlots("webinar", {})).toBe(
+        2,
+      );
     });
   });
 

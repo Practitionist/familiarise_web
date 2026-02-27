@@ -34,7 +34,9 @@ export async function POST(req: NextRequest) {
 
   // DB health check — return 503 if DB is unreachable so Stripe retries
   if (!(await isDbHealthy())) {
-    console.warn("[stripe webhook] DB unhealthy — returning 503 for Stripe retry");
+    console.warn(
+      "[stripe webhook] DB unhealthy — returning 503 for Stripe retry",
+    );
     return NextResponse.json(
       { error: "Service temporarily unavailable" },
       { status: 503 },

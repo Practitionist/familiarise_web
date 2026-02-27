@@ -91,7 +91,9 @@ export function EventTimingsCalendar({
           eventId: appointment.class?.id || "",
           meetingsPerWeek: defaults.classesPerWeek,
           durationInMonths: defaults.durationInMonths,
-          durationInHours: classPlan?.sessionDurationInHours ?? defaults.sessionDurationInHours,
+          durationInHours:
+            classPlan?.sessionDurationInHours ??
+            defaults.sessionDurationInHours,
           totalSessions: classPlan?.totalSessions ?? undefined,
           title: classPlan?.title || "Class",
           planType: defaults.type,
@@ -168,9 +170,11 @@ export function EventTimingsCalendar({
         {/* Guidance prompt for class rules */}
         {appointment.appointmentType === "CLASS" && (
           <div className="mb-2 rounded-md border bg-muted/30 px-3 py-2 text-xs">
-            Tip: Each class is {Math.ceil((eventDetails.durationInHours || 1) / 0.5)} consecutive 30‑min slots. Complete an
-            in‑progress class before starting another. Max {eventDetails.meetingsPerWeek || 2} classes per day;
-            weekly limit applies.
+            Tip: Each class is{" "}
+            {Math.ceil((eventDetails.durationInHours || 1) / 0.5)} consecutive
+            30‑min slots. Complete an in‑progress class before starting another.
+            Max {eventDetails.meetingsPerWeek || 2} classes per day; weekly
+            limit applies.
           </div>
         )}
 

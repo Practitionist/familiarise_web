@@ -148,7 +148,12 @@ export function mapWeeklySlots(
       );
 
       const slotEndTime = new Date(iterDate);
-      slotEndTime.setUTCHours(endTime.getUTCHours(), endTime.getUTCMinutes(), 0, 0);
+      slotEndTime.setUTCHours(
+        endTime.getUTCHours(),
+        endTime.getUTCMinutes(),
+        0,
+        0,
+      );
 
       // Handle slots that cross midnight
       if (slotEndTime <= slotStartTime) {
@@ -369,13 +374,17 @@ export function calculateRequiredSlots(
  * Count the number of distinct Sunday-start weeks overlapping [start, end].
  * Delegates to SlotCalculationService.countWeeks as the single source of truth.
  */
-export const countSundayWeeksInclusive = SlotCalculationService.countWeeks.bind(SlotCalculationService);
+export const countSundayWeeksInclusive = SlotCalculationService.countWeeks.bind(
+  SlotCalculationService,
+);
 
 /**
  * Get the Sunday at 00:00:00 of the week that contains the given date.
  * Delegates to SlotCalculationService.startOfWeekSunday as the single source of truth.
  */
-export const startOfWeekSunday = SlotCalculationService.startOfWeekSunday.bind(SlotCalculationService);
+export const startOfWeekSunday = SlotCalculationService.startOfWeekSunday.bind(
+  SlotCalculationService,
+);
 
 /**
  * Validates selected slots for a specific event type

@@ -53,11 +53,15 @@ export async function GET() {
   ]);
 
   const warnings: string[] = [];
-  if (activeCalls > 0) warnings.push(`${activeCalls} active video call(s) in progress`);
-  if (pendingPayments > 0) warnings.push(`${pendingPayments} pending payment(s) in flight`);
-  if (upcomingAppointments > 0) warnings.push(`${upcomingAppointments} appointment(s) in the next 4 hours`);
+  if (activeCalls > 0)
+    warnings.push(`${activeCalls} active video call(s) in progress`);
+  if (pendingPayments > 0)
+    warnings.push(`${pendingPayments} pending payment(s) in flight`);
+  if (upcomingAppointments > 0)
+    warnings.push(`${upcomingAppointments} appointment(s) in the next 4 hours`);
   if (pendingPayouts > 0) warnings.push(`${pendingPayouts} pending payout(s)`);
-  if (openDisputes > 0) warnings.push(`${openDisputes} open dispute(s) requiring response`);
+  if (openDisputes > 0)
+    warnings.push(`${openDisputes} open dispute(s) requiring response`);
 
   let recommendation: "SAFE" | "CAUTION" | "RISKY";
   if (activeCalls > 0 || pendingPayments > 0 || openDisputes > 0) {

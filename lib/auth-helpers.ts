@@ -155,9 +155,7 @@ export async function authorizeEventAccess(
   }
 
   if (!isAuthorized) {
-    return forbiddenResponse(
-      "You are not authorized to access this event",
-    );
+    return forbiddenResponse("You are not authorized to access this event");
   }
 
   return null;

@@ -64,21 +64,30 @@ describe("AllocationAlgorithms.manualAllocate", () => {
 
   it("should reject when slot count doesn't match required", async () => {
     const slots = makeFutureConsecutiveSlots("2025-06-01T09:00:00Z", 1);
-    const result = await AllocationAlgorithms.manualAllocate(slots as any, baseOptions);
+    const result = await AllocationAlgorithms.manualAllocate(
+      slots as any,
+      baseOptions,
+    );
     expect(result.success).toBe(false);
     expect(result.error).toContain("Expected 2 slots but received 1");
   });
 
   it("should reject past slots", async () => {
     const slots = makeFutureConsecutiveSlots("2024-01-01T09:00:00Z", 2);
-    const result = await AllocationAlgorithms.manualAllocate(slots as any, baseOptions);
+    const result = await AllocationAlgorithms.manualAllocate(
+      slots as any,
+      baseOptions,
+    );
     expect(result.success).toBe(false);
     expect(result.error).toContain("past");
   });
 
   it("should accept valid consultation slots", async () => {
     const slots = makeFutureConsecutiveSlots("2025-06-01T09:00:00Z", 2);
-    const result = await AllocationAlgorithms.manualAllocate(slots as any, baseOptions);
+    const result = await AllocationAlgorithms.manualAllocate(
+      slots as any,
+      baseOptions,
+    );
     expect(result.success).toBe(true);
     expect(result.strategy).toBe("manual");
     expect(mockAllocateSlots).toHaveBeenCalledTimes(1);
@@ -149,7 +158,10 @@ describe("AllocationAlgorithms.manualAllocate", () => {
     });
 
     const slots = makeFutureConsecutiveSlots("2025-06-01T09:00:00Z", 2);
-    const result = await AllocationAlgorithms.manualAllocate(slots as any, baseOptions);
+    const result = await AllocationAlgorithms.manualAllocate(
+      slots as any,
+      baseOptions,
+    );
     expect(result.success).toBe(false);
     expect(result.error).toBe("Server error");
   });
@@ -158,7 +170,10 @@ describe("AllocationAlgorithms.manualAllocate", () => {
     mockAllocateSlots.mockRejectedValue(new Error("Network error"));
 
     const slots = makeFutureConsecutiveSlots("2025-06-01T09:00:00Z", 2);
-    const result = await AllocationAlgorithms.manualAllocate(slots as any, baseOptions);
+    const result = await AllocationAlgorithms.manualAllocate(
+      slots as any,
+      baseOptions,
+    );
     expect(result.success).toBe(false);
     expect(result.error).toBe("Network error");
   });
@@ -293,10 +308,7 @@ describe("AllocationAlgorithms.autoAllocate", () => {
   describe("preference filtering", () => {
     it("should filter out past slots", async () => {
       const pastSlots = makeFutureConsecutiveSlots("2024-01-01T09:00:00Z", 4);
-      const futureSlots = makeFutureConsecutiveSlots(
-        "2025-06-01T09:00:00Z",
-        4,
-      );
+      const futureSlots = makeFutureConsecutiveSlots("2025-06-01T09:00:00Z", 4);
       const allSlots = [...pastSlots, ...futureSlots];
 
       const result = await AllocationAlgorithms.autoAllocate(allSlots as any, {
@@ -328,10 +340,7 @@ describe("AllocationAlgorithms.autoAllocate", () => {
 
     it("should exclude weekends when requested", async () => {
       // Saturday slots
-      const satSlots = makeFutureConsecutiveSlots(
-        "2025-06-07T09:00:00Z",
-        4,
-      ); // Saturday
+      const satSlots = makeFutureConsecutiveSlots("2025-06-07T09:00:00Z", 4); // Saturday
 
       const result = await AllocationAlgorithms.autoAllocate(
         satSlots as any,
@@ -380,10 +389,7 @@ describe("AllocationAlgorithms.autoAllocate", () => {
     it("should apply afternoon preference filter", async () => {
       // Use 6:00 AM local time — guaranteed morning in any timezone
       const baseDate = new Date(2025, 5, 2, 6, 0, 0, 0); // June 2, 6:00 AM local
-      const morningSlots = makeConsecutiveTimeSlots(
-        baseDate.toISOString(),
-        4,
-      );
+      const morningSlots = makeConsecutiveTimeSlots(baseDate.toISOString(), 4);
 
       const result = await AllocationAlgorithms.autoAllocate(
         morningSlots as any,

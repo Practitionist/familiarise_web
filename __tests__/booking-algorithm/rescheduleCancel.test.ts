@@ -80,10 +80,7 @@ function makeRescheduleRequest(
 }
 
 /** Create a Request for the cancel endpoint */
-function makeCancelRequest(
-  appointmentId: string,
-  body?: Record<string, any>,
-) {
+function makeCancelRequest(appointmentId: string, body?: Record<string, any>) {
   const url = `http://localhost/api/appointments/${appointmentId}/cancel`;
   return new Request(url, {
     method: "POST",
@@ -265,9 +262,7 @@ describe("RescheduleErrors", () => {
 
     it("should show slot message for slot type", () => {
       const err = new AppointmentNotFoundError("slot", "slot-456");
-      expect(err.message).toBe(
-        "Specified slot not found in this appointment",
-      );
+      expect(err.message).toBe("Specified slot not found in this appointment");
     });
 
     it("should expose resourceType and resourceId", () => {
@@ -959,10 +954,9 @@ describe("Cancel Route Handler - POST", () => {
       makeConsultationAppointment(),
     );
 
-    const req = new Request(
-      "http://localhost/api/appointments/apt-1/cancel",
-      { method: "POST" },
-    ) as any;
+    const req = new Request("http://localhost/api/appointments/apt-1/cancel", {
+      method: "POST",
+    }) as any;
     const res = await cancelHandler(req, makeParams("apt-1"));
 
     expect(res.status).toBe(200);
@@ -1241,8 +1235,6 @@ describe("cleanupTentativeSlots", () => {
 
     await cleanupTentativeSlots();
 
-    expect(
-      (prisma.slotOfAppointment as any).deleteMany,
-    ).not.toHaveBeenCalled();
+    expect((prisma.slotOfAppointment as any).deleteMany).not.toHaveBeenCalled();
   });
 });

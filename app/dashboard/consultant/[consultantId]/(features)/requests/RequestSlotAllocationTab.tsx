@@ -251,34 +251,39 @@ export function RequestSlotAllocationTab({
               })),
               status: subscription.requestStatus,
               // When rescheduling (tentative slots exist), only require replacing those slots
-              requiredSlots: tentativeCount > 0
-                ? tentativeCount
-                : (() => {
-                    const totalSessions =
-                      subscription.subscriptionPlan?.totalSessions;
-                    if (totalSessions && totalSessions > 0) {
-                      return totalSessions * slotsPerSession;
-                    }
-                    // Fallback: week-based calculation
-                    const startDate = subscription.schedulingPeriodStartsAt
-                      ? new Date(subscription.schedulingPeriodStartsAt)
-                      : undefined;
-                    const endDate = subscription.schedulingPeriodEndsAt
-                      ? new Date(subscription.schedulingPeriodEndsAt)
-                      : undefined;
-                    const callsPerWeek =
-                      subscription.subscriptionPlan?.callsPerWeek ?? 0;
-                    if (startDate && endDate) {
-                      const weeks = countSundayWeeksInclusive(startDate, endDate);
-                      return weeks * callsPerWeek * slotsPerSession;
-                    }
-                    return (
-                      callsPerWeek *
-                        4 *
-                        (subscription.subscriptionPlan?.durationInMonths ?? 0) *
-                        slotsPerSession || 0
-                    );
-                  })(),
+              requiredSlots:
+                tentativeCount > 0
+                  ? tentativeCount
+                  : (() => {
+                      const totalSessions =
+                        subscription.subscriptionPlan?.totalSessions;
+                      if (totalSessions && totalSessions > 0) {
+                        return totalSessions * slotsPerSession;
+                      }
+                      // Fallback: week-based calculation
+                      const startDate = subscription.schedulingPeriodStartsAt
+                        ? new Date(subscription.schedulingPeriodStartsAt)
+                        : undefined;
+                      const endDate = subscription.schedulingPeriodEndsAt
+                        ? new Date(subscription.schedulingPeriodEndsAt)
+                        : undefined;
+                      const callsPerWeek =
+                        subscription.subscriptionPlan?.callsPerWeek ?? 0;
+                      if (startDate && endDate) {
+                        const weeks = countSundayWeeksInclusive(
+                          startDate,
+                          endDate,
+                        );
+                        return weeks * callsPerWeek * slotsPerSession;
+                      }
+                      return (
+                        callsPerWeek *
+                          4 *
+                          (subscription.subscriptionPlan?.durationInMonths ??
+                            0) *
+                          slotsPerSession || 0
+                      );
+                    })(),
               totalSessions:
                 tentativeCount > 0
                   ? tentativeCount / slotsPerSession

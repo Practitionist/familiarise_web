@@ -24,8 +24,7 @@ export default function MaintenanceBanner() {
 
     const el = bannerRef.current;
     const observer = new ResizeObserver(([entry]) => {
-      const h =
-        entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height;
+      const h = entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height;
       document.documentElement.style.setProperty(
         "--maintenance-banner-height",
         `${h}px`,
@@ -71,12 +70,21 @@ export default function MaintenanceBanner() {
           className="ml-2 flex-shrink-0 rounded p-0.5 text-yellow-600 hover:bg-yellow-100 hover:text-yellow-800"
           aria-label="Dismiss maintenance notice"
         >
-          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
+          <svg
+            className="h-4 w-4"
+            fill="none"
+            viewBox="0 0 24 24"
+            strokeWidth={2}
+            stroke="currentColor"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M6 18 18 6M6 6l12 12"
+            />
           </svg>
         </button>
       </div>
     </div>
   );
 }
-

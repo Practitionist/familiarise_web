@@ -19,7 +19,10 @@ async function checkBetterStack(): Promise<{
   monitors?: { name: string; status: string }[];
 }> {
   const now = Date.now();
-  if (betterStackCache && now - betterStackCache.at < BETTERSTACK_CACHE_TTL_MS) {
+  if (
+    betterStackCache &&
+    now - betterStackCache.at < BETTERSTACK_CACHE_TTL_MS
+  ) {
     return betterStackCache.value;
   }
 

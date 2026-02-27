@@ -98,7 +98,9 @@ export async function runPostRecovery(): Promise<RecoveryResult> {
     ]);
     result.reconciliation = reconciliationRuns.map((r, i) => ({
       job: JOB_NAMES[i],
-      success: r.status === "fulfilled" && (r.value as { success?: boolean })?.success === true,
+      success:
+        r.status === "fulfilled" &&
+        (r.value as { success?: boolean })?.success === true,
     }));
     reconciliationRuns.forEach((r, i) => {
       if (r.status === "rejected") {

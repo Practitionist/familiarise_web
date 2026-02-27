@@ -79,7 +79,7 @@ type SubscriptionCheckoutResult = {
 function buildPaymentMetadata(
   data: CheckoutInput,
   userId: string,
-): { appointmentId: string; appointmentType: string;[key: string]: string } {
+): { appointmentId: string; appointmentType: string; [key: string]: string } {
   return {
     appointmentId: "pending",
     appointmentType: data.appointmentType,
@@ -460,14 +460,14 @@ export async function validateSlotAvailability(
         // FIX: Filter by consultant - only check slots belonging to this consultant
         ...(consultantUserId
           ? [
-            {
-              user: {
-                some: {
-                  id: consultantUserId,
+              {
+                user: {
+                  some: {
+                    id: consultantUserId,
+                  },
                 },
               },
-            },
-          ]
+            ]
           : []),
       ],
     },
@@ -489,14 +489,14 @@ export async function validateSlotAvailability(
           // FIX: Filter by consultant - only check tentative slots for this consultant
           ...(consultantUserId
             ? [
-              {
-                user: {
-                  some: {
-                    id: consultantUserId,
+                {
+                  user: {
+                    some: {
+                      id: consultantUserId,
+                    },
                   },
                 },
-              },
-            ]
+              ]
             : []),
           {
             appointment: {
@@ -547,14 +547,14 @@ export async function validateSlotAvailability(
         // FIX: Filter by consultant - only count tentative slots for this consultant
         ...(consultantUserId
           ? [
-            {
-              user: {
-                some: {
-                  id: consultantUserId,
+              {
+                user: {
+                  some: {
+                    id: consultantUserId,
+                  },
                 },
               },
-            },
-          ]
+            ]
           : []),
         {
           appointment: {
@@ -990,10 +990,14 @@ export async function handleConsultationCheckout(
   const slotChunks: { startsAt: Date; endsAt: Date }[] = [];
   let cur = new Date(startTime);
   while (cur < endTime) {
-    slotChunks.push({ startsAt: new Date(cur), endsAt: new Date(cur.getTime() + SLOT_MS) });
+    slotChunks.push({
+      startsAt: new Date(cur),
+      endsAt: new Date(cur.getTime() + SLOT_MS),
+    });
     cur = new Date(cur.getTime() + SLOT_MS);
   }
-  if (slotChunks.length === 0) throw new Error("Invalid slot: start must be before end");
+  if (slotChunks.length === 0)
+    throw new Error("Invalid slot: start must be before end");
 
   const appointment = await tx.appointment.create({
     data: {
@@ -1398,8 +1402,15 @@ export async function handleCheckout(
 
   try {
     // STEP 1: Calculate amount and fetch plan data (OUTSIDE LOCK - just pricing)
-    const { amount, originalAmount, taxAmount, currency, discountCodeId, consulteeProfileId, creditsApplied } =
-      await calculateAmountAndValidate(validatedData, userId);
+    const {
+      amount,
+      originalAmount,
+      taxAmount,
+      currency,
+      discountCodeId,
+      consulteeProfileId,
+      creditsApplied,
+    } = await calculateAmountAndValidate(validatedData, userId);
 
     // Get plan data for consultant ID (needed for lock acquisition)
     const planData = await getPlanDataForLock(validatedData);
@@ -1554,15 +1565,23 @@ export async function handleCheckout(
             // creditsApplied is in rupees (from TX1), convert to paise for comparison
             // with totalAvailable (paise) and for applyCreditsToPayment (works in paise)
             const creditsAppliedInPaise = creditsApplied * 100;
-            const actualCreditsInPaise = Math.min(totalAvailable, creditsAppliedInPaise);
+            const actualCreditsInPaise = Math.min(
+              totalAvailable,
+              creditsAppliedInPaise,
+            );
 
             if (actualCreditsInPaise > 0) {
-              await applyCreditsToPayment(userId, actualCreditsInPaise, tx, payment.id);
+              await applyCreditsToPayment(
+                userId,
+                actualCreditsInPaise,
+                tx,
+                payment.id,
+              );
               console.log(
                 `🎁 Applied ${actualCreditsInPaise} paise (₹${creditsApplied}) referral credits for user ${userId}` +
-                (actualCreditsInPaise !== creditsAppliedInPaise
-                  ? ` (requested ${creditsAppliedInPaise} paise, available ${totalAvailable} paise)`
-                  : ""),
+                  (actualCreditsInPaise !== creditsAppliedInPaise
+                    ? ` (requested ${creditsAppliedInPaise} paise, available ${totalAvailable} paise)`
+                    : ""),
               );
             }
 
@@ -1573,13 +1592,16 @@ export async function handleCheckout(
             if (actualCreditsInPaise < creditsAppliedInPaise) {
               throw new Error(
                 `CREDIT_SHORTFALL: expected ${creditsAppliedInPaise} paise credits but only ${actualCreditsInPaise} available. ` +
-                `Payment ${payment.id} amount is stale. Aborting for retry.`,
+                  `Payment ${payment.id} amount is stale. Aborting for retry.`,
               );
             }
             actualCreditsApplied = creditsApplied; // In rupees for return value
           }
 
-          return { appointmentId: createdAppointment?.id, creditsApplied: actualCreditsApplied };
+          return {
+            appointmentId: createdAppointment?.id,
+            creditsApplied: actualCreditsApplied,
+          };
         },
         {
           timeout: 25000,
@@ -1684,7 +1706,8 @@ export async function handleCheckout(
               };
 
               const earningsAppointmentType =
-                appointmentTypeMap[validatedData.appointmentType] || "CONSULTATION";
+                appointmentTypeMap[validatedData.appointmentType] ||
+                "CONSULTATION";
 
               const paymentForEarnings = {
                 ...paymentWithAppointment,
@@ -1692,10 +1715,17 @@ export async function handleCheckout(
                   ...paymentWithAppointment.appointment,
                   consultantProfile: { id: consultantProfile.id },
                   webinar: paymentWithAppointment.appointment.webinar
-                    ? { webinarPlanId: paymentWithAppointment.appointment.webinar.webinarPlanId }
+                    ? {
+                        webinarPlanId:
+                          paymentWithAppointment.appointment.webinar
+                            .webinarPlanId,
+                      }
                     : null,
                   class: paymentWithAppointment.appointment.class
-                    ? { classPlanId: paymentWithAppointment.appointment.class.classPlanId }
+                    ? {
+                        classPlanId:
+                          paymentWithAppointment.appointment.class.classPlanId,
+                      }
                     : null,
                 },
               };

@@ -9,11 +9,7 @@
  * (not yet completed, cancelled, rejected, or expired).
  */
 
-import {
-  RequestStatus,
-  TrialSessionStatus,
-  Prisma,
-} from "@prisma/client";
+import { RequestStatus, TrialSessionStatus, Prisma } from "@prisma/client";
 
 /**
  * Consultation/Subscription statuses that count as "slot occupied"
@@ -75,9 +71,7 @@ export function buildOccupiedAppointmentFilter(
     },
     {
       class: {
-        ...(consultantProfileId
-          ? { classPlan: { consultantProfileId } }
-          : {}),
+        ...(consultantProfileId ? { classPlan: { consultantProfileId } } : {}),
         status: { in: [...OCCUPIED_EVENT_STATUSES] },
       },
     },

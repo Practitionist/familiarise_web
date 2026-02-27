@@ -634,7 +634,7 @@ function validateEventSlots(
         result.isValid = false;
         result.errors.push(
           subscriptionValidation.weeklyCallsError ||
-          "Weekly call limit exceeded",
+            "Weekly call limit exceeded",
         );
       }
 
@@ -1349,9 +1349,7 @@ export function useEventSlotAllocation(
           const dayKey = slot.startTime.toDateString();
           const daySlots = currentSlots
             .filter((s) => s.startTime.toDateString() === dayKey)
-            .sort(
-              (a, b) => a.startTime.getTime() - b.startTime.getTime(),
-            );
+            .sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
 
           const group = findConsecutiveGroupContaining(slot, daySlots);
           const removeTimestamps = new Set(
@@ -1533,7 +1531,8 @@ export function useEventSlotAllocation(
               setPendingToast({
                 variant: "destructive",
                 title: "All sessions selected",
-                description: "You've selected all the required time slots. Click 'Allocate' to confirm.",
+                description:
+                  "You've selected all the required time slots. Click 'Allocate' to confirm.",
               });
             }, 0);
             return currentSlots;
@@ -1593,7 +1592,10 @@ export function useEventSlotAllocation(
                 isCompleteCall(daySlots, slotsPerCall)
               ) {
                 const weekString = getWeekString(daySlots[0].startTime);
-                existingWeeklyConfirmedCallCounts.set(weekString, (existingWeeklyConfirmedCallCounts.get(weekString) || 0) + 1);
+                existingWeeklyConfirmedCallCounts.set(
+                  weekString,
+                  (existingWeeklyConfirmedCallCounts.get(weekString) || 0) + 1,
+                );
               }
             });
 
@@ -1604,7 +1606,10 @@ export function useEventSlotAllocation(
                 isCompleteCall(daySlots, slotsPerCall)
               ) {
                 const weekString = getWeekString(daySlots[0].startTime);
-                weeklyConfirmedCallCounts.set(weekString, (weeklyConfirmedCallCounts.get(weekString) || 0) + 1);
+                weeklyConfirmedCallCounts.set(
+                  weekString,
+                  (weeklyConfirmedCallCounts.get(weekString) || 0) + 1,
+                );
               }
             });
 
@@ -1618,7 +1623,9 @@ export function useEventSlotAllocation(
             ];
 
             // Block if adding this slot COMPLETES a call and the week is already at its callsPerWeek limit
-            const existingCallsThisWeek = existingWeeklyConfirmedCallCounts.get(weeklyConfirmedSlotWeek) || 0;
+            const existingCallsThisWeek =
+              existingWeeklyConfirmedCallCounts.get(weeklyConfirmedSlotWeek) ||
+              0;
             if (
               dayWithNewSlot.length === slotsPerCall &&
               isCompleteCall(dayWithNewSlot, slotsPerCall) &&
@@ -1664,7 +1671,7 @@ export function useEventSlotAllocation(
               // Calculate weeks passed since subscription started
               const weeksPassed = Math.floor(
                 (currentDate.getTime() - subscriptionStartDate.getTime()) /
-                (7 * 24 * 60 * 60 * 1000),
+                  (7 * 24 * 60 * 60 * 1000),
               );
               pastCallsCompleted = Math.min(
                 weeksPassed * callsPerWeek,
@@ -1716,7 +1723,8 @@ export function useEventSlotAllocation(
                 setPendingToast({
                   variant: "destructive",
                   title: "One session per day",
-                  description: "You can only schedule one session per day. Please choose a different day.",
+                  description:
+                    "You can only schedule one session per day. Please choose a different day.",
                 });
               }, 0);
               return currentSlots;

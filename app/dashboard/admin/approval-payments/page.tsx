@@ -234,7 +234,10 @@ export default function ApprovalPaymentsPage() {
                         <div>
                           <p className="text-gray-500">Amount</p>
                           <p className="font-medium text-gray-900">
-                            {formatCurrencyAmount(payment.amount, payment.currency)}
+                            {formatCurrencyAmount(
+                              payment.amount,
+                              payment.currency,
+                            )}
                           </p>
                         </div>
                         <div>

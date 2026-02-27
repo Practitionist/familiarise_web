@@ -49,7 +49,10 @@ export async function createCollaborators() {
   const statuses = ["PENDING", "ACCEPTED", "DECLINED"] as const;
 
   // Add collaborators to ~50% of webinar plans
-  for (const plan of webinarPlans.slice(0, Math.ceil(webinarPlans.length * 0.5))) {
+  for (const plan of webinarPlans.slice(
+    0,
+    Math.ceil(webinarPlans.length * 0.5),
+  )) {
     // Pick 1-2 collaborators (not the owner)
     const availableCollaborators = consultantProfiles.filter(
       (cp) => cp.id !== plan.consultantProfileId,

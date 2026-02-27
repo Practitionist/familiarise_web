@@ -29,7 +29,10 @@ const FOOTER_LINKS: Record<string, FooterLink[]> = {
     { label: "Creative Arts", href: "/explore/experts?domain=Creative Arts" },
     { label: "Education", href: "/explore/experts?domain=Education" },
     { label: "Health", href: "/explore/experts?domain=Health" },
-    { label: "Personal Development", href: "/explore/experts?domain=Personal Development" },
+    {
+      label: "Personal Development",
+      href: "/explore/experts?domain=Personal Development",
+    },
   ],
   useCases: [
     { label: "College Students", href: "/use-cases/college-students" },
@@ -85,7 +88,9 @@ const SOCIAL_LINKS = [
 const Footer: React.FC = () => {
   const pathname = usePathname();
   const [email, setEmail] = useState("");
-  const [newsletterStatus, setNewsletterStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
+  const [newsletterStatus, setNewsletterStatus] = useState<
+    "idle" | "loading" | "success" | "error"
+  >("idle");
 
   // Check if we're on the home page
   const isHomePage = pathname === "/";
@@ -165,15 +170,24 @@ const Footer: React.FC = () => {
                 <Button
                   type="submit"
                   size="lg"
-                  disabled={newsletterStatus === "loading" || newsletterStatus === "success"}
+                  disabled={
+                    newsletterStatus === "loading" ||
+                    newsletterStatus === "success"
+                  }
                   className="h-14 bg-white text-zinc-900 hover:bg-zinc-200 px-8 rounded-xl font-medium shrink-0"
                 >
-                  {newsletterStatus === "loading" ? "Subscribing..." : newsletterStatus === "success" ? "Subscribed!" : "Subscribe"}
+                  {newsletterStatus === "loading"
+                    ? "Subscribing..."
+                    : newsletterStatus === "success"
+                      ? "Subscribed!"
+                      : "Subscribe"}
                 </Button>
               </form>
 
               {newsletterStatus === "error" && (
-                <p className="text-sm text-red-400 mt-2">Something went wrong. Please try again.</p>
+                <p className="text-sm text-red-400 mt-2">
+                  Something went wrong. Please try again.
+                </p>
               )}
 
               <p className="text-sm text-zinc-600 mt-4">

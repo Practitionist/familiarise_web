@@ -12,6 +12,7 @@ Complete these steps after ending maintenance mode. Items are ordered by priorit
   - [ ] Maintenance page redirects to home (polls every 30s)
 
 **What happens automatically when you end maintenance**:
+
 - Redis keys updated: `maintenance:phase` = `"OFF"`
 - Prisma: `MaintenanceWindow` record updated with `endedAt` and `endedBy`
 - BetterStack incident auto-resolved (if one was created)
@@ -20,9 +21,11 @@ Complete these steps after ending maintenance mode. Items are ordered by priorit
 ## 2. Verify Core Connectivity
 
 - [ ] **Database**: Hit `/api/health` and confirm `status: "healthy"`
+
   ```
   curl https://your-domain.com/api/health
   ```
+
   Expected: `{ "status": "healthy", "maintenance": { "phase": "OFF" } }`
 
 - [ ] **Redis**: Maintenance state should read as OFF
@@ -59,55 +62,70 @@ This is the most critical post-maintenance step for financial integrity.
 Manually trigger these jobs in order. Use the admin system jobs dashboard or run directly:
 
 ### Priority 1: Payment Reconciliation
+
 ```bash
 # Check for payments that succeeded during maintenance but have no appointment
 npx tsx jobs/payments/reconcile-payment-status.ts
 ```
+
 - [ ] Verify output: no "succeeded payments needing appointment creation" flagged
 - [ ] If flagged: these need manual appointment creation or webhook replay
 
 ### Priority 2: Slot Reconciliation
+
 ```bash
 # Fix any slot inconsistencies caused by interrupted operations
 npx tsx jobs/appointments/reconcile-slot-availability.ts
 ```
+
 - [ ] Verify output: no double bookings detected, no orphaned tentative flags
 
 ### Priority 3: Payment-Earnings Sync
+
 ```bash
 # Ensure earnings records match payments
 npx tsx jobs/earnings/sync-payment-earnings.ts
 ```
+
 - [ ] Verify output: no missing earnings entries created
 
 ### Priority 4: Tentative Slot Cleanup
+
 ```bash
 # Release tentative slots that may have been left by interrupted checkouts
 npx tsx jobs/appointments/cleanup-tentative-slots.ts
 ```
+
 - [ ] Verify output: note how many tentative slots were released
 
 ### Priority 5: Refund Reconciliation
+
 ```bash
 # Sync any refund status changes that occurred during maintenance
 npx tsx jobs/refunds/reconcile-pending-refunds.ts
 ```
+
 - [ ] Verify output: all refund statuses synced
 
 ### Priority 6: Payout Reconciliation (if applicable)
+
 ```bash
 # Only run if maintenance overlapped with payout processing (Monday 8-10 PM UTC)
 npx tsx jobs/payouts/reconcile-payout-status.ts
 ```
+
 - [ ] Verify output: all payout statuses match gateway state
 
 ## 5. Verify BetterStack
 
 - [ ] **Check `/api/health` for BetterStack status**:
+
   ```bash
   curl https://familiarisenow.com/api/health
   ```
+
   Expected response now includes:
+
   ```json
   {
     "status": "healthy",

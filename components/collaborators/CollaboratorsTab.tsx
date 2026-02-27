@@ -62,7 +62,10 @@ const CLASS_ROLES = [
 
 const statusConfig: Record<
   string,
-  { label: string; variant: "default" | "secondary" | "destructive" | "outline" }
+  {
+    label: string;
+    variant: "default" | "secondary" | "destructive" | "outline";
+  }
 > = {
   PENDING: { label: "Pending", variant: "secondary" },
   ACCEPTED: { label: "Accepted", variant: "default" },

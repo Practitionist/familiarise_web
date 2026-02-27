@@ -53,20 +53,20 @@ Admin ends maintenance
 
 ## Key Files
 
-| File | Runtime | Purpose |
-|------|---------|---------|
-| `middleware.ts` | Edge | Request interception, maintenance checks, route protection |
-| `lib/maintenance-edge.ts` | Edge | Edge-safe Redis reads via `fetch()`. No SDK imports. |
-| `lib/maintenance.ts` | Node.js | Server-side state management. Redis SDK + Prisma writes. |
-| `lib/betterstack.ts` | Node.js | BetterStack incident creation/resolution |
-| `app/api/admin/maintenance/route.ts` | Node.js | Admin CRUD API (GET/POST/PATCH/DELETE) |
-| `app/api/health/route.ts` | Node.js | Public health check — returns maintenance state + calls BetterStack `/api/v2/monitors` to report `{ configured, reachable, monitors[] }` |
-| `providers/MaintenanceProvider.tsx` | Client | React context, polls `/api/health` every 60s |
-| `components/banners/MaintenanceBanner.tsx` | Client | Dismissible warning banner for DEGRADED mode |
-| `app/maintenance/page.tsx` | Client | Full-screen offline page, auto-refreshes every 30s |
-| `components/dashboard/MaintenanceControls.tsx` | Client | Admin/staff UI for controlling maintenance |
-| `app/dashboard/admin/maintenance/page.tsx` | Client | Admin maintenance control page |
-| `app/dashboard/staff/[staffId]/(features)/maintenance/page.tsx` | Client | Staff maintenance control page |
+| File                                                            | Runtime | Purpose                                                                                                                                  |
+| --------------------------------------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `middleware.ts`                                                 | Edge    | Request interception, maintenance checks, route protection                                                                               |
+| `lib/maintenance-edge.ts`                                       | Edge    | Edge-safe Redis reads via `fetch()`. No SDK imports.                                                                                     |
+| `lib/maintenance.ts`                                            | Node.js | Server-side state management. Redis SDK + Prisma writes.                                                                                 |
+| `lib/betterstack.ts`                                            | Node.js | BetterStack incident creation/resolution                                                                                                 |
+| `app/api/admin/maintenance/route.ts`                            | Node.js | Admin CRUD API (GET/POST/PATCH/DELETE)                                                                                                   |
+| `app/api/health/route.ts`                                       | Node.js | Public health check — returns maintenance state + calls BetterStack `/api/v2/monitors` to report `{ configured, reachable, monitors[] }` |
+| `providers/MaintenanceProvider.tsx`                             | Client  | React context, polls `/api/health` every 60s                                                                                             |
+| `components/banners/MaintenanceBanner.tsx`                      | Client  | Dismissible warning banner for DEGRADED mode                                                                                             |
+| `app/maintenance/page.tsx`                                      | Client  | Full-screen offline page, auto-refreshes every 30s                                                                                       |
+| `components/dashboard/MaintenanceControls.tsx`                  | Client  | Admin/staff UI for controlling maintenance                                                                                               |
+| `app/dashboard/admin/maintenance/page.tsx`                      | Client  | Admin maintenance control page                                                                                                           |
+| `app/dashboard/staff/[staffId]/(features)/maintenance/page.tsx` | Client  | Staff maintenance control page                                                                                                           |
 
 ## Database Model
 
@@ -96,9 +96,9 @@ model MaintenanceWindow {
 
 ## Redis Keys
 
-| Key | Type | Value |
-|-----|------|-------|
-| `maintenance:phase` | String | `"OFF"`, `"DEGRADED"`, or `"OFFLINE"` |
+| Key                  | Type        | Value                                                           |
+| -------------------- | ----------- | --------------------------------------------------------------- |
+| `maintenance:phase`  | String      | `"OFF"`, `"DEGRADED"`, or `"OFFLINE"`                           |
 | `maintenance:config` | JSON String | `{ reason, estimatedEnd, bypassSecret, betterstackIncidentId }` |
 
 `betterstackIncidentId` is set when entering OFFLINE mode (incident creation succeeds) and read when ending maintenance (to auto-resolve the incident). It is `null` if DEGRADED was used or if incident creation failed.
@@ -108,6 +108,7 @@ model MaintenanceWindow {
 Each maintenance window generates a UUID bypass secret (`crypto.randomUUID()`).
 
 **Usage**:
+
 - HTTP Header: `x-maintenance-bypass: <secret>`
 - Cookie: `maintenance_bypass=<secret>`
 
@@ -123,10 +124,10 @@ BetterStack monitors the platform for uptime and auto-creates incidents during O
 
 Two monitors are configured at [https://uptime.betterstack.com/team/t332379](https://uptime.betterstack.com/team/t332379):
 
-| Public Name | URL | Frequency | Alert |
-|-------------|-----|-----------|-------|
-| Website | `https://familiarisenow.com` | Every 3 min | Email |
-| API Health | `https://familiarisenow.com/api/health` | Every 3 min | Email |
+| Public Name | URL                                     | Frequency   | Alert |
+| ----------- | --------------------------------------- | ----------- | ----- |
+| Website     | `https://familiarisenow.com`            | Every 3 min | Email |
+| API Health  | `https://familiarisenow.com/api/health` | Every 3 min | Email |
 
 ### Status Page
 
@@ -136,12 +137,14 @@ Shows both monitors and reflects active incidents.
 ### Incident Lifecycle
 
 **When entering OFFLINE mode** (`POST /api/admin/maintenance`):
+
 1. `createIncident()` is called in `lib/betterstack.ts`
 2. BetterStack creates an incident at `/api/v2/incidents`
 3. The returned incident ID is stored in Redis under `maintenance:config.betterstackIncidentId`
 4. The POST response includes `betterstackIncidentId` so admins can verify
 
 **When ending maintenance** (`DELETE /api/admin/maintenance`):
+
 1. `getMaintenanceState()` reads `betterstackIncidentId` from Redis
 2. If an incident ID exists, `resolveIncident(id)` is called
 3. BetterStack marks the incident as resolved
@@ -159,12 +162,12 @@ See [00-betterstack-setup.md](./00-betterstack-setup.md) for the full account an
 
 ## Admin API
 
-| Method | Endpoint | Purpose |
-|--------|----------|---------|
-| GET | `/api/admin/maintenance` | Fetch current state + last 20 windows |
-| POST | `/api/admin/maintenance` | Start maintenance (returns bypass secret) |
-| PATCH | `/api/admin/maintenance` | Update active window (phase, reason, ETA) |
-| DELETE | `/api/admin/maintenance` | End maintenance (set phase=OFF) |
+| Method | Endpoint                 | Purpose                                   |
+| ------ | ------------------------ | ----------------------------------------- |
+| GET    | `/api/admin/maintenance` | Fetch current state + last 20 windows     |
+| POST   | `/api/admin/maintenance` | Start maintenance (returns bypass secret) |
+| PATCH  | `/api/admin/maintenance` | Update active window (phase, reason, ETA) |
+| DELETE | `/api/admin/maintenance` | End maintenance (set phase=OFF)           |
 
 **Authorization**: Requires `ADMIN` or `STAFF` role.
 
@@ -185,9 +188,9 @@ These routes are never blocked by maintenance mode:
 
 ## Environment Variables
 
-| Variable | Required | Purpose |
-|----------|----------|---------|
-| `UPSTASH_REDIS_REST_URL` | Yes | Redis endpoint for maintenance state |
-| `UPSTASH_REDIS_REST_TOKEN` | Yes | Redis auth token |
-| `MAINTENANCE_BYPASS_SECRET` | No | Fallback bypass secret |
-| `BETTERSTACK_API_KEY` | **Yes** | BetterStack incident management. Token from BetterStack Settings → API tokens. |
+| Variable                    | Required | Purpose                                                                        |
+| --------------------------- | -------- | ------------------------------------------------------------------------------ |
+| `UPSTASH_REDIS_REST_URL`    | Yes      | Redis endpoint for maintenance state                                           |
+| `UPSTASH_REDIS_REST_TOKEN`  | Yes      | Redis auth token                                                               |
+| `MAINTENANCE_BYPASS_SECRET` | No       | Fallback bypass secret                                                         |
+| `BETTERSTACK_API_KEY`       | **Yes**  | BetterStack incident management. Token from BetterStack Settings → API tokens. |

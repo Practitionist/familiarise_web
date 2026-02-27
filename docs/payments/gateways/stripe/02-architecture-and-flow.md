@@ -116,21 +116,21 @@ Platform Commission (20% of net):  $ 19.36
 Consultant Earnings (80% of net):  $ 77.44
 ```
 
-| Party | Amount | Percentage |
-|-------|--------|------------|
-| Stripe | $3.20 | 3.2% of total |
-| Familiarise | $19.36 | 20% of net |
-| Consultant | $77.44 | 80% of net |
-| **Total** | **$100.00** | **100%** |
+| Party       | Amount      | Percentage    |
+| ----------- | ----------- | ------------- |
+| Stripe      | $3.20       | 3.2% of total |
+| Familiarise | $19.36      | 20% of net    |
+| Consultant  | $77.44      | 80% of net    |
+| **Total**   | **$100.00** | **100%**      |
 
 ### Gateway Fees by Region
 
-| Customer Region | Stripe Fee |
-|----------------|------------|
-| US | 2.9% + $0.30 |
-| Europe (SEPA) | 1.4% + EUR 0.25 |
-| UK | 1.4% + GBP 0.20 |
-| International | 3.9% + $0.30 |
+| Customer Region | Stripe Fee      |
+| --------------- | --------------- |
+| US              | 2.9% + $0.30    |
+| Europe (SEPA)   | 1.4% + EUR 0.25 |
+| UK              | 1.4% + GBP 0.20 |
+| International   | 3.9% + $0.30    |
 
 We use 3.2% as the average for calculations.
 
@@ -166,26 +166,26 @@ All payments on Familiarise are accepted in **USD**. Currency conversion to the 
 
 ### Events Handled
 
-| Event | When It Fires | What We Do |
-|-------|--------------|------------|
-| `payment_intent.succeeded` | Payment captured | Update payment to SUCCEEDED, create earnings, send confirmation |
-| `payment_intent.payment_failed` | Payment declined/errored | Update payment to FAILED, send failure notification |
-| `charge.refunded` | Refund completed | Create/update refund record, mark earnings as REFUNDED |
-| `charge.dispute.created` | Customer opened chargeback | Create dispute record, notify admin via Novu |
-| `charge.dispute.updated` | Dispute evidence submitted/reviewed | Update dispute status |
-| `charge.dispute.closed` | Dispute resolved | Update dispute to WON/LOST/CHARGE_REFUNDED |
+| Event                           | When It Fires                       | What We Do                                                      |
+| ------------------------------- | ----------------------------------- | --------------------------------------------------------------- |
+| `payment_intent.succeeded`      | Payment captured                    | Update payment to SUCCEEDED, create earnings, send confirmation |
+| `payment_intent.payment_failed` | Payment declined/errored            | Update payment to FAILED, send failure notification             |
+| `charge.refunded`               | Refund completed                    | Create/update refund record, mark earnings as REFUNDED          |
+| `charge.dispute.created`        | Customer opened chargeback          | Create dispute record, notify admin via Novu                    |
+| `charge.dispute.updated`        | Dispute evidence submitted/reviewed | Update dispute status                                           |
+| `charge.dispute.closed`         | Dispute resolved                    | Update dispute to WON/LOST/CHARGE_REFUNDED                      |
 
 ### Stripe Connect Events (Payouts)
 
-| Event | When It Fires | What We Do |
-|-------|--------------|------------|
-| `payout.created` | Payout initiated | Log payout creation |
-| `payout.paid` | Funds deposited to bank | Mark payout COMPLETED, earnings as PAID |
-| `payout.failed` | Payout failed | Mark payout FAILED, restore balance |
-| `payout.canceled` | Payout cancelled | Mark payout CANCELLED |
-| `account.updated` | Connected account status changed | Update consultant's account status |
-| `transfer.created` | Transfer initiated | Log transfer creation |
-| `transfer.reversed` | Transfer clawed back | Handle transfer reversal |
+| Event               | When It Fires                    | What We Do                              |
+| ------------------- | -------------------------------- | --------------------------------------- |
+| `payout.created`    | Payout initiated                 | Log payout creation                     |
+| `payout.paid`       | Funds deposited to bank          | Mark payout COMPLETED, earnings as PAID |
+| `payout.failed`     | Payout failed                    | Mark payout FAILED, restore balance     |
+| `payout.canceled`   | Payout cancelled                 | Mark payout CANCELLED                   |
+| `account.updated`   | Connected account status changed | Update consultant's account status      |
+| `transfer.created`  | Transfer initiated               | Log transfer creation                   |
+| `transfer.reversed` | Transfer clawed back             | Handle transfer reversal                |
 
 **Source**: `app/api/webhooks/stripe/route.ts`
 
@@ -207,16 +207,16 @@ Evidence fields supported: customer name, email, purchase IP, cancellation polic
 
 ## Error Handling
 
-| Error | Description |
-|-------|-------------|
-| `card_declined` | Customer's card was declined |
-| `insufficient_funds` | Card doesn't have enough balance |
-| `expired_card` | Customer needs to update card |
-| `processing_error` | Transient error, retry the payment |
-| `incorrect_cvc` | Wrong CVC entered |
-| `authentication_required` | Customer needs to complete 3D Secure |
-| `StripeAuthenticationError` | Invalid API key |
-| `StripeRateLimitError` | Too many requests |
+| Error                       | Description                          |
+| --------------------------- | ------------------------------------ |
+| `card_declined`             | Customer's card was declined         |
+| `insufficient_funds`        | Card doesn't have enough balance     |
+| `expired_card`              | Customer needs to update card        |
+| `processing_error`          | Transient error, retry the payment   |
+| `incorrect_cvc`             | Wrong CVC entered                    |
+| `authentication_required`   | Customer needs to complete 3D Secure |
+| `StripeAuthenticationError` | Invalid API key                      |
+| `StripeRateLimitError`      | Too many requests                    |
 
 **Source**: `lib/payments/core/stripe.ts` (error handling section)
 

@@ -352,9 +352,7 @@ export function useCalendarData(
         }
         // Check subscription status
         if (appt.subscription?.requestStatus) {
-          if (
-            inactiveRequestStatuses.includes(appt.subscription.requestStatus)
-          )
+          if (inactiveRequestStatuses.includes(appt.subscription.requestStatus))
             return false;
         }
         // Check webinar status
@@ -424,38 +422,34 @@ export function useCalendarData(
         // slots being replaced. They should NOT show as "This Event" on the calendar
         // because the auto-allocate will delete them. Showing them as "This Event"
         // misleads the consultant into thinking they're confirmed bookings.
-        const slots: TimeSlot[] = activeData.flatMap(
-          (appointment: any) =>
-            (appointment.slotsOfAppointment || [])
-              .filter((slot: any) => !slot.isTentative)
-              .flatMap((slot: any): TimeSlot[] => {
-                // FIX: Use correct field names from API (startsAt/endsAt)
-                const start = new Date(
-                  slot.startsAt || slot.slotStartTimeInUTC,
-                );
-                const end = new Date(slot.endsAt || slot.slotEndTimeInUTC);
-                const durationMinutes =
-                  (end.getTime() - start.getTime()) / (1000 * 60);
-                const numIntervals = Math.round(durationMinutes / 30);
+        const slots: TimeSlot[] = activeData.flatMap((appointment: any) =>
+          (appointment.slotsOfAppointment || [])
+            .filter((slot: any) => !slot.isTentative)
+            .flatMap((slot: any): TimeSlot[] => {
+              // FIX: Use correct field names from API (startsAt/endsAt)
+              const start = new Date(slot.startsAt || slot.slotStartTimeInUTC);
+              const end = new Date(slot.endsAt || slot.slotEndTimeInUTC);
+              const durationMinutes =
+                (end.getTime() - start.getTime()) / (1000 * 60);
+              const numIntervals = Math.round(durationMinutes / 30);
 
-                const intervalSlots: TimeSlot[] = [];
-                for (let i = 0; i < numIntervals; i++) {
-                  const intervalStart = new Date(
-                    start.getTime() + i * 30 * 60 * 1000,
-                  );
-                  const intervalEnd = new Date(
-                    intervalStart.getTime() + 30 * 60 * 1000,
-                  );
-                  intervalSlots.push({
-                    startTime: intervalStart,
-                    endTime: intervalEnd,
-                    isAvailable: true,
-                    isBooked: true, // Event slots are considered booked/allocated
-                  });
-                }
-                return intervalSlots;
-              },
-            ),
+              const intervalSlots: TimeSlot[] = [];
+              for (let i = 0; i < numIntervals; i++) {
+                const intervalStart = new Date(
+                  start.getTime() + i * 30 * 60 * 1000,
+                );
+                const intervalEnd = new Date(
+                  intervalStart.getTime() + 30 * 60 * 1000,
+                );
+                intervalSlots.push({
+                  startTime: intervalStart,
+                  endTime: intervalEnd,
+                  isAvailable: true,
+                  isBooked: true, // Event slots are considered booked/allocated
+                });
+              }
+              return intervalSlots;
+            }),
         );
         setEventSlots(slots);
       } else {
@@ -574,7 +568,6 @@ export function useCalendarData(
               with: extractAppointmentParticipant(appointment),
             })) || [],
       );
-
 
       // STEP 5: Determine booking status using SERVER-CALCULATED data
       // FIXED: Use server bookingStatus instead of manual calculation

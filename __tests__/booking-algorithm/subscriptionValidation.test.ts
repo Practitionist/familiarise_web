@@ -55,12 +55,13 @@ describe("Bug A Fix: Week key format consistency", () => {
       2,
     );
 
-    const result = await service.validateSubscriptionSlots("sub-1", proposedSlots);
+    const result = await service.validateSubscriptionSlots(
+      "sub-1",
+      proposedSlots,
+    );
 
     // The proposed call should appear in weeklyInfo
-    const weekWithProposed = result.weeklyInfo.find(
-      (w) => w.proposedCalls > 0,
-    );
+    const weekWithProposed = result.weeklyInfo.find((w) => w.proposedCalls > 0);
     expect(weekWithProposed).toBeDefined();
     expect(weekWithProposed!.proposedCalls).toBe(1);
   });
@@ -78,7 +79,10 @@ describe("Bug A Fix: Week key format consistency", () => {
     const call2 = makeConsecutiveSlotISOs("2025-01-07T10:00:00.000Z", 2);
     const proposedSlots = [...call1, ...call2];
 
-    const result = await service.validateSubscriptionSlots("sub-1", proposedSlots);
+    const result = await service.validateSubscriptionSlots(
+      "sub-1",
+      proposedSlots,
+    );
 
     expect(result.isValid).toBe(false);
     expect(result.errors.some((e) => e.includes("exceeds call limit"))).toBe(
@@ -229,7 +233,10 @@ describe("Bug C Fix: Weekly limit validation actually catches violations", () =>
       2,
     );
 
-    const result = await service.validateSubscriptionSlots("sub-1", proposedSlots);
+    const result = await service.validateSubscriptionSlots(
+      "sub-1",
+      proposedSlots,
+    );
 
     expect(result.isValid).toBe(false);
     expect(result.errors.some((e) => e.includes("exceeds call limit"))).toBe(
@@ -282,7 +289,10 @@ describe("Bug C Fix: Weekly limit validation actually catches violations", () =>
       2,
     );
 
-    const result = await service.validateSubscriptionSlots("sub-1", proposedSlots);
+    const result = await service.validateSubscriptionSlots(
+      "sub-1",
+      proposedSlots,
+    );
     expect(result.isValid).toBe(true);
   });
 });
@@ -320,7 +330,10 @@ describe("Subscription period validation", () => {
       2,
     );
 
-    const result = await service.validateSubscriptionSlots("sub-1", proposedSlots);
+    const result = await service.validateSubscriptionSlots(
+      "sub-1",
+      proposedSlots,
+    );
     expect(
       result.errors.some((e) => e.includes("outside subscription period")),
     ).toBe(false);
@@ -453,9 +466,7 @@ describe("Incomplete proposed calls", () => {
       "2025-01-06T10:00:00.000Z",
     ]);
 
-    const weekWithProposed = result.weeklyInfo.find(
-      (w) => w.proposedCalls > 0,
-    );
+    const weekWithProposed = result.weeklyInfo.find((w) => w.proposedCalls > 0);
     expect(weekWithProposed).toBeUndefined();
   });
 
@@ -473,9 +484,7 @@ describe("Incomplete proposed calls", () => {
       "2025-01-06T11:00:00.000Z",
     ]);
 
-    const weekWithProposed = result.weeklyInfo.find(
-      (w) => w.proposedCalls > 0,
-    );
+    const weekWithProposed = result.weeklyInfo.find((w) => w.proposedCalls > 0);
     expect(weekWithProposed).toBeUndefined();
   });
 });
@@ -504,7 +513,8 @@ describe("getAvailableWeeksForSubscription", () => {
       existingAppointments,
     );
 
-    const availableWeeks = await service.getAvailableWeeksForSubscription("sub-1");
+    const availableWeeks =
+      await service.getAvailableWeeksForSubscription("sub-1");
     // Week 1 (Jan 5-11) is full (1/1), other future weeks should be available
     const fullWeek = availableWeeks.find(
       (w) =>
@@ -648,9 +658,7 @@ describe("Slot consecutiveness tolerance", () => {
       "2025-01-06T10:30:00.500Z",
     ]);
 
-    const weekWithProposed = result.weeklyInfo.find(
-      (w) => w.proposedCalls > 0,
-    );
+    const weekWithProposed = result.weeklyInfo.find((w) => w.proposedCalls > 0);
     expect(weekWithProposed).toBeDefined();
     expect(weekWithProposed!.proposedCalls).toBe(1);
   });
@@ -680,7 +688,10 @@ describe("Valid complete submission", () => {
       ...makeConsecutiveSlotISOs("2025-01-27T10:00:00.000Z", 2), // Week 4
     ];
 
-    const result = await service.validateSubscriptionSlots("sub-1", proposedSlots);
+    const result = await service.validateSubscriptionSlots(
+      "sub-1",
+      proposedSlots,
+    );
     expect(result.isValid).toBe(true);
     expect(result.errors).toHaveLength(0);
 

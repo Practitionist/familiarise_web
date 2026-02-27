@@ -8,13 +8,13 @@ This is intentional: payment webhooks are critical for completing transactions a
 
 ## Webhook Handlers
 
-| Gateway | Route | Signature Verification | Idempotency |
-|---------|-------|----------------------|-------------|
-| **Stripe** | `POST /api/webhooks/stripe` | `stripe.webhooks.constructEvent()` | `logWebhookEvent()` with gateway event ID |
-| **Razorpay** | `POST /api/webhooks/razorpay` | HMAC SHA256 signature | `logWebhookEvent()` with gateway event ID |
-| **Lemon Squeezy** | `POST /api/webhooks/lemon-squeezy` | HMAC SHA256 (custom) | `logWebhookEvent()` with gateway event ID |
-| **XFlow** | `POST /api/webhooks/xflow` | HMAC SHA256 (custom) | `logWebhookEvent()` with gateway event ID |
-| **Stream.io** | `POST /api/stream/webhooks/` | HMAC SHA256 (constant-time) | `logWebhookEvent()` with event ID |
+| Gateway           | Route                              | Signature Verification             | Idempotency                               |
+| ----------------- | ---------------------------------- | ---------------------------------- | ----------------------------------------- |
+| **Stripe**        | `POST /api/webhooks/stripe`        | `stripe.webhooks.constructEvent()` | `logWebhookEvent()` with gateway event ID |
+| **Razorpay**      | `POST /api/webhooks/razorpay`      | HMAC SHA256 signature              | `logWebhookEvent()` with gateway event ID |
+| **Lemon Squeezy** | `POST /api/webhooks/lemon-squeezy` | HMAC SHA256 (custom)               | `logWebhookEvent()` with gateway event ID |
+| **XFlow**         | `POST /api/webhooks/xflow`         | HMAC SHA256 (custom)               | `logWebhookEvent()` with gateway event ID |
+| **Stream.io**     | `POST /api/stream/webhooks/`       | HMAC SHA256 (constant-time)        | `logWebhookEvent()` with event ID         |
 
 ## Stripe Webhook Events Handled
 
@@ -61,6 +61,7 @@ This is intentional: payment webhooks are critical for completing transactions a
 ## Retry Behavior by Provider
 
 ### Stripe
+
 - **Retry policy**: Up to 3 days with exponential backoff
 - **Initial retry**: ~1 hour after first failure
 - **Max retries**: ~15 attempts over 3 days
@@ -69,6 +70,7 @@ This is intentional: payment webhooks are critical for completing transactions a
 - **Dashboard**: Stripe Dashboard > Developers > Webhooks > Failed events
 
 ### Razorpay
+
 - **Retry policy**: Retries for up to 24 hours
 - **Retry interval**: Exponential backoff starting at ~5 minutes
 - **Max retries**: Multiple attempts over 24 hours
@@ -76,12 +78,14 @@ This is intentional: payment webhooks are critical for completing transactions a
 - **Dashboard**: Razorpay Dashboard > Webhooks > Recent Deliveries
 
 ### Lemon Squeezy
+
 - **Retry policy**: Retries with exponential backoff
 - **Retry window**: Up to 7 days
 - **Max retries**: Multiple attempts
 - **Dashboard**: Lemon Squeezy Dashboard > Webhooks
 
 ### XFlow
+
 - **Retry policy**: Retries on non-2xx response
 - **Retry window**: Limited retry window
 - **Dashboard**: XFlow merchant portal
@@ -95,6 +99,7 @@ All webhook handlers use `logWebhookEvent()` from `/api/webhooks/utils.ts`:
 3. **Processing**: If new, processes the event and calls `markWebhookEventProcessed()` with success/error status
 
 **Database table**: `WebhookEvent`
+
 - `gateway`: STRIPE | RAZORPAY | STREAM | LEMON_SQUEEZY | XFLOW
 - `eventId`: Unique identifier from the gateway
 - `eventType`: Event type string
@@ -121,6 +126,7 @@ This means even if a webhook is retried (due to temporary failure during mainten
 ## Risk: Webhook Handler Hits Migrating Schema
 
 The webhook handler does more than just log the event. It also:
+
 - Creates appointments (`handlePaymentSuccess()`)
 - Updates payment records
 - Processes refunds (`handleRefundCreated()`)

@@ -199,11 +199,7 @@ interface ClassPlanSchedule {
   classes: ClassEventSchedule[];
 }
 
-function WebinarScheduleSummary({
-  plan,
-}: {
-  plan: WebinarPlanSchedule;
-}) {
+function WebinarScheduleSummary({ plan }: { plan: WebinarPlanSchedule }) {
   const webinar = plan.webinars[0];
   const slot = webinar?.appointment?.slotsOfAppointment[0];
 
@@ -268,11 +264,7 @@ function WebinarScheduleSummary({
   );
 }
 
-function WebinarEventList({
-  plan,
-}: {
-  plan: WebinarPlanSchedule;
-}) {
+function WebinarEventList({ plan }: { plan: WebinarPlanSchedule }) {
   return (
     <div className="space-y-2">
       {plan.webinars.map((webinar) => {
@@ -330,11 +322,7 @@ function WebinarEventList({
   );
 }
 
-function ClassScheduleSummary({
-  plan,
-}: {
-  plan: ClassPlanSchedule;
-}) {
+function ClassScheduleSummary({ plan }: { plan: ClassPlanSchedule }) {
   if (plan.classes.length === 0) {
     return (
       <p className="text-xs text-zinc-400 italic">No classes scheduled yet</p>
@@ -480,7 +468,10 @@ function ClassSessionList({ cls }: { cls: ClassEventSchedule }) {
   );
 }
 
-function ClassEventCard({ cls, plan }: {
+function ClassEventCard({
+  cls,
+  plan,
+}: {
   cls: ClassEventSchedule;
   plan: ClassPlanSchedule;
 }) {
@@ -552,11 +543,7 @@ function ClassEventCard({ cls, plan }: {
   );
 }
 
-function ClassEventList({
-  plan,
-}: {
-  plan: ClassPlanSchedule;
-}) {
+function ClassEventList({ plan }: { plan: ClassPlanSchedule }) {
   return (
     <div className="space-y-2">
       {plan.classes.map((cls) => (
@@ -592,11 +579,10 @@ function ActiveCollaborationCard({
       : collab.classPlan?.consultantProfile;
 
   // Filter out the current user from the collaborators list (they're shown in the banner)
-  const allCollaboratorsOnPlan = (
-    collab.planType === "webinar"
+  const allCollaboratorsOnPlan =
+    (collab.planType === "webinar"
       ? collab.webinarPlan?.collaborators
-      : collab.classPlan?.collaborators
-  ) ?? [];
+      : collab.classPlan?.collaborators) ?? [];
   const otherCollaborators = allCollaboratorsOnPlan.filter(
     (c) => c.id !== collab.id,
   );
@@ -613,157 +599,171 @@ function ActiveCollaborationCard({
     <div className="bg-white border border-zinc-200 rounded-lg overflow-hidden">
       {/* Role banner */}
       <div className="bg-purple-600 px-3 py-1.5 flex items-center justify-between">
-        <span className="text-xs font-semibold text-white tracking-wide uppercase">{formatRole(collab.role)}</span>
-        <Badge variant="secondary" className="text-[10px] bg-purple-500 text-purple-100 border-purple-400">
+        <span className="text-xs font-semibold text-white tracking-wide uppercase">
+          {formatRole(collab.role)}
+        </span>
+        <Badge
+          variant="secondary"
+          className="text-[10px] bg-purple-500 text-purple-100 border-purple-400"
+        >
           {collab.planType === "webinar" ? "Webinar" : "Class"}
         </Badge>
       </div>
 
       <div className="p-3">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="min-w-0">
-          <p className="text-sm font-medium text-zinc-800 truncate">
-            {collab.planTitle}
-          </p>
-          <p className="text-xs text-zinc-500">
-            by {owner?.user.name ?? "Unknown"}
-          </p>
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-zinc-800 truncate">
+              {collab.planTitle}
+            </p>
+            <p className="text-xs text-zinc-500">
+              by {owner?.user.name ?? "Unknown"}
+            </p>
+          </div>
         </div>
-      </div>
 
-      {/* Revenue share */}
-      <div className="flex items-center gap-2 mt-2 px-2 py-1.5 bg-zinc-50 rounded-md border border-zinc-100">
-        <div className="flex items-center gap-1.5 text-xs text-zinc-600">
-          {currentUser && (
-            <Avatar className="w-5 h-5">
-              <AvatarImage src={currentUser.image ?? undefined} />
-              <AvatarFallback className="text-[8px]">
-                {(currentUser.name ?? "Y").charAt(0)}
-              </AvatarFallback>
-            </Avatar>
-          )}
-          <span className="font-medium">You {collab.revenueSharePercentage}%</span>
-          {owner && (
-            <span>&middot; {owner.user.name} {100 - collab.revenueSharePercentage}%</span>
-          )}
-        </div>
-      </div>
-
-      {/* Team — host + other collaborators (excludes self) */}
-      <div className="border-t border-zinc-100 mt-3 pt-3">
-        <p className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider mb-2">
-          Team ({1 + otherCollaborators.length})
-        </p>
-        <div className="space-y-2">
-          {/* Host (plan owner) */}
-          {owner && (
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2.5">
-                <Avatar className="w-7 h-7">
-                  <AvatarImage src={owner.user.image ?? undefined} />
-                  <AvatarFallback className="text-[10px]">
-                    {(owner.user.name ?? "H").charAt(0)}
-                  </AvatarFallback>
-                </Avatar>
-                <div>
-                  <p className="text-xs font-medium text-zinc-800">
-                    {owner.user.name ?? "Unknown"}
-                  </p>
-                  <p className="text-[11px] text-zinc-500">
-                    Host &middot; {100 - allCollaboratorsOnPlan.reduce((sum, c) => sum + c.revenueSharePercentage, 0)}% share
-                  </p>
-                </div>
-              </div>
-              <Badge
-                variant="default"
-                className="bg-zinc-100 text-zinc-700 border-zinc-200 text-[10px]"
-              >
-                Owner
-              </Badge>
-            </div>
-          )}
-          {/* Other collaborators (not the current user) */}
-          {otherCollaborators.map((c) => (
-            <div
-              key={c.id}
-              className="flex items-center justify-between"
-            >
-              <div className="flex items-center gap-2.5">
-                <Avatar className="w-7 h-7">
-                  <AvatarImage
-                    src={c.consultantProfile.user.image ?? undefined}
-                  />
-                  <AvatarFallback className="text-[10px]">
-                    {(c.consultantProfile.user.name ?? "?").charAt(0)}
-                  </AvatarFallback>
-                </Avatar>
-                <div>
-                  <p className="text-xs font-medium text-zinc-800">
-                    {c.consultantProfile.user.name ?? "Unknown"}
-                  </p>
-                  <p className="text-[11px] text-zinc-500">
-                    {formatRole(c.role)} &middot; {c.revenueSharePercentage}% share
-                  </p>
-                </div>
-              </div>
-              <Badge
-                variant={c.status === "ACCEPTED" ? "default" : "secondary"}
-                className={
-                  c.status === "ACCEPTED"
-                    ? "bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px]"
-                    : "text-[10px]"
-                }
-              >
-                {c.status === "ACCEPTED" ? "Accepted" : "Pending"}
-              </Badge>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Schedule summary */}
-      <div className="border-t border-zinc-100 mt-3 pt-3">
-        <p className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider mb-2">
-          Schedule
-        </p>
-        {collab.planType === "webinar" && collab.webinarPlan ? (
-          <WebinarScheduleSummary plan={collab.webinarPlan} />
-        ) : collab.planType === "class" && collab.classPlan ? (
-          <ClassScheduleSummary plan={collab.classPlan} />
-        ) : (
-          <p className="text-xs text-zinc-400 italic">
-            No schedule data available
-          </p>
-        )}
-      </div>
-
-      {/* All events — collapsible */}
-      {hasExpandableDetails && (
-        <div className="mt-2">
-          <button
-            type="button"
-            onClick={() => setSlotsExpanded((prev) => !prev)}
-            className="flex items-center gap-1 text-[11px] text-zinc-500 hover:text-zinc-700 transition-colors"
-          >
-            {slotsExpanded ? (
-              <ChevronUp className="w-3 h-3" />
-            ) : (
-              <ChevronDown className="w-3 h-3" />
+        {/* Revenue share */}
+        <div className="flex items-center gap-2 mt-2 px-2 py-1.5 bg-zinc-50 rounded-md border border-zinc-100">
+          <div className="flex items-center gap-1.5 text-xs text-zinc-600">
+            {currentUser && (
+              <Avatar className="w-5 h-5">
+                <AvatarImage src={currentUser.image ?? undefined} />
+                <AvatarFallback className="text-[8px]">
+                  {(currentUser.name ?? "Y").charAt(0)}
+                </AvatarFallback>
+              </Avatar>
             )}
-            {slotsExpanded ? "Hide" : "Show"} all events
-          </button>
-          {slotsExpanded && (
-            <div className="mt-2 border-t border-zinc-100 pt-2">
-              {collab.planType === "webinar" && collab.webinarPlan ? (
-                <WebinarEventList plan={collab.webinarPlan} />
-              ) : collab.planType === "class" && collab.classPlan ? (
-                <ClassEventList plan={collab.classPlan} />
-              ) : null}
-            </div>
+            <span className="font-medium">
+              You {collab.revenueSharePercentage}%
+            </span>
+            {owner && (
+              <span>
+                &middot; {owner.user.name} {100 - collab.revenueSharePercentage}
+                %
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Team — host + other collaborators (excludes self) */}
+        <div className="border-t border-zinc-100 mt-3 pt-3">
+          <p className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider mb-2">
+            Team ({1 + otherCollaborators.length})
+          </p>
+          <div className="space-y-2">
+            {/* Host (plan owner) */}
+            {owner && (
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <Avatar className="w-7 h-7">
+                    <AvatarImage src={owner.user.image ?? undefined} />
+                    <AvatarFallback className="text-[10px]">
+                      {(owner.user.name ?? "H").charAt(0)}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div>
+                    <p className="text-xs font-medium text-zinc-800">
+                      {owner.user.name ?? "Unknown"}
+                    </p>
+                    <p className="text-[11px] text-zinc-500">
+                      Host &middot;{" "}
+                      {100 -
+                        allCollaboratorsOnPlan.reduce(
+                          (sum, c) => sum + c.revenueSharePercentage,
+                          0,
+                        )}
+                      % share
+                    </p>
+                  </div>
+                </div>
+                <Badge
+                  variant="default"
+                  className="bg-zinc-100 text-zinc-700 border-zinc-200 text-[10px]"
+                >
+                  Owner
+                </Badge>
+              </div>
+            )}
+            {/* Other collaborators (not the current user) */}
+            {otherCollaborators.map((c) => (
+              <div key={c.id} className="flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <Avatar className="w-7 h-7">
+                    <AvatarImage
+                      src={c.consultantProfile.user.image ?? undefined}
+                    />
+                    <AvatarFallback className="text-[10px]">
+                      {(c.consultantProfile.user.name ?? "?").charAt(0)}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div>
+                    <p className="text-xs font-medium text-zinc-800">
+                      {c.consultantProfile.user.name ?? "Unknown"}
+                    </p>
+                    <p className="text-[11px] text-zinc-500">
+                      {formatRole(c.role)} &middot; {c.revenueSharePercentage}%
+                      share
+                    </p>
+                  </div>
+                </div>
+                <Badge
+                  variant={c.status === "ACCEPTED" ? "default" : "secondary"}
+                  className={
+                    c.status === "ACCEPTED"
+                      ? "bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px]"
+                      : "text-[10px]"
+                  }
+                >
+                  {c.status === "ACCEPTED" ? "Accepted" : "Pending"}
+                </Badge>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Schedule summary */}
+        <div className="border-t border-zinc-100 mt-3 pt-3">
+          <p className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider mb-2">
+            Schedule
+          </p>
+          {collab.planType === "webinar" && collab.webinarPlan ? (
+            <WebinarScheduleSummary plan={collab.webinarPlan} />
+          ) : collab.planType === "class" && collab.classPlan ? (
+            <ClassScheduleSummary plan={collab.classPlan} />
+          ) : (
+            <p className="text-xs text-zinc-400 italic">
+              No schedule data available
+            </p>
           )}
         </div>
-      )}
+
+        {/* All events — collapsible */}
+        {hasExpandableDetails && (
+          <div className="mt-2">
+            <button
+              type="button"
+              onClick={() => setSlotsExpanded((prev) => !prev)}
+              className="flex items-center gap-1 text-[11px] text-zinc-500 hover:text-zinc-700 transition-colors"
+            >
+              {slotsExpanded ? (
+                <ChevronUp className="w-3 h-3" />
+              ) : (
+                <ChevronDown className="w-3 h-3" />
+              )}
+              {slotsExpanded ? "Hide" : "Show"} all events
+            </button>
+            {slotsExpanded && (
+              <div className="mt-2 border-t border-zinc-100 pt-2">
+                {collab.planType === "webinar" && collab.webinarPlan ? (
+                  <WebinarEventList plan={collab.webinarPlan} />
+                ) : collab.planType === "class" && collab.classPlan ? (
+                  <ClassEventList plan={collab.classPlan} />
+                ) : null}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -792,8 +792,12 @@ function HostedPlanCard({
     .reduce((sum, c) => sum + c.revenueSharePercentage, 0);
   const hostShare = 100 - totalCollabShare;
 
-  const pendingCollabs = plan.collaborators.filter((c) => c.status === "PENDING");
-  const acceptedCollabs = plan.collaborators.filter((c) => c.status === "ACCEPTED");
+  const pendingCollabs = plan.collaborators.filter(
+    (c) => c.status === "PENDING",
+  );
+  const acceptedCollabs = plan.collaborators.filter(
+    (c) => c.status === "ACCEPTED",
+  );
 
   const hasExpandableDetails =
     (plan.planType === "webinar" &&
@@ -807,156 +811,160 @@ function HostedPlanCard({
     <div className="bg-white border border-zinc-200 rounded-lg overflow-hidden">
       {/* Role banner */}
       <div className="bg-zinc-800 px-3 py-1.5 flex items-center justify-between">
-        <span className="text-xs font-semibold text-white tracking-wide uppercase">Host</span>
-        <Badge variant="secondary" className="text-[10px] bg-zinc-700 text-zinc-200 border-zinc-600">
+        <span className="text-xs font-semibold text-white tracking-wide uppercase">
+          Host
+        </span>
+        <Badge
+          variant="secondary"
+          className="text-[10px] bg-zinc-700 text-zinc-200 border-zinc-600"
+        >
           {plan.planType === "webinar" ? "Webinar" : "Class"}
         </Badge>
       </div>
 
       <div className="p-3">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="min-w-0">
-          <p className="text-sm font-medium text-zinc-800 truncate">
-            {plan.title}
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-zinc-800 truncate">
+              {plan.title}
+            </p>
+            {plan.price > 0 && (
+              <p className="text-xs text-zinc-500">
+                {formatCurrencyAmount(plan.price, "INR")}
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* Revenue split */}
+        <div className="flex items-center gap-2 mt-2 px-2 py-1.5 bg-zinc-50 rounded-md border border-zinc-100">
+          <div className="flex items-center gap-1.5 text-xs text-zinc-600">
+            {hostUser && (
+              <Avatar className="w-5 h-5">
+                <AvatarImage src={hostUser.image ?? undefined} />
+                <AvatarFallback className="text-[8px]">
+                  {(hostUser.name ?? "H").charAt(0)}
+                </AvatarFallback>
+              </Avatar>
+            )}
+            <span className="font-medium">You {hostShare}%</span>
+            <span>&middot; Collaborators {totalCollabShare}%</span>
+          </div>
+        </div>
+
+        {/* Collaborators list */}
+        <div className="border-t border-zinc-100 mt-3 pt-3">
+          <p className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider mb-2">
+            Collaborators ({plan.collaborators.length})
           </p>
-          {plan.price > 0 && (
-            <p className="text-xs text-zinc-500">
-              {formatCurrencyAmount(plan.price, "INR")}
+          <div className="space-y-2">
+            {acceptedCollabs.map((collab) => (
+              <div
+                key={collab.id}
+                className="flex items-center justify-between"
+              >
+                <div className="flex items-center gap-2.5">
+                  <Avatar className="w-7 h-7">
+                    <AvatarImage
+                      src={collab.consultantProfile.user.image ?? undefined}
+                    />
+                    <AvatarFallback className="text-[10px]">
+                      {(collab.consultantProfile.user.name ?? "?").charAt(0)}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div>
+                    <p className="text-xs font-medium text-zinc-800">
+                      {collab.consultantProfile.user.name ?? "Unknown"}
+                    </p>
+                    <p className="text-[11px] text-zinc-500">
+                      {formatRole(collab.role)} &middot;{" "}
+                      {collab.revenueSharePercentage}% share
+                    </p>
+                  </div>
+                </div>
+                <Badge
+                  variant="default"
+                  className="bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px]"
+                >
+                  Accepted
+                </Badge>
+              </div>
+            ))}
+            {pendingCollabs.map((collab) => (
+              <div
+                key={collab.id}
+                className="flex items-center justify-between"
+              >
+                <div className="flex items-center gap-2.5">
+                  <Avatar className="w-7 h-7">
+                    <AvatarImage
+                      src={collab.consultantProfile.user.image ?? undefined}
+                    />
+                    <AvatarFallback className="text-[10px]">
+                      {(collab.consultantProfile.user.name ?? "?").charAt(0)}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div>
+                    <p className="text-xs font-medium text-zinc-800">
+                      {collab.consultantProfile.user.name ?? "Unknown"}
+                    </p>
+                    <p className="text-[11px] text-zinc-500">
+                      {formatRole(collab.role)} &middot;{" "}
+                      {collab.revenueSharePercentage}% share
+                    </p>
+                  </div>
+                </div>
+                <Badge variant="secondary" className="text-[10px]">
+                  Pending
+                </Badge>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Schedule summary */}
+        <div className="border-t border-zinc-100 mt-3 pt-3">
+          <p className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider mb-2">
+            Schedule
+          </p>
+          {plan.planType === "webinar" && plan.webinarPlan ? (
+            <WebinarScheduleSummary plan={plan.webinarPlan} />
+          ) : plan.planType === "class" && plan.classPlan ? (
+            <ClassScheduleSummary plan={plan.classPlan} />
+          ) : (
+            <p className="text-xs text-zinc-400 italic">
+              No schedule data available
             </p>
           )}
         </div>
-      </div>
 
-      {/* Revenue split */}
-      <div className="flex items-center gap-2 mt-2 px-2 py-1.5 bg-zinc-50 rounded-md border border-zinc-100">
-        <div className="flex items-center gap-1.5 text-xs text-zinc-600">
-          {hostUser && (
-            <Avatar className="w-5 h-5">
-              <AvatarImage src={hostUser.image ?? undefined} />
-              <AvatarFallback className="text-[8px]">
-                {(hostUser.name ?? "H").charAt(0)}
-              </AvatarFallback>
-            </Avatar>
-          )}
-          <span className="font-medium">You {hostShare}%</span>
-          <span>&middot; Collaborators {totalCollabShare}%</span>
-        </div>
-      </div>
-
-      {/* Collaborators list */}
-      <div className="border-t border-zinc-100 mt-3 pt-3">
-        <p className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider mb-2">
-          Collaborators ({plan.collaborators.length})
-        </p>
-        <div className="space-y-2">
-          {acceptedCollabs.map((collab) => (
-            <div
-              key={collab.id}
-              className="flex items-center justify-between"
+        {/* All events — collapsible */}
+        {hasExpandableDetails && (
+          <div className="mt-2">
+            <button
+              type="button"
+              onClick={() => setEventsExpanded((prev) => !prev)}
+              className="flex items-center gap-1 text-[11px] text-zinc-500 hover:text-zinc-700 transition-colors"
             >
-              <div className="flex items-center gap-2.5">
-                <Avatar className="w-7 h-7">
-                  <AvatarImage
-                    src={collab.consultantProfile.user.image ?? undefined}
-                  />
-                  <AvatarFallback className="text-[10px]">
-                    {(collab.consultantProfile.user.name ?? "?").charAt(0)}
-                  </AvatarFallback>
-                </Avatar>
-                <div>
-                  <p className="text-xs font-medium text-zinc-800">
-                    {collab.consultantProfile.user.name ?? "Unknown"}
-                  </p>
-                  <p className="text-[11px] text-zinc-500">
-                    {formatRole(collab.role)} &middot; {collab.revenueSharePercentage}% share
-                  </p>
-                </div>
+              {eventsExpanded ? (
+                <ChevronUp className="w-3 h-3" />
+              ) : (
+                <ChevronDown className="w-3 h-3" />
+              )}
+              {eventsExpanded ? "Hide" : "Show"} all events
+            </button>
+            {eventsExpanded && (
+              <div className="mt-2 border-t border-zinc-100 pt-2">
+                {plan.planType === "webinar" && plan.webinarPlan ? (
+                  <WebinarEventList plan={plan.webinarPlan} />
+                ) : plan.planType === "class" && plan.classPlan ? (
+                  <ClassEventList plan={plan.classPlan} />
+                ) : null}
               </div>
-              <Badge
-                variant="default"
-                className="bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px]"
-              >
-                Accepted
-              </Badge>
-            </div>
-          ))}
-          {pendingCollabs.map((collab) => (
-            <div
-              key={collab.id}
-              className="flex items-center justify-between"
-            >
-              <div className="flex items-center gap-2.5">
-                <Avatar className="w-7 h-7">
-                  <AvatarImage
-                    src={collab.consultantProfile.user.image ?? undefined}
-                  />
-                  <AvatarFallback className="text-[10px]">
-                    {(collab.consultantProfile.user.name ?? "?").charAt(0)}
-                  </AvatarFallback>
-                </Avatar>
-                <div>
-                  <p className="text-xs font-medium text-zinc-800">
-                    {collab.consultantProfile.user.name ?? "Unknown"}
-                  </p>
-                  <p className="text-[11px] text-zinc-500">
-                    {formatRole(collab.role)} &middot; {collab.revenueSharePercentage}% share
-                  </p>
-                </div>
-              </div>
-              <Badge
-                variant="secondary"
-                className="text-[10px]"
-              >
-                Pending
-              </Badge>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Schedule summary */}
-      <div className="border-t border-zinc-100 mt-3 pt-3">
-        <p className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider mb-2">
-          Schedule
-        </p>
-        {plan.planType === "webinar" && plan.webinarPlan ? (
-          <WebinarScheduleSummary plan={plan.webinarPlan} />
-        ) : plan.planType === "class" && plan.classPlan ? (
-          <ClassScheduleSummary plan={plan.classPlan} />
-        ) : (
-          <p className="text-xs text-zinc-400 italic">
-            No schedule data available
-          </p>
-        )}
-      </div>
-
-      {/* All events — collapsible */}
-      {hasExpandableDetails && (
-        <div className="mt-2">
-          <button
-            type="button"
-            onClick={() => setEventsExpanded((prev) => !prev)}
-            className="flex items-center gap-1 text-[11px] text-zinc-500 hover:text-zinc-700 transition-colors"
-          >
-            {eventsExpanded ? (
-              <ChevronUp className="w-3 h-3" />
-            ) : (
-              <ChevronDown className="w-3 h-3" />
             )}
-            {eventsExpanded ? "Hide" : "Show"} all events
-          </button>
-          {eventsExpanded && (
-            <div className="mt-2 border-t border-zinc-100 pt-2">
-              {plan.planType === "webinar" && plan.webinarPlan ? (
-                <WebinarEventList plan={plan.webinarPlan} />
-              ) : plan.planType === "class" && plan.classPlan ? (
-                <ClassEventList plan={plan.classPlan} />
-              ) : null}
-            </div>
-          )}
-        </div>
-      )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1191,7 +1199,11 @@ export function InvitationsPanel() {
           </h3>
           <div className="space-y-2">
             {accepted.map((collab) => (
-              <ActiveCollaborationCard key={collab.id} collab={collab} currentUser={data?.hostUser} />
+              <ActiveCollaborationCard
+                key={collab.id}
+                collab={collab}
+                currentUser={data?.hostUser}
+              />
             ))}
           </div>
         </div>

@@ -82,7 +82,9 @@ export async function GET(req: NextRequest) {
       const currentDate = new Date(startDate);
 
       while (currentDate <= endDate) {
-        if (currentDate.getUTCDay() === dayToNumber[slot.dayOfWeekForStartsAt]) {
+        if (
+          currentDate.getUTCDay() === dayToNumber[slot.dayOfWeekForStartsAt]
+        ) {
           // Use UTC-consistent construction to avoid timezone drift
           const slotStart = new Date(
             Date.UTC(

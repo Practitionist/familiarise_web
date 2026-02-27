@@ -44,7 +44,11 @@ interface PayoutListResponse {
   };
 }
 
-async function fetchPayouts(status?: string, page = 1, limit = 20): Promise<PayoutListResponse> {
+async function fetchPayouts(
+  status?: string,
+  page = 1,
+  limit = 20,
+): Promise<PayoutListResponse> {
   const offset = (page - 1) * limit;
   const params = new URLSearchParams({
     limit: limit.toString(),

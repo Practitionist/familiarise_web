@@ -245,7 +245,10 @@ export async function DELETE(
 
     if (activeCollaborators > 0) {
       return NextResponse.json(
-        { error: "Cannot delete class plan with active collaborators. Remove or notify collaborators first." },
+        {
+          error:
+            "Cannot delete class plan with active collaborators. Remove or notify collaborators first.",
+        },
         { status: 400 },
       );
     }

@@ -250,7 +250,10 @@ export default function AdminPaymentsPage() {
                           {payment.paymentIntent?.substring(0, 20)}...
                         </td>
                         <td className="px-4 py-3 text-sm text-gray-900">
-                          {formatCurrencyAmount(payment.amount, payment.currency)}
+                          {formatCurrencyAmount(
+                            payment.amount,
+                            payment.currency,
+                          )}
                         </td>
                         <td className="px-4 py-3 text-sm">
                           <span

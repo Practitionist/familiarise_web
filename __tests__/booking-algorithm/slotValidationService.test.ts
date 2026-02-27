@@ -57,7 +57,10 @@ afterEach(() => {
 
 // ─── Helper ─────────────────────────────────────────────────────────────────
 
-function futureSlots(count: number, startISO: string = "2025-06-01T10:00:00Z"): Date[] {
+function futureSlots(
+  count: number,
+  startISO: string = "2025-06-01T10:00:00Z",
+): Date[] {
   const slots: Date[] = [];
   let current = new Date(startISO);
   for (let i = 0; i < count; i++) {

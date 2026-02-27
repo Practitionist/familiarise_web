@@ -115,7 +115,8 @@ export default function MaintenanceControls() {
       console.error("Failed to fetch maintenance state:", error);
       toast({
         title: "Something went wrong",
-        description: "Unable to load the current status. Please refresh the page or try again later.",
+        description:
+          "Unable to load the current status. Please refresh the page or try again later.",
         variant: "destructive",
       });
     } finally {
@@ -353,24 +354,50 @@ export default function MaintenanceControls() {
             <CardContent className="space-y-3">
               <div className="flex items-center gap-3">
                 {preflight.recommendation === "SAFE" && (
-                  <Badge className="bg-green-100 text-green-700 border-green-200">SAFE</Badge>
+                  <Badge className="bg-green-100 text-green-700 border-green-200">
+                    SAFE
+                  </Badge>
                 )}
                 {preflight.recommendation === "CAUTION" && (
-                  <Badge className="bg-yellow-100 text-yellow-700 border-yellow-200">CAUTION</Badge>
+                  <Badge className="bg-yellow-100 text-yellow-700 border-yellow-200">
+                    CAUTION
+                  </Badge>
                 )}
                 {preflight.recommendation === "RISKY" && (
-                  <Badge className="bg-red-100 text-red-700 border-red-200">RISKY</Badge>
+                  <Badge className="bg-red-100 text-red-700 border-red-200">
+                    RISKY
+                  </Badge>
                 )}
                 <span className="text-xs text-zinc-400">
                   Checked {new Date(preflight.checkedAt).toLocaleTimeString()}
                 </span>
               </div>
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
-                <PreflightStat label="Active Calls" value={preflight.activeCalls} warn={preflight.activeCalls > 0} />
-                <PreflightStat label="Pending Payments" value={preflight.pendingPayments} warn={preflight.pendingPayments > 0} />
-                <PreflightStat label="Upcoming (4h)" value={preflight.upcomingAppointments} warn={preflight.upcomingAppointments > 0} />
-                <PreflightStat label="Pending Payouts" value={preflight.pendingPayouts} warn={preflight.pendingPayouts > 0} />
-                <PreflightStat label="Open Disputes" value={preflight.openDisputes} warn={preflight.openDisputes > 0} />
+                <PreflightStat
+                  label="Active Calls"
+                  value={preflight.activeCalls}
+                  warn={preflight.activeCalls > 0}
+                />
+                <PreflightStat
+                  label="Pending Payments"
+                  value={preflight.pendingPayments}
+                  warn={preflight.pendingPayments > 0}
+                />
+                <PreflightStat
+                  label="Upcoming (4h)"
+                  value={preflight.upcomingAppointments}
+                  warn={preflight.upcomingAppointments > 0}
+                />
+                <PreflightStat
+                  label="Pending Payouts"
+                  value={preflight.pendingPayouts}
+                  warn={preflight.pendingPayouts > 0}
+                />
+                <PreflightStat
+                  label="Open Disputes"
+                  value={preflight.openDisputes}
+                  warn={preflight.openDisputes > 0}
+                />
               </div>
               {preflight.warnings.length > 0 && (
                 <ul className="text-sm text-zinc-600 space-y-1">
@@ -588,9 +615,7 @@ export default function MaintenanceControls() {
                           : "—"}
                       </td>
                       <td className="py-2.5 pr-4 text-zinc-500 whitespace-nowrap">
-                        {w.endedAt
-                          ? new Date(w.endedAt).toLocaleString()
-                          : "—"}
+                        {w.endedAt ? new Date(w.endedAt).toLocaleString() : "—"}
                       </td>
                     </tr>
                   ))}
@@ -626,10 +651,20 @@ function StatusIndicator({ phase }: { phase: string }) {
   );
 }
 
-function PreflightStat({ label, value, warn }: { label: string; value: number; warn: boolean }) {
+function PreflightStat({
+  label,
+  value,
+  warn,
+}: {
+  label: string;
+  value: number;
+  warn: boolean;
+}) {
   return (
     <div className="rounded-md border px-3 py-2 text-center">
-      <p className={`text-lg font-semibold ${warn ? "text-yellow-600" : "text-zinc-900"}`}>
+      <p
+        className={`text-lg font-semibold ${warn ? "text-yellow-600" : "text-zinc-900"}`}
+      >
         {value}
       </p>
       <p className="text-xs text-zinc-500">{label}</p>
@@ -645,10 +680,7 @@ function PhaseBadge({ phase }: { phase: string }) {
   };
 
   return (
-    <Badge
-      variant="outline"
-      className={variants[phase] || variants.OFF}
-    >
+    <Badge variant="outline" className={variants[phase] || variants.OFF}>
       {phase}
     </Badge>
   );

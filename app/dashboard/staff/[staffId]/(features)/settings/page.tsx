@@ -483,13 +483,17 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
               <Label>Responsibilities</Label>
               <p className="text-sm text-gray-500 dark:text-gray-400">
                 {/* TODO: Improve display/editing for JSON */}
-                {staffData.responsibilities ? JSON.stringify(staffData.responsibilities) : "Not specified"}
+                {staffData.responsibilities
+                  ? JSON.stringify(staffData.responsibilities)
+                  : "Not specified"}
               </p>
             </div>
             <div className="space-y-2 md:col-span-2">
               <Label>Permissions</Label>
               <p className="text-sm text-gray-500 dark:text-gray-400">
-                {staffData.permissions ? JSON.stringify(staffData.permissions) : "Not specified"}
+                {staffData.permissions
+                  ? JSON.stringify(staffData.permissions)
+                  : "Not specified"}
               </p>
             </div>
           </CardContent>

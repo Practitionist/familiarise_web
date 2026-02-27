@@ -287,7 +287,7 @@ export default function SubscriptionPricingToggle({
             animate={{
               opacity:
                 activeSubscriptionOption ===
-                  option.title.toLowerCase().replace(" ", "-")
+                option.title.toLowerCase().replace(" ", "-")
                   ? 1
                   : 0,
               y: 0,
@@ -295,7 +295,7 @@ export default function SubscriptionPricingToggle({
             transition={{ duration: 0.2 }}
             className={
               activeSubscriptionOption ===
-                option.title.toLowerCase().replace(" ", "-")
+              option.title.toLowerCase().replace(" ", "-")
                 ? "block"
                 : "hidden"
             }
@@ -317,7 +317,9 @@ export default function SubscriptionPricingToggle({
               <>
                 <div className="border-t border-white/[0.06] mb-4" />
                 <div className="space-y-2 mb-5">
-                  <p className="text-xs text-zinc-500 font-medium uppercase tracking-wider">Includes</p>
+                  <p className="text-xs text-zinc-500 font-medium uppercase tracking-wider">
+                    Includes
+                  </p>
                   <ul className="space-y-2">
                     {option.features?.map((feature, index) => (
                       <li
@@ -482,7 +484,7 @@ export default function SubscriptionPricingToggle({
                   Duration: ~
                   {Math.round(
                     differenceInDays(schedulingEndDate, schedulingStartDate) /
-                    30,
+                      30,
                   )}{" "}
                   month(s)
                 </p>

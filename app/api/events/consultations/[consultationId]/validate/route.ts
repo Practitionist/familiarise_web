@@ -177,7 +177,9 @@ export async function POST(
             // Mark ALL provided slots as outside availability.
             for (const bodySlot of body.slots) {
               const normalized = new Date(bodySlot).toISOString().slice(0, 19);
-              if (!result.outsideAvailability.some((o) => o.slot === normalized)) {
+              if (
+                !result.outsideAvailability.some((o) => o.slot === normalized)
+              ) {
                 result.outsideAvailability.push({ slot: normalized });
               }
             }

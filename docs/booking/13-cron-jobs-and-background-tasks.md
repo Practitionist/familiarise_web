@@ -25,14 +25,14 @@ Both paths call the same core function exported from `scripts/appointments/`. Th
 
 ## Schedule Overview
 
-| Job | Cron Expression | Human-Readable | Source Script | API Route |
-|-----|----------------|----------------|---------------|-----------|
-| Auto-complete appointments | `0 * * * *` | Every hour, on the hour | `scripts/appointments/auto-complete-appointments.ts` | `/api/cleanup/auto-complete-appointments` |
-| Cleanup tentative slots | `0 */2 * * *` | Every 2 hours | `scripts/appointments/cleanup-tentative-slots.ts` | `/api/cleanup/tentative-slots` |
-| Cleanup stale pending consultations | `30 * * * *` | Every hour, at :30 | `scripts/appointments/cleanup-stale-pending-consultations.ts` | `/api/cleanup/stale-pending-consultations` |
-| Cleanup invalid appointments | `0 * * * *` | Every hour, on the hour | `scripts/appointments/cleanup-invalid-appointments.ts` | `/api/cleanup/invalid-appointments` |
-| Expire stale requests | `0 1 * * *` | Daily at 01:00 UTC | `scripts/appointments/expire-stale-requests.ts` | `/api/cleanup/expire-stale-requests` |
-| Reconcile slot availability | `15 * * * *` | Every hour, at :15 | `scripts/appointments/reconcile-slot-availability.ts` | `/api/cleanup/reconcile-slot-availability` |
+| Job                                 | Cron Expression | Human-Readable          | Source Script                                                 | API Route                                  |
+| ----------------------------------- | --------------- | ----------------------- | ------------------------------------------------------------- | ------------------------------------------ |
+| Auto-complete appointments          | `0 * * * *`     | Every hour, on the hour | `scripts/appointments/auto-complete-appointments.ts`          | `/api/cleanup/auto-complete-appointments`  |
+| Cleanup tentative slots             | `0 */2 * * *`   | Every 2 hours           | `scripts/appointments/cleanup-tentative-slots.ts`             | `/api/cleanup/tentative-slots`             |
+| Cleanup stale pending consultations | `30 * * * *`    | Every hour, at :30      | `scripts/appointments/cleanup-stale-pending-consultations.ts` | `/api/cleanup/stale-pending-consultations` |
+| Cleanup invalid appointments        | `0 * * * *`     | Every hour, on the hour | `scripts/appointments/cleanup-invalid-appointments.ts`        | `/api/cleanup/invalid-appointments`        |
+| Expire stale requests               | `0 1 * * *`     | Daily at 01:00 UTC      | `scripts/appointments/expire-stale-requests.ts`               | `/api/cleanup/expire-stale-requests`       |
+| Reconcile slot availability         | `15 * * * *`    | Every hour, at :15      | `scripts/appointments/reconcile-slot-availability.ts`         | `/api/cleanup/reconcile-slot-availability` |
 
 ---
 
@@ -40,13 +40,13 @@ Both paths call the same core function exported from `scripts/appointments/`. Th
 
 ### a. Auto-Complete Appointments
 
-| Field | Value |
-|-------|-------|
-| **Schedule** | `0 * * * *` -- every hour, on the hour |
-| **Source** | `scripts/appointments/auto-complete-appointments.ts` |
-| **API** | `app/api/cleanup/auto-complete-appointments/route.ts` |
-| **GitHub Actions** | `.github/workflows/auto-complete-appointments.yml` |
-| **HTTP Methods** | `GET`, `POST` |
+| Field              | Value                                                 |
+| ------------------ | ----------------------------------------------------- |
+| **Schedule**       | `0 * * * *` -- every hour, on the hour                |
+| **Source**         | `scripts/appointments/auto-complete-appointments.ts`  |
+| **API**            | `app/api/cleanup/auto-complete-appointments/route.ts` |
+| **GitHub Actions** | `.github/workflows/auto-complete-appointments.yml`    |
+| **HTTP Methods**   | `GET`, `POST`                                         |
 
 **Purpose**: Transitions appointments to `COMPLETED` status after their session time has passed. Enables downstream processes: feedback collection, payout processing, and reporting.
 
@@ -54,13 +54,13 @@ Both paths call the same core function exported from `scripts/appointments/`. Th
 
 **Records affected**:
 
-| Entity | Source Statuses | Target Status | Criteria |
-|--------|----------------|---------------|----------|
-| Webinar | `SCHEDULED`, `IN_PROGRESS` | `COMPLETED` | All slots ended > 1h ago |
-| Class | `SCHEDULED`, `IN_PROGRESS` | `COMPLETED` | All slots across all appointments ended > 1h ago |
-| Consultation | `APPROVED`, `SCHEDULED` | `COMPLETED` | All slots ended > 1h ago |
-| Subscription | `APPROVED`, `SCHEDULED` | `COMPLETED` | All slots across all appointments ended > 1h ago |
-| TrialSession | `SCHEDULED` | `COMPLETED` | All slots ended > 1h ago; also sets `completedAt` and creates an `ActivityLog` entry |
+| Entity       | Source Statuses            | Target Status | Criteria                                                                             |
+| ------------ | -------------------------- | ------------- | ------------------------------------------------------------------------------------ |
+| Webinar      | `SCHEDULED`, `IN_PROGRESS` | `COMPLETED`   | All slots ended > 1h ago                                                             |
+| Class        | `SCHEDULED`, `IN_PROGRESS` | `COMPLETED`   | All slots across all appointments ended > 1h ago                                     |
+| Consultation | `APPROVED`, `SCHEDULED`    | `COMPLETED`   | All slots ended > 1h ago                                                             |
+| Subscription | `APPROVED`, `SCHEDULED`    | `COMPLETED`   | All slots across all appointments ended > 1h ago                                     |
+| TrialSession | `SCHEDULED`                | `COMPLETED`   | All slots ended > 1h ago; also sets `completedAt` and creates an `ActivityLog` entry |
 
 **Safety**: Per-record `try/catch`. A failure on one record does not prevent processing of others. All errors are collected into a result array and returned. The activity log write for trial sessions has its own nested `try/catch` so a logging failure does not block the completion update.
 
@@ -68,13 +68,13 @@ Both paths call the same core function exported from `scripts/appointments/`. Th
 
 ### b. Cleanup Tentative Slots
 
-| Field | Value |
-|-------|-------|
-| **Schedule** | `0 */2 * * *` -- every 2 hours |
-| **Source** | `scripts/appointments/cleanup-tentative-slots.ts` |
-| **API** | `app/api/cleanup/tentative-slots/route.ts` |
-| **GitHub Actions** | `.github/workflows/cleanup-tentative-slots.yml` |
-| **HTTP Methods** | `GET`, `POST` |
+| Field              | Value                                             |
+| ------------------ | ------------------------------------------------- |
+| **Schedule**       | `0 */2 * * *` -- every 2 hours                    |
+| **Source**         | `scripts/appointments/cleanup-tentative-slots.ts` |
+| **API**            | `app/api/cleanup/tentative-slots/route.ts`        |
+| **GitHub Actions** | `.github/workflows/cleanup-tentative-slots.yml`   |
+| **HTTP Methods**   | `GET`, `POST`                                     |
 
 **Purpose**: Releases slots marked `isTentative = true` that are associated with abandoned booking flows. These tentative slots block consultant availability; if not cleaned up, abandoned checkouts permanently reduce the consultant's bookable calendar.
 
@@ -90,13 +90,13 @@ Both paths call the same core function exported from `scripts/appointments/`. Th
 
 ### c. Cleanup Stale Pending Consultations
 
-| Field | Value |
-|-------|-------|
-| **Schedule** | `30 * * * *` -- every hour, at :30 |
-| **Source** | `scripts/appointments/cleanup-stale-pending-consultations.ts` |
-| **API** | `app/api/cleanup/stale-pending-consultations/route.ts` |
-| **GitHub Actions** | `.github/workflows/cleanup-stale-pending-consultations.yml` |
-| **HTTP Methods** | `GET`, `POST` |
+| Field              | Value                                                         |
+| ------------------ | ------------------------------------------------------------- |
+| **Schedule**       | `30 * * * *` -- every hour, at :30                            |
+| **Source**         | `scripts/appointments/cleanup-stale-pending-consultations.ts` |
+| **API**            | `app/api/cleanup/stale-pending-consultations/route.ts`        |
+| **GitHub Actions** | `.github/workflows/cleanup-stale-pending-consultations.yml`   |
+| **HTTP Methods**   | `GET`, `POST`                                                 |
 
 **Purpose**: Cancels consultations stuck in `APPROVED` or `APPROVED_PENDING_PAYMENT` where the user never completed payment within the threshold period. Differs from the expire-stale-requests job, which targets `PENDING` requests awaiting consultant response.
 
@@ -105,6 +105,7 @@ Both paths call the same core function exported from `scripts/appointments/`. Th
 **Criteria**: Consultation in `APPROVED` or `APPROVED_PENDING_PAYMENT` status, `updatedAt` older than 7 days, AND either no payment records or all payments in a non-`SUCCEEDED` state.
 
 **Action**: Within a Prisma `$transaction`:
+
 1. Updates consultation to `requestStatus = CANCELLED` with `cancellationNotes` indicating auto-cancellation and `cancelledAt` timestamp.
 2. Deletes tentative `SlotOfAppointment` records tied to the appointment.
 
@@ -114,26 +115,26 @@ Both paths call the same core function exported from `scripts/appointments/`. Th
 
 ### d. Cleanup Invalid Appointments
 
-| Field | Value |
-|-------|-------|
-| **Schedule** | `0 * * * *` -- every hour, on the hour |
-| **Source** | `scripts/appointments/cleanup-invalid-appointments.ts` |
-| **API** | `app/api/cleanup/invalid-appointments/route.ts` |
-| **GitHub Actions** | `.github/workflows/cleanup-invalid-appointments.yml` |
-| **HTTP Methods** | `POST` only |
+| Field              | Value                                                  |
+| ------------------ | ------------------------------------------------------ |
+| **Schedule**       | `0 * * * *` -- every hour, on the hour                 |
+| **Source**         | `scripts/appointments/cleanup-invalid-appointments.ts` |
+| **API**            | `app/api/cleanup/invalid-appointments/route.ts`        |
+| **GitHub Actions** | `.github/workflows/cleanup-invalid-appointments.yml`   |
+| **HTTP Methods**   | `POST` only                                            |
 
 **Purpose**: Detects and cancels duplicate or structurally invalid appointments across four categories.
 
 **Detection categories**:
 
-| Category | Detection Logic | Keeps |
-|----------|----------------|-------|
-| Duplicate consultations (same-day) | Same `requestedById` + `consultationPlanId` + same calendar day | Oldest record |
-| Duplicate consultations (double-submit) | Same user + plan, created within 5 seconds | Oldest record |
-| Duplicate subscriptions (overlapping) | Same `requestedById` + `subscriptionPlanId` + overlapping scheduling periods | Oldest record |
-| Duplicate subscriptions (double-submit) | Same user + plan, created within 5 seconds | Oldest record |
-| Invalid duration consultations | Total slot duration does not match `consultationPlan.durationInHours` (1% tolerance) | N/A -- cancels |
-| Invalid duration subscriptions | Scheduling period months does not match `subscriptionPlan.durationInMonths` | N/A -- cancels |
+| Category                                | Detection Logic                                                                      | Keeps          |
+| --------------------------------------- | ------------------------------------------------------------------------------------ | -------------- |
+| Duplicate consultations (same-day)      | Same `requestedById` + `consultationPlanId` + same calendar day                      | Oldest record  |
+| Duplicate consultations (double-submit) | Same user + plan, created within 5 seconds                                           | Oldest record  |
+| Duplicate subscriptions (overlapping)   | Same `requestedById` + `subscriptionPlanId` + overlapping scheduling periods         | Oldest record  |
+| Duplicate subscriptions (double-submit) | Same user + plan, created within 5 seconds                                           | Oldest record  |
+| Invalid duration consultations          | Total slot duration does not match `consultationPlan.durationInHours` (1% tolerance) | N/A -- cancels |
+| Invalid duration subscriptions          | Scheduling period months does not match `subscriptionPlan.durationInMonths`          | N/A -- cancels |
 
 **Action**: Sets `requestStatus = CANCELLED` on affected records. Also deletes associated `SlotOfAppointment` records to free availability. Records already in terminal states (`CANCELLED`, `REJECTED`, `EXPIRED`) are excluded from processing.
 
@@ -143,22 +144,23 @@ Both paths call the same core function exported from `scripts/appointments/`. Th
 
 ### e. Expire Stale Requests
 
-| Field | Value |
-|-------|-------|
-| **Schedule** | `0 1 * * *` -- daily at 01:00 UTC |
-| **Source** | `scripts/appointments/expire-stale-requests.ts` |
-| **API** | `app/api/cleanup/expire-stale-requests/route.ts` |
-| **GitHub Actions** | `.github/workflows/expire-stale-requests.yml` |
-| **HTTP Methods** | `GET`, `POST` |
+| Field              | Value                                            |
+| ------------------ | ------------------------------------------------ |
+| **Schedule**       | `0 1 * * *` -- daily at 01:00 UTC                |
+| **Source**         | `scripts/appointments/expire-stale-requests.ts`  |
+| **API**            | `app/api/cleanup/expire-stale-requests/route.ts` |
+| **GitHub Actions** | `.github/workflows/expire-stale-requests.yml`    |
+| **HTTP Methods**   | `GET`, `POST`                                    |
 
 **Purpose**: Expires consultation and subscription requests that have been ignored or abandoned at the request stage. This covers two distinct scenarios:
 
-| Scenario | Source Status | Threshold | Target Status |
-|----------|-------------|-----------|---------------|
-| Consultant never responded | `PENDING` | 30 days since `requestedAt` (`PENDING_EXPIRATION_DAYS = 30`) | `EXPIRED` |
-| Approved but payment never started | `APPROVED_PENDING_PAYMENT` | 7 days since `updatedAt` (`PAYMENT_PENDING_EXPIRATION_DAYS = 7`) | `EXPIRED` |
+| Scenario                           | Source Status              | Threshold                                                        | Target Status |
+| ---------------------------------- | -------------------------- | ---------------------------------------------------------------- | ------------- |
+| Consultant never responded         | `PENDING`                  | 30 days since `requestedAt` (`PENDING_EXPIRATION_DAYS = 30`)     | `EXPIRED`     |
+| Approved but payment never started | `APPROVED_PENDING_PAYMENT` | 7 days since `updatedAt` (`PAYMENT_PENDING_EXPIRATION_DAYS = 7`) | `EXPIRED`     |
 
 **Action**:
+
 - PENDING requests: Bulk `updateMany` to `EXPIRED` for both consultations and subscriptions.
 - APPROVED_PENDING_PAYMENT requests: Bulk `updateMany` to `EXPIRED` and clears `pendingPaymentUrl` to invalidate stale payment links.
 
@@ -168,13 +170,13 @@ Both paths call the same core function exported from `scripts/appointments/`. Th
 
 ### f. Reconcile Slot Availability
 
-| Field | Value |
-|-------|-------|
-| **Schedule** | `15 * * * *` -- every hour, at :15 |
-| **Source** | `scripts/appointments/reconcile-slot-availability.ts` |
-| **API** | `app/api/cleanup/reconcile-slot-availability/route.ts` |
-| **GitHub Actions** | `.github/workflows/reconcile-slot-availability.yml` |
-| **HTTP Methods** | `GET`, `POST` |
+| Field              | Value                                                  |
+| ------------------ | ------------------------------------------------------ |
+| **Schedule**       | `15 * * * *` -- every hour, at :15                     |
+| **Source**         | `scripts/appointments/reconcile-slot-availability.ts`  |
+| **API**            | `app/api/cleanup/reconcile-slot-availability/route.ts` |
+| **GitHub Actions** | `.github/workflows/reconcile-slot-availability.yml`    |
+| **HTTP Methods**   | `GET`, `POST`                                          |
 
 **Purpose**: Fixes slot availability inconsistencies and detects booking conflicts. Performs two operations:
 
@@ -183,6 +185,7 @@ Both paths call the same core function exported from `scripts/appointments/`. Th
 **Operation 2 -- Detect double bookings**: Scans all confirmed (non-tentative) future slots with successful payments, groups them by consultant, and checks for time overlaps. Double bookings are reported but **not** auto-resolved -- they require manual intervention.
 
 **Action**:
+
 - Tentative flag mismatches: Automatically corrected.
 - Double bookings: Logged and returned in the response. The API returns HTTP `207` when double bookings are detected (vs `200` for clean results).
 
@@ -268,17 +271,17 @@ The `invalid-appointments` endpoint uses a stronger `crypto.timingSafeEqual` com
 
 All endpoints return a JSON result object with at minimum:
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `success` | `boolean` | `true` if no errors occurred |
-| `errors` | `string[]` | List of error messages (empty on success) |
-| `timestamp` | `string` | ISO 8601 timestamp of completion |
+| Field       | Type       | Description                               |
+| ----------- | ---------- | ----------------------------------------- |
+| `success`   | `boolean`  | `true` if no errors occurred              |
+| `errors`    | `string[]` | List of error messages (empty on success) |
+| `timestamp` | `string`   | ISO 8601 timestamp of completion          |
 
 Each job adds additional fields specific to its operation (e.g., `webinarsCompleted`, `slotsReleased`, `doubleBookingsDetected`). HTTP status codes:
 
-| Code | Meaning |
-|------|---------|
-| `200` | Job completed successfully |
+| Code  | Meaning                                                                 |
+| ----- | ----------------------------------------------------------------------- |
+| `200` | Job completed successfully                                              |
 | `207` | Partial success (reconcile-slot-availability: double bookings detected) |
-| `401` | Missing or invalid `CRON_SECRET` |
-| `500` | Job failed or returned errors |
+| `401` | Missing or invalid `CRON_SECRET`                                        |
+| `500` | Job failed or returned errors                                           |

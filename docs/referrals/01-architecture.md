@@ -197,7 +197,7 @@ The qualifying action is the user's **first successful payment** on the platform
 When a payment succeeds, `handlePaymentSuccess()` in `lib/payments/webhooks/handlers.ts` calls:
 
 ```typescript
-processQualifyingAction(userId, "first_paid_booking")
+processQualifyingAction(userId, "first_paid_booking");
 ```
 
 This function is the heart of the reward logic. Here's what it does:

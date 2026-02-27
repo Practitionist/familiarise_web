@@ -18,7 +18,9 @@ const DEFAULT_WINDOW_MS = 4 * 60 * 60 * 1000;
 async function requireAdmin() {
   const session = await getSession();
   if (!session?.user) {
-    return { error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
+    return {
+      error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
+    };
   }
 
   const user = await prisma.user.findUnique({
@@ -27,7 +29,9 @@ async function requireAdmin() {
   });
 
   if (user?.role !== UserRole.ADMIN && user?.role !== UserRole.STAFF) {
-    return { error: NextResponse.json({ error: "Forbidden" }, { status: 403 }) };
+    return {
+      error: NextResponse.json({ error: "Forbidden" }, { status: 403 }),
+    };
   }
 
   return { userId: session.user.id };
@@ -141,7 +145,10 @@ export async function POST(request: NextRequest) {
   const parsed = postSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
-      { error: "Invalid request body", details: parsed.error.flatten().fieldErrors },
+      {
+        error: "Invalid request body",
+        details: parsed.error.flatten().fieldErrors,
+      },
       { status: 400 },
     );
   }
@@ -181,9 +188,7 @@ export async function POST(request: NextRequest) {
   }
 
   const targetPhase =
-    phase === "DEGRADED"
-      ? MaintenancePhase.DEGRADED
-      : MaintenancePhase.OFFLINE;
+    phase === "DEGRADED" ? MaintenancePhase.DEGRADED : MaintenancePhase.OFFLINE;
 
   const bypassSecret = crypto.randomUUID();
 
@@ -252,7 +257,10 @@ export async function PATCH(request: NextRequest) {
   const parsed = patchSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
-      { error: "Invalid request body", details: parsed.error.flatten().fieldErrors },
+      {
+        error: "Invalid request body",
+        details: parsed.error.flatten().fieldErrors,
+      },
       { status: 400 },
     );
   }
@@ -271,7 +279,9 @@ export async function PATCH(request: NextRequest) {
   const currentState = await getMaintenanceState();
   if (currentState.phase === "OFF") {
     return NextResponse.json(
-      { error: "No active maintenance window to update. Use POST to start one." },
+      {
+        error: "No active maintenance window to update. Use POST to start one.",
+      },
       { status: 400 },
     );
   }
@@ -281,11 +291,14 @@ export async function PATCH(request: NextRequest) {
   const nextReason = reason ?? currentState.reason ?? undefined;
   const nextEstimatedEnd =
     estimatedEndDate === undefined
-      ? currentState.estimatedEnd ?? undefined
+      ? (currentState.estimatedEnd ?? undefined)
       : estimatedEndDate?.toISOString();
 
   let betterstackIncidentId = currentState.betterstackIncidentId;
-  if (currentPhase !== MaintenancePhase.OFFLINE && targetPhase === MaintenancePhase.OFFLINE) {
+  if (
+    currentPhase !== MaintenancePhase.OFFLINE &&
+    targetPhase === MaintenancePhase.OFFLINE
+  ) {
     betterstackIncidentId = await createIncident(
       "Platform Maintenance",
       nextReason || "Scheduled platform maintenance in progress",

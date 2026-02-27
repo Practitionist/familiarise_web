@@ -6,12 +6,12 @@ How to run Prisma schema migrations safely on this app, especially during active
 
 ## `migrate dev` vs `migrate deploy`
 
-| Command | When to use |
-|---------|------------|
-| `prisma migrate dev` | **Local dev only.** Generates migration files, resets dev DB, regenerates client. Never run in production — it may reset data. |
-| `prisma migrate deploy` | **Production / CI.** Applies pending migrations in order without prompting. Safe for automated pipelines. |
-| `prisma migrate resolve --applied <name>` | Fix drift: marks a migration as applied without running it (use when you manually applied a change). |
-| `prisma migrate status` | Check which migrations are pending or failed. Run this before and after deploying. |
+| Command                                   | When to use                                                                                                                    |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `prisma migrate dev`                      | **Local dev only.** Generates migration files, resets dev DB, regenerates client. Never run in production — it may reset data. |
+| `prisma migrate deploy`                   | **Production / CI.** Applies pending migrations in order without prompting. Safe for automated pipelines.                      |
+| `prisma migrate resolve --applied <name>` | Fix drift: marks a migration as applied without running it (use when you manually applied a change).                           |
+| `prisma migrate status`                   | Check which migrations are pending or failed. Run this before and after deploying.                                             |
 
 ---
 
@@ -22,6 +22,7 @@ How to run Prisma schema migrations safely on this app, especially during active
 **Cause**: Someone ran `prisma db push` directly in production, or made a manual `ALTER TABLE` in the DB. The migration history no longer matches the actual schema.
 
 **Fix**:
+
 ```bash
 # Option A: Mark the drift as intentional (preserves data)
 npx prisma migrate resolve --applied <migration-name>
@@ -59,6 +60,7 @@ npx prisma migrate deploy
 **Cause**: Adding a `NOT NULL` column without `@default()` when rows already exist. Postgres rejects the migration because existing rows would violate the constraint.
 
 **Fix options**:
+
 ```prisma
 // Option A: Add a default (preferred)
 newColumn   String   @default("value")
@@ -68,6 +70,7 @@ newColumn   String?
 ```
 
 **Safe sequence for adding NOT NULL**:
+
 1. Migration 1: Add column as nullable (`String?`)
 2. Data migration: backfill all rows (`UPDATE table SET new_column = 'default' WHERE new_column IS NULL`)
 3. Migration 2: Add NOT NULL constraint (`String`)
@@ -79,6 +82,7 @@ newColumn   String?
 **Cause**: Migration was created on a feature branch and applied to prod manually, but the migration history in the `_prisma_migrations` table is out of sync.
 
 **Fix**:
+
 ```bash
 npx prisma migrate status         # See what's pending/applied
 npx prisma migrate resolve --applied <migration-name>
@@ -95,6 +99,7 @@ npx prisma migrate resolve --applied <migration-name>
 **Impact**: Usually harmless — Directus reads only. But during long `ALTER TABLE` operations, Directus queries may timeout.
 
 **Fix**: Usually no action needed — retry. For long migrations:
+
 1. Pause Directus service in Railway/Docker before migrating
 2. Run migration
 3. Restart Directus
@@ -131,6 +136,7 @@ model Newsletter {
 ```
 
 **Checklist before migrating**:
+
 - [ ] Add `@default()` to any new NOT NULL fields
 - [ ] Test migration on a local copy of production data first (`prisma migrate dev --preview-feature`)
 - [ ] Schedule during low-traffic window (late night IST)
@@ -144,6 +150,7 @@ model Newsletter {
 Directus uses its own `directus_*` and `cms_*` prefixed tables in the same Supabase PostgreSQL. These are created and managed by Directus itself — no Prisma conflict.
 
 **Key facts**:
+
 - Prisma migrations never touch `directus_*` or `cms_*` tables
 - Directus migrations never touch Prisma tables
 - During a long Prisma migration, Directus may see connection timeouts — acceptable

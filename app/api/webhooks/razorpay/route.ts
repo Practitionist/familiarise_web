@@ -40,7 +40,9 @@ export async function POST(req: NextRequest) {
 
   // DB health check — return 503 if DB is unreachable so Razorpay retries
   if (!(await isDbHealthy())) {
-    console.warn("[razorpay webhook] DB unhealthy — returning 503 for Razorpay retry");
+    console.warn(
+      "[razorpay webhook] DB unhealthy — returning 503 for Razorpay retry",
+    );
     return NextResponse.json(
       { error: "Service temporarily unavailable" },
       { status: 503 },
@@ -117,7 +119,9 @@ export async function POST(req: NextRequest) {
 
           if (razorpayClient) {
             try {
-              const rzpPayment = await razorpayClient.payments.fetch(refundEvent.payment_id);
+              const rzpPayment = await razorpayClient.payments.fetch(
+                refundEvent.payment_id,
+              );
               if (rzpPayment.order_id) {
                 paymentIntentId = rzpPayment.order_id;
               }
@@ -146,7 +150,9 @@ export async function POST(req: NextRequest) {
 
           if (razorpayClient) {
             try {
-              const rzpPayment = await razorpayClient.payments.fetch(failedRefundEvent.payment_id);
+              const rzpPayment = await razorpayClient.payments.fetch(
+                failedRefundEvent.payment_id,
+              );
               if (rzpPayment.order_id) {
                 failedPaymentIntentId = rzpPayment.order_id;
               }

@@ -153,9 +153,7 @@ function ConsulteeNav({
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   return (
-    <header
-      className="sticky top-maintenance z-50 bg-white/80 backdrop-blur-xl border-b border-zinc-200/50"
-    >
+    <header className="sticky top-maintenance z-50 bg-white/80 backdrop-blur-xl border-b border-zinc-200/50">
       <div className="w-full px-4 sm:px-6 lg:px-8">
         <div className="flex h-16 items-center">
           {/* Logo */}
@@ -269,9 +267,7 @@ function DashboardSkeleton() {
   return (
     <div className="min-h-screen bg-zinc-50">
       {/* Header skeleton */}
-      <header
-        className="sticky top-maintenance z-50 bg-white border-b border-zinc-200"
-      >
+      <header className="sticky top-maintenance z-50 bg-white border-b border-zinc-200">
         <div className="w-full px-4 sm:px-6 lg:px-8">
           <div className="flex h-16 items-center">
             <Skeleton className="h-8 w-32 shrink-0" />

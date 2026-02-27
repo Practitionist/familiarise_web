@@ -17,7 +17,10 @@ import { useSession } from "@/lib/auth-client";
 import { useMemo, useState } from "react";
 import { PricingOption } from "../defaults";
 import { TSlotTiming } from "@/types/slots";
-import { breakDownSlotsByDuration, mergeConsecutiveSlots } from "@/utils/timeSlotsProcessing";
+import {
+  breakDownSlotsByDuration,
+  mergeConsecutiveSlots,
+} from "@/utils/timeSlotsProcessing";
 import { useToast } from "@/hooks/use-toast";
 import { useCurrency } from "@/lib/hooks/useCurrency";
 
@@ -283,7 +286,9 @@ export default function ConsultationPricingToggle({
               <>
                 <div className="border-t border-white/[0.06] mb-4" />
                 <div className="space-y-2 mb-5">
-                  <p className="text-xs text-zinc-500 font-medium uppercase tracking-wider">Includes</p>
+                  <p className="text-xs text-zinc-500 font-medium uppercase tracking-wider">
+                    Includes
+                  </p>
                   <ul className="space-y-2">
                     {option.features.map((feature, index) => (
                       <li
