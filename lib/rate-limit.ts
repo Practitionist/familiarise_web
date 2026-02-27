@@ -21,12 +21,12 @@ type RatelimitRedis = ConstructorParameters<typeof Ratelimit>[0]["redis"];
 
 function makeLimiter(
   requests: number,
-  window: string,
+  window: `${number} ${"ms" | "s" | "m" | "h" | "d"}`,
   prefix: string,
 ): Ratelimit {
   return new Ratelimit({
     redis: redis as RatelimitRedis,
-    limiter: Ratelimit.slidingWindow(requests, window as "1 m"),
+    limiter: Ratelimit.slidingWindow(requests, window),
     prefix,
   });
 }
