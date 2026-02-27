@@ -13,6 +13,7 @@ import {
   type StalePendingConsultationsResult,
 } from "../../scripts/appointments/cleanup-stale-pending-consultations";
 import fs from "fs";
+import { abortIfMaintenance } from "../../lib/maintenance-cron";
 
 /**
  * Output results to GitHub Actions
@@ -48,6 +49,7 @@ function outputToGitHubActions(result: StalePendingConsultationsResult): void {
  * Main entry point
  */
 async function main(): Promise<void> {
+  await abortIfMaintenance("cleanup-stale-pending-consultations");
   console.log("🧹 Starting stale pending consultations cleanup job...");
   console.log(`Timestamp: ${new Date().toISOString()}`);
 

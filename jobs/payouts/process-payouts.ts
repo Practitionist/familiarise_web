@@ -14,6 +14,7 @@ import {
 } from "../../scripts/payouts/process-payouts";
 
 import fs from "fs";
+import { abortIfMaintenance } from "../../lib/maintenance-cron";
 
 /**
  * Output results to GitHub Actions using environment files
@@ -45,6 +46,7 @@ function outputToGitHubActions(result: ProcessingResult): void {
  * Entry point for GitHub Actions
  */
 async function main(): Promise<void> {
+  await abortIfMaintenance("process-payouts");
   const startTime = Date.now();
   console.log(
     `🚀 Starting payout processing job at ${new Date().toISOString()}`,

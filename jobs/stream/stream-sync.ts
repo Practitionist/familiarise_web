@@ -14,6 +14,7 @@ import {
   type SyncSummary,
 } from "../../scripts/stream/stream-sync";
 import fs from "fs";
+import { abortIfMaintenance } from "../../lib/maintenance-cron";
 
 /**
  * Output results to GitHub Actions
@@ -55,6 +56,7 @@ function outputToGitHubActions(summary: SyncSummary): void {
  * Main entry point for GitHub Actions
  */
 async function main(): Promise<void> {
+  await abortIfMaintenance("stream-sync");
   const startTime = Date.now();
   console.log("🚀 Starting Stream user sync job...");
   console.log(`   Timestamp: ${new Date().toISOString()}`);

@@ -1,6 +1,13 @@
 import { getSessionCookie } from "better-auth/cookies";
 import { NextRequest, NextResponse } from "next/server";
 
+import {
+  getMaintenanceState,
+  isMaintenanceExempt,
+  validateBypass,
+  isWriteBlockedInDegraded,
+} from "@/lib/maintenance-edge";
+
 // Constants for common URLs and route patterns
 const URLS = {
   SIGNIN: "/auth/signin",
@@ -18,8 +25,9 @@ const ROUTE_PATTERNS = {
     "/meetings/",
   ],
   PUBLIC_AUTH_PREFIXES: ["/auth/"],
-  PRIVATE_API_PREFIXES: ["/api/inngest/"],
-  PROTECTED_API_PREFIXES: [
+  // API routes requiring a session cookie (returns 401 JSON without one)
+  AUTHENTICATED_API_PREFIXES: [
+    "/api/inngest/",
     "/api/form/onboarding/",
     "/api/verification/",
     "/api/user/",
@@ -37,15 +45,21 @@ const ROUTE_PATTERNS = {
   ],
 };
 
+// Matches paths ending with a file extension (e.g. .js, .css, .png, .woff2)
+// More precise than pathname.includes(".") which false-positives on /api/v2.0/foo
+const HAS_FILE_EXTENSION = /\.\w{2,10}$/;
+
 /**
  * Fast route matching using string prefix checks instead of glob patterns.
  * Also matches the exact path without trailing slash (e.g. "/settings" matches "/settings/").
  */
 const matchesAnyPrefix = (pathname: string, prefixes: string[]): boolean => {
-  return prefixes.some(
-    (prefix) =>
-      pathname.startsWith(prefix) || pathname === prefix.replace(/\/$/, ""),
-  );
+  for (const prefix of prefixes) {
+    if (pathname.startsWith(prefix)) return true;
+    // Check exact match without trailing slash: "/settings" matches "/settings/"
+    if (prefix.endsWith("/") && pathname === prefix.slice(0, -1)) return true;
+  }
+  return false;
 };
 
 /**
@@ -60,9 +74,79 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
   if (
     pathname.startsWith("/_next/") ||
     pathname.startsWith("/favicon") ||
-    pathname.includes(".")
+    HAS_FILE_EXTENSION.test(pathname)
   ) {
     return NextResponse.next();
+  }
+
+  // Maintenance mode check (fail-open: defaults to OFF if Redis unreachable)
+  const maintenanceState = await getMaintenanceState();
+  if (
+    maintenanceState.phase !== "OFF" &&
+    !isMaintenanceExempt(pathname)
+  ) {
+    if (!validateBypass(req, maintenanceState.bypassSecret)) {
+      if (maintenanceState.phase === "OFFLINE") {
+        const offlineHeaders: Record<string, string> = {};
+        if (maintenanceState.estimatedEnd) {
+          const retryAfterSecs = Math.ceil(
+            (new Date(maintenanceState.estimatedEnd).getTime() - Date.now()) / 1000,
+          );
+          if (retryAfterSecs > 0) {
+            offlineHeaders["Retry-After"] = String(retryAfterSecs);
+          }
+        }
+
+        // API callers should receive machine-readable 503 JSON, not rewritten HTML.
+        if (pathname.startsWith("/api/")) {
+          return NextResponse.json(
+            {
+              error: "Service temporarily unavailable during maintenance",
+              phase: "OFFLINE",
+              reason: maintenanceState.reason || null,
+              estimatedEnd: maintenanceState.estimatedEnd || null,
+            },
+            { status: 503, headers: offlineHeaders },
+          );
+        }
+
+        const response = NextResponse.rewrite(new URL("/maintenance", req.url));
+        Object.entries(offlineHeaders).forEach(([key, value]) => {
+          response.headers.set(key, value);
+        });
+        return response;
+      }
+      // DEGRADED: block transactional writes; allow reads with banner headers
+      if (isWriteBlockedInDegraded(pathname, req.method)) {
+        const degradedHeaders: Record<string, string> = {};
+        if (maintenanceState.estimatedEnd) {
+          const retryAfterSecs = Math.ceil(
+            (new Date(maintenanceState.estimatedEnd).getTime() - Date.now()) / 1000,
+          );
+          if (retryAfterSecs > 0) degradedHeaders["Retry-After"] = String(retryAfterSecs);
+        }
+        return NextResponse.json(
+          {
+            error: "Writes are temporarily unavailable during maintenance",
+            phase: "DEGRADED",
+            reason: maintenanceState.reason || null,
+            estimatedEnd: maintenanceState.estimatedEnd || null,
+          },
+          { status: 503, headers: degradedHeaders },
+        );
+      }
+      const response = NextResponse.next();
+      response.headers.set("x-maintenance-phase", "degraded");
+      response.headers.set(
+        "x-maintenance-reason",
+        encodeURIComponent(maintenanceState.reason || ""),
+      );
+      response.headers.set(
+        "x-maintenance-eta",
+        encodeURIComponent(maintenanceState.estimatedEnd || ""),
+      );
+      return response;
+    }
   }
 
   // Handle public API routes first (most common, no auth needed)
@@ -74,21 +158,17 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
   const sessionCookie = getSessionCookie(req);
   const isAuthenticated = !!sessionCookie;
 
-  // Handle private API routes
-  if (matchesAnyPrefix(pathname, ROUTE_PATTERNS.PRIVATE_API_PREFIXES)) {
+  // Handle authenticated API routes (require session cookie)
+  if (matchesAnyPrefix(pathname, ROUTE_PATTERNS.AUTHENTICATED_API_PREFIXES)) {
     return isAuthenticated
       ? NextResponse.next()
       : NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // Handle protected API routes
-  if (matchesAnyPrefix(pathname, ROUTE_PATTERNS.PROTECTED_API_PREFIXES)) {
-    return isAuthenticated
-      ? NextResponse.next()
-      : NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  // Handle public auth routes
+  // Handle public auth routes — always allow through.
+  // The signin page validates the session client-side via useSession() and
+  // redirects authenticated users itself. Doing it here based on cookie
+  // presence causes infinite loops when the cookie is stale (DB session gone).
   if (matchesAnyPrefix(pathname, ROUTE_PATTERNS.PUBLIC_AUTH_PREFIXES)) {
     // Do NOT redirect cookie-present users to /dashboard here.
     // Cookie presence ≠ session validity — stale cookies cause an infinite
@@ -115,8 +195,8 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
 // Optimized matcher to reduce middleware execution
 export const config = {
   matcher: [
-    // Skip all static files and Next.js internals
-    "/((?!_next/static|_next/image|favicon.ico|.*\\..*).+)",
+    // Match root and all paths except static files and Next.js internals
+    "/((?!_next/static|_next/image|favicon.ico|.*\\..*).*)",
     // Include API routes
     "/api/(.*)",
   ],

@@ -171,12 +171,7 @@ export async function handleUnifiedCheckout(
             });
             break;
 
-          case "LEMON_SQUEEZY":
-          case "XFLOW":
-            if (data.checkoutUrl) {
-              window.location.href = data.checkoutUrl;
-            }
-            break;
+          // TODO(#312/#334): Add Lemon Squeezy and XFlow cases when webhook handlers are implemented
         }
       }, 1000);
     }
@@ -197,16 +192,7 @@ export const paymentGateways = [
     description: "Indian payments in INR",
     gateway: "RAZORPAY" as const,
   },
-  {
-    name: "Lemon Squeezy",
-    description: "Global payments in USD",
-    gateway: "LEMON_SQUEEZY" as const,
-  },
-  {
-    name: "Xflow",
-    description: "Secure payments in USD",
-    gateway: "XFLOW" as const,
-  },
+  // TODO: Add Lemon Squeezy and XFlow when webhook appointment creation is implemented
 ];
 
 // Default success and error handlers for StripeCheckout component

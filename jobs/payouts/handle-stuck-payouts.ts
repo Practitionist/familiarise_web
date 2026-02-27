@@ -13,6 +13,7 @@ import {
   type StuckPayoutsResult,
 } from "../../scripts/payouts/handle-stuck-payouts";
 import fs from "fs";
+import { abortIfMaintenance } from "../../lib/maintenance-cron";
 
 /**
  * Output results to GitHub Actions
@@ -50,6 +51,7 @@ function outputToGitHubActions(result: StuckPayoutsResult): void {
  * Main entry point
  */
 async function main(): Promise<void> {
+  await abortIfMaintenance("handle-stuck-payouts");
   console.log("🔄 Starting stuck payouts handler job...");
   console.log(`Timestamp: ${new Date().toISOString()}`);
 

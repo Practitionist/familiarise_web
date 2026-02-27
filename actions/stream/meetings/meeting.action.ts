@@ -2,6 +2,7 @@
 
 import { z } from "zod";
 import prisma from "@/lib/prisma";
+import { getMaintenanceState } from "@/lib/maintenance";
 /**
  * Minimal slot interface for database meeting session operations.
  * Matches the MeetingSlot interface from lib/meeting.ts.
@@ -74,6 +75,12 @@ export async function createDbMeetingSession(
   slot: MeetingSlot,
   streamCallId: string,
 ): Promise<MeetingSession> {
+  // Block new call creation during maintenance
+  const maintenanceState = await getMaintenanceState();
+  if (maintenanceState.phase !== "OFF") {
+    throw new Error("New calls cannot be created during maintenance.");
+  }
+
   // Validate inputs
   slotSchema.parse({
     id: slot.id,

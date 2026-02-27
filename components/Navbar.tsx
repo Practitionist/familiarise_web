@@ -352,7 +352,13 @@ const Navbar = () => {
   if (excludeNavbar) return null;
 
   const handleSignOut = () => {
-    signOut();
+    signOut({
+      fetchOptions: {
+        onSuccess: () => {
+          window.location.href = "/auth/signin";
+        },
+      },
+    });
     closeMenu();
   };
 
@@ -374,9 +380,7 @@ const Navbar = () => {
             : "bg-white/90 backdrop-blur-xl border-b border-zinc-200 shadow-sm"
         }`}
         style={{
-          top: isAnnouncementVisible
-            ? "var(--announcement-bar-height, 0px)"
-            : "0px",
+          top: `calc(var(--maintenance-banner-height, 0px) + ${isAnnouncementVisible ? "var(--announcement-bar-height, 0px)" : "0px"})`,
         }}
       >
         <div className="container mx-auto px-4 md:px-6">

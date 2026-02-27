@@ -13,6 +13,7 @@ import {
   type OrphanedPaymentsAlertResult,
 } from "../../scripts/alerts/alert-orphaned-payments";
 import fs from "fs";
+import { abortIfMaintenance } from "../../lib/maintenance-cron";
 
 /**
  * Output results to GitHub Actions
@@ -44,6 +45,7 @@ function outputToGitHubActions(result: OrphanedPaymentsAlertResult): void {
  * Main entry point
  */
 async function main(): Promise<void> {
+  await abortIfMaintenance("alert-orphaned-payments");
   console.log("🔍 Starting orphaned payments alert job...");
   console.log(`Timestamp: ${new Date().toISOString()}`);
 

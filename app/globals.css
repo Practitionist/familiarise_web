@@ -54,6 +54,9 @@
     --steel: 0 0% 55%;
     --graphite: 0 0% 25%;
 
+    /* Maintenance banner height — set dynamically by MaintenanceBanner.tsx */
+    --maintenance-banner-height: 0px;
+
     /* Header height system — announcement-bar-height is set dynamically by JS */
     --announcement-bar-height: 0px;
     --navbar-height: 4rem; /* 64px — mobile default */
@@ -135,6 +138,7 @@
 
   body {
     @apply bg-background text-foreground;
+    padding-top: var(--maintenance-banner-height, 0px);
     font-feature-settings:
       "rlig" 1,
       "calt" 1;
@@ -149,6 +153,15 @@
 }
 
 @layer utilities {
+  /* Maintenance banner offset for fixed/sticky elements */
+  .top-maintenance {
+    top: var(--maintenance-banner-height, 0px);
+  }
+
+  .h-screen-maintenance {
+    height: calc(100vh - var(--maintenance-banner-height, 0px));
+  }
+
   /* Safe area inset utilities */
   .safe-top {
     padding-top: env(safe-area-inset-top, 0px);

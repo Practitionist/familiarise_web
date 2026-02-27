@@ -7,6 +7,7 @@
 
 import { processExpiredNotifications, handleSlotOpening } from "@/lib/waitlist";
 import { sendWaitlistExpiredEmail } from "@/lib/waitlist/notifications";
+import { abortIfMaintenance } from "../../lib/maintenance-cron";
 
 export interface ProcessExpiredResult {
   processed: number;
@@ -24,6 +25,7 @@ export interface ProcessExpiredResult {
  * 4. Notify next person in queue
  */
 export async function processExpiredNotificationsJob(): Promise<ProcessExpiredResult> {
+  await abortIfMaintenance("process-expired-notifications");
   const startTime = Date.now();
   const errors: Array<{ id: string; error: string }> = [];
 

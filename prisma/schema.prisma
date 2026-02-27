@@ -2247,3 +2247,30 @@ enum ConsultantVerificationStatus {
   VERIFIED // Approved
   REJECTED // Needs resubmission
 }
+
+//////////////////////////////////////////////////// MAINTENANCE MODE ////////////////////////////////////////////////////
+
+enum MaintenancePhase {
+  OFF
+  DEGRADED
+  OFFLINE
+}
+
+model MaintenanceWindow {
+  id           String           @id @default(cuid())
+  phase        MaintenancePhase @default(OFF)
+  reason       String?
+  scheduledAt  DateTime?
+  startedAt    DateTime?
+  endedAt      DateTime?
+  estimatedEnd DateTime?
+  startedBy    String?
+  endedBy      String?
+  bypassSecret String?
+  metadata     Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("maintenance_windows")
+}

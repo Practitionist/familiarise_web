@@ -112,7 +112,7 @@ const AnnouncementBar = () => {
     <div
       ref={barRef}
       data-announcement-bar
-      className="w-full text-center py-2.5 pt-[max(0.625rem,env(safe-area-inset-top))] fixed top-0 z-[1001] flex items-center justify-center gap-4 px-4"
+      className="w-full text-center py-2.5 pt-[max(0.625rem,env(safe-area-inset-top))] fixed top-maintenance z-[1001] flex items-center justify-center gap-4 px-4"
       style={{ backgroundColor, color: textColor }}
     >
       <span className="flex-1 text-center text-sm">
