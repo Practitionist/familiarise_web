@@ -24,11 +24,15 @@ const FINANCIAL_JOB_NAMES = new Set([
   "process-payouts",
   "create-payout-batch",
   "handle-stuck-payouts",
+  "reconcile-payout-status",
   "cascade-refund-earnings",
   "reconcile-pending-refunds",
   "handle-lost-disputes",
+  "reconcile-disputes",
   "cleanup-abandoned-payments",
   "release-earnings",
+  "reconcile-payment-status",
+  "sync-payment-earnings",
 ]);
 
 /**

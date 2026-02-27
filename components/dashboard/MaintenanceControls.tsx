@@ -55,6 +55,13 @@ function toLocalDatetime(iso: string | null): string {
   }
 }
 
+function toIsoDatetime(localDatetime: string): string | undefined {
+  if (!localDatetime) return undefined;
+  const parsed = new Date(localDatetime);
+  if (Number.isNaN(parsed.getTime())) return undefined;
+  return parsed.toISOString();
+}
+
 export default function MaintenanceControls() {
   const { refresh: refreshBanner } = useMaintenanceState();
   const { toast } = useToast();
@@ -114,7 +121,7 @@ export default function MaintenanceControls() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [toast]);
 
   useEffect(() => {
     fetchState();
@@ -123,21 +130,47 @@ export default function MaintenanceControls() {
   const startMaintenance = async (phase: "DEGRADED" | "OFFLINE") => {
     setActionLoading(true);
     try {
+      const estimatedEndIso = toIsoDatetime(estimatedEnd);
+      if (estimatedEnd && !estimatedEndIso) {
+        toast({
+          title: "Invalid estimated end",
+          description: "Please provide a valid date/time.",
+          variant: "destructive",
+        });
+        return;
+      }
+
       const res = await fetch("/api/admin/maintenance", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           phase,
           reason: reason || undefined,
-          estimatedEnd: estimatedEnd || undefined,
+          estimatedEnd: estimatedEndIso,
         }),
       });
-      if (res.ok) {
-        const data = await res.json();
-        setBypassSecret(data.bypassSecret);
-        setHasEdits(false);
-        await fetchState();
-        await refreshBanner();
+
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        toast({
+          title: "Failed to start maintenance",
+          description: data?.error || "Request failed. Please try again.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      setBypassSecret(data?.bypassSecret ?? null);
+      setHasEdits(false);
+      await fetchState();
+      await refreshBanner();
+
+      if (Array.isArray(data?.setupErrors) && data.setupErrors.length > 0) {
+        toast({
+          title: "Maintenance started with warnings",
+          description: data.setupErrors[0],
+          variant: "destructive",
+        });
       }
     } finally {
       setActionLoading(false);
@@ -149,9 +182,19 @@ export default function MaintenanceControls() {
   }) => {
     setActionLoading(true);
     try {
+      const estimatedEndIso = toIsoDatetime(estimatedEnd);
+      if (estimatedEnd && !estimatedEndIso) {
+        toast({
+          title: "Invalid estimated end",
+          description: "Please provide a valid date/time.",
+          variant: "destructive",
+        });
+        return;
+      }
+
       const body: Record<string, string | undefined> = {
         reason: reason || undefined,
-        estimatedEnd: estimatedEnd || undefined,
+        estimatedEnd: estimatedEndIso,
       };
       if (overrides?.phase) body.phase = overrides.phase;
 
@@ -160,10 +203,27 @@ export default function MaintenanceControls() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      if (res.ok) {
-        setHasEdits(false);
-        await fetchState();
-        await refreshBanner();
+
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        toast({
+          title: "Failed to update maintenance",
+          description: data?.error || "Request failed. Please try again.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      setHasEdits(false);
+      await fetchState();
+      await refreshBanner();
+
+      if (Array.isArray(data?.setupErrors) && data.setupErrors.length > 0) {
+        toast({
+          title: "Maintenance updated with warnings",
+          description: data.setupErrors[0],
+          variant: "destructive",
+        });
       }
     } finally {
       setActionLoading(false);
@@ -174,14 +234,23 @@ export default function MaintenanceControls() {
     setActionLoading(true);
     try {
       const res = await fetch("/api/admin/maintenance", { method: "DELETE" });
-      if (res.ok) {
-        setBypassSecret(null);
-        setReason("");
-        setEstimatedEnd("");
-        setHasEdits(false);
-        await fetchState();
-        await refreshBanner();
+
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        toast({
+          title: "Failed to end maintenance",
+          description: data?.error || "Request failed. Please try again.",
+          variant: "destructive",
+        });
+        return;
       }
+
+      setBypassSecret(null);
+      setReason("");
+      setEstimatedEnd("");
+      setHasEdits(false);
+      await fetchState();
+      await refreshBanner();
     } finally {
       setActionLoading(false);
     }
@@ -197,10 +266,17 @@ export default function MaintenanceControls() {
     setPreflightLoading(true);
     try {
       const res = await fetch("/api/admin/maintenance/preflight");
-      if (res.ok) {
-        const data = await res.json();
-        setPreflight(data);
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        toast({
+          title: "Pre-flight check failed",
+          description: data?.error || "Unable to run pre-flight checks.",
+          variant: "destructive",
+        });
+        return;
       }
+
+      setPreflight(data);
     } catch {
       toast({ title: "Pre-flight check failed", variant: "destructive" });
     } finally {

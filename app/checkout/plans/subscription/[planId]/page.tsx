@@ -383,17 +383,24 @@ export default function SubscriptionCheckoutPage({
 
   if (error) {
     return (
-      <div className="flex items-center justify-center h-screen bg-zinc-50">
+      <div className="col-span-full flex items-center justify-center min-h-screen bg-zinc-50">
         <div
-          className="bg-zinc-900 border border-zinc-800 text-white p-6 max-w-lg mx-auto text-center rounded-xl shadow-xl"
+          className="bg-zinc-900 border border-zinc-800 text-white p-8 max-w-md w-full mx-4 text-center rounded-xl shadow-xl"
           role="alert"
         >
-          <p className="font-bold text-lg mb-2">Oops! Something went wrong</p>
-          <p className="text-zinc-400">{error}</p>
-          <p className="mt-3 text-zinc-500 text-sm">
-            Please check your selection and try again. If the problem persists,
-            contact support.
-          </p>
+          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-zinc-800">
+            <svg className="h-6 w-6 text-zinc-400" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z" />
+            </svg>
+          </div>
+          <p className="font-semibold text-lg mb-2">Unable to load checkout</p>
+          <p className="text-zinc-400 text-sm">{error}</p>
+          <button
+            onClick={() => window.history.back()}
+            className="mt-5 inline-flex items-center rounded-lg bg-white px-4 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-100 transition-colors"
+          >
+            Go back
+          </button>
         </div>
       </div>
     );
@@ -744,6 +751,7 @@ export default function SubscriptionCheckoutPage({
                           })}
                           onPaymentSuccess={stripeHandlers.onPaymentSuccess}
                           onPaymentError={stripeHandlers.onPaymentError}
+                          disabled={isMaintenanceBlocked}
                         />
                       ) : gateway.gateway === "RAZORPAY" ? (
                         <RazorpayCheckout
@@ -756,6 +764,7 @@ export default function SubscriptionCheckoutPage({
                           })}
                           onPaymentSuccess={razorpayHandlers.onPaymentSuccess}
                           onPaymentError={razorpayHandlers.onPaymentError}
+                          disabled={isMaintenanceBlocked}
                         />
                       ) : null}
                       {/* Mock Payment Button */}

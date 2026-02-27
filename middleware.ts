@@ -80,13 +80,33 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
   ) {
     if (!validateBypass(req, maintenanceState.bypassSecret)) {
       if (maintenanceState.phase === "OFFLINE") {
-        const response = NextResponse.rewrite(new URL("/maintenance", req.url));
+        const offlineHeaders: Record<string, string> = {};
         if (maintenanceState.estimatedEnd) {
           const retryAfterSecs = Math.ceil(
             (new Date(maintenanceState.estimatedEnd).getTime() - Date.now()) / 1000,
           );
-          if (retryAfterSecs > 0) response.headers.set("Retry-After", String(retryAfterSecs));
+          if (retryAfterSecs > 0) {
+            offlineHeaders["Retry-After"] = String(retryAfterSecs);
+          }
         }
+
+        // API callers should receive machine-readable 503 JSON, not rewritten HTML.
+        if (pathname.startsWith("/api/")) {
+          return NextResponse.json(
+            {
+              error: "Service temporarily unavailable during maintenance",
+              phase: "OFFLINE",
+              reason: maintenanceState.reason || null,
+              estimatedEnd: maintenanceState.estimatedEnd || null,
+            },
+            { status: 503, headers: offlineHeaders },
+          );
+        }
+
+        const response = NextResponse.rewrite(new URL("/maintenance", req.url));
+        Object.entries(offlineHeaders).forEach(([key, value]) => {
+          response.headers.set(key, value);
+        });
         return response;
       }
       // DEGRADED: block transactional writes; allow reads with banner headers
