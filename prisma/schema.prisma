@@ -982,6 +982,7 @@ model WebinarPlan {
   prerequisites       String?  @default("None")
   materialProvided    String?  @default("None")
   learningOutcomes    String[] @default([])
+  imageUrl            String?
 
   consultantProfile   ConsultantProfile? @relation(fields: [consultantProfileId], references: [id])
   consultantProfileId String?
@@ -1043,6 +1044,7 @@ model ClassPlan {
   prerequisites          String?          @default("None")
   materialProvided       String?          @default("None")
   learningOutcomes       String[]         @default([])
+  imageUrl               String?
 
   consultantProfile   ConsultantProfile? @relation(fields: [consultantProfileId], references: [id])
   consultantProfileId String?

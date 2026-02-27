@@ -12,7 +12,7 @@ import {
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { CreditCard, Clock, ExternalLink, AlertCircle } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
-import { formatCurrencyAmount } from "@/lib/utils";
+import { formatCurrencyAmount } from "@/utils/formatting";
 
 interface PendingPayment {
   id: string;

@@ -8,24 +8,24 @@ import {
   TAppointment,
 } from "@/types/appointment";
 
-export type ConsultationWithPlan = TConsultation & {
+export type TConsultationWithPlan = TConsultation & {
   appointment: TAppointment | null;
 };
 
-export type SubscriptionWithPlan = TSubscription & {
+export type TSubscriptionWithPlan = TSubscription & {
   appointments: TAppointment[];
 };
 
-export type WebinarWithPlan = TWebinar & {
+export type TWebinarWithPlan = TWebinar & {
   appointment: TAppointment | null;
 };
 
-export type ClassWithPlan = TClass & {
+export type TClassWithPlan = TClass & {
   appointment: TAppointment[];
 };
 
 // Trial session type for consultee dashboard
-export type TrialWithPlan = {
+export type TTrialWithPlan = {
   id: string;
   status: string;
   notes: string | null;
@@ -50,45 +50,40 @@ export type TrialWithPlan = {
 
 // --- Internal types ---
 
-type EventQueryMode =
+type TEventQueryMode =
   | { type: "consultee"; profileId: string }
   | { type: "consultant"; profileId: string }
   | { type: "user"; userId: string };
 
-interface EventsResult {
-  consultations: ConsultationWithPlan[];
-  subscriptions: SubscriptionWithPlan[];
-  webinars: WebinarWithPlan[];
-  classes: ClassWithPlan[];
+interface IEventsResult {
+  consultations: TConsultationWithPlan[];
+  subscriptions: TSubscriptionWithPlan[];
+  webinars: TWebinarWithPlan[];
+  classes: TClassWithPlan[];
   isLoading: boolean;
   error: Error | null;
 }
 
 // --- Single internal implementation ---
 
-function useEventsInternal(mode: EventQueryMode): EventsResult {
-  const [consultations, setConsultations] = useState<ConsultationWithPlan[]>(
+function useEventsInternal(mode: TEventQueryMode): IEventsResult {
+  const [consultations, setConsultations] = useState<TConsultationWithPlan[]>(
     [],
   );
-  const [subscriptions, setSubscriptions] = useState<SubscriptionWithPlan[]>(
+  const [subscriptions, setSubscriptions] = useState<TSubscriptionWithPlan[]>(
     [],
   );
-  const [webinars, setWebinars] = useState<WebinarWithPlan[]>([]);
-  const [classes, setClasses] = useState<ClassWithPlan[]>([]);
+  const [webinars, setWebinars] = useState<TWebinarWithPlan[]>([]);
+  const [classes, setClasses] = useState<TClassWithPlan[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
   const { toast } = useToast();
 
-  // Stable key for the effect dependency
-  const modeKey =
-    mode.type === "user"
-      ? `user:${mode.userId}`
-      : mode.type === "consultant"
-        ? `consultant:${mode.profileId}`
-        : `consultee:${mode.profileId}`;
+  // Extract stable primitives for the effect dependency array
+  const modeType = mode.type;
+  const identifier = mode.type === "user" ? mode.userId : mode.profileId;
 
   useEffect(() => {
-    const identifier = mode.type === "user" ? mode.userId : mode.profileId;
     if (!identifier) return;
 
     const fetchEvents = async () => {
@@ -98,9 +93,9 @@ function useEventsInternal(mode: EventQueryMode): EventsResult {
       try {
         let queryParam: string;
 
-        if (mode.type === "user") {
+        if (modeType === "user") {
           // Fetch user details first to determine role
-          const response = await fetch(`/api/user/${mode.userId}`);
+          const response = await fetch(`/api/user/${identifier}`);
           if (!response.ok) {
             throw new Error("Failed to fetch user details");
           }
@@ -130,10 +125,10 @@ function useEventsInternal(mode: EventQueryMode): EventsResult {
             setIsLoading(false);
             return;
           }
-        } else if (mode.type === "consultant") {
-          queryParam = `consultantProfileId=${mode.profileId}`;
+        } else if (modeType === "consultant") {
+          queryParam = `consultantProfileId=${identifier}`;
         } else {
-          queryParam = `consulteeProfileId=${mode.profileId}`;
+          queryParam = `consulteeProfileId=${identifier}`;
         }
 
         const [consultationsRes, subscriptionsRes, webinarsRes, classesRes] =
@@ -162,12 +157,13 @@ function useEventsInternal(mode: EventQueryMode): EventsResult {
         setSubscriptions(subscriptionsData.data);
         setWebinars(webinarsData.data);
         setClasses(classesData.data);
-      } catch (err: any) {
+      } catch (err: unknown) {
         console.error("Error fetching events:", err);
-        setError(err);
+        const message = err instanceof Error ? err.message : "Unknown error";
+        setError(err instanceof Error ? err : new Error(message));
         toast({
           title: "Error fetching events",
-          description: err.message,
+          description: message,
           variant: "destructive",
         });
       } finally {
@@ -176,8 +172,7 @@ function useEventsInternal(mode: EventQueryMode): EventsResult {
     };
 
     fetchEvents();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [modeKey, toast]);
+  }, [modeType, identifier, toast]);
 
   return { consultations, subscriptions, webinars, classes, isLoading, error };
 }

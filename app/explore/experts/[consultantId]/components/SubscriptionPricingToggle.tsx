@@ -23,7 +23,7 @@ import { useState, useMemo, useEffect } from "react";
 import { PricingOption } from "../defaults";
 import { useToast } from "@/hooks/use-toast";
 import { addMonths, differenceInDays, format } from "date-fns";
-import { useCurrency } from "@/lib/hooks/useCurrency";
+import { useCurrency } from "@/hooks/useCurrency";
 import { TrialBookingModal } from "./TrialBookingModal";
 
 interface SubscriptionPricingToggleProps {

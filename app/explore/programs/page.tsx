@@ -15,15 +15,13 @@ import { useSession } from "@/lib/auth-client";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useMemo, useRef, useState, Suspense } from "react";
 import { useDebouncedCallback } from "use-debounce";
+import { usePrograms, useCuratedPrograms, useTopicsWithCount } from "./hooks";
 import {
   filterAndSortPrograms,
   getUniqueLevels,
   Program,
   ProgramType,
   ProgramFilters,
-  usePrograms,
-  useCuratedPrograms,
-  useTopicsWithCount,
 } from "./utils";
 import ProgramCard from "./components/ProgramCard";
 import ProgramTabs from "./components/ProgramTabs";

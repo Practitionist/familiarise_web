@@ -3,7 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { HelpSkeleton } from "@/components/dashboard/DashboardSkeletons";
-import { staticQueries } from "@/hooks/useCosultantPrefetchDashboard";
+import { staticQueries } from "@/hooks/useConsultantPrefetchDashboard";
 import { HelpTab } from "./HelpTab";
 
 export default function HelpPage() {

@@ -1,7 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { Control, useController } from "react-hook-form";
+import {
+  Control,
+  FieldPath,
+  FieldValues,
+  useController,
+} from "react-hook-form";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -11,11 +16,10 @@ import {
   FormDescription,
 } from "@/components/ui/form";
 import { Plus, Trash2, GripVertical } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn } from "@/utils/tailwind";
 
-interface LearningOutcomesFieldProps {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  control: Control<any>;
+interface LearningOutcomesFieldProps<T extends FieldValues = FieldValues> {
+  control: Control<T>;
   name: string;
   label?: string;
   placeholder?: string;
@@ -24,7 +28,7 @@ interface LearningOutcomesFieldProps {
   className?: string;
 }
 
-export function LearningOutcomesField({
+export function LearningOutcomesField<T extends FieldValues = FieldValues>({
   control,
   name,
   label = "Learning Outcomes",
@@ -32,7 +36,7 @@ export function LearningOutcomesField({
   description = "What participants will be able to do after completion",
   maxItems = 10,
   className,
-}: Readonly<LearningOutcomesFieldProps>) {
+}: Readonly<LearningOutcomesFieldProps<T>>) {
   const [newOutcome, setNewOutcome] = useState("");
   const [error, setError] = useState<string | null>(null);
 
@@ -40,9 +44,9 @@ export function LearningOutcomesField({
     field,
     fieldState: { error: fieldError },
   } = useController({
-    name,
+    name: name as FieldPath<T>,
     control,
-    defaultValue: [],
+    defaultValue: [] as T[string],
   });
 
   const outcomes = (field.value as string[]) || [];

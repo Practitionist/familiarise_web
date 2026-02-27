@@ -4,8 +4,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { experienceValidation } from "@/schemas/shared";
 import { checkActiveAppointments } from "../utils/consultant-appointments";
-
 import { getSession } from "@/lib/auth-server";
+import { apiError } from "@/lib/errors";
 // Zod schema for UUID validation
 const uuidSchema = z.string().uuid();
 
@@ -193,17 +193,23 @@ export async function GET(
         },
         webinarPlans: true,
         classPlans: true,
-        reviews: true,
+        reviews: {
+          select: { id: true, rating: true },
+          take: 5,
+        },
       },
     });
 
-    return NextResponse.json({ data: consultant });
-  } catch (error) {
-    console.error("Error fetching consultant:", error);
     return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 },
+      { data: consultant },
+      {
+        headers: {
+          "Cache-Control": "public, s-maxage=60, stale-while-revalidate=300",
+        },
+      },
     );
+  } catch (error) {
+    return apiError({ tag: "[Consultant.GET]", error });
   }
 }
 
@@ -409,14 +415,7 @@ export async function PUT(
 
     return NextResponse.json({ data: updatedConsultant });
   } catch (error) {
-    console.error("Error updating consultant:", error);
-    if (error instanceof Error) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
-    }
-    return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 },
-    );
+    return apiError({ tag: "[Consultant.PUT]", error });
   }
 }
 
@@ -469,13 +468,6 @@ export async function DELETE(
 
     return NextResponse.json({ message: "Consultant deleted successfully" });
   } catch (error) {
-    console.error("Error deleting consultant:", error);
-    if (error instanceof Error) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
-    }
-    return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 },
-    );
+    return apiError({ tag: "[Consultant.DELETE]", error });
   }
 }

@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react";
 
-import { formatEta } from "@/lib/utils";
+import { formatEta } from "@/utils/formatting";
 import { useMaintenanceState } from "@/providers/MaintenanceProvider";
 
 export default function MaintenanceBanner() {

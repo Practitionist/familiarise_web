@@ -122,4 +122,12 @@ export default [
       "no-undef": ["error", { typeof: true }],
     },
   },
+
+  // Seed files: allow control character regex (intentional sanitization for PostgreSQL)
+  {
+    files: ["prisma/seedFiles/**/*.ts"],
+    rules: {
+      "no-control-regex": "off",
+    },
+  },
 ];

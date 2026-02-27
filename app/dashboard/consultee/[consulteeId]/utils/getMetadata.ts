@@ -1,15 +1,15 @@
 import {
-  ConsultationWithPlan,
-  SubscriptionWithPlan,
-  WebinarWithPlan,
-  ClassWithPlan,
+  TConsultationWithPlan,
+  TSubscriptionWithPlan,
+  TWebinarWithPlan,
+  TClassWithPlan,
 } from "@/hooks/useEvents";
 
 export type EventWithType =
-  | (ConsultationWithPlan & { type: "Consultation" })
-  | (SubscriptionWithPlan & { type: "Subscription" })
-  | (WebinarWithPlan & { type: "Webinar" })
-  | (ClassWithPlan & { type: "Class" });
+  | (TConsultationWithPlan & { type: "Consultation" })
+  | (TSubscriptionWithPlan & { type: "Subscription" })
+  | (TWebinarWithPlan & { type: "Webinar" })
+  | (TClassWithPlan & { type: "Class" });
 
 export function getEventTitle(event: EventWithType): string {
   switch (event.type) {

@@ -3,7 +3,7 @@
 import Image from "next/image";
 import { useEffect, useState } from "react";
 
-import { formatEta } from "@/lib/utils";
+import { formatEta } from "@/utils/formatting";
 
 import familiariseLogo from "@/public/avif/static/assets/logos/images/logos/Familiarise-logos_transparent.avif";
 

@@ -4,10 +4,10 @@ import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import Link from "next/link";
 import { User, Star, ArrowRight, Flame, Clock } from "lucide-react";
-import { TConsultantProfile } from "@/types/consultant";
+import type { IConsultantCardData } from "@/types/consultant";
 
 interface ExpertMiniCardProps {
-  expert: TConsultantProfile;
+  expert: IConsultantCardData;
   badge?: "trending" | "new";
 }
 

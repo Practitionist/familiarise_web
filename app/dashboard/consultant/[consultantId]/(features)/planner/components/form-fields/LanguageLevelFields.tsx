@@ -1,6 +1,11 @@
 "use client";
 
-import { Control, useController } from "react-hook-form";
+import {
+  Control,
+  FieldPath,
+  FieldValues,
+  useController,
+} from "react-hook-form";
 import {
   Select,
   SelectContent,
@@ -10,7 +15,7 @@ import {
 } from "@/components/ui/select";
 import { FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import iso6391 from "iso-639-1";
-import { cn } from "@/lib/utils";
+import { cn } from "@/utils/tailwind";
 
 const DEFAULT_LEVEL_OPTIONS = [
   "Beginner",
@@ -19,9 +24,8 @@ const DEFAULT_LEVEL_OPTIONS = [
   "Expert",
 ];
 
-interface LanguageLevelFieldsProps {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  control: Control<any>;
+interface LanguageLevelFieldsProps<T extends FieldValues = FieldValues> {
+  control: Control<T>;
   languageName?: string;
   levelName?: string;
   levelOptions?: string[];
@@ -29,30 +33,30 @@ interface LanguageLevelFieldsProps {
   gridCols?: 1 | 2;
 }
 
-export function LanguageLevelFields({
+export function LanguageLevelFields<T extends FieldValues = FieldValues>({
   control,
   languageName = "language",
   levelName = "level",
   levelOptions = DEFAULT_LEVEL_OPTIONS,
   className,
   gridCols = 2,
-}: Readonly<LanguageLevelFieldsProps>) {
+}: Readonly<LanguageLevelFieldsProps<T>>) {
   const {
     field: languageField,
     fieldState: { error: languageError },
   } = useController({
-    name: languageName,
+    name: languageName as FieldPath<T>,
     control,
-    defaultValue: "English",
+    defaultValue: "English" as T[string],
   });
 
   const {
     field: levelField,
     fieldState: { error: levelError },
   } = useController({
-    name: levelName,
+    name: levelName as FieldPath<T>,
     control,
-    defaultValue: "Beginner",
+    defaultValue: "Beginner" as T[string],
   });
 
   const languageNames = iso6391.getAllNames();

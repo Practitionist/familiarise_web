@@ -21,7 +21,7 @@ import {
   Zap,
 } from "lucide-react";
 import { cn } from "@/utils/tailwind";
-import { formatCurrencyAmount } from "@/lib/utils";
+import { formatCurrencyAmount } from "@/utils/formatting";
 import type {
   AdminDashboardStats,
   RecentPayment,

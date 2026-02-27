@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { notifyNewReview } from "@/lib/novu";
 import { CreateReviewSchema } from "@/schemas/feedbacks";
+import { apiError } from "@/lib/errors";
 
 export async function GET(req: NextRequest) {
   try {
@@ -36,6 +37,7 @@ export async function GET(req: NextRequest) {
 
     const reviews = await prisma.consultantReview.findMany({
       where: whereClause,
+      take: 50,
       include: {
         consultantProfile: {
           include: {
@@ -62,13 +64,17 @@ export async function GET(req: NextRequest) {
       },
     });
 
-    return NextResponse.json({ data: reviews }, { status: 200 });
-  } catch (error) {
-    console.error("Error getting reviews:", error);
     return NextResponse.json(
-      { error: "Internal Server Error" },
-      { status: 500 },
+      { data: reviews },
+      {
+        status: 200,
+        headers: {
+          "Cache-Control": "public, s-maxage=120, stale-while-revalidate=300",
+        },
+      },
     );
+  } catch (error) {
+    return apiError({ tag: "[Reviews.GET]", error });
   }
 }
 
@@ -125,10 +131,6 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(newReview, { status: 201 });
   } catch (error) {
-    console.error("Error creating review:", error);
-    return NextResponse.json(
-      { error: "Internal Server Error" },
-      { status: 500 },
-    );
+    return apiError({ tag: "[Reviews.POST]", error });
   }
 }

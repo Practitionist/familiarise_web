@@ -11,10 +11,24 @@
  */
 
 import type { TConsultantDashboardResponse } from "@/types/consultant-events";
+import type { TAppointment } from "@/types/appointment";
+import type { TConsultantProfile } from "@/types/consultant";
+import type { TConsulteeEventsResponse } from "@/types/consultee-events";
+import type { TConsulteeProfile } from "@/types/consultee";
+import type {
+  PlannerWebinarEvent,
+  PlannerClassEvent,
+} from "@/app/dashboard/consultant/[consultantId]/(features)/planner/types/event";
 
 // =============================================================================
 // Types
 // =============================================================================
+
+interface PlannerData {
+  webinars: PlannerWebinarEvent[];
+  classes: PlannerClassEvent[];
+  participantCounts: Record<string, number>;
+}
 
 export interface QueryConfig {
   queryKey: readonly unknown[];
@@ -50,20 +64,6 @@ async function fetchWithErrorHandling<T>(
   return json.data ?? json;
 }
 
-// Consultant data types
-interface ConsultantDetailsData {
-  id: string;
-  user: {
-    id: string;
-    name: string | null;
-    image: string | null;
-    email: string | null;
-  };
-  domain?: { name: string } | null;
-  subDomains?: { name: string }[] | null;
-  [key: string]: unknown;
-}
-
 // Consultant fetchers
 export const consultantFetchers = {
   dashboard: (consultantId: string) =>
@@ -73,31 +73,31 @@ export const consultantFetchers = {
     ),
 
   appointments: (consultantId: string) =>
-    fetchWithErrorHandling<unknown[]>(
+    fetchWithErrorHandling<TAppointment[]>(
       `/api/slots/appointments?consultantProfileId=${consultantId}&consultationStatus=APPROVED&subscriptionStatus=APPROVED&webinarStatus=APPROVED&classStatus=APPROVED`,
       "Appointments fetch failed",
     ),
 
   details: (consultantId: string) =>
-    fetchWithErrorHandling<ConsultantDetailsData>(
+    fetchWithErrorHandling<TConsultantProfile>(
       `/api/user/consultants/${consultantId}`,
       "Consultant details fetch failed",
     ),
 
   requests: (consultantId: string) =>
-    fetchWithErrorHandling<unknown[]>(
+    fetchWithErrorHandling<TAppointment[]>(
       `/api/dashboard/consultant/${consultantId}/requests`,
       "Requests fetch failed",
     ),
 
   planner: (consultantId: string) =>
-    fetchWithErrorHandling<Record<string, unknown>>(
+    fetchWithErrorHandling<PlannerData>(
       `/api/dashboard/consultant/${consultantId}/planner`,
       "Planner fetch failed",
     ),
 
   documents: (consultantId: string) =>
-    fetchWithErrorHandling<unknown[]>(
+    fetchWithErrorHandling<TAppointment[]>(
       `/api/dashboard/consultant/${consultantId}/documents`,
       "Documents fetch failed",
     ),
@@ -106,31 +106,34 @@ export const consultantFetchers = {
 // Consultee fetchers
 export const consulteeFetchers = {
   events: (consulteeId: string) =>
-    fetchWithErrorHandling(
+    fetchWithErrorHandling<TConsulteeEventsResponse>(
       `/api/dashboard/consultee/${consulteeId}/events`,
       "Events fetch failed",
     ),
 
   profile: (consulteeId: string) =>
-    fetchWithErrorHandling(
+    fetchWithErrorHandling<TConsulteeProfile>(
       `/api/user/consultees/${consulteeId}`,
       "Profile fetch failed",
     ),
 
   feedback: () =>
-    fetchWithErrorHandling(`/api/user/feedbacks`, "Feedback fetch failed"),
+    fetchWithErrorHandling<Record<string, unknown>[]>(
+      `/api/user/feedbacks`,
+      "Feedback fetch failed",
+    ),
 
   supportTickets: () =>
-    fetchWithErrorHandling(
+    fetchWithErrorHandling<Record<string, unknown>[]>(
       `/api/user/support-tickets`,
       "Support tickets fetch failed",
     ),
 
   messages: (consulteeId: string) =>
-    fetchWithErrorHandling(
+    fetchWithErrorHandling<Record<string, unknown>[]>(
       `/api/dashboard/consultee/${consulteeId}/messages`,
       "Messages fetch failed",
-    ).catch(() => []),
+    ).catch((): Record<string, unknown>[] => []),
 };
 
 // Admin fetchers
@@ -285,6 +288,15 @@ export function createConsulteeQueries(consulteeId: string) {
       queryKey: ["consultee-messages", consulteeId] as const,
       queryFn: () => consulteeFetchers.messages(consulteeId),
       staleTime: STALE_TIMES.SHORT,
+      gcTime: GC_TIME,
+      retry: 2,
+    },
+
+    // Settings (uses same endpoint as profile)
+    settings: {
+      queryKey: ["consultee-settings", consulteeId] as const,
+      queryFn: () => consulteeFetchers.profile(consulteeId),
+      staleTime: STALE_TIMES.LONG,
       gcTime: GC_TIME,
       retry: 2,
     },

@@ -38,7 +38,7 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
-import { useCurrency, SUPPORTED_CURRENCIES } from "@/lib/hooks/useCurrency";
+import { useCurrency, SUPPORTED_CURRENCIES } from "@/hooks/useCurrency";
 import { useAnnouncementBar } from "@/providers/AnnouncementBarProvider";
 import familiariseLogoTransparent from "@/public/avif/static/assets/logos/images/logos/Familiarise-logos_transparent.avif";
 import familiariseLogoWhite from "@/public/avif/static/assets/logos/images/logos/Familiarise-logos_white.avif";

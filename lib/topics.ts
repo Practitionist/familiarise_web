@@ -84,8 +84,7 @@ export function transformTopicsToStrings<
  * Transform nested plan with topics (e.g., classPlan, webinarPlan)
  * Use planKey as string to handle dynamic property access
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function transformNestedPlanTopics<T extends Record<string, any>>(
+export function transformNestedPlanTopics<T extends Record<string, unknown>>(
   data: T,
   planKey: string,
 ): T {
@@ -106,8 +105,7 @@ export function transformNestedPlanTopics<T extends Record<string, any>>(
 /**
  * Transform an array of items with nested plan topics
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function transformArrayWithPlanTopics<T extends Record<string, any>>(
+export function transformArrayWithPlanTopics<T extends Record<string, unknown>>(
   items: T[],
   planKey: string,
 ): T[] {

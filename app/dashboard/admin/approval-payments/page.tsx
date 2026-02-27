@@ -9,7 +9,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Clock, AlertCircle, ExternalLink, RefreshCcw } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { useState } from "react";
-import { formatCurrencyAmount } from "@/lib/utils";
+import { formatCurrencyAmount } from "@/utils/formatting";
 
 interface ApprovalPayment {
   id: string;

@@ -1,40 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { DayOfWeek } from "@prisma/client";
-import { TConsultantProfile } from "@/types/consultant";
+import type { TConsultantDetailData } from "@/types/consultant";
 import { TSlotTiming } from "@/types/slots";
 import { WeeklyAvailability } from "./WeeklyAvailability";
 import { CustomAvailability } from "./CustomAvailability";
 import { addDays, startOfDay, endOfDay } from "date-fns";
 import { toZonedTime, format as formatTz } from "date-fns-tz";
+import type { ProcessedSlot } from "../types";
 
 interface ConsultantAvailabilityProps {
-  consultantDetails: TConsultantProfile;
+  consultantDetails: TConsultantDetailData;
   timezone: string;
-}
-
-// Better typing for slot types
-type WeeklySlotData = {
-  id: string;
-  slotStartTimeInUTC: string;
-  slotEndTimeInUTC: string;
-};
-
-type CustomSlotData = {
-  id: string;
-  slotStartTimeInUTC: string;
-  slotEndTimeInUTC: string;
-};
-
-interface ProcessedSlot {
-  id: string;
-  localStartTime: string;
-  localEndTime: string;
-  originalSlot: WeeklySlotData | CustomSlotData;
-  isAllocated?: boolean;
-  bookingStatus?: "available" | "partially-booked" | "fully-booked";
-  slotStartTimeInUTC?: string;
-  slotEndTimeInUTC?: string;
-  type?: "WEEKLY" | "CUSTOM";
 }
 
 type ProcessedSlotsByDay = Record<DayOfWeek, ProcessedSlot[]>;

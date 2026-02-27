@@ -4,7 +4,7 @@ import { useParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { PlannerSkeleton } from "@/components/dashboard/DashboardSkeletons";
-import { createConsultantQueries } from "@/hooks/useCosultantPrefetchDashboard";
+import { createConsultantQueries } from "@/lib/dashboard-queries";
 import { EventManagementDashboard } from "./components/EventManagementDashboard";
 
 export default function PlannerPage() {
