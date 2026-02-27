@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/select";
 import { FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import iso6391 from "iso-639-1";
-import { cn } from "@/lib/utils";
+import { cn } from "@/utils/tailwind";
 
 const DEFAULT_LEVEL_OPTIONS = [
   "Beginner",

@@ -5,10 +5,10 @@ import { Badge } from "@/components/ui/badge";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { User, Star, StarHalf, ArrowRight, Award } from "lucide-react";
-import { TConsultantProfile } from "@/types/consultant";
+import type { IConsultantCardData } from "@/types/consultant";
 
 interface FeaturedExpertsProps {
-  experts: TConsultantProfile[];
+  experts: IConsultantCardData[];
   isLoading: boolean;
 }
 
@@ -129,7 +129,7 @@ export function FeaturedExperts({ experts, isLoading }: FeaturedExpertsProps) {
                       {/* Headline */}
                       <div className="text-center flex-1">
                         <p className="text-sm text-zinc-600 font-medium line-clamp-1 mb-1">
-                          {expert.headline || expert.domain.name}
+                          {expert.headline || expert.domain?.name}
                         </p>
                         <p className="text-xs text-zinc-500">
                           {expert.experience} experience

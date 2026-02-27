@@ -1,6 +1,8 @@
 import prisma from "@/lib/prisma";
 import { Prisma, PlanEmailSupport } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
+import { fetchClassPlanDetail } from "@/lib/data/plan-details";
+import { apiError } from "@/lib/errors";
 
 export async function GET(
   request: NextRequest,
@@ -8,84 +10,27 @@ export async function GET(
 ) {
   try {
     const { classPlanId } = await params;
-    const classPlan = await prisma.classPlan.findUniqueOrThrow({
-      where: { id: classPlanId },
-      include: {
-        consultantProfile: {
-          include: {
-            user: {
-              select: {
-                id: true,
-                name: true,
-                email: true,
-                image: true,
-              },
-            },
-            domain: true,
-            subDomains: true,
-            tags: true,
-          },
-        },
-        classes: {
-          include: {
-            appointments: {
-              include: {
-                slotsOfAppointment: {
-                  include: {
-                    user: {
-                      select: { id: true },
-                    },
-                  },
-                },
-              },
-            },
-            waitlist: {
-              select: {
-                userId: true,
-                position: true,
-                status: true,
-              },
-            },
-          },
-        },
-        topics: true,
-        classContents: true,
-        collaborators: {
-          where: { status: "ACCEPTED" },
-          include: {
-            consultantProfile: {
-              include: {
-                user: {
-                  select: { id: true, name: true, image: true },
-                },
-              },
-            },
-          },
-        },
-      },
-    });
+    const classPlan = await fetchClassPlanDetail(classPlanId);
 
-    const enhancedClassPlan = {
-      ...classPlan,
-      type: "class" as const,
-      imageUrl: "/images/placeholder-class.png", // Using placeholder as no specific image field exists on ClassPlan model
-    };
-    return NextResponse.json({ data: enhancedClassPlan }, { status: 200 });
-  } catch (error) {
-    if (
-      error instanceof Prisma.PrismaClientKnownRequestError &&
-      error.code === "P2025"
-    ) {
+    if (!classPlan) {
       return NextResponse.json(
         { error: "Class plan not found" },
         { status: 404 },
       );
     }
-    console.error("Error fetching class plan:", error);
+
     return NextResponse.json(
-      { error: "An error occurred while fetching the class plan" },
-      { status: 500 },
+      { data: classPlan },
+      {
+        status: 200,
+        headers: {
+          "Cache-Control":
+            "public, s-maxage=60, stale-while-revalidate=300",
+        },
+      },
     );
+  } catch (error) {
+    return apiError({ tag: "[ClassPlan.GET]", error });
   }
 }
 
@@ -208,11 +153,7 @@ export async function PUT(
         { status: 404 },
       );
     }
-    console.error("Error updating class plan:", error);
-    return NextResponse.json(
-      { error: "An error occurred while updating the class plan" },
-      { status: 500 },
-    );
+    return apiError({ tag: "[ClassPlan.PUT]", error });
   }
 }
 
@@ -287,10 +228,6 @@ export async function DELETE(
         { status: 404 },
       );
     }
-    console.error("Error deleting class plan:", error);
-    return NextResponse.json(
-      { error: "An error occurred while deleting the class plan" },
-      { status: 500 },
-    );
+    return apiError({ tag: "[ClassPlan.DELETE]", error });
   }
 }

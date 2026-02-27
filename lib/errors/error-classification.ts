@@ -5,7 +5,7 @@
  * from *infrastructure failures* (unexpected, full stack trace for debugging).
  *
  * Usage:
- *   import { classifyError, logClassifiedError } from "@/lib/payments/error-classification";
+ *   import { classifyError, logClassifiedError } from "@/lib/errors/error-classification";
  *
  *   const classified = classifyError(error);
  *   logClassifiedError("Checkout", classified, error);

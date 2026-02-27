@@ -1,6 +1,6 @@
 "use client";
 
-import { cn } from "@/lib/utils";
+import { cn } from "@/utils/tailwind";
 import { LucideIcon } from "lucide-react";
 
 interface FormSectionProps {

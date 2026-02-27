@@ -3,122 +3,18 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef } from "react";
 
+import {
+  createConsulteeQueries,
+  createUserQueries,
+  batchPrefetch,
+  schedulePrefetch,
+} from "@/lib/dashboard-queries";
+
+
 interface PrefetchConsulteeDashboardOptions {
   consulteeId?: string;
   enableAggressivePrefetch?: boolean;
 }
-
-// Individual fetcher functions - can be imported separately
-export const fetchConsulteeEvents = async (consulteeId: string) => {
-  const response = await fetch(
-    `/api/dashboard/consultee/${consulteeId}/events`,
-  );
-  if (!response.ok)
-    throw new Error(`Events fetch failed: ${response.statusText}`);
-  const data = await response.json();
-  return data.data;
-};
-
-export const fetchConsulteeProfile = async (consulteeId: string) => {
-  const response = await fetch(`/api/user/consultees/${consulteeId}`);
-  if (!response.ok)
-    throw new Error(`Consultee profile fetch failed: ${response.statusText}`);
-  const data = await response.json();
-  return data.data;
-};
-
-export const fetchFeedbackData = async () => {
-  const response = await fetch(`/api/user/feedbacks`);
-  if (!response.ok)
-    throw new Error(`Feedback fetch failed: ${response.statusText}`);
-  return response.json();
-};
-
-export const fetchSupportTickets = async () => {
-  const response = await fetch(`/api/user/support-tickets`);
-  if (!response.ok)
-    throw new Error(`Support tickets fetch failed: ${response.statusText}`);
-  return response.json();
-};
-
-export const fetchConsulteeMessages = async (consulteeId: string) => {
-  // This might need to be updated based on your actual messages API
-  const response = await fetch(
-    `/api/dashboard/consultee/${consulteeId}/messages`,
-  );
-  if (!response.ok) {
-    // If messages API doesn't exist yet, return empty array
-    if (response.status === 404) return [];
-    throw new Error(`Messages fetch failed: ${response.statusText}`);
-  }
-  const data = await response.json();
-  return data.data || [];
-};
-
-export const fetchUserDetails = async (userId: string) => {
-  const response = await fetch(`/api/user/${userId}`);
-  if (!response.ok)
-    throw new Error(`User details fetch failed: ${response.statusText}`);
-  const data = await response.json();
-  return data.data;
-};
-
-// Query factory functions for consultee dashboard - exported for reuse
-export const createConsulteeQueries = (consulteeId: string) => ({
-  events: {
-    queryKey: ["consultee-events", consulteeId],
-    queryFn: () => fetchConsulteeEvents(consulteeId),
-    staleTime: 2 * 60 * 1000,
-    gcTime: 10 * 60 * 1000,
-    retry: 2,
-  },
-  profile: {
-    queryKey: ["consultee-profile", consulteeId],
-    queryFn: () => fetchConsulteeProfile(consulteeId),
-    staleTime: 5 * 60 * 1000,
-    gcTime: 10 * 60 * 1000,
-    retry: 2,
-  },
-  feedback: {
-    queryKey: ["consultee-feedback"],
-    queryFn: () => fetchFeedbackData(),
-    staleTime: 2 * 60 * 1000,
-    gcTime: 10 * 60 * 1000,
-    retry: 2,
-  },
-  supportTickets: {
-    queryKey: ["consultee-support-tickets"],
-    queryFn: () => fetchSupportTickets(),
-    staleTime: 2 * 60 * 1000,
-    gcTime: 10 * 60 * 1000,
-    retry: 2,
-  },
-  messages: {
-    queryKey: ["consultee-messages", consulteeId],
-    queryFn: () => fetchConsulteeMessages(consulteeId),
-    staleTime: 1 * 60 * 1000,
-    gcTime: 10 * 60 * 1000,
-    retry: 2,
-  },
-  settings: {
-    queryKey: ["consultee-settings", consulteeId],
-    queryFn: () => fetchConsulteeProfile(consulteeId), // settings uses same endpoint as profile
-    staleTime: 5 * 60 * 1000,
-    gcTime: 10 * 60 * 1000,
-    retry: 2,
-  },
-});
-
-// User-level queries (shared across roles) - exported for reuse
-export const createUserQueries = (userId: string) => ({
-  userDetails: {
-    queryKey: ["user-details", userId],
-    queryFn: () => fetchUserDetails(userId),
-    staleTime: 5 * 60 * 1000,
-    gcTime: 10 * 60 * 1000,
-    retry: 2,
-  },
-});
 
 export function useConsulteePrefetchDashboard({
   consulteeId,
@@ -172,7 +68,7 @@ export function useConsulteePrefetchDashboard({
       const queries = createUserQueries(userId);
 
       try {
-        await safePrefetch([queries.userDetails], "high");
+        await safePrefetch([queries.details], "high");
       } catch (error) {
         console.warn("User data prefetching failed:", error);
       }
@@ -263,18 +159,9 @@ export function useConsulteePrefetchDashboard({
   useEffect(() => {
     if (!enableAggressivePrefetch) return;
 
-    // Use requestIdleCallback for non-blocking prefetch
-    const schedulePretech = (callback: () => void) => {
-      if (typeof window !== "undefined" && "requestIdleCallback" in window) {
-        window.requestIdleCallback(callback, { timeout: 2000 });
-      } else {
-        setTimeout(callback, 100);
-      }
-    };
-
     // Prefetch critical data immediately when component mounts
     if (consulteeId) {
-      schedulePretech(() => prefetchAllConsulteeData());
+      schedulePrefetch(() => prefetchAllConsulteeData());
     }
   }, [consulteeId, enableAggressivePrefetch, prefetchAllConsulteeData]);
 

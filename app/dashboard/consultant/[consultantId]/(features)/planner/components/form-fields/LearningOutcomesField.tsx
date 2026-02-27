@@ -11,7 +11,7 @@ import {
   FormDescription,
 } from "@/components/ui/form";
 import { Plus, Trash2, GripVertical } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn } from "@/utils/tailwind";
 
 interface LearningOutcomesFieldProps {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

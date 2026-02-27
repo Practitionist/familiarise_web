@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { User, ConsultationPlan, SubscriptionPlan } from "@prisma/client";
-import { TConsultantProfile } from "@/types/consultant";
+import type { TConsultantDetailData } from "@/types/consultant";
 import { TSlotTiming } from "@/types/slots";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import ConsultationPricingToggle from "./ConsultationPricingToggle";
@@ -29,7 +29,7 @@ const getSubscriptionDurationLabel = (durationInMonths: number): string => {
 
 interface ExpertPricingProps {
   userDetails: User;
-  consultantDetails: TConsultantProfile;
+  consultantDetails: TConsultantDetailData;
   handleConsultationBooking: () => Promise<void>;
   handleSubscriptionBooking: (
     option: PricingOption,

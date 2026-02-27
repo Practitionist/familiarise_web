@@ -8,7 +8,7 @@ import prisma from "@/lib/prisma";
 import {
   classifyError,
   logClassifiedError,
-} from "@/lib/payments/error-classification";
+} from "@/lib/errors/error-classification";
 import { Prisma } from "@prisma/client";
 import crypto from "crypto";
 import { NextRequest, NextResponse } from "next/server";

@@ -8,9 +8,9 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import type { TConsultantProfile } from "@/types/consultant";
+import type { IConsultantCardData } from "@/types/consultant";
 
-function ExpertCard({ expert }: { expert: TConsultantProfile }) {
+function ExpertCard({ expert }: { expert: IConsultantCardData }) {
   return (
     <Link
       href={`/explore/experts/${expert.id}`}
@@ -33,7 +33,7 @@ function ExpertCard({ expert }: { expert: TConsultantProfile }) {
                 {expert.user.name}
               </h4>
               <p className="text-sm text-zinc-500 truncate">
-                {expert.headline || expert.domain.name}
+                {expert.headline || expert.domain?.name}
               </p>
             </div>
           </div>
@@ -75,7 +75,7 @@ function ExpertLoadingSkeleton() {
 }
 
 interface FeaturedExpertsSectionProps {
-  experts: TConsultantProfile[];
+  experts: IConsultantCardData[];
   isLoading: boolean;
 }
 

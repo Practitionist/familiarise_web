@@ -3,7 +3,7 @@ import { handleCheckout } from "@/lib/payments/operations/checkout";
 import {
   classifyError,
   logClassifiedError,
-} from "@/lib/payments/error-classification";
+} from "@/lib/errors/error-classification";
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth-server";
 

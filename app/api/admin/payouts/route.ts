@@ -8,7 +8,7 @@ import prisma from "@/lib/prisma";
 import {
   classifyError,
   logClassifiedError,
-} from "@/lib/payments/error-classification";
+} from "@/lib/errors/error-classification";
 import { PayoutStatus, Prisma } from "@prisma/client";
 import { getPayoutStats, createPayoutBatch } from "@/lib/payments/payouts";
 

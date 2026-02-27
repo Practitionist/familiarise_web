@@ -4,7 +4,7 @@ import { use } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { RequestsSkeleton } from "@/components/dashboard/DashboardSkeletons";
-import { createConsultantQueries } from "@/hooks/useCosultantPrefetchDashboard";
+import { createConsultantQueries } from "@/lib/dashboard-queries";
 import { RequestSlotAllocationTab } from "./RequestSlotAllocationTab";
 
 export default function RequestsPage({

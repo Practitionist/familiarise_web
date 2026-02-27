@@ -48,7 +48,7 @@ import {
   createRazorpayCheckoutHandlers,
 } from "../../utils";
 import { calculatePricing, formatPercentage } from "../../math";
-import { useCurrency } from "@/lib/hooks/useCurrency";
+import { useCurrency } from "@/hooks/useCurrency";
 
 type PageProps = {
   params: Promise<{ planId: string }>;

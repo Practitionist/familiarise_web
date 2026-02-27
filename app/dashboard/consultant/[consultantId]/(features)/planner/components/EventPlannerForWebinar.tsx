@@ -49,6 +49,7 @@ import { PlannerService } from "../services/planner";
 import { WebinarEvent, WebinarPlannerProps } from "../types/event";
 import { PlanMaterialsUpload } from "./PlanMaterialsUpload";
 import { CollaboratorsTab } from "@/components/collaborators/CollaboratorsTab";
+import { PlanImageUploader } from "@/components/plans/PlanImageUploader";
 
 // Form-specific schema - all required fields explicitly defined
 const WebinarFormSchema = z.object({
@@ -285,6 +286,7 @@ export function EventPlannerForWebinar({
           topics: formData.topics as any,
           consultantProfileId: consultantId,
           consultantProfile: null,
+          imageUrl: initialData?.webinarPlan?.imageUrl ?? null,
           createdAt: initialData?.webinarPlan?.createdAt ?? now,
           updatedAt: now,
         },
@@ -615,6 +617,21 @@ export function EventPlannerForWebinar({
                   description="What attendees will learn from this webinar"
                 />
               </FormSection>
+
+              {/* Cover Image Section - Only show when editing an existing plan */}
+              {initialData?.webinarPlan?.id && (
+                <FormSection
+                  title="Cover Image"
+                  description="Upload a cover image for your webinar"
+                  icon={Upload}
+                >
+                  <PlanImageUploader
+                    planType="webinar-plans"
+                    planId={initialData.webinarPlan.id}
+                    currentImageUrl={initialData.webinarPlan.imageUrl}
+                  />
+                </FormSection>
+              )}
 
               {/* Materials Section - Only show when editing an existing plan */}
               {initialData?.id && (

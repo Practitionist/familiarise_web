@@ -19,7 +19,7 @@ import {
   PaymentStatus,
   AppointmentsType,
 } from "@prisma/client";
-import { formatCurrencyAmount } from "@/lib/utils";
+import { formatCurrencyAmount } from "@/utils/formatting";
 import type { PaymentListResponse, Payment } from "@/types/payments";
 
 // Fetch payments with filters

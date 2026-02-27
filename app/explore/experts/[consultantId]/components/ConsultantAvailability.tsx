@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { DayOfWeek } from "@prisma/client";
-import { TConsultantProfile } from "@/types/consultant";
+import type { TConsultantDetailData } from "@/types/consultant";
 import { TSlotTiming } from "@/types/slots";
 import { WeeklyAvailability } from "./WeeklyAvailability";
 import { CustomAvailability } from "./CustomAvailability";
@@ -8,7 +8,7 @@ import { addDays, startOfDay, endOfDay } from "date-fns";
 import { toZonedTime, format as formatTz } from "date-fns-tz";
 
 interface ConsultantAvailabilityProps {
-  consultantDetails: TConsultantProfile;
+  consultantDetails: TConsultantDetailData;
   timezone: string;
 }
 

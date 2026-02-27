@@ -1,5 +1,6 @@
 "use client";
 
+import "@stream-io/video-react-sdk/dist/css/styles.css";
 import { getEffectiveUserId } from "@/utils/auth";
 import { Skeleton } from "@/components/ui/skeleton";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";

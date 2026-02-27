@@ -23,7 +23,7 @@ import {
   handleUnifiedCheckout,
 } from "../../utils";
 import { calculatePricing, formatPercentage } from "../../math";
-import { useCurrency } from "@/lib/hooks/useCurrency";
+import { useCurrency } from "@/hooks/useCurrency";
 import type { AppliedDiscount } from "@/types/checkout";
 
 import type {

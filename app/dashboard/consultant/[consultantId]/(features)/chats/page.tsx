@@ -4,7 +4,7 @@ import { use } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { ChatSkeleton } from "@/components/dashboard/DashboardSkeletons";
-import { createConsultantQueries } from "@/hooks/useCosultantPrefetchDashboard";
+import { createConsultantQueries } from "@/lib/dashboard-queries";
 import { ChatsTab } from "./ChatsTab";
 
 export default function ChatsPage({

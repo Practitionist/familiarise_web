@@ -3,7 +3,7 @@
 import React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { createConsulteeQueries } from "@/hooks/useConsulteePrefetchDashboard";
+import { createConsulteeQueries } from "@/lib/dashboard-queries";
 import { Overview } from "./Overview";
 import { Calendar } from "./Calendar";
 import { BookingHistoryTab } from "../history/BookingHistoryTab";

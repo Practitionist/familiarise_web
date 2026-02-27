@@ -2,11 +2,11 @@
 
 import { Button } from "@/components/ui/button";
 import {
-  ClassWithPlan,
-  ConsultationWithPlan,
-  SubscriptionWithPlan,
-  WebinarWithPlan,
-  TrialWithPlan,
+  TClassWithPlan,
+  TConsultationWithPlan,
+  TSubscriptionWithPlan,
+  TWebinarWithPlan,
+  TTrialWithPlan,
 } from "@/hooks/useEvents";
 import { EventWithType } from "../../utils/getMetadata";
 import {
@@ -29,11 +29,11 @@ import { motion } from "framer-motion";
 import type { BookingStatus } from "@/components/ui/waitlist-status-badge";
 
 interface OverviewProps {
-  consultations: ConsultationWithPlan[];
-  subscriptions: SubscriptionWithPlan[];
-  webinars: WebinarWithPlan[];
-  classes: ClassWithPlan[];
-  trials: TrialWithPlan[];
+  consultations: TConsultationWithPlan[];
+  subscriptions: TSubscriptionWithPlan[];
+  webinars: TWebinarWithPlan[];
+  classes: TClassWithPlan[];
+  trials: TTrialWithPlan[];
 }
 
 interface CollaboratorInfo {

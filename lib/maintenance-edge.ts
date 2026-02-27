@@ -41,6 +41,12 @@ const OFF_STATE: MaintenanceState = {
   bypassSecret: null,
 };
 
+// In-memory cache to avoid Redis round-trips on every request.
+// Edge isolates share module scope within an instance lifetime.
+let cachedState: MaintenanceState | null = null;
+let cacheTimestamp = 0;
+const CACHE_TTL_MS = 30_000; // 30 seconds
+
 /**
  * Direct Upstash REST call — edge-safe, no SDK needed.
  */
@@ -65,13 +71,22 @@ async function redisGet(key: string): Promise<string | null> {
  * Fail-open: returns OFF if Redis is unreachable or not configured.
  */
 export async function getMaintenanceState(): Promise<MaintenanceState> {
+  const now = Date.now();
+  if (cachedState && now - cacheTimestamp < CACHE_TTL_MS) {
+    return cachedState;
+  }
+
   try {
     const [phase, configRaw] = await Promise.all([
       redisGet(REDIS_KEYS.PHASE),
       redisGet(REDIS_KEYS.CONFIG),
     ]);
 
-    if (!phase || phase === "OFF") return OFF_STATE;
+    if (!phase || phase === "OFF") {
+      cachedState = OFF_STATE;
+      cacheTimestamp = now;
+      return OFF_STATE;
+    }
 
     let config: Partial<MaintenanceState> = {};
     if (configRaw) {
@@ -82,14 +97,19 @@ export async function getMaintenanceState(): Promise<MaintenanceState> {
       }
     }
 
-    return {
+    const state: MaintenanceState = {
       phase: phase as MaintenanceState["phase"],
       reason: config.reason ?? null,
       estimatedEnd: config.estimatedEnd ?? null,
       bypassSecret: config.bypassSecret ?? null,
     };
+    cachedState = state;
+    cacheTimestamp = now;
+    return state;
   } catch {
-    // Fail-open: site stays up if Redis is down
+    // Fail-open: cache OFF to avoid repeated failing calls
+    cachedState = OFF_STATE;
+    cacheTimestamp = now;
     return OFF_STATE;
   }
 }

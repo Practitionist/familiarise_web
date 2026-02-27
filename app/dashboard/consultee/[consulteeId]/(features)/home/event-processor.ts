@@ -6,11 +6,13 @@
  */
 
 import type {
-  TConsulteeConsultation,
-  TConsulteeSubscription,
+  TConsultationWithPlan,
+  TSubscriptionWithPlan,
+} from "@/hooks/useEvents";
+import type {
+  TConsulteeEventsResponse,
   TConsulteeWebinar,
   TConsulteeClass,
-  TConsulteeEventsResponse,
 } from "@/types/consultee-events";
 import type { MeetingAppointment, MeetingSlot } from "@/lib/meeting";
 import type { BookingStatus } from "@/components/ui/waitlist-status-badge";
@@ -78,7 +80,7 @@ function findNextSlot(slots: SlotWithContext[]): SlotWithContext | null {
  * Process a consultation into a ProcessedEvent
  */
 export function processConsultation(
-  consultation: TConsulteeConsultation,
+  consultation: TConsultationWithPlan,
 ): ProcessedEvent | null {
   const slots = consultation.appointment?.slotsOfAppointment;
   if (!slots || slots.length === 0) return null;
@@ -143,7 +145,7 @@ export function processConsultation(
  * Process a subscription into a ProcessedEvent
  */
 export function processSubscription(
-  subscription: TConsulteeSubscription,
+  subscription: TSubscriptionWithPlan,
 ): ProcessedEvent | null {
   const allSlots: SlotWithContext[] = [];
 

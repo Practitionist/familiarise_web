@@ -2,7 +2,14 @@
 
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef } from "react";
-import type { TConsultantDashboardResponse } from "@/types/consultant-events";
+
+import {
+  createConsultantQueries,
+  createConsulteeQueries,
+  batchPrefetch,
+  schedulePrefetch,
+} from "@/lib/dashboard-queries";
+
 
 interface PrefetchDashboardOptions {
   consultantId?: string;
@@ -10,144 +17,21 @@ interface PrefetchDashboardOptions {
   enableAggressivePrefetch?: boolean;
 }
 
-// Individual fetcher functions - can be imported separately
-export const fetchConsultantDashboard = async (
-  consultantId: string,
-): Promise<TConsultantDashboardResponse> => {
-  const response = await fetch(`/api/dashboard/consultant/${consultantId}`);
-  if (!response.ok)
-    throw new Error(`Dashboard fetch failed: ${response.statusText}`);
-  const data = await response.json();
-  return data.data;
-};
-
-export const fetchConsultantAppointments = async (consultantId: string) => {
-  const response = await fetch(
-    `/api/slots/appointments?consultantProfileId=${consultantId}&consultationStatus=APPROVED&subscriptionStatus=APPROVED&webinarStatus=APPROVED&classStatus=APPROVED`,
-  );
-  if (!response.ok)
-    throw new Error(`Appointments fetch failed: ${response.statusText}`);
-  const data = await response.json();
-  return data.data;
-};
-
-export const fetchConsultantDetails = async (consultantId: string) => {
-  const response = await fetch(`/api/user/consultants/${consultantId}`);
-  if (!response.ok)
-    throw new Error(`Consultant details fetch failed: ${response.statusText}`);
-  const data = await response.json();
-  return data.data;
-};
-
-export const fetchConsultantRequests = async (consultantId: string) => {
-  const response = await fetch(
-    `/api/dashboard/consultant/${consultantId}/requests`,
-  );
-  if (!response.ok)
-    throw new Error(`Requests fetch failed: ${response.statusText}`);
-  const data = await response.json();
-  return data.data;
-};
-
-export const fetchConsultantPlanner = async (consultantId: string) => {
-  const response = await fetch(
-    `/api/dashboard/consultant/${consultantId}/planner`,
-  );
-  if (!response.ok)
-    throw new Error(`Planner fetch failed: ${response.statusText}`);
-  const data = await response.json();
-  return data.data;
-};
-
+// FAQ fetcher — specific to consultant help page, not a dashboard query
 export const fetchHelpFAQs = async () => {
   const { faqs } =
     await import("../app/dashboard/consultant/[consultantId]/(features)/help/questions");
   return faqs;
 };
 
-// Query factory functions for better organization - exported for reuse
-export const createConsultantQueries = (consultantId: string) => ({
-  dashboard: {
-    queryKey: ["consultant-dashboard", consultantId],
-    queryFn: () => fetchConsultantDashboard(consultantId),
-    staleTime: 2 * 60 * 1000,
-    gcTime: 10 * 60 * 1000,
-    retry: 2,
-  },
-  appointments: {
-    queryKey: ["appointments", consultantId],
-    queryFn: () => fetchConsultantAppointments(consultantId),
-    staleTime: 2 * 60 * 1000,
-    gcTime: 10 * 60 * 1000,
-    retry: 2,
-  },
-  details: {
-    queryKey: ["consultant-details", consultantId],
-    queryFn: () => fetchConsultantDetails(consultantId),
-    staleTime: 5 * 60 * 1000,
-    gcTime: 10 * 60 * 1000,
-    retry: 2,
-  },
-  requests: {
-    queryKey: ["requests", consultantId],
-    queryFn: () => fetchConsultantRequests(consultantId),
-    staleTime: 1 * 60 * 1000,
-    gcTime: 10 * 60 * 1000,
-    retry: 2,
-  },
-  planner: {
-    queryKey: ["planner", consultantId],
-    queryFn: () => fetchConsultantPlanner(consultantId),
-    staleTime: 2 * 60 * 1000,
-    gcTime: 10 * 60 * 1000,
-    retry: 2,
-  },
-});
-
-export const createConsulteeQueries = (consulteeId: string) => ({
-  events: {
-    queryKey: ["consultee-events", consulteeId],
-    queryFn: async () => {
-      const response = await fetch(
-        `/api/dashboard/consultee/${consulteeId}/events`,
-      );
-      if (!response.ok)
-        throw new Error(`Events fetch failed: ${response.statusText}`);
-      const data = await response.json();
-      return data.data;
-    },
-    staleTime: 2 * 60 * 1000,
-  },
-  feedback: {
-    queryKey: ["feedback"],
-    queryFn: async () => {
-      const response = await fetch(`/api/user/feedbacks`);
-      if (!response.ok)
-        throw new Error(`Feedback fetch failed: ${response.statusText}`);
-      return response.json();
-    },
-    staleTime: 2 * 60 * 1000,
-  },
-  supportTickets: {
-    queryKey: ["support-tickets"],
-    queryFn: async () => {
-      const response = await fetch(`/api/user/support-tickets`);
-      if (!response.ok)
-        throw new Error(`Support tickets fetch failed: ${response.statusText}`);
-      return response.json();
-    },
-    staleTime: 2 * 60 * 1000,
-  },
-});
-
-// Static queries (FAQ, help, etc.) - exported for reuse
+// Static queries (FAQ, help, etc.) — exported for reuse
 export const staticQueries = {
   help: {
     queryKey: ["help-faqs"],
     queryFn: fetchHelpFAQs,
-    staleTime: Infinity, // Static data never becomes stale
+    staleTime: Infinity,
     gcTime: Infinity,
-    retry: false,
+    retry: false as const,
   },
 };
 
@@ -305,21 +189,12 @@ export function usePrefetchDashboard({
   useEffect(() => {
     if (!enableAggressivePrefetch) return;
 
-    // Use requestIdleCallback for non-blocking prefetch
-    const schedulePretech = (callback: () => void) => {
-      if (typeof window !== "undefined" && "requestIdleCallback" in window) {
-        window.requestIdleCallback(callback, { timeout: 2000 });
-      } else {
-        setTimeout(callback, 100);
-      }
-    };
-
     // Prefetch critical data immediately when component mounts
     if (consultantId) {
-      schedulePretech(() => prefetchAllConsultantData());
+      schedulePrefetch(() => prefetchAllConsultantData());
     }
     if (consulteeId) {
-      schedulePretech(() => prefetchAllConsulteeData());
+      schedulePrefetch(() => prefetchAllConsulteeData());
     }
   }, [
     consultantId,

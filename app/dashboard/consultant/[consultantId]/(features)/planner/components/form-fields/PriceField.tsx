@@ -15,7 +15,7 @@ import {
   FormMessage,
   FormDescription,
 } from "@/components/ui/form";
-import { cn } from "@/lib/utils";
+import { cn } from "@/utils/tailwind";
 
 const DEFAULT_CURRENCIES = ["INR", "USD", "EUR", "GBP"];
 

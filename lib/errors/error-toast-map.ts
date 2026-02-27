@@ -5,7 +5,7 @@
  * to user-friendly toast titles and descriptions.
  *
  * Usage:
- *   import { getErrorToast } from "@/lib/payments/error-toast-map";
+ *   import { getErrorToast } from "@/lib/errors";
  *
  *   const { title, description } = getErrorToast(errorType, errorMessage);
  */

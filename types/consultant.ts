@@ -34,7 +34,73 @@ export type TConsultantProfile = Prisma.ConsultantProfileGetPayload<{
   };
 }>;
 
-// By using Prisma.ConsultantProfileGetPayload, we ensure that the type
-// exactly matches what Prisma will return when querying a ConsultantProfile
-// with these specific relations included. This helps prevent type mismatches
-// and provides better autocomplete and type checking in our application.
+/**
+ * Data shape for consultant cards in public listings.
+ * Used by FeaturedExperts, ExpertRow, ExpertMiniCard, ConsultantCard,
+ * and FeaturedExpertsSection. Works with both server (lib/data/) and
+ * client (useConsultants hook) data sources via structural typing.
+ */
+export interface IConsultantCardData {
+  id: string;
+  rating: number;
+  headline: string | null;
+  experience: number | null;
+  description: string | null;
+  createdAt: Date;
+  user: {
+    id: string;
+    name: string;
+    image: string | null;
+    profileDisplayImage?: string | null;
+    email?: string;
+  };
+  domain: { id: string; name: string } | null;
+  subDomains: { id: string; name: string }[];
+  tags: { id: string; name: string }[];
+  reviews?: { rating: number }[];
+  subscriptionPlans?: Array<{
+    id: string;
+    title: string;
+    price: number;
+    priceCurrency: string;
+    durationInMonths: number;
+    callsPerWeek: number | null;
+    emailSupport: string | null;
+    totalSessions: number | null;
+  }>;
+}
+
+/**
+ * Data shape for the expert detail page.
+ * Includes plans and slots for booking flow, but NOT reviews
+ * (reviews are fetched separately and passed as a distinct prop).
+ */
+export type TConsultantDetailData = Prisma.ConsultantProfileGetPayload<{
+  include: {
+    user: {
+      select: {
+        id: true;
+        name: true;
+        image: true;
+        profileDisplayImage: true;
+        bio: true;
+        city: true;
+        country: true;
+        linkedinUrl: true;
+        timezone: true;
+        workExperiences: true;
+        education: true;
+        certifications: true;
+      };
+    };
+    domain: true;
+    subDomains: true;
+    tags: true;
+    slotsOfAvailabilityWeekly: true;
+    slotsOfAvailabilityCustom: true;
+    consultationPlans: true;
+    subscriptionPlans: { include: { subscriptionContents: true } };
+    webinarPlans: true;
+    classPlans: true;
+  };
+}>;

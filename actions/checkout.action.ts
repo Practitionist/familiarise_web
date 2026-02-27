@@ -5,7 +5,7 @@ import { CheckoutInput, checkoutSchema } from "@/schemas/checkout";
 import {
   classifyError,
   logClassifiedError,
-} from "@/lib/payments/error-classification";
+} from "@/lib/errors/error-classification";
 import { getSession } from "@/lib/auth-server";
 
 export async function checkoutAction(

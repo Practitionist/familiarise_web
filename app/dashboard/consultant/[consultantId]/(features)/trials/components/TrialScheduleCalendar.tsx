@@ -10,7 +10,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { format as formatTz } from "date-fns-tz";
 import { Calendar, Clock, Loader2, Check } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn } from "@/utils/tailwind";
 import { Badge } from "@/components/ui/badge";
 
 export interface SelectedSlot {

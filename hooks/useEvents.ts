@@ -8,24 +8,24 @@ import {
   TAppointment,
 } from "@/types/appointment";
 
-export type ConsultationWithPlan = TConsultation & {
+export type TConsultationWithPlan = TConsultation & {
   appointment: TAppointment | null;
 };
 
-export type SubscriptionWithPlan = TSubscription & {
+export type TSubscriptionWithPlan = TSubscription & {
   appointments: TAppointment[];
 };
 
-export type WebinarWithPlan = TWebinar & {
+export type TWebinarWithPlan = TWebinar & {
   appointment: TAppointment | null;
 };
 
-export type ClassWithPlan = TClass & {
+export type TClassWithPlan = TClass & {
   appointment: TAppointment[];
 };
 
 // Trial session type for consultee dashboard
-export type TrialWithPlan = {
+export type TTrialWithPlan = {
   id: string;
   status: string;
   notes: string | null;
@@ -50,31 +50,31 @@ export type TrialWithPlan = {
 
 // --- Internal types ---
 
-type EventQueryMode =
+type TEventQueryMode =
   | { type: "consultee"; profileId: string }
   | { type: "consultant"; profileId: string }
   | { type: "user"; userId: string };
 
-interface EventsResult {
-  consultations: ConsultationWithPlan[];
-  subscriptions: SubscriptionWithPlan[];
-  webinars: WebinarWithPlan[];
-  classes: ClassWithPlan[];
+interface IEventsResult {
+  consultations: TConsultationWithPlan[];
+  subscriptions: TSubscriptionWithPlan[];
+  webinars: TWebinarWithPlan[];
+  classes: TClassWithPlan[];
   isLoading: boolean;
   error: Error | null;
 }
 
 // --- Single internal implementation ---
 
-function useEventsInternal(mode: EventQueryMode): EventsResult {
-  const [consultations, setConsultations] = useState<ConsultationWithPlan[]>(
+function useEventsInternal(mode: TEventQueryMode): IEventsResult {
+  const [consultations, setConsultations] = useState<TConsultationWithPlan[]>(
     [],
   );
-  const [subscriptions, setSubscriptions] = useState<SubscriptionWithPlan[]>(
+  const [subscriptions, setSubscriptions] = useState<TSubscriptionWithPlan[]>(
     [],
   );
-  const [webinars, setWebinars] = useState<WebinarWithPlan[]>([]);
-  const [classes, setClasses] = useState<ClassWithPlan[]>([]);
+  const [webinars, setWebinars] = useState<TWebinarWithPlan[]>([]);
+  const [classes, setClasses] = useState<TClassWithPlan[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
   const { toast } = useToast();
