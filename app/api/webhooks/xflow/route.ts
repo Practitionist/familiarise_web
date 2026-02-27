@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
 import prisma from "@/lib/prisma";
 import { PaymentStatus, RequestStatus } from "@prisma/client";
+import { isDbHealthy } from "@/app/api/webhooks/utils";
 
 export async function POST(req: NextRequest) {
   try {
@@ -33,9 +34,7 @@ export async function POST(req: NextRequest) {
     }
 
     // DB health check — return 503 if DB is unreachable so XFlow retries
-    try {
-      await prisma.$queryRaw`SELECT 1`;
-    } catch {
+    if (!(await isDbHealthy())) {
       console.warn("[xflow webhook] DB unhealthy — returning 503 for retry");
       return NextResponse.json(
         { error: "Service temporarily unavailable" },
