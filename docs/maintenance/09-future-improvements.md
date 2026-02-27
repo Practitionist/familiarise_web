@@ -5,6 +5,8 @@ Recommended code changes to improve maintenance mode protection.
 > **Already implemented**: BetterStack incident management (auto-create on OFFLINE, auto-resolve on end) is complete. See [Architecture](./01-architecture.md#betterstack-integration) and [BetterStack Setup Guide](./00-betterstack-setup.md).
 >
 > **Sprint 1 completed (Feb 2026)**: Items 1, 2, 3, and new items A, B below are **fully implemented**. The Implementation Priority table at the bottom reflects the updated status.
+>
+> **Sprint 2 completed (Feb 2026)**: Items 4, 5, C are **fully implemented**. Only item 6 (Scheduled Maintenance) remains as a future improvement.
 
 ## 1. DEGRADED Write-Blocking
 
@@ -145,11 +147,11 @@ if (!dbHealthy) {
 
 ---
 
-## 4. UI Maintenance Guard Hook
+## 4. UI Maintenance Guard Hook ✅ IMPLEMENTED
 
 **Problem**: During DEGRADED mode, the UI shows a banner but doesn't disable interactive elements. Users can still click "Book Now" or "Pay" buttons.
 
-**Proposed Change**: Create a React hook that components can use to disable transactional buttons during DEGRADED mode.
+**Implemented**: Created `hooks/useMaintenanceGuard.ts` hook. Wired into all 4 checkout pages (consultation, subscription, webinar, class) to block `handleCheckout` and disable payment buttons during DEGRADED/OFFLINE mode. Shows toast with maintenance message on blocked attempts.
 
 **Files to Create**:
 - `hooks/useMaintenanceGuard.ts`
@@ -190,11 +192,11 @@ export function useMaintenanceGuard() {
 
 ---
 
-## 5. Admin Pre-Flight API
+## 5. Admin Pre-Flight API ✅ IMPLEMENTED
 
 **Problem**: Before activating maintenance, admins must manually check for active calls, pending payments, and upcoming appointments across multiple dashboards.
 
-**Proposed Change**: Create a single API endpoint that returns all pre-flight data.
+**Implemented**: Created `GET /api/admin/maintenance/preflight` endpoint that queries active calls, pending payments, upcoming appointments (4h), pending payouts, and open disputes. Returns SAFE/CAUTION/RISKY recommendation with warnings. Integrated into MaintenanceControls UI with a "Run Check" button and stats display.
 
 **Files to Create**:
 - `app/api/admin/maintenance/preflight/route.ts`
@@ -273,16 +275,12 @@ File: `app/api/admin/system-jobs/run/route.ts`
 
 ---
 
-### C. `reconcile-document-storage` Safety Risk
+### C. `reconcile-document-storage` Safety Risk ✅ IMPLEMENTED
 
 **Problem**: The daily document storage reconciliation job (`jobs/cleanup/reconcile-document-storage.ts`) deletes files it considers orphaned. If Supabase Storage is temporarily unreachable (e.g. during migration), it may falsely mark valid files as orphaned and delete them.
 
-**Proposed Change**: Before the deletion loop, verify storage is reachable with a lightweight probe (e.g. list a single known bucket). If unreachable, abort with a warning rather than deleting.
-
-**Files to Modify**: `jobs/cleanup/reconcile-document-storage.ts`
-
-**Effort**: 1-2 hours
-**Priority**: MEDIUM — Risk only materialises if Supabase Storage has an outage concurrent with a migration
+**Implemented**: Added a lightweight storage health probe at the start of `reconcileDocumentStorage()` that lists a single item from the `documents` bucket. If storage is unreachable, the job aborts with a warning instead of proceeding to the deletion loop.
+File: `scripts/cleanup/reconcile-document-storage.ts`
 
 ---
 
@@ -295,7 +293,7 @@ File: `app/api/admin/system-jobs/run/route.ts`
 | 3 | Webhook DB health check (Stripe/Razorpay/LS/XFlow) | HIGH | ✅ Done |
 | A | Admin system-jobs DEGRADED blocking | MEDIUM | ✅ Done |
 | B | Stream.io webhook DB health check | MEDIUM | ✅ Done |
-| C | `reconcile-document-storage` storage probe | MEDIUM | Pending |
-| 4 | UI maintenance guard hook | MEDIUM | Pending |
-| 5 | Admin pre-flight API | MEDIUM | Pending |
+| C | `reconcile-document-storage` storage probe | MEDIUM | ✅ Done |
+| 4 | UI maintenance guard hook | MEDIUM | ✅ Done |
+| 5 | Admin pre-flight API | MEDIUM | ✅ Done |
 | 6 | Scheduled maintenance | LOW | Pending |

@@ -8,6 +8,7 @@ import {
   Copy,
   Check,
   Loader2,
+  Shield,
 } from "lucide-react";
 import { useMaintenanceState } from "@/providers/MaintenanceProvider";
 import { useToast } from "@/hooks/use-toast";
@@ -71,6 +72,20 @@ export default function MaintenanceControls() {
 
   // Track if active fields have been edited (for save button)
   const [hasEdits, setHasEdits] = useState(false);
+
+  // Pre-flight check
+  interface PreflightData {
+    activeCalls: number;
+    pendingPayments: number;
+    upcomingAppointments: number;
+    pendingPayouts: number;
+    openDisputes: number;
+    recommendation: "SAFE" | "CAUTION" | "RISKY";
+    warnings: string[];
+    checkedAt: string;
+  }
+  const [preflight, setPreflight] = useState<PreflightData | null>(null);
+  const [preflightLoading, setPreflightLoading] = useState(false);
 
   const fetchState = useCallback(async () => {
     try {
@@ -178,6 +193,21 @@ export default function MaintenanceControls() {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const runPreflight = async () => {
+    setPreflightLoading(true);
+    try {
+      const res = await fetch("/api/admin/maintenance/preflight");
+      if (res.ok) {
+        const data = await res.json();
+        setPreflight(data);
+      }
+    } catch {
+      toast({ title: "Pre-flight check failed", variant: "destructive" });
+    } finally {
+      setPreflightLoading(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center p-12">
@@ -216,6 +246,70 @@ export default function MaintenanceControls() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Pre-flight Check (only when not in active maintenance) */}
+      {!isActive && (
+        <Card>
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle className="text-base">Pre-flight Check</CardTitle>
+                <CardDescription>
+                  Verify system readiness before activating maintenance.
+                </CardDescription>
+              </div>
+              <Button
+                onClick={runPreflight}
+                disabled={preflightLoading}
+                variant="outline"
+                size="sm"
+              >
+                {preflightLoading ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Shield className="mr-2 h-4 w-4" />
+                )}
+                Run Check
+              </Button>
+            </div>
+          </CardHeader>
+          {preflight && (
+            <CardContent className="space-y-3">
+              <div className="flex items-center gap-3">
+                {preflight.recommendation === "SAFE" && (
+                  <Badge className="bg-green-100 text-green-700 border-green-200">SAFE</Badge>
+                )}
+                {preflight.recommendation === "CAUTION" && (
+                  <Badge className="bg-yellow-100 text-yellow-700 border-yellow-200">CAUTION</Badge>
+                )}
+                {preflight.recommendation === "RISKY" && (
+                  <Badge className="bg-red-100 text-red-700 border-red-200">RISKY</Badge>
+                )}
+                <span className="text-xs text-zinc-400">
+                  Checked {new Date(preflight.checkedAt).toLocaleTimeString()}
+                </span>
+              </div>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+                <PreflightStat label="Active Calls" value={preflight.activeCalls} warn={preflight.activeCalls > 0} />
+                <PreflightStat label="Pending Payments" value={preflight.pendingPayments} warn={preflight.pendingPayments > 0} />
+                <PreflightStat label="Upcoming (4h)" value={preflight.upcomingAppointments} warn={preflight.upcomingAppointments > 0} />
+                <PreflightStat label="Pending Payouts" value={preflight.pendingPayouts} warn={preflight.pendingPayouts > 0} />
+                <PreflightStat label="Open Disputes" value={preflight.openDisputes} warn={preflight.openDisputes > 0} />
+              </div>
+              {preflight.warnings.length > 0 && (
+                <ul className="text-sm text-zinc-600 space-y-1">
+                  {preflight.warnings.map((w, i) => (
+                    <li key={i} className="flex items-start gap-1.5">
+                      <AlertTriangle className="h-4 w-4 text-yellow-500 shrink-0 mt-0.5" />
+                      {w}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </CardContent>
+          )}
+        </Card>
+      )}
 
       {/* Controls */}
       <Card>
@@ -452,6 +546,17 @@ function StatusIndicator({ phase }: { phase: string }) {
   return (
     <div className="flex h-12 w-12 items-center justify-center rounded-full bg-green-100">
       <CheckCircle2 className="h-6 w-6 text-green-600" />
+    </div>
+  );
+}
+
+function PreflightStat({ label, value, warn }: { label: string; value: number; warn: boolean }) {
+  return (
+    <div className="rounded-md border px-3 py-2 text-center">
+      <p className={`text-lg font-semibold ${warn ? "text-yellow-600" : "text-zinc-900"}`}>
+        {value}
+      </p>
+      <p className="text-xs text-zinc-500">{label}</p>
     </div>
   );
 }

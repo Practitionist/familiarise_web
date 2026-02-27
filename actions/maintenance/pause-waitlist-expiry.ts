@@ -42,19 +42,23 @@ export async function pauseWaitlistExpiry(
     return { extended: 0 };
   }
 
-  // Extend each entry's expiry by the maintenance duration
-  let extended = 0;
-  for (const entry of entries) {
-    if (!entry.expiresAt) continue;
-
-    await prisma.waitlist.update({
-      where: { id: entry.id },
-      data: {
-        expiresAt: new Date(entry.expiresAt.getTime() + durationMs),
-      },
-    });
-    extended++;
+  // Extend each entry's expiry by the maintenance duration (parallel for performance)
+  const validEntries = entries.filter((e) => e.expiresAt);
+  if (validEntries.length === 0) {
+    return { extended: 0 };
   }
+
+  await Promise.all(
+    validEntries.map((entry) =>
+      prisma.waitlist.update({
+        where: { id: entry.id },
+        data: {
+          expiresAt: new Date(entry.expiresAt!.getTime() + durationMs),
+        },
+      }),
+    ),
+  );
+  const extended = validEntries.length;
 
   console.log(
     JSON.stringify({

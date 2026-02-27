@@ -94,3 +94,24 @@ export function formatCurrencyAmount(
     maximumFractionDigits: fractionDigits,
   }).format(amountInSmallestUnit / divisor);
 }
+
+/**
+ * Format an ISO date string as a short, human-readable ETA.
+ * Used in maintenance banners and the maintenance page.
+ *
+ * @param isoString - ISO 8601 date string (e.g., "2026-02-27T14:00:00Z")
+ * @returns Formatted string like "Feb 27, 2:00 PM" or the raw string on parse failure
+ */
+export function formatEta(isoString: string): string {
+  try {
+    const date = new Date(isoString);
+    return date.toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  } catch {
+    return isoString;
+  }
+}

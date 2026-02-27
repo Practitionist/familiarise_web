@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
+import { useMaintenanceGuard } from "@/hooks/useMaintenanceGuard";
 import { useToast } from "@/hooks/use-toast";
 import { fetchReviews } from "@/lib/user";
 import { searchParamsSchema, createCheckoutData } from "@/schemas/checkout";
@@ -95,6 +96,7 @@ export default function ClassCheckoutPage({
   const [isLoadingCredits, setIsLoadingCredits] = useState(true);
 
   const { toast } = useToast();
+  const { isBlocked: isMaintenanceBlocked, blockReason: maintenanceBlockReason } = useMaintenanceGuard();
 
   // Apply discount code
   const handleApplyDiscount = async (code?: string) => {
@@ -166,6 +168,12 @@ export default function ClassCheckoutPage({
 
   const handleCheckout = useCallback(
     async (gateway: PaymentGateway, isMockPayment: boolean = false) => {
+      // Block checkout during maintenance mode
+      if (isMaintenanceBlocked) {
+        toast({ title: "Checkout unavailable", description: maintenanceBlockReason ?? "Service temporarily unavailable", variant: "destructive" });
+        return;
+      }
+
       if (isCheckoutProcessing) {
         return;
       }
@@ -258,6 +266,8 @@ export default function ClassCheckoutPage({
     },
     [
       isCheckoutProcessing,
+      isMaintenanceBlocked,
+      maintenanceBlockReason,
       resolvedSearchParams,
       planData?.data?.id,
       resolvedParams.classPlanId,
@@ -709,7 +719,7 @@ export default function ClassCheckoutPage({
                       <Button
                         variant="secondary"
                         onClick={() => handleCheckout(gateway.gateway, true)}
-                        disabled={isCheckoutProcessing}
+                        disabled={isCheckoutProcessing || isMaintenanceBlocked}
                       >
                         {isCheckoutProcessing &&
                         processingGateway === `${gateway.gateway}-mock` ? (

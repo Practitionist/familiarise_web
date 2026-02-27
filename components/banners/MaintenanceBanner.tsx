@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 
+import { formatEta } from "@/lib/utils";
 import { useMaintenanceState } from "@/providers/MaintenanceProvider";
 
 export default function MaintenanceBanner() {
@@ -79,16 +80,3 @@ export default function MaintenanceBanner() {
   );
 }
 
-function formatEta(isoString: string): string {
-  try {
-    const date = new Date(isoString);
-    return date.toLocaleString(undefined, {
-      month: "short",
-      day: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-    });
-  } catch {
-    return isoString;
-  }
-}

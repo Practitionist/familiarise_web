@@ -3,6 +3,8 @@
 import Image from "next/image";
 import { useEffect, useState } from "react";
 
+import { formatEta } from "@/lib/utils";
+
 import familiariseLogo from "@/public/avif/static/assets/logos/images/logos/Familiarise-logos_transparent.avif";
 
 const AUTO_REFRESH_INTERVAL = 30_000; // 30 seconds
@@ -105,16 +107,3 @@ export default function MaintenancePage() {
   );
 }
 
-function formatEta(isoString: string): string {
-  try {
-    const date = new Date(isoString);
-    return date.toLocaleString(undefined, {
-      month: "short",
-      day: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-    });
-  } catch {
-    return isoString;
-  }
-}

@@ -13,6 +13,41 @@ import { notifyAppointmentCancelled } from "@/lib/novu/service";
 import { createRefund } from "@/lib/payments";
 import prisma from "@/lib/prisma";
 
+type NotificationPayload = {
+  userIds: string[];
+  data: Parameters<typeof notifyAppointmentCancelled>[1];
+};
+
+function buildCancellationNotification(params: {
+  appointmentId: string;
+  appointmentType: string;
+  consultantUser: { id: string; name: string | null } | null | undefined;
+  participantIds: string[];
+  planTitle: string;
+  dateTime: string;
+  consulteeName?: string;
+}): NotificationPayload | null {
+  const userIds = [...params.participantIds];
+  if (params.consultantUser?.id && !userIds.includes(params.consultantUser.id)) {
+    userIds.push(params.consultantUser.id);
+  }
+  if (userIds.length === 0) return null;
+  return {
+    userIds,
+    data: {
+      appointmentId: params.appointmentId,
+      appointmentType: params.appointmentType,
+      consultantName: params.consultantUser?.name || "Consultant",
+      consulteeName: params.consulteeName || "Participants",
+      planTitle: params.planTitle,
+      dateTime: params.dateTime,
+      dashboardUrl: "/dashboard",
+      reason: "Scheduled platform maintenance",
+      cancelledBy: "system",
+    },
+  };
+}
+
 export async function freezeAppointments(
   maintenanceStart: Date,
   maintenanceEnd: Date | null,
@@ -151,10 +186,6 @@ export async function freezeAppointments(
   // External API calls (Novu) cannot be rolled back, so they must run
   // outside the transaction to avoid notifying users about cancellations
   // that were later rolled back.
-  type NotificationPayload = {
-    userIds: string[];
-    data: Parameters<typeof notifyAppointmentCancelled>[1];
-  };
   const pendingNotifications: NotificationPayload[] = [];
 
   // Wrap all DB writes in a single transaction for atomicity.
@@ -184,30 +215,16 @@ export async function freezeAppointments(
             },
           });
 
-          const consultantUser =
-            consultation.consultationPlan?.consultantProfile?.user;
-          const consulteeUser = consultation.requestedBy?.user;
-          const userIds: string[] = [];
-          if (consulteeUser?.id) userIds.push(consulteeUser.id);
-          if (consultantUser?.id) userIds.push(consultantUser.id);
-
-          if (userIds.length > 0) {
-            pendingNotifications.push({
-              userIds,
-              data: {
-                appointmentId: appointment.id,
-                appointmentType: "CONSULTATION",
-                consultantName: consultantUser?.name || "Consultant",
-                consulteeName: consulteeUser?.name || "User",
-                planTitle:
-                  consultation.consultationPlan?.title || "Consultation",
-                dateTime: earliestSlot.startsAt.toISOString(),
-                dashboardUrl: "/dashboard",
-                reason: "Scheduled platform maintenance",
-                cancelledBy: "system",
-              },
-            });
-          }
+          const notif = buildCancellationNotification({
+            appointmentId: appointment.id,
+            appointmentType: "CONSULTATION",
+            consultantUser: consultation.consultationPlan?.consultantProfile?.user,
+            participantIds: consultation.requestedBy?.user?.id ? [consultation.requestedBy.user.id] : [],
+            planTitle: consultation.consultationPlan?.title || "Consultation",
+            dateTime: earliestSlot.startsAt.toISOString(),
+            consulteeName: consultation.requestedBy?.user?.name || "User",
+          });
+          if (notif) pendingNotifications.push(notif);
         }
 
         // Cancel subscription appointment if applicable
@@ -226,30 +243,16 @@ export async function freezeAppointments(
 
           affectedSubscriptionIds.add(subscription.id);
 
-          const consultantUser =
-            subscription.subscriptionPlan?.consultantProfile?.user;
-          const consulteeUser = subscription.requestedBy?.user;
-          const userIds: string[] = [];
-          if (consulteeUser?.id) userIds.push(consulteeUser.id);
-          if (consultantUser?.id) userIds.push(consultantUser.id);
-
-          if (userIds.length > 0) {
-            pendingNotifications.push({
-              userIds,
-              data: {
-                appointmentId: appointment.id,
-                appointmentType: "SUBSCRIPTION",
-                consultantName: consultantUser?.name || "Consultant",
-                consulteeName: consulteeUser?.name || "User",
-                planTitle:
-                  subscription.subscriptionPlan?.title || "Subscription",
-                dateTime: earliestSlot.startsAt.toISOString(),
-                dashboardUrl: "/dashboard",
-                reason: "Scheduled platform maintenance",
-                cancelledBy: "system",
-              },
-            });
-          }
+          const notif = buildCancellationNotification({
+            appointmentId: appointment.id,
+            appointmentType: "SUBSCRIPTION",
+            consultantUser: subscription.subscriptionPlan?.consultantProfile?.user,
+            participantIds: subscription.requestedBy?.user?.id ? [subscription.requestedBy.user.id] : [],
+            planTitle: subscription.subscriptionPlan?.title || "Subscription",
+            dateTime: earliestSlot.startsAt.toISOString(),
+            consulteeName: subscription.requestedBy?.user?.name || "User",
+          });
+          if (notif) pendingNotifications.push(notif);
         }
 
         // Cancel webinar if applicable
@@ -260,31 +263,18 @@ export async function freezeAppointments(
             data: { status: "CANCELLED" },
           });
 
-          const consultantUser = webinar.webinarPlan?.consultantProfile?.user;
-          const participantIds = slots.flatMap((s: AffectedSlot) =>
-            s.user.map((u) => u.id),
-          );
-          const userIds = Array.from(new Set(participantIds));
-          if (consultantUser?.id && !userIds.includes(consultantUser.id)) {
-            userIds.push(consultantUser.id);
-          }
-
-          if (userIds.length > 0) {
-            pendingNotifications.push({
-              userIds,
-              data: {
-                appointmentId: appointment.id,
-                appointmentType: "WEBINAR",
-                consultantName: consultantUser?.name || "Consultant",
-                consulteeName: "Participants",
-                planTitle: webinar.webinarPlan?.title || "Webinar",
-                dateTime: earliestSlot.startsAt.toISOString(),
-                dashboardUrl: "/dashboard",
-                reason: "Scheduled platform maintenance",
-                cancelledBy: "system",
-              },
-            });
-          }
+          const webinarParticipantIds = Array.from(new Set(
+            slots.flatMap((s: AffectedSlot) => s.user.map((u) => u.id)),
+          ));
+          const notif = buildCancellationNotification({
+            appointmentId: appointment.id,
+            appointmentType: "WEBINAR",
+            consultantUser: webinar.webinarPlan?.consultantProfile?.user,
+            participantIds: webinarParticipantIds,
+            planTitle: webinar.webinarPlan?.title || "Webinar",
+            dateTime: earliestSlot.startsAt.toISOString(),
+          });
+          if (notif) pendingNotifications.push(notif);
         }
 
         // Cancel class if applicable
@@ -295,31 +285,18 @@ export async function freezeAppointments(
             data: { status: "CANCELLED" },
           });
 
-          const consultantUser = classEvent.classPlan?.consultantProfile?.user;
-          const participantIds = slots.flatMap((s: AffectedSlot) =>
-            s.user.map((u) => u.id),
-          );
-          const userIds = Array.from(new Set(participantIds));
-          if (consultantUser?.id && !userIds.includes(consultantUser.id)) {
-            userIds.push(consultantUser.id);
-          }
-
-          if (userIds.length > 0) {
-            pendingNotifications.push({
-              userIds,
-              data: {
-                appointmentId: appointment.id,
-                appointmentType: "CLASS",
-                consultantName: consultantUser?.name || "Consultant",
-                consulteeName: "Participants",
-                planTitle: classEvent.classPlan?.title || "Class",
-                dateTime: earliestSlot.startsAt.toISOString(),
-                dashboardUrl: "/dashboard",
-                reason: "Scheduled platform maintenance",
-                cancelledBy: "system",
-              },
-            });
-          }
+          const classParticipantIds = Array.from(new Set(
+            slots.flatMap((s: AffectedSlot) => s.user.map((u) => u.id)),
+          ));
+          const notif = buildCancellationNotification({
+            appointmentId: appointment.id,
+            appointmentType: "CLASS",
+            consultantUser: classEvent.classPlan?.consultantProfile?.user,
+            participantIds: classParticipantIds,
+            planTitle: classEvent.classPlan?.title || "Class",
+            dateTime: earliestSlot.startsAt.toISOString(),
+          });
+          if (notif) pendingNotifications.push(notif);
         }
 
         // Cancel trial session if applicable
@@ -330,29 +307,16 @@ export async function freezeAppointments(
             data: { status: "CANCELLED" },
           });
 
-          const consultantUser = trial.consultantProfile?.user;
-          const consulteeUser = trial.consulteeProfile?.user;
-          const userIds: string[] = [];
-          if (consulteeUser?.id) userIds.push(consulteeUser.id);
-          if (consultantUser?.id) userIds.push(consultantUser.id);
-
-          if (userIds.length > 0) {
-            pendingNotifications.push({
-              userIds,
-              data: {
-                appointmentId: appointment.id,
-                appointmentType: "TRIAL",
-                consultantName: consultantUser?.name || "Consultant",
-                consulteeName: consulteeUser?.name || "User",
-                planTitle:
-                  trial.subscriptionPlan?.title || "Trial Session",
-                dateTime: earliestSlot.startsAt.toISOString(),
-                dashboardUrl: "/dashboard",
-                reason: "Scheduled platform maintenance",
-                cancelledBy: "system",
-              },
-            });
-          }
+          const notif = buildCancellationNotification({
+            appointmentId: appointment.id,
+            appointmentType: "TRIAL",
+            consultantUser: trial.consultantProfile?.user,
+            participantIds: trial.consulteeProfile?.user?.id ? [trial.consulteeProfile.user.id] : [],
+            planTitle: trial.subscriptionPlan?.title || "Trial Session",
+            dateTime: earliestSlot.startsAt.toISOString(),
+            consulteeName: trial.consulteeProfile?.user?.name || "User",
+          });
+          if (notif) pendingNotifications.push(notif);
         }
 
         // Collect SUCCEEDED payments for refund processing after the transaction.

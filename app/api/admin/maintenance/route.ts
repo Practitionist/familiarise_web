@@ -1,9 +1,23 @@
 import crypto from "crypto";
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 
 import { MaintenancePhase, UserRole } from "@prisma/client";
 
 import { getSession } from "@/lib/auth-server";
+
+const postSchema = z.object({
+  phase: z.enum(["DEGRADED", "OFFLINE"]).optional(),
+  reason: z.string().optional(),
+  estimatedEnd: z.string().optional(),
+  bypassDisputeCheck: z.boolean().optional(),
+});
+
+const patchSchema = z.object({
+  phase: z.enum(["DEGRADED", "OFFLINE"]).optional(),
+  reason: z.string().optional(),
+  estimatedEnd: z.string().optional(),
+});
 import { createIncident, resolveIncident } from "@/lib/betterstack";
 import { getMaintenanceState, setMaintenanceState } from "@/lib/maintenance";
 import prisma from "@/lib/prisma";
@@ -59,12 +73,14 @@ export async function POST(request: NextRequest) {
   if ("error" in auth && auth.error) return auth.error;
 
   const body = await request.json();
-  const { phase, reason, estimatedEnd, bypassDisputeCheck } = body as {
-    phase?: string;
-    reason?: string;
-    estimatedEnd?: string;
-    bypassDisputeCheck?: boolean;
-  };
+  const parsed = postSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Invalid request body", details: parsed.error.flatten().fieldErrors },
+      { status: 400 },
+    );
+  }
+  const { phase, reason, estimatedEnd, bypassDisputeCheck } = parsed.data;
 
   // Block if open disputes have response deadlines within the maintenance window (+48h buffer)
   if (estimatedEnd && !bypassDisputeCheck) {
@@ -147,11 +163,14 @@ export async function PATCH(request: NextRequest) {
   if ("error" in auth && auth.error) return auth.error;
 
   const body = await request.json();
-  const { phase, reason, estimatedEnd } = body as {
-    phase?: string;
-    reason?: string;
-    estimatedEnd?: string;
-  };
+  const parsed = patchSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Invalid request body", details: parsed.error.flatten().fieldErrors },
+      { status: 400 },
+    );
+  }
+  const { phase, reason, estimatedEnd } = parsed.data;
 
   const currentState = await getMaintenanceState();
   if (currentState.phase === "OFF") {

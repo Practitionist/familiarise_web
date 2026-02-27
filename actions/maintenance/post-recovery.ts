@@ -46,7 +46,21 @@ export async function runPostRecovery(): Promise<RecoveryResult> {
     );
   }
 
-  // 2. Restore discount codes that were paused before maintenance
+  // 2. Check Redis health (independent of DB, runs in parallel with DB-dependent steps)
+  const redisCheckPromise = (async () => {
+    try {
+      result.redis = await checkRedisHealth();
+      if (!result.redis) {
+        result.errors.push("Redis: PING failed");
+      }
+    } catch (error) {
+      result.errors.push(
+        `Redis: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  })();
+
+  // 3. Restore discount codes that were paused before maintenance
   if (result.database) {
     try {
       const discountResult = await restoreDiscountCodes();
@@ -64,7 +78,7 @@ export async function runPostRecovery(): Promise<RecoveryResult> {
     }
   }
 
-  // 3. Run reconciliation jobs to catch anything that drifted during maintenance
+  // 4. Run reconciliation jobs to catch anything that drifted during maintenance
   if (result.database) {
     const JOB_NAMES = [
       "reconcile-payment-status",
@@ -93,19 +107,10 @@ export async function runPostRecovery(): Promise<RecoveryResult> {
     });
   }
 
-  // 4. Check Redis health
-  try {
-    result.redis = await checkRedisHealth();
-    if (!result.redis) {
-      result.errors.push("Redis: PING failed");
-    }
-  } catch (error) {
-    result.errors.push(
-      `Redis: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
+  // 5. Ensure Redis check completes before proceeding
+  await redisCheckPromise;
 
-  // 5. Send "we're back" broadcast notification
+  // 6. Send "we're back" broadcast notification
   try {
     const notifResult = await notifyMaintenanceEnded({
       phase: "OFF",
