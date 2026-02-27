@@ -52,6 +52,7 @@ async function redisGet(key: string): Promise<string | null> {
   const res = await fetch(`${url}/get/${encodeURIComponent(key)}`, {
     headers: { Authorization: `Bearer ${token}` },
     cache: "no-store",
+    signal: AbortSignal.timeout(1500),
   });
 
   if (!res.ok) return null;
@@ -93,11 +94,15 @@ export async function getMaintenanceState(): Promise<MaintenanceState> {
   }
 }
 
+// Matches paths ending with a file extension (e.g. .js, .css, .png, .woff2)
+// More precise than pathname.includes(".") which false-positives on /api/v2.0/foo
+const HAS_FILE_EXTENSION = /\.\w{2,10}$/;
+
 /**
  * Check if a route is exempt from maintenance mode.
  */
 export function isMaintenanceExempt(pathname: string): boolean {
-  if (pathname.includes(".")) return true;
+  if (HAS_FILE_EXTENSION.test(pathname)) return true;
   return EXEMPT_PREFIXES.some((prefix) => pathname.startsWith(prefix));
 }
 
@@ -141,9 +146,13 @@ export function isWriteBlockedInDegraded(
       // Exact prefix match
       return pathname === pattern || pathname.startsWith(pattern + "/");
     }
-    // Wildcard: split on '*' and check prefix + suffix
+    // Wildcard: split on '*' and check prefix + suffix with length guard
     const [prefix, suffix] = pattern.split("*");
-    return pathname.startsWith(prefix) && pathname.endsWith(suffix);
+    return (
+      pathname.length >= prefix.length + suffix.length &&
+      pathname.startsWith(prefix) &&
+      pathname.endsWith(suffix)
+    );
   });
 }
 

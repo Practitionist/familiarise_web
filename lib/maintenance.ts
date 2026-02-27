@@ -9,7 +9,6 @@
  */
 
 import { MaintenancePhase } from "@prisma/client";
-import { NextRequest } from "next/server";
 
 import prisma from "@/lib/prisma";
 import redis, { withCircuitBreaker } from "@/lib/redis";
@@ -19,17 +18,6 @@ const REDIS_KEYS = {
   PHASE: "maintenance:phase",
   CONFIG: "maintenance:config",
 } as const;
-
-// Routes exempt from maintenance mode
-const EXEMPT_PREFIXES = [
-  "/api/webhooks/", // Payment webhooks (stripe, razorpay, lemon-squeezy, xflow)
-  "/api/health",
-  "/api/auth/",
-  "/api/admin/maintenance",
-  "/maintenance",
-  "/_next/",
-  "/favicon",
-];
 
 export interface MaintenanceState {
   phase: MaintenancePhase;
@@ -98,101 +86,72 @@ export async function setMaintenanceState(
     betterstackIncidentId?: string;
   } = {},
 ): Promise<void> {
-  // Write to Redis
-  await redis.set(REDIS_KEYS.PHASE, phase);
-  await redis.set(
-    REDIS_KEYS.CONFIG,
-    JSON.stringify({
-      reason: config.reason ?? null,
-      estimatedEnd: config.estimatedEnd ?? null,
-      bypassSecret: config.bypassSecret ?? null,
-      betterstackIncidentId: config.betterstackIncidentId ?? null,
-    }),
-  );
+  // Write both Redis keys concurrently to minimize inconsistency window
+  await Promise.all([
+    redis.set(REDIS_KEYS.PHASE, phase),
+    redis.set(
+      REDIS_KEYS.CONFIG,
+      JSON.stringify({
+        reason: config.reason ?? null,
+        estimatedEnd: config.estimatedEnd ?? null,
+        bypassSecret: config.bypassSecret ?? null,
+        betterstackIncidentId: config.betterstackIncidentId ?? null,
+      }),
+    ),
+  ]);
 
-  // Persist to Prisma for audit trail
-  if (phase === MaintenancePhase.OFF) {
-    // End the current active window
-    const activeWindow = await prisma.maintenanceWindow.findFirst({
-      where: { phase: { not: MaintenancePhase.OFF } },
-      orderBy: { createdAt: "desc" },
-    });
-
-    if (activeWindow) {
-      await prisma.maintenanceWindow.update({
-        where: { id: activeWindow.id },
-        data: {
-          phase: MaintenancePhase.OFF,
-          endedAt: new Date(),
-          endedBy: config.endedBy,
-        },
+  // Persist to Prisma for audit trail (transactional to prevent find+update races)
+  await prisma.$transaction(async (tx) => {
+    if (phase === MaintenancePhase.OFF) {
+      const activeWindow = await tx.maintenanceWindow.findFirst({
+        where: { phase: { not: MaintenancePhase.OFF } },
+        orderBy: { createdAt: "desc" },
       });
-    }
-  } else {
-    // Find active window or create new one
-    const activeWindow = await prisma.maintenanceWindow.findFirst({
-      where: { phase: { not: MaintenancePhase.OFF } },
-      orderBy: { createdAt: "desc" },
-    });
 
-    if (activeWindow) {
-      await prisma.maintenanceWindow.update({
-        where: { id: activeWindow.id },
-        data: {
-          phase,
-          reason: config.reason,
-          estimatedEnd:
-            config.estimatedEnd && !isNaN(new Date(config.estimatedEnd).getTime())
-              ? new Date(config.estimatedEnd)
-              : undefined,
-        },
-      });
+      if (activeWindow) {
+        await tx.maintenanceWindow.update({
+          where: { id: activeWindow.id },
+          data: {
+            phase: MaintenancePhase.OFF,
+            endedAt: new Date(),
+            endedBy: config.endedBy,
+          },
+        });
+      }
     } else {
-      await prisma.maintenanceWindow.create({
-        data: {
-          phase,
-          reason: config.reason,
-          startedAt: new Date(),
-          startedBy: config.startedBy,
-          estimatedEnd:
-            config.estimatedEnd && !isNaN(new Date(config.estimatedEnd).getTime())
-              ? new Date(config.estimatedEnd)
-              : undefined,
-          bypassSecret: config.bypassSecret,
-        },
+      const activeWindow = await tx.maintenanceWindow.findFirst({
+        where: { phase: { not: MaintenancePhase.OFF } },
+        orderBy: { createdAt: "desc" },
       });
+
+      if (activeWindow) {
+        await tx.maintenanceWindow.update({
+          where: { id: activeWindow.id },
+          data: {
+            phase,
+            reason: config.reason,
+            estimatedEnd:
+              config.estimatedEnd && !isNaN(new Date(config.estimatedEnd).getTime())
+                ? new Date(config.estimatedEnd)
+                : undefined,
+          },
+        });
+      } else {
+        await tx.maintenanceWindow.create({
+          data: {
+            phase,
+            reason: config.reason,
+            startedAt: new Date(),
+            startedBy: config.startedBy,
+            estimatedEnd:
+              config.estimatedEnd && !isNaN(new Date(config.estimatedEnd).getTime())
+                ? new Date(config.estimatedEnd)
+                : undefined,
+            bypassSecret: config.bypassSecret,
+          },
+        });
+      }
     }
-  }
+  });
 }
 
-/**
- * Check if a route is exempt from maintenance mode.
- */
-export function isMaintenanceExempt(pathname: string): boolean {
-  // Static assets are always exempt
-  if (pathname.includes(".")) return true;
-
-  return EXEMPT_PREFIXES.some((prefix) => pathname.startsWith(prefix));
-}
-
-/**
- * Validate maintenance bypass via header or cookie.
- */
-export function validateBypass(
-  request: NextRequest,
-  storedSecret: string | null,
-): boolean {
-  if (!storedSecret) {
-    // Fall back to env var
-    const envSecret = process.env.MAINTENANCE_BYPASS_SECRET;
-    if (!envSecret) return false;
-
-    const headerVal = request.headers.get("x-maintenance-bypass");
-    const cookieVal = request.cookies.get("maintenance_bypass")?.value;
-    return headerVal === envSecret || cookieVal === envSecret;
-  }
-
-  const headerVal = request.headers.get("x-maintenance-bypass");
-  const cookieVal = request.cookies.get("maintenance_bypass")?.value;
-  return headerVal === storedSecret || cookieVal === storedSecret;
-}

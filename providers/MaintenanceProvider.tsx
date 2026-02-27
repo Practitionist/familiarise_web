@@ -63,12 +63,13 @@ export function MaintenanceProvider({
     }
   }, []);
 
-  // Poll every 60s
+  // Adaptive polling: 60s when maintenance is active, 5min when OFF
   useEffect(() => {
     checkMaintenance();
-    const interval = setInterval(checkMaintenance, 60_000);
+    const intervalMs = phase ? 60_000 : 300_000;
+    const interval = setInterval(checkMaintenance, intervalMs);
     return () => clearInterval(interval);
-  }, [checkMaintenance]);
+  }, [checkMaintenance, phase]);
 
   const dismiss = useCallback(() => setIsDismissed(true), []);
 

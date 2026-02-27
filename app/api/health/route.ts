@@ -9,6 +9,8 @@ type BetterStackHealth = {
 };
 
 const BETTERSTACK_CACHE_TTL_MS = 60_000;
+// Module-level cache: instance-local in serverless (each cold start resets).
+// Acceptable here — just prevents redundant BetterStack API calls within a warm instance.
 let betterStackCache: { at: number; value: BetterStackHealth } | null = null;
 
 async function checkBetterStack(): Promise<{

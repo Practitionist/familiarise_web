@@ -60,6 +60,8 @@ export async function abortIfMaintenance(jobName: string): Promise<void> {
   }
 
   try {
+    // Intentionally creates a fresh client per invocation — cron jobs run
+    // infrequently and this avoids holding a persistent connection.
     const redis = new Redis({ url, token });
     const phase = await redis.get<string>("maintenance:phase");
 

@@ -25,8 +25,9 @@ const ROUTE_PATTERNS = {
     "/meetings/",
   ],
   PUBLIC_AUTH_PREFIXES: ["/auth/"],
-  PRIVATE_API_PREFIXES: ["/api/inngest/"],
-  PROTECTED_API_PREFIXES: [
+  // API routes requiring a session cookie (returns 401 JSON without one)
+  AUTHENTICATED_API_PREFIXES: [
+    "/api/inngest/",
     "/api/form/onboarding/",
     "/api/verification/",
     "/api/user/",
@@ -44,15 +45,21 @@ const ROUTE_PATTERNS = {
   ],
 };
 
+// Matches paths ending with a file extension (e.g. .js, .css, .png, .woff2)
+// More precise than pathname.includes(".") which false-positives on /api/v2.0/foo
+const HAS_FILE_EXTENSION = /\.\w{2,10}$/;
+
 /**
  * Fast route matching using string prefix checks instead of glob patterns.
  * Also matches the exact path without trailing slash (e.g. "/settings" matches "/settings/").
  */
 const matchesAnyPrefix = (pathname: string, prefixes: string[]): boolean => {
-  return prefixes.some(
-    (prefix) =>
-      pathname.startsWith(prefix) || pathname === prefix.replace(/\/$/, ""),
-  );
+  for (const prefix of prefixes) {
+    if (pathname.startsWith(prefix)) return true;
+    // Check exact match without trailing slash: "/settings" matches "/settings/"
+    if (prefix.endsWith("/") && pathname === prefix.slice(0, -1)) return true;
+  }
+  return false;
 };
 
 /**
@@ -67,7 +74,7 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
   if (
     pathname.startsWith("/_next/") ||
     pathname.startsWith("/favicon") ||
-    pathname.includes(".")
+    HAS_FILE_EXTENSION.test(pathname)
   ) {
     return NextResponse.next();
   }
@@ -151,15 +158,8 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
   const sessionCookie = getSessionCookie(req);
   const isAuthenticated = !!sessionCookie;
 
-  // Handle private API routes
-  if (matchesAnyPrefix(pathname, ROUTE_PATTERNS.PRIVATE_API_PREFIXES)) {
-    return isAuthenticated
-      ? NextResponse.next()
-      : NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  // Handle protected API routes
-  if (matchesAnyPrefix(pathname, ROUTE_PATTERNS.PROTECTED_API_PREFIXES)) {
+  // Handle authenticated API routes (require session cookie)
+  if (matchesAnyPrefix(pathname, ROUTE_PATTERNS.AUTHENTICATED_API_PREFIXES)) {
     return isAuthenticated
       ? NextResponse.next()
       : NextResponse.json({ error: "Unauthorized" }, { status: 401 });
