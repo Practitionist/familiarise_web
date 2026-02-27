@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth-server";
 import { applyReferralCode } from "@/lib/referrals/service";
+import { referralApplyLimiter, applyRateLimit } from "@/lib/rate-limit";
 
 export async function POST(req: NextRequest) {
   try {
@@ -8,6 +9,10 @@ export async function POST(req: NextRequest) {
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+
+    // Rate limit: 3 referral applications per 24 hours per user
+    const rl = await applyRateLimit(referralApplyLimiter, session.user.id);
+    if (rl) return rl;
 
     const body = await req.json();
     const { code } = body;

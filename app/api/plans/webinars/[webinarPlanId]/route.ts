@@ -3,6 +3,11 @@ import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { fetchWebinarPlanDetail } from "@/lib/data/plan-details";
 import { apiError } from "@/lib/errors";
+import {
+  requireApiAuth,
+  isPrivileged,
+  forbiddenResponse,
+} from "@/lib/auth-helpers";
 
 export async function GET(
   request: NextRequest,
@@ -37,9 +42,24 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ webinarPlanId: string }> },
 ) {
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const { session } = authResult;
+
   try {
     const { webinarPlanId } = await params;
     const body = await request.json();
+
+    // Only the owning consultant or ADMIN/STAFF can update a webinar plan
+    if (!isPrivileged(session.user.role)) {
+      const plan = await prisma.webinarPlan.findUnique({
+        where: { id: webinarPlanId },
+        select: { consultantProfileId: true },
+      });
+      if (!plan || plan.consultantProfileId !== session.user.consultantProfileId) {
+        return forbiddenResponse("You can only update your own webinar plans");
+      }
+    }
 
     // Input validation
     if (body.durationInHours && body.durationInHours <= 0) {
@@ -127,8 +147,23 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ webinarPlanId: string }> },
 ) {
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const { session } = authResult;
+
   try {
     const { webinarPlanId } = await params;
+
+    // Only the owning consultant or ADMIN/STAFF can delete a webinar plan
+    if (!isPrivileged(session.user.role)) {
+      const plan = await prisma.webinarPlan.findUnique({
+        where: { id: webinarPlanId },
+        select: { consultantProfileId: true },
+      });
+      if (!plan || plan.consultantProfileId !== session.user.consultantProfileId) {
+        return forbiddenResponse("You can only delete your own webinar plans");
+      }
+    }
 
     // Check if there are any associated webinars
     const associatedWebinars = await prisma.webinar.findMany({

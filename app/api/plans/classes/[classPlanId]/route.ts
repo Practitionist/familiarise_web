@@ -3,6 +3,11 @@ import { Prisma, PlanEmailSupport } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { fetchClassPlanDetail } from "@/lib/data/plan-details";
 import { apiError } from "@/lib/errors";
+import {
+  requireApiAuth,
+  isPrivileged,
+  forbiddenResponse,
+} from "@/lib/auth-helpers";
 
 export async function GET(
   request: NextRequest,
@@ -37,9 +42,24 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ classPlanId: string }> },
 ) {
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const { session } = authResult;
+
   try {
     const { classPlanId } = await params;
     const body = await request.json();
+
+    // Only the owning consultant or ADMIN/STAFF can update a class plan
+    if (!isPrivileged(session.user.role)) {
+      const plan = await prisma.classPlan.findUnique({
+        where: { id: classPlanId },
+        select: { consultantProfileId: true },
+      });
+      if (!plan || plan.consultantProfileId !== session.user.consultantProfileId) {
+        return forbiddenResponse("You can only update your own class plans");
+      }
+    }
 
     // Input validation
     if (body.durationInMonths && body.durationInMonths <= 0) {
@@ -160,8 +180,23 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ classPlanId: string }> },
 ) {
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const { session } = authResult;
+
   try {
     const { classPlanId } = await params;
+
+    // Only the owning consultant or ADMIN/STAFF can delete a class plan
+    if (!isPrivileged(session.user.role)) {
+      const plan = await prisma.classPlan.findUnique({
+        where: { id: classPlanId },
+        select: { consultantProfileId: true },
+      });
+      if (!plan || plan.consultantProfileId !== session.user.consultantProfileId) {
+        return forbiddenResponse("You can only delete your own class plans");
+      }
+    }
 
     // Check if there are any associated classes
     const associatedClasses = await prisma.class.findMany({

@@ -1,12 +1,32 @@
 import prisma from "@/lib/prisma";
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { transformNestedPlanTopics } from "@/lib/topics";
+import {
+  requireApiAuth,
+  isPrivileged,
+  forbiddenResponse,
+} from "@/lib/auth-helpers";
 
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
+  // Require authentication (middleware already enforces cookie presence for /api/events/)
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const { session } = authResult;
+
   try {
     const { searchParams } = new URL(request.url);
     const consulteeProfileId = searchParams.get("consulteeProfileId");
     const consultantProfileId = searchParams.get("consultantProfileId");
+
+    // IDOR protection: non-privileged users can only request their own profile's data
+    if (!isPrivileged(session.user.role)) {
+      if (consulteeProfileId && session.user.consulteeProfileId !== consulteeProfileId) {
+        return forbiddenResponse("You can only view your own enrolled classes");
+      }
+      if (consultantProfileId && session.user.consultantProfileId !== consultantProfileId) {
+        return forbiddenResponse("You can only view your own classes");
+      }
+    }
     const startDateStr = searchParams.get("startDate");
     const endDateStr = searchParams.get("endDate");
 

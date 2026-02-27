@@ -16,6 +16,11 @@ import {
   notifyTrialSessionCancelled,
 } from "@/lib/novu";
 import { UpdateTrialSchema } from "@/schemas/trials";
+import {
+  requireApiAuth,
+  isPrivileged,
+  forbiddenResponse,
+} from "@/lib/auth-helpers";
 
 interface RouteContext {
   params: Promise<{ trialId: string }>;
@@ -26,6 +31,10 @@ interface RouteContext {
  * Get a specific trial session
  */
 export async function GET(request: NextRequest, context: RouteContext) {
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const { session } = authResult;
+
   const { trialId } = await context.params;
 
   try {
@@ -75,6 +84,17 @@ export async function GET(request: NextRequest, context: RouteContext) {
         { error: "Trial session not found" },
         { status: 404 },
       );
+    }
+
+    // Non-privileged users can only view trials they are a participant of
+    if (!isPrivileged(session.user.role)) {
+      const isConsultee =
+        session.user.consulteeProfileId === trialSession.consulteeProfileId;
+      const isConsultant =
+        session.user.consultantProfileId === trialSession.consultantProfileId;
+      if (!isConsultee && !isConsultant) {
+        return forbiddenResponse("You can only view your own trial sessions");
+      }
     }
 
     return NextResponse.json({ data: trialSession });
@@ -153,6 +173,10 @@ async function validateSlotAvailability(
  * Update a trial session (approve, reject, schedule, complete, etc.)
  */
 export async function PATCH(request: NextRequest, context: RouteContext) {
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const { session } = authResult;
+
   const { trialId } = await context.params;
 
   try {
@@ -190,6 +214,17 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         { error: "Trial session not found" },
         { status: 404 },
       );
+    }
+
+    // Non-privileged users can only update trials they are a participant of
+    if (!isPrivileged(session.user.role)) {
+      const isConsultee =
+        session.user.consulteeProfileId === existingTrial.consulteeProfileId;
+      const isConsultant =
+        session.user.consultantProfileId === existingTrial.consultantProfileId;
+      if (!isConsultee && !isConsultant) {
+        return forbiddenResponse("You can only update your own trial sessions");
+      }
     }
 
     const updateData: Prisma.TrialSessionUpdateInput = {};
@@ -506,6 +541,10 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
  * Cancel a trial session
  */
 export async function DELETE(request: NextRequest, context: RouteContext) {
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const { session } = authResult;
+
   const { trialId } = await context.params;
 
   try {
@@ -518,6 +557,17 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
         { error: "Trial session not found" },
         { status: 404 },
       );
+    }
+
+    // Non-privileged users can only cancel trials they are a participant of
+    if (!isPrivileged(session.user.role)) {
+      const isConsultee =
+        session.user.consulteeProfileId === existingTrial.consulteeProfileId;
+      const isConsultant =
+        session.user.consultantProfileId === existingTrial.consultantProfileId;
+      if (!isConsultee && !isConsultant) {
+        return forbiddenResponse("You can only cancel your own trial sessions");
+      }
     }
 
     // Only allow cancellation of PENDING or SCHEDULED trials

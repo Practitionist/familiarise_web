@@ -6,6 +6,7 @@ import { SlotLockError } from "@/utils/errors/SlotLockError";
 import { SlotValidationService } from "@/utils/slotAllocation/SlotValidationService";
 import { notifyNewBookingRequest } from "@/lib/novu";
 import { RequestForApprovalSchema } from "@/schemas/slots";
+import { requestApprovalLimiter, applyRateLimit } from "@/lib/rate-limit";
 
 import { getSession } from "@/lib/auth-server";
 export async function POST(req: NextRequest) {
@@ -18,6 +19,10 @@ export async function POST(req: NextRequest) {
         { status: 401 },
       );
     }
+
+    // Rate limit: 10 approval requests per hour per user
+    const rl = await applyRateLimit(requestApprovalLimiter, session.user.id);
+    if (rl) return rl;
 
     const body = await req.json();
     const parseResult = RequestForApprovalSchema.safeParse(body);

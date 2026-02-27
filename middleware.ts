@@ -33,12 +33,16 @@ const ROUTE_PATTERNS = {
     "/api/user/",
     "/api/events/",
     "/api/plans/",
+    "/api/participants/", // Private: participant management for classes/webinars/etc.
+    "/api/dashboard/", // Private: dashboard data routes
+    "/api/trials/", // Private: trial session routes (public sub-routes exempted below)
   ],
   // Note: /api/auth/ must remain public for BetterAuth to work
   // /api/user/consultants routes are public for explore page (verification filter enforced in API)
   // /api/user/reviews is public for displaying reviews on consultant profiles
   // /api/plans/classes and /api/plans/webinars are public for browse/detail pages;
   //   their sub-routes (recordings, materials) enforce auth in their own handlers
+  // /api/trials/check-eligibility and /api/trials/stats are public (no private data)
   PUBLIC_API_PREFIXES: [
     "/api/auth/",
     "/api/health/",
@@ -46,6 +50,8 @@ const ROUTE_PATTERNS = {
     "/api/user/reviews", // Public: consultant reviews
     "/api/plans/classes", // Public: browse and view class plans (sub-routes enforce their own auth)
     "/api/plans/webinars", // Public: browse and view webinar plans (sub-routes enforce their own auth)
+    "/api/trials/check-eligibility", // Public: eligibility check (no private data returned)
+    "/api/trials/stats", // Public: aggregate trial stats
   ],
 };
 

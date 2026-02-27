@@ -2,9 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { consultantListInclude } from "@/lib/data/explore-experts";
 import { apiError } from "@/lib/errors";
+import { searchLimiter, applyRateLimit, getClientIp } from "@/lib/rate-limit";
 
 export async function GET(request: NextRequest) {
   try {
+    // Rate limit: 60 requests per minute per IP
+    const rl = await applyRateLimit(searchLimiter, getClientIp(request));
+    if (rl) return rl;
+
     const searchParams = request.nextUrl.searchParams;
     const page = parseInt(searchParams.get("page") || "1");
     const limit = parseInt(searchParams.get("limit") || "10");

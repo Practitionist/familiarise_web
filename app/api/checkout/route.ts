@@ -6,6 +6,7 @@ import {
 } from "@/lib/errors/classification/payment-error-classification";
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth-server";
+import { checkoutLimiter, applyRateLimit } from "@/lib/rate-limit";
 
 export async function POST(req: NextRequest) {
   try {
@@ -14,6 +15,10 @@ export async function POST(req: NextRequest) {
     if (!session?.user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+
+    // Rate limit: 5 checkouts per minute per user
+    const rl = await applyRateLimit(checkoutLimiter, session.user.id);
+    if (rl) return rl;
 
     // Validate request body
     const body = await req.json();

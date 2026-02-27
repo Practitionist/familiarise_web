@@ -1,12 +1,28 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import {
+  requireApiAuth,
+  isPrivileged,
+  forbiddenResponse,
+} from "@/lib/auth-helpers";
 
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ consulteeId: string }> },
 ) {
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const { session } = authResult;
+
   try {
     const { consulteeId } = await params;
+
+    if (
+      !isPrivileged(session.user.role) &&
+      session.user.consulteeProfileId !== consulteeId
+    ) {
+      return forbiddenResponse("You can only access your own events");
+    }
 
     if (!consulteeId) {
       return NextResponse.json(

@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { RequestStatus } from "@prisma/client";
+import {
+  requireApiAuth,
+  isPrivileged,
+  forbiddenResponse,
+} from "@/lib/auth-helpers";
 
 /**
  * GET /api/dashboard/consultee/[consulteeId]/pending-payments
@@ -10,8 +15,19 @@ export async function GET(
   request: Request,
   { params }: { params: Promise<{ consulteeId: string }> },
 ) {
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const { session } = authResult;
+
   try {
     const { consulteeId } = await params;
+
+    if (
+      !isPrivileged(session.user.role) &&
+      session.user.consulteeProfileId !== consulteeId
+    ) {
+      return forbiddenResponse("You can only access your own pending payments");
+    }
 
     // Fetch consultee profile to get their ID
     const consulteeProfile = await prisma.consulteeProfile.findUnique({

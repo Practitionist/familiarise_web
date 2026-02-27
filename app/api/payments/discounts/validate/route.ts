@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { DiscountType } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
+import { discountLimiter, applyRateLimit } from "@/lib/rate-limit";
 
 interface ValidateDiscountRequest {
   code: string;
@@ -32,6 +33,10 @@ export async function POST(request: NextRequest) {
         { status: 401 },
       );
     }
+
+    // Rate limit: 10 discount validations per minute per user
+    const rl = await applyRateLimit(discountLimiter, session.user.id);
+    if (rl) return rl;
 
     const body: ValidateDiscountRequest = await request.json();
     const { code, amount } = body;

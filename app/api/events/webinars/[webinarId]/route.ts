@@ -1,6 +1,11 @@
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import {
+  requireApiAuth,
+  isPrivileged,
+  forbiddenResponse,
+} from "@/lib/auth-helpers";
 
 export async function GET(
   request: Request,
@@ -51,15 +56,30 @@ export async function GET(
 }
 
 export async function PUT(
-  request: Request,
+  request: NextRequest,
   { params }: { params: Promise<{ webinarId: string }> },
 ) {
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const { session } = authResult;
+
   try {
     const { webinarId } = await params;
     const body = await request.json();
 
+    // Only the owning consultant or ADMIN/STAFF can update a webinar instance
     const webinarData = await prisma.webinar.update({
-      where: { id: webinarId },
+      where: {
+        id: webinarId,
+        ...(isPrivileged(session.user.role)
+          ? {}
+          : {
+              webinarPlan: {
+                consultantProfileId:
+                  session.user.consultantProfileId ?? "__none__",
+              },
+            }),
+      },
       data: {
         status: body.status,
         feedbackSummary: body.feedbackSummary,
@@ -109,14 +129,29 @@ export async function PUT(
 }
 
 export async function DELETE(
-  request: Request,
+  request: NextRequest,
   { params }: { params: Promise<{ webinarId: string }> },
 ) {
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const { session } = authResult;
+
   try {
     const { webinarId } = await params;
 
+    // Only the owning consultant or ADMIN/STAFF can delete a webinar instance
     const webinarData = await prisma.webinar.delete({
-      where: { id: webinarId },
+      where: {
+        id: webinarId,
+        ...(isPrivileged(session.user.role)
+          ? {}
+          : {
+              webinarPlan: {
+                consultantProfileId:
+                  session.user.consultantProfileId ?? "__none__",
+              },
+            }),
+      },
       include: {
         webinarPlan: {
           include: {
