@@ -282,8 +282,7 @@ export function EventPlannerForWebinar({
           prerequisites: formData.prerequisites ?? null,
           materialProvided: formData.materialProvided ?? null,
           learningOutcomes: formData.learningOutcomes,
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          topics: formData.topics as any,
+          topics: formData.topics,
           consultantProfileId: consultantId,
           consultantProfile: null,
           imageUrl: initialData?.webinarPlan?.imageUrl ?? null,

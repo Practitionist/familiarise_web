@@ -97,8 +97,12 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
     const body = await req.json();
     const { status, assignedToId } = body;
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const updateData: any = {};
+    const updateData: {
+      status?: ModerationReportStatus;
+      assignedToId?: string | null;
+      resolvedAt?: Date;
+      resolvedBy?: string;
+    } = {};
 
     if (status !== undefined) {
       const validStatuses: ModerationReportStatus[] = [

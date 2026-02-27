@@ -79,16 +79,12 @@ function useEventsInternal(mode: TEventQueryMode): IEventsResult {
   const [error, setError] = useState<Error | null>(null);
   const { toast } = useToast();
 
-  // Stable key for the effect dependency
-  const modeKey =
-    mode.type === "user"
-      ? `user:${mode.userId}`
-      : mode.type === "consultant"
-        ? `consultant:${mode.profileId}`
-        : `consultee:${mode.profileId}`;
+  // Extract stable primitives for the effect dependency array
+  const modeType = mode.type;
+  const identifier =
+    mode.type === "user" ? mode.userId : mode.profileId;
 
   useEffect(() => {
-    const identifier = mode.type === "user" ? mode.userId : mode.profileId;
     if (!identifier) return;
 
     const fetchEvents = async () => {
@@ -98,9 +94,9 @@ function useEventsInternal(mode: TEventQueryMode): IEventsResult {
       try {
         let queryParam: string;
 
-        if (mode.type === "user") {
+        if (modeType === "user") {
           // Fetch user details first to determine role
-          const response = await fetch(`/api/user/${mode.userId}`);
+          const response = await fetch(`/api/user/${identifier}`);
           if (!response.ok) {
             throw new Error("Failed to fetch user details");
           }
@@ -130,10 +126,10 @@ function useEventsInternal(mode: TEventQueryMode): IEventsResult {
             setIsLoading(false);
             return;
           }
-        } else if (mode.type === "consultant") {
-          queryParam = `consultantProfileId=${mode.profileId}`;
+        } else if (modeType === "consultant") {
+          queryParam = `consultantProfileId=${identifier}`;
         } else {
-          queryParam = `consulteeProfileId=${mode.profileId}`;
+          queryParam = `consulteeProfileId=${identifier}`;
         }
 
         const [consultationsRes, subscriptionsRes, webinarsRes, classesRes] =
@@ -162,12 +158,14 @@ function useEventsInternal(mode: TEventQueryMode): IEventsResult {
         setSubscriptions(subscriptionsData.data);
         setWebinars(webinarsData.data);
         setClasses(classesData.data);
-      } catch (err: any) {
+      } catch (err: unknown) {
         console.error("Error fetching events:", err);
-        setError(err);
+        const message =
+          err instanceof Error ? err.message : "Unknown error";
+        setError(err instanceof Error ? err : new Error(message));
         toast({
           title: "Error fetching events",
-          description: err.message,
+          description: message,
           variant: "destructive",
         });
       } finally {
@@ -176,8 +174,7 @@ function useEventsInternal(mode: TEventQueryMode): IEventsResult {
     };
 
     fetchEvents();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [modeKey, toast]);
+  }, [modeType, identifier, toast]);
 
   return { consultations, subscriptions, webinars, classes, isLoading, error };
 }

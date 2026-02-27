@@ -13,25 +13,25 @@ interface WeeklyAvailabilityProps {
 
 const VISIBLE_SLOT_COUNT = 5;
 
+const DAY_NAMES: DayOfWeek[] = [
+  "MONDAY",
+  "TUESDAY",
+  "WEDNESDAY",
+  "THURSDAY",
+  "FRIDAY",
+  "SATURDAY",
+  "SUNDAY",
+];
+
 export function WeeklyAvailability({ slotsByDay }: WeeklyAvailabilityProps) {
   const [isExpanded, setIsExpanded] = useState(false);
-
-  const dayNames: DayOfWeek[] = [
-    "MONDAY",
-    "TUESDAY",
-    "WEDNESDAY",
-    "THURSDAY",
-    "FRIDAY",
-    "SATURDAY",
-    "SUNDAY",
-  ];
 
   const mergedSlotsByDay = useMemo(() => {
     const result: Record<DayOfWeek, ProcessedSlot[]> = {} as Record<
       DayOfWeek,
       ProcessedSlot[]
     >;
-    for (const day of dayNames) {
+    for (const day of DAY_NAMES) {
       const sorted = (slotsByDay[day] || []).slice().sort((a, b) => {
         return (
           timeToMinutes(roundTime(a.localStartTime)) -
@@ -41,16 +41,14 @@ export function WeeklyAvailability({ slotsByDay }: WeeklyAvailabilityProps) {
       result[day] = mergeConsecutiveSlotsForDisplay(sorted);
     }
     return result;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slotsByDay]);
 
   // Check if any day has more slots than the visible limit
   const totalHidden = useMemo(() => {
-    return dayNames.reduce((sum, day) => {
+    return DAY_NAMES.reduce((sum, day) => {
       const excess = mergedSlotsByDay[day].length - VISIBLE_SLOT_COUNT;
       return sum + (excess > 0 ? excess : 0);
     }, 0);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mergedSlotsByDay]);
 
   // Get the date for booked slots in user timezone
@@ -70,7 +68,7 @@ export function WeeklyAvailability({ slotsByDay }: WeeklyAvailabilityProps) {
 
       <div className="relative">
         <div className="grid grid-cols-7 gap-3">
-          {dayNames.map((day) => {
+          {DAY_NAMES.map((day) => {
             const allSlots = mergedSlotsByDay[day];
             const visibleSlots = isExpanded
               ? allSlots

@@ -45,8 +45,7 @@ interface FeedbackSupportTabProps {
 }
 
 export default function FeedbackSupportTab({
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  consulteeId,
+  consulteeId: _consulteeId,
 }: FeedbackSupportTabProps) {
   const {
     isLoading,

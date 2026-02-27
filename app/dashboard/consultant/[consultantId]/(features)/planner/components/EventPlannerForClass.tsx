@@ -288,8 +288,7 @@ export function EventPlannerForClass({
           prerequisites: formData.prerequisites ?? null,
           materialProvided: formData.materialProvided ?? null,
           learningOutcomes: formData.learningOutcomes,
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          topics: formData.topics as any,
+          topics: formData.topics,
           consultantProfileId: consultantId,
           consultantProfile: null,
           certificateProvided: formData.certificateProvided ?? false,

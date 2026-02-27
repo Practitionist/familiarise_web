@@ -1087,54 +1087,61 @@ export class SlotAllocationService {
     firstSlot: Date,
     config: EventConfig,
   ): Promise<void> {
-    const updates: any = {};
-
     switch (eventType) {
       case "consultation":
+        await tx.consultation.update({
+          where: { id: eventId },
+          data: { requestStatus: RequestStatus.APPROVED },
+        });
+        break;
+
       case "subscription":
-        updates.requestStatus = RequestStatus.APPROVED;
-        if (eventType === "subscription") {
-          // FIX: Only set schedulingPeriod if not already configured
-          // This prevents overwriting the user's scheduling period with the first allocated slot
-          // which could cause slots to appear outside the intended scheduling window
-          if (
-            !config.schedulingPeriodStartsAt ||
+        await tx.subscription.update({
+          where: { id: eventId },
+          data: {
+            requestStatus: RequestStatus.APPROVED,
+            // FIX: Only set schedulingPeriod if not already configured
+            // This prevents overwriting the user's scheduling period with the first allocated slot
+            // which could cause slots to appear outside the intended scheduling window
+            ...(!config.schedulingPeriodStartsAt ||
             !config.schedulingPeriodEndsAt
-          ) {
-            updates.schedulingPeriodStartsAt = firstSlot;
-            updates.schedulingPeriodEndsAt = addMonths(
-              firstSlot,
-              config.durationInMonths || 1,
-            );
-          }
-        }
+              ? {
+                  schedulingPeriodStartsAt: firstSlot,
+                  schedulingPeriodEndsAt: addMonths(
+                    firstSlot,
+                    config.durationInMonths || 1,
+                  ),
+                }
+              : {}),
+          },
+        });
         break;
 
       case "webinar":
         // Webinar model does NOT have startDate/endDate fields
         // Start date is stored in the Appointment's slots
-        updates.status = "SCHEDULED";
+        await tx.webinar.update({
+          where: { id: eventId },
+          data: { status: "SCHEDULED" },
+        });
         break;
 
       case "class":
         // Class model HAS schedulingPeriod fields
         // FIX Bug #19: Use addMonths instead of addWeeks * 4 for accurate month boundaries
-        updates.status = "SCHEDULED";
-        updates.schedulingPeriodStartsAt = firstSlot;
-        updates.schedulingPeriodEndsAt = addMonths(
-          firstSlot,
-          config.durationInMonths || 1,
-        );
+        await tx.class.update({
+          where: { id: eventId },
+          data: {
+            status: "SCHEDULED",
+            schedulingPeriodStartsAt: firstSlot,
+            schedulingPeriodEndsAt: addMonths(
+              firstSlot,
+              config.durationInMonths || 1,
+            ),
+          },
+        });
         break;
     }
-
-    // Dynamic model access by eventType requires type assertion — TypeScript can't
-    // statically verify tx["consultation"] etc. from a computed string.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (tx as any)[eventType].update({
-      where: { id: eventId },
-      data: updates,
-    });
   }
 
   /**
@@ -1150,35 +1157,57 @@ export class SlotAllocationService {
     consulteeUserId?: string;
     requestedSlots?: Date[];
   } | null> {
-    const include = this.getEventInclude(eventType);
-    // Dynamic model access by eventType — same as updateEventStatus above
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const event = await (tx as any)[eventType].findUnique({
-      where: { id: eventId },
-      include,
-    });
+    const consultantProfileSelect = {
+      select: {
+        user: true,
+        scheduleType: true,
+        slotsOfAvailabilityWeekly: true,
+        slotsOfAvailabilityCustom: true,
+      },
+    } as const;
 
-    if (!event) return null;
-
-    // Extract consultant profile based on event type
-    let consultantProfile: any;
+    let consultantProfile: {
+      user: { id: string; timezone?: string | null };
+      scheduleType: "WEEKLY" | "CUSTOM";
+      slotsOfAvailabilityWeekly: ConsultantAllocationData["slotsOfAvailabilityWeekly"];
+      slotsOfAvailabilityCustom: ConsultantAllocationData["slotsOfAvailabilityCustom"];
+    } | null | undefined;
     let config: EventConfig;
     let consulteeUserId: string | undefined;
     let requestedSlots: Date[] | undefined;
 
     switch (eventType) {
-      case "consultation":
+      case "consultation": {
+        const event = await tx.consultation.findUnique({
+          where: { id: eventId },
+          include: {
+            consultationPlan: { include: { consultantProfile: consultantProfileSelect } },
+            requestedBy: { include: { user: true } },
+            appointment: { include: { slotsOfAppointment: true } },
+          },
+        });
+        if (!event) return null;
         consultantProfile = event.consultationPlan?.consultantProfile;
         config = {
           durationInHours: event.consultationPlan?.durationInHours,
         };
         consulteeUserId = event.requestedBy?.user?.id;
         requestedSlots = event.appointment?.slotsOfAppointment?.map(
-          (s: any) => new Date(s.startsAt),
+          (s) => new Date(s.startsAt),
         );
         break;
+      }
 
-      case "subscription":
+      case "subscription": {
+        const event = await tx.subscription.findUnique({
+          where: { id: eventId },
+          include: {
+            subscriptionPlan: { include: { consultantProfile: consultantProfileSelect } },
+            requestedBy: { include: { user: true } },
+            appointments: { include: { slotsOfAppointment: true } },
+          },
+        });
+        if (!event) return null;
         consultantProfile = event.subscriptionPlan?.consultantProfile;
         config = {
           durationInMonths: event.subscriptionPlan?.durationInMonths,
@@ -1186,29 +1215,51 @@ export class SlotAllocationService {
           sessionDurationInHours:
             event.subscriptionPlan?.sessionDurationInHours,
           totalSessions: event.subscriptionPlan?.totalSessions,
-          schedulingPeriodStartsAt: event.schedulingPeriodStartsAt,
-          schedulingPeriodEndsAt: event.schedulingPeriodEndsAt,
+          schedulingPeriodStartsAt: event.schedulingPeriodStartsAt ?? undefined,
+          schedulingPeriodEndsAt: event.schedulingPeriodEndsAt ?? undefined,
         };
         consulteeUserId = event.requestedBy?.user?.id;
-        requestedSlots = event.appointments?.flatMap((app: any) =>
-          app.slotsOfAppointment.map((s: any) => new Date(s.startsAt)),
+        requestedSlots = event.appointments?.flatMap((app) =>
+          app.slotsOfAppointment.map((s) => new Date(s.startsAt)),
         );
         break;
+      }
 
-      case "webinar":
+      case "webinar": {
+        const event = await tx.webinar.findUnique({
+          where: { id: eventId },
+          include: {
+            webinarPlan: { include: { consultantProfile: consultantProfileSelect } },
+          },
+        });
+        if (!event) return null;
         consultantProfile = event.webinarPlan?.consultantProfile;
         config = {
           durationInHours: event.webinarPlan?.durationInHours,
         };
         break;
+      }
 
-      case "class":
+      case "class": {
+        const event = await tx.class.findUnique({
+          where: { id: eventId },
+          include: {
+            classPlan: {
+              include: {
+                consultantProfile: consultantProfileSelect,
+                classContents: true,
+              },
+            },
+            appointments: { include: { slotsOfAppointment: true } },
+          },
+        });
+        if (!event) return null;
         consultantProfile = event.classPlan?.consultantProfile;
         const classContents = event.classPlan?.classContents || [];
         const sessionDuration =
           classContents.length > 0
             ? classContents.reduce(
-                (sum: number, c: any) => sum + c.hoursAllotted,
+                (sum, c) => sum + c.hoursAllotted,
                 0,
               ) / classContents.length
             : event.classPlan?.sessionDurationInHours || 1;
@@ -1218,10 +1269,11 @@ export class SlotAllocationService {
           callsPerWeek: event.classPlan?.meetingsPerWeek,
           sessionDurationInHours: sessionDuration,
           totalSessions: event.classPlan?.totalSessions,
-          schedulingPeriodStartsAt: event.schedulingPeriodStartsAt,
-          schedulingPeriodEndsAt: event.schedulingPeriodEndsAt,
+          schedulingPeriodStartsAt: event.schedulingPeriodStartsAt ?? undefined,
+          schedulingPeriodEndsAt: event.schedulingPeriodEndsAt ?? undefined,
         };
         break;
+      }
     }
 
     if (!consultantProfile) {
@@ -1246,7 +1298,7 @@ export class SlotAllocationService {
         scheduleType: consultantProfile.scheduleType,
         slotsOfAvailabilityWeekly: consultantProfile.slotsOfAvailabilityWeekly,
         slotsOfAvailabilityCustom: consultantProfile.slotsOfAvailabilityCustom,
-        timezone: consultantProfile.user.timezone,
+        timezone: consultantProfile.user.timezone ?? undefined,
       },
       config,
       consulteeUserId,
@@ -1274,51 +1326,4 @@ export class SlotAllocationService {
     return eventType;
   }
 
-  /**
-   * Get Prisma include object for event fetching
-   */
-  private static getEventInclude(eventType: EventType): any {
-    const baseInclude = {
-      consultantProfile: {
-        select: {
-          user: true,
-          scheduleType: true,
-          slotsOfAvailabilityWeekly: true,
-          slotsOfAvailabilityCustom: true,
-        },
-      },
-    };
-
-    switch (eventType) {
-      case "consultation":
-        return {
-          consultationPlan: { include: baseInclude },
-          requestedBy: { include: { user: true } },
-          appointment: { include: { slotsOfAppointment: true } },
-        };
-
-      case "subscription":
-        return {
-          subscriptionPlan: { include: baseInclude },
-          requestedBy: { include: { user: true } },
-          appointments: { include: { slotsOfAppointment: true } },
-        };
-
-      case "webinar":
-        return {
-          webinarPlan: { include: baseInclude },
-        };
-
-      case "class":
-        return {
-          classPlan: {
-            include: {
-              ...baseInclude,
-              classContents: true,
-            },
-          },
-          appointments: { include: { slotsOfAppointment: true } },
-        };
-    }
-  }
 }

@@ -13,7 +13,6 @@ export function sanitizeString(input: string): string {
   return (
     input
       .replace(/\0/g, "") // Remove null bytes
-      // eslint-disable-next-line no-control-regex
       .replace(/[\x00-\x1F\x7F]/g, "") // Remove control characters
       .trim()
   );
@@ -50,7 +49,6 @@ export function sanitizePhone(phone: string): string {
   return (
     phone
       .replace(/\0/g, "")
-      // eslint-disable-next-line no-control-regex
       .replace(/[\x00-\x08\x0B-\x1F\x7F]/g, "")
       .trim()
   );
