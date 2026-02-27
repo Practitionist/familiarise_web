@@ -7,8 +7,12 @@ import {
   type TPlanImageType,
 } from "@/lib/supabase";
 import { apiError } from "@/lib/errors";
+import { z } from "zod";
 
-const VALID_PLAN_TYPES: TPlanImageType[] = ["webinar-plans", "class-plans"];
+const planImageSchema = z.object({
+  planType: z.enum(["webinar-plans", "class-plans"]),
+  planId: z.string().min(1),
+});
 
 export async function POST(request: NextRequest) {
   try {
@@ -19,22 +23,27 @@ export async function POST(request: NextRequest) {
 
     const formData = await request.formData();
     const file = formData.get("file") as File | null;
-    const planType = formData.get("planType") as TPlanImageType | null;
-    const planId = formData.get("planId") as string | null;
 
-    if (!file || !planType || !planId) {
+    if (!file) {
       return NextResponse.json(
-        { error: "Missing required fields: file, planType, planId" },
+        { error: "Missing required field: file" },
         { status: 400 },
       );
     }
 
-    if (!VALID_PLAN_TYPES.includes(planType)) {
+    const parseResult = planImageSchema.safeParse({
+      planType: formData.get("planType"),
+      planId: formData.get("planId"),
+    });
+
+    if (!parseResult.success) {
       return NextResponse.json(
-        { error: "Invalid planType. Must be 'webinar-plans' or 'class-plans'" },
+        { error: "Invalid request", details: parseResult.error.format() },
         { status: 400 },
       );
     }
+
+    const { planType, planId } = parseResult.data;
 
     // Verify plan ownership
     const isOwner = await verifyPlanOwnership(
@@ -86,24 +95,16 @@ export async function DELETE(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { planType, planId } = body as {
-      planType: TPlanImageType;
-      planId: string;
-    };
+    const parseResult = planImageSchema.safeParse(body);
 
-    if (!planType || !planId) {
+    if (!parseResult.success) {
       return NextResponse.json(
-        { error: "Missing required fields: planType, planId" },
+        { error: "Invalid request body", details: parseResult.error.format() },
         { status: 400 },
       );
     }
 
-    if (!VALID_PLAN_TYPES.includes(planType)) {
-      return NextResponse.json(
-        { error: "Invalid planType" },
-        { status: 400 },
-      );
-    }
+    const { planType, planId } = parseResult.data;
 
     // Verify plan ownership
     const isOwner = await verifyPlanOwnership(
