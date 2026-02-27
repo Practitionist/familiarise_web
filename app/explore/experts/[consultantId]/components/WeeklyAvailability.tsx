@@ -1,26 +1,9 @@
-import React from "react";
+import React, { useMemo, useState } from "react";
 import { DayOfWeek } from "@prisma/client";
-import { TSlotTiming } from "@/types/slots";
+import { ChevronDown, ChevronUp } from "lucide-react";
 import { roundTime, timeToMinutes } from "../utils/time";
-
-// Better typing for original slot data
-type OriginalSlotData = {
-  id: string;
-  slotStartTimeInUTC: string;
-  slotEndTimeInUTC: string;
-};
-
-interface ProcessedSlot {
-  id: string;
-  localStartTime: string;
-  localEndTime: string;
-  originalSlot: OriginalSlotData;
-  isAllocated?: boolean;
-  bookingStatus?: "available" | "partially-booked" | "fully-booked";
-  slotStartTimeInUTC?: string;
-  slotEndTimeInUTC?: string;
-  type?: "WEEKLY" | "CUSTOM";
-}
+import { mergeConsecutiveSlotsForDisplay } from "../utils/mergeSlots";
+import type { ProcessedSlot } from "../types";
 
 type ProcessedSlotsByDay = Record<DayOfWeek, ProcessedSlot[]>;
 
@@ -28,7 +11,11 @@ interface WeeklyAvailabilityProps {
   slotsByDay: ProcessedSlotsByDay;
 }
 
+const VISIBLE_SLOT_COUNT = 5;
+
 export function WeeklyAvailability({ slotsByDay }: WeeklyAvailabilityProps) {
+  const [isExpanded, setIsExpanded] = useState(false);
+
   const dayNames: DayOfWeek[] = [
     "MONDAY",
     "TUESDAY",
@@ -38,6 +25,33 @@ export function WeeklyAvailability({ slotsByDay }: WeeklyAvailabilityProps) {
     "SATURDAY",
     "SUNDAY",
   ];
+
+  const mergedSlotsByDay = useMemo(() => {
+    const result: Record<DayOfWeek, ProcessedSlot[]> = {} as Record<
+      DayOfWeek,
+      ProcessedSlot[]
+    >;
+    for (const day of dayNames) {
+      const sorted = (slotsByDay[day] || []).slice().sort((a, b) => {
+        return (
+          timeToMinutes(roundTime(a.localStartTime)) -
+          timeToMinutes(roundTime(b.localStartTime))
+        );
+      });
+      result[day] = mergeConsecutiveSlotsForDisplay(sorted);
+    }
+    return result;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slotsByDay]);
+
+  // Check if any day has more slots than the visible limit
+  const totalHidden = useMemo(() => {
+    return dayNames.reduce((sum, day) => {
+      const excess = mergedSlotsByDay[day].length - VISIBLE_SLOT_COUNT;
+      return sum + (excess > 0 ? excess : 0);
+    }, 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mergedSlotsByDay]);
 
   // Get the date for booked slots in user timezone
   const getBookedSlotDate = (slot: ProcessedSlot) => {
@@ -56,25 +70,24 @@ export function WeeklyAvailability({ slotsByDay }: WeeklyAvailabilityProps) {
 
       <div className="relative">
         <div className="grid grid-cols-7 gap-3">
-          {dayNames.map((day) => (
-            <div key={day} className="space-y-3">
-              {/* Day header with glossy effect */}
-              <div className="text-center">
-                <h4 className="font-semibold text-sm text-gray-800 bg-gradient-to-b from-gray-100 to-gray-200/80 px-3 py-2 rounded-xl border border-gray-300/50 shadow-sm">
-                  {day.charAt(0) + day.slice(1).toLowerCase()}
-                </h4>
-              </div>
+          {dayNames.map((day) => {
+            const allSlots = mergedSlotsByDay[day];
+            const visibleSlots = isExpanded
+              ? allSlots
+              : allSlots.slice(0, VISIBLE_SLOT_COUNT);
 
-              <div className="space-y-2">
-                {slotsByDay[day]?.length > 0 ? (
-                  // Sort slots chronologically within each day
-                  slotsByDay[day]
-                    .sort((a, b) => {
-                      const timeA = timeToMinutes(roundTime(a.localStartTime));
-                      const timeB = timeToMinutes(roundTime(b.localStartTime));
-                      return timeA - timeB;
-                    })
-                    .map((slot) => {
+            return (
+              <div key={day} className="space-y-3">
+                {/* Day header with glossy effect */}
+                <div className="text-center">
+                  <h4 className="font-semibold text-sm text-gray-800 bg-gradient-to-b from-gray-100 to-gray-200/80 px-3 py-2 rounded-xl border border-gray-300/50 shadow-sm">
+                    {day.charAt(0) + day.slice(1).toLowerCase()}
+                  </h4>
+                </div>
+
+                <div className="space-y-2">
+                  {visibleSlots.length > 0 ? (
+                    visibleSlots.map((slot) => {
                       const bookingStatus = slot.bookingStatus || "available";
                       const isFullyBooked = bookingStatus === "fully-booked";
                       const isPartiallyBooked =
@@ -128,15 +141,38 @@ export function WeeklyAvailability({ slotsByDay }: WeeklyAvailabilityProps) {
                         </div>
                       );
                     })
-                ) : (
-                  <div className="h-16 flex items-center justify-center text-xs text-gray-400 bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl border border-gray-200 shadow-sm">
-                    No slots
-                  </div>
-                )}
+                  ) : (
+                    <div className="h-16 flex items-center justify-center text-xs text-gray-400 bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl border border-gray-200 shadow-sm">
+                      No slots
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
+
+        {/* Single expand/collapse button for the entire week */}
+        {totalHidden > 0 && (
+          <div className="flex justify-center mt-4">
+            <button
+              onClick={() => setIsExpanded((prev) => !prev)}
+              className="flex items-center gap-1.5 px-4 py-2 text-xs font-medium text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 rounded-xl border border-emerald-200 transition-colors cursor-pointer shadow-sm"
+            >
+              {isExpanded ? (
+                <>
+                  <ChevronUp className="w-3.5 h-3.5" />
+                  Show less
+                </>
+              ) : (
+                <>
+                  <ChevronDown className="w-3.5 h-3.5" />
+                  Show {totalHidden} more slots
+                </>
+              )}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
