@@ -10,12 +10,10 @@ import { faker } from "@faker-js/faker";
 export function sanitizeString(input: string): string {
   if (!input) return input;
 
-  return (
-    input
-      .replace(/\0/g, "") // Remove null bytes
-      .replace(/[\x00-\x1F\x7F]/g, "") // Remove control characters
-      .trim()
-  );
+  return input
+    .replace(/\0/g, "") // Remove null bytes
+    .replace(/[\x00-\x1F\x7F]/g, "") // Remove control characters
+    .trim();
 }
 
 /**
@@ -46,12 +44,10 @@ export function sanitizePhone(phone: string): string {
   if (!phone) return phone;
 
   // Remove null bytes and control characters, but keep phone number characters
-  return (
-    phone
-      .replace(/\0/g, "")
-      .replace(/[\x00-\x08\x0B-\x1F\x7F]/g, "")
-      .trim()
-  );
+  return phone
+    .replace(/\0/g, "")
+    .replace(/[\x00-\x08\x0B-\x1F\x7F]/g, "")
+    .trim();
 }
 
 /**

@@ -15,7 +15,10 @@ import type { TAppointment } from "@/types/appointment";
 import type { TConsultantProfile } from "@/types/consultant";
 import type { TConsulteeEventsResponse } from "@/types/consultee-events";
 import type { TConsulteeProfile } from "@/types/consultee";
-import type { PlannerWebinarEvent, PlannerClassEvent } from "@/app/dashboard/consultant/[consultantId]/(features)/planner/types/event";
+import type {
+  PlannerWebinarEvent,
+  PlannerClassEvent,
+} from "@/app/dashboard/consultant/[consultantId]/(features)/planner/types/event";
 
 // =============================================================================
 // Types

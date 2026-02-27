@@ -81,8 +81,7 @@ function useEventsInternal(mode: TEventQueryMode): IEventsResult {
 
   // Extract stable primitives for the effect dependency array
   const modeType = mode.type;
-  const identifier =
-    mode.type === "user" ? mode.userId : mode.profileId;
+  const identifier = mode.type === "user" ? mode.userId : mode.profileId;
 
   useEffect(() => {
     if (!identifier) return;
@@ -160,8 +159,7 @@ function useEventsInternal(mode: TEventQueryMode): IEventsResult {
         setClasses(classesData.data);
       } catch (err: unknown) {
         console.error("Error fetching events:", err);
-        const message =
-          err instanceof Error ? err.message : "Unknown error";
+        const message = err instanceof Error ? err.message : "Unknown error";
         setError(err instanceof Error ? err : new Error(message));
         toast({
           title: "Error fetching events",

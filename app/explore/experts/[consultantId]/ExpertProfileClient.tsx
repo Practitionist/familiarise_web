@@ -159,8 +159,7 @@ export function ExpertProfileClient({
         return;
       }
 
-      const schedulingPeriodStartsAt =
-        schedulingPeriod.startDate.toISOString();
+      const schedulingPeriodStartsAt = schedulingPeriod.startDate.toISOString();
       const schedulingPeriodEndsAt = schedulingPeriod.endDate.toISOString();
 
       const params = new URLSearchParams({

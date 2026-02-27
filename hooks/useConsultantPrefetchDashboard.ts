@@ -10,7 +10,6 @@ import {
   schedulePrefetch,
 } from "@/lib/dashboard-queries";
 
-
 interface PrefetchDashboardOptions {
   consultantId?: string;
   consulteeId?: string;

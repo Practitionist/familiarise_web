@@ -109,7 +109,12 @@ export function usePrograms(
                 ...plan,
                 classes,
                 type: "class",
-                imageUrl: generateProgramImageUrl(plan.id, 600, 400, plan.imageUrl),
+                imageUrl: generateProgramImageUrl(
+                  plan.id,
+                  600,
+                  400,
+                  plan.imageUrl,
+                ),
                 isRegistered,
               };
             },
@@ -136,7 +141,12 @@ export function usePrograms(
                   ...plan,
                   webinars,
                   type: "webinar",
-                  imageUrl: generateProgramImageUrl(plan.id, 600, 400, plan.imageUrl),
+                  imageUrl: generateProgramImageUrl(
+                    plan.id,
+                    600,
+                    400,
+                    plan.imageUrl,
+                  ),
                   isRegistered,
                 };
               },
@@ -243,7 +253,12 @@ export function useCuratedPrograms(
               ...plan,
               classes: plan.classes || [],
               type: "class",
-              imageUrl: generateProgramImageUrl(plan.id, 600, 400, plan.imageUrl),
+              imageUrl: generateProgramImageUrl(
+                plan.id,
+                600,
+                400,
+                plan.imageUrl,
+              ),
             }),
           ),
         );
@@ -260,7 +275,12 @@ export function useCuratedPrograms(
               ...plan,
               webinars: plan.webinars || [],
               type: "webinar",
-              imageUrl: generateProgramImageUrl(plan.id, 600, 400, plan.imageUrl),
+              imageUrl: generateProgramImageUrl(
+                plan.id,
+                600,
+                400,
+                plan.imageUrl,
+              ),
             }),
           ),
         );

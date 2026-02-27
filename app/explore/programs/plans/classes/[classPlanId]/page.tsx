@@ -18,7 +18,12 @@ export default async function ClassDetailsPage({
   const planWithDefaults = {
     ...classPlan,
     type: "class" as const,
-    imageUrl: generateProgramImageUrl(classPlan.id, 1200, 400, classPlan.imageUrl),
+    imageUrl: generateProgramImageUrl(
+      classPlan.id,
+      1200,
+      400,
+      classPlan.imageUrl,
+    ),
   };
 
   return <ClassDetails plan={planWithDefaults} />;

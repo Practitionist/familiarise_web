@@ -2,7 +2,11 @@ import { useQuery, useInfiniteQuery } from "@tanstack/react-query";
 import type { IConsultantCardData } from "@/types/consultant";
 import { SortOption } from "./components/SearchBar";
 import { useCallback, useMemo } from "react";
-import { CONSULTANTS_PER_PAGE, type IExpertFilters, type IExpertsMetaData } from "./utils";
+import {
+  CONSULTANTS_PER_PAGE,
+  type IExpertFilters,
+  type IExpertsMetaData,
+} from "./utils";
 
 // Enhanced React Query fetcher function with error handling for consultants
 const fetchConsultantsData = async (url: string) => {
@@ -24,7 +28,9 @@ const fetchConsultantsData = async (url: string) => {
 };
 
 export function useConsultantsMetadata() {
-  const { data, error, isLoading, refetch } = useQuery<{ data: IExpertsMetaData }>({
+  const { data, error, isLoading, refetch } = useQuery<{
+    data: IExpertsMetaData;
+  }>({
     queryKey: ["consultants-metadata"],
     queryFn: () => fetchConsultantsData("/api/user/consultants/meta"),
     staleTime: 5 * 60 * 1000,

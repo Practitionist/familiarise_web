@@ -74,10 +74,7 @@ export default async function ExploreExperts() {
     <main className="min-h-screen bg-white">
       <HeroSection />
 
-      <FeaturedExperts
-        experts={featuredExperts}
-        isLoading={false}
-      />
+      <FeaturedExperts experts={featuredExperts} isLoading={false} />
 
       <Suspense
         fallback={

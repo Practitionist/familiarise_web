@@ -44,74 +44,79 @@ export const consultantListInclude = {
 
 /** Raw function — importable by API routes (no React.cache). */
 export async function fetchExpertsMetadata() {
-  const [domainsWithSubs, tags, consultantMetadata, availableLanguages, availabilityStats] =
-    await Promise.all([
-      // Domains + subdomains
-      prisma.domain.findMany({
-        include: {
-          subDomains: {
-            select: { id: true, name: true, domainId: true },
-          },
+  const [
+    domainsWithSubs,
+    tags,
+    consultantMetadata,
+    availableLanguages,
+    availabilityStats,
+  ] = await Promise.all([
+    // Domains + subdomains
+    prisma.domain.findMany({
+      include: {
+        subDomains: {
+          select: { id: true, name: true, domainId: true },
         },
-      }),
-      // Tags
-      prisma.tag.findMany({
-        select: { id: true, name: true, domainId: true },
-      }),
-      // Consultant metadata (counts, domain breakdown, avg rating)
-      (async () => {
-        const [totalConsultants, consultantsByDomain, averageRating] =
-          await Promise.all([
-            prisma.consultantProfile.count({
-              where: { verificationStatus: "VERIFIED" },
-            }),
-            prisma.domain.findMany({
-              select: {
-                id: true,
-                name: true,
-                _count: {
-                  select: {
-                    consultantProfiles: {
-                      where: { verificationStatus: "VERIFIED" },
-                    },
+      },
+    }),
+    // Tags
+    prisma.tag.findMany({
+      select: { id: true, name: true, domainId: true },
+    }),
+    // Consultant metadata (counts, domain breakdown, avg rating)
+    (async () => {
+      const [totalConsultants, consultantsByDomain, averageRating] =
+        await Promise.all([
+          prisma.consultantProfile.count({
+            where: { verificationStatus: "VERIFIED" },
+          }),
+          prisma.domain.findMany({
+            select: {
+              id: true,
+              name: true,
+              _count: {
+                select: {
+                  consultantProfiles: {
+                    where: { verificationStatus: "VERIFIED" },
                   },
                 },
               },
-            }),
-            prisma.consultantProfile.aggregate({
-              where: { verificationStatus: "VERIFIED" },
-              _avg: { rating: true },
-            }),
-          ]);
+            },
+          }),
+          prisma.consultantProfile.aggregate({
+            where: { verificationStatus: "VERIFIED" },
+            _avg: { rating: true },
+          }),
+        ]);
 
-        return {
-          totalConsultants,
-          consultantsByDomain: consultantsByDomain.map((d) => ({
-            id: d.id,
-            name: d.name,
-            consultantCount: d._count.consultantProfiles,
-          })),
-          averageRating: averageRating._avg.rating || 0,
-        };
-      })(),
-      // Available languages via raw SQL
-      prisma.$queryRaw<{ lang: string }[]>`
+      return {
+        totalConsultants,
+        consultantsByDomain: consultantsByDomain.map((d) => ({
+          id: d.id,
+          name: d.name,
+          consultantCount: d._count.consultantProfiles,
+        })),
+        averageRating: averageRating._avg.rating || 0,
+      };
+    })(),
+    // Available languages via raw SQL
+    prisma.$queryRaw<{ lang: string }[]>`
         SELECT DISTINCT unnest(languages) as lang
         FROM "ConsultantProfile"
         WHERE "verificationStatus" = 'VERIFIED'
         ORDER BY lang
       `.then((result) => result.map((r) => r.lang)),
-      // Availability stats
-      prisma.consultantProfile.count({
-        where: {
-          verificationStatus: "VERIFIED",
-          OR: [
-            { slotsOfAvailabilityWeekly: { some: {} } },
-            { slotsOfAvailabilityCustom: { some: {} } },
-          ],
-        },
-      }),
-    ]);
+    // Availability stats
+    prisma.consultantProfile.count({
+      where: {
+        verificationStatus: "VERIFIED",
+        OR: [
+          { slotsOfAvailabilityWeekly: { some: {} } },
+          { slotsOfAvailabilityCustom: { some: {} } },
+        ],
+      },
+    }),
+  ]);
 
   return {
     domains: domainsWithSubs.map((d) => ({ id: d.id, name: d.name })),

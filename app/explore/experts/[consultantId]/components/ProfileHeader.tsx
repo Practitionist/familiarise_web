@@ -91,9 +91,7 @@ export function ProfileHeader({
               {consultantDetails.rating.toFixed(1)}
             </span>
             <span className="text-zinc-400">•</span>
-            <span className="text-zinc-500">
-              {reviewCount} reviews
-            </span>
+            <span className="text-zinc-500">{reviewCount} reviews</span>
           </div>
 
           {/* Meta */}

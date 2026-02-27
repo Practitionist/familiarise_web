@@ -25,7 +25,10 @@ export const getConsultantDetail = cache(async (consultantId: string) => {
           linkedinUrl: true,
           timezone: true,
           workExperiences: {
-            orderBy: [{ isCurrent: "desc" as const }, { startDate: "desc" as const }],
+            orderBy: [
+              { isCurrent: "desc" as const },
+              { startDate: "desc" as const },
+            ],
           },
           education: {
             orderBy: { endYear: "desc" as const },

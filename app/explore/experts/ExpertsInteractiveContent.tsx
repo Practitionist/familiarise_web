@@ -1,20 +1,9 @@
 "use client";
 
-import {
-  useState,
-  useRef,
-  useCallback,
-  useMemo,
-  useEffect,
-} from "react";
+import { useState, useRef, useCallback, useMemo, useEffect } from "react";
 import { motion } from "framer-motion";
 import { useRouter, useSearchParams } from "next/navigation";
-import {
-  Search,
-  Flame,
-  Clock,
-  Briefcase,
-} from "lucide-react";
+import { Search, Flame, Clock, Briefcase } from "lucide-react";
 import type { IConsultantCardData } from "@/types/consultant";
 import { useCurrency } from "@/hooks/useCurrency";
 import { FiltersSection } from "./components/FiltersSection";
@@ -277,11 +266,7 @@ export default function ExpertsInteractiveContent({
             icon={<Clock className="w-5 h-5 text-white" />}
             onSeeAllClick={() => scrollToBrowse("newest")}
           />
-          <ExpertRow
-            experts={newestExperts}
-            badge="new"
-            isLoading={false}
-          />
+          <ExpertRow experts={newestExperts} badge="new" isLoading={false} />
         </div>
 
         {/* Browse by Domain */}
@@ -325,9 +310,7 @@ export default function ExpertsInteractiveContent({
                 })
               }
               selectedSubdomain={filters.subdomain}
-              setSelectedSubdomain={(val) =>
-                updateFilters({ subdomain: val })
-              }
+              setSelectedSubdomain={(val) => updateFilters({ subdomain: val })}
               selectedTags={filters.tags}
               setSelectedTags={(tags) => updateFilters({ tags })}
               experienceYears={filters.experience}
@@ -471,9 +454,7 @@ export default function ExpertsInteractiveContent({
               <div className="flex justify-center py-8">
                 <div className="flex items-center gap-3">
                   <div className="w-8 h-8 border-3 border-zinc-200 border-t-zinc-900 rounded-full animate-spin" />
-                  <span className="text-zinc-500 text-sm">
-                    Loading more...
-                  </span>
+                  <span className="text-zinc-500 text-sm">Loading more...</span>
                 </div>
               </div>
             )}

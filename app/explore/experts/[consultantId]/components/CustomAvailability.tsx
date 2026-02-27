@@ -1,5 +1,10 @@
 import React, { useMemo, useState } from "react";
-import { ChevronLeft, ChevronRight, ChevronDown, ChevronUp } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  ChevronDown,
+  ChevronUp,
+} from "lucide-react";
 import { roundTime, timeToMinutes } from "../utils/time";
 import { mergeConsecutiveSlotsForDisplay } from "../utils/mergeSlots";
 import type { ProcessedSlot } from "../types";
@@ -115,16 +120,12 @@ export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
                   <div key={date.toISOString()} className="space-y-2">
                     {visibleSlots.length > 0 ? (
                       visibleSlots.map((slot) => {
-                        const bookingStatus =
-                          slot.bookingStatus || "available";
-                        const isFullyBooked =
-                          bookingStatus === "fully-booked";
+                        const bookingStatus = slot.bookingStatus || "available";
+                        const isFullyBooked = bookingStatus === "fully-booked";
                         const isPartiallyBooked =
                           bookingStatus === "partially-booked";
                         const bookedDate =
-                          isFullyBooked ||
-                          isPartiallyBooked ||
-                          slot.isAllocated
+                          isFullyBooked || isPartiallyBooked || slot.isAllocated
                             ? getBookedSlotDate(slot)
                             : "";
 
@@ -176,8 +177,7 @@ export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
                                   <div className="text-[10px] font-semibold opacity-90 text-center leading-tight">
                                     Request
                                     <br />
-                                    Approval{" "}
-                                    {bookedDate && `(${bookedDate})`}
+                                    Approval {bookedDate && `(${bookedDate})`}
                                   </div>
                                 )}
                             </div>

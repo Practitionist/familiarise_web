@@ -1166,12 +1166,15 @@ export class SlotAllocationService {
       },
     } as const;
 
-    let consultantProfile: {
-      user: { id: string; timezone?: string | null };
-      scheduleType: "WEEKLY" | "CUSTOM";
-      slotsOfAvailabilityWeekly: ConsultantAllocationData["slotsOfAvailabilityWeekly"];
-      slotsOfAvailabilityCustom: ConsultantAllocationData["slotsOfAvailabilityCustom"];
-    } | null | undefined;
+    let consultantProfile:
+      | {
+          user: { id: string; timezone?: string | null };
+          scheduleType: "WEEKLY" | "CUSTOM";
+          slotsOfAvailabilityWeekly: ConsultantAllocationData["slotsOfAvailabilityWeekly"];
+          slotsOfAvailabilityCustom: ConsultantAllocationData["slotsOfAvailabilityCustom"];
+        }
+      | null
+      | undefined;
     let config: EventConfig;
     let consulteeUserId: string | undefined;
     let requestedSlots: Date[] | undefined;
@@ -1181,7 +1184,9 @@ export class SlotAllocationService {
         const event = await tx.consultation.findUnique({
           where: { id: eventId },
           include: {
-            consultationPlan: { include: { consultantProfile: consultantProfileSelect } },
+            consultationPlan: {
+              include: { consultantProfile: consultantProfileSelect },
+            },
             requestedBy: { include: { user: true } },
             appointment: { include: { slotsOfAppointment: true } },
           },
@@ -1202,7 +1207,9 @@ export class SlotAllocationService {
         const event = await tx.subscription.findUnique({
           where: { id: eventId },
           include: {
-            subscriptionPlan: { include: { consultantProfile: consultantProfileSelect } },
+            subscriptionPlan: {
+              include: { consultantProfile: consultantProfileSelect },
+            },
             requestedBy: { include: { user: true } },
             appointments: { include: { slotsOfAppointment: true } },
           },
@@ -1229,7 +1236,9 @@ export class SlotAllocationService {
         const event = await tx.webinar.findUnique({
           where: { id: eventId },
           include: {
-            webinarPlan: { include: { consultantProfile: consultantProfileSelect } },
+            webinarPlan: {
+              include: { consultantProfile: consultantProfileSelect },
+            },
           },
         });
         if (!event) return null;
@@ -1258,10 +1267,8 @@ export class SlotAllocationService {
         const classContents = event.classPlan?.classContents || [];
         const sessionDuration =
           classContents.length > 0
-            ? classContents.reduce(
-                (sum, c) => sum + c.hoursAllotted,
-                0,
-              ) / classContents.length
+            ? classContents.reduce((sum, c) => sum + c.hoursAllotted, 0) /
+              classContents.length
             : event.classPlan?.sessionDurationInHours || 1;
 
         config = {
@@ -1325,5 +1332,4 @@ export class SlotAllocationService {
   private static getEventRelationField(eventType: EventType): string {
     return eventType;
   }
-
 }
