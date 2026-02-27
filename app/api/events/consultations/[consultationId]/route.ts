@@ -6,6 +6,7 @@ import {
   Prisma,
   RequestStatus,
 } from "@prisma/client";
+import { z } from "zod";
 import { addHours } from "date-fns";
 import { NextRequest, NextResponse } from "next/server";
 import { createApprovalPaymentIntent } from "@/lib/payments/operations/approval-payment";
@@ -383,27 +384,21 @@ export async function PATCH(
     const { session } = authResult;
 
     const body = await request.json();
-
-    if (!body || typeof body !== "object") {
-      return NextResponse.json(
-        { error: "Invalid request body" },
-        { status: 400 },
-      );
-    }
-
-    const { status } = body as { status: RequestStatus };
     const { consultationId } = await params;
 
-    if (!status) {
+    const consultationPatchSchema = z.object({
+      status: z.nativeEnum(RequestStatus),
+    });
+
+    const parseResult = consultationPatchSchema.safeParse(body);
+    if (!parseResult.success) {
       return NextResponse.json(
-        { error: "Status is required" },
+        { error: "Invalid request body", details: parseResult.error.format() },
         { status: 400 },
       );
     }
 
-    if (!Object.values(RequestStatus).includes(status)) {
-      return NextResponse.json({ error: "Invalid status" }, { status: 400 });
-    }
+    const { status } = parseResult.data;
 
     // First fetch the consultation to validate it exists and get all necessary data
     const existingConsultation = await prisma.consultation.findUnique({

@@ -19,7 +19,7 @@ import { useSession } from "@/lib/auth-client";
 import { useRouter } from "next/navigation";
 import React, { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { useCurrency } from "@/lib/hooks/useCurrency";
+import { useCurrency } from "@/hooks/useCurrency";
 
 interface ClassesAndWebinarsProps {
   classPlans: ClassPlan[];

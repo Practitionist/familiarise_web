@@ -1,6 +1,6 @@
 "use client";
 
-import { cn } from "@/lib/utils";
+import { cn } from "@/utils/tailwind";
 import { Badge } from "@/components/ui/badge";
 import { CheckCircle2, Clock, Sparkles } from "lucide-react";
 

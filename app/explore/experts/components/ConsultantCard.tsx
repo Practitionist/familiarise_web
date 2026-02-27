@@ -5,10 +5,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
-import { Domain, SubDomain, Tag } from "@prisma/client";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { TConsultantProfile } from "@/types/consultant";
+import type { IConsultantCardData } from "@/types/consultant";
 import {
   Star,
   MapPin,
@@ -17,14 +16,14 @@ import {
   ArrowRight,
   CheckCircle2,
 } from "lucide-react";
-import { useCurrency } from "@/lib/hooks/useCurrency";
+import { useCurrency } from "@/hooks/useCurrency";
 
 interface ConsultantCardProps {
-  consultant: TConsultantProfile;
+  consultant: IConsultantCardData;
   metadata: {
-    domains: Domain[];
-    subdomains: SubDomain[];
-    tags: Tag[];
+    domains: { id: string; name: string }[];
+    subdomains: { id: string; name: string }[];
+    tags: { id: string; name: string }[];
   } | null;
 }
 
@@ -35,7 +34,7 @@ const ConsultantInfo = ({
 }: {
   icon: React.ElementType;
   label: string;
-  value: string | null;
+  value: string | null | undefined;
 }) => (
   <div className="flex items-center gap-2 text-sm">
     <Icon className="w-4 h-4 text-zinc-400" />
@@ -181,7 +180,7 @@ export const ConsultantCard = memo(function ConsultantCard({
               <ConsultantInfo
                 icon={MapPin}
                 label="Domain"
-                value={consultant.domain.name}
+                value={consultant.domain?.name}
               />
             </div>
           </div>
@@ -189,7 +188,7 @@ export const ConsultantCard = memo(function ConsultantCard({
           {/* Tags */}
           <div className="flex flex-wrap gap-2">
             <Badge className="bg-zinc-900 text-white hover:bg-zinc-800 px-3 py-1">
-              {consultant.domain.name}
+              {consultant.domain?.name}
             </Badge>
             {consultant.subDomains.slice(0, 2).map((sd) => (
               <Badge

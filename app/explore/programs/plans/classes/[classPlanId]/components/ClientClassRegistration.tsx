@@ -16,7 +16,7 @@ import {
   isUserEnrolled,
   countUniqueParticipants,
 } from "@/lib/payments/utils/participants";
-import { useCurrency } from "@/lib/hooks/useCurrency";
+import { useCurrency } from "@/hooks/useCurrency";
 import { JoinWaitlistButton } from "@/components/waitlist/JoinWaitlistButton";
 import { WaitlistBadge } from "@/components/waitlist/WaitlistBadge";
 

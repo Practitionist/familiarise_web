@@ -3,7 +3,7 @@
 import { useMemo } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { motion } from "framer-motion";
-import { formatCurrencyAmount } from "@/lib/utils";
+import { formatCurrencyAmount } from "@/utils/formatting";
 import { cn } from "@/utils/tailwind";
 import { CreditCard, Gift, Download, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";

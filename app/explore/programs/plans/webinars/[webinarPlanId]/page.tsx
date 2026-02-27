@@ -1,56 +1,18 @@
-"use client";
+import { notFound } from "next/navigation";
+import { getWebinarPlanDetail } from "@/lib/data/plan-details";
+import { WebinarDetails } from "./components/WebinarDetails";
 
-import { use, useEffect, useState } from "react";
-import { Video } from "lucide-react";
-import {
-  WebinarDetails,
-  type WebinarPlanData,
-} from "./components/WebinarDetails";
-
-export default function WebinarDetailsPage({
+export default async function WebinarDetailsPage({
   params,
 }: Readonly<{
   params: Promise<{ webinarPlanId: string }>;
 }>) {
-  const [webinarData, setWebinarData] = useState<WebinarPlanData | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const resolvedParams = use(params);
-  const webinarPlanId = resolvedParams.webinarPlanId;
+  const { webinarPlanId } = await params;
+  const webinarData = await getWebinarPlanDetail(webinarPlanId);
 
-  useEffect(() => {
-    const fetchWebinarPlanData = async () => {
-      try {
-        const response = await fetch(`/api/plans/webinars/${webinarPlanId}`);
-        if (!response.ok) throw new Error("Failed to fetch webinar data");
-        const resJson = await response.json();
-        setWebinarData(resJson.data);
-      } catch (error) {
-        console.error("Error fetching webinar data:", error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    fetchWebinarPlanData();
-  }, [webinarPlanId]);
-
-  if (isLoading) {
-    return (
-      <main className="min-h-screen bg-zinc-50 flex items-center justify-center">
-        <div className="flex flex-col items-center gap-4">
-          <div className="relative">
-            <div className="w-16 h-16 border-4 border-zinc-200 border-t-zinc-900 rounded-full animate-spin" />
-            <div className="absolute inset-0 flex items-center justify-center">
-              <Video className="w-6 h-6 text-zinc-400" />
-            </div>
-          </div>
-          <p className="text-zinc-500 text-sm">Loading webinar details...</p>
-        </div>
-      </main>
-    );
+  if (!webinarData) {
+    notFound();
   }
-
-  if (!webinarData) return null;
 
   const firstWebinarInstance = webinarData.webinars?.[0];
   const nextSession =

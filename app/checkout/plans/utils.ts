@@ -1,5 +1,5 @@
 import { useToast } from "@/hooks/use-toast";
-import { getErrorToast } from "@/lib/payments/error-toast-map";
+import { getErrorToast } from "@/lib/errors/mapping/payment-error-toast-map";
 import { CheckoutInput, checkoutResponseSchema } from "@/schemas/checkout";
 import { PaymentGateway } from "@prisma/client";
 import { loadStripe } from "@stripe/stripe-js";

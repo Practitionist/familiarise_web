@@ -4,7 +4,7 @@ import { use } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { PageSkeleton } from "@/components/dashboard/DashboardSkeletons";
-import { createConsulteeQueries } from "@/hooks/useConsulteePrefetchDashboard";
+import { createConsulteeQueries } from "@/lib/dashboard-queries";
 import FeedbackSupportTab from "./FeedbackSupportTab";
 
 type PageProps = {

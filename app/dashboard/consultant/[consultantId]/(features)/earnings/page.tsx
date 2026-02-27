@@ -18,7 +18,7 @@ import {
   ArrowUpRight,
   Loader2,
 } from "lucide-react";
-import { formatCurrencyAmount } from "@/lib/utils";
+import { formatCurrencyAmount } from "@/utils/formatting";
 
 type EarningStatus = "PENDING" | "READY" | "PAID" | "HELD" | "REFUNDED";
 

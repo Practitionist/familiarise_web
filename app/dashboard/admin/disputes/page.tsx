@@ -15,7 +15,7 @@ import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { useState } from "react";
 import { PaymentGateway, DisputeStatus } from "@prisma/client";
-import { formatCurrencyAmount } from "@/lib/utils";
+import { formatCurrencyAmount } from "@/utils/formatting";
 import type { Dispute, DisputeListResponse } from "@/types/disputes";
 
 // Fetch disputes with filters

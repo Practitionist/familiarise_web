@@ -4,7 +4,7 @@ import { use } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { PageSkeleton } from "@/components/dashboard/DashboardSkeletons";
-import { createConsulteeQueries } from "@/hooks/useConsulteePrefetchDashboard";
+import { createConsulteeQueries } from "@/lib/dashboard-queries";
 import { Overview } from "./Overview";
 import { Calendar } from "./Calendar";
 import { BookingHistoryTab } from "../history/BookingHistoryTab";

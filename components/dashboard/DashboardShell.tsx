@@ -1,6 +1,6 @@
 "use client";
 
-import { cn } from "@/lib/utils";
+import { cn } from "@/utils/tailwind";
 import { motion, AnimatePresence } from "framer-motion";
 import { ReactNode, useState, createContext, useContext } from "react";
 import { Menu, X } from "lucide-react";

@@ -2,7 +2,7 @@
 
 import React from "react";
 import { Calendar, User, Clock, Link2 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn } from "@/utils/tailwind";
 
 export interface AppointmentContextData {
   appointmentId: string;

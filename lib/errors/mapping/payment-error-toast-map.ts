@@ -10,7 +10,7 @@
  *   const { title, description } = getErrorToast(errorType, errorMessage);
  */
 
-import { ErrorTypes, type ErrorType } from "./error-classification";
+import { ErrorTypes, type ErrorType } from "../classification/payment-error-classification";
 
 // ============================================================================
 // Toast message definitions

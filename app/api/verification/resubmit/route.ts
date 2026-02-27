@@ -7,6 +7,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { UserRole, ConsultantVerificationStatus } from "@prisma/client";
+import { z } from "zod";
+
+const resubmitSchema = z.object({
+  notes: z.string().optional(),
+});
 
 import { getSession } from "@/lib/auth-server";
 export async function POST(req: NextRequest) {
@@ -56,7 +61,14 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { notes } = body as { notes?: string };
+    const parseResult = resubmitSchema.safeParse(body);
+    if (!parseResult.success) {
+      return NextResponse.json(
+        { error: "Invalid request body", details: parseResult.error.format() },
+        { status: 400 },
+      );
+    }
+    const { notes } = parseResult.data;
 
     // Get the most recent verification to link existing documents
     const previousVerification =

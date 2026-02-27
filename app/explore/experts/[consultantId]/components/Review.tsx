@@ -28,7 +28,7 @@ const Review: React.FC<Readonly<TConsultantReview>> = ({
               {reviewerName}
             </h4>
             <p className="text-xs text-gray-500">
-              {new Date(createdAt).toLocaleDateString()}
+              {new Date(createdAt).toLocaleDateString("en-IN")}
             </p>
           </div>
           <div className="flex items-center">

@@ -4,7 +4,7 @@ import { use } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { ConsulteeDashboardSkeleton } from "@/components/ui/dashboard-skeleton";
-import { createConsulteeQueries } from "@/hooks/useConsulteePrefetchDashboard";
+import { createConsulteeQueries } from "@/lib/dashboard-queries";
 import HomeTab from "./HomeTab";
 import { useUser } from "../../UserContext";
 

@@ -22,7 +22,7 @@ import {
   mergeConsecutiveSlots,
 } from "@/utils/timeSlotsProcessing";
 import { useToast } from "@/hooks/use-toast";
-import { useCurrency } from "@/lib/hooks/useCurrency";
+import { useCurrency } from "@/hooks/useCurrency";
 
 interface ConsultationPricingToggleProps {
   consultationOptions: PricingOption[];

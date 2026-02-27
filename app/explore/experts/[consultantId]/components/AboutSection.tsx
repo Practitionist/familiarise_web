@@ -1,12 +1,12 @@
 "use client";
 
 import { User } from "@prisma/client";
-import { TConsultantProfile } from "@/types/consultant";
+import type { TConsultantDetailData } from "@/types/consultant";
 import { User2, GraduationCap, Sparkles } from "lucide-react";
 
 interface AboutSectionProps {
   userDetails: User;
-  consultantDetails: TConsultantProfile;
+  consultantDetails: TConsultantDetailData;
 }
 
 export function AboutSection({

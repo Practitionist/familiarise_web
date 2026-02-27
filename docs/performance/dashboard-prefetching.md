@@ -13,7 +13,7 @@ This document outlines the enhanced prefetching strategy implemented for both co
 
 ```
 hooks/
-├── useCosultantPrefetchDashboard.ts   # Consultant-specific prefetching
+├── useConsultantPrefetchDashboard.ts   # Consultant-specific prefetching
 └── useConsulteePrefetchDashboard.ts   # Consultee-specific prefetching
 
 app/dashboard/
@@ -82,7 +82,7 @@ const NAV_ITEMS = [
 
 ```typescript
 // In consultant layout
-import { usePrefetchDashboard } from "@/hooks/useCosultantPrefetchDashboard";
+import { usePrefetchDashboard } from "@/hooks/useConsultantPrefetchDashboard";
 
 const { prefetchAllConsultantData, prefetchOnTabHover } = usePrefetchDashboard({
   consultantId,
