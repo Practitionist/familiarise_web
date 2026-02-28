@@ -8,7 +8,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { z } from "zod";
-import { newsletterLimiter, applyRateLimit, getClientIp } from "@/lib/rate-limit";
 
 const subscribeSchema = z.object({
   email: z.string().email("Invalid email address"),
@@ -16,10 +15,6 @@ const subscribeSchema = z.object({
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
-    // Rate limit: 3 subscriptions per hour per IP
-    const rl = await applyRateLimit(newsletterLimiter, getClientIp(req));
-    if (rl) return rl;
-
     const body = await req.json();
     const parsed = subscribeSchema.safeParse(body);
 

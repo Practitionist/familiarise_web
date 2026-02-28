@@ -1,6 +1,5 @@
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
-import { eligibilityLimiter, applyRateLimit, getClientIp } from "@/lib/rate-limit";
 
 /**
  * GET /api/trials/check-eligibility
@@ -12,10 +11,6 @@ import { eligibilityLimiter, applyRateLimit, getClientIp } from "@/lib/rate-limi
  * - subscriptionPlanId: Optional - check if specific plan has trial enabled
  */
 export async function GET(request: NextRequest) {
-  // Rate limit: 20 eligibility checks per minute per IP
-  const rl = await applyRateLimit(eligibilityLimiter, getClientIp(request));
-  if (rl) return rl;
-
   const { searchParams } = new URL(request.url);
   const consulteeProfileId = searchParams.get("consulteeProfileId");
   const consultantProfileId = searchParams.get("consultantProfileId");

@@ -7,6 +7,13 @@ import {
   validateBypass,
   isWriteBlockedInDegraded,
 } from "@/lib/maintenance-edge";
+import {
+  searchLimiter,
+  eligibilityLimiter,
+  newsletterLimiter,
+  applyRateLimit,
+  getClientIp,
+} from "@/lib/rate-limit";
 
 // Constants for common URLs and route patterns
 const URLS = {
@@ -157,6 +164,25 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
       );
       return response;
     }
+  }
+
+  // Edge rate limiting for high-traffic public endpoints (IP-based).
+  // Runs before any serverless function is invoked — prevents cost amplification
+  // under DDoS even when every request would otherwise return 429.
+  if (
+    pathname.startsWith("/api/user/consultants") ||
+    pathname.startsWith("/api/consultants/search")
+  ) {
+    const rl = await applyRateLimit(searchLimiter, getClientIp(req));
+    if (rl) return rl;
+  }
+  if (pathname.startsWith("/api/trials/check-eligibility")) {
+    const rl = await applyRateLimit(eligibilityLimiter, getClientIp(req));
+    if (rl) return rl;
+  }
+  if (pathname.startsWith("/api/newsletter/subscribe") && req.method === "POST") {
+    const rl = await applyRateLimit(newsletterLimiter, getClientIp(req));
+    if (rl) return rl;
   }
 
   // Handle public API routes first (most common, no auth needed)
