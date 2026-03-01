@@ -6,8 +6,8 @@ import { apiError } from "@/lib/errors";
 export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams;
-    const page = parseInt(searchParams.get("page") || "1");
-    const limit = parseInt(searchParams.get("limit") || "10");
+    const page = Math.max(1, parseInt(searchParams.get("page") || "1"));
+    const limit = Math.min(Math.max(1, parseInt(searchParams.get("limit") || "10")), 100);
     const domain = searchParams.get("domain");
     const subdomain = searchParams.get("subdomain");
     const tags = searchParams.get("tags")?.split(",");

@@ -2,6 +2,7 @@
  * Shared rate limiters for API routes.
  *
  * Rate limit profiles:
+ * - authLimiter:            10/15min per IP  — POST /api/auth/sign-in, sign-up, forget-password (brute-force)
  * - checkoutLimiter:        5/min per user   — POST /api/checkout (fraud)
  * - discountLimiter:        10/min per user  — POST /api/payments/discounts/validate (brute-force)
  * - newsletterLimiter:      3/hr per IP      — POST /api/newsletter/subscribe (spam)
@@ -11,6 +12,7 @@
  * - requestApprovalLimiter: 10/hr per user   — POST /api/slots/request-for-approval
  * - searchLimiter:          60/min per IP    — GET /api/user/consultants, /api/consultants/search
  * - eligibilityLimiter:     20/min per IP    — GET /api/trials/check-eligibility
+ * - availabilityLimiter:    30/min per IP    — GET /api/slots/availability/[consultantId]
  */
 
 import { Ratelimit } from "@upstash/ratelimit";
@@ -30,6 +32,9 @@ function makeLimiter(
     prefix,
   });
 }
+
+/** 10 per 15 minutes — auth endpoints (sign-in, sign-up, forget-password) */
+export const authLimiter = makeLimiter(10, "15 m", "rl:auth");
 
 /** 5 per minute — POST /api/checkout */
 export const checkoutLimiter = makeLimiter(5, "1 m", "rl:checkout");
@@ -61,6 +66,9 @@ export const searchLimiter = makeLimiter(60, "1 m", "rl:search");
 
 /** 20 per minute — GET /api/trials/check-eligibility */
 export const eligibilityLimiter = makeLimiter(20, "1 m", "rl:eligibility");
+
+/** 30 per minute — GET /api/slots/availability/[consultantId] (IP-based, public booking flow) */
+export const availabilityLimiter = makeLimiter(30, "1 m", "rl:availability");
 
 /**
  * Apply rate limit to a request.

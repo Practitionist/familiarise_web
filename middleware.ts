@@ -8,9 +8,11 @@ import {
   isWriteBlockedInDegraded,
 } from "@/lib/maintenance-edge";
 import {
+  authLimiter,
   searchLimiter,
   eligibilityLimiter,
   newsletterLimiter,
+  availabilityLimiter,
   applyRateLimit,
   getClientIp,
 } from "@/lib/rate-limit";
@@ -169,6 +171,17 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
   // Edge rate limiting for high-traffic public endpoints (IP-based).
   // Runs before any serverless function is invoked — prevents cost amplification
   // under DDoS even when every request would otherwise return 429.
+
+  // Auth brute-force protection — must be checked before PUBLIC_API_PREFIXES pass-through
+  if (
+    pathname.startsWith("/api/auth/sign-in") ||
+    pathname.startsWith("/api/auth/sign-up") ||
+    pathname.startsWith("/api/auth/forget-password")
+  ) {
+    const rl = await applyRateLimit(authLimiter, getClientIp(req));
+    if (rl) return rl;
+  }
+
   if (
     pathname.startsWith("/api/user/consultants") ||
     pathname.startsWith("/api/consultants/search")
@@ -182,6 +195,10 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
   }
   if (pathname.startsWith("/api/newsletter/subscribe") && req.method === "POST") {
     const rl = await applyRateLimit(newsletterLimiter, getClientIp(req));
+    if (rl) return rl;
+  }
+  if (pathname.startsWith("/api/slots/availability/")) {
+    const rl = await applyRateLimit(availabilityLimiter, getClientIp(req));
     if (rl) return rl;
   }
 
