@@ -5,14 +5,23 @@ import {
   requireApiAuth,
   isPrivileged,
   forbiddenResponse,
+  authorizeEventAccess,
 } from "@/lib/auth-helpers";
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ classId: string }> },
 ) {
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const { session } = authResult;
+
   try {
     const { classId } = await params;
+
+    const authz = await authorizeEventAccess(session, "class", classId);
+    if (authz) return authz;
+
     const classData = await prisma.class.findUniqueOrThrow({
       where: { id: classId },
       include: {
@@ -121,6 +130,12 @@ export async function PUT(
 
     return NextResponse.json({ data: classData }, { status: 200 });
   } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2025"
+    ) {
+      return NextResponse.json({ error: "Class not found" }, { status: 404 });
+    }
     console.error(error);
     return NextResponse.json(
       { error: "Internal Server Error" },
@@ -183,6 +198,12 @@ export async function DELETE(
 
     return NextResponse.json({ data: classData }, { status: 200 });
   } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2025"
+    ) {
+      return NextResponse.json({ error: "Class not found" }, { status: 404 });
+    }
     console.error(error);
     return NextResponse.json(
       { error: "Internal Server Error" },

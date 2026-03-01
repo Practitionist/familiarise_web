@@ -89,11 +89,10 @@ export async function PUT(
         prerequisites: body.prerequisites,
         materialProvided: body.materialProvided,
         learningOutcomes: body.learningOutcomes,
-        consultantProfile: body.consultantProfileId
-          ? {
-              connect: { id: body.consultantProfileId },
-            }
-          : undefined,
+        consultantProfile:
+          isPrivileged(session.user.role) && body.consultantProfileId
+            ? { connect: { id: body.consultantProfileId } }
+            : undefined,
         topics: body.topicIds
           ? {
               set: body.topicIds.map((id: string) => ({ id })),

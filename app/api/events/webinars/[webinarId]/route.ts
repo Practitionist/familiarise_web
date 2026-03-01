@@ -5,14 +5,23 @@ import {
   requireApiAuth,
   isPrivileged,
   forbiddenResponse,
+  authorizeEventAccess,
 } from "@/lib/auth-helpers";
 
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ webinarId: string }> },
 ) {
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const { session } = authResult;
+
   try {
     const { webinarId } = await params;
+
+    const authz = await authorizeEventAccess(session, "webinar", webinarId);
+    if (authz) return authz;
+
     const webinarData = await prisma.webinar.findUniqueOrThrow({
       where: { id: webinarId },
       include: {
@@ -83,16 +92,14 @@ export async function PUT(
       data: {
         status: body.status,
         feedbackSummary: body.feedbackSummary,
-        webinarPlan: body.webinarPlanId
-          ? {
-              connect: { id: body.webinarPlanId },
-            }
-          : undefined,
-        appointment: body.appointmentId
-          ? {
-              connect: { id: body.appointmentId },
-            }
-          : undefined,
+        webinarPlan:
+          isPrivileged(session.user.role) && body.webinarPlanId
+            ? { connect: { id: body.webinarPlanId } }
+            : undefined,
+        appointment:
+          isPrivileged(session.user.role) && body.appointmentId
+            ? { connect: { id: body.appointmentId } }
+            : undefined,
       },
       include: {
         webinarPlan: {
@@ -120,6 +127,15 @@ export async function PUT(
 
     return NextResponse.json({ data: webinarData }, { status: 200 });
   } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2025"
+    ) {
+      return NextResponse.json(
+        { error: "Webinar not found" },
+        { status: 404 },
+      );
+    }
     console.error("Error updating webinar:", error);
     return NextResponse.json(
       { error: "An error occurred while updating the webinar" },
@@ -178,6 +194,15 @@ export async function DELETE(
 
     return NextResponse.json({ data: webinarData }, { status: 200 });
   } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2025"
+    ) {
+      return NextResponse.json(
+        { error: "Webinar not found" },
+        { status: 404 },
+      );
+    }
     console.error("Error deleting webinar:", error);
     return NextResponse.json(
       { error: "An error occurred while deleting the webinar" },
