@@ -16,7 +16,6 @@
  */
 
 import { Ratelimit } from "@upstash/ratelimit";
-import { randomUUID } from "crypto";
 import redis from "@/lib/redis";
 import { NextResponse } from "next/server";
 
@@ -107,5 +106,5 @@ export function getClientIp(
 ): string {
   const ip =
     req.ip ?? req.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
-  return ip ?? randomUUID();
+  return ip ?? "unknown_ip";
 }
