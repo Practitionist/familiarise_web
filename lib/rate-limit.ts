@@ -106,5 +106,5 @@ export function getClientIp(
 ): string {
   const ip =
     req.ip ?? req.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
-  return ip ?? "unknown_ip";
+  return ip || "unknown_ip";
 }
