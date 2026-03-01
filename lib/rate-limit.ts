@@ -16,7 +16,7 @@
  */
 
 import { Ratelimit } from "@upstash/ratelimit";
-import redis from "@/lib/redis";
+import redis from "@/lib/redis-edge";
 import { NextResponse } from "next/server";
 
 type RatelimitRedis = ConstructorParameters<typeof Ratelimit>[0]["redis"];

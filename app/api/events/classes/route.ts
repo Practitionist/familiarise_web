@@ -33,6 +33,9 @@ export async function GET(request: NextRequest) {
           consulteeProfileId = session.user.consulteeProfileId;
         } else if (session.user.consultantProfileId) {
           consultantProfileId = session.user.consultantProfileId;
+        } else {
+          // User has no profile (e.g. incomplete onboarding) — must not reach unfiltered query
+          return forbiddenResponse("You are not authorized to view classes without a profile");
         }
       }
     }

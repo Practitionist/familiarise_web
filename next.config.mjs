@@ -9,7 +9,7 @@ const withBundleAnalyzer =
       })
     : (config) => config;
 
-/** @type {import('next').NextConfig['headers']} */
+/** @type {Array<{ key: string; value: string }>} */
 const securityHeaders = [
   // Prevent the page from being embedded in an iframe (clickjacking)
   { key: "X-Frame-Options", value: "DENY" },

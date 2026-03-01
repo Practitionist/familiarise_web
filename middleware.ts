@@ -172,11 +172,12 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
   // Runs before any serverless function is invoked — prevents cost amplification
   // under DDoS even when every request would otherwise return 429.
 
-  // Auth brute-force protection — must be checked before PUBLIC_API_PREFIXES pass-through
+  // Auth brute-force protection — POST only (credential submission); GET/OPTIONS must not consume quota
   if (
-    pathname.startsWith("/api/auth/sign-in") ||
-    pathname.startsWith("/api/auth/sign-up") ||
-    pathname.startsWith("/api/auth/forget-password")
+    req.method === "POST" &&
+    (pathname.startsWith("/api/auth/sign-in") ||
+      pathname.startsWith("/api/auth/sign-up") ||
+      pathname.startsWith("/api/auth/forget-password"))
   ) {
     const rl = await applyRateLimit(authLimiter, getClientIp(req));
     if (rl) return rl;
