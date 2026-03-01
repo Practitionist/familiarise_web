@@ -16,6 +16,7 @@
  */
 
 import { Ratelimit } from "@upstash/ratelimit";
+import { randomUUID } from "crypto";
 import redis from "@/lib/redis";
 import { NextResponse } from "next/server";
 
@@ -83,14 +84,18 @@ export async function applyRateLimit(
   limiter: Ratelimit,
   identifier: string,
 ): Promise<NextResponse | null> {
-  const { success, remaining } = await limiter.limit(identifier);
-  if (!success) {
-    return NextResponse.json(
-      { error: "Too many requests. Please try again later." },
-      { status: 429, headers: { "X-RateLimit-Remaining": String(remaining) } },
-    );
+  try {
+    const { success, remaining } = await limiter.limit(identifier);
+    if (!success) {
+      return NextResponse.json(
+        { error: "Too many requests. Please try again later." },
+        { status: 429, headers: { "X-RateLimit-Remaining": String(remaining) } },
+      );
+    }
+    return null;
+  } catch {
+    return null; // Redis down — fail open
   }
-  return null;
 }
 
 /**
@@ -98,9 +103,9 @@ export async function applyRateLimit(
  * Use for IP-based rate limiting on public endpoints.
  */
 export function getClientIp(
-  req: { headers: { get(name: string): string | null } },
+  req: { ip?: string; headers: { get(name: string): string | null } },
 ): string {
-  return (
-    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown"
-  );
+  const ip =
+    req.ip ?? req.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
+  return ip ?? randomUUID();
 }

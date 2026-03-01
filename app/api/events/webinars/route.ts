@@ -16,8 +16,8 @@ export async function GET(request: NextRequest) {
 
   try {
     const { searchParams } = new URL(request.url);
-    const consulteeProfileId = searchParams.get("consulteeProfileId");
-    const consultantProfileId = searchParams.get("consultantProfileId");
+    let consulteeProfileId = searchParams.get("consulteeProfileId");
+    let consultantProfileId = searchParams.get("consultantProfileId");
 
     // IDOR protection: non-privileged users can only request their own profile's data
     if (!isPrivileged(session.user.role)) {
@@ -26,6 +26,15 @@ export async function GET(request: NextRequest) {
       }
       if (consultantProfileId && session.user.consultantProfileId !== consultantProfileId) {
         return forbiddenResponse("You can only view your own webinars");
+      }
+      // No-filter fallthrough guard: auto-fill from session so the unfiltered else
+      // branch is never reached by non-privileged users with no params supplied.
+      if (!consulteeProfileId && !consultantProfileId) {
+        if (session.user.consulteeProfileId) {
+          consulteeProfileId = session.user.consulteeProfileId;
+        } else if (session.user.consultantProfileId) {
+          consultantProfileId = session.user.consultantProfileId;
+        }
       }
     }
     const startDateStr = searchParams.get("startDate");

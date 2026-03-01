@@ -182,10 +182,7 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
     if (rl) return rl;
   }
 
-  if (
-    pathname.startsWith("/api/user/consultants") ||
-    pathname.startsWith("/api/consultants/search")
-  ) {
+  if (pathname.startsWith("/api/user/consultants")) {
     const rl = await applyRateLimit(searchLimiter, getClientIp(req));
     if (rl) return rl;
   }

@@ -16,11 +16,7 @@ import {
   notifyTrialSessionCancelled,
 } from "@/lib/novu";
 import { UpdateTrialSchema } from "@/schemas/trials";
-import {
-  requireApiAuth,
-  isPrivileged,
-  forbiddenResponse,
-} from "@/lib/auth-helpers";
+import { requireApiAuth, isPrivileged } from "@/lib/auth-helpers";
 
 interface RouteContext {
   params: Promise<{ trialId: string }>;
@@ -39,7 +35,17 @@ export async function GET(request: NextRequest, context: RouteContext) {
 
   try {
     const trialSession = await prisma.trialSession.findUnique({
-      where: { id: trialId },
+      where: {
+        id: trialId,
+        ...(isPrivileged(session.user.role)
+          ? {}
+          : {
+              OR: [
+                { consulteeProfileId: session.user.consulteeProfileId ?? "__none__" },
+                { consultantProfileId: session.user.consultantProfileId ?? "__none__" },
+              ],
+            }),
+      },
       include: {
         consulteeProfile: {
           include: {
@@ -84,17 +90,6 @@ export async function GET(request: NextRequest, context: RouteContext) {
         { error: "Trial session not found" },
         { status: 404 },
       );
-    }
-
-    // Non-privileged users can only view trials they are a participant of
-    if (!isPrivileged(session.user.role)) {
-      const isConsultee =
-        session.user.consulteeProfileId === trialSession.consulteeProfileId;
-      const isConsultant =
-        session.user.consultantProfileId === trialSession.consultantProfileId;
-      if (!isConsultee && !isConsultant) {
-        return forbiddenResponse("You can only view your own trial sessions");
-      }
     }
 
     return NextResponse.json({ data: trialSession });
@@ -192,7 +187,17 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 
     // Fetch the existing trial session
     const existingTrial = await prisma.trialSession.findUnique({
-      where: { id: trialId },
+      where: {
+        id: trialId,
+        ...(isPrivileged(session.user.role)
+          ? {}
+          : {
+              OR: [
+                { consulteeProfileId: session.user.consulteeProfileId ?? "__none__" },
+                { consultantProfileId: session.user.consultantProfileId ?? "__none__" },
+              ],
+            }),
+      },
       include: {
         consulteeProfile: {
           include: {
@@ -214,17 +219,6 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         { error: "Trial session not found" },
         { status: 404 },
       );
-    }
-
-    // Non-privileged users can only update trials they are a participant of
-    if (!isPrivileged(session.user.role)) {
-      const isConsultee =
-        session.user.consulteeProfileId === existingTrial.consulteeProfileId;
-      const isConsultant =
-        session.user.consultantProfileId === existingTrial.consultantProfileId;
-      if (!isConsultee && !isConsultant) {
-        return forbiddenResponse("You can only update your own trial sessions");
-      }
     }
 
     const updateData: Prisma.TrialSessionUpdateInput = {};
@@ -549,7 +543,17 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
 
   try {
     const existingTrial = await prisma.trialSession.findUnique({
-      where: { id: trialId },
+      where: {
+        id: trialId,
+        ...(isPrivileged(session.user.role)
+          ? {}
+          : {
+              OR: [
+                { consulteeProfileId: session.user.consulteeProfileId ?? "__none__" },
+                { consultantProfileId: session.user.consultantProfileId ?? "__none__" },
+              ],
+            }),
+      },
     });
 
     if (!existingTrial) {
@@ -557,17 +561,6 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
         { error: "Trial session not found" },
         { status: 404 },
       );
-    }
-
-    // Non-privileged users can only cancel trials they are a participant of
-    if (!isPrivileged(session.user.role)) {
-      const isConsultee =
-        session.user.consulteeProfileId === existingTrial.consulteeProfileId;
-      const isConsultant =
-        session.user.consultantProfileId === existingTrial.consultantProfileId;
-      if (!isConsultee && !isConsultant) {
-        return forbiddenResponse("You can only cancel your own trial sessions");
-      }
     }
 
     // Only allow cancellation of PENDING or SCHEDULED trials
