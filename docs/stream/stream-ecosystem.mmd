@@ -1,0 +1,52 @@
+graph TB
+    subgraph BIZ["Business Entities"]
+        U1["User ↔ User"]
+        CON["Consultation<br/>(APPROVED)"]
+        SUB["Subscription<br/>(APPROVED)"]
+        WEB_I["Webinar Instance"]
+        CLS_I["Class Instance"]
+        PLAN["Webinar / Class Plan<br/>+ Accepted Collaborators"]
+        SLOT["SlotOfAppointment<br/>→ MeetingSession"]
+    end
+
+    subgraph STREAM_CHAT["Stream Chat"]
+        subgraph MSG["channel type: messaging"]
+            DM["DM Channel<br/>ID: uid_a-uid_b<br/>Members: 2 users"]
+            CON_CH["Consultation Channel<br/>ID: consultation-{id}<br/>Members: consultant + consultee"]
+            SUB_CH["Subscription Channel<br/>ID: subscription-{id}<br/>Members: consultant + subscriber"]
+            COL_CH["Collaborator Channel<br/>ID: collab-webinar|class-{planId}<br/>Members: host + accepted collabs<br/>Reconciled on every accept / remove"]
+        end
+        subgraph TEAM["channel type: team"]
+            WEB_CH["Webinar Channel<br/>ID: webinar-{webinarId}<br/>Members: consultant + all attendees"]
+            CLS_CH["Class Channel<br/>ID: class-{classId}<br/>Members: consultant + all students"]
+        end
+    end
+
+    subgraph STREAM_VIDEO["Stream Video"]
+        CALL["Call<br/>type: default<br/>ID: MeetingSession.streamCallId<br/>Participants join via SDK token"]
+        subgraph REC["Recording Status Machine"]
+            direction LR
+            R1["RECORDING"] --> R2["PROCESSING"] --> R3["READY<br/>Stream S3 — expires 14 d"]
+            R2 --> RF["FAILED"]
+            R3 -->|"optional transfer"| R5["AVAILABLE<br/>Supabase permanent"]
+        end
+        CALL -->|"call.recording_started / stopped / ready / failed"| REC
+    end
+
+    subgraph INFRA["Shared Infrastructure"]
+        TOK["Token Provider<br/>Chat JWT · Video JWT — 1 h expiry"]
+        CACHE["Cache<br/>user sync: 5 min<br/>channel exists: 2 min<br/>membership: 1 min<br/>session init: once per process"]
+        HOOK["Webhooks<br/>call.session_ended → end MeetingSession<br/>call.ended → end MeetingSession"]
+    end
+
+    U1      --> DM
+    CON     --> CON_CH
+    SUB     --> SUB_CH
+    PLAN    --> COL_CH
+    WEB_I   --> WEB_CH
+    CLS_I   --> CLS_CH
+    SLOT    --> CALL
+    HOOK   -.-> STREAM_VIDEO
+    TOK    -.-> STREAM_CHAT
+    TOK    -.-> STREAM_VIDEO
+    CACHE  -.-> STREAM_CHAT
