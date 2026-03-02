@@ -20,7 +20,10 @@ const securityHeaders = [
   // Only send origin when navigating to same origin; send nothing for cross-origin
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
   // Restrict access to browser features not used by this app
-  { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
+  {
+    key: "Permissions-Policy",
+    value: "camera=(), microphone=(), geolocation=()",
+  },
 ];
 
 const nextConfig = {

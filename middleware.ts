@@ -191,7 +191,10 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
     const rl = await applyRateLimit(eligibilityLimiter, getClientIp(req));
     if (rl) return rl;
   }
-  if (pathname.startsWith("/api/newsletter/subscribe") && req.method === "POST") {
+  if (
+    pathname.startsWith("/api/newsletter/subscribe") &&
+    req.method === "POST"
+  ) {
     const rl = await applyRateLimit(newsletterLimiter, getClientIp(req));
     if (rl) return rl;
   }

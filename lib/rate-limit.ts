@@ -88,7 +88,10 @@ export async function applyRateLimit(
     if (!success) {
       return NextResponse.json(
         { error: "Too many requests. Please try again later." },
-        { status: 429, headers: { "X-RateLimit-Remaining": String(remaining) } },
+        {
+          status: 429,
+          headers: { "X-RateLimit-Remaining": String(remaining) },
+        },
       );
     }
     return null;
@@ -101,9 +104,10 @@ export async function applyRateLimit(
  * Extract the client IP from request headers.
  * Use for IP-based rate limiting on public endpoints.
  */
-export function getClientIp(
-  req: { ip?: string; headers: { get(name: string): string | null } },
-): string {
+export function getClientIp(req: {
+  ip?: string;
+  headers: { get(name: string): string | null };
+}): string {
   const ip =
     req.ip ?? req.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
   return ip || "unknown_ip";

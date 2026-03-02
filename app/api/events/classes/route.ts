@@ -20,10 +20,16 @@ export async function GET(request: NextRequest) {
 
     // IDOR protection: non-privileged users can only request their own profile's data
     if (!isPrivileged(session.user.role)) {
-      if (consulteeProfileId && session.user.consulteeProfileId !== consulteeProfileId) {
+      if (
+        consulteeProfileId &&
+        session.user.consulteeProfileId !== consulteeProfileId
+      ) {
         return forbiddenResponse("You can only view your own enrolled classes");
       }
-      if (consultantProfileId && session.user.consultantProfileId !== consultantProfileId) {
+      if (
+        consultantProfileId &&
+        session.user.consultantProfileId !== consultantProfileId
+      ) {
         return forbiddenResponse("You can only view your own classes");
       }
       // No-filter fallthrough guard: auto-fill from session so the unfiltered else
@@ -35,7 +41,9 @@ export async function GET(request: NextRequest) {
           consultantProfileId = session.user.consultantProfileId;
         } else {
           // User has no profile (e.g. incomplete onboarding) — must not reach unfiltered query
-          return forbiddenResponse("You are not authorized to view classes without a profile");
+          return forbiddenResponse(
+            "You are not authorized to view classes without a profile",
+          );
         }
       }
     }

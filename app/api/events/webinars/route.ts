@@ -21,10 +21,18 @@ export async function GET(request: NextRequest) {
 
     // IDOR protection: non-privileged users can only request their own profile's data
     if (!isPrivileged(session.user.role)) {
-      if (consulteeProfileId && session.user.consulteeProfileId !== consulteeProfileId) {
-        return forbiddenResponse("You can only view your own enrolled webinars");
+      if (
+        consulteeProfileId &&
+        session.user.consulteeProfileId !== consulteeProfileId
+      ) {
+        return forbiddenResponse(
+          "You can only view your own enrolled webinars",
+        );
       }
-      if (consultantProfileId && session.user.consultantProfileId !== consultantProfileId) {
+      if (
+        consultantProfileId &&
+        session.user.consultantProfileId !== consultantProfileId
+      ) {
         return forbiddenResponse("You can only view your own webinars");
       }
       // No-filter fallthrough guard: auto-fill from session so the unfiltered else
@@ -36,7 +44,9 @@ export async function GET(request: NextRequest) {
           consultantProfileId = session.user.consultantProfileId;
         } else {
           // User has no profile (e.g. incomplete onboarding) — must not reach unfiltered query
-          return forbiddenResponse("You are not authorized to view webinars without a profile");
+          return forbiddenResponse(
+            "You are not authorized to view webinars without a profile",
+          );
         }
       }
     }
@@ -262,8 +272,13 @@ export async function POST(request: Request) {
         where: { id: body.webinarPlanId },
         select: { consultantProfileId: true },
       });
-      if (!plan || plan.consultantProfileId !== session.user.consultantProfileId) {
-        return forbiddenResponse("You can only create webinars for your own plans");
+      if (
+        !plan ||
+        plan.consultantProfileId !== session.user.consultantProfileId
+      ) {
+        return forbiddenResponse(
+          "You can only create webinars for your own plans",
+        );
       }
     }
 

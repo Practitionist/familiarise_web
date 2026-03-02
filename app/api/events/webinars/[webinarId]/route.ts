@@ -131,10 +131,7 @@ export async function PUT(
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2025"
     ) {
-      return NextResponse.json(
-        { error: "Webinar not found" },
-        { status: 404 },
-      );
+      return NextResponse.json({ error: "Webinar not found" }, { status: 404 });
     }
     console.error("Error updating webinar:", error);
     return NextResponse.json(
@@ -198,10 +195,7 @@ export async function DELETE(
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2025"
     ) {
-      return NextResponse.json(
-        { error: "Webinar not found" },
-        { status: 404 },
-      );
+      return NextResponse.json({ error: "Webinar not found" }, { status: 404 });
     }
     console.error("Error deleting webinar:", error);
     return NextResponse.json(

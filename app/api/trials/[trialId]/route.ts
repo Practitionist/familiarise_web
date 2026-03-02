@@ -41,8 +41,14 @@ export async function GET(request: NextRequest, context: RouteContext) {
           ? {}
           : {
               OR: [
-                { consulteeProfileId: session.user.consulteeProfileId ?? "__none__" },
-                { consultantProfileId: session.user.consultantProfileId ?? "__none__" },
+                {
+                  consulteeProfileId:
+                    session.user.consulteeProfileId ?? "__none__",
+                },
+                {
+                  consultantProfileId:
+                    session.user.consultantProfileId ?? "__none__",
+                },
               ],
             }),
       },
@@ -193,8 +199,14 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
           ? {}
           : {
               OR: [
-                { consulteeProfileId: session.user.consulteeProfileId ?? "__none__" },
-                { consultantProfileId: session.user.consultantProfileId ?? "__none__" },
+                {
+                  consulteeProfileId:
+                    session.user.consulteeProfileId ?? "__none__",
+                },
+                {
+                  consultantProfileId:
+                    session.user.consultantProfileId ?? "__none__",
+                },
               ],
             }),
       },
@@ -549,8 +561,14 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
           ? {}
           : {
               OR: [
-                { consulteeProfileId: session.user.consulteeProfileId ?? "__none__" },
-                { consultantProfileId: session.user.consultantProfileId ?? "__none__" },
+                {
+                  consulteeProfileId:
+                    session.user.consulteeProfileId ?? "__none__",
+                },
+                {
+                  consultantProfileId:
+                    session.user.consultantProfileId ?? "__none__",
+                },
               ],
             }),
       },

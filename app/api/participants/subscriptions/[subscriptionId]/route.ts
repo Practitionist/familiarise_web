@@ -93,10 +93,7 @@ export async function DELETE(
   if (authResult.error) return authResult.error;
   const { session } = authResult;
 
-  if (
-    !isPrivileged(session.user.role) &&
-    !session.user.consultantProfileId
-  ) {
+  if (!isPrivileged(session.user.role) && !session.user.consultantProfileId) {
     return forbiddenResponse("Only consultants can remove participants");
   }
 
