@@ -696,9 +696,9 @@ model Education {
 model SlotOfAvailabilityWeekly {
   id           String    @id @default(uuid())
   startDay     DayOfWeek
-  startTimeUtc Int       // Minutes since midnight UTC (0-1439)
+  startTimeUtc Int       @db.SmallInt // Minutes since midnight UTC (0-1439)
   endDay       DayOfWeek
-  endTimeUtc   Int       // Minutes since midnight UTC (0-1439)
+  endTimeUtc   Int       @db.SmallInt // Minutes since midnight UTC (0-1439)
 
   consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultantProfileId String

@@ -193,13 +193,15 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
           const endMinutes = dateToMinuteUtc(new Date(endUTC));
 
           if (overnight) {
+            // "00:00" end means "until end of day" — represent as 23:59 (1439)
+            // to avoid endTimeUtc=0 on the same startDay (rejected by API for UTC users)
             if (slot.endTime === "00:00") {
               return [
                 {
                   startDay: day.toUpperCase() as DayOfWeek,
                   endDay: day.toUpperCase() as DayOfWeek,
                   startTimeUtc: startMinutes,
-                  endTimeUtc: endMinutes,
+                  endTimeUtc: 1439,
                 },
               ];
             }
