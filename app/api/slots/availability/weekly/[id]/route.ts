@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { Prisma, DayOfWeek } from "@prisma/client";
+import { minutesToTimeString } from "@/utils/slotAllocation/slotTimeUtils";
 
 export async function GET(
   req: NextRequest,
@@ -41,10 +42,12 @@ export async function PUT(
     const body = await req.json();
 
     if (
-      !body.dayOfWeekForStartsAt ||
-      !body.dayOfWeekForEndsAt ||
-      !body.availabilityStartsAt ||
-      !body.availabilityEndsAt
+      !body.startDay ||
+      !body.endDay ||
+      body.startTimeUtc === undefined ||
+      body.startTimeUtc === null ||
+      body.endTimeUtc === undefined ||
+      body.endTimeUtc === null
     ) {
       return NextResponse.json(
         { error: "Missing required fields" },
@@ -53,8 +56,8 @@ export async function PUT(
     }
 
     if (
-      !Object.values(DayOfWeek).includes(body.dayOfWeekForStartsAt) ||
-      !Object.values(DayOfWeek).includes(body.dayOfWeekForEndsAt)
+      !Object.values(DayOfWeek).includes(body.startDay) ||
+      !Object.values(DayOfWeek).includes(body.endDay)
     ) {
       return NextResponse.json(
         { error: "Invalid day of week" },
@@ -62,34 +65,34 @@ export async function PUT(
       );
     }
 
-    const startTime = new Date(body.availabilityStartsAt);
-    const endTime = new Date(body.availabilityEndsAt);
+    const startTimeUtc: number = body.startTimeUtc;
+    const endTimeUtc: number = body.endTimeUtc;
 
-    if (startTime >= endTime) {
+    if (startTimeUtc >= endTimeUtc) {
       return NextResponse.json(
         { error: "Start time must be before end time" },
         { status: 400 },
       );
     }
 
-    // Check for overlapping slots
+    // Check for overlapping slots (Int range overlap check)
     const overlappingSlot = await prisma.slotOfAvailabilityWeekly.findFirst({
       where: {
         id: { not: id },
         consultantProfileId: body.consultantProfileId,
-        dayOfWeekForStartsAt: body.dayOfWeekForStartsAt,
+        startDay: body.startDay,
         OR: [
           {
-            availabilityStartsAt: { lte: startTime },
-            availabilityEndsAt: { gt: startTime },
+            startTimeUtc: { lte: startTimeUtc },
+            endTimeUtc: { gt: startTimeUtc },
           },
           {
-            availabilityStartsAt: { lt: endTime },
-            availabilityEndsAt: { gte: endTime },
+            startTimeUtc: { lt: endTimeUtc },
+            endTimeUtc: { gte: endTimeUtc },
           },
           {
-            availabilityStartsAt: { gte: startTime },
-            availabilityEndsAt: { lte: endTime },
+            startTimeUtc: { gte: startTimeUtc },
+            endTimeUtc: { lte: endTimeUtc },
           },
         ],
       },
@@ -97,7 +100,7 @@ export async function PUT(
 
     if (overlappingSlot) {
       return NextResponse.json(
-        { error: "This slot overlaps with an existing slot" },
+        { error: `This slot (${minutesToTimeString(startTimeUtc)}-${minutesToTimeString(endTimeUtc)}) overlaps with an existing slot` },
         { status: 409 },
       );
     }
@@ -105,10 +108,10 @@ export async function PUT(
     const updatedSlot = await prisma.slotOfAvailabilityWeekly.update({
       where: { id: id },
       data: {
-        dayOfWeekForStartsAt: body.dayOfWeekForStartsAt,
-        dayOfWeekForEndsAt: body.dayOfWeekForEndsAt,
-        availabilityStartsAt: startTime,
-        availabilityEndsAt: endTime,
+        startDay: body.startDay,
+        endDay: body.endDay,
+        startTimeUtc,
+        endTimeUtc,
         consultantProfile: body.consultantProfileId
           ? { connect: { id: body.consultantProfileId } }
           : undefined,
@@ -145,8 +148,8 @@ export async function PATCH(
     const body = await req.json();
 
     if (
-      body.dayOfWeekForStartsAt &&
-      !Object.values(DayOfWeek).includes(body.dayOfWeekForStartsAt)
+      body.startDay &&
+      !Object.values(DayOfWeek).includes(body.startDay)
     ) {
       return NextResponse.json(
         { error: "Invalid day of week for start time" },
@@ -155,8 +158,8 @@ export async function PATCH(
     }
 
     if (
-      body.dayOfWeekForEndsAt &&
-      !Object.values(DayOfWeek).includes(body.dayOfWeekForEndsAt)
+      body.endDay &&
+      !Object.values(DayOfWeek).includes(body.endDay)
     ) {
       return NextResponse.json(
         { error: "Invalid day of week for end time" },
@@ -175,40 +178,36 @@ export async function PATCH(
       );
     }
 
-    const startTime = body.availabilityStartsAt
-      ? new Date(body.availabilityStartsAt)
-      : currentSlot.availabilityStartsAt;
-    const endTime = body.availabilityEndsAt
-      ? new Date(body.availabilityEndsAt)
-      : currentSlot.availabilityEndsAt;
+    const startTimeUtc: number = body.startTimeUtc ?? currentSlot.startTimeUtc;
+    const endTimeUtc: number = body.endTimeUtc ?? currentSlot.endTimeUtc;
 
-    if (startTime >= endTime) {
+    if (startTimeUtc >= endTimeUtc) {
       return NextResponse.json(
         { error: "Start time must be before end time" },
         { status: 400 },
       );
     }
 
-    // Check for overlapping slots
+    // Check for overlapping slots (Int range overlap check)
     const overlappingSlot = await prisma.slotOfAvailabilityWeekly.findFirst({
       where: {
         id: { not: id },
         consultantProfileId:
           body.consultantProfileId || currentSlot.consultantProfileId,
-        dayOfWeekForStartsAt:
-          body.dayOfWeekForStartsAt || currentSlot.dayOfWeekForStartsAt,
+        startDay:
+          body.startDay || currentSlot.startDay,
         OR: [
           {
-            availabilityStartsAt: { lte: startTime },
-            availabilityEndsAt: { gt: startTime },
+            startTimeUtc: { lte: startTimeUtc },
+            endTimeUtc: { gt: startTimeUtc },
           },
           {
-            availabilityStartsAt: { lt: endTime },
-            availabilityEndsAt: { gte: endTime },
+            startTimeUtc: { lt: endTimeUtc },
+            endTimeUtc: { gte: endTimeUtc },
           },
           {
-            availabilityStartsAt: { gte: startTime },
-            availabilityEndsAt: { lte: endTime },
+            startTimeUtc: { gte: startTimeUtc },
+            endTimeUtc: { lte: endTimeUtc },
           },
         ],
       },
@@ -216,7 +215,7 @@ export async function PATCH(
 
     if (overlappingSlot) {
       return NextResponse.json(
-        { error: "This slot overlaps with an existing slot" },
+        { error: `This slot (${minutesToTimeString(startTimeUtc)}-${minutesToTimeString(endTimeUtc)}) overlaps with an existing slot` },
         { status: 409 },
       );
     }
@@ -224,10 +223,10 @@ export async function PATCH(
     const updatedSlot = await prisma.slotOfAvailabilityWeekly.update({
       where: { id: id },
       data: {
-        dayOfWeekForStartsAt: body.dayOfWeekForStartsAt,
-        dayOfWeekForEndsAt: body.dayOfWeekForEndsAt,
-        availabilityStartsAt: startTime,
-        availabilityEndsAt: endTime,
+        startDay: body.startDay,
+        endDay: body.endDay,
+        startTimeUtc,
+        endTimeUtc,
         consultantProfile: body.consultantProfileId
           ? { connect: { id: body.consultantProfileId } }
           : undefined,

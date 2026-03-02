@@ -82,8 +82,8 @@ export async function GET(
         consultantProfileId: consultantId,
       },
       orderBy: [
-        { dayOfWeekForStartsAt: "asc" },
-        { availabilityStartsAt: "asc" },
+        { startDay: "asc" },
+        { startTimeUtc: "asc" },
       ],
     });
 
@@ -103,22 +103,28 @@ export async function GET(
     const end = new Date(endDateInUtc);
 
     // FIX Bug #09: Use UTC-consistent date construction and range overlap check
+    // Weekly slots now use Int (minutes since midnight UTC) instead of DateTime
     weeklySlots.forEach((weeklySlot) => {
       const currentDate = new Date(start);
+
+      const startHours = Math.floor(weeklySlot.startTimeUtc / 60);
+      const startMins = weeklySlot.startTimeUtc % 60;
+      const endHours = Math.floor(weeklySlot.endTimeUtc / 60);
+      const endMins = weeklySlot.endTimeUtc % 60;
 
       while (currentDate <= end) {
         if (
           currentDate.getUTCDay() ===
-          dayToNumber[weeklySlot.dayOfWeekForStartsAt]
+          dayToNumber[weeklySlot.startDay]
         ) {
-          // Use UTC-consistent construction to avoid timezone drift
+          // Use UTC-consistent construction with Int minutes
           const slotStart = new Date(
             Date.UTC(
               currentDate.getUTCFullYear(),
               currentDate.getUTCMonth(),
               currentDate.getUTCDate(),
-              weeklySlot.availabilityStartsAt.getUTCHours(),
-              weeklySlot.availabilityStartsAt.getUTCMinutes(),
+              startHours,
+              startMins,
               0,
               0,
             ),
@@ -129,8 +135,8 @@ export async function GET(
               currentDate.getUTCFullYear(),
               currentDate.getUTCMonth(),
               currentDate.getUTCDate(),
-              weeklySlot.availabilityEndsAt.getUTCHours(),
-              weeklySlot.availabilityEndsAt.getUTCMinutes(),
+              endHours,
+              endMins,
               0,
               0,
             ),
@@ -145,7 +151,7 @@ export async function GET(
             unallocatedWeeklySlots.push({
               slotId: weeklySlot.id,
               dateInISO: currentDate.toISOString(),
-              dayOfWeek: weeklySlot.dayOfWeekForStartsAt,
+              dayOfWeek: weeklySlot.startDay,
               slotStartTimeInUTC: slotStart.toISOString(),
               slotEndTimeInUTC: slotEnd.toISOString(),
               slotOfAvailabilityId: weeklySlot.id,

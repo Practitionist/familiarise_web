@@ -694,11 +694,11 @@ model Education {
 //////////////////////////////////////////////////// AVAILABILITY SLOTS ////////////////////////////////////////////////////
 
 model SlotOfAvailabilityWeekly {
-  id                   String    @id @default(uuid())
-  dayOfWeekForStartsAt DayOfWeek
-  availabilityStartsAt DateTime  @db.Timestamptz()
-  dayOfWeekForEndsAt   DayOfWeek
-  availabilityEndsAt   DateTime  @db.Timestamptz()
+  id           String    @id @default(uuid())
+  startDay     DayOfWeek
+  startTimeUtc Int       // Minutes since midnight UTC (0-1439)
+  endDay       DayOfWeek
+  endTimeUtc   Int       // Minutes since midnight UTC (0-1439)
 
   consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultantProfileId String

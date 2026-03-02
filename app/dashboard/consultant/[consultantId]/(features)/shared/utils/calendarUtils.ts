@@ -8,6 +8,7 @@ import {
 } from "@prisma/client";
 import { startOfWeek } from "date-fns";
 import { SlotCalculationService } from "@/utils/slotAllocation/SlotCalculationService";
+import { minuteUtcToDate } from "@/utils/slotAllocation/slotTimeUtils";
 
 // Core types for the unified calendar system
 export interface TimeSlot {
@@ -128,32 +129,13 @@ export function mapWeeklySlots(
   while (iterDate <= endDate) {
     const dayOfWeek = iterDate.getDay();
     const matchingSlots = consultantData.slotsOfAvailabilityWeekly.filter(
-      (slot) => DAY_INDEX[slot.dayOfWeekForStartsAt] === dayOfWeek,
+      (slot) => DAY_INDEX[slot.startDay] === dayOfWeek,
     );
 
     matchingSlots.forEach((slot) => {
-      const startTime = new Date(slot.availabilityStartsAt);
-      const endTime = new Date(slot.availabilityEndsAt);
-
-      // FIXED: Create new date objects to avoid mutations
-      const slotStartTime = new Date(iterDate);
-      // FIX: Use UTC methods to match server-side SlotValidationService which
-      // uses getUTCHours(). Previously used local-time .setHours() which caused
-      // timezone-dependent mismatches between calendar display and server validation.
-      slotStartTime.setUTCHours(
-        startTime.getUTCHours(),
-        startTime.getUTCMinutes(),
-        0,
-        0,
-      );
-
-      const slotEndTime = new Date(iterDate);
-      slotEndTime.setUTCHours(
-        endTime.getUTCHours(),
-        endTime.getUTCMinutes(),
-        0,
-        0,
-      );
+      // startTimeUtc/endTimeUtc are Int (minutes since midnight UTC, 0-1439)
+      const slotStartTime = minuteUtcToDate(slot.startTimeUtc, iterDate);
+      const slotEndTime = minuteUtcToDate(slot.endTimeUtc, iterDate);
 
       // Handle slots that cross midnight
       if (slotEndTime <= slotStartTime) {

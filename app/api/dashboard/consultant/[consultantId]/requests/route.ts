@@ -334,8 +334,8 @@ export async function GET(
           consultantProfileId,
         },
         orderBy: [
-          { dayOfWeekForStartsAt: "asc" },
-          { availabilityStartsAt: "asc" },
+          { startDay: "asc" },
+          { startTimeUtc: "asc" },
         ],
         include: weeklyAvailabilityInclude,
       }),

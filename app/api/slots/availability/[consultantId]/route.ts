@@ -7,6 +7,7 @@ import { formatInTimeZone, fromZonedTime, toZonedTime } from "date-fns-tz";
 // Assuming TSlotTiming is defined in a types file
 import { TSlotTiming } from "@/types/slots";
 import { MINIMUM_BOOKING_LEAD_TIME_MS } from "@/lib/payments/constants";
+import { minuteUtcToDate } from "@/utils/slotAllocation/slotTimeUtils";
 
 export async function GET(
   req: NextRequest,
@@ -98,14 +99,14 @@ async function getWeeklySlots(
     where: {
       consultantProfileId: consultantId,
       OR: [
-        { dayOfWeekForStartsAt: userDayOfWeek },
+        { startDay: userDayOfWeek },
         {
-          dayOfWeekForStartsAt: previousDayOfWeek,
-          dayOfWeekForEndsAt: userDayOfWeek,
+          startDay: previousDayOfWeek,
+          endDay: userDayOfWeek,
         },
       ],
     },
-    orderBy: { availabilityStartsAt: "asc" },
+    orderBy: { startTimeUtc: "asc" },
   });
 
   return weeklySlots.map((slot) =>
@@ -241,20 +242,24 @@ function setToUserDate(date: Date, userDate: Date): Date {
 function mapWeeklySlotToTiming(
   slot: {
     id: string;
-    availabilityStartsAt: Date;
-    availabilityEndsAt: Date;
-    dayOfWeekForStartsAt: DayOfWeek;
-    dayOfWeekForEndsAt: DayOfWeek;
+    startTimeUtc: number;
+    endTimeUtc: number;
+    startDay: DayOfWeek;
+    endDay: DayOfWeek;
   },
   userDate: Date,
   userTimeZone: string,
 ): TSlotTiming {
-  const slotStart = toZonedTime(slot.availabilityStartsAt, userTimeZone);
-  const slotEnd = toZonedTime(slot.availabilityEndsAt, userTimeZone);
+  // Convert Int minutes to concrete Date objects on the userDate
+  const startDateUtc = minuteUtcToDate(slot.startTimeUtc, userDate);
+  const endDateUtc = minuteUtcToDate(slot.endTimeUtc, userDate);
+
+  const slotStart = toZonedTime(startDateUtc, userTimeZone);
+  const slotEnd = toZonedTime(endDateUtc, userTimeZone);
   const adjustedStart = setToUserDate(slotStart, userDate);
   const adjustedEnd = setToUserDate(slotEnd, userDate);
 
-  if (slot.dayOfWeekForStartsAt !== slot.dayOfWeekForEndsAt) {
+  if (slot.startDay !== slot.endDay) {
     adjustedEnd.setDate(adjustedEnd.getDate() + 1);
   }
 
@@ -265,7 +270,7 @@ function mapWeeklySlotToTiming(
       userTimeZone,
       "yyyy-MM-dd'T'HH:mm:ssXXX",
     ),
-    dayOfWeek: slot.dayOfWeekForStartsAt,
+    dayOfWeek: slot.startDay,
     slotStartTimeInUTC: formatInTimeZone(
       fromZonedTime(adjustedStart, userTimeZone),
       "UTC",

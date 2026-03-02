@@ -15,10 +15,10 @@ import { experienceValidation } from "@/schemas/shared";
 // #region Shared Zod Schema Definitions
 
 export const SlotWeeklyCreateInputSchema = z.object({
-  dayOfWeekForStartsAt: z.nativeEnum(DayOfWeek),
-  availabilityStartsAt: z.string(),
-  dayOfWeekForEndsAt: z.nativeEnum(DayOfWeek),
-  availabilityEndsAt: z.string(),
+  startDay: z.nativeEnum(DayOfWeek),
+  startTimeUtc: z.number().int().min(0).max(1439),
+  endDay: z.nativeEnum(DayOfWeek),
+  endTimeUtc: z.number().int().min(0).max(1439),
 });
 
 export const SlotCustomCreateInputSchema = z.object({

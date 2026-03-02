@@ -25,6 +25,10 @@ import {
 } from "@/utils/onboarding";
 import { validateTimeSlot } from "@/utils/timeSlotValidation";
 import {
+  dateToMinuteUtc,
+  minuteUtcToDate,
+} from "@/utils/slotAllocation/slotTimeUtils";
+import {
   SlotValidationFeedback,
   useSlotValidationFeedback,
 } from "@/components/schedule/SlotValidationFeedback";
@@ -41,10 +45,10 @@ interface Props {
 }
 
 interface WeeklySlot {
-  dayOfWeekForStartsAt: DayOfWeek;
-  dayOfWeekForEndsAt: DayOfWeek;
-  availabilityStartsAt: string;
-  availabilityEndsAt: string;
+  startDay: DayOfWeek;
+  endDay: DayOfWeek;
+  startTimeUtc: number;
+  endTimeUtc: number;
 }
 
 interface CustomSlot {
@@ -91,18 +95,19 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
 
     if (initialData.weeklySlots?.length) {
       const formattedWeeklySlots: SlotsType = {};
+      const refDate = new Date("1970-01-05T00:00:00Z");
       initialData.weeklySlots.forEach((slot) => {
-        const day = slot.dayOfWeekForStartsAt.toLowerCase();
+        const day = slot.startDay.toLowerCase();
         if (!formattedWeeklySlots[day]) {
           formattedWeeklySlots[day] = [];
         }
         formattedWeeklySlots[day].push({
           startTime: extractTimeFromUtcSlot(
-            slot.availabilityStartsAt.toString(),
+            minuteUtcToDate(slot.startTimeUtc, refDate).toISOString(),
             timezone,
           ),
           endTime: extractTimeFromUtcSlot(
-            slot.availabilityEndsAt.toString(),
+            minuteUtcToDate(slot.endTimeUtc, refDate).toISOString(),
             timezone,
           ),
           isValid: true,
@@ -184,14 +189,17 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
             return [];
           }
 
+          const startMinutes = dateToMinuteUtc(new Date(startUTC));
+          const endMinutes = dateToMinuteUtc(new Date(endUTC));
+
           if (overnight) {
             if (slot.endTime === "00:00") {
               return [
                 {
-                  dayOfWeekForStartsAt: day.toUpperCase() as DayOfWeek,
-                  dayOfWeekForEndsAt: day.toUpperCase() as DayOfWeek,
-                  availabilityStartsAt: startUTC,
-                  availabilityEndsAt: endUTC,
+                  startDay: day.toUpperCase() as DayOfWeek,
+                  endDay: day.toUpperCase() as DayOfWeek,
+                  startTimeUtc: startMinutes,
+                  endTimeUtc: endMinutes,
                 },
               ];
             }
@@ -203,35 +211,35 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
             );
             if (!midnightUTC) return [];
 
-            const justBeforeMidnightUTC = new Date(
-              new Date(midnightUTC).getTime() - 1000,
-            );
+            const midnightMinutes = dateToMinuteUtc(new Date(midnightUTC));
+            // Just before midnight = 23:59 = 1439
+            const justBeforeMidnightMinutes = 1439;
 
-            const startDay = day.toUpperCase() as DayOfWeek;
-            const endDay = getNextDay(startDay);
+            const startDayVal = day.toUpperCase() as DayOfWeek;
+            const endDayVal = getNextDay(startDayVal);
 
             return [
               {
-                dayOfWeekForStartsAt: startDay,
-                dayOfWeekForEndsAt: startDay,
-                availabilityStartsAt: startUTC,
-                availabilityEndsAt: justBeforeMidnightUTC.toISOString(),
+                startDay: startDayVal,
+                endDay: startDayVal,
+                startTimeUtc: startMinutes,
+                endTimeUtc: justBeforeMidnightMinutes,
               },
               {
-                dayOfWeekForStartsAt: endDay,
-                dayOfWeekForEndsAt: endDay,
-                availabilityStartsAt: midnightUTC,
-                availabilityEndsAt: endUTC,
+                startDay: endDayVal,
+                endDay: endDayVal,
+                startTimeUtc: midnightMinutes,
+                endTimeUtc: endMinutes,
               },
             ];
           }
 
           return [
             {
-              dayOfWeekForStartsAt: day.toUpperCase() as DayOfWeek,
-              dayOfWeekForEndsAt: day.toUpperCase() as DayOfWeek,
-              availabilityStartsAt: startUTC,
-              availabilityEndsAt: endUTC,
+              startDay: day.toUpperCase() as DayOfWeek,
+              endDay: day.toUpperCase() as DayOfWeek,
+              startTimeUtc: startMinutes,
+              endTimeUtc: endMinutes,
             },
           ];
         });

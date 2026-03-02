@@ -90,19 +90,28 @@ async function updateConsultantProfileAndRelations(
     });
     const weeklySlotsToCreate = profileData.slotsOfAvailabilityWeekly?.create;
     if (weeklySlotsToCreate && weeklySlotsToCreate.length > 0) {
-      const validWeeklySlots = weeklySlotsToCreate.filter((slot) =>
-        isValidTimeRange(
-          slot.availabilityStartsAt.split("T")[1]?.slice(0, 5) || "",
-          slot.availabilityEndsAt.split("T")[1]?.slice(0, 5) || "",
-        ),
-      );
+      const validWeeklySlots = weeklySlotsToCreate.filter((slot) => {
+        // Int-based minutes (0-1439): convert to HH:MM for validation
+        const startHH = Math.floor(slot.startTimeUtc / 60)
+          .toString()
+          .padStart(2, "0");
+        const startMM = (slot.startTimeUtc % 60).toString().padStart(2, "0");
+        const endHH = Math.floor(slot.endTimeUtc / 60)
+          .toString()
+          .padStart(2, "0");
+        const endMM = (slot.endTimeUtc % 60).toString().padStart(2, "0");
+        return isValidTimeRange(
+          `${startHH}:${startMM}`,
+          `${endHH}:${endMM}`,
+        );
+      });
       if (validWeeklySlots.length > 0) {
         await tx.slotOfAvailabilityWeekly.createMany({
           data: validWeeklySlots.map((slot) => ({
-            dayOfWeekForStartsAt: slot.dayOfWeekForStartsAt,
-            availabilityStartsAt: slot.availabilityStartsAt,
-            dayOfWeekForEndsAt: slot.dayOfWeekForEndsAt,
-            availabilityEndsAt: slot.availabilityEndsAt,
+            startDay: slot.startDay,
+            startTimeUtc: slot.startTimeUtc,
+            endDay: slot.endDay,
+            endTimeUtc: slot.endTimeUtc,
             consultantProfileId: consultantProfile.id,
           })),
         });

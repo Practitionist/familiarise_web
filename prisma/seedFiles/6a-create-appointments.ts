@@ -230,7 +230,7 @@ const createSubscriptionAppointment = (
 
   // Get consultant's available days of week from their weekly slots
   const availableDaysSet = new Set(
-    consultantWeeklySlots.map((s) => s.dayOfWeekForStartsAt),
+    consultantWeeklySlots.map((s) => s.startDay),
   );
   const availableDays = Array.from(availableDaysSet);
 
@@ -267,7 +267,7 @@ const createSubscriptionAppointment = (
     if (availableDays.includes(currentDayOfWeek)) {
       // Find available time slots for this day
       const daySlotsForConsultant = consultantWeeklySlots.filter(
-        (s) => s.dayOfWeekForStartsAt === currentDayOfWeek,
+        (s) => s.startDay === currentDayOfWeek,
       );
 
       if (daySlotsForConsultant.length > 0) {
@@ -277,8 +277,8 @@ const createSubscriptionAppointment = (
         // Create appointment slot at this time
         const slotStart = new Date(currentDate);
         slotStart.setUTCHours(
-          randomSlot.availabilityStartsAt.getUTCHours(),
-          randomSlot.availabilityStartsAt.getUTCMinutes(),
+          Math.floor(randomSlot.startTimeUtc / 60),
+          randomSlot.startTimeUtc % 60,
           0,
           0,
         );
@@ -318,8 +318,8 @@ const createSubscriptionAppointment = (
     const randomSlot = faker.helpers.arrayElement(consultantWeeklySlots);
     const slotStart = new Date(startDate);
     slotStart.setUTCHours(
-      randomSlot.availabilityStartsAt.getUTCHours(),
-      randomSlot.availabilityStartsAt.getUTCMinutes(),
+      Math.floor(randomSlot.startTimeUtc / 60),
+      randomSlot.startTimeUtc % 60,
       0,
       0,
     );
@@ -629,11 +629,18 @@ async function createAppointmentBatch(
       }
 
       // Extract just the time pattern (hours and minutes) from the slot
-      const slotTime = slotData.slot;
-      const startHours = slotTime.availabilityStartsAt.getUTCHours();
-      const startMinutes = slotTime.availabilityStartsAt.getUTCMinutes();
-      const endHours = slotTime.availabilityEndsAt.getUTCHours();
-      const endMinutes = slotTime.availabilityEndsAt.getUTCMinutes();
+      let startHours: number, startMinutes: number, endHours: number, endMinutes: number;
+      if (slotData.type === "weekly") {
+        startHours = Math.floor(slotData.slot.startTimeUtc / 60);
+        startMinutes = slotData.slot.startTimeUtc % 60;
+        endHours = Math.floor(slotData.slot.endTimeUtc / 60);
+        endMinutes = slotData.slot.endTimeUtc % 60;
+      } else {
+        startHours = slotData.slot.availabilityStartsAt.getUTCHours();
+        startMinutes = slotData.slot.availabilityStartsAt.getUTCMinutes();
+        endHours = slotData.slot.availabilityEndsAt.getUTCHours();
+        endMinutes = slotData.slot.availabilityEndsAt.getUTCMinutes();
+      }
 
       // Create new dates using the appointment's actual date
       const actualStartTime = new Date(startDate);

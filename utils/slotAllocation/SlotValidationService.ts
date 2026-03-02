@@ -296,11 +296,27 @@ export class SlotValidationService {
   }
 
   /**
+   * Map DayOfWeek enum string to JS getUTCDay() index (Sunday=0 ... Saturday=6)
+   */
+  private static readonly dayOfWeekToIndex: Record<string, number> = {
+    SUNDAY: 0,
+    MONDAY: 1,
+    TUESDAY: 2,
+    WEDNESDAY: 3,
+    THURSDAY: 4,
+    FRIDAY: 5,
+    SATURDAY: 6,
+  };
+
+  /**
    * UNIVERSAL VALIDATOR: Ensure slots match consultant's schedule
    *
-   * FIX: For WEEKLY schedules, directly compare each slot's UTC day-of-week and time
-   * against the availability patterns. Also checks adjacent day's availability for
-   * timezone edge cases (e.g., 21:00 UTC Saturday = 02:30 IST Sunday).
+   * FIX Issue #6: Now uses Int (startTimeUtc/endTimeUtc) directly instead of
+   * extracting hours/minutes from DateTime objects. This eliminates the
+   * complex DateTime-to-minutes conversion that was the source of timezone bugs.
+   *
+   * Also checks adjacent day's availability for timezone edge cases
+   * (e.g., 21:00 UTC Saturday = 02:30 IST Sunday).
    */
   private validateMatchesSchedule(
     slots: Date[],
@@ -320,17 +336,6 @@ export class SlotValidationService {
         "Saturday",
       ];
 
-      // Map DayOfWeek enum to JS getDay() index (Sunday=0 ... Saturday=6)
-      const dayOfWeekToIndex: Record<string, number> = {
-        SUNDAY: 0,
-        MONDAY: 1,
-        TUESDAY: 2,
-        WEDNESDAY: 3,
-        THURSDAY: 4,
-        FRIDAY: 5,
-        SATURDAY: 6,
-      };
-
       // For each slot, check if it falls within ANY weekly availability
       // Also check adjacent day's availability for timezone edge cases
       for (const slot of slots) {
@@ -343,17 +348,13 @@ export class SlotValidationService {
         // Check if this slot matches any availability pattern
         const matchesAvailability = consultant.slotsOfAvailabilityWeekly.some(
           (availSlot) => {
-            if (!(availSlot.dayOfWeekForStartsAt in dayOfWeekToIndex)) {
-              return false;
-            }
+            const availDay =
+              SlotValidationService.dayOfWeekToIndex[availSlot.startDay];
+            if (availDay === undefined) return false;
 
-            const availDay = dayOfWeekToIndex[availSlot.dayOfWeekForStartsAt];
-            const availStart = new Date(availSlot.availabilityStartsAt);
-            const availEnd = new Date(availSlot.availabilityEndsAt);
-            const availStartMinutes =
-              availStart.getUTCHours() * 60 + availStart.getUTCMinutes();
-            const availEndMinutes =
-              availEnd.getUTCHours() * 60 + availEnd.getUTCMinutes();
+            // Direct Int comparison — no DateTime parsing needed
+            const availStartMinutes = availSlot.startTimeUtc;
+            const availEndMinutes = availSlot.endTimeUtc;
             const isOvernightAvail = availEndMinutes <= availStartMinutes;
 
             // Check for same day match

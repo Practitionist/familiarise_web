@@ -22,7 +22,17 @@ jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     $transaction: jest.fn(),
+    consultation: { findUnique: jest.fn() },
+    subscription: { findUnique: jest.fn() },
+    webinar: { findUnique: jest.fn() },
+    class: { findUnique: jest.fn() },
   },
+}));
+
+// Mock appointmentlock to avoid @upstash/redis ESM import issues in Jest
+jest.mock("../../utils/appointmentlock", () => ({
+  lockAutoAllocate: jest.fn().mockResolvedValue({ key: "mock-key", value: "mock-value" }),
+  unlockAutoAllocate: jest.fn().mockResolvedValue(undefined),
 }));
 
 // Mock SlotValidationService to isolate unit under test
@@ -150,6 +160,22 @@ beforeEach(() => {
   (prisma.$transaction as jest.Mock).mockImplementation(async (callback: any) =>
     callback(mockTx),
   );
+
+  // Setup top-level prisma mocks for getConsultantProfileId() pre-fetch
+  // (runs outside the transaction to acquire consultant-level lock)
+  const consultantProfileId = "consultant-profile-1";
+  (prisma.consultation.findUnique as jest.Mock).mockResolvedValue({
+    consultationPlan: { consultantProfileId },
+  });
+  (prisma.subscription.findUnique as jest.Mock).mockResolvedValue({
+    subscriptionPlan: { consultantProfileId },
+  });
+  (prisma.webinar.findUnique as jest.Mock).mockResolvedValue({
+    webinarPlan: { consultantProfileId },
+  });
+  (prisma.class.findUnique as jest.Mock).mockResolvedValue({
+    classPlan: { consultantProfileId },
+  });
 
   mockValidateFn.mockReset();
   mockValidateFn.mockResolvedValue({

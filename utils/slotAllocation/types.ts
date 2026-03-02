@@ -110,9 +110,9 @@ export interface ConsultantAllocationData {
   scheduleType: "WEEKLY" | "CUSTOM";
   slotsOfAvailabilityWeekly: Array<{
     id: string;
-    dayOfWeekForStartsAt: string;
-    availabilityStartsAt: Date;
-    availabilityEndsAt: Date;
+    startDay: string;
+    startTimeUtc: number;
+    endTimeUtc: number;
   }>;
   slotsOfAvailabilityCustom: Array<{
     id: string;

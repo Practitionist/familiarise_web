@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { DayOfWeek } from "@prisma/client";
+import { minutesToTimeString } from "@/utils/slotAllocation/slotTimeUtils";
 
 export async function GET(req: NextRequest) {
   try {
@@ -24,8 +25,8 @@ export async function GET(req: NextRequest) {
           consultantProfileId: consultantProfileId,
         },
         orderBy: [
-          { dayOfWeekForStartsAt: "asc" },
-          { availabilityStartsAt: "asc" },
+          { startDay: "asc" },
+          { startTimeUtc: "asc" },
         ],
         include: {
           consultantProfile: {
@@ -74,18 +75,20 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const {
       consultantProfileId,
-      dayOfWeekForStartsAt,
-      dayOfWeekForEndsAt,
-      availabilityStartsAt,
-      availabilityEndsAt,
+      startDay,
+      endDay,
+      startTimeUtc,
+      endTimeUtc,
     } = body;
 
     if (
       !consultantProfileId ||
-      !dayOfWeekForStartsAt ||
-      !dayOfWeekForEndsAt ||
-      !availabilityStartsAt ||
-      !availabilityEndsAt
+      !startDay ||
+      !endDay ||
+      startTimeUtc === undefined ||
+      startTimeUtc === null ||
+      endTimeUtc === undefined ||
+      endTimeUtc === null
     ) {
       return NextResponse.json(
         { error: "Missing required fields" },
@@ -94,8 +97,8 @@ export async function POST(req: NextRequest) {
     }
 
     if (
-      !Object.values(DayOfWeek).includes(dayOfWeekForStartsAt) ||
-      !Object.values(DayOfWeek).includes(dayOfWeekForEndsAt)
+      !Object.values(DayOfWeek).includes(startDay) ||
+      !Object.values(DayOfWeek).includes(endDay)
     ) {
       return NextResponse.json(
         { error: "Invalid day of week" },
@@ -104,42 +107,43 @@ export async function POST(req: NextRequest) {
     }
 
     if (
-      isNaN(Date.parse(availabilityStartsAt)) ||
-      isNaN(Date.parse(availabilityEndsAt))
+      typeof startTimeUtc !== "number" ||
+      typeof endTimeUtc !== "number" ||
+      startTimeUtc < 0 ||
+      startTimeUtc > 1439 ||
+      endTimeUtc < 0 ||
+      endTimeUtc > 1439
     ) {
       return NextResponse.json(
-        { error: "Invalid time format" },
+        { error: "Invalid time format: must be integer 0-1439 (minutes since midnight UTC)" },
         { status: 400 },
       );
     }
 
-    const startTime = new Date(availabilityStartsAt);
-    const endTime = new Date(availabilityEndsAt);
-
-    if (startTime >= endTime) {
+    if (startTimeUtc >= endTimeUtc) {
       return NextResponse.json(
         { error: "Start time must be before end time" },
         { status: 400 },
       );
     }
 
-    // Check for overlapping slots
+    // Check for overlapping slots (Int range overlap check)
     const overlappingSlot = await prisma.slotOfAvailabilityWeekly.findFirst({
       where: {
         consultantProfileId,
-        dayOfWeekForStartsAt,
+        startDay,
         OR: [
           {
-            availabilityStartsAt: { lte: startTime },
-            availabilityEndsAt: { gt: startTime },
+            startTimeUtc: { lte: startTimeUtc },
+            endTimeUtc: { gt: startTimeUtc },
           },
           {
-            availabilityStartsAt: { lt: endTime },
-            availabilityEndsAt: { gte: endTime },
+            startTimeUtc: { lt: endTimeUtc },
+            endTimeUtc: { gte: endTimeUtc },
           },
           {
-            availabilityStartsAt: { gte: startTime },
-            availabilityEndsAt: { lte: endTime },
+            startTimeUtc: { gte: startTimeUtc },
+            endTimeUtc: { lte: endTimeUtc },
           },
         ],
       },
@@ -147,7 +151,7 @@ export async function POST(req: NextRequest) {
 
     if (overlappingSlot) {
       return NextResponse.json(
-        { error: "This slot overlaps with an existing slot" },
+        { error: `This slot (${minutesToTimeString(startTimeUtc)}-${minutesToTimeString(endTimeUtc)}) overlaps with an existing slot` },
         { status: 409 },
       );
     }
@@ -155,10 +159,10 @@ export async function POST(req: NextRequest) {
     const newWeeklySlot = await prisma.slotOfAvailabilityWeekly.create({
       data: {
         consultantProfileId,
-        dayOfWeekForStartsAt,
-        dayOfWeekForEndsAt,
-        availabilityStartsAt: startTime,
-        availabilityEndsAt: endTime,
+        startDay,
+        endDay,
+        startTimeUtc,
+        endTimeUtc,
       },
       include: {
         consultantProfile: {

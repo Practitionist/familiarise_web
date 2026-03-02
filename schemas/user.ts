@@ -122,10 +122,10 @@ export type PersonalInfoAndRole = z.infer<typeof PersonalInfoAndRoleSchema>;
 // #region Slot Schemas
 
 export const WeeklySlotSchema = z.object({
-  dayOfWeekForStartsAt: DayOfWeekEnum,
-  availabilityStartsAt: z.string(),
-  dayOfWeekForEndsAt: DayOfWeekEnum,
-  availabilityEndsAt: z.string(),
+  startDay: DayOfWeekEnum,
+  startTimeUtc: z.number().int().min(0).max(1439),
+  endDay: DayOfWeekEnum,
+  endTimeUtc: z.number().int().min(0).max(1439),
 });
 
 export const CustomSlotSchema = z.object({

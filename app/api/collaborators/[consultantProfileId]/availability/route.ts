@@ -49,10 +49,10 @@ export async function GET(
     const weeklySlots = await prisma.slotOfAvailabilityWeekly.findMany({
       where: { consultantProfileId },
       select: {
-        dayOfWeekForStartsAt: true,
-        availabilityStartsAt: true,
-        dayOfWeekForEndsAt: true,
-        availabilityEndsAt: true,
+        startDay: true,
+        startTimeUtc: true,
+        endDay: true,
+        endTimeUtc: true,
       },
     });
 

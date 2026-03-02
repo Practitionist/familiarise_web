@@ -2,6 +2,7 @@ import { DayOfWeek } from "@prisma/client";
 import { TWeeklySlot, TCustomSlot, TSlotTiming } from "@/types/slots";
 import { format } from "date-fns";
 import { toZonedTime } from "date-fns-tz";
+import { minutesToTimeString } from "@/utils/slotAllocation/slotTimeUtils";
 
 export const dayMap: Record<number, DayOfWeek> = {
   0: DayOfWeek.SUNDAY,
@@ -28,15 +29,17 @@ export function normalizeUTCTime(time: string | Date): string {
   return typeof time === "string" ? time : time.toISOString();
 }
 
-// Normalize weekly slot to ensure all times are strings
+// Normalize weekly slot — startTimeUtc/endTimeUtc are already Int (minutes
+// since midnight UTC), so we just pass them through. This helper remains for
+// backward-compatible call-sites that expected a normalised slot object.
 export function normalizeWeeklySlot(slot: TWeeklySlot): TWeeklySlot & {
-  availabilityStartsAt: string;
-  availabilityEndsAt: string;
+  startTimeUtcStr: string;
+  endTimeUtcStr: string;
 } {
   return {
     ...slot,
-    availabilityStartsAt: normalizeUTCTime(slot.availabilityStartsAt),
-    availabilityEndsAt: normalizeUTCTime(slot.availabilityEndsAt),
+    startTimeUtcStr: minutesToTimeString(slot.startTimeUtc),
+    endTimeUtcStr: minutesToTimeString(slot.endTimeUtc),
   };
 }
 

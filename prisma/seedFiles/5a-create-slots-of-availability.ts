@@ -9,57 +9,10 @@ const MIN_BREAK_DURATION = 1; // In 30-min intervals (1 = 30 mins)
 const MAX_SLOTS_PER_DAY = 4;
 
 /**
- * Validates that a slot has valid start and end times
+ * Convert hours and minutes to minutes since midnight UTC (0-1439)
  */
-function validateSlot(startTime: Date, endTime: Date): boolean {
-  // Check that end time is after start time
-  if (endTime <= startTime) {
-    console.warn(
-      `Invalid slot: end time ${endTime.toISOString()} is not after start time ${startTime.toISOString()}`,
-    );
-    return false;
-  }
-
-  // Check that slot duration is reasonable (max 24 hours)
-  const durationHours =
-    (endTime.getTime() - startTime.getTime()) / (1000 * 60 * 60);
-  if (durationHours > 24) {
-    console.warn(
-      `Invalid slot: duration ${durationHours} hours exceeds 24 hours`,
-    );
-    return false;
-  }
-
-  return true;
-}
-
-/**
- * Get a reference date that matches the given day of week
- *
- * For weekly slots, we need the date component to match the dayOfWeek field
- * to ensure the availability API can correctly query and match slots.
- * Uses a fixed reference week (Jan 6-12, 2025) where dates align with day names.
- *
- * @param dayOfWeek - The day of week enum value
- * @returns A Date object set to that day of week in the reference week
- */
-function getReferenceDateForDayOfWeek(dayOfWeek: DayOfWeek): Date {
-  // Reference week: Jan 6, 2025 (Monday) through Jan 12, 2025 (Sunday)
-  const referenceWeekStart = new Date(Date.UTC(2025, 0, 6, 0, 0, 0, 0)); // Monday, Jan 6, 2025 00:00:00 UTC
-
-  const daysMap: Record<DayOfWeek, number> = {
-    [DayOfWeek.MONDAY]: 0,
-    [DayOfWeek.TUESDAY]: 1,
-    [DayOfWeek.WEDNESDAY]: 2,
-    [DayOfWeek.THURSDAY]: 3,
-    [DayOfWeek.FRIDAY]: 4,
-    [DayOfWeek.SATURDAY]: 5,
-    [DayOfWeek.SUNDAY]: 6,
-  };
-
-  const date = new Date(referenceWeekStart);
-  date.setUTCDate(date.getUTCDate() + daysMap[dayOfWeek]);
-  return date;
+function toMinutesSinceMidnight(hour: number, minute: number): number {
+  return hour * 60 + minute;
 }
 
 function generateSlotTime(
@@ -158,19 +111,17 @@ export async function createSlotsOfAvailability(
           );
 
           for (const timeSlot of selectedHours) {
-            // Use reference date that matches the day of week to ensure date/dayOfWeek consistency
-            const slotStartTime = getReferenceDateForDayOfWeek(dayOfWeek);
-            // Set time in UTC to ensure consistent timezone handling
-            slotStartTime.setUTCHours(timeSlot.hour, timeSlot.minute, 0, 0);
+            const startMinutes = toMinutesSinceMidnight(
+              timeSlot.hour,
+              timeSlot.minute,
+            );
 
             weeklySlots.push({
               consultantProfileId: consultant.consultantProfile.id,
-              dayOfWeekForStartsAt: dayOfWeek,
-              dayOfWeekForEndsAt: dayOfWeek, // Same day since it's a 1-hour slot
-              availabilityStartsAt: slotStartTime,
-              availabilityEndsAt: new Date(
-                slotStartTime.getTime() + 60 * 60 * 1000,
-              ), // 1 hour duration
+              startDay: dayOfWeek,
+              endDay: dayOfWeek, // Same day since it's a 1-hour slot
+              startTimeUtc: startMinutes,
+              endTimeUtc: startMinutes + 60, // 1 hour duration (60 minutes)
             });
           }
         }
@@ -186,19 +137,17 @@ export async function createSlotsOfAvailability(
             ); // Fewer weekend slots
 
             for (const timeSlot of selectedHours) {
-              // Use reference date that matches the day of week to ensure date/dayOfWeek consistency
-              const slotStartTime = getReferenceDateForDayOfWeek(dayOfWeek);
-              // Set time in UTC to ensure consistent timezone handling
-              slotStartTime.setUTCHours(timeSlot.hour, timeSlot.minute, 0, 0);
+              const startMinutes = toMinutesSinceMidnight(
+                timeSlot.hour,
+                timeSlot.minute,
+              );
 
               weeklySlots.push({
                 consultantProfileId: consultant.consultantProfile.id,
-                dayOfWeekForStartsAt: dayOfWeek,
-                dayOfWeekForEndsAt: dayOfWeek, // Same day since it's a 1-hour slot
-                availabilityStartsAt: slotStartTime,
-                availabilityEndsAt: new Date(
-                  slotStartTime.getTime() + 60 * 60 * 1000,
-                ), // 1 hour duration
+                startDay: dayOfWeek,
+                endDay: dayOfWeek, // Same day since it's a 1-hour slot
+                startTimeUtc: startMinutes,
+                endTimeUtc: startMinutes + 60, // 1 hour duration (60 minutes)
               });
             }
           }

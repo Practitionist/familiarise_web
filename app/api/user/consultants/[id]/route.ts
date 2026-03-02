@@ -6,6 +6,7 @@ import { experienceValidation } from "@/schemas/shared";
 import { checkActiveAppointments } from "../utils/consultant-appointments";
 import { getSession } from "@/lib/auth-server";
 import { apiError } from "@/lib/errors";
+import { dateToMinuteUtc } from "@/utils/slotAllocation/slotTimeUtils";
 // Zod schema for UUID validation
 const uuidSchema = z.string().uuid();
 
@@ -343,10 +344,10 @@ export async function PUT(
         const weeklySlotData: Prisma.SlotOfAvailabilityWeeklyCreateManyInput[] =
           slotsOfAvailabilityWeekly.map((slot) => ({
             consultantProfileId: id,
-            dayOfWeekForStartsAt: slot.dayOfWeekforStartTimeInUTC,
-            dayOfWeekForEndsAt: slot.dayOfWeekforEndTimeInUTC,
-            availabilityStartsAt: new Date(slot.slotStartTimeInUTC),
-            availabilityEndsAt: new Date(slot.slotEndTimeInUTC),
+            startDay: slot.dayOfWeekforStartTimeInUTC,
+            endDay: slot.dayOfWeekforEndTimeInUTC,
+            startTimeUtc: dateToMinuteUtc(new Date(slot.slotStartTimeInUTC)),
+            endTimeUtc: dateToMinuteUtc(new Date(slot.slotEndTimeInUTC)),
           }));
 
         await prisma.slotOfAvailabilityWeekly.createMany({

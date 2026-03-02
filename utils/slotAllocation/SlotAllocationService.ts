@@ -26,6 +26,10 @@ import {
 import { SlotCalculationService } from "./SlotCalculationService";
 import { SlotValidationService } from "./SlotValidationService";
 import { buildOccupiedAppointmentFilter } from "./occupancyPolicy";
+import {
+  lockAutoAllocate,
+  unlockAutoAllocate,
+} from "@/utils/appointmentlock";
 
 type AppointmentWithSlots = Appointment & {
   slotsOfAppointment: SlotOfAppointment[];
@@ -79,12 +83,85 @@ export class SlotAllocationService {
   }
 
   /**
+   * Lightweight pre-fetch to get consultantProfileId for lock acquisition.
+   * Runs OUTSIDE the transaction, before the distributed lock is acquired.
+   *
+   * FIX Issue #1 from Architecture Review (#446):
+   * autoAllocate() needs a consultant-level lock to prevent concurrent
+   * auto-allocations from double-booking the same slots.
+   */
+  private static async getConsultantProfileId(
+    eventType: EventType,
+    eventId: string,
+  ): Promise<string | null> {
+    switch (eventType) {
+      case "consultation": {
+        const event = await prisma.consultation.findUnique({
+          where: { id: eventId },
+          select: {
+            consultationPlan: { select: { consultantProfileId: true } },
+          },
+        });
+        return event?.consultationPlan?.consultantProfileId ?? null;
+      }
+      case "subscription": {
+        const event = await prisma.subscription.findUnique({
+          where: { id: eventId },
+          select: {
+            subscriptionPlan: { select: { consultantProfileId: true } },
+          },
+        });
+        return event?.subscriptionPlan?.consultantProfileId ?? null;
+      }
+      case "webinar": {
+        const event = await prisma.webinar.findUnique({
+          where: { id: eventId },
+          select: {
+            webinarPlan: { select: { consultantProfileId: true } },
+          },
+        });
+        return event?.webinarPlan?.consultantProfileId ?? null;
+      }
+      case "class": {
+        const event = await prisma.class.findUnique({
+          where: { id: eventId },
+          select: { classPlan: { select: { consultantProfileId: true } } },
+        });
+        return event?.classPlan?.consultantProfileId ?? null;
+      }
+      default:
+        return null;
+    }
+  }
+
+  /**
    * AUTO ALLOCATION: Find and allocate first available consecutive slots
+   *
+   * FIX Issue #1 from Architecture Review (#446):
+   * Wrapped in a consultant-level distributed lock to prevent concurrent
+   * auto-allocations from reading the same slots as "available" and
+   * double-booking. The lock is acquired BEFORE the Prisma transaction
+   * and released in a finally block to guarantee cleanup.
    */
   private static async autoAllocate(
     eventType: EventType,
     eventId: string,
   ): Promise<AllocationResult> {
+    // Pre-fetch consultantProfileId for lock key (lightweight, outside transaction)
+    const consultantProfileId = await this.getConsultantProfileId(
+      eventType,
+      eventId,
+    );
+    if (!consultantProfileId) {
+      return {
+        success: false,
+        error: `${eventType} not found or has no consultant`,
+      };
+    }
+
+    // Acquire consultant-level distributed lock before the transaction
+    const lock = await lockAutoAllocate(consultantProfileId);
+    try {
     return await prisma.$transaction(
       async (tx) => {
         // Fetch event details and consultant info
@@ -219,6 +296,9 @@ export class SlotAllocationService {
         timeout: 120000, // 120 seconds (2 min) - handles large allocations (200+ slots)
       },
     );
+    } finally {
+      await unlockAutoAllocate(lock);
+    }
   }
 
   /**
@@ -536,30 +616,45 @@ export class SlotAllocationService {
   }
 
   /**
+   * Map DayOfWeek enum string to JS getUTCDay() index (Sunday=0 ... Saturday=6)
+   */
+  private static readonly dayOfWeekToIndex: Record<string, number> = {
+    SUNDAY: 0,
+    MONDAY: 1,
+    TUESDAY: 2,
+    WEDNESDAY: 3,
+    THURSDAY: 4,
+    FRIDAY: 5,
+    SATURDAY: 6,
+  };
+
+  /**
    * Check if a 30-minute candidate slot falls within the consultant's availability.
    * Replaces the pre-computed availableSlotsSet to eliminate the 8-week cap.
+   *
+   * FIX Issue #6: Now uses Int (minutes since midnight UTC) directly
+   * instead of extracting hours/minutes from DateTime objects.
    */
   private static isWithinAvailability(
     candidate: Date,
     consultant: ConsultantAllocationData,
   ): boolean {
     if (consultant.scheduleType === ScheduleType.WEEKLY) {
+      const candidateDay = candidate.getUTCDay();
+      const candidateMinutes =
+        candidate.getUTCHours() * 60 + candidate.getUTCMinutes();
+
       return consultant.slotsOfAvailabilityWeekly.some((slot) => {
-        const slotStart = new Date(slot.availabilityStartsAt);
-        const slotEnd = new Date(slot.availabilityEndsAt);
+        const availDay = this.dayOfWeekToIndex[slot.startDay];
+        if (availDay === undefined) return false;
 
         // Must match day of week (UTC)
-        if (candidate.getUTCDay() !== slotStart.getUTCDay()) return false;
+        if (candidateDay !== availDay) return false;
 
-        // Candidate time must be within [slotStart time, slotEnd time) in UTC
-        const candidateMinutes =
-          candidate.getUTCHours() * 60 + candidate.getUTCMinutes();
-        const startMinutes =
-          slotStart.getUTCHours() * 60 + slotStart.getUTCMinutes();
-        const endMinutes = slotEnd.getUTCHours() * 60 + slotEnd.getUTCMinutes();
-
+        // Direct Int comparison — no DateTime parsing needed
         return (
-          candidateMinutes >= startMinutes && candidateMinutes < endMinutes
+          candidateMinutes >= slot.startTimeUtc &&
+          candidateMinutes < slot.endTimeUtc
         );
       });
     } else {
@@ -631,26 +726,15 @@ export class SlotAllocationService {
       ),
     );
 
-    // Get consultant's available time slots
-    const availableTimeSlots =
-      consultant.scheduleType === ScheduleType.WEEKLY
-        ? consultant.slotsOfAvailabilityWeekly
-        : consultant.slotsOfAvailabilityCustom;
-
-    if (!availableTimeSlots.length) {
+    // Validate availability exists
+    const hasWeeklySlots = consultant.slotsOfAvailabilityWeekly.length > 0;
+    const hasCustomSlots = consultant.slotsOfAvailabilityCustom.length > 0;
+    if (
+      (consultant.scheduleType === ScheduleType.WEEKLY && !hasWeeklySlots) ||
+      (consultant.scheduleType === ScheduleType.CUSTOM && !hasCustomSlots)
+    ) {
       throw new Error("No availability slots configured for consultant");
     }
-
-    // Sort by UTC time of day to prioritize earlier slots
-    const sortedSlots = [...availableTimeSlots].sort((a, b) => {
-      const timeA =
-        new Date(a.availabilityStartsAt).getUTCHours() * 60 +
-        new Date(a.availabilityStartsAt).getUTCMinutes();
-      const timeB =
-        new Date(b.availabilityStartsAt).getUTCHours() * 60 +
-        new Date(b.availabilityStartsAt).getUTCMinutes();
-      return timeA - timeB;
-    });
 
     const now = new Date();
     const selectedSlots: Date[] = [];
@@ -660,11 +744,16 @@ export class SlotAllocationService {
       const maxWeeksToSearch = eventType === "consultation" ? 8 : 4;
 
       if (consultant.scheduleType === ScheduleType.WEEKLY) {
+        // Sort weekly slots by startTimeUtc to prioritize earlier times
+        const sortedWeekly = [...consultant.slotsOfAvailabilityWeekly].sort(
+          (a, b) => a.startTimeUtc - b.startTimeUtc,
+        );
+
         for (let week = 0; week < maxWeeksToSearch; week++) {
-          for (const slot of sortedSlots) {
-            const baseStart = this.getNextOccurrence(
-              slot.availabilityStartsAt,
-              consultant.scheduleType,
+          for (const slot of sortedWeekly) {
+            const baseStart = this.getNextOccurrenceWeekly(
+              slot.startDay,
+              slot.startTimeUtc,
             );
 
             const candidateStart = new Date(baseStart);
@@ -703,8 +792,14 @@ export class SlotAllocationService {
           }
         }
       } else {
-        // CUSTOM schedule: iterate all available slots directly
-        for (const slot of sortedSlots) {
+        // CUSTOM schedule: sort and iterate all available slots directly
+        const sortedCustom = [...consultant.slotsOfAvailabilityCustom].sort(
+          (a, b) =>
+            new Date(a.availabilityStartsAt).getTime() -
+            new Date(b.availabilityStartsAt).getTime(),
+        );
+
+        for (const slot of sortedCustom) {
           const slotStart = new Date(slot.availabilityStartsAt);
 
           if (slotStart < now || bookedSlots.has(slotStart.toISOString())) {
@@ -768,6 +863,22 @@ export class SlotAllocationService {
     let currentWeek = SlotCalculationService.startOfWeekSunday(startDate);
     const totalWeeks = SlotCalculationService.countWeeks(startDate, endDate);
 
+    // Sort slots for subscriptions/classes
+    const sortedWeekly =
+      consultant.scheduleType === ScheduleType.WEEKLY
+        ? [...consultant.slotsOfAvailabilityWeekly].sort(
+            (a, b) => a.startTimeUtc - b.startTimeUtc,
+          )
+        : [];
+    const sortedCustom =
+      consultant.scheduleType === ScheduleType.CUSTOM
+        ? [...consultant.slotsOfAvailabilityCustom].sort(
+            (a, b) =>
+              new Date(a.availabilityStartsAt).getTime() -
+              new Date(b.availabilityStartsAt).getTime(),
+          )
+        : [];
+
     for (
       let week = 0;
       week < totalWeeks && selectedSlots.length < totalSlotsNeeded;
@@ -782,44 +893,85 @@ export class SlotAllocationService {
         currentDay.setUTCDate(currentDay.getUTCDate() + day);
 
         // Find first available slot on this day
-        for (const slot of sortedSlots) {
-          const slotTime = this.matchSlotToDay(
-            slot.availabilityStartsAt,
-            currentDay,
-            consultant.scheduleType,
-          );
+        if (consultant.scheduleType === ScheduleType.WEEKLY) {
+          for (const slot of sortedWeekly) {
+            const slotTime = this.matchWeeklySlotToDay(
+              slot.startDay,
+              slot.startTimeUtc,
+              currentDay,
+            );
 
-          if (
-            !slotTime ||
-            slotTime < now ||
-            slotTime < startDate ||
-            slotTime > endDate
-          ) {
-            continue;
-          }
-
-          // Try to build consecutive block for this call
-          const callSlots: Date[] = [];
-          let currentTime = new Date(slotTime);
-
-          for (let i = 0; i < slotsPerCall; i++) {
-            const currentTimeStr = currentTime.toISOString();
             if (
-              bookedSlots.has(currentTimeStr) ||
-              !this.isWithinAvailability(currentTime, consultant) ||
-              currentTime < now
+              !slotTime ||
+              slotTime < now ||
+              slotTime < startDate ||
+              slotTime > endDate
             ) {
+              continue;
+            }
+
+            // Try to build consecutive block for this call
+            const callSlots: Date[] = [];
+            let currentTime = new Date(slotTime);
+
+            for (let i = 0; i < slotsPerCall; i++) {
+              const currentTimeStr = currentTime.toISOString();
+              if (
+                bookedSlots.has(currentTimeStr) ||
+                !this.isWithinAvailability(currentTime, consultant) ||
+                currentTime < now
+              ) {
+                break;
+              }
+              callSlots.push(new Date(currentTime));
+              currentTime = new Date(currentTime.getTime() + 30 * 60 * 1000);
+            }
+
+            if (callSlots.length === slotsPerCall) {
+              selectedSlots.push(...callSlots);
+              callSlots.forEach((s) => bookedSlots.add(s.toISOString()));
+              callsThisWeek++;
               break;
             }
-            callSlots.push(new Date(currentTime));
-            currentTime = new Date(currentTime.getTime() + 30 * 60 * 1000);
           }
+        } else {
+          for (const slot of sortedCustom) {
+            const slotTime = this.matchCustomSlotToDay(
+              slot.availabilityStartsAt,
+              currentDay,
+            );
 
-          if (callSlots.length === slotsPerCall) {
-            selectedSlots.push(...callSlots);
-            callSlots.forEach((s) => bookedSlots.add(s.toISOString()));
-            callsThisWeek++;
-            break; // Found slot for this day, move to next day
+            if (
+              !slotTime ||
+              slotTime < now ||
+              slotTime < startDate ||
+              slotTime > endDate
+            ) {
+              continue;
+            }
+
+            const callSlots: Date[] = [];
+            let currentTime = new Date(slotTime);
+
+            for (let i = 0; i < slotsPerCall; i++) {
+              const currentTimeStr = currentTime.toISOString();
+              if (
+                bookedSlots.has(currentTimeStr) ||
+                !this.isWithinAvailability(currentTime, consultant) ||
+                currentTime < now
+              ) {
+                break;
+              }
+              callSlots.push(new Date(currentTime));
+              currentTime = new Date(currentTime.getTime() + 30 * 60 * 1000);
+            }
+
+            if (callSlots.length === slotsPerCall) {
+              selectedSlots.push(...callSlots);
+              callSlots.forEach((s) => bookedSlots.add(s.toISOString()));
+              callsThisWeek++;
+              break;
+            }
           }
         }
       }
@@ -837,21 +989,22 @@ export class SlotAllocationService {
   }
 
   /**
-   * Get next occurrence of a weekly slot starting from now
+   * Get next occurrence of a weekly slot starting from now.
+   * Uses Int (startTimeUtc) and DayOfWeek enum string directly.
    *
-   * FIX: Ensure returned slot matches the exact day-of-week, hour, and minute
-   * pattern from the consultant's weekly schedule.
+   * FIX Issue #6: No longer parses DateTime objects for time extraction.
    */
-  private static getNextOccurrence(slotTime: Date, scheduleType: string): Date {
-    if (scheduleType === ScheduleType.CUSTOM) {
-      return new Date(slotTime);
-    }
-
+  private static getNextOccurrenceWeekly(
+    startDay: string,
+    startTimeUtc: number,
+  ): Date {
     const now = new Date();
-    const slotDate = new Date(slotTime);
-    const targetDay = slotDate.getUTCDay(); // Use UTC day to match validation
-    const targetHours = slotDate.getUTCHours();
-    const targetMinutes = slotDate.getUTCMinutes();
+    const targetDay = this.dayOfWeekToIndex[startDay];
+    if (targetDay === undefined) {
+      throw new Error(`Invalid day of week: ${startDay}`);
+    }
+    const targetHours = Math.floor(startTimeUtc / 60);
+    const targetMinutes = startTimeUtc % 60;
     const currentDay = now.getUTCDay();
 
     // Calculate days until next occurrence
@@ -878,43 +1031,47 @@ export class SlotAllocationService {
   }
 
   /**
-   * Match a weekly slot pattern to a specific day
-   *
-   * FIX: Use UTC methods consistently to match validation logic
+   * Match a weekly slot pattern to a specific target day.
+   * Uses Int startTimeUtc and DayOfWeek string directly.
    */
-  private static matchSlotToDay(
-    slotTime: Date,
+  private static matchWeeklySlotToDay(
+    startDay: string,
+    startTimeUtc: number,
     targetDay: Date,
-    scheduleType: string,
   ): Date | null {
-    if (scheduleType === ScheduleType.CUSTOM) {
-      // Only match if exact same day (use UTC for consistency)
-      const slotDate = new Date(slotTime);
-      const slotDateStr = `${slotDate.getUTCFullYear()}-${slotDate.getUTCMonth()}-${slotDate.getUTCDate()}`;
-      const targetDateStr = `${targetDay.getUTCFullYear()}-${targetDay.getUTCMonth()}-${targetDay.getUTCDate()}`;
+    const slotDayOfWeek = this.dayOfWeekToIndex[startDay];
+    if (slotDayOfWeek === undefined) return null;
 
-      if (slotDateStr === targetDateStr) {
-        return new Date(slotTime);
-      }
-      return null;
-    }
-
-    // Weekly: match day of week using UTC
-    const slotDate = new Date(slotTime);
-    const slotDayOfWeek = slotDate.getUTCDay();
     const targetDayOfWeek = targetDay.getUTCDay();
 
     if (slotDayOfWeek === targetDayOfWeek) {
       const result = new Date(targetDay);
       result.setUTCHours(
-        slotDate.getUTCHours(),
-        slotDate.getUTCMinutes(),
+        Math.floor(startTimeUtc / 60),
+        startTimeUtc % 60,
         0,
         0,
       );
       return result;
     }
 
+    return null;
+  }
+
+  /**
+   * Match a custom slot to a specific target day.
+   */
+  private static matchCustomSlotToDay(
+    slotTime: Date,
+    targetDay: Date,
+  ): Date | null {
+    const slotDate = new Date(slotTime);
+    const slotDateStr = `${slotDate.getUTCFullYear()}-${slotDate.getUTCMonth()}-${slotDate.getUTCDate()}`;
+    const targetDateStr = `${targetDay.getUTCFullYear()}-${targetDay.getUTCMonth()}-${targetDay.getUTCDate()}`;
+
+    if (slotDateStr === targetDateStr) {
+      return new Date(slotTime);
+    }
     return null;
   }
 

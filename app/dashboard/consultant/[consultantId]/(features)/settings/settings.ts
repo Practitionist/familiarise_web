@@ -4,6 +4,7 @@ import {
   extractTimeFromUtcSlot,
   sortSlotsByTime,
 } from "@/utils/dateTimeUtils";
+import { minuteUtcToDate } from "@/utils/slotAllocation/slotTimeUtils";
 import { isValidTimeRange } from "@/utils/timeSlotValidation";
 import type { SlotsType } from "@/utils/schedule/types";
 import { DayOfWeek, ScheduleType, SessionType } from "@prisma/client";
@@ -89,10 +90,15 @@ export const getInitialWeeklySlots = (
   if (!consultant?.slotsOfAvailabilityWeekly?.length) return {};
 
   const formattedWeeklySlots: SlotsType = {};
+  const refDate = new Date("1970-01-05T00:00:00Z");
   try {
     consultant.slotsOfAvailabilityWeekly.forEach((slot) => {
       try {
-        if (!slot || !slot.availabilityStartsAt || !slot.availabilityEndsAt) {
+        if (
+          !slot ||
+          slot.startTimeUtc == null ||
+          slot.endTimeUtc == null
+        ) {
           console.warn("Invalid weekly slot data:", slot);
           return;
         }
@@ -100,15 +106,16 @@ export const getInitialWeeklySlots = (
         // Use the day-of-week stored in the database. This is the consultant's
         // intended day for the recurring slot. The time will be converted,
         // but the day grouping should remain consistent with the original setting.
-        const day = (slot.dayOfWeekForStartsAt as string).toLowerCase();
+        const day = (slot.startDay as string).toLowerCase();
 
-        // Use timezone-aware time extraction so displayed times stay correct
+        // Convert Int minutes to a temporary Date to leverage existing timezone
+        // conversion, then extract local time string for display.
         const startTime = extractTimeFromUtcSlot(
-          slot.availabilityStartsAt.toString(),
+          minuteUtcToDate(slot.startTimeUtc, refDate).toISOString(),
           timezone,
         );
         const endTime = extractTimeFromUtcSlot(
-          slot.availabilityEndsAt.toString(),
+          minuteUtcToDate(slot.endTimeUtc, refDate).toISOString(),
           timezone,
         );
 
