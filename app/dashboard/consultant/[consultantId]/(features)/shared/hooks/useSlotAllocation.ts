@@ -278,6 +278,9 @@ export interface UseEventSlotAllocationReturn {
   /** Check if a slot is currently selected */
   isSlotSelected: (slot: TimeSlot) => boolean;
 
+  /** Pre-computed Set of selected slot timestamps for O(1) lookups */
+  selectedSlotsSet: Set<number>;
+
   /** Add multiple slots with validation */
   addSlots: (slots: TimeSlot[]) => void;
 
@@ -1822,15 +1825,22 @@ export function useEventSlotAllocation(
   }, []);
 
   /**
-   * Check if a slot is currently selected
+   * PERFORMANCE: Pre-compute a Set of selected slot timestamps for O(1) lookups.
+   * Replaces O(n) .some() scan that ran 336× per render.
+   */
+  const selectedSlotsSet = useMemo(
+    () => new Set(selectedSlots.map((s) => s.startTime.getTime())),
+    [selectedSlots],
+  );
+
+  /**
+   * Check if a slot is currently selected — O(1) via Set lookup
    */
   const isSlotSelected = useCallback(
     (slot: TimeSlot) => {
-      return selectedSlots.some(
-        (s) => s.startTime.getTime() === slot.startTime.getTime(),
-      );
+      return selectedSlotsSet.has(slot.startTime.getTime());
     },
-    [selectedSlots],
+    [selectedSlotsSet],
   );
 
   /**
@@ -2198,6 +2208,7 @@ export function useEventSlotAllocation(
     toggleSlot,
     clearSlots,
     isSlotSelected,
+    selectedSlotsSet,
     addSlots,
     removeSlots,
 
