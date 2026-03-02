@@ -256,18 +256,16 @@ Consultants configure one of two schedule types:
 
 Recurring weekly patterns stored in `SlotOfAvailabilityWeekly`:
 
-- `dayOfWeekForStartsAt`: DayOfWeek enum (SUNDAY, MONDAY, ..., SATURDAY) -- **source of truth** for which day
-- `availabilityStartsAt`: DateTime with time-of-day (date portion may be a reference date)
-- `availabilityEndsAt`: DateTime with end time
-
-The `dayOfWeekForStartsAt` enum must be used instead of `getUTCDay()` on the DateTime, because the stored DateTime may use arbitrary reference dates (e.g., Jan 6-12, 2025 seed data or 1970 epoch from client).
+- `startDay`: DayOfWeek enum (SUNDAY, MONDAY, ..., SATURDAY) -- **source of truth** for which day
+- `startTimeUtc`: Int (minutes since midnight UTC, 0-1439)
+- `endTimeUtc`: Int (minutes since midnight UTC, 0-1439)
 
 ### Custom
 
 Specific date/time ranges stored in `SlotOfAvailabilityCustom`:
 
-- `availabilityStartsAt`: Exact DateTime
-- `availabilityEndsAt`: Exact DateTime
+- `startsAt`: Exact DateTime
+- `endsAt`: Exact DateTime
 - Validated using overlap detection: `proposedStart < availEnd AND availStart < proposedEnd`
 
 The `scheduleType` field on `ConsultantProfile` determines which availability set is used.

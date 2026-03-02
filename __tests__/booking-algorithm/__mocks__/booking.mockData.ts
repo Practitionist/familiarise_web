@@ -216,7 +216,7 @@ export function makeWeeklyAvailabilitySlot(
 export function makeCustomAvailabilitySlot(startISO: string, endISO: string) {
   return {
     id: `custom-${startISO}`,
-    availabilityStartsAt: new Date(startISO),
-    availabilityEndsAt: new Date(endISO),
+    startsAt: new Date(startISO),
+    endsAt: new Date(endISO),
   };
 }

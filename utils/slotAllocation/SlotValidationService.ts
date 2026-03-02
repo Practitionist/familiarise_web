@@ -434,8 +434,8 @@ export class SlotValidationService {
         // Uses same overlap logic as calendar: intervalStart < slotEnd && slotStart < intervalEnd
         const hasOverlap = consultant.slotsOfAvailabilityCustom.some(
           (availableSlot) => {
-            const availableStart = new Date(availableSlot.availabilityStartsAt);
-            const availableEnd = new Date(availableSlot.availabilityEndsAt);
+            const availableStart = new Date(availableSlot.startsAt);
+            const availableEnd = new Date(availableSlot.endsAt);
             return slot < availableEnd && availableStart < slotEnd;
           },
         );
@@ -458,8 +458,8 @@ export class SlotValidationService {
         const validSlotCount = slots.filter((slot) => {
           const slotEnd = new Date(slot.getTime() + 30 * 60 * 1000);
           return consultant.slotsOfAvailabilityCustom.some((availableSlot) => {
-            const availableStart = new Date(availableSlot.availabilityStartsAt);
-            const availableEnd = new Date(availableSlot.availabilityEndsAt);
+            const availableStart = new Date(availableSlot.startsAt);
+            const availableEnd = new Date(availableSlot.endsAt);
             return slot < availableEnd && availableStart < slotEnd;
           });
         }).length;

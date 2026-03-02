@@ -711,8 +711,8 @@ model SlotOfAvailabilityWeekly {
 
 model SlotOfAvailabilityCustom {
   id                   String   @id @default(uuid())
-  availabilityStartsAt DateTime @db.Timestamptz()
-  availabilityEndsAt   DateTime @db.Timestamptz()
+  startsAt DateTime @db.Timestamptz()
+  endsAt   DateTime @db.Timestamptz()
 
   consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultantProfileId String

@@ -22,10 +22,10 @@ export const SlotWeeklyCreateInputSchema = z.object({
 });
 
 export const SlotCustomCreateInputSchema = z.object({
-  availabilityStartsAt: z
+  startsAt: z
     .string()
     .datetime({ message: "Invalid start datetime string for custom slot" }),
-  availabilityEndsAt: z
+  endsAt: z
     .string()
     .datetime({ message: "Invalid end datetime string for custom slot" }),
 });
@@ -641,11 +641,11 @@ export function transformOnboardingFormToServerData(
             slotsOfAvailabilityCustom: formData.customSlots?.length
               ? {
                   create: formData.customSlots.map((slot) => ({
-                    availabilityStartsAt: new Date(
-                      slot.availabilityStartsAt,
+                    startsAt: new Date(
+                      slot.startsAt,
                     ).toISOString(),
-                    availabilityEndsAt: new Date(
-                      slot.availabilityEndsAt,
+                    endsAt: new Date(
+                      slot.endsAt,
                     ).toISOString(),
                   })),
                 }

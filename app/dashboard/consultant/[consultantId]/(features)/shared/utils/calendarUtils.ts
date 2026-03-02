@@ -187,8 +187,8 @@ export function mapCustomSlots(
   const slots: TimeSlot[] = [];
 
   consultantData.slotsOfAvailabilityCustom.forEach((slot) => {
-    const startTime = new Date(slot.availabilityStartsAt);
-    const endTime = new Date(slot.availabilityEndsAt);
+    const startTime = new Date(slot.startsAt);
+    const endTime = new Date(slot.endsAt);
 
     // Create intervals with configurable duration for the custom slot
     let currentInterval = new Date(startTime);

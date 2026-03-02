@@ -52,8 +52,8 @@ interface WeeklySlot {
 }
 
 interface CustomSlot {
-  availabilityStartsAt: string;
-  availabilityEndsAt: string;
+  startsAt: string;
+  endsAt: string;
 }
 
 const isValidSlot = (slot: SlotType): slot is SlotType & { isValid: true } => {
@@ -125,7 +125,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
       const formattedCustomSlots: SlotsType = {};
       initialData.customSlots.forEach((slot) => {
         try {
-          const startDate = new Date(slot.availabilityStartsAt);
+          const startDate = new Date(slot.startsAt);
           const dateString = startDate.toLocaleDateString("en-CA", {
             timeZone: timezone,
           });
@@ -134,11 +134,11 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
           }
           formattedCustomSlots[dateString].push({
             startTime: convertUtcToTimezone(
-              slot.availabilityStartsAt.toString(),
+              slot.startsAt.toString(),
               timezone,
             ),
             endTime: convertUtcToTimezone(
-              slot.availabilityEndsAt.toString(),
+              slot.endsAt.toString(),
               timezone,
             ),
             isValid: true,
@@ -282,8 +282,8 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
             if (slot.endTime === "00:00") {
               return [
                 {
-                  availabilityStartsAt: startUTC,
-                  availabilityEndsAt: endUTC,
+                  startsAt: startUTC,
+                  endsAt: endUTC,
                 },
               ];
             }
@@ -301,20 +301,20 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
 
             return [
               {
-                availabilityStartsAt: startUTC,
-                availabilityEndsAt: justBeforeMidnightUTC.toISOString(),
+                startsAt: startUTC,
+                endsAt: justBeforeMidnightUTC.toISOString(),
               },
               {
-                availabilityStartsAt: midnightUTC,
-                availabilityEndsAt: endUTC,
+                startsAt: midnightUTC,
+                endsAt: endUTC,
               },
             ];
           }
 
           return [
             {
-              availabilityStartsAt: startUTC,
-              availabilityEndsAt: endUTC,
+              startsAt: startUTC,
+              endsAt: endUTC,
             },
           ];
         });

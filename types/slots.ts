@@ -25,6 +25,6 @@ export type TWeeklySlot = {
 
 export type TCustomSlot = {
   id: string;
-  availabilityStartsAt: string | Date;
-  availabilityEndsAt: string | Date;
+  startsAt: string | Date;
+  endsAt: string | Date;
 };

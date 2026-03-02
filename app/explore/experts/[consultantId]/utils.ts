@@ -45,13 +45,13 @@ export function normalizeWeeklySlot(slot: TWeeklySlot): TWeeklySlot & {
 
 // Normalize custom slot to ensure all times are strings
 export function normalizeCustomSlot(slot: TCustomSlot): TCustomSlot & {
-  availabilityStartsAt: string;
-  availabilityEndsAt: string;
+  startsAt: string;
+  endsAt: string;
 } {
   return {
     ...slot,
-    availabilityStartsAt: normalizeUTCTime(slot.availabilityStartsAt),
-    availabilityEndsAt: normalizeUTCTime(slot.availabilityEndsAt),
+    startsAt: normalizeUTCTime(slot.startsAt),
+    endsAt: normalizeUTCTime(slot.endsAt),
   };
 }
 

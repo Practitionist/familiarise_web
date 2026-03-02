@@ -345,7 +345,7 @@ export async function GET(
           consultantProfileId,
         },
         orderBy: {
-          availabilityStartsAt: "asc",
+          startsAt: "asc",
         },
         include: customAvailabilityInclude,
       }),

@@ -43,11 +43,11 @@ const ConsultantReviewForm: React.FC<Props> = ({
   };
 
   const isValidCustomSlot = (slot: {
-    availabilityStartsAt: string;
-    availabilityEndsAt: string;
+    startsAt: string;
+    endsAt: string;
   }): boolean => {
-    const startTime = formatTime(slot.availabilityStartsAt, "12h");
-    const endTime = formatTime(slot.availabilityEndsAt, "12h");
+    const startTime = formatTime(slot.startsAt, "12h");
+    const endTime = formatTime(slot.endsAt, "12h");
     return startTime !== endTime;
   };
 
@@ -103,13 +103,13 @@ const ConsultantReviewForm: React.FC<Props> = ({
               <p className="text-sm font-medium">Custom Slots</p>
               <div className="space-y-1">
                 {formData.customSlots.filter(isValidCustomSlot).map((slot, index) => {
-                  const startDate = formatDate(slot.availabilityStartsAt);
-                  const endDate = formatDate(slot.availabilityEndsAt);
+                  const startDate = formatDate(slot.startsAt);
+                  const endDate = formatDate(slot.endsAt);
                   const startTime = formatTime(
-                    slot.availabilityStartsAt,
+                    slot.startsAt,
                     "12h",
                   );
-                  const endTime = formatTime(slot.availabilityEndsAt, "12h");
+                  const endTime = formatTime(slot.endsAt, "12h");
                   const isSameDay = startDate === endDate;
 
                   return (

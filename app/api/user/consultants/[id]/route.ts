@@ -368,8 +368,8 @@ export async function PUT(
         const customSlotData: Prisma.SlotOfAvailabilityCustomCreateManyInput[] =
           slotsOfAvailabilityCustom.map((slot) => ({
             consultantProfileId: id,
-            availabilityStartsAt: new Date(slot.slotStartTimeInUTC),
-            availabilityEndsAt: new Date(slot.slotEndTimeInUTC),
+            startsAt: new Date(slot.slotStartTimeInUTC),
+            endsAt: new Date(slot.slotEndTimeInUTC),
           }));
 
         await prisma.slotOfAvailabilityCustom.createMany({

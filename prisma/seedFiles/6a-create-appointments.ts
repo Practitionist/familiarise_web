@@ -636,10 +636,10 @@ async function createAppointmentBatch(
         endHours = Math.floor(slotData.slot.endTimeUtc / 60);
         endMinutes = slotData.slot.endTimeUtc % 60;
       } else {
-        startHours = slotData.slot.availabilityStartsAt.getUTCHours();
-        startMinutes = slotData.slot.availabilityStartsAt.getUTCMinutes();
-        endHours = slotData.slot.availabilityEndsAt.getUTCHours();
-        endMinutes = slotData.slot.availabilityEndsAt.getUTCMinutes();
+        startHours = slotData.slot.startsAt.getUTCHours();
+        startMinutes = slotData.slot.startsAt.getUTCMinutes();
+        endHours = slotData.slot.endsAt.getUTCHours();
+        endMinutes = slotData.slot.endsAt.getUTCMinutes();
       }
 
       // Create new dates using the appointment's actual date

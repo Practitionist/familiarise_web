@@ -128,15 +128,15 @@ async function updateConsultantProfileAndRelations(
     if (customSlotsToCreate && customSlotsToCreate.length > 0) {
       const validCustomSlots = customSlotsToCreate.filter((slot) =>
         isValidTimeRange(
-          new Date(slot.availabilityStartsAt).toTimeString().slice(0, 5),
-          new Date(slot.availabilityEndsAt).toTimeString().slice(0, 5),
+          new Date(slot.startsAt).toTimeString().slice(0, 5),
+          new Date(slot.endsAt).toTimeString().slice(0, 5),
         ),
       );
       if (validCustomSlots.length > 0) {
         await tx.slotOfAvailabilityCustom.createMany({
           data: validCustomSlots.map((slot) => ({
-            availabilityStartsAt: slot.availabilityStartsAt,
-            availabilityEndsAt: slot.availabilityEndsAt,
+            startsAt: slot.startsAt,
+            endsAt: slot.endsAt,
             consultantProfileId: consultantProfile.id,
           })),
         });

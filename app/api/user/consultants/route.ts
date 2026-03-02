@@ -116,7 +116,7 @@ export async function GET(request: NextRequest) {
           {
             slotsOfAvailabilityCustom: {
               some: {
-                availabilityStartsAt: {
+                startsAt: {
                   gte: now,
                   lte: oneWeekFromNow,
                 },

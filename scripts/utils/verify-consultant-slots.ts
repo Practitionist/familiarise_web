@@ -101,12 +101,12 @@ async function verifyConsultantSlots() {
       const customSlots = await prisma.slotOfAvailabilityCustom.findMany({
         where: {
           consultantProfileId: CONSULTANT_ID,
-          availabilityStartsAt: {
+          startsAt: {
             gte: START_DATE,
             lte: END_DATE,
           },
         },
-        orderBy: { availabilityStartsAt: "asc" },
+        orderBy: { startsAt: "asc" },
       });
 
       console.log(
@@ -114,8 +114,8 @@ async function verifyConsultantSlots() {
       );
       console.log(`Total slots in range: ${customSlots.length}\n`);
       customSlots.forEach((slot, idx) => {
-        const startTime = new Date(slot.availabilityStartsAt);
-        const endTime = new Date(slot.availabilityEndsAt);
+        const startTime = new Date(slot.startsAt);
+        const endTime = new Date(slot.endsAt);
         console.log(`Slot ${idx + 1}:`);
         console.log(`  ${startTime.toISOString()} - ${endTime.toISOString()}`);
       });

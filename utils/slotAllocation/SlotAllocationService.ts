@@ -661,8 +661,8 @@ export class SlotAllocationService {
       // CUSTOM schedule: candidate must fall within a specific date range
       const thirtyMinMs = 30 * 60 * 1000;
       return consultant.slotsOfAvailabilityCustom.some((slot) => {
-        const slotStart = new Date(slot.availabilityStartsAt);
-        const slotEnd = new Date(slot.availabilityEndsAt);
+        const slotStart = new Date(slot.startsAt);
+        const slotEnd = new Date(slot.endsAt);
 
         return (
           candidate >= slotStart &&
@@ -795,12 +795,12 @@ export class SlotAllocationService {
         // CUSTOM schedule: sort and iterate all available slots directly
         const sortedCustom = [...consultant.slotsOfAvailabilityCustom].sort(
           (a, b) =>
-            new Date(a.availabilityStartsAt).getTime() -
-            new Date(b.availabilityStartsAt).getTime(),
+            new Date(a.startsAt).getTime() -
+            new Date(b.startsAt).getTime(),
         );
 
         for (const slot of sortedCustom) {
-          const slotStart = new Date(slot.availabilityStartsAt);
+          const slotStart = new Date(slot.startsAt);
 
           if (slotStart < now || bookedSlots.has(slotStart.toISOString())) {
             continue;
@@ -874,8 +874,8 @@ export class SlotAllocationService {
       consultant.scheduleType === ScheduleType.CUSTOM
         ? [...consultant.slotsOfAvailabilityCustom].sort(
             (a, b) =>
-              new Date(a.availabilityStartsAt).getTime() -
-              new Date(b.availabilityStartsAt).getTime(),
+              new Date(a.startsAt).getTime() -
+              new Date(b.startsAt).getTime(),
           )
         : [];
 
@@ -937,7 +937,7 @@ export class SlotAllocationService {
         } else {
           for (const slot of sortedCustom) {
             const slotTime = this.matchCustomSlotToDay(
-              slot.availabilityStartsAt,
+              slot.startsAt,
               currentDay,
             );
 

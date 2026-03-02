@@ -166,19 +166,19 @@ export const getInitialCustomSlots = (
   try {
     consultant.slotsOfAvailabilityCustom.forEach((slot) => {
       try {
-        if (!slot || !slot.availabilityStartsAt || !slot.availabilityEndsAt) {
+        if (!slot || !slot.startsAt || !slot.endsAt) {
           console.warn("Invalid custom slot data:", slot);
           return;
         }
 
-        const startDate = new Date(slot.availabilityStartsAt);
-        const endDate = new Date(slot.availabilityEndsAt);
+        const startDate = new Date(slot.startsAt);
+        const endDate = new Date(slot.endsAt);
 
         if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
           console.warn(
             "Invalid date in custom slot:",
-            slot.availabilityStartsAt,
-            slot.availabilityEndsAt,
+            slot.startsAt,
+            slot.endsAt,
           );
           return;
         }
@@ -190,11 +190,11 @@ export const getInitialCustomSlots = (
         }); // en-CA gives YYYY-MM-DD format
 
         const startTime = convertUtcToTimezone(
-          slot.availabilityStartsAt.toString(),
+          slot.startsAt.toString(),
           timezone,
         );
         const endTime = convertUtcToTimezone(
-          slot.availabilityEndsAt.toString(),
+          slot.endsAt.toString(),
           timezone,
         );
 

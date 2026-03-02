@@ -116,8 +116,8 @@ export interface ConsultantAllocationData {
   }>;
   slotsOfAvailabilityCustom: Array<{
     id: string;
-    availabilityStartsAt: Date;
-    availabilityEndsAt: Date;
+    startsAt: Date;
+    endsAt: Date;
   }>;
   timezone?: string;
 }

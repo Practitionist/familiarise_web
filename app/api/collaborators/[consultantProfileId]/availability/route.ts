@@ -60,11 +60,11 @@ export async function GET(
     const customSlots = await prisma.slotOfAvailabilityCustom.findMany({
       where: {
         consultantProfileId,
-        availabilityStartsAt: { gte: dayStart, lte: dayEnd },
+        startsAt: { gte: dayStart, lte: dayEnd },
       },
       select: {
-        availabilityStartsAt: true,
-        availabilityEndsAt: true,
+        startsAt: true,
+        endsAt: true,
       },
     });
 

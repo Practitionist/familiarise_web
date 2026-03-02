@@ -196,8 +196,8 @@ export async function createSlotsOfAvailability(
             if (slotDate > startDate && slotDate < endDate) {
               customSlots.push({
                 consultantProfileId: consultant.consultantProfile.id,
-                availabilityStartsAt: slotDate,
-                availabilityEndsAt: new Date(
+                startsAt: slotDate,
+                endsAt: new Date(
                   slotDate.getTime() + 60 * 60 * 1000,
                 ),
               });

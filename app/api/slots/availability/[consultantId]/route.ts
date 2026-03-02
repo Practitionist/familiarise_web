@@ -125,20 +125,20 @@ async function getCustomSlots(
       consultantProfileId: consultantId,
       OR: [
         {
-          availabilityStartsAt: {
+          startsAt: {
             gte: utcDayStart,
             lt: utcDayEnd,
           },
         },
         {
-          availabilityEndsAt: {
+          endsAt: {
             gt: utcDayStart,
             lte: utcDayEnd,
           },
         },
       ],
     },
-    orderBy: { availabilityStartsAt: "asc" },
+    orderBy: { startsAt: "asc" },
   });
 
   return customSlots.map((slot) => mapCustomSlotToTiming(slot, userTimeZone));
@@ -292,13 +292,13 @@ function mapWeeklySlotToTiming(
 function mapCustomSlotToTiming(
   slot: {
     id: string;
-    availabilityStartsAt: Date;
-    availabilityEndsAt: Date;
+    startsAt: Date;
+    endsAt: Date;
   },
   userTimeZone: string,
 ): TSlotTiming {
-  const slotStart = toZonedTime(slot.availabilityStartsAt, userTimeZone);
-  const slotEnd = toZonedTime(slot.availabilityEndsAt, userTimeZone);
+  const slotStart = toZonedTime(slot.startsAt, userTimeZone);
+  const slotEnd = toZonedTime(slot.endsAt, userTimeZone);
 
   // Get the day of week for the slot's start time
   const dayOfWeek = getDayOfWeek(slotStart);
@@ -312,12 +312,12 @@ function mapCustomSlotToTiming(
     ),
     dayOfWeek,
     slotStartTimeInUTC: formatInTimeZone(
-      slot.availabilityStartsAt,
+      slot.startsAt,
       "UTC",
       "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
     ),
     slotEndTimeInUTC: formatInTimeZone(
-      slot.availabilityEndsAt,
+      slot.endsAt,
       "UTC",
       "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
     ),

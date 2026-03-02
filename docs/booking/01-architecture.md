@@ -190,8 +190,8 @@ erDiagram
     SlotOfAvailabilityWeekly {
         string id PK
         DayOfWeek dayOfWeekForStartsAt
-        DateTime availabilityStartsAt
-        DateTime availabilityEndsAt
+        DateTime startsAt
+        DateTime endsAt
     }
 
     Appointment {

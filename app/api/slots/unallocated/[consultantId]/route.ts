@@ -68,11 +68,11 @@ export async function GET(
     const customSlots = await prisma.slotOfAvailabilityCustom.findMany({
       where: {
         consultantProfileId: consultantId,
-        availabilityStartsAt: { gte: new Date(startDateInUtc) },
-        availabilityEndsAt: { lte: new Date(endDateInUtc) },
+        startsAt: { gte: new Date(startDateInUtc) },
+        endsAt: { lte: new Date(endDateInUtc) },
       },
       orderBy: {
-        availabilityStartsAt: "asc",
+        startsAt: "asc",
       },
     });
 
@@ -91,8 +91,8 @@ export async function GET(
     const unallocatedCustomSlots = customSlots.filter((slot) => {
       const hasOverlap = allocatedSlots.some(
         (allocated) =>
-          allocated.startsAt < slot.availabilityEndsAt &&
-          allocated.endsAt > slot.availabilityStartsAt,
+          allocated.startsAt < slot.endsAt &&
+          allocated.endsAt > slot.startsAt,
       );
       return !hasOverlap;
     });
@@ -172,16 +172,16 @@ export async function GET(
     const formattedCustomSlots: TSlotTiming[] = unallocatedCustomSlots.map(
       (slot) => ({
         slotId: slot.id,
-        dateInISO: slot.availabilityStartsAt.toISOString(),
-        dayOfWeek: dayMap[new Date(slot.availabilityStartsAt).getDay()],
-        slotStartTimeInUTC: slot.availabilityStartsAt.toISOString(),
-        slotEndTimeInUTC: slot.availabilityEndsAt.toISOString(),
+        dateInISO: slot.startsAt.toISOString(),
+        dayOfWeek: dayMap[new Date(slot.startsAt).getDay()],
+        slotStartTimeInUTC: slot.startsAt.toISOString(),
+        slotEndTimeInUTC: slot.endsAt.toISOString(),
         slotOfAvailabilityId: slot.id,
         slotOfAppointmentId: "",
         localStartTime: new Date(
-          slot.availabilityStartsAt,
+          slot.startsAt,
         ).toLocaleTimeString(),
-        localEndTime: new Date(slot.availabilityEndsAt).toLocaleTimeString(),
+        localEndTime: new Date(slot.endsAt).toLocaleTimeString(),
         type: "CUSTOM" as const,
       }),
     );

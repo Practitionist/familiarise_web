@@ -90,20 +90,20 @@ export async function GET(
             // Use comprehensive overlap check for custom slots to match appointment logic
             OR: [
               {
-                availabilityStartsAt: {
+                startsAt: {
                   gte: startDate,
                   lt: endDate,
                 },
               },
               {
-                availabilityEndsAt: {
+                endsAt: {
                   gt: startDate,
                   lte: endDate,
                 },
               },
               {
-                availabilityStartsAt: { lte: startDate },
-                availabilityEndsAt: { gte: endDate },
+                startsAt: { lte: startDate },
+                endsAt: { gte: endDate },
               },
             ],
           },
@@ -286,7 +286,7 @@ export async function GET(
     const customSlots: CustomSlot[] = consultant.slotsOfAvailabilityCustom
       .filter((slot) => {
         // Defensive: Validate required fields exist
-        if (!slot.availabilityStartsAt || !slot.availabilityEndsAt) {
+        if (!slot.startsAt || !slot.endsAt) {
           console.warn(
             `⚠️ Filtering out custom slot ${slot.id}: missing required fields`,
           );
@@ -294,8 +294,8 @@ export async function GET(
         }
 
         // Defensive: Validate dates are valid
-        const start = new Date(slot.availabilityStartsAt);
-        const end = new Date(slot.availabilityEndsAt);
+        const start = new Date(slot.startsAt);
+        const end = new Date(slot.endsAt);
         if (isNaN(start.getTime()) || isNaN(end.getTime())) {
           console.warn(
             `⚠️ Filtering out custom slot ${slot.id}: invalid date format`,
@@ -306,12 +306,12 @@ export async function GET(
         // Filter out invalid slots, but allow legitimate overnight slots
         if (
           !isValidOvernightSlot(
-            slot.availabilityStartsAt,
-            slot.availabilityEndsAt,
+            slot.startsAt,
+            slot.endsAt,
           )
         ) {
           console.warn(
-            `❌ Filtering out invalid custom slot ${slot.id}: end time ${slot.availabilityEndsAt.toISOString()} <= start time ${slot.availabilityStartsAt.toISOString()}`,
+            `❌ Filtering out invalid custom slot ${slot.id}: end time ${slot.endsAt.toISOString()} <= start time ${slot.startsAt.toISOString()}`,
           );
           return false;
         }
@@ -350,8 +350,8 @@ export async function GET(
       })
       .map((slot) => ({
         id: slot.id,
-        slotStartTimeInUTC: slot.availabilityStartsAt,
-        slotEndTimeInUTC: slot.availabilityEndsAt,
+        slotStartTimeInUTC: slot.startsAt,
+        slotEndTimeInUTC: slot.endsAt,
       }));
 
     // Apply schedule type filtering based on consultant's preference

@@ -56,8 +56,8 @@ export async function GET(req: NextRequest) {
     const dateFilter =
       startDateInUtc && endDateInUtc
         ? {
-            availabilityStartsAt: { gte: new Date(startDateInUtc) },
-            availabilityEndsAt: { lte: new Date(endDateInUtc) },
+            startsAt: { gte: new Date(startDateInUtc) },
+            endsAt: { lte: new Date(endDateInUtc) },
           }
         : {};
 
@@ -67,7 +67,7 @@ export async function GET(req: NextRequest) {
         ...dateFilter,
       },
       orderBy: {
-        availabilityStartsAt: "asc",
+        startsAt: "asc",
       },
       include: {
         consultantProfile: {
@@ -88,8 +88,8 @@ export async function GET(req: NextRequest) {
     const allUnallocatedSlots = allCustomSlots.filter((slot) => {
       const hasOverlap = allocatedSlots.some(
         (allocated) =>
-          allocated.startsAt < slot.availabilityEndsAt &&
-          allocated.endsAt > slot.availabilityStartsAt,
+          allocated.startsAt < slot.endsAt &&
+          allocated.endsAt > slot.startsAt,
       );
       return !hasOverlap;
     });

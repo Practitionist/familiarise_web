@@ -129,8 +129,8 @@ export const WeeklySlotSchema = z.object({
 });
 
 export const CustomSlotSchema = z.object({
-  availabilityStartsAt: z.string(),
-  availabilityEndsAt: z.string(),
+  startsAt: z.string(),
+  endsAt: z.string(),
 });
 
 // #endregion
