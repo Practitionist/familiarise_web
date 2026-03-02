@@ -41,7 +41,7 @@ This document details all SaaS and infrastructure costs for Familiarise. Updated
 | [Globe.dev](https://globe.dev/)                                  | Free tier (Flutter deployment)           | ₹0                   | Not publicly listed      | Unknown                                          |
 | [Novu](https://novu.co/pricing)                                  | 10K workflow runs/mo, 20 workflows       | ₹0                   | $30/mo (~₹2,721) Pro     | ~500-1K bookings/month (~5-8 events each)        |
 | [Resend](https://resend.com/pricing)                             | 100 emails/day, 3K/month                 | ₹0                   | $20/mo (~₹1,814)         | ~100 bookings/day                                |
-| [Upstash Redis](https://upstash.com/pricing)                     | Free tier                                | ₹0                   | $10/mo (~₹907)           | Heavy rate-limiting                              |
+| [Upstash Redis](https://upstash.com/pricing)                     | 500K cmds/mo, 256 MB data, 50 GB bw     | ₹0                   | $0.20/100K cmds PAYG (₹18/mo at 10K MAU) | ~8,300 MAU — see [cost model](../upstash/redis/04-pricing-and-cost-model.md) |
 | [PostHog](https://posthog.com/pricing)                           | 1M events/month                          | ₹0                   | Usage-based              | Scale stage                                      |
 | [Sentry](https://sentry.io/pricing)                              | 5K errors/month                          | ₹0                   | $26/mo (~₹2,200) Team    | Paid features needed                             |
 | [Cloudflare](https://www.cloudflare.com/plans/)                  | CDN, DDoS protection                     | ₹0                   | $20/mo Pro               | Enterprise features                              |
@@ -228,6 +228,7 @@ You lose access when ANY of these happen:
 | **Vercel**          | Need team features or bandwidth         | LOW        | ₹0 → ₹1,814/seat        | Can stay on hobby plan for a long time with single developer     |
 | **PostHog**         | 1M events/month                         | LOW        | ₹0 → usage-based        | Very generous free tier; unlikely to hit in Year 1               |
 | **Sentry**          | 5K errors/month                         | LOW        | ₹0 → ₹2,358/mo          | If hitting 5K errors, you have bigger problems                   |
+| **Upstash Redis**   | ~8,300 MAU (~500K Redis cmds/mo)        | LOW        | ₹0 → ₹18/mo PAYG        | Stays free through Year 1; see [cost model](../upstash/redis/04-pricing-and-cost-model.md) |
 
 ---
 
@@ -306,6 +307,7 @@ When GST-registered, you must pay 18% IGST on all imported services (foreign Saa
 | Stream.io | Dashboard → Usage           | 1,500 MAU (75% of 2K limit)     |
 | Novu      | Dashboard → Usage           | 7,000 runs/month (70% of limit) |
 | Resend    | Dashboard → Usage           | 70 emails/day (70% of limit)    |
+| Upstash   | Dashboard → Usage           | 400K commands/month (80% of free tier) |
 | Razorpay  | Dashboard → Settlements     | Refund rate > 5%                |
 | Claude    | Subscription page           | Before renewal each month       |
 
@@ -319,3 +321,4 @@ When GST-registered, you must pay 18% IGST on all imported services (foreign Saa
 - [09-tax-compliance-india.md](./09-tax-compliance-india.md) - Tax compliance (GST, TDS, TCS)
 - [10-profitability-minimum-pricing.md](./10-profitability-minimum-pricing.md) - Profitability analysis
 - `temp/11-cfo-master-plan.md` - Comprehensive CFO financial blueprint (private, not in git)
+- [../upstash/redis/04-pricing-and-cost-model.md](../upstash/redis/04-pricing-and-cost-model.md) - Upstash Redis command budget, growth projections, and plan decision guide
