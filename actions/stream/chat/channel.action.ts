@@ -493,8 +493,10 @@ export async function initializeAllChannels() {
 }
 
 /**
- * Create a collaborator channel for a webinar or class plan.
- * Called when a collaborator accepts an invitation.
+ * Create or reconcile a collaborator channel for a webinar or class plan.
+ * Called when a collaborator accepts an invitation (idempotent).
+ * Performs full member diffing: adds any DB collaborators missing from the channel
+ * and removes any channel members no longer in the DB set (except host).
  * Members: host + all accepted collaborators.
  */
 export async function createCollaboratorChannel(
@@ -563,9 +565,12 @@ export async function createCollaboratorChannel(
     throw new Error(`Host not found for ${planType} plan: ${planId}`);
   }
 
-  const allMemberIds = [hostUserId, ...collaboratorUserIds];
+  // Deduplicated expected member set: host + all accepted collaborators
+  const expectedMemberIds = Array.from(
+    new Set([hostUserId, ...collaboratorUserIds]),
+  );
 
-  if (allMemberIds.length < 2) {
+  if (expectedMemberIds.length < 2) {
     streamLogger.debug("Skipping collaborator channel - not enough members", {
       planType,
       planId,
@@ -574,25 +579,62 @@ export async function createCollaboratorChannel(
   }
 
   const channelId = `collab-${planType}-${planId}`;
+  const client = getStreamChatClient();
 
-  streamLogger.debug("Creating collaborator channel", {
+  const channel = client.channel("messaging", channelId, {
+    name: `${title} - Collaborators`,
+    created_by_id: hostUserId,
+    members: expectedMemberIds,
+    [`${planType}_plan_id`]: planId,
+    is_collaborator_channel: true,
+  } as Record<string, unknown>);
+
+  // Idempotent create — no-op if channel already exists
+  await channel.create();
+  markChannelExists("messaging", channelId);
+
+  // Query current channel membership for diffing
+  const channelData = await channel.query();
+  const currentMemberIds = Object.keys(channelData.members ?? {});
+
+  // Add members present in DB but missing from channel
+  const toAdd = expectedMemberIds.filter(
+    (id) => !currentMemberIds.includes(id),
+  );
+  if (toAdd.length > 0) {
+    await channel.addMembers(toAdd);
+    streamLogger.debug("Collaborator channel: added missing members", {
+      channelId,
+      added: toAdd,
+    });
+  }
+
+  // Remove channel members no longer in the DB set
+  const toRemove = currentMemberIds.filter(
+    (id) => !expectedMemberIds.includes(id),
+  );
+  if (toRemove.length > 0) {
+    await channel.removeMembers(toRemove);
+    streamLogger.debug("Collaborator channel: removed departed members", {
+      channelId,
+      removed: toRemove,
+    });
+  }
+
+  streamLogger.debug("Collaborator channel reconciled", {
     channelId,
     planType,
     planId,
-    memberCount: allMemberIds.length,
+    memberCount: expectedMemberIds.length,
+    added: toAdd.length,
+    removed: toRemove.length,
   });
 
-  return createChannel({
-    channelType: "messaging",
+  return {
     channelId,
-    channelName: `${title} - Collaborators`,
-    members: allMemberIds,
-    createdById: hostUserId,
-    additionalData: {
-      [`${planType}_plan_id`]: planId,
-      is_collaborator_channel: true,
-    },
-  });
+    members: expectedMemberIds,
+    channelData,
+  };
 }
 
 /**
