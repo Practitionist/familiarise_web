@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { fetchWebinarPlanDetail } from "@/lib/data/plan-details";
 import { apiError } from "@/lib/errors";
+import { requireApiAuth, isPrivileged } from "@/lib/auth-helpers";
 
 export async function GET(
   request: NextRequest,
@@ -37,6 +38,10 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ webinarPlanId: string }> },
 ) {
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const { session } = authResult;
+
   try {
     const { webinarPlanId } = await params;
     const body = await request.json();
@@ -64,7 +69,15 @@ export async function PUT(
     }
 
     const webinarPlan = await prisma.webinarPlan.update({
-      where: { id: webinarPlanId },
+      where: {
+        id: webinarPlanId,
+        ...(isPrivileged(session.user.role)
+          ? {}
+          : {
+              consultantProfileId:
+                session.user.consultantProfileId ?? "__none__",
+            }),
+      },
       data: {
         title: body.title,
         description: body.description,
@@ -76,11 +89,10 @@ export async function PUT(
         prerequisites: body.prerequisites,
         materialProvided: body.materialProvided,
         learningOutcomes: body.learningOutcomes,
-        consultantProfile: body.consultantProfileId
-          ? {
-              connect: { id: body.consultantProfileId },
-            }
-          : undefined,
+        consultantProfile:
+          isPrivileged(session.user.role) && body.consultantProfileId
+            ? { connect: { id: body.consultantProfileId } }
+            : undefined,
         topics: body.topicIds
           ? {
               set: body.topicIds.map((id: string) => ({ id })),
@@ -127,8 +139,32 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ webinarPlanId: string }> },
 ) {
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const { session } = authResult;
+
   try {
     const { webinarPlanId } = await params;
+
+    // Verify existence + ownership in one query (non-owners get 404, not 403)
+    const existingPlan = await prisma.webinarPlan.findUnique({
+      where: {
+        id: webinarPlanId,
+        ...(isPrivileged(session.user.role)
+          ? {}
+          : {
+              consultantProfileId:
+                session.user.consultantProfileId ?? "__none__",
+            }),
+      },
+      select: { id: true },
+    });
+    if (!existingPlan) {
+      return NextResponse.json(
+        { error: "Webinar plan not found" },
+        { status: 404 },
+      );
+    }
 
     // Check if there are any associated webinars
     const associatedWebinars = await prisma.webinar.findMany({

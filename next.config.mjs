@@ -9,6 +9,23 @@ const withBundleAnalyzer =
       })
     : (config) => config;
 
+/** @type {Array<{ key: string; value: string }>} */
+const securityHeaders = [
+  // Prevent the page from being embedded in an iframe (clickjacking)
+  { key: "X-Frame-Options", value: "DENY" },
+  // Prevent browsers from MIME-sniffing a response away from the declared content-type
+  { key: "X-Content-Type-Options", value: "nosniff" },
+  // Disable DNS prefetching to reduce information leakage
+  { key: "X-DNS-Prefetch-Control", value: "off" },
+  // Only send origin when navigating to same origin; send nothing for cross-origin
+  { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+  // Restrict access to browser features not used by this app
+  {
+    key: "Permissions-Policy",
+    value: "camera=(), microphone=(), geolocation=()",
+  },
+];
+
 const nextConfig = {
   // This tells Next.js to explicitly process these packages during the build, which should resolve the module format conflict.
   transpilePackages: ["react-day-picker", "date-fns"],
@@ -54,6 +71,15 @@ const nextConfig = {
   // Reduce JavaScript bundle size by removing console statements in production
   compiler: {
     removeConsole: process.env.NODE_ENV === "production",
+  },
+
+  async headers() {
+    return [
+      {
+        source: "/(.*)",
+        headers: securityHeaders,
+      },
+    ];
   },
 };
 

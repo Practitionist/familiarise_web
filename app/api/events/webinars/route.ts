@@ -1,13 +1,55 @@
 import prisma from "@/lib/prisma";
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { WebinarStatus } from "@prisma/client";
 import { transformNestedPlanTopics } from "@/lib/topics";
+import {
+  requireApiAuth,
+  isPrivileged,
+  forbiddenResponse,
+} from "@/lib/auth-helpers";
 
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
+  // Require authentication (middleware already enforces cookie presence for /api/events/)
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const { session } = authResult;
+
   try {
     const { searchParams } = new URL(request.url);
-    const consulteeProfileId = searchParams.get("consulteeProfileId");
-    const consultantProfileId = searchParams.get("consultantProfileId");
+    let consulteeProfileId = searchParams.get("consulteeProfileId");
+    let consultantProfileId = searchParams.get("consultantProfileId");
+
+    // IDOR protection: non-privileged users can only request their own profile's data
+    if (!isPrivileged(session.user.role)) {
+      if (
+        consulteeProfileId &&
+        session.user.consulteeProfileId !== consulteeProfileId
+      ) {
+        return forbiddenResponse(
+          "You can only view your own enrolled webinars",
+        );
+      }
+      if (
+        consultantProfileId &&
+        session.user.consultantProfileId !== consultantProfileId
+      ) {
+        return forbiddenResponse("You can only view your own webinars");
+      }
+      // No-filter fallthrough guard: auto-fill from session so the unfiltered else
+      // branch is never reached by non-privileged users with no params supplied.
+      if (!consulteeProfileId && !consultantProfileId) {
+        if (session.user.consulteeProfileId) {
+          consulteeProfileId = session.user.consulteeProfileId;
+        } else if (session.user.consultantProfileId) {
+          consultantProfileId = session.user.consultantProfileId;
+        } else {
+          // User has no profile (e.g. incomplete onboarding) — must not reach unfiltered query
+          return forbiddenResponse(
+            "You are not authorized to view webinars without a profile",
+          );
+        }
+      }
+    }
     const startDateStr = searchParams.get("startDate");
     const endDateStr = searchParams.get("endDate");
 
@@ -206,6 +248,10 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const { session } = authResult;
+
   try {
     const body = await request.json();
 
@@ -218,6 +264,22 @@ export async function POST(request: Request) {
         },
         { status: 400 },
       );
+    }
+
+    // Ownership check: only the owning consultant or privileged users can schedule a webinar
+    if (!isPrivileged(session.user.role)) {
+      const plan = await prisma.webinarPlan.findUnique({
+        where: { id: body.webinarPlanId },
+        select: { consultantProfileId: true },
+      });
+      if (
+        !plan ||
+        plan.consultantProfileId !== session.user.consultantProfileId
+      ) {
+        return forbiddenResponse(
+          "You can only create webinars for your own plans",
+        );
+      }
     }
 
     const webinar = await prisma.webinar.create({

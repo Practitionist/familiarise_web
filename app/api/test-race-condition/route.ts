@@ -5,6 +5,10 @@ import { NextRequest, NextResponse } from "next/server";
  * This helps verify the race condition fix works correctly
  */
 export async function POST(req: NextRequest) {
+  if (process.env.NODE_ENV === "production") {
+    return NextResponse.json({ error: "Not available" }, { status: 403 });
+  }
+
   try {
     const body = await req.json();
     const {

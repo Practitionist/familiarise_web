@@ -2,6 +2,10 @@ import { NextResponse } from "next/server";
 import redisClient from "../../../lib/redis";
 
 export async function GET() {
+  if (process.env.NODE_ENV === "production") {
+    return NextResponse.json({ error: "Not available" }, { status: 403 });
+  }
+
   try {
     // Test basic SET operation
     const testKey = `test-${Date.now()}`;

@@ -33,19 +33,19 @@ This document details all SaaS and infrastructure costs for Familiarise. Updated
 
 ### Free Tier SaaS (₹0 Current Cost)
 
-| Service                                                          | Free Tier Limits                         | Monthly Cost at Free | Paid Tier Cost           | When You Outgrow Free                            |
-| ---------------------------------------------------------------- | ---------------------------------------- | -------------------- | ------------------------ | ------------------------------------------------ |
-| [Supabase](https://supabase.com/pricing)                         | 500MB DB, 1GB storage, 50K MAU           | ₹0                   | $25/mo (~₹2,125) Pro     | ~200-500 active users                            |
-| [Vercel](https://vercel.com/pricing)                             | 100GB bandwidth, hobby project           | ₹0                   | $20/seat (~₹1,700) Pro   | Team features needed                             |
-| [Stream.io](https://getstream.io/maker-account/) (Maker Account) | 2K MAU chat, 333K video participant-mins | ₹0                   | $99-299/mo (~₹8.4-25.4K) | $10K revenue OR $100K funding OR >5 team members |
-| [Globe.dev](https://globe.dev/)                                  | Free tier (Flutter deployment)           | ₹0                   | Not publicly listed      | Unknown                                          |
-| [Novu](https://novu.co/pricing)                                  | 10K workflow runs/mo, 20 workflows       | ₹0                   | $30/mo (~₹2,721) Pro     | ~500-1K bookings/month (~5-8 events each)        |
-| [Resend](https://resend.com/pricing)                             | 100 emails/day, 3K/month                 | ₹0                   | $20/mo (~₹1,814)         | ~100 bookings/day                                |
-| [Upstash Redis](https://upstash.com/pricing)                     | Free tier                                | ₹0                   | $10/mo (~₹907)           | Heavy rate-limiting                              |
-| [PostHog](https://posthog.com/pricing)                           | 1M events/month                          | ₹0                   | Usage-based              | Scale stage                                      |
-| [Sentry](https://sentry.io/pricing)                              | 5K errors/month                          | ₹0                   | $26/mo (~₹2,200) Team    | Paid features needed                             |
-| [Cloudflare](https://www.cloudflare.com/plans/)                  | CDN, DDoS protection                     | ₹0                   | $20/mo Pro               | Enterprise features                              |
-| [GitHub](https://github.com/pricing)                             | Free private repos, Actions minutes      | ₹0                   | $4/user/mo (~₹340) Team  | Team management                                  |
+| Service                                                          | Free Tier Limits                         | Monthly Cost at Free | Paid Tier Cost                           | When You Outgrow Free                                                        |
+| ---------------------------------------------------------------- | ---------------------------------------- | -------------------- | ---------------------------------------- | ---------------------------------------------------------------------------- |
+| [Supabase](https://supabase.com/pricing)                         | 500MB DB, 1GB storage, 50K MAU           | ₹0                   | $25/mo (~₹2,125) Pro                     | ~200-500 active users                                                        |
+| [Vercel](https://vercel.com/pricing)                             | 100GB bandwidth, hobby project           | ₹0                   | $20/seat (~₹1,700) Pro                   | Team features needed                                                         |
+| [Stream.io](https://getstream.io/maker-account/) (Maker Account) | 2K MAU chat, 333K video participant-mins | ₹0                   | $99-299/mo (~₹8.4-25.4K)                 | $10K revenue OR $100K funding OR >5 team members                             |
+| [Globe.dev](https://globe.dev/)                                  | Free tier (Flutter deployment)           | ₹0                   | Not publicly listed                      | Unknown                                                                      |
+| [Novu](https://novu.co/pricing)                                  | 10K workflow runs/mo, 20 workflows       | ₹0                   | $30/mo (~₹2,721) Pro                     | ~500-1K bookings/month (~5-8 events each)                                    |
+| [Resend](https://resend.com/pricing)                             | 100 emails/day, 3K/month                 | ₹0                   | $20/mo (~₹1,814)                         | ~100 bookings/day                                                            |
+| [Upstash Redis](https://upstash.com/pricing)                     | 500K cmds/mo, 256 MB data, 50 GB bw      | ₹0                   | $0.20/100K cmds PAYG (₹18/mo at 10K MAU) | ~8,300 MAU — see [cost model](../upstash/redis/04-pricing-and-cost-model.md) |
+| [PostHog](https://posthog.com/pricing)                           | 1M events/month                          | ₹0                   | Usage-based                              | Scale stage                                                                  |
+| [Sentry](https://sentry.io/pricing)                              | 5K errors/month                          | ₹0                   | $26/mo (~₹2,200) Team                    | Paid features needed                                                         |
+| [Cloudflare](https://www.cloudflare.com/plans/)                  | CDN, DDoS protection                     | ₹0                   | $20/mo Pro                               | Enterprise features                                                          |
+| [GitHub](https://github.com/pricing)                             | Free private repos, Actions minutes      | ₹0                   | $4/user/mo (~₹340) Team                  | Team management                                                              |
 
 ### Total Current Monthly SaaS Burn
 
@@ -219,15 +219,16 @@ You lose access when ANY of these happen:
 
 ## Free Tier Expiry Risk Matrix
 
-| Service             | Trigger to Outgrow                      | Risk Level | Cost Jump (Pre-GST)     | Mitigation                                                       |
-| ------------------- | --------------------------------------- | ---------- | ----------------------- | ---------------------------------------------------------------- |
-| **Stream.io Maker** | $10K revenue, $100K funding, or >5 team | HIGH       | ₹0 → ₹36,189-₹42,703/mo | Largest single cost increase. Budget for this at ₹8.5L+ GMV      |
-| **Novu**            | 10K workflow runs/month                 | MEDIUM     | ₹0 → ₹2,721/mo          | ~500-1K bookings/month triggers upgrade. Each booking = 5-8 runs |
-| **Supabase**        | 500MB DB or 50K MAU                     | MEDIUM     | ₹0 → ₹2,268/mo          | DB growth is gradual; monitor usage dashboard weekly             |
-| **Resend**          | 100 emails/day or 3K/month              | MEDIUM     | ₹0 → ₹1,814/mo          | At ~50+ bookings/day (each generates 2-3 emails)                 |
-| **Vercel**          | Need team features or bandwidth         | LOW        | ₹0 → ₹1,814/seat        | Can stay on hobby plan for a long time with single developer     |
-| **PostHog**         | 1M events/month                         | LOW        | ₹0 → usage-based        | Very generous free tier; unlikely to hit in Year 1               |
-| **Sentry**          | 5K errors/month                         | LOW        | ₹0 → ₹2,358/mo          | If hitting 5K errors, you have bigger problems                   |
+| Service             | Trigger to Outgrow                      | Risk Level | Cost Jump (Pre-GST)     | Mitigation                                                                                 |
+| ------------------- | --------------------------------------- | ---------- | ----------------------- | ------------------------------------------------------------------------------------------ |
+| **Stream.io Maker** | $10K revenue, $100K funding, or >5 team | HIGH       | ₹0 → ₹36,189-₹42,703/mo | Largest single cost increase. Budget for this at ₹8.5L+ GMV                                |
+| **Novu**            | 10K workflow runs/month                 | MEDIUM     | ₹0 → ₹2,721/mo          | ~500-1K bookings/month triggers upgrade. Each booking = 5-8 runs                           |
+| **Supabase**        | 500MB DB or 50K MAU                     | MEDIUM     | ₹0 → ₹2,268/mo          | DB growth is gradual; monitor usage dashboard weekly                                       |
+| **Resend**          | 100 emails/day or 3K/month              | MEDIUM     | ₹0 → ₹1,814/mo          | At ~50+ bookings/day (each generates 2-3 emails)                                           |
+| **Vercel**          | Need team features or bandwidth         | LOW        | ₹0 → ₹1,814/seat        | Can stay on hobby plan for a long time with single developer                               |
+| **PostHog**         | 1M events/month                         | LOW        | ₹0 → usage-based        | Very generous free tier; unlikely to hit in Year 1                                         |
+| **Sentry**          | 5K errors/month                         | LOW        | ₹0 → ₹2,358/mo          | If hitting 5K errors, you have bigger problems                                             |
+| **Upstash Redis**   | ~8,300 MAU (~500K Redis cmds/mo)        | LOW        | ₹0 → ₹18/mo PAYG        | Stays free through Year 1; see [cost model](../upstash/redis/04-pricing-and-cost-model.md) |
 
 ---
 
@@ -299,15 +300,16 @@ When GST-registered, you must pay 18% IGST on all imported services (foreign Saa
 
 ### Set Cost Alerts For
 
-| Service   | Where to Monitor            | Alert When                      |
-| --------- | --------------------------- | ------------------------------- |
-| Supabase  | Dashboard → Usage           | 70% of any free tier limit      |
-| Vercel    | Dashboard → Usage & Billing | 75% of bandwidth                |
-| Stream.io | Dashboard → Usage           | 1,500 MAU (75% of 2K limit)     |
-| Novu      | Dashboard → Usage           | 7,000 runs/month (70% of limit) |
-| Resend    | Dashboard → Usage           | 70 emails/day (70% of limit)    |
-| Razorpay  | Dashboard → Settlements     | Refund rate > 5%                |
-| Claude    | Subscription page           | Before renewal each month       |
+| Service   | Where to Monitor            | Alert When                             |
+| --------- | --------------------------- | -------------------------------------- |
+| Supabase  | Dashboard → Usage           | 70% of any free tier limit             |
+| Vercel    | Dashboard → Usage & Billing | 75% of bandwidth                       |
+| Stream.io | Dashboard → Usage           | 1,500 MAU (75% of 2K limit)            |
+| Novu      | Dashboard → Usage           | 7,000 runs/month (70% of limit)        |
+| Resend    | Dashboard → Usage           | 70 emails/day (70% of limit)           |
+| Upstash   | Dashboard → Usage           | 400K commands/month (80% of free tier) |
+| Razorpay  | Dashboard → Settlements     | Refund rate > 5%                       |
+| Claude    | Subscription page           | Before renewal each month              |
 
 ---
 
@@ -319,3 +321,4 @@ When GST-registered, you must pay 18% IGST on all imported services (foreign Saa
 - [09-tax-compliance-india.md](./09-tax-compliance-india.md) - Tax compliance (GST, TDS, TCS)
 - [10-profitability-minimum-pricing.md](./10-profitability-minimum-pricing.md) - Profitability analysis
 - `temp/11-cfo-master-plan.md` - Comprehensive CFO financial blueprint (private, not in git)
+- [../upstash/redis/04-pricing-and-cost-model.md](../upstash/redis/04-pricing-and-cost-model.md) - Upstash Redis command budget, growth projections, and plan decision guide

@@ -7,6 +7,15 @@ import {
   validateBypass,
   isWriteBlockedInDegraded,
 } from "@/lib/maintenance-edge";
+import {
+  authLimiter,
+  searchLimiter,
+  eligibilityLimiter,
+  newsletterLimiter,
+  availabilityLimiter,
+  applyRateLimit,
+  getClientIp,
+} from "@/lib/rate-limit";
 
 // Constants for common URLs and route patterns
 const URLS = {
@@ -33,12 +42,16 @@ const ROUTE_PATTERNS = {
     "/api/user/",
     "/api/events/",
     "/api/plans/",
+    "/api/participants/", // Private: participant management for classes/webinars/etc.
+    "/api/dashboard/", // Private: dashboard data routes
+    "/api/trials/", // Private: trial session routes (public sub-routes exempted below)
   ],
   // Note: /api/auth/ must remain public for BetterAuth to work
   // /api/user/consultants routes are public for explore page (verification filter enforced in API)
   // /api/user/reviews is public for displaying reviews on consultant profiles
   // /api/plans/classes and /api/plans/webinars are public for browse/detail pages;
   //   their sub-routes (recordings, materials) enforce auth in their own handlers
+  // /api/trials/check-eligibility and /api/trials/stats are public (no private data)
   PUBLIC_API_PREFIXES: [
     "/api/auth/",
     "/api/health/",
@@ -46,6 +59,8 @@ const ROUTE_PATTERNS = {
     "/api/user/reviews", // Public: consultant reviews
     "/api/plans/classes", // Public: browse and view class plans (sub-routes enforce their own auth)
     "/api/plans/webinars", // Public: browse and view webinar plans (sub-routes enforce their own auth)
+    "/api/trials/check-eligibility", // Public: eligibility check (no private data returned)
+    "/api/trials/stats", // Public: aggregate trial stats
   ],
 };
 
@@ -151,6 +166,41 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
       );
       return response;
     }
+  }
+
+  // Edge rate limiting for high-traffic public endpoints (IP-based).
+  // Runs before any serverless function is invoked — prevents cost amplification
+  // under DDoS even when every request would otherwise return 429.
+
+  // Auth brute-force protection — POST only (credential submission); GET/OPTIONS must not consume quota
+  if (
+    req.method === "POST" &&
+    (pathname.startsWith("/api/auth/sign-in") ||
+      pathname.startsWith("/api/auth/sign-up") ||
+      pathname.startsWith("/api/auth/forget-password"))
+  ) {
+    const rl = await applyRateLimit(authLimiter, getClientIp(req));
+    if (rl) return rl;
+  }
+
+  if (pathname.startsWith("/api/user/consultants")) {
+    const rl = await applyRateLimit(searchLimiter, getClientIp(req));
+    if (rl) return rl;
+  }
+  if (pathname.startsWith("/api/trials/check-eligibility")) {
+    const rl = await applyRateLimit(eligibilityLimiter, getClientIp(req));
+    if (rl) return rl;
+  }
+  if (
+    pathname.startsWith("/api/newsletter/subscribe") &&
+    req.method === "POST"
+  ) {
+    const rl = await applyRateLimit(newsletterLimiter, getClientIp(req));
+    if (rl) return rl;
+  }
+  if (pathname.startsWith("/api/slots/availability/")) {
+    const rl = await applyRateLimit(availabilityLimiter, getClientIp(req));
+    if (rl) return rl;
   }
 
   // Handle public API routes first (most common, no auth needed)

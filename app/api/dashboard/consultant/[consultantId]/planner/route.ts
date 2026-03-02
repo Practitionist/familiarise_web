@@ -2,6 +2,11 @@ import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { transformNestedPlanTopics } from "@/lib/topics";
+import {
+  requireApiAuth,
+  isPrivileged,
+  forbiddenResponse,
+} from "@/lib/auth-helpers";
 
 // =============================================================================
 // Prisma Query Types - Derived from actual query shape for type safety
@@ -157,8 +162,19 @@ export async function GET(
   // Note: request parameter kept for Next.js API route signature compatibility
   void request;
 
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const { session } = authResult;
+
   try {
     const { consultantId } = await params;
+
+    if (
+      !isPrivileged(session.user.role) &&
+      session.user.consultantProfileId !== consultantId
+    ) {
+      return forbiddenResponse("You can only access your own planner");
+    }
 
     if (!consultantId) {
       return NextResponse.json(

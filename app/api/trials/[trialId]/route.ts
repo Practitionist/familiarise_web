@@ -16,6 +16,7 @@ import {
   notifyTrialSessionCancelled,
 } from "@/lib/novu";
 import { UpdateTrialSchema } from "@/schemas/trials";
+import { requireApiAuth, isPrivileged } from "@/lib/auth-helpers";
 
 interface RouteContext {
   params: Promise<{ trialId: string }>;
@@ -26,11 +27,31 @@ interface RouteContext {
  * Get a specific trial session
  */
 export async function GET(request: NextRequest, context: RouteContext) {
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const { session } = authResult;
+
   const { trialId } = await context.params;
 
   try {
     const trialSession = await prisma.trialSession.findUnique({
-      where: { id: trialId },
+      where: {
+        id: trialId,
+        ...(isPrivileged(session.user.role)
+          ? {}
+          : {
+              OR: [
+                {
+                  consulteeProfileId:
+                    session.user.consulteeProfileId ?? "__none__",
+                },
+                {
+                  consultantProfileId:
+                    session.user.consultantProfileId ?? "__none__",
+                },
+              ],
+            }),
+      },
       include: {
         consulteeProfile: {
           include: {
@@ -153,6 +174,10 @@ async function validateSlotAvailability(
  * Update a trial session (approve, reject, schedule, complete, etc.)
  */
 export async function PATCH(request: NextRequest, context: RouteContext) {
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const { session } = authResult;
+
   const { trialId } = await context.params;
 
   try {
@@ -168,7 +193,23 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 
     // Fetch the existing trial session
     const existingTrial = await prisma.trialSession.findUnique({
-      where: { id: trialId },
+      where: {
+        id: trialId,
+        ...(isPrivileged(session.user.role)
+          ? {}
+          : {
+              OR: [
+                {
+                  consulteeProfileId:
+                    session.user.consulteeProfileId ?? "__none__",
+                },
+                {
+                  consultantProfileId:
+                    session.user.consultantProfileId ?? "__none__",
+                },
+              ],
+            }),
+      },
       include: {
         consulteeProfile: {
           include: {
@@ -506,11 +547,31 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
  * Cancel a trial session
  */
 export async function DELETE(request: NextRequest, context: RouteContext) {
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const { session } = authResult;
+
   const { trialId } = await context.params;
 
   try {
     const existingTrial = await prisma.trialSession.findUnique({
-      where: { id: trialId },
+      where: {
+        id: trialId,
+        ...(isPrivileged(session.user.role)
+          ? {}
+          : {
+              OR: [
+                {
+                  consulteeProfileId:
+                    session.user.consulteeProfileId ?? "__none__",
+                },
+                {
+                  consultantProfileId:
+                    session.user.consultantProfileId ?? "__none__",
+                },
+              ],
+            }),
+      },
     });
 
     if (!existingTrial) {
