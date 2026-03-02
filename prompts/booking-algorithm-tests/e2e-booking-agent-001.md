@@ -44,6 +44,8 @@ Seed all test data using Supabase MCP `execute_sql`. Run each SQL block in order
 - DateTime fields with `@db.Timestamptz()` store as `timestamptz` in Postgres
 - BetterAuth uses `accounts` table with `providerId = 'credential'` for email/password login
 - Passwords are hashed with bcrypt — use a pre-hashed password
+- `SlotOfAvailabilityWeekly.startTimeUtc` / `endTimeUtc` are `Int @db.SmallInt` — **minutes since midnight UTC (0-1439)**, NOT timestamps. Example: 270 = 04:30 UTC, 690 = 11:30 UTC. `startDay`/`endDay` are `DayOfWeek` enums.
+- `SlotOfAvailabilityCustom.startsAt` / `endsAt` are `DateTime @db.Timestamptz()` — actual timestamps for one-off date-specific availability
 
 ### Step 0.1: Create Domain & SubDomain
 
@@ -230,41 +232,42 @@ ON CONFLICT (id) DO NOTHING;
 Create weekly availability for the consultant: Monday-Friday, 10:00-17:00 IST (04:30-11:30 UTC).
 
 ```sql
--- Weekly availability: Monday 10:00-17:00 IST (04:30-11:30 UTC)
--- We use a reference date (1970-01-05 is a Monday) for the time component
+-- Weekly availability: Monday-Friday, split into AM + PM blocks
+-- Times stored as Int minutes since midnight UTC (0-1439)
+-- Conversion: 10:00-13:00 IST = 04:30-07:30 UTC = 270-450 min
+--             14:00-17:00 IST = 08:30-11:30 UTC = 510-690 min
 INSERT INTO "SlotOfAvailabilityWeekly" (
-  id, "dayOfWeekForStartsAt", "availabilityStartsAt",
-  "dayOfWeekForEndsAt", "availabilityEndsAt",
+  id, "startDay", "startTimeUtc", "endDay", "endTimeUtc",
   "consultantProfileId",
   "createdAt", "updatedAt"
 )
 VALUES
-  -- Monday 10:00-13:00 IST
-  ('test-weekly-slot-mon-am', 'MONDAY', '1970-01-05 04:30:00+00', 'MONDAY', '1970-01-05 07:30:00+00', 'test-consultant-profile-001', NOW(), NOW()),
-  -- Monday 14:00-17:00 IST
-  ('test-weekly-slot-mon-pm', 'MONDAY', '1970-01-05 08:30:00+00', 'MONDAY', '1970-01-05 11:30:00+00', 'test-consultant-profile-001', NOW(), NOW()),
-  -- Tuesday 10:00-13:00 IST
-  ('test-weekly-slot-tue-am', 'TUESDAY', '1970-01-06 04:30:00+00', 'TUESDAY', '1970-01-06 07:30:00+00', 'test-consultant-profile-001', NOW(), NOW()),
-  -- Tuesday 14:00-17:00 IST
-  ('test-weekly-slot-tue-pm', 'TUESDAY', '1970-01-06 08:30:00+00', 'TUESDAY', '1970-01-06 11:30:00+00', 'test-consultant-profile-001', NOW(), NOW()),
-  -- Wednesday 10:00-13:00 IST
-  ('test-weekly-slot-wed-am', 'WEDNESDAY', '1970-01-07 04:30:00+00', 'WEDNESDAY', '1970-01-07 07:30:00+00', 'test-consultant-profile-001', NOW(), NOW()),
-  -- Wednesday 14:00-17:00 IST
-  ('test-weekly-slot-wed-pm', 'WEDNESDAY', '1970-01-07 08:30:00+00', 'WEDNESDAY', '1970-01-07 11:30:00+00', 'test-consultant-profile-001', NOW(), NOW()),
-  -- Thursday 10:00-13:00 IST
-  ('test-weekly-slot-thu-am', 'THURSDAY', '1970-01-08 04:30:00+00', 'THURSDAY', '1970-01-08 07:30:00+00', 'test-consultant-profile-001', NOW(), NOW()),
-  -- Thursday 14:00-17:00 IST
-  ('test-weekly-slot-thu-pm', 'THURSDAY', '1970-01-08 08:30:00+00', 'THURSDAY', '1970-01-08 11:30:00+00', 'test-consultant-profile-001', NOW(), NOW()),
-  -- Friday 10:00-13:00 IST
-  ('test-weekly-slot-fri-am', 'FRIDAY', '1970-01-09 04:30:00+00', 'FRIDAY', '1970-01-09 07:30:00+00', 'test-consultant-profile-001', NOW(), NOW()),
-  -- Friday 14:00-17:00 IST
-  ('test-weekly-slot-fri-pm', 'FRIDAY', '1970-01-09 08:30:00+00', 'FRIDAY', '1970-01-09 11:30:00+00', 'test-consultant-profile-001', NOW(), NOW())
+  -- Monday 10:00-13:00 IST = 04:30-07:30 UTC = 270-450 min
+  ('test-weekly-slot-mon-am', 'MONDAY', 270, 'MONDAY', 450, 'test-consultant-profile-001', NOW(), NOW()),
+  -- Monday 14:00-17:00 IST = 08:30-11:30 UTC = 510-690 min
+  ('test-weekly-slot-mon-pm', 'MONDAY', 510, 'MONDAY', 690, 'test-consultant-profile-001', NOW(), NOW()),
+  -- Tuesday AM
+  ('test-weekly-slot-tue-am', 'TUESDAY', 270, 'TUESDAY', 450, 'test-consultant-profile-001', NOW(), NOW()),
+  -- Tuesday PM
+  ('test-weekly-slot-tue-pm', 'TUESDAY', 510, 'TUESDAY', 690, 'test-consultant-profile-001', NOW(), NOW()),
+  -- Wednesday AM
+  ('test-weekly-slot-wed-am', 'WEDNESDAY', 270, 'WEDNESDAY', 450, 'test-consultant-profile-001', NOW(), NOW()),
+  -- Wednesday PM
+  ('test-weekly-slot-wed-pm', 'WEDNESDAY', 510, 'WEDNESDAY', 690, 'test-consultant-profile-001', NOW(), NOW()),
+  -- Thursday AM
+  ('test-weekly-slot-thu-am', 'THURSDAY', 270, 'THURSDAY', 450, 'test-consultant-profile-001', NOW(), NOW()),
+  -- Thursday PM
+  ('test-weekly-slot-thu-pm', 'THURSDAY', 510, 'THURSDAY', 690, 'test-consultant-profile-001', NOW(), NOW()),
+  -- Friday AM
+  ('test-weekly-slot-fri-am', 'FRIDAY', 270, 'FRIDAY', 450, 'test-consultant-profile-001', NOW(), NOW()),
+  -- Friday PM
+  ('test-weekly-slot-fri-pm', 'FRIDAY', 510, 'FRIDAY', 690, 'test-consultant-profile-001', NOW(), NOW())
 ON CONFLICT (id) DO NOTHING;
 
 -- Also create one custom availability slot (for a specific date, e.g., next Saturday)
--- This tests custom slot handling separately from weekly
+-- Custom slots use actual timestamps (DateTime @db.Timestamptz), not minutes
 INSERT INTO "SlotOfAvailabilityCustom" (
-  id, "availabilityStartsAt", "availabilityEndsAt",
+  id, "startsAt", "endsAt",
   "consultantProfileId",
   "createdAt", "updatedAt"
 )
@@ -421,9 +424,9 @@ SELECT id, name, email, role, "consultantProfileId", "consulteeProfileId" FROM u
 SELECT id, headline, "scheduleType", "userId" FROM "ConsultantProfile" WHERE id = 'test-consultant-profile-001';
 SELECT id, occupation, "userId" FROM "ConsulteeProfile" WHERE id = 'test-consultee-profile-001';
 
--- Verify availability
-SELECT id, "dayOfWeekForStartsAt", "availabilityStartsAt", "availabilityEndsAt" FROM "SlotOfAvailabilityWeekly" WHERE "consultantProfileId" = 'test-consultant-profile-001';
-SELECT id, "availabilityStartsAt", "availabilityEndsAt" FROM "SlotOfAvailabilityCustom" WHERE "consultantProfileId" = 'test-consultant-profile-001';
+-- Verify availability (weekly uses Int minutes 0-1439, custom uses timestamptz)
+SELECT id, "startDay", "startTimeUtc", "endDay", "endTimeUtc" FROM "SlotOfAvailabilityWeekly" WHERE "consultantProfileId" = 'test-consultant-profile-001';
+SELECT id, "startsAt", "endsAt" FROM "SlotOfAvailabilityCustom" WHERE "consultantProfileId" = 'test-consultant-profile-001';
 
 -- Verify plans
 SELECT id, title, price, "durationInHours" FROM "ConsultationPlan" WHERE id = 'test-consultation-plan-001';
@@ -1309,6 +1312,184 @@ WHERE "appointmentId" = '<APPOINTMENT_ID>';
 1. Log in as a different user
 2. Try to cancel someone else's appointment
 3. **Expected:** 403 Forbidden
+
+### Test 5.9: Appointment Type Mismatch (400)
+
+1. Get an existing CONSULTATION appointment ID
+2. Try to reschedule it with the wrong type:
+
+```javascript
+async () => {
+  const appointmentId = "<CONSULTATION_APPOINTMENT_ID>";
+  const response = await fetch(
+    `/api/appointments/${appointmentId}/reschedule?type=WEBINAR`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    },
+  );
+  return { status: response.status, body: await response.json() };
+};
+```
+
+3. **Expected:** 400 with message: `"Appointment type mismatch: query param "WEBINAR" does not match actual type "CONSULTATION""`
+
+### Test 5.10: Weekly Availability CRUD API
+
+Test the weekly availability slot management endpoints. Log in as consultant.
+
+**5.10a: Create a new weekly slot via API**
+
+```javascript
+async () => {
+  const response = await fetch("/api/slots/availability/weekly", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      startDay: "SATURDAY",
+      startTimeUtc: 360,   // 06:00 UTC = 11:30 IST
+      endDay: "SATURDAY",
+      endTimeUtc: 540,     // 09:00 UTC = 14:30 IST
+      consultantProfileId: "test-consultant-profile-001",
+    }),
+  });
+  return { status: response.status, body: await response.json() };
+};
+```
+
+**Expected:** 201, slot created with correct Int values.
+
+**Verify DB:**
+
+```sql
+SELECT id, "startDay", "startTimeUtc", "endDay", "endTimeUtc"
+FROM "SlotOfAvailabilityWeekly"
+WHERE "consultantProfileId" = 'test-consultant-profile-001'
+  AND "startDay" = 'SATURDAY';
+```
+
+**5.10b: Reject out-of-range time value**
+
+```javascript
+async () => {
+  const response = await fetch("/api/slots/availability/weekly", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      startDay: "SUNDAY",
+      startTimeUtc: 1500,  // > 1439 — invalid
+      endDay: "SUNDAY",
+      endTimeUtc: 1600,
+      consultantProfileId: "test-consultant-profile-001",
+    }),
+  });
+  return { status: response.status, body: await response.json() };
+};
+```
+
+**Expected:** 400 — time values must be 0-1439.
+
+**5.10c: Reject overlapping slot**
+
+```javascript
+async () => {
+  // Try to create a slot that overlaps with Monday AM (270-450)
+  const response = await fetch("/api/slots/availability/weekly", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      startDay: "MONDAY",
+      startTimeUtc: 300,   // 05:00 UTC — inside 270-450 range
+      endDay: "MONDAY",
+      endTimeUtc: 480,
+      consultantProfileId: "test-consultant-profile-001",
+    }),
+  });
+  return { status: response.status, body: await response.json() };
+};
+```
+
+**Expected:** 400 — overlapping with existing Monday AM slot.
+
+**5.10d: Update and delete a slot**
+
+```javascript
+async () => {
+  // Get the Saturday slot ID from 5.10a
+  const satSlotId = "<SATURDAY_SLOT_ID>";
+
+  // UPDATE the slot
+  const putResp = await fetch(`/api/slots/availability/weekly/${satSlotId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      startDay: "SATURDAY",
+      startTimeUtc: 420,   // 07:00 UTC
+      endDay: "SATURDAY",
+      endTimeUtc: 600,     // 10:00 UTC
+    }),
+  });
+
+  // DELETE the slot
+  const delResp = await fetch(`/api/slots/availability/weekly/${satSlotId}`, {
+    method: "DELETE",
+  });
+
+  return {
+    put: { status: putResp.status },
+    del: { status: delResp.status },
+  };
+};
+```
+
+**Verify DB:** Saturday slot no longer exists.
+
+### Test 5.11: Concurrent Booking Race Condition
+
+Test that the distributed lock prevents double-booking when two checkouts hit the same slot simultaneously.
+
+```javascript
+async () => {
+  // Calculate an available slot (next Thursday 10:30 IST = 05:00 UTC)
+  const nextThu = new Date();
+  nextThu.setDate(nextThu.getDate() + ((4 + 7 - nextThu.getDay()) % 7 || 7));
+  nextThu.setUTCHours(5, 0, 0, 0);
+
+  const slotEnd = new Date(nextThu);
+  slotEnd.setUTCHours(6, 0, 0, 0);
+
+  const body = JSON.stringify({
+    appointmentType: "CONSULTATION",
+    planId: "test-consultation-plan-001",
+    paymentGateway: "STRIPE",
+    slotStartTimeInUTC: nextThu.toISOString(),
+    slotEndTimeInUTC: slotEnd.toISOString(),
+    isMockPayment: true,
+  });
+
+  // Fire two simultaneous checkout requests
+  const [r1, r2] = await Promise.all([
+    fetch("/api/checkout", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+    }),
+    fetch("/api/checkout", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+    }),
+  ]);
+
+  return {
+    req1: { status: r1.status, body: await r1.json() },
+    req2: { status: r2.status, body: await r2.json() },
+  };
+};
+```
+
+**Expected:** Exactly ONE succeeds (200), the other fails with a conflict error. Verify DB has exactly one appointment for that time slot, not two.
 
 ---
 

@@ -39,6 +39,8 @@ Run all SQL blocks via `execute_sql` in order. Use `ON CONFLICT (id) DO NOTHING`
 - Timestamps → `timestamptz` columns, stored as UTC
 - `priceCurrency` (not `currency`) on `ConsultationPlan` / `SubscriptionPlan`
 - `ConsulteeProfile` requires `userId` (NOT NULL) — create User first
+- `SlotOfAvailabilityWeekly.startTimeUtc` / `endTimeUtc` are `Int @db.SmallInt` — **minutes since midnight UTC (0-1439)**, NOT timestamps. Example: 240 = 04:00 UTC, 690 = 11:30 UTC. `startDay`/`endDay` are `DayOfWeek` enums.
+- `SlotOfAvailabilityCustom.startsAt` / `endsAt` are `DateTime @db.Timestamptz()` — actual timestamps for one-off availability
 
 ### Step 0.1 — Domain + SubDomain
 
@@ -126,42 +128,43 @@ WHERE u.email = 'testconsultee002@familiarise.com';
 
 ### Step 0.4 — Consultant Availability Slots
 
-Replace `<CONSULTANT_PROFILE_ID>` with `'test-consultant-profile-002'`.
-
 ```sql
 -- Weekly availability: Mon–Fri, 09:30–12:30 IST + 14:00–17:00 IST
--- Stored as UTC: 04:00–07:00 + 08:30–11:30
+-- Times stored as Int minutes since midnight UTC (0-1439)
+-- Conversion: 09:30-12:30 IST = 04:00-07:00 UTC = 240-420 min
+--             14:00-17:00 IST = 08:30-11:30 UTC = 510-690 min
 
-INSERT INTO "WeeklyAvailabilitySlot" (
-  id, "consultantProfileId", "dayOfWeek",
-  "startTime", "endTime",
-  "isActive", "createdAt", "updatedAt"
+INSERT INTO "SlotOfAvailabilityWeekly" (
+  id, "startDay", "startTimeUtc", "endDay", "endTimeUtc",
+  "consultantProfileId", "createdAt", "updatedAt"
 )
 VALUES
-  ('test-w002-mon-am', 'test-consultant-profile-002', 'MONDAY',    '04:00', '07:00', true, NOW(), NOW()),
-  ('test-w002-tue-am', 'test-consultant-profile-002', 'TUESDAY',   '04:00', '07:00', true, NOW(), NOW()),
-  ('test-w002-wed-am', 'test-consultant-profile-002', 'WEDNESDAY', '04:00', '07:00', true, NOW(), NOW()),
-  ('test-w002-thu-am', 'test-consultant-profile-002', 'THURSDAY',  '04:00', '07:00', true, NOW(), NOW()),
-  ('test-w002-fri-am', 'test-consultant-profile-002', 'FRIDAY',    '04:00', '07:00', true, NOW(), NOW()),
-  ('test-w002-mon-pm', 'test-consultant-profile-002', 'MONDAY',    '08:30', '11:30', true, NOW(), NOW()),
-  ('test-w002-tue-pm', 'test-consultant-profile-002', 'TUESDAY',   '08:30', '11:30', true, NOW(), NOW()),
-  ('test-w002-wed-pm', 'test-consultant-profile-002', 'WEDNESDAY', '08:30', '11:30', true, NOW(), NOW()),
-  ('test-w002-thu-pm', 'test-consultant-profile-002', 'THURSDAY',  '08:30', '11:30', true, NOW(), NOW()),
-  ('test-w002-fri-pm', 'test-consultant-profile-002', 'FRIDAY',    '08:30', '11:30', true, NOW(), NOW())
+  -- Monday AM: 09:30-12:30 IST = 04:00-07:00 UTC = 240-420 min
+  ('test-w002-mon-am', 'MONDAY',    240, 'MONDAY',    420, 'test-consultant-profile-002', NOW(), NOW()),
+  ('test-w002-tue-am', 'TUESDAY',   240, 'TUESDAY',   420, 'test-consultant-profile-002', NOW(), NOW()),
+  ('test-w002-wed-am', 'WEDNESDAY', 240, 'WEDNESDAY', 420, 'test-consultant-profile-002', NOW(), NOW()),
+  ('test-w002-thu-am', 'THURSDAY',  240, 'THURSDAY',  420, 'test-consultant-profile-002', NOW(), NOW()),
+  ('test-w002-fri-am', 'FRIDAY',    240, 'FRIDAY',    420, 'test-consultant-profile-002', NOW(), NOW()),
+  -- Monday PM: 14:00-17:00 IST = 08:30-11:30 UTC = 510-690 min
+  ('test-w002-mon-pm', 'MONDAY',    510, 'MONDAY',    690, 'test-consultant-profile-002', NOW(), NOW()),
+  ('test-w002-tue-pm', 'TUESDAY',   510, 'TUESDAY',   690, 'test-consultant-profile-002', NOW(), NOW()),
+  ('test-w002-wed-pm', 'WEDNESDAY', 510, 'WEDNESDAY', 690, 'test-consultant-profile-002', NOW(), NOW()),
+  ('test-w002-thu-pm', 'THURSDAY',  510, 'THURSDAY',  690, 'test-consultant-profile-002', NOW(), NOW()),
+  ('test-w002-fri-pm', 'FRIDAY',    510, 'FRIDAY',    690, 'test-consultant-profile-002', NOW(), NOW())
 ON CONFLICT (id) DO NOTHING;
 
 -- Custom slot: next Saturday 10:00–16:00 IST (04:30–10:30 UTC)
-INSERT INTO "CustomAvailabilitySlot" (
-  id, "consultantProfileId",
-  "startTime", "endTime",
-  "isActive", "createdAt", "updatedAt"
+-- Custom slots use actual timestamps (DateTime @db.Timestamptz), not minutes
+INSERT INTO "SlotOfAvailabilityCustom" (
+  id, "startsAt", "endsAt",
+  "consultantProfileId", "createdAt", "updatedAt"
 )
 VALUES (
   'test-c002-sat-001',
+  (date_trunc('week', NOW()) + INTERVAL '13 days' + INTERVAL '4 hours 30 minutes')::timestamptz,
+  (date_trunc('week', NOW()) + INTERVAL '13 days' + INTERVAL '10 hours 30 minutes')::timestamptz,
   'test-consultant-profile-002',
-  (date_trunc('week', NOW()) + INTERVAL '13 days' + INTERVAL '4 hours 30 minutes'),
-  (date_trunc('week', NOW()) + INTERVAL '13 days' + INTERVAL '10 hours 30 minutes'),
-  true, NOW(), NOW()
+  NOW(), NOW()
 )
 ON CONFLICT (id) DO NOTHING;
 ```
@@ -277,7 +280,13 @@ SELECT id, title FROM "WebinarPlan"       WHERE id = 'test-webinar-plan-002';
 SELECT id, title FROM "ClassPlan"         WHERE id = 'test-class-plan-002';
 SELECT id, status FROM "Webinar"          WHERE id = 'test-webinar-002';
 SELECT id, status FROM "Class"            WHERE id = 'test-class-002';
-SELECT COUNT(*) as slot_count FROM "WeeklyAvailabilitySlot"
+SELECT COUNT(*) as slot_count FROM "SlotOfAvailabilityWeekly"
+  WHERE "consultantProfileId" = 'test-consultant-profile-002';
+SELECT id, "startDay", "startTimeUtc", "endDay", "endTimeUtc"
+  FROM "SlotOfAvailabilityWeekly"
+  WHERE "consultantProfileId" = 'test-consultant-profile-002';
+SELECT id, "startsAt", "endsAt"
+  FROM "SlotOfAvailabilityCustom"
   WHERE "consultantProfileId" = 'test-consultant-profile-002';
 ```
 
@@ -693,6 +702,173 @@ POST /api/appointments/test-403-apt-002/cancel (as CONSULTANT 002, who doesn't o
 Expected: 403
 ```
 
+### 6.8 — Appointment Type Mismatch (400)
+
+Get an existing CONSULTATION appointment and reschedule with wrong type:
+
+```javascript
+async () => {
+  const appointmentId = "<CONSULTATION_APPOINTMENT_ID>";
+  const response = await fetch(
+    `/api/appointments/${appointmentId}/reschedule?type=WEBINAR`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    },
+  );
+  return { status: response.status, body: await response.json() };
+};
+```
+
+Expected: 400 with message: `"Appointment type mismatch: query param "WEBINAR" does not match actual type "CONSULTATION""`
+
+### 6.9 — Weekly Availability CRUD API
+
+Test the weekly availability slot management endpoints. Log in as consultant.
+
+**6.9a: Create a new weekly slot**
+
+```javascript
+async () => {
+  const response = await fetch("/api/slots/availability/weekly", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      startDay: "SATURDAY",
+      startTimeUtc: 360,   // 06:00 UTC
+      endDay: "SATURDAY",
+      endTimeUtc: 540,     // 09:00 UTC
+      consultantProfileId: "test-consultant-profile-002",
+    }),
+  });
+  return { status: response.status, body: await response.json() };
+};
+```
+
+Expected: 201, slot created. Verify via DB:
+
+```sql
+SELECT id, "startDay", "startTimeUtc", "endDay", "endTimeUtc"
+FROM "SlotOfAvailabilityWeekly"
+WHERE "consultantProfileId" = 'test-consultant-profile-002'
+  AND "startDay" = 'SATURDAY';
+```
+
+**6.9b: Reject out-of-range time (startTimeUtc > 1439)**
+
+```javascript
+async () => {
+  const response = await fetch("/api/slots/availability/weekly", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      startDay: "SUNDAY",
+      startTimeUtc: 1500,  // > 1439 — invalid
+      endDay: "SUNDAY",
+      endTimeUtc: 1600,
+      consultantProfileId: "test-consultant-profile-002",
+    }),
+  });
+  return { status: response.status, body: await response.json() };
+};
+```
+
+Expected: 400
+
+**6.9c: Reject overlapping slot**
+
+```javascript
+async () => {
+  // Overlaps with Monday AM (240-420)
+  const response = await fetch("/api/slots/availability/weekly", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      startDay: "MONDAY",
+      startTimeUtc: 300,   // inside 240-420 range
+      endDay: "MONDAY",
+      endTimeUtc: 480,
+      consultantProfileId: "test-consultant-profile-002",
+    }),
+  });
+  return { status: response.status, body: await response.json() };
+};
+```
+
+Expected: 400 — overlap detected
+
+**6.9d: Update then delete the Saturday slot**
+
+```javascript
+async () => {
+  const satSlotId = "<SATURDAY_SLOT_ID_FROM_6.9a>";
+
+  const putResp = await fetch(`/api/slots/availability/weekly/${satSlotId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      startDay: "SATURDAY",
+      startTimeUtc: 420,
+      endDay: "SATURDAY",
+      endTimeUtc: 600,
+    }),
+  });
+
+  const delResp = await fetch(`/api/slots/availability/weekly/${satSlotId}`, {
+    method: "DELETE",
+  });
+
+  return { put: putResp.status, del: delResp.status };
+};
+```
+
+Verify DB: Saturday slot removed.
+
+### 6.10 — Concurrent Booking Race Condition
+
+Fire two simultaneous checkouts for the same slot to verify distributed lock prevents double-booking:
+
+```javascript
+async () => {
+  const nextThu = new Date();
+  nextThu.setDate(nextThu.getDate() + ((4 + 7 - nextThu.getDay()) % 7 || 7));
+  nextThu.setUTCHours(5, 0, 0, 0);
+
+  const slotEnd = new Date(nextThu);
+  slotEnd.setUTCHours(6, 0, 0, 0);
+
+  const body = JSON.stringify({
+    appointmentType: "CONSULTATION",
+    planId: "test-consultation-plan-002",
+    paymentGateway: "STRIPE",
+    slotStartTimeInUTC: nextThu.toISOString(),
+    slotEndTimeInUTC: slotEnd.toISOString(),
+    isMockPayment: true,
+  });
+
+  const [r1, r2] = await Promise.all([
+    fetch("/api/checkout", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+    }),
+    fetch("/api/checkout", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+    }),
+  ]);
+
+  return {
+    req1: { status: r1.status, body: await r1.json() },
+    req2: { status: r2.status, body: await r2.json() },
+  };
+};
+```
+
+Expected: Exactly ONE succeeds, the other fails with conflict. Verify DB has only one appointment for that slot.
+
 ---
 
 ## Phase 7 — UI Verification Checklist
@@ -851,8 +1027,8 @@ DELETE FROM "WebinarPlan"      WHERE id = 'test-webinar-plan-002';
 DELETE FROM "ClassPlan"        WHERE id = 'test-class-plan-002';
 
 -- Availability
-DELETE FROM "WeeklyAvailabilitySlot"  WHERE "consultantProfileId" = 'test-consultant-profile-002';
-DELETE FROM "CustomAvailabilitySlot"  WHERE "consultantProfileId" = 'test-consultant-profile-002';
+DELETE FROM "SlotOfAvailabilityWeekly"  WHERE "consultantProfileId" = 'test-consultant-profile-002';
+DELETE FROM "SlotOfAvailabilityCustom"  WHERE "consultantProfileId" = 'test-consultant-profile-002';
 
 -- Profiles + Users
 UPDATE users SET "consultantProfileId" = NULL WHERE email = 'testconsultant002@familiarise.com';
