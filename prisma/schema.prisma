@@ -1860,6 +1860,7 @@ model ReferralCreditUsage {
   paymentId      String
   amount         Int // Current remaining usage (decremented on partial refund restores)
   originalAmount Int // Original amount at creation (never changes, used for ratio calculations)
+  restoredAmount Int      @default(0) // Cumulative amount restored across partial refunds (drift-free tracking)
   createdAt      DateTime @default(now())
 
   credit  ReferralCredit @relation(fields: [creditId], references: [id], onUpdate: Cascade, onDelete: Cascade)
