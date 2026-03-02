@@ -331,6 +331,75 @@ export async function getCollaborators(planType: PlanType, planId: string) {
   }
 }
 
+type CollaboratorItem = Awaited<ReturnType<typeof getCollaborators>>[number];
+
+export type CollaboratorAuthResult =
+  | { status: "not_found" }
+  | { status: "forbidden" }
+  | { status: "ok"; data: CollaboratorItem[] };
+
+/**
+ * Fetch collaborators for a plan and apply visibility scoping based on the
+ * requesting user's role (owner / accepted collaborator / pending invitee).
+ * Returns a discriminated union so HTTP concerns stay in the route layer.
+ */
+export async function getCollaboratorsForUser(
+  planType: PlanType,
+  planId: string,
+  userId: string,
+): Promise<CollaboratorAuthResult> {
+  const planQuery =
+    planType === "webinar"
+      ? prisma.webinarPlan.findUnique({
+          where: { id: planId },
+          select: { consultantProfileId: true },
+        })
+      : prisma.classPlan.findUnique({
+          where: { id: planId },
+          select: { consultantProfileId: true },
+        });
+
+  const [plan, requesterProfile] = await Promise.all([
+    planQuery,
+    prisma.consultantProfile.findFirst({
+      where: { userId },
+      select: { id: true },
+    }),
+  ]);
+
+  if (!plan) return { status: "not_found" };
+
+  const requesterProfileId = requesterProfile?.id;
+  const isOwner =
+    requesterProfileId != null &&
+    plan.consultantProfileId === requesterProfileId;
+
+  const collaborators = await getCollaborators(planType, planId);
+
+  if (isOwner) {
+    return { status: "ok", data: collaborators };
+  }
+
+  if (requesterProfileId) {
+    const ownRecord = collaborators.find(
+      (c) => c.consultantProfileId === requesterProfileId,
+    );
+
+    if (ownRecord?.status === "ACCEPTED") {
+      return {
+        status: "ok",
+        data: collaborators.filter((c) => c.status === "ACCEPTED"),
+      };
+    }
+
+    if (ownRecord?.status === "PENDING") {
+      return { status: "ok", data: [ownRecord] };
+    }
+  }
+
+  return { status: "forbidden" };
+}
+
 /**
  * Get all collaborations for a consultant.
  */

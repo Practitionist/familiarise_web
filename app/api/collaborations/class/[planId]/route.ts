@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth-server";
 import prisma from "@/lib/prisma";
 import {
-  getCollaborators,
+  getCollaboratorsForUser,
   inviteCollaborator,
 } from "@/lib/collaborators/service";
 import { inviteClassCollaboratorSchema } from "@/schemas/collaborators";
@@ -18,54 +18,18 @@ export async function GET(
     }
 
     const { planId } = await params;
+    const result = await getCollaboratorsForUser(
+      "class",
+      planId,
+      session.user.id,
+    );
 
-    // Determine requester's scope: owner, accepted collaborator, pending invitee, or forbidden
-    const [plan, requesterProfile] = await Promise.all([
-      prisma.classPlan.findUnique({
-        where: { id: planId },
-        select: { consultantProfileId: true },
-      }),
-      prisma.consultantProfile.findFirst({
-        where: { userId: session.user.id },
-        select: { id: true },
-      }),
-    ]);
-
-    if (!plan) {
+    if (result.status === "not_found")
       return NextResponse.json({ error: "Plan not found" }, { status: 404 });
-    }
+    if (result.status === "forbidden")
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-    const requesterProfileId = requesterProfile?.id;
-    const isOwner =
-      requesterProfileId != null &&
-      plan.consultantProfileId === requesterProfileId;
-
-    const collaborators = await getCollaborators("class", planId);
-
-    if (isOwner) {
-      // Owner sees all PENDING + ACCEPTED
-      return NextResponse.json({ data: collaborators });
-    }
-
-    if (requesterProfileId) {
-      const ownRecord = collaborators.find(
-        (c) => c.consultantProfileId === requesterProfileId,
-      );
-
-      if (ownRecord?.status === "ACCEPTED") {
-        // Accepted collaborator sees only ACCEPTED members
-        return NextResponse.json({
-          data: collaborators.filter((c) => c.status === "ACCEPTED"),
-        });
-      }
-
-      if (ownRecord?.status === "PENDING") {
-        // Pending invitee sees only their own record
-        return NextResponse.json({ data: [ownRecord] });
-      }
-    }
-
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    return NextResponse.json({ data: result.data });
   } catch (error) {
     console.error("Error fetching class collaborators:", error);
     return NextResponse.json(
