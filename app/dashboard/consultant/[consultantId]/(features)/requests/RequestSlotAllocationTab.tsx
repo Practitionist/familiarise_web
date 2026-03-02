@@ -391,6 +391,38 @@ export function RequestSlotAllocationTab({
     }
   };
 
+  const handleDecline = async (request: Request) => {
+    if (request.type !== AppointmentsType.CONSULTATION) return;
+    try {
+      const response = await fetch(
+        `/api/events/consultations/${request.id}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: "REJECTED" }),
+        },
+      );
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to decline request");
+      }
+      toast({
+        title: "Request declined",
+        description: "The consultation request has been declined.",
+        variant: "default",
+      });
+      setRequests((prev) => prev.filter((r) => r.id !== request.id));
+      onUpdate();
+    } catch (error) {
+      toast({
+        title: "Error",
+        description:
+          error instanceof Error ? error.message : "Failed to decline request",
+        variant: "destructive",
+      });
+    }
+  };
+
   // Handle allocation complete from UnifiedCalendar
   const handleAllocationComplete = async () => {
     toast({
@@ -450,18 +482,19 @@ export function RequestSlotAllocationTab({
           Allocate slots for subscription and class requests
         </CardDescription>
       </CardHeader>
-      <CardContent>
-        <Table>
+      <CardContent className="p-0 sm:p-6">
+        <div className="overflow-x-auto w-full">
+        <Table className="w-full min-w-[820px]">
           <TableHeader>
             <TableRow>
-              <TableHead>Type</TableHead>
-              <TableHead>Title</TableHead>
-              <TableHead>Requested By</TableHead>
-              <TableHead>Requested At</TableHead>
+              <TableHead className="w-[110px]">Type</TableHead>
+              <TableHead className="w-[150px]">Title</TableHead>
+              <TableHead className="w-[130px]">Requested By</TableHead>
+              <TableHead className="w-[130px]">Requested At</TableHead>
               <TableHead>Requested Times</TableHead>
-              <TableHead>Required Slots</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Actions</TableHead>
+              <TableHead className="w-[90px] text-center">Required Slots</TableHead>
+              <TableHead className="w-[120px]">Status</TableHead>
+              <TableHead className="w-[150px]">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -591,7 +624,7 @@ export function RequestSlotAllocationTab({
                     </div>
                   )}
                 </TableCell>
-                <TableCell>{request.requiredSlots}</TableCell>
+                <TableCell className="text-center">{request.requiredSlots}</TableCell>
                 <TableCell>
                   <div className="flex flex-col gap-1">
                     <Badge
@@ -607,15 +640,15 @@ export function RequestSlotAllocationTab({
                 </TableCell>
                 <TableCell>
                   {request.status === RequestStatus.PENDING && (
-                    <>
-                      {/* Hide "Use Requested Times" button for directly booked consultations (Bug #8 fix) */}
+                    <div className="flex flex-col gap-1.5">
+                      {/* Hide "Use Requested Times" for directly booked consultations (Bug #8 fix) */}
                       {request.requestedTimes &&
                         request.requestedTimes.length > 0 &&
                         request.bookingSource === "REQUEST_SUBMITTED" && (
                           <Button
                             variant="secondary"
                             size="sm"
-                            className="mr-2"
+                            className="w-full"
                             onClick={() => {
                               setSelectedRequestForDialog(request);
                               setRequestedSlotsDialogOpen(true);
@@ -627,6 +660,7 @@ export function RequestSlotAllocationTab({
                       <Button
                         variant="outline"
                         size="sm"
+                        className="w-full"
                         onClick={() => {
                           setSelectedRequest(request);
                           setDialogOpen(true);
@@ -634,13 +668,24 @@ export function RequestSlotAllocationTab({
                       >
                         Allocate Slots
                       </Button>
-                    </>
+                      {request.type === AppointmentsType.CONSULTATION && (
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          className="w-full"
+                          onClick={() => handleDecline(request)}
+                        >
+                          Decline
+                        </Button>
+                      )}
+                    </div>
                   )}
                 </TableCell>
               </TableRow>
             ))}
           </TableBody>
         </Table>
+        </div>
 
         {/* Single Allocation Dialog - moved outside map loop to prevent multiple dialogs */}
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>

@@ -129,7 +129,7 @@ export async function handleUnifiedCheckout(
   if (!response.ok) {
     const errorData = await response.json();
     handleApiError(errorData);
-    throw new Error(errorData.error || "Checkout failed");
+    return; // Toast already shown — don't throw to avoid double toast + console overlay
   }
 
   const rawData = await response.json();

@@ -193,8 +193,8 @@ eventIdSchema = z
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
         id,
       ) || // UUID
-      /^c[a-z0-9]{24}$/i.test(id)
-    ); // CUID
+      /^[a-z][a-z0-9]{23,24}$/.test(id)
+    ); // CUID (v1: 25 chars, v2: 24 chars)
   });
 ```
 

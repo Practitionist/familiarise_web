@@ -305,7 +305,7 @@ export default function ConsultationCheckoutPage({
         if (!response.ok) {
           const errorData = await response.json();
           handleApiError(errorData);
-          throw new Error(errorData.error || "Checkout failed");
+          return; // Toast already shown — don't throw to avoid double toast + console overlay
         }
 
         const data = await response.json();
@@ -366,17 +366,14 @@ export default function ConsultationCheckoutPage({
           }, 1000);
         }
       } catch (error) {
-        console.error("Checkout error:", error);
-
-        // Only show generic error if it wasn't already handled
-        if (!(error instanceof Error && error.message.includes("failed"))) {
-          toast({
-            title: "Checkout Failed",
-            description:
-              error instanceof Error ? error.message : "Please try again",
-            variant: "destructive",
-          });
-        }
+        // Only fires for unexpected errors (network failure, JSON parse error, etc.)
+        // API errors are handled above with handleApiError() + return
+        toast({
+          title: "Checkout Failed",
+          description:
+            error instanceof Error ? error.message : "Please try again",
+          variant: "destructive",
+        });
       } finally {
         // Always reset loading state
         setIsCheckoutProcessing(false);
