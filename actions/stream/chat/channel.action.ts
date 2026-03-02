@@ -595,7 +595,9 @@ export async function createCollaboratorChannel(
 
   // Query current channel membership for diffing
   const channelData = await channel.query();
-  const currentMemberIds = Object.keys(channelData.members ?? {});
+  const currentMemberIds = (channelData.members ?? [])
+    .map((m) => m.user_id)
+    .filter((id): id is string => !!id);
 
   // Add members present in DB but missing from channel
   const toAdd = expectedMemberIds.filter(

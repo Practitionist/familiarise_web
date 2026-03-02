@@ -370,9 +370,12 @@ export async function getCollaboratorsForUser(
   if (!plan) return { status: "not_found" };
 
   const requesterProfileId = requesterProfile?.id;
-  const isOwner =
-    requesterProfileId != null &&
-    plan.consultantProfileId === requesterProfileId;
+
+  // Short-circuit: no consultant profile means cannot be owner or collaborator.
+  // Avoids an unnecessary getCollaborators DB call for consultee / unauthenticated requests.
+  if (!requesterProfileId) return { status: "forbidden" };
+
+  const isOwner = plan.consultantProfileId === requesterProfileId;
 
   const collaborators = await getCollaborators(planType, planId);
 
@@ -380,21 +383,19 @@ export async function getCollaboratorsForUser(
     return { status: "ok", data: collaborators };
   }
 
-  if (requesterProfileId) {
-    const ownRecord = collaborators.find(
-      (c) => c.consultantProfileId === requesterProfileId,
-    );
+  const ownRecord = collaborators.find(
+    (c) => c.consultantProfileId === requesterProfileId,
+  );
 
-    if (ownRecord?.status === "ACCEPTED") {
-      return {
-        status: "ok",
-        data: collaborators.filter((c) => c.status === "ACCEPTED"),
-      };
-    }
+  if (ownRecord?.status === "ACCEPTED") {
+    return {
+      status: "ok",
+      data: collaborators.filter((c) => c.status === "ACCEPTED"),
+    };
+  }
 
-    if (ownRecord?.status === "PENDING") {
-      return { status: "ok", data: [ownRecord] };
-    }
+  if (ownRecord?.status === "PENDING") {
+    return { status: "ok", data: [ownRecord] };
   }
 
   return { status: "forbidden" };
