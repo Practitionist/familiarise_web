@@ -133,7 +133,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.2",
-    "@next/bundle-analyzer": "^16.1.5",
+    "@next/bundle-analyzer": "^16.1.6",
     "@testing-library/jest-dom": "^6.9.1",
     "@types/jest": "^30.0.0",
     "@types/libsodium-wrappers": "^0.8.2",
@@ -141,7 +141,7 @@
     "@types/pg": "^8.16.0",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
-    "autoprefixer": "^10.4.23",
+    "autoprefixer": "^10.4.27",
     "chalk": "^5.6.2",
     "dotenv-cli": "^11.0.0",
     "eslint": "^9.39.2",
