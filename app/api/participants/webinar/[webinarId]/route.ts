@@ -1,16 +1,34 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { handleSlotOpening } from "@/lib/waitlist/slot-handler";
+import {
+  requireApiAuth,
+  isPrivileged,
+  forbiddenResponse,
+} from "@/lib/auth-helpers";
 
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ webinarId: string }> },
 ) {
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const { session } = authResult;
+
   try {
     const { webinarId } = await params;
+    // Non-privileged users can only view participants for webinars they own as consultant
     const webinarEvent = await prisma.webinar.findUnique({
       where: {
         id: webinarId,
+        ...(isPrivileged(session.user.role)
+          ? {}
+          : {
+              webinarPlan: {
+                consultantProfileId:
+                  session.user.consultantProfileId ?? "__none__",
+              },
+            }),
       },
       include: {
         webinarPlan: true,
@@ -70,6 +88,17 @@ export async function DELETE(
   request: Request,
   { params }: { params: Promise<{ webinarId: string }> },
 ) {
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const { session } = authResult;
+
+  if (
+    !isPrivileged(session.user.role) &&
+    !session.user.consultantProfileId
+  ) {
+    return forbiddenResponse("Only consultants can remove participants");
+  }
+
   try {
     const { webinarId } = await params;
 
@@ -81,8 +110,19 @@ export async function DELETE(
     }
 
     // Remove user from all slots in the appointment
+    // Non-privileged users can only modify webinars they own as consultant
     const webinarEvent = await prisma.webinar.findUnique({
-      where: { id: webinarId },
+      where: {
+        id: webinarId,
+        ...(isPrivileged(session.user.role)
+          ? {}
+          : {
+              webinarPlan: {
+                consultantProfileId:
+                  session.user.consultantProfileId ?? "__none__",
+              },
+            }),
+      },
       include: {
         appointment: {
           include: {

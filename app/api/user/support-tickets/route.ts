@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "lib/prisma";
 import { notifySupportTicketCreated } from "@/lib/novu";
 import { CreateSupportTicketSchema } from "@/schemas/support";
+import { spamLimiter, applyRateLimit } from "@/lib/rate-limit";
 
 import { getSession } from "@/lib/auth-server";
 export async function GET() {
@@ -69,6 +70,10 @@ export async function POST(req: NextRequest) {
         { status: 401 },
       );
     }
+
+    // Rate limit: 5 support tickets per hour per user
+    const rl = await applyRateLimit(spamLimiter, `tickets:${session.user.id}`);
+    if (rl) return rl;
 
     const body = await req.json();
     const result = CreateSupportTicketSchema.safeParse(body);

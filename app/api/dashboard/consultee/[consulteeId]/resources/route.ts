@@ -3,6 +3,11 @@ import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { RecordingTransferService } from "@/lib/stream/recording-transfer-service";
 import { RecordingService } from "@/lib/stream/recording-service";
+import {
+  requireApiAuth,
+  isPrivileged,
+  forbiddenResponse,
+} from "@/lib/auth-helpers";
 
 const planMaterialSelect = {
   id: true,
@@ -129,8 +134,19 @@ export async function GET(
   request: Request,
   { params }: { params: Promise<{ consulteeId: string }> },
 ) {
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const { session } = authResult;
+
   try {
     const { consulteeId } = await params;
+
+    if (
+      !isPrivileged(session.user.role) &&
+      session.user.consulteeProfileId !== consulteeId
+    ) {
+      return forbiddenResponse("You can only access your own resources");
+    }
 
     if (!consulteeId) {
       return NextResponse.json(

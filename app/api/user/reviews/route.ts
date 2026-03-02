@@ -3,6 +3,8 @@ import prisma from "@/lib/prisma";
 import { notifyNewReview } from "@/lib/novu";
 import { CreateReviewSchema } from "@/schemas/feedbacks";
 import { apiError } from "@/lib/errors";
+import { getSession } from "@/lib/auth-server";
+import { spamLimiter, applyRateLimit } from "@/lib/rate-limit";
 
 export async function GET(req: NextRequest) {
   try {
@@ -80,6 +82,15 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
+    const session = await getSession();
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // Rate limit: 5 reviews per hour per user
+    const rl = await applyRateLimit(spamLimiter, `reviews:${session.user.id}`);
+    if (rl) return rl;
+
     const body = await req.json();
     const result = CreateReviewSchema.safeParse(body);
     if (!result.success) {

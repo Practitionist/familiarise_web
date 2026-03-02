@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { joinWaitlist, getUserWaitlistEntries } from "@/lib/waitlist";
 import { sendWaitlistJoinedEmail } from "@/lib/waitlist/notifications";
 import prisma from "@/lib/prisma";
+import { waitlistLimiter, applyRateLimit } from "@/lib/rate-limit";
 
 import { getSession } from "@/lib/auth-server";
 /**
@@ -23,6 +24,10 @@ export async function POST(request: NextRequest) {
         { status: 401 },
       );
     }
+
+    // Rate limit: 5 waitlist joins per hour per user
+    const rl = await applyRateLimit(waitlistLimiter, session.user.id);
+    if (rl) return rl;
 
     const body = await request.json();
     const { webinarId, classId, preferences } = body;
