@@ -16,6 +16,7 @@ import {
 } from "@prisma/client";
 import { addWeeks, addMonths } from "date-fns";
 import {
+  AllocationErrorCode,
   AllocationRequest,
   AllocationResult,
   EventType,
@@ -55,6 +56,8 @@ export class SlotAllocationService {
             return {
               success: false,
               error: "Slots are required for manual allocation",
+              errorCode: "VALIDATION_ERROR",
+              httpStatus: 400,
             };
           }
           return await this.manualAllocate(
@@ -73,14 +76,48 @@ export class SlotAllocationService {
           return {
             success: false,
             error: `Invalid allocation mode: ${request.mode}`,
+            errorCode: "INVALID_MODE",
+            httpStatus: 400,
           };
       }
     } catch (error) {
+      const { errorCode, httpStatus } = this.classifyError(error);
       return {
         success: false,
         error: error instanceof Error ? error.message : "Allocation failed",
+        errorCode,
+        httpStatus,
       };
     }
+  }
+
+  /**
+   * Classifies an unknown error into a structured error code and HTTP status.
+   * Called from the allocate() catch block to avoid string-prefix checks in routes.
+   */
+  private static classifyError(error: unknown): {
+    errorCode: AllocationErrorCode;
+    httpStatus: number;
+  } {
+    const msg = error instanceof Error ? error.message : "";
+    if (
+      msg.startsWith("Validation failed:") ||
+      msg.startsWith("Invalid slot count:") ||
+      msg.startsWith("Duplicate slots") ||
+      msg.startsWith("Invalid date string") ||
+      msg.startsWith("This reschedule requires") ||
+      msg.startsWith("This ") || // "This <eventType> requires exactly..."
+      msg.includes("No availability")
+    ) {
+      return { errorCode: "VALIDATION_ERROR", httpStatus: 400 };
+    }
+    if (msg.includes("not found") || msg.includes("no consultant")) {
+      return { errorCode: "NOT_FOUND", httpStatus: 400 };
+    }
+    if (msg.includes("lock") || msg.includes("Lock")) {
+      return { errorCode: "LOCK_CONTENTION", httpStatus: 409 };
+    }
+    return { errorCode: "UNKNOWN_ERROR", httpStatus: 500 };
   }
 
   /**
@@ -157,6 +194,8 @@ export class SlotAllocationService {
       return {
         success: false,
         error: `${eventType} not found or has no consultant`,
+        errorCode: "NOT_FOUND",
+        httpStatus: 400,
       };
     }
 
