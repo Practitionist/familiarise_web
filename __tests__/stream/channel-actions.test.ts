@@ -415,13 +415,15 @@ describe("Entity Channel Creation", () => {
 
       const result = await createConsultationChannel("consultation-789");
 
-      expect(result.channelId).toBe("consultation-consultation-789");
+      // IDs sorted: "consultant-3" < "consultee-1" alphabetically
+      expect(result.channelId).toBe("dm-consultant-3-consultee-1");
       expect(mockStreamClient.channel).toHaveBeenCalledWith(
         "messaging",
-        "consultation-consultation-789",
+        "dm-consultant-3-consultee-1",
         expect.objectContaining({
           created_by_id: "consultant-3",
-          consultation_id: "consultation-789",
+          dm_consultant_user_id: "consultant-3",
+          dm_consultee_user_id: "consultee-1",
         }),
       );
     });
@@ -468,13 +470,15 @@ describe("Entity Channel Creation", () => {
 
       const result = await createSubscriptionChannel("subscription-101");
 
-      expect(result.channelId).toBe("subscription-subscription-101");
+      // IDs sorted: "consultant-4" < "subscriber-1" alphabetically
+      expect(result.channelId).toBe("dm-consultant-4-subscriber-1");
       expect(mockStreamClient.channel).toHaveBeenCalledWith(
         "messaging",
-        "subscription-subscription-101",
+        "dm-consultant-4-subscriber-1",
         expect.objectContaining({
           created_by_id: "consultant-4",
-          subscription_id: "subscription-101",
+          dm_consultant_user_id: "consultant-4",
+          dm_consultee_user_id: "subscriber-1",
         }),
       );
     });

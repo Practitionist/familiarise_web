@@ -605,13 +605,13 @@ async function getDmPairsForUser(
       }),
     ]);
     for (const c of consultations) {
-      const consultantUserId = c.consultationPlan.consultantProfile?.user?.id;
+      const consultantUserId = c.consultationPlan?.consultantProfile?.user?.id;
       if (!consultantUserId) continue;
       const channelId = getDmChannelId(consultantUserId, userId);
       pairMap.set(channelId, { consultantUserId, consulteeUserId: userId });
     }
     for (const s of subscriptions) {
-      const consultantUserId = s.subscriptionPlan.consultantProfile?.user?.id;
+      const consultantUserId = s.subscriptionPlan?.consultantProfile?.user?.id;
       if (!consultantUserId) continue;
       const channelId = getDmChannelId(consultantUserId, userId);
       pairMap.set(channelId, { consultantUserId, consulteeUserId: userId });
