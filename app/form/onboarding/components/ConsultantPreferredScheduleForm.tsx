@@ -8,15 +8,12 @@ import { PreferredSchedule } from "@/schemas/user";
 import {
   DAYS_OF_WEEK,
   type DayOfWeek,
-  convertTimezoneToUtc,
   convertUtcToTimezone,
   extractTimeFromUtcSlot,
   formatDayDisplay,
   getDaysInMonth,
   getFirstDayOfMonth,
   getLocalDateString,
-  getNextDay,
-  isOvernight,
   sortSlotsByTime,
 } from "@/utils/dateTimeUtils";
 import {
@@ -24,15 +21,16 @@ import {
   PreferredScheduleFormSchema,
 } from "@/utils/onboarding";
 import { validateTimeSlot } from "@/utils/timeSlotValidation";
-import {
-  dateToMinuteUtc,
-  minuteUtcToDate,
-} from "@/utils/slotAllocation/slotTimeUtils";
+import { minuteUtcToDate } from "@/utils/slotAllocation/slotTimeUtils";
 import {
   SlotValidationFeedback,
   useSlotValidationFeedback,
 } from "@/components/schedule/SlotValidationFeedback";
 import type { SlotType, SlotsType } from "@/utils/schedule/types";
+import {
+  buildCustomSlotsForSave,
+  buildWeeklySlotsForSave,
+} from "@/utils/schedule/formatting";
 import { useToast } from "@/hooks/use-toast";
 import { zodResolver } from "@hookform/resolvers/zod";
 import React, { useCallback, useEffect, useState } from "react";
@@ -44,21 +42,6 @@ interface Props {
   initialData: Partial<OnboardingFormData>;
 }
 
-interface WeeklySlot {
-  startDay: DayOfWeek;
-  endDay: DayOfWeek;
-  startTimeUtc: number;
-  endTimeUtc: number;
-}
-
-interface CustomSlot {
-  startsAt: string;
-  endsAt: string;
-}
-
-const isValidSlot = (slot: SlotType): slot is SlotType & { isValid: true } => {
-  return Boolean(slot.startTime && slot.endTime && slot.isValid);
-};
 
 const ConsultantPreferredScheduleForm: React.FC<Props> = ({
   onNext,
@@ -161,168 +144,13 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
   // Format weekly slots for API
   useEffect(() => {
     if (!timezone) return;
-
-    const sortedWeeklySlots: SlotsType = {};
-    Object.entries(weeklySlots).forEach(([day, slots]) => {
-      sortedWeeklySlots[day] = sortSlotsByTime(slots);
-    });
-
-    const formattedWeeklySlots = Object.entries(sortedWeeklySlots).flatMap(
-      ([day, slots]) => {
-        return slots.filter(isValidSlot).flatMap((slot): WeeklySlot[] => {
-          const baseDate = "1970-01-01";
-          const nextDate = "1970-01-02";
-          const overnight = isOvernight(slot.startTime, slot.endTime);
-
-          const startUTC = convertTimezoneToUtc(
-            slot.startTime,
-            baseDate,
-            timezone,
-          );
-          const endUTC = convertTimezoneToUtc(
-            slot.endTime,
-            overnight ? nextDate : baseDate,
-            timezone,
-          );
-
-          if (!startUTC || !endUTC) {
-            return [];
-          }
-
-          const startMinutes = dateToMinuteUtc(new Date(startUTC));
-          const endMinutes = dateToMinuteUtc(new Date(endUTC));
-
-          if (overnight) {
-            // "00:00" end means "until end of day" — represent as 23:59 (1439)
-            // to avoid endTimeUtc=0 on the same startDay (rejected by API for UTC users)
-            if (slot.endTime === "00:00") {
-              return [
-                {
-                  startDay: day.toUpperCase() as DayOfWeek,
-                  endDay: day.toUpperCase() as DayOfWeek,
-                  startTimeUtc: startMinutes,
-                  endTimeUtc: 1439,
-                },
-              ];
-            }
-
-            const midnightUTC = convertTimezoneToUtc(
-              "00:00",
-              nextDate,
-              timezone,
-            );
-            if (!midnightUTC) return [];
-
-            const midnightMinutes = dateToMinuteUtc(new Date(midnightUTC));
-            // Just before midnight = 23:59 = 1439
-            const justBeforeMidnightMinutes = 1439;
-
-            const startDayVal = day.toUpperCase() as DayOfWeek;
-            const endDayVal = getNextDay(startDayVal);
-
-            return [
-              {
-                startDay: startDayVal,
-                endDay: startDayVal,
-                startTimeUtc: startMinutes,
-                endTimeUtc: justBeforeMidnightMinutes,
-              },
-              {
-                startDay: endDayVal,
-                endDay: endDayVal,
-                startTimeUtc: midnightMinutes,
-                endTimeUtc: endMinutes,
-              },
-            ];
-          }
-
-          return [
-            {
-              startDay: day.toUpperCase() as DayOfWeek,
-              endDay: day.toUpperCase() as DayOfWeek,
-              startTimeUtc: startMinutes,
-              endTimeUtc: endMinutes,
-            },
-          ];
-        });
-      },
-    );
-    setValue("weeklySlots", formattedWeeklySlots);
+    setValue("weeklySlots", buildWeeklySlotsForSave(weeklySlots, timezone));
   }, [weeklySlots, setValue, timezone]);
 
   // Format custom slots for API
   useEffect(() => {
     if (!timezone) return;
-
-    const sortedCustomSlots: SlotsType = {};
-    Object.entries(customSlots).forEach(([dateString, slots]) => {
-      sortedCustomSlots[dateString] = sortSlotsByTime(slots);
-    });
-
-    const formattedCustomSlots = Object.entries(sortedCustomSlots).flatMap(
-      ([dateString, slots]) => {
-        return slots.filter(isValidSlot).flatMap((slot): CustomSlot[] => {
-          const nextDate = new Date(dateString);
-          nextDate.setDate(nextDate.getDate() + 1);
-          const nextDateStr = getLocalDateString(nextDate);
-          const overnight = isOvernight(slot.startTime, slot.endTime);
-
-          const startUTC = convertTimezoneToUtc(
-            slot.startTime,
-            dateString,
-            timezone,
-          );
-          const endUTC = convertTimezoneToUtc(
-            slot.endTime,
-            overnight ? nextDateStr : dateString,
-            timezone,
-          );
-
-          if (!startUTC || !endUTC) return [];
-
-          if (overnight) {
-            if (slot.endTime === "00:00") {
-              return [
-                {
-                  startsAt: startUTC,
-                  endsAt: endUTC,
-                },
-              ];
-            }
-
-            const midnightUTC = convertTimezoneToUtc(
-              "00:00",
-              nextDateStr,
-              timezone,
-            );
-            if (!midnightUTC) return [];
-
-            const justBeforeMidnightUTC = new Date(
-              new Date(midnightUTC).getTime() - 1000,
-            );
-
-            return [
-              {
-                startsAt: startUTC,
-                endsAt: justBeforeMidnightUTC.toISOString(),
-              },
-              {
-                startsAt: midnightUTC,
-                endsAt: endUTC,
-              },
-            ];
-          }
-
-          return [
-            {
-              startsAt: startUTC,
-              endsAt: endUTC,
-            },
-          ];
-        });
-      },
-    );
-    setValue("customSlots", formattedCustomSlots);
+    setValue("customSlots", buildCustomSlotsForSave(customSlots, timezone));
   }, [customSlots, setValue, timezone]);
 
   const handleAddSlot = useCallback(
