@@ -17,6 +17,7 @@ import {
 import { SlotCalculationService } from "./SlotCalculationService";
 import { SubscriptionValidationService } from "../subscriptionValidation";
 import { buildOccupiedAppointmentFilter } from "./occupancyPolicy";
+import { DAY_OF_WEEK_TO_INDEX } from "./slotTimeUtils";
 
 /**
  * Service for validating slot allocations
@@ -296,19 +297,6 @@ export class SlotValidationService {
   }
 
   /**
-   * Map DayOfWeek enum string to JS getUTCDay() index (Sunday=0 ... Saturday=6)
-   */
-  private static readonly dayOfWeekToIndex: Record<string, number> = {
-    SUNDAY: 0,
-    MONDAY: 1,
-    TUESDAY: 2,
-    WEDNESDAY: 3,
-    THURSDAY: 4,
-    FRIDAY: 5,
-    SATURDAY: 6,
-  };
-
-  /**
    * UNIVERSAL VALIDATOR: Ensure slots match consultant's schedule
    *
    * FIX Issue #6: Now uses Int (startTimeUtc/endTimeUtc) directly instead of
@@ -349,7 +337,7 @@ export class SlotValidationService {
         const matchesAvailability = consultant.slotsOfAvailabilityWeekly.some(
           (availSlot) => {
             const availDay =
-              SlotValidationService.dayOfWeekToIndex[availSlot.startDay];
+              DAY_OF_WEEK_TO_INDEX[availSlot.startDay];
             if (availDay === undefined) return false;
 
             // Direct Int comparison — no DateTime parsing needed

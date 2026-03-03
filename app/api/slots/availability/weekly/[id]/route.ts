@@ -68,6 +68,20 @@ export async function PUT(
     const startTimeUtc: number = body.startTimeUtc;
     const endTimeUtc: number = body.endTimeUtc;
 
+    if (
+      !Number.isInteger(startTimeUtc) ||
+      !Number.isInteger(endTimeUtc) ||
+      startTimeUtc < 0 ||
+      startTimeUtc > 1439 ||
+      endTimeUtc < 0 ||
+      endTimeUtc > 1439
+    ) {
+      return NextResponse.json(
+        { error: "Invalid time format: must be integer 0-1439 (minutes since midnight UTC)" },
+        { status: 400 },
+      );
+    }
+
     if (startTimeUtc >= endTimeUtc) {
       return NextResponse.json(
         { error: "Start time must be before end time" },
@@ -180,6 +194,20 @@ export async function PATCH(
 
     const startTimeUtc: number = body.startTimeUtc ?? currentSlot.startTimeUtc;
     const endTimeUtc: number = body.endTimeUtc ?? currentSlot.endTimeUtc;
+
+    if (
+      (body.startTimeUtc !== undefined && !Number.isInteger(body.startTimeUtc)) ||
+      (body.endTimeUtc !== undefined && !Number.isInteger(body.endTimeUtc)) ||
+      startTimeUtc < 0 ||
+      startTimeUtc > 1439 ||
+      endTimeUtc < 0 ||
+      endTimeUtc > 1439
+    ) {
+      return NextResponse.json(
+        { error: "Invalid time format: must be integer 0-1439 (minutes since midnight UTC)" },
+        { status: 400 },
+      );
+    }
 
     if (startTimeUtc >= endTimeUtc) {
       return NextResponse.json(

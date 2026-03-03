@@ -30,6 +30,7 @@ import {
   lockAutoAllocate,
   unlockAutoAllocate,
 } from "@/utils/appointmentlock";
+import { DAY_OF_WEEK_TO_INDEX } from "./slotTimeUtils";
 
 type AppointmentWithSlots = Appointment & {
   slotsOfAppointment: SlotOfAppointment[];
@@ -616,19 +617,6 @@ export class SlotAllocationService {
   }
 
   /**
-   * Map DayOfWeek enum string to JS getUTCDay() index (Sunday=0 ... Saturday=6)
-   */
-  private static readonly dayOfWeekToIndex: Record<string, number> = {
-    SUNDAY: 0,
-    MONDAY: 1,
-    TUESDAY: 2,
-    WEDNESDAY: 3,
-    THURSDAY: 4,
-    FRIDAY: 5,
-    SATURDAY: 6,
-  };
-
-  /**
    * Check if a 30-minute candidate slot falls within the consultant's availability.
    * Replaces the pre-computed availableSlotsSet to eliminate the 8-week cap.
    *
@@ -645,7 +633,7 @@ export class SlotAllocationService {
         candidate.getUTCHours() * 60 + candidate.getUTCMinutes();
 
       return consultant.slotsOfAvailabilityWeekly.some((slot) => {
-        const availDay = this.dayOfWeekToIndex[slot.startDay];
+        const availDay = DAY_OF_WEEK_TO_INDEX[slot.startDay];
         if (availDay === undefined) return false;
 
         // Must match day of week (UTC)
@@ -739,16 +727,27 @@ export class SlotAllocationService {
     const now = new Date();
     const selectedSlots: Date[] = [];
 
+    // Pre-sort availability slots once — reused by both consultation/webinar and subscription/class paths
+    const sortedWeekly =
+      consultant.scheduleType === ScheduleType.WEEKLY
+        ? [...consultant.slotsOfAvailabilityWeekly].sort(
+            (a, b) => a.startTimeUtc - b.startTimeUtc,
+          )
+        : [];
+    const sortedCustom =
+      consultant.scheduleType === ScheduleType.CUSTOM
+        ? [...consultant.slotsOfAvailabilityCustom].sort(
+            (a, b) =>
+              new Date(a.startsAt).getTime() -
+              new Date(b.startsAt).getTime(),
+          )
+        : [];
+
     // For consultations/webinars: find one consecutive block, searching multiple weeks
     if (eventType === "consultation" || eventType === "webinar") {
       const maxWeeksToSearch = eventType === "consultation" ? 8 : 4;
 
       if (consultant.scheduleType === ScheduleType.WEEKLY) {
-        // Sort weekly slots by startTimeUtc to prioritize earlier times
-        const sortedWeekly = [...consultant.slotsOfAvailabilityWeekly].sort(
-          (a, b) => a.startTimeUtc - b.startTimeUtc,
-        );
-
         for (let week = 0; week < maxWeeksToSearch; week++) {
           for (const slot of sortedWeekly) {
             const baseStart = this.getNextOccurrenceWeekly(
@@ -792,13 +791,7 @@ export class SlotAllocationService {
           }
         }
       } else {
-        // CUSTOM schedule: sort and iterate all available slots directly
-        const sortedCustom = [...consultant.slotsOfAvailabilityCustom].sort(
-          (a, b) =>
-            new Date(a.startsAt).getTime() -
-            new Date(b.startsAt).getTime(),
-        );
-
+        // CUSTOM schedule: iterate pre-sorted slots
         for (const slot of sortedCustom) {
           const slotStart = new Date(slot.startsAt);
 
@@ -862,22 +855,6 @@ export class SlotAllocationService {
 
     let currentWeek = SlotCalculationService.startOfWeekSunday(startDate);
     const totalWeeks = SlotCalculationService.countWeeks(startDate, endDate);
-
-    // Sort slots for subscriptions/classes
-    const sortedWeekly =
-      consultant.scheduleType === ScheduleType.WEEKLY
-        ? [...consultant.slotsOfAvailabilityWeekly].sort(
-            (a, b) => a.startTimeUtc - b.startTimeUtc,
-          )
-        : [];
-    const sortedCustom =
-      consultant.scheduleType === ScheduleType.CUSTOM
-        ? [...consultant.slotsOfAvailabilityCustom].sort(
-            (a, b) =>
-              new Date(a.startsAt).getTime() -
-              new Date(b.startsAt).getTime(),
-          )
-        : [];
 
     for (
       let week = 0;
@@ -999,7 +976,7 @@ export class SlotAllocationService {
     startTimeUtc: number,
   ): Date {
     const now = new Date();
-    const targetDay = this.dayOfWeekToIndex[startDay];
+    const targetDay = DAY_OF_WEEK_TO_INDEX[startDay];
     if (targetDay === undefined) {
       throw new Error(`Invalid day of week: ${startDay}`);
     }
@@ -1039,7 +1016,7 @@ export class SlotAllocationService {
     startTimeUtc: number,
     targetDay: Date,
   ): Date | null {
-    const slotDayOfWeek = this.dayOfWeekToIndex[startDay];
+    const slotDayOfWeek = DAY_OF_WEEK_TO_INDEX[startDay];
     if (slotDayOfWeek === undefined) return null;
 
     const targetDayOfWeek = targetDay.getUTCDay();

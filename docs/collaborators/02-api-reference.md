@@ -306,9 +306,10 @@ Get a collaborator's availability for a specific date. Used by the host's schedu
     "date": "2026-03-15",
     "weeklySlots": [
       {
-        "dayOfWeekForStartsAt": 6,
-        "startsAt": "2026-02-10T09:00:00Z",
-        "endsAt": "2026-02-10T17:00:00Z"
+        "startDay": "MONDAY",
+        "startTimeUtc": 540,
+        "endDay": "MONDAY",
+        "endTimeUtc": 1020
       }
     ],
     "customSlots": [],

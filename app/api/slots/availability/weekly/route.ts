@@ -109,6 +109,8 @@ export async function POST(req: NextRequest) {
     if (
       typeof startTimeUtc !== "number" ||
       typeof endTimeUtc !== "number" ||
+      !Number.isInteger(startTimeUtc) ||
+      !Number.isInteger(endTimeUtc) ||
       startTimeUtc < 0 ||
       startTimeUtc > 1439 ||
       endTimeUtc < 0 ||

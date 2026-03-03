@@ -47,6 +47,22 @@ export function minuteUtcToDate(minuteUtc: number, referenceDate: Date): Date {
 }
 
 /**
+ * Map DayOfWeek enum string to JS getUTCDay() index (Sunday=0 ... Saturday=6)
+ *
+ * Shared constant used by SlotAllocationService and SlotValidationService
+ * to convert Prisma DayOfWeek enum values to numeric day indices.
+ */
+export const DAY_OF_WEEK_TO_INDEX: Record<string, number> = {
+  SUNDAY: 0,
+  MONDAY: 1,
+  TUESDAY: 2,
+  WEDNESDAY: 3,
+  THURSDAY: 4,
+  FRIDAY: 5,
+  SATURDAY: 6,
+};
+
+/**
  * Extract minutes-since-midnight from a Date object (UTC)
  * Useful when converting from Date-based slot representations.
  *
