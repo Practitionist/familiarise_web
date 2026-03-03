@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "lib/prisma";
 import { getSession } from "@/lib/auth-server";
+import { getDmChannelId } from "@/lib/stream-utils";
 export type AppointmentSearchResult = {
   id: string;
   type: "consultation" | "subscription" | "webinar" | "class";
@@ -97,11 +98,19 @@ export async function GET(request: NextRequest) {
               include: {
                 user: {
                   select: {
+                    id: true,
                     name: true,
                     image: true,
                   },
                 },
               },
+            },
+          },
+        },
+        requestedBy: {
+          include: {
+            user: {
+              select: { id: true },
             },
           },
         },
@@ -120,7 +129,10 @@ export async function GET(request: NextRequest) {
         consultantImage:
           consultation.consultationPlan.consultantProfile.user.image ||
           undefined,
-        channelId: `consultation-${consultation.id}`,
+        channelId: getDmChannelId(
+          consultation.consultationPlan.consultantProfile.user.id,
+          consultation.requestedBy.user.id,
+        ),
       });
     }
 
@@ -191,11 +203,19 @@ export async function GET(request: NextRequest) {
               include: {
                 user: {
                   select: {
+                    id: true,
                     name: true,
                     image: true,
                   },
                 },
               },
+            },
+          },
+        },
+        requestedBy: {
+          include: {
+            user: {
+              select: { id: true },
             },
           },
         },
@@ -214,7 +234,10 @@ export async function GET(request: NextRequest) {
         consultantImage:
           subscription.subscriptionPlan.consultantProfile.user.image ||
           undefined,
-        channelId: `subscription-${subscription.id}`,
+        channelId: getDmChannelId(
+          subscription.subscriptionPlan.consultantProfile.user.id,
+          subscription.requestedBy.user.id,
+        ),
       });
     }
 

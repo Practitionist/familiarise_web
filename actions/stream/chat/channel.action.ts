@@ -6,6 +6,7 @@ import { getStreamChatClient } from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
 import { markChannelExists } from "@/lib/stream-cache";
 import { upsertUsersToStream } from "./user.action";
+import { getDmChannelId } from "@/lib/stream-utils";
 
 // Input validation schemas
 const channelTypeSchema = z.enum(["messaging", "team"]);
@@ -276,10 +277,13 @@ export async function createConsultationChannel(consultationId: string) {
 
   return createChannel({
     channelType: "messaging",
-    channelId: `consultation-${consultationId}`,
+    channelId: getDmChannelId(consultantId, consulteeId),
     members: [consultantId, consulteeId],
     createdById: consultantId,
-    additionalData: { consultation_id: consultationId },
+    additionalData: {
+      dm_consultant_user_id: consultantId,
+      dm_consultee_user_id: consulteeId,
+    },
   });
 }
 
@@ -320,10 +324,13 @@ export async function createSubscriptionChannel(subscriptionId: string) {
 
   return createChannel({
     channelType: "messaging",
-    channelId: `subscription-${subscriptionId}`,
+    channelId: getDmChannelId(consultantId, consulteeId),
     members: [consultantId, consulteeId],
     createdById: consultantId,
-    additionalData: { subscription_id: subscriptionId },
+    additionalData: {
+      dm_consultant_user_id: consultantId,
+      dm_consultee_user_id: consulteeId,
+    },
   });
 }
 
@@ -652,7 +659,8 @@ export async function addMemberToChannel(channelId: string, userId: string) {
   const channelType =
     channelId.startsWith("consultation-") ||
     channelId.startsWith("subscription-") ||
-    channelId.startsWith("collab-")
+    channelId.startsWith("collab-") ||
+    channelId.startsWith("dm-")
       ? "messaging"
       : "team";
 

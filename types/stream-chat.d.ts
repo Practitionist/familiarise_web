@@ -41,6 +41,9 @@ declare module "stream-chat" {
     // Channel metadata
     title?: string;
     description?: string;
+    // DM pair channel linking
+    dm_consultant_user_id?: string;
+    dm_consultee_user_id?: string;
   }
 
   /**
