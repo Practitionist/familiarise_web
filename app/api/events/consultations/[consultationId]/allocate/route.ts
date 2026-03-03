@@ -73,6 +73,9 @@ export async function PATCH(
 
       const duration = Date.now() - startTime;
       if (!result.success) {
+        const isValidationError =
+          result.error?.startsWith("Validation failed:") ||
+          result.error?.startsWith("Invalid slot count:");
         console.error(
           `[Consultation Allocation] Failed after ${duration}ms: ${result.error}`,
         );
@@ -86,7 +89,7 @@ export async function PATCH(
               duration,
             },
           },
-          { status: 500 },
+          { status: isValidationError ? 400 : 500 },
         );
       }
 

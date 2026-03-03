@@ -164,13 +164,16 @@ const createConsultationAppointment = (
   isPastAppointment: boolean,
   slotStartTimeInUTC: Date,
   slotEndTimeInUTC: Date,
+  consultantUserId?: string,
 ): Prisma.AppointmentCreateInput => {
   return {
     appointmentType: AppointmentsType.CONSULTATION,
     slotsOfAppointment: {
       create: {
         user: {
-          connect: [{ id: consultee.id }],
+          connect: consultantUserId
+            ? [{ id: consultantUserId }, { id: consultee.id }]
+            : [{ id: consultee.id }],
         },
         startsAt: slotStartTimeInUTC,
         endsAt: slotEndTimeInUTC,
@@ -216,6 +219,7 @@ const createSubscriptionAppointment = (
   startDate: Date,
   endDate: Date,
   numSlots: number,
+  consultantUserId?: string,
 ): Prisma.AppointmentCreateInput => {
   // Select a random subscription plan
   const selectedPlan = faker.helpers.arrayElement(subscriptionPlans);
@@ -330,7 +334,9 @@ const createSubscriptionAppointment = (
 
     slots.push({
       user: {
-        connect: [{ id: consultee.id }],
+        connect: consultantUserId
+          ? [{ id: consultantUserId }, { id: consultee.id }]
+          : [{ id: consultee.id }],
       },
       startsAt: slotStart,
       endsAt: slotEnd,
@@ -383,6 +389,7 @@ const createWebinarAppointment = async (
   isPastAppointment: boolean,
   slotStartTimeInUTC: Date,
   slotEndTimeInUTC: Date,
+  consultantUserId?: string,
 ): Promise<Prisma.AppointmentCreateInput> => {
   // Limit waitlist size to prevent transaction timeout
   const waitlistSize = Math.min(faker.number.int({ min: 0, max: 3 }), 3);
@@ -403,6 +410,7 @@ const createWebinarAppointment = async (
       create: {
         user: {
           connect: [
+            ...(consultantUserId ? [{ id: consultantUserId }] : []),
             { id: consultee.id },
             ...additionalParticipants.map((c) => ({ id: c.id })),
           ],
@@ -453,6 +461,7 @@ const createClassAppointment = async (
   startDate: Date,
   endDate: Date,
   numSlots: number,
+  consultantUserId?: string,
 ): Promise<Prisma.AppointmentCreateInput> => {
   // Limit slots and waitlist to prevent transaction timeout
   const limitedSlots = Math.min(numSlots, 4);
@@ -486,6 +495,7 @@ const createClassAppointment = async (
         return {
           user: {
             connect: [
+              ...(consultantUserId ? [{ id: consultantUserId }] : []),
               { id: consultee.id },
               ...additionalParticipants.map((c) => ({ id: c.id })),
             ],
@@ -548,6 +558,7 @@ async function createAppointmentBatch(
   weeklySlots: SlotOfAvailabilityWeekly[],
   startIndex: number,
   batchSize: number,
+  consultantUserMap: Record<string, string>,
 ): Promise<number> {
   let successCount = 0;
 
@@ -660,6 +671,8 @@ async function createAppointmentBatch(
       // Prepare appointment data outside transaction
       let appointmentData: Prisma.AppointmentCreateInput;
 
+      const consultantUserId = consultantUserMap[slotConsultantId];
+
       switch (appointmentType) {
         case AppointmentsType.CONSULTATION:
           appointmentData = createConsultationAppointment(
@@ -669,6 +682,7 @@ async function createAppointmentBatch(
             isPastAppointment,
             actualStartTime,
             actualEndTime,
+            consultantUserId,
           );
           break;
 
@@ -682,6 +696,7 @@ async function createAppointmentBatch(
             startDate,
             endDate,
             numSlots,
+            consultantUserId,
           );
           break;
 
@@ -693,6 +708,7 @@ async function createAppointmentBatch(
             isPastAppointment,
             actualStartTime,
             actualEndTime,
+            consultantUserId,
           );
           break;
 
@@ -705,6 +721,7 @@ async function createAppointmentBatch(
             startDate,
             endDate,
             numSlots,
+            consultantUserId,
           );
           break;
       }
@@ -750,6 +767,17 @@ export async function createAppointments(consultees: UserWithProfiles[]) {
   const webinarPlans = await prisma.webinarPlan.findMany();
   const classPlans = await prisma.classPlan.findMany();
 
+  // Build a map of consultantProfileId -> consultantUserId so we can connect
+  // the consultant user to every SlotOfAppointment. Without this, the
+  // validateNoConflicts query (which filters by user.some.id = consultantUserId)
+  // cannot detect conflicts against seed-generated appointments.
+  const consultantProfiles = await prisma.consultantProfile.findMany({
+    select: { id: true, userId: true },
+  });
+  const consultantUserMap: Record<string, string> = Object.fromEntries(
+    consultantProfiles.map((p) => [p.id, p.userId]),
+  );
+
   const allSlots: SlotData[] = [
     ...weeklySlots.map((slot) => ({ type: "weekly" as const, slot })),
     ...customSlots.map((slot) => ({ type: "custom" as const, slot })),
@@ -776,6 +804,7 @@ export async function createAppointments(consultees: UserWithProfiles[]) {
       weeklySlots,
       batchStart,
       BATCH_SIZE,
+      consultantUserMap,
     );
 
     totalCreated += batchCount;

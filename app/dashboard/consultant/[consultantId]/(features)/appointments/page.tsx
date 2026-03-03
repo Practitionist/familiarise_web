@@ -32,7 +32,35 @@ export default function AppointmentsPage({
     },
   });
 
-  if (isLoading || trialsLoading) {
+  // Fetch class events for this consultant (to show unscheduled classes in appointments page)
+  const { data: classEventsData, isLoading: classesLoading } = useQuery({
+    queryKey: ["consultant-classes", consultantId],
+    queryFn: async () => {
+      const res = await fetch(
+        `/api/events/classes?consultantProfileId=${consultantId}`,
+      );
+      if (!res.ok) throw new Error("Failed to fetch classes");
+      const { data } = await res.json();
+      return data;
+    },
+  });
+
+  // Fetch webinar events for this consultant; filter to those with no appointment yet
+  const { data: webinarEventsData, isLoading: webinarsLoading } = useQuery({
+    queryKey: ["consultant-webinars-unscheduled", consultantId],
+    queryFn: async () => {
+      const res = await fetch(
+        `/api/events/webinars?consultantProfileId=${consultantId}`,
+      );
+      if (!res.ok) throw new Error("Failed to fetch webinars");
+      const { data } = await res.json();
+      return (data ?? []).filter(
+        (w: { appointment: unknown }) => !w.appointment,
+      );
+    },
+  });
+
+  if (isLoading || trialsLoading || classesLoading || webinarsLoading) {
     return <PageSkeleton />;
   }
 
@@ -65,6 +93,8 @@ export default function AppointmentsPage({
         badgeStyles={BADGE_STYLES}
         scheduledTrials={trialsData || []}
         consultantId={consultantId}
+        unscheduledClasses={classEventsData || []}
+        unscheduledWebinars={webinarEventsData || []}
       />
     </DashboardErrorBoundary>
   );

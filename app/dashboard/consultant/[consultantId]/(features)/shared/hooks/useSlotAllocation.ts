@@ -419,11 +419,18 @@ function getSlotLimits(
       const sessionSlots = Math.ceil(
         (options.sessionDurationInHours || 1) / 0.5,
       );
+      // Use maxTotalCalls (from classPlan.totalSessions) as authoritative when provided,
+      // otherwise fall back to period-based calculation (same pattern as subscription).
+      const effectiveTotalSessions =
+        options.maxTotalCalls && options.maxTotalCalls > 0
+          ? options.maxTotalCalls
+          : Math.ceil(requiredSlots / sessionSlots);
+      const effectiveMaxSlots = effectiveTotalSessions * sessionSlots;
       return {
-        minSlots: requiredSlots,
-        maxSlots: requiredSlots,
+        minSlots: effectiveMaxSlots,
+        maxSlots: effectiveMaxSlots,
         slotsPerSession: sessionSlots,
-        totalSessions: Math.ceil(requiredSlots / sessionSlots),
+        totalSessions: effectiveTotalSessions,
       };
     }
 
@@ -1237,9 +1244,12 @@ export function useEventSlotAllocation(
 
   // Required slots calculation
   const requiredSlots = useMemo(() => {
-    // For subscriptions, maxTotalCalls is set to the plan's totalSessions (authoritative).
+    // For subscriptions and classes, maxTotalCalls is set to the plan's totalSessions (authoritative).
     // Derive requiredSlots from it to stay consistent with backend validation.
-    if (eventType === "subscription" && options.maxTotalCalls) {
+    if (
+      (eventType === "subscription" || eventType === "class") &&
+      options.maxTotalCalls
+    ) {
       const slotsPerSession = Math.ceil(
         (options.sessionDurationInHours || 1) / 0.5,
       );

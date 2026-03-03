@@ -448,6 +448,44 @@ export async function validateSlotAvailability(
     throw new Error(timingError);
   }
 
+  // 0b. Validate slot falls within the specified availability window
+  if (data.slotOfAvailabilityWeeklyId) {
+    const avail = await tx.slotOfAvailabilityWeekly.findUnique({
+      where: { id: data.slotOfAvailabilityWeeklyId },
+    });
+    if (!avail) {
+      throw new Error("Availability slot not found");
+    }
+    // Map JS getUTCDay() (0=Sun,1=Mon,...,6=Sat) to DayOfWeek enum
+    const jsDayToEnum: Record<number, string> = {
+      0: "SUNDAY", 1: "MONDAY", 2: "TUESDAY", 3: "WEDNESDAY",
+      4: "THURSDAY", 5: "FRIDAY", 6: "SATURDAY",
+    };
+    const slotDay = jsDayToEnum[slotStart.getUTCDay()];
+    const slotMinutes = slotStart.getUTCHours() * 60 + slotStart.getUTCMinutes();
+    if (
+      slotDay !== avail.startDay ||
+      slotMinutes < avail.startTimeUtc ||
+      slotMinutes >= avail.endTimeUtc
+    ) {
+      throw new Error(
+        "Selected slot does not fall within the specified availability window",
+      );
+    }
+  } else if (data.slotOfAvailabilityCustomId) {
+    const avail = await tx.slotOfAvailabilityCustom.findUnique({
+      where: { id: data.slotOfAvailabilityCustomId },
+    });
+    if (!avail) {
+      throw new Error("Custom availability slot not found");
+    }
+    if (slotStart < avail.startsAt || slotEnd > avail.endsAt) {
+      throw new Error(
+        "Selected slot does not fall within the specified availability window",
+      );
+    }
+  }
+
   // 1. Check for confirmed overlapping appointments FOR THIS CONSULTANT ONLY
   // FIX Bug #05: Use canonical overlap predicate that catches all 4 overlap shapes
   // (partial start, partial end, full containment, and exact match)
@@ -1188,20 +1226,10 @@ export async function handleWebinarCheckout(
   ]);
 
   // Check if max participants reached
+  // NOTE: Waitlist creation happens OUTSIDE the transaction in handleCheckout's catch block,
+  // because creating it here (inside the transaction) would be rolled back on throw.
   if (currentParticipants >= plan.maxParticipants) {
-    if (skipPayment) {
-      // Add to waitlist
-      await tx.waitlist.create({
-        data: {
-          userId,
-          webinarId: webinar.id,
-        },
-      });
-
-      throw new Error("Webinar is full. Added to waitlist.");
-    } else {
-      throw new Error("Webinar is full");
-    }
+    throw new Error("Webinar is full");
   }
 
   // FIX Issue #5: Validate webinar is scheduled before allowing booking
@@ -1789,6 +1817,34 @@ export async function handleCheckout(
         );
       }
 
+      // Waitlist creation for full webinar — must happen OUTSIDE the transaction
+      // (transaction was rolled back above, so any tx.waitlist.create would be lost)
+      // NOTE: The capacity check in revalidateInsideLock also throws "Webinar is full",
+      // but that lands in the outer catch(error) block, not here. Both are handled.
+      if (
+        dbError instanceof Error &&
+        dbError.message === "Webinar is full" &&
+        validatedData.appointmentType === "WEBINAR" &&
+        validatedData.eventId
+      ) {
+        try {
+          await prisma.waitlist.create({
+            data: { userId, webinarId: validatedData.eventId },
+          });
+          throw new Error("Webinar is full. Added to waitlist.");
+        } catch (waitlistError) {
+          console.error("[WAITLIST CREATE ERROR]", waitlistError);
+          // Re-throw if it's our own "Added to waitlist" error
+          if (
+            waitlistError instanceof Error &&
+            waitlistError.message.includes("Added to waitlist")
+          ) {
+            throw waitlistError;
+          }
+          // Waitlist creation failed (e.g., already on waitlist) — fall through
+        }
+      }
+
       // Preserve specific error messages (duplicate registration, full capacity, etc.)
       if (dbError instanceof Error) {
         const preservedMessages = [
@@ -1798,6 +1854,8 @@ export async function handleCheckout(
           "cancelled",
           "ended",
           "not been scheduled",
+          "already have a pending or active subscription",
+          "overlapping dates",
         ];
         if (preservedMessages.some((msg) => dbError.message.includes(msg))) {
           throw dbError;
@@ -1818,6 +1876,29 @@ export async function handleCheckout(
         throw new Error(
           "Another user is currently booking this slot. Please wait a few seconds and try again.",
         );
+      }
+
+      // Waitlist creation for full webinar — handles capacity check from revalidateInsideLock
+      // (which runs OUTSIDE the inner try/catch(dbError), so errors land here)
+      if (
+        error.message === "Webinar is full" &&
+        validatedData.appointmentType === "WEBINAR" &&
+        validatedData.eventId
+      ) {
+        try {
+          await prisma.waitlist.create({
+            data: { userId, webinarId: validatedData.eventId },
+          });
+          throw new Error("Webinar is full. Added to waitlist.");
+        } catch (waitlistError) {
+          if (
+            waitlistError instanceof Error &&
+            waitlistError.message.includes("Added to waitlist")
+          ) {
+            throw waitlistError;
+          }
+          // Waitlist creation failed (e.g., already on waitlist) — rethrow original
+        }
       }
     }
     throw error;
