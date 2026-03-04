@@ -478,15 +478,30 @@ export async function syncUserEventChannels(
 
     // --- Reconciliation pass: remove user from stale channels ---
     // Query Stream for every channel this user currently belongs to.
-    // Note: limit 100 covers the vast majority of real-world cases.
-    const streamChannels = await client.queryChannels(
-      { members: { $in: [userId] } },
-      {},
-      { limit: 100 },
-    );
+    // Paginate to handle users with 100+ channel memberships.
+    const PAGE_SIZE = 100;
+    let allStreamChannels: Awaited<ReturnType<typeof client.queryChannels>> = [];
+    let offset = 0;
+    let page;
+    do {
+      page = await client.queryChannels(
+        { members: { $in: [userId] } },
+        {},
+        { limit: PAGE_SIZE, offset },
+      );
+      allStreamChannels = allStreamChannels.concat(page);
+      offset += PAGE_SIZE;
+    } while (page.length === PAGE_SIZE);
+    const streamChannels = allStreamChannels;
 
+    // Only clean up channels with managed prefixes — preserve collab, support,
+    // and manually-created channels that aren't part of the event/dm lifecycle.
+    const MANAGED_PREFIXES = ["consultation-", "subscription-", "webinar-", "class-", "trial-", "dm-"];
     const staleChannels = streamChannels.filter(
-      (ch) => ch.id && !expectedChannelIds.has(ch.id),
+      (ch) =>
+        ch.id &&
+        !expectedChannelIds.has(ch.id) &&
+        MANAGED_PREFIXES.some((prefix) => ch.id!.startsWith(prefix)),
     );
 
     let staleRemovedCount = 0;
