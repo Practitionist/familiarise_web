@@ -30,7 +30,7 @@ export async function GET(
 
     const consultantProfile = await prisma.consultantProfile.findUnique({
       where: { id: consultantId },
-      select: { scheduleType: true },
+      select: { scheduleType: true, userId: true },
     });
 
     if (!consultantProfile) {
@@ -60,7 +60,7 @@ export async function GET(
     }
 
     slots = filterSlots(slots, userDayStart, userDayEnd);
-    slots = await removeBookedSlots(slots);
+    slots = await removeBookedSlots(slots, consultantProfile.userId);
     slots = filterExpiredSlots(slots);
 
     const totalSlots = slots.length;
@@ -156,13 +156,18 @@ function filterSlots(
   });
 }
 
-async function removeBookedSlots(slots: TSlotTiming[]): Promise<TSlotTiming[]> {
+async function removeBookedSlots(slots: TSlotTiming[], consultantUserId: string): Promise<TSlotTiming[]> {
   const appointments = await prisma.appointment.findMany({
     where: {
       slotsOfAppointment: {
         some: {
           startsAt: {
             in: slots.map((s) => parseISO(s.slotStartTimeInUTC)),
+          },
+          // Scope to this consultant only — prevents Consultant A's bookings
+          // from incorrectly hiding Consultant B's availability
+          user: {
+            some: { id: consultantUserId },
           },
         },
       },

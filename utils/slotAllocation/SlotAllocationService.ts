@@ -114,7 +114,11 @@ export class SlotAllocationService {
     if (msg.includes("not found") || msg.includes("no consultant")) {
       return { errorCode: "NOT_FOUND", httpStatus: 400 };
     }
-    if (msg.includes("lock") || msg.includes("Lock")) {
+    if (
+      msg.includes("lock") ||
+      msg.includes("Lock") ||
+      msg.includes("in progress")
+    ) {
       return { errorCode: "LOCK_CONTENTION", httpStatus: 409 };
     }
     return { errorCode: "UNKNOWN_ERROR", httpStatus: 500 };
@@ -661,6 +665,10 @@ export class SlotAllocationService {
    *
    * FIX Issue #6: Now uses Int (minutes since midnight UTC) directly
    * instead of extracting hours/minutes from DateTime objects.
+   *
+   * Handles overnight (cross-midnight) availability slots where
+   * endTimeUtc <= startTimeUtc (e.g., 22:00→02:00 spanning two days).
+   * Mirrors the logic from SlotValidationService.validateMatchesSchedule().
    */
   private static isWithinAvailability(
     candidate: Date,
@@ -670,19 +678,44 @@ export class SlotAllocationService {
       const candidateDay = candidate.getUTCDay();
       const candidateMinutes =
         candidate.getUTCHours() * 60 + candidate.getUTCMinutes();
+      const candidateEndMinutes = candidateMinutes + 30;
 
       return consultant.slotsOfAvailabilityWeekly.some((slot) => {
         const availDay = DAY_OF_WEEK_TO_INDEX[slot.startDay];
         if (availDay === undefined) return false;
 
-        // Must match day of week (UTC)
-        if (candidateDay !== availDay) return false;
+        const isOvernight = slot.endTimeUtc <= slot.startTimeUtc;
 
-        // Direct Int comparison — no DateTime parsing needed
-        return (
-          candidateMinutes >= slot.startTimeUtc &&
-          candidateMinutes < slot.endTimeUtc
-        );
+        if (!isOvernight) {
+          // Normal same-day availability: candidate must be on the same day
+          // and the full 30-min slot must fit within [startTimeUtc, endTimeUtc)
+          if (candidateDay !== availDay) return false;
+          return (
+            candidateMinutes >= slot.startTimeUtc &&
+            candidateEndMinutes <= slot.endTimeUtc
+          );
+        }
+
+        // Overnight availability (e.g., Mon 22:00 → Tue 02:00):
+        // Candidate on the start day: must start at or after startTimeUtc
+        // AND the full 30-min slot must fit — either entirely before midnight,
+        // or if it overflows past midnight, the overflow must fit within endTimeUtc.
+        if (candidateDay === availDay && candidateMinutes >= slot.startTimeUtc) {
+          if (candidateEndMinutes <= 1440) {
+            // Entire 30-min slot fits before midnight
+            return true;
+          }
+          // Slot crosses midnight — verify overflow fits within next-day availability
+          const overflowMinutes = candidateEndMinutes - 1440;
+          return overflowMinutes <= slot.endTimeUtc;
+        }
+        // Candidate on the next day: full 30-min slot must end at or before endTimeUtc
+        const nextDay = (availDay + 1) % 7;
+        if (candidateDay === nextDay && candidateEndMinutes <= slot.endTimeUtc) {
+          return true;
+        }
+
+        return false;
       });
     } else {
       // CUSTOM schedule: candidate must fall within a specific date range
