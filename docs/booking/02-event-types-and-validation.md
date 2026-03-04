@@ -233,8 +233,9 @@ This catches partial overlaps that exact-match would miss.
 
 **Schedule matching** (weekly availability):
 
-- Uses `dayOfWeekForStartsAt` enum as the source of truth for day-of-week
-- Compares time-of-day only (hours:minutes), not full DateTime
+- Uses `startDay`/`endDay` DayOfWeek enum as the source of truth for day-of-week
+- Compares `startTimeUtc`/`endTimeUtc` Int fields (minutes since midnight UTC, 0-1439)
+- Handles overnight (cross-midnight) slots where `endTimeUtc <= startTimeUtc`
 - Slot must start >= availability start AND end <= availability end
 
 ### Layer 3: Database Constraints
