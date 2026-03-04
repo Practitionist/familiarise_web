@@ -292,7 +292,7 @@ export async function lockConsultationApproval(
     return await acquireLockWithRetry(key, ttl);
   } catch (error) {
     throw new Error(
-      "Another approval is in progress for this consultation. Please try again.",
+      "Lock contention: Another approval is in progress for this consultation. Please try again.",
     );
   }
 }
@@ -312,7 +312,7 @@ export async function lockSubscriptionApproval(
     return await acquireLockWithRetry(key, ttl);
   } catch (error) {
     throw new Error(
-      "Another approval is in progress for this subscription. Please try again.",
+      "Lock contention: Another approval is in progress for this subscription. Please try again.",
     );
   }
 }
@@ -726,7 +726,7 @@ export async function lockAutoAllocate(
     return await acquireLockWithRetry(key, ttl);
   } catch (error) {
     throw new Error(
-      "Another auto-allocation is in progress for this consultant. Please try again.",
+      "Lock contention: Another auto-allocation is in progress for this consultant. Please try again.",
     );
   }
 }
