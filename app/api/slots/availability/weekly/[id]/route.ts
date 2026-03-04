@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { Prisma, DayOfWeek } from "@prisma/client";
-import { minutesToTimeString } from "@/utils/slotAllocation/slotTimeUtils";
+import {
+  minutesToTimeString,
+  validateWeeklySlotTimeOrder,
+  buildWeeklyOverlapWhere,
+} from "@/utils/slotAllocation/slotTimeUtils";
+import { getSession } from "@/lib/auth-server";
 
 export async function GET(
   req: NextRequest,
@@ -39,6 +44,37 @@ export async function PUT(
 ) {
   try {
     const { id } = await params;
+
+    // Auth check
+    const session = await getSession();
+    if (!session?.user?.id) {
+      return NextResponse.json(
+        { error: "Authentication required" },
+        { status: 401 },
+      );
+    }
+
+    // Fetch existing slot for authoritative consultantProfileId and ownership
+    const currentSlot = await prisma.slotOfAvailabilityWeekly.findUnique({
+      where: { id },
+      include: { consultantProfile: { select: { userId: true } } },
+    });
+
+    if (!currentSlot) {
+      return NextResponse.json(
+        { error: "Weekly slot not found" },
+        { status: 404 },
+      );
+    }
+
+    // Ownership check
+    if (currentSlot.consultantProfile.userId !== session.user.id) {
+      return NextResponse.json(
+        { error: "Forbidden: you do not own this slot" },
+        { status: 403 },
+      );
+    }
+
     const body = await req.json();
 
     if (
@@ -69,6 +105,8 @@ export async function PUT(
     const endTimeUtc: number = body.endTimeUtc;
 
     if (
+      typeof startTimeUtc !== "number" ||
+      typeof endTimeUtc !== "number" ||
       !Number.isInteger(startTimeUtc) ||
       !Number.isInteger(endTimeUtc) ||
       startTimeUtc < 0 ||
@@ -82,34 +120,33 @@ export async function PUT(
       );
     }
 
-    if (startTimeUtc >= endTimeUtc) {
+    // Day-aware time order validation (supports overnight slots)
+    const timeError = validateWeeklySlotTimeOrder(body.startDay, body.endDay, startTimeUtc, endTimeUtc);
+    if (timeError) {
+      return NextResponse.json({ error: timeError }, { status: 400 });
+    }
+
+    // Use authoritative consultantProfileId from existing slot (FIX 9)
+    const effectiveConsultantProfileId = currentSlot.consultantProfileId;
+
+    // Reject consultant reassignment
+    if (body.consultantProfileId && body.consultantProfileId !== effectiveConsultantProfileId) {
       return NextResponse.json(
-        { error: "Start time must be before end time" },
+        { error: "Cannot reassign slot to a different consultant" },
         { status: 400 },
       );
     }
 
-    // Check for overlapping slots (Int range overlap check)
+    // Cross-midnight-aware overlap check
     const overlappingSlot = await prisma.slotOfAvailabilityWeekly.findFirst({
-      where: {
-        id: { not: id },
-        consultantProfileId: body.consultantProfileId,
-        startDay: body.startDay,
-        OR: [
-          {
-            startTimeUtc: { lte: startTimeUtc },
-            endTimeUtc: { gt: startTimeUtc },
-          },
-          {
-            startTimeUtc: { lt: endTimeUtc },
-            endTimeUtc: { gte: endTimeUtc },
-          },
-          {
-            startTimeUtc: { gte: startTimeUtc },
-            endTimeUtc: { lte: endTimeUtc },
-          },
-        ],
-      },
+      where: buildWeeklyOverlapWhere(
+        effectiveConsultantProfileId,
+        body.startDay,
+        body.endDay,
+        startTimeUtc,
+        endTimeUtc,
+        id,
+      ),
     });
 
     if (overlappingSlot) {
@@ -126,9 +163,6 @@ export async function PUT(
         endDay: body.endDay,
         startTimeUtc,
         endTimeUtc,
-        consultantProfile: body.consultantProfileId
-          ? { connect: { id: body.consultantProfileId } }
-          : undefined,
       },
       include: {
         consultantProfile: true,
@@ -159,6 +193,16 @@ export async function PATCH(
 ) {
   try {
     const { id } = await params;
+
+    // Auth check
+    const session = await getSession();
+    if (!session?.user?.id) {
+      return NextResponse.json(
+        { error: "Authentication required" },
+        { status: 401 },
+      );
+    }
+
     const body = await req.json();
 
     if (
@@ -183,6 +227,7 @@ export async function PATCH(
 
     const currentSlot = await prisma.slotOfAvailabilityWeekly.findUnique({
       where: { id: id },
+      include: { consultantProfile: { select: { userId: true } } },
     });
 
     if (!currentSlot) {
@@ -192,12 +237,28 @@ export async function PATCH(
       );
     }
 
+    // Ownership check
+    if (currentSlot.consultantProfile.userId !== session.user.id) {
+      return NextResponse.json(
+        { error: "Forbidden: you do not own this slot" },
+        { status: 403 },
+      );
+    }
+
+    // Reject consultant reassignment
+    if (body.consultantProfileId && body.consultantProfileId !== currentSlot.consultantProfileId) {
+      return NextResponse.json(
+        { error: "Cannot reassign slot to a different consultant" },
+        { status: 400 },
+      );
+    }
+
     const startTimeUtc: number = body.startTimeUtc ?? currentSlot.startTimeUtc;
     const endTimeUtc: number = body.endTimeUtc ?? currentSlot.endTimeUtc;
 
     if (
-      (body.startTimeUtc !== undefined && !Number.isInteger(body.startTimeUtc)) ||
-      (body.endTimeUtc !== undefined && !Number.isInteger(body.endTimeUtc)) ||
+      (body.startTimeUtc !== undefined && (typeof body.startTimeUtc !== "number" || !Number.isInteger(body.startTimeUtc))) ||
+      (body.endTimeUtc !== undefined && (typeof body.endTimeUtc !== "number" || !Number.isInteger(body.endTimeUtc))) ||
       startTimeUtc < 0 ||
       startTimeUtc > 1439 ||
       endTimeUtc < 0 ||
@@ -209,36 +270,25 @@ export async function PATCH(
       );
     }
 
-    if (startTimeUtc >= endTimeUtc) {
-      return NextResponse.json(
-        { error: "Start time must be before end time" },
-        { status: 400 },
-      );
+    const effectiveStartDay = body.startDay || currentSlot.startDay;
+    const effectiveEndDay = body.endDay || currentSlot.endDay;
+
+    // Day-aware time order validation (supports overnight slots)
+    const timeError = validateWeeklySlotTimeOrder(effectiveStartDay, effectiveEndDay, startTimeUtc, endTimeUtc);
+    if (timeError) {
+      return NextResponse.json({ error: timeError }, { status: 400 });
     }
 
-    // Check for overlapping slots (Int range overlap check)
+    // Cross-midnight-aware overlap check using authoritative consultantProfileId
     const overlappingSlot = await prisma.slotOfAvailabilityWeekly.findFirst({
-      where: {
-        id: { not: id },
-        consultantProfileId:
-          body.consultantProfileId || currentSlot.consultantProfileId,
-        startDay:
-          body.startDay || currentSlot.startDay,
-        OR: [
-          {
-            startTimeUtc: { lte: startTimeUtc },
-            endTimeUtc: { gt: startTimeUtc },
-          },
-          {
-            startTimeUtc: { lt: endTimeUtc },
-            endTimeUtc: { gte: endTimeUtc },
-          },
-          {
-            startTimeUtc: { gte: startTimeUtc },
-            endTimeUtc: { lte: endTimeUtc },
-          },
-        ],
-      },
+      where: buildWeeklyOverlapWhere(
+        currentSlot.consultantProfileId,
+        effectiveStartDay,
+        effectiveEndDay,
+        startTimeUtc,
+        endTimeUtc,
+        id,
+      ),
     });
 
     if (overlappingSlot) {
@@ -255,9 +305,6 @@ export async function PATCH(
         endDay: body.endDay,
         startTimeUtc,
         endTimeUtc,
-        consultantProfile: body.consultantProfileId
-          ? { connect: { id: body.consultantProfileId } }
-          : undefined,
       },
       include: {
         consultantProfile: true,
@@ -288,15 +335,33 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params;
-    // Check if there are any associated appointments
-    const associatedAppointments = await prisma.slotOfAppointment.findMany({
-      where: { id: id },
+
+    // Auth check
+    const session = await getSession();
+    if (!session?.user?.id) {
+      return NextResponse.json(
+        { error: "Authentication required" },
+        { status: 401 },
+      );
+    }
+
+    const weeklySlot = await prisma.slotOfAvailabilityWeekly.findUnique({
+      where: { id },
+      include: { consultantProfile: { select: { userId: true } } },
     });
 
-    if (associatedAppointments.length > 0) {
+    if (!weeklySlot) {
       return NextResponse.json(
-        { error: "Cannot delete weekly slot with associated appointments" },
-        { status: 400 },
+        { error: "Weekly slot not found" },
+        { status: 404 },
+      );
+    }
+
+    // Ownership check
+    if (weeklySlot.consultantProfile.userId !== session.user.id) {
+      return NextResponse.json(
+        { error: "Forbidden: you do not own this slot" },
+        { status: 403 },
       );
     }
 

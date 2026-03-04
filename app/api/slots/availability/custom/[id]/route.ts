@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
+import { getSession } from "@/lib/auth-server";
 
 export async function GET(
   req: NextRequest,
@@ -38,11 +39,49 @@ export async function PUT(
 ) {
   try {
     const { id } = await params;
+
+    // Auth check
+    const session = await getSession();
+    if (!session?.user?.id) {
+      return NextResponse.json(
+        { error: "Authentication required" },
+        { status: 401 },
+      );
+    }
+
+    // Fetch existing slot for authoritative consultantProfileId and ownership
+    const currentSlot = await prisma.slotOfAvailabilityCustom.findUnique({
+      where: { id },
+      include: { consultantProfile: { select: { userId: true } } },
+    });
+
+    if (!currentSlot) {
+      return NextResponse.json(
+        { error: "Custom slot not found" },
+        { status: 404 },
+      );
+    }
+
+    // Ownership check
+    if (currentSlot.consultantProfile.userId !== session.user.id) {
+      return NextResponse.json(
+        { error: "Forbidden: you do not own this slot" },
+        { status: 403 },
+      );
+    }
+
     const body = await req.json();
 
     if (!body.startsAt || !body.endsAt) {
       return NextResponse.json(
         { error: "Missing required fields" },
+        { status: 400 },
+      );
+    }
+
+    if (isNaN(Date.parse(body.startsAt)) || isNaN(Date.parse(body.endsAt))) {
+      return NextResponse.json(
+        { error: "Invalid date format" },
         { status: 400 },
       );
     }
@@ -57,11 +96,19 @@ export async function PUT(
       );
     }
 
-    // Check for overlapping slots
+    // Reject consultant reassignment
+    if (body.consultantProfileId && body.consultantProfileId !== currentSlot.consultantProfileId) {
+      return NextResponse.json(
+        { error: "Cannot reassign slot to a different consultant" },
+        { status: 400 },
+      );
+    }
+
+    // Check for overlapping slots using authoritative consultantProfileId
     const overlappingSlot = await prisma.slotOfAvailabilityCustom.findFirst({
       where: {
         id: { not: id },
-        consultantProfileId: body.consultantProfileId,
+        consultantProfileId: currentSlot.consultantProfileId,
         OR: [
           {
             startsAt: { lte: startTime },
@@ -91,9 +138,6 @@ export async function PUT(
       data: {
         startsAt: startTime,
         endsAt: endTime,
-        consultantProfile: body.consultantProfileId
-          ? { connect: { id: body.consultantProfileId } }
-          : undefined,
       },
       include: {
         consultantProfile: true,
@@ -124,16 +168,53 @@ export async function PATCH(
 ) {
   try {
     const { id } = await params;
+
+    // Auth check
+    const session = await getSession();
+    if (!session?.user?.id) {
+      return NextResponse.json(
+        { error: "Authentication required" },
+        { status: 401 },
+      );
+    }
+
     const body = await req.json();
 
     const currentSlot = await prisma.slotOfAvailabilityCustom.findUnique({
       where: { id: id },
+      include: { consultantProfile: { select: { userId: true } } },
     });
 
     if (!currentSlot) {
       return NextResponse.json(
         { error: "Custom slot not found" },
         { status: 404 },
+      );
+    }
+
+    // Ownership check
+    if (currentSlot.consultantProfile.userId !== session.user.id) {
+      return NextResponse.json(
+        { error: "Forbidden: you do not own this slot" },
+        { status: 403 },
+      );
+    }
+
+    // Reject consultant reassignment
+    if (body.consultantProfileId && body.consultantProfileId !== currentSlot.consultantProfileId) {
+      return NextResponse.json(
+        { error: "Cannot reassign slot to a different consultant" },
+        { status: 400 },
+      );
+    }
+
+    if (
+      (body.startsAt && isNaN(Date.parse(body.startsAt))) ||
+      (body.endsAt && isNaN(Date.parse(body.endsAt)))
+    ) {
+      return NextResponse.json(
+        { error: "Invalid date format" },
+        { status: 400 },
       );
     }
 
@@ -151,12 +232,11 @@ export async function PATCH(
       );
     }
 
-    // Check for overlapping slots
+    // Check for overlapping slots using authoritative consultantProfileId
     const overlappingSlot = await prisma.slotOfAvailabilityCustom.findFirst({
       where: {
         id: { not: id },
-        consultantProfileId:
-          body.consultantProfileId || currentSlot.consultantProfileId,
+        consultantProfileId: currentSlot.consultantProfileId,
         OR: [
           {
             startsAt: { lte: startTime },
@@ -186,9 +266,6 @@ export async function PATCH(
       data: {
         startsAt: startTime,
         endsAt: endTime,
-        consultantProfile: body.consultantProfileId
-          ? { connect: { id: body.consultantProfileId } }
-          : undefined,
       },
       include: {
         consultantProfile: true,
@@ -219,15 +296,33 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params;
-    // Check if there are any associated appointments
-    const associatedAppointments = await prisma.slotOfAppointment.findMany({
-      where: { id: id },
+
+    // Auth check
+    const session = await getSession();
+    if (!session?.user?.id) {
+      return NextResponse.json(
+        { error: "Authentication required" },
+        { status: 401 },
+      );
+    }
+
+    const customSlot = await prisma.slotOfAvailabilityCustom.findUnique({
+      where: { id },
+      include: { consultantProfile: { select: { userId: true } } },
     });
 
-    if (associatedAppointments.length > 0) {
+    if (!customSlot) {
       return NextResponse.json(
-        { error: "Cannot delete custom slot with associated appointments" },
-        { status: 400 },
+        { error: "Custom slot not found" },
+        { status: 404 },
+      );
+    }
+
+    // Ownership check
+    if (customSlot.consultantProfile.userId !== session.user.id) {
+      return NextResponse.json(
+        { error: "Forbidden: you do not own this slot" },
+        { status: 403 },
       );
     }
 

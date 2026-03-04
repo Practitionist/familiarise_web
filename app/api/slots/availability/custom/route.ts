@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { getSession } from "@/lib/auth-server";
 
 export async function GET(req: NextRequest) {
   try {
@@ -84,6 +85,15 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
+    // Auth check
+    const session = await getSession();
+    if (!session?.user?.id) {
+      return NextResponse.json(
+        { error: "Authentication required" },
+        { status: 401 },
+      );
+    }
+
     const body = await req.json();
     const { consultantProfileId, startsAt, endsAt } =
       body;
@@ -92,6 +102,18 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         { error: "Missing required fields" },
         { status: 400 },
+      );
+    }
+
+    // Ownership check
+    const consultantProfile = await prisma.consultantProfile.findUnique({
+      where: { id: consultantProfileId },
+      select: { userId: true },
+    });
+    if (!consultantProfile || consultantProfile.userId !== session.user.id) {
+      return NextResponse.json(
+        { error: "Forbidden: you do not own this consultant profile" },
+        { status: 403 },
       );
     }
 

@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { DayOfWeek } from "@prisma/client";
-import { minutesToTimeString } from "@/utils/slotAllocation/slotTimeUtils";
+import {
+  minutesToTimeString,
+  validateWeeklySlotTimeOrder,
+  buildWeeklyOverlapWhere,
+} from "@/utils/slotAllocation/slotTimeUtils";
+import { getSession } from "@/lib/auth-server";
 
 export async function GET(req: NextRequest) {
   try {
@@ -72,6 +77,15 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
+    // Auth check
+    const session = await getSession();
+    if (!session?.user?.id) {
+      return NextResponse.json(
+        { error: "Authentication required" },
+        { status: 401 },
+      );
+    }
+
     const body = await req.json();
     const {
       consultantProfileId,
@@ -93,6 +107,18 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         { error: "Missing required fields" },
         { status: 400 },
+      );
+    }
+
+    // Ownership check
+    const consultantProfile = await prisma.consultantProfile.findUnique({
+      where: { id: consultantProfileId },
+      select: { userId: true },
+    });
+    if (!consultantProfile || consultantProfile.userId !== session.user.id) {
+      return NextResponse.json(
+        { error: "Forbidden: you do not own this consultant profile" },
+        { status: 403 },
       );
     }
 
@@ -122,33 +148,21 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    if (startTimeUtc >= endTimeUtc) {
-      return NextResponse.json(
-        { error: "Start time must be before end time" },
-        { status: 400 },
-      );
+    // Day-aware time order validation (supports overnight slots)
+    const timeError = validateWeeklySlotTimeOrder(startDay, endDay, startTimeUtc, endTimeUtc);
+    if (timeError) {
+      return NextResponse.json({ error: timeError }, { status: 400 });
     }
 
-    // Check for overlapping slots (Int range overlap check)
+    // Cross-midnight-aware overlap check
     const overlappingSlot = await prisma.slotOfAvailabilityWeekly.findFirst({
-      where: {
+      where: buildWeeklyOverlapWhere(
         consultantProfileId,
         startDay,
-        OR: [
-          {
-            startTimeUtc: { lte: startTimeUtc },
-            endTimeUtc: { gt: startTimeUtc },
-          },
-          {
-            startTimeUtc: { lt: endTimeUtc },
-            endTimeUtc: { gte: endTimeUtc },
-          },
-          {
-            startTimeUtc: { gte: startTimeUtc },
-            endTimeUtc: { lte: endTimeUtc },
-          },
-        ],
-      },
+        endDay,
+        startTimeUtc,
+        endTimeUtc,
+      ),
     });
 
     if (overlappingSlot) {
