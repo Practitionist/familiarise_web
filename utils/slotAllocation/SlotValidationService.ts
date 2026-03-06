@@ -499,7 +499,8 @@ export class SlotValidationService {
     const errors: string[] = [];
 
     for (const slot of slots) {
-      if (slot < startDate || slot > endDate) {
+      const slotEnd = new Date(slot.getTime() + 30 * 60 * 1000);
+      if (slot < startDate || slotEnd > endDate) {
         errors.push(
           `[OUTSIDE_AVAILABILITY] Slot ${slot.toLocaleString()} is outside the scheduling period ` +
             `(${startDate.toLocaleDateString()} - ${endDate.toLocaleDateString()}). ` +
