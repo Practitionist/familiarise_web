@@ -232,6 +232,48 @@ export function buildWeeklyOverlapWhere(
 }
 
 /**
+ * Check whether two weekly slot records overlap in-memory.
+ * Works for both same-day and overnight slots.
+ *
+ * Each slot is described by { startDay, endDay, startTimeUtc, endTimeUtc }
+ * where times are minutes-since-midnight-UTC (0-1439).
+ *
+ * Logic: convert each slot to a set of (day, minuteStart, minuteEnd) ranges,
+ * then check for pairwise overlap.
+ */
+export function slotsOverlap(
+  a: { startDay: DayOfWeek; endDay: DayOfWeek; startTimeUtc: number; endTimeUtc: number },
+  b: { startDay: DayOfWeek; endDay: DayOfWeek; startTimeUtc: number; endTimeUtc: number },
+): boolean {
+  // Convert a slot to an array of (dayIndex, startMinute, endMinute) ranges.
+  // Same-day slots produce 1 range; overnight slots produce 2 ranges.
+  const toRanges = (s: typeof a): Array<[number, number, number]> => {
+    const startIdx = DAY_ORDER.indexOf(s.startDay);
+    if (s.startDay === s.endDay) {
+      return [[startIdx, s.startTimeUtc, s.endTimeUtc]];
+    }
+    // Overnight: startDay startTimeUtc→1440, endDay 0→endTimeUtc
+    const endIdx = DAY_ORDER.indexOf(s.endDay);
+    return [
+      [startIdx, s.startTimeUtc, 1440],
+      [endIdx, 0, s.endTimeUtc],
+    ];
+  };
+
+  const rangesA = toRanges(a);
+  const rangesB = toRanges(b);
+
+  for (const [dayA, startA, endA] of rangesA) {
+    for (const [dayB, startB, endB] of rangesB) {
+      if (dayA === dayB && startA < endB && startB < endA) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
  * Check if a candidate slot fits entirely within a weekly availability window.
  * Handles both same-day and overnight (cross-midnight) availability.
  *

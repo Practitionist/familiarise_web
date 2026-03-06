@@ -53,7 +53,7 @@ const getNextDayOfWeek = (dayOfWeek: string): string => {
 /**
  * Formats slots for API submission (dashboard save path).
  * Converts local times to UTC and handles overnight slot detection.
- * Weekly overnight slots are split into two records (one per UTC day).
+ * Overnight slots produce a single record with startDay !== endDay.
  *
  * @param slots - The slots to format (keyed by day or date)
  * @param isWeekly - Whether these are weekly recurring slots
@@ -90,7 +90,7 @@ export function formatSlotsForApi(
         });
 
         if (isWeekly) {
-          // flatMap because formatWeeklySlot may return 2 records for overnight slots
+          // flatMap because formatWeeklySlot returns an array (may be empty on error)
           return validSlots.flatMap((slot) => {
             try {
               return formatWeeklySlot(slot, key, timezone);
@@ -127,8 +127,7 @@ export function formatSlotsForApi(
 
 /**
  * Formats a single weekly slot for API submission.
- * Overnight slots (crossing local midnight) are split into two records so that
- * every record has startTimeUtc <= endTimeUtc (monotonic, no cross-midnight singles).
+ * Overnight slots produce a single record with startDay !== endDay.
  */
 function formatWeeklySlot(
   slot: { startTime: string; endTime: string },
@@ -158,46 +157,31 @@ function formatWeeklySlot(
   if (!startUTC) return [];
 
   if (overnight) {
-    // "00:00" end = "until end of day" → single record ending at 23:59 local time
+    const nextDay = getNextDayOfWeek(dayOfWeek);
+
     if (slot.endTime === "00:00") {
-      const justBeforeMidnightUTC = convertTimezoneToUtc(
-        "23:59",
-        baseDate,
-        timezone,
-      );
-      if (!justBeforeMidnightUTC) return [];
+      // "00:00" end = midnight on the next day → single overnight record
+      const midnightUTC = convertTimezoneToUtc("00:00", nextDate, timezone);
+      if (!midnightUTC) return [];
       return [
         {
           dayOfWeekforStartTimeInUTC: dayOfWeek,
-          dayOfWeekforEndTimeInUTC: dayOfWeek,
+          dayOfWeekforEndTimeInUTC: nextDay,
           slotStartTimeInUTC: startUTC,
-          slotEndTimeInUTC: justBeforeMidnightUTC,
+          slotEndTimeInUTC: midnightUTC,
         },
       ];
     }
 
-    // General overnight: split at local midnight → two records
-    const midnightUTC = convertTimezoneToUtc("00:00", nextDate, timezone);
+    // General overnight: single record with startDay !== endDay
     const endUTC = convertTimezoneToUtc(slot.endTime, nextDate, timezone);
-    if (!midnightUTC || !endUTC) return [];
-
-    // One minute before local midnight
-    const justBeforeMidnightUTC = new Date(
-      new Date(midnightUTC).getTime() - 60_000,
-    ).toISOString();
-    const nextDay = getNextDayOfWeek(dayOfWeek);
+    if (!endUTC) return [];
 
     return [
       {
         dayOfWeekforStartTimeInUTC: dayOfWeek,
-        dayOfWeekforEndTimeInUTC: dayOfWeek,
-        slotStartTimeInUTC: startUTC,
-        slotEndTimeInUTC: justBeforeMidnightUTC,
-      },
-      {
-        dayOfWeekforStartTimeInUTC: nextDay,
         dayOfWeekforEndTimeInUTC: nextDay,
-        slotStartTimeInUTC: midnightUTC,
+        slotStartTimeInUTC: startUTC,
         slotEndTimeInUTC: endUTC,
       },
     ];
@@ -260,8 +244,7 @@ function formatCustomSlot(
  * Converts a SlotsType map (local HH:MM) into WeeklySlot records (UTC minutes, 0–1439)
  * ready for the onboarding server action.
  *
- * Overnight slots are split into two monotonic records (one per UTC-local day).
- * Every resulting record satisfies startTimeUtc <= endTimeUtc.
+ * Overnight slots produce a single record with startDay !== endDay.
  */
 export function buildWeeklySlotsForSave(
   slots: SlotsType,
@@ -288,38 +271,13 @@ export function buildWeeklySlotsForSave(
         const startDay = day.toUpperCase() as DayOfWeek;
 
         if (overnight) {
-          // "00:00" end = "until end of day" → single record ending at minute 1439
-          if (slot.endTime === "00:00") {
-            return [
-              {
-                startDay,
-                endDay: startDay,
-                startTimeUtc: startMinutes,
-                endTimeUtc: 1439,
-              },
-            ];
-          }
-
-          // General overnight: split at local midnight
-          const midnightUTC = convertTimezoneToUtc("00:00", nextDate, timezone);
-          if (!midnightUTC) return [];
-          const midnightMinutes = dateToMinuteUtc(new Date(midnightUTC));
-          // One minute before local midnight in UTC minutes.
-          // (midnightMinutes + 1439) % 1440 handles UTC (0 → 1439) correctly.
-          const justBefore = (midnightMinutes + 1439) % 1440;
           const endDay = getNextDayOfWeek(startDay) as DayOfWeek;
-
+          // Single overnight record with startDay !== endDay
           return [
             {
               startDay,
-              endDay: startDay,
-              startTimeUtc: startMinutes,
-              endTimeUtc: justBefore,
-            },
-            {
-              startDay: endDay,
               endDay,
-              startTimeUtc: midnightMinutes,
+              startTimeUtc: startMinutes,
               endTimeUtc: endMinutes,
             },
           ];
@@ -341,7 +299,7 @@ export function buildWeeklySlotsForSave(
  * Converts a SlotsType map (local HH:MM, keyed by YYYY-MM-DD) into CustomSlot
  * records (ISO strings) ready for the onboarding server action.
  *
- * Overnight slots are split into two records (before/after local midnight).
+ * Overnight slots produce a single record where endsAt is on the next calendar day.
  */
 export function buildCustomSlotsForSave(
   slots: SlotsType,
@@ -364,30 +322,7 @@ export function buildCustomSlotsForSave(
         );
         if (!startUTC || !endUTC) return [];
 
-        if (overnight) {
-          // "00:00" end = "until end of day" → single record (endUTC is midnight next day)
-          if (slot.endTime === "00:00") {
-            return [{ startsAt: startUTC, endsAt: endUTC }];
-          }
-
-          // General overnight: split at local midnight
-          const midnightUTC = convertTimezoneToUtc(
-            "00:00",
-            nextDateStr,
-            timezone,
-          );
-          if (!midnightUTC) return [];
-          // One minute before local midnight
-          const justBeforeMidnight = new Date(
-            new Date(midnightUTC).getTime() - 60_000,
-          ).toISOString();
-
-          return [
-            { startsAt: startUTC, endsAt: justBeforeMidnight },
-            { startsAt: midnightUTC, endsAt: endUTC },
-          ];
-        }
-
+        // Both overnight and same-day: single record
         return [{ startsAt: startUTC, endsAt: endUTC }];
       });
   });

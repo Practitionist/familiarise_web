@@ -11,6 +11,7 @@
 
 - [ ] All write endpoints (POST/PUT/PATCH/DELETE) require `getSession()` authentication
 - [ ] Ownership verified: `consultantProfile.userId === session.user.id` on mutations
+- [ ] Bulk consultant settings route (`/api/user/consultants/[id]`) enforces ownership on PUT and DELETE
 - [ ] Checkout validates availability slot belongs to plan's consultant (not cross-consultant)
 - [ ] Consultant-only operations (webinar/class reschedule) reject consultee callers
 - [ ] Admin/Staff override paths explicitly check privileged roles
@@ -18,7 +19,8 @@
 
 ## 2. Data Validation
 
-- [ ] `validateWeeklySlotTimeOrder()` called on all weekly slot creation/update paths
+- [ ] `validateWeeklySlotTimeOrder()` called on all weekly slot creation/update paths (including bulk save route)
+- [ ] Bulk save route checks intra-set overlap via `slotsOverlap()` before writing
 - [ ] Same-day: `startTimeUtc < endTimeUtc` enforced
 - [ ] Overnight: `endDay` is next day after `startDay`, and `startTimeUtc > endTimeUtc`
 - [ ] Minutes range validated: 0-1439 (inclusive), `Number.isInteger()` check
@@ -95,6 +97,8 @@
 - [ ] Unscheduled events filtered: both webinars AND classes use `.filter(e => !e.appointment)`
 - [ ] `useSlotAllocation` hook: correct `requiredSlots` for SUBSCRIPTION and CLASS types
 - [ ] Calendar renders overnight slots correctly (split across two days if needed)
+- [ ] Main UI save paths (onboarding + settings) create single overnight weekly records (not split at midnight)
+- [ ] Frontend validator (`isValidTimeRange`, `validateTimeSlot`) accepts overnight slots
 - [ ] Timezone handling uses `minuteUtcToDate()` for weekly slot display
 - [ ] Slot selection UI prevents selecting past slots
 - [ ] Loading states shown during slot fetch operations
@@ -149,7 +153,8 @@
 6. **Auth on writes:** Unauthenticated POST to `/api/slots/availability/weekly` -> 401
 7. **Lock contention:** Two concurrent auto-allocations for same consultant -> one gets 409
 8. **Unallocated overnight:** Mon 22:00->Tue 02:00 with Tue 01:00 booking is excluded from both `/api/slots/unallocated/weekly` and `/api/slots/unallocated/[consultantId]`
-9. **Scheduling period boundary:** A 1-hour session ending after `schedulingPeriodEndsAt` is rejected even if its last slot starts exactly at the end time
+9. **Midnight boundary:** 22:00→00:00 weekly availability saves with `endTimeUtc=0` on next day (not `1439` on same day); 23:30→00:00 slot is bookable
+10. **Scheduling period boundary:** A 1-hour session ending after `schedulingPeriodEndsAt` is rejected even if its last slot starts exactly at the end time
 
 ---
 
@@ -196,3 +201,6 @@
 | Docs update | Field names updated to match new schema |
 | Unallocated overnight | Unallocated routes roll `slotEnd` to next day for overnight weekly slots |
 | Scheduling boundary | `validateSchedulingPeriod` checks `slot + 30min <= endDate` (server + client) |
+| Bulk route auth | `/api/user/consultants/[id]` PUT/DELETE enforce ownership (`userId === session.user.id`) |
+| Bulk route validation | Bulk save runs `validateWeeklySlotTimeOrder()` + `slotsOverlap()` + custom `startsAt < endsAt` |
+| Frontend overnight | `isValidTimeRange` / `validateTimeSlot` accept overnight slots; formatting produces single overnight records |

@@ -1,12 +1,16 @@
 import prisma from "@/lib/prisma";
-import { Prisma, ScheduleType, SessionType } from "@prisma/client";
+import { DayOfWeek, Prisma, ScheduleType, SessionType } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { experienceValidation } from "@/schemas/shared";
 import { checkActiveAppointments } from "../utils/consultant-appointments";
 import { getSession } from "@/lib/auth-server";
 import { apiError } from "@/lib/errors";
-import { dateToMinuteUtc } from "@/utils/slotAllocation/slotTimeUtils";
+import {
+  dateToMinuteUtc,
+  validateWeeklySlotTimeOrder,
+  slotsOverlap,
+} from "@/utils/slotAllocation/slotTimeUtils";
 // Zod schema for UUID validation
 const uuidSchema = z.string().uuid();
 
@@ -220,11 +224,21 @@ export async function PUT(
 ) {
   try {
     const session = await getSession();
-    if (!session) {
+    if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     const { id } = await params;
+
+    // Verify the caller owns this consultant profile
+    const ownerCheck = await prisma.consultantProfile.findUnique({
+      where: { id },
+      select: { userId: true },
+    });
+    if (!ownerCheck || ownerCheck.userId !== session.user.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
+    }
+
     const requestData = await request.json();
 
     // Validate request body using zod schema
@@ -334,12 +348,6 @@ export async function PUT(
 
     // Update weekly slots if schedule type is WEEKLY
     if (scheduleType === ScheduleType.WEEKLY) {
-      // Delete existing weekly slots
-      await prisma.slotOfAvailabilityWeekly.deleteMany({
-        where: { consultantProfileId: id },
-      });
-
-      // Create new weekly slots
       if (slotsOfAvailabilityWeekly?.length) {
         const weeklySlotData: Prisma.SlotOfAvailabilityWeeklyCreateManyInput[] =
           slotsOfAvailabilityWeekly.map((slot) => ({
@@ -350,20 +358,66 @@ export async function PUT(
             endTimeUtc: dateToMinuteUtc(new Date(slot.slotEndTimeInUTC)),
           }));
 
+        // Validate each weekly slot before saving
+        for (const slot of weeklySlotData) {
+          const timeError = validateWeeklySlotTimeOrder(
+            slot.startDay as DayOfWeek,
+            slot.endDay as DayOfWeek,
+            slot.startTimeUtc,
+            slot.endTimeUtc,
+          );
+          if (timeError) {
+            return NextResponse.json(
+              { error: timeError },
+              { status: 400 },
+            );
+          }
+        }
+
+        // Check for overlaps within the submitted set
+        for (let i = 0; i < weeklySlotData.length; i++) {
+          for (let j = i + 1; j < weeklySlotData.length; j++) {
+            if (
+              slotsOverlap(
+                weeklySlotData[i] as {
+                  startDay: DayOfWeek;
+                  endDay: DayOfWeek;
+                  startTimeUtc: number;
+                  endTimeUtc: number;
+                },
+                weeklySlotData[j] as {
+                  startDay: DayOfWeek;
+                  endDay: DayOfWeek;
+                  startTimeUtc: number;
+                  endTimeUtc: number;
+                },
+              )
+            ) {
+              return NextResponse.json(
+                { error: "Submitted weekly slots contain overlapping time ranges" },
+                { status: 400 },
+              );
+            }
+          }
+        }
+
+        // Delete existing then create new
+        await prisma.slotOfAvailabilityWeekly.deleteMany({
+          where: { consultantProfileId: id },
+        });
         await prisma.slotOfAvailabilityWeekly.createMany({
           data: weeklySlotData,
+        });
+      } else {
+        // No weekly slots submitted — clear existing
+        await prisma.slotOfAvailabilityWeekly.deleteMany({
+          where: { consultantProfileId: id },
         });
       }
     }
 
     // Update custom slots if schedule type is CUSTOM
     if (scheduleType === ScheduleType.CUSTOM) {
-      // Delete existing custom slots
-      await prisma.slotOfAvailabilityCustom.deleteMany({
-        where: { consultantProfileId: id },
-      });
-
-      // Create new custom slots
       if (slotsOfAvailabilityCustom?.length) {
         const customSlotData: Prisma.SlotOfAvailabilityCustomCreateManyInput[] =
           slotsOfAvailabilityCustom.map((slot) => ({
@@ -372,8 +426,27 @@ export async function PUT(
             endsAt: new Date(slot.slotEndTimeInUTC),
           }));
 
+        // Validate custom slot ordering
+        for (const slot of customSlotData) {
+          if (new Date(slot.startsAt).getTime() >= new Date(slot.endsAt).getTime()) {
+            return NextResponse.json(
+              { error: "Custom slot start time must be before end time" },
+              { status: 400 },
+            );
+          }
+        }
+
+        // Delete existing then create new
+        await prisma.slotOfAvailabilityCustom.deleteMany({
+          where: { consultantProfileId: id },
+        });
         await prisma.slotOfAvailabilityCustom.createMany({
           data: customSlotData,
+        });
+      } else {
+        // No custom slots submitted — clear existing
+        await prisma.slotOfAvailabilityCustom.deleteMany({
+          where: { consultantProfileId: id },
         });
       }
     }
@@ -426,11 +499,20 @@ export async function DELETE(
 ) {
   try {
     const session = await getSession();
-    if (!session) {
+    if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     const { id } = await params;
+
+    // Verify the caller owns this consultant profile
+    const ownerCheck = await prisma.consultantProfile.findUnique({
+      where: { id },
+      select: { userId: true },
+    });
+    if (!ownerCheck || ownerCheck.userId !== session.user.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
+    }
 
     // Delete all related records first
     await prisma.$transaction([
