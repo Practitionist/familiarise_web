@@ -426,13 +426,28 @@ export async function PUT(
             endsAt: new Date(slot.slotEndTimeInUTC),
           }));
 
-        // Validate custom slot ordering
+        // Validate custom slot ordering and check for pairwise overlaps
         for (const slot of customSlotData) {
           if (new Date(slot.startsAt).getTime() >= new Date(slot.endsAt).getTime()) {
             return NextResponse.json(
               { error: "Custom slot start time must be before end time" },
               { status: 400 },
             );
+          }
+        }
+        for (let i = 0; i < customSlotData.length; i++) {
+          for (let j = i + 1; j < customSlotData.length; j++) {
+            const a = customSlotData[i];
+            const b = customSlotData[j];
+            if (
+              new Date(a.startsAt).getTime() < new Date(b.endsAt).getTime() &&
+              new Date(b.startsAt).getTime() < new Date(a.endsAt).getTime()
+            ) {
+              return NextResponse.json(
+                { error: "Submitted custom slots contain overlapping time ranges" },
+                { status: 400 },
+              );
+            }
           }
         }
 

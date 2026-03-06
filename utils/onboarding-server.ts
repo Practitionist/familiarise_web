@@ -1,8 +1,12 @@
 import "server-only";
-import { Prisma } from "@prisma/client";
+import { DayOfWeek, Prisma } from "@prisma/client";
 import { UserRole, ScheduleType } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { isValidTimeRange } from "@/utils/timeSlotValidation";
+import {
+  validateWeeklySlotTimeOrder,
+  slotsOverlap,
+} from "@/utils/slotAllocation/slotTimeUtils";
 import { notifyNewConsultantApplication } from "@/lib/novu";
 import type {
   OnboardingData,
@@ -105,6 +109,43 @@ async function updateConsultantProfileAndRelations(
           `${endHH}:${endMM}`,
         );
       });
+      // Validate time ordering and check for pairwise overlaps
+      for (const slot of validWeeklySlots) {
+        const timeError = validateWeeklySlotTimeOrder(
+          slot.startDay as DayOfWeek,
+          slot.endDay as DayOfWeek,
+          slot.startTimeUtc,
+          slot.endTimeUtc,
+        );
+        if (timeError) {
+          throw new Error(timeError);
+        }
+      }
+      for (let i = 0; i < validWeeklySlots.length; i++) {
+        for (let j = i + 1; j < validWeeklySlots.length; j++) {
+          if (
+            slotsOverlap(
+              validWeeklySlots[i] as {
+                startDay: DayOfWeek;
+                endDay: DayOfWeek;
+                startTimeUtc: number;
+                endTimeUtc: number;
+              },
+              validWeeklySlots[j] as {
+                startDay: DayOfWeek;
+                endDay: DayOfWeek;
+                startTimeUtc: number;
+                endTimeUtc: number;
+              },
+            )
+          ) {
+            throw new Error(
+              "Weekly availability slots contain overlapping time ranges",
+            );
+          }
+        }
+      }
+
       if (validWeeklySlots.length > 0) {
         await tx.slotOfAvailabilityWeekly.createMany({
           data: validWeeklySlots.map((slot) => ({
@@ -132,6 +173,32 @@ async function updateConsultantProfileAndRelations(
           new Date(slot.endsAt).toTimeString().slice(0, 5),
         ),
       );
+      // Validate ordering and pairwise overlaps
+      for (const slot of validCustomSlots) {
+        if (
+          new Date(slot.startsAt).getTime() >=
+          new Date(slot.endsAt).getTime()
+        ) {
+          throw new Error("Custom slot start time must be before end time");
+        }
+      }
+      for (let i = 0; i < validCustomSlots.length; i++) {
+        for (let j = i + 1; j < validCustomSlots.length; j++) {
+          const a = validCustomSlots[i];
+          const b = validCustomSlots[j];
+          if (
+            new Date(a.startsAt).getTime() <
+              new Date(b.endsAt).getTime() &&
+            new Date(b.startsAt).getTime() <
+              new Date(a.endsAt).getTime()
+          ) {
+            throw new Error(
+              "Custom availability slots contain overlapping time ranges",
+            );
+          }
+        }
+      }
+
       if (validCustomSlots.length > 0) {
         await tx.slotOfAvailabilityCustom.createMany({
           data: validCustomSlots.map((slot) => ({

@@ -19,8 +19,10 @@
 
 ## 2. Data Validation
 
-- [ ] `validateWeeklySlotTimeOrder()` called on all weekly slot creation/update paths (including bulk save route)
+- [ ] `validateWeeklySlotTimeOrder()` called on all weekly slot creation/update paths (including bulk save + onboarding)
 - [ ] Bulk save route checks intra-set overlap via `slotsOverlap()` before writing
+- [ ] Bulk save route rejects overlapping custom slot submissions, not only weekly
+- [ ] Onboarding persistence (`onboarding-server.ts`) enforces same weekly/custom validation as availability CRUD routes
 - [ ] Same-day: `startTimeUtc < endTimeUtc` enforced
 - [ ] Overnight: `endDay` is next day after `startDay`, and `startTimeUtc > endTimeUtc`
 - [ ] Minutes range validated: 0-1439 (inclusive), `Number.isInteger()` check
@@ -204,3 +206,5 @@
 | Bulk route auth | `/api/user/consultants/[id]` PUT/DELETE enforce ownership (`userId === session.user.id`) |
 | Bulk route validation | Bulk save runs `validateWeeklySlotTimeOrder()` + `slotsOverlap()` + custom `startsAt < endsAt` |
 | Frontend overnight | `isValidTimeRange` / `validateTimeSlot` accept overnight slots; formatting produces single overnight records |
+| Bulk custom overlap | Bulk settings route rejects overlapping custom slot submissions (pairwise check) |
+| Onboarding validation | `onboarding-server.ts` runs `validateWeeklySlotTimeOrder()`, `slotsOverlap()`, and custom overlap/ordering checks |
