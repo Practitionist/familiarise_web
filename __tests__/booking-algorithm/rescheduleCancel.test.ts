@@ -894,7 +894,7 @@ describe("Cancel Route Handler - POST", () => {
   // ─── WEBINAR Cancellation ───────────────────────────────────────────────
 
   describe("WEBINAR", () => {
-    it("should update webinar to CANCELLED and trigger waitlist", async () => {
+    it("should update webinar to CANCELLED without notifying waitlist", async () => {
       const appointment = makeWebinarAppointment();
       (prisma.appointment.findUnique as jest.Mock).mockResolvedValue(
         appointment,
@@ -910,20 +910,15 @@ describe("Cancel Route Handler - POST", () => {
         data: { status: "CANCELLED" },
       });
 
-      // Waitlist notified
-      expect(handleSlotOpening).toHaveBeenCalledWith({
-        webinarId: "web-1",
-        classId: undefined,
-        slotsAvailable: 1,
-        reason: "cancellation",
-      });
+      // Whole-event cancel should NOT notify waitlist (event is dead)
+      expect(handleSlotOpening).not.toHaveBeenCalled();
     });
   });
 
   // ─── CLASS Cancellation ─────────────────────────────────────────────────
 
   describe("CLASS", () => {
-    it("should update class to CANCELLED and trigger waitlist", async () => {
+    it("should update class to CANCELLED without notifying waitlist", async () => {
       const appointment = makeClassAppointment();
       (prisma.appointment.findUnique as jest.Mock).mockResolvedValue(
         appointment,
@@ -939,12 +934,8 @@ describe("Cancel Route Handler - POST", () => {
         data: { status: "CANCELLED" },
       });
 
-      expect(handleSlotOpening).toHaveBeenCalledWith({
-        classId: "cls-1",
-        webinarId: undefined,
-        slotsAvailable: 1,
-        reason: "cancellation",
-      });
+      // Whole-event cancel should NOT notify waitlist (event is dead)
+      expect(handleSlotOpening).not.toHaveBeenCalled();
     });
   });
 
@@ -1003,20 +994,17 @@ describe("Cancel Route Handler - POST", () => {
     expect(handleSlotOpening).not.toHaveBeenCalled();
   });
 
-  it("should handle waitlist notification failure gracefully", async () => {
+  it("should never call waitlist on any cancellation (whole-event cancel)", async () => {
     (prisma.appointment.findUnique as jest.Mock).mockResolvedValue(
       makeWebinarAppointment(),
-    );
-
-    (handleSlotOpening as jest.Mock).mockRejectedValue(
-      new Error("Waitlist service down"),
     );
 
     const req = makeCancelRequest("apt-1");
     const res = await cancelHandler(req, makeParams("apt-1"));
 
-    // Should still succeed — waitlist notification is best-effort
     expect(res.status).toBe(200);
+    // Cancel route always cancels the entire event, so no waitlist notification
+    expect(handleSlotOpening).not.toHaveBeenCalled();
   });
 
   // ─── Response ──────────────────────────────────────────────────────────

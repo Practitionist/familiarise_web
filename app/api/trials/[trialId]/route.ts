@@ -17,6 +17,7 @@ import {
 } from "@/lib/novu";
 import { UpdateTrialSchema } from "@/schemas/trials";
 import { requireApiAuth, isPrivileged } from "@/lib/auth-helpers";
+import { buildOccupiedAppointmentFilter } from "@/utils/slotAllocation/occupancyPolicy";
 
 interface RouteContext {
   params: Promise<{ trialId: string }>;
@@ -119,50 +120,17 @@ async function validateSlotAvailability(
   const startTime = new Date(startsAt);
   const endTime = new Date(endsAt);
 
-  // Check for overlapping appointments across all appointment types
+  // Use canonical occupancy policy for consistent conflict detection
+  const occupiedFilter = buildOccupiedAppointmentFilter(consultantProfileId);
+
   const overlapping = await prisma.slotOfAppointment.findFirst({
     where: {
       appointment: {
-        OR: [
-          // Approved consultations
-          {
-            consultation: {
-              consultationPlan: { consultantProfileId },
-              requestStatus: "APPROVED",
-            },
-          },
-          // Approved subscriptions
-          {
-            subscription: {
-              subscriptionPlan: { consultantProfileId },
-              requestStatus: "APPROVED",
-            },
-          },
-          // Scheduled webinars
-          {
-            webinar: {
-              webinarPlan: { consultantProfileId },
-              status: "SCHEDULED",
-            },
-          },
-          // Scheduled classes
-          {
-            class: {
-              classPlan: { consultantProfileId },
-              status: "SCHEDULED",
-            },
-          },
-          // Scheduled trials
-          {
-            trialSession: {
-              consultantProfileId,
-              status: "SCHEDULED",
-            },
-          },
-        ],
+        OR: occupiedFilter,
       },
-      // Check for time overlap
-      AND: [{ startsAt: { lt: endTime } }, { endsAt: { gt: startTime } }],
+      // Canonical overlap predicate
+      startsAt: { lt: endTime },
+      endsAt: { gt: startTime },
     },
   });
 
@@ -258,6 +226,42 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         return NextResponse.json(
           { error: `Cannot transition from ${currentStatus} to ${status}` },
           { status: 400 },
+        );
+      }
+
+      // Role-based transition guards
+      const isTrialConsultant =
+        session.user.consultantProfileId === existingTrial.consultantProfileId;
+      const isTrialConsultee =
+        session.user.consulteeProfileId === existingTrial.consulteeProfileId;
+      const isPrivilegedUser = isPrivileged(session.user.role);
+
+      if (!isTrialConsultant && !isTrialConsultee && !isPrivilegedUser) {
+        return NextResponse.json(
+          { error: "Not a participant of this trial" },
+          { status: 403 },
+        );
+      }
+
+      // Consultee can only cancel their trials
+      if (isTrialConsultee && !isTrialConsultant && !isPrivilegedUser) {
+        if (status !== TrialSessionStatus.CANCELLED) {
+          return NextResponse.json(
+            { error: "Consultees can only cancel trial sessions" },
+            { status: 403 },
+          );
+        }
+      }
+
+      // CONVERTED requires consultant or privileged
+      if (
+        status === TrialSessionStatus.CONVERTED &&
+        !isTrialConsultant &&
+        !isPrivilegedUser
+      ) {
+        return NextResponse.json(
+          { error: "Only the consultant can convert a trial" },
+          { status: 403 },
         );
       }
 
@@ -599,6 +603,16 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
       where: { id: trialId },
       data: { status: TrialSessionStatus.CANCELLED },
     });
+
+    // Clean up linked appointment and slots to free availability
+    if (existingTrial.appointmentId) {
+      await prisma.slotOfAppointment.deleteMany({
+        where: { appointmentId: existingTrial.appointmentId },
+      });
+      await prisma.appointment.delete({
+        where: { id: existingTrial.appointmentId },
+      });
+    }
 
     return NextResponse.json({ data: updatedTrial });
   } catch (error) {

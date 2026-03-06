@@ -1,7 +1,6 @@
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 import { CancellationReason } from "@prisma/client";
-import { handleSlotOpening } from "@/lib/waitlist/slot-handler";
 import { notifyAppointmentCancelled } from "@/lib/novu";
 import { CancelAppointmentSchema } from "@/schemas/appointments";
 
@@ -271,32 +270,10 @@ export async function POST(
       });
     }
 
-    // Notify waitlist if a webinar or class appointment was cancelled
-    if (result.webinarId || result.classId) {
-      try {
-        await handleSlotOpening({
-          webinarId: result.webinarId ?? undefined,
-          classId: result.classId ?? undefined,
-          slotsAvailable: 1,
-          reason: "cancellation",
-        });
-
-        console.log(
-          JSON.stringify({
-            event: "waitlist_notified_after_cancellation",
-            webinarId: result.webinarId,
-            classId: result.classId,
-            timestamp: new Date().toISOString(),
-          }),
-        );
-      } catch (waitlistError) {
-        // Log but don't fail the cancellation - waitlist notification is best-effort
-        console.error(
-          "Failed to notify waitlist after cancellation:",
-          waitlistError,
-        );
-      }
-    }
+    // Note: This route cancels the entire event (sets parent to CANCELLED),
+    // so we do NOT notify waitlisted users — there is no "spot" to offer.
+    // Waitlist notifications should only fire when a participant leaves an
+    // otherwise-active event (handled in participant removal flow).
 
     return NextResponse.json(result);
   } catch (error) {
