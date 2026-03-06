@@ -41,7 +41,9 @@ export default function AppointmentsPage({
       );
       if (!res.ok) throw new Error("Failed to fetch classes");
       const { data } = await res.json();
-      return data;
+      return (data ?? []).filter(
+        (c: { appointment: unknown }) => !c.appointment,
+      );
     },
   });
 
