@@ -356,7 +356,7 @@ export async function PUT(
           .then((u) => u?.timezone ?? null);
         const utcOffsetMinutes = userTimezone
           ? getTimezoneOffsetMinutes(userTimezone)
-          : null;
+          : 0;
 
         const weeklySlotData: Prisma.SlotOfAvailabilityWeeklyCreateManyInput[] =
           slotsOfAvailabilityWeekly.map((slot) => ({

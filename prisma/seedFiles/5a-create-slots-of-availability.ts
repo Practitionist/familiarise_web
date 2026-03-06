@@ -1,6 +1,7 @@
 import { faker } from "@faker-js/faker";
 import { DayOfWeek, ScheduleType } from "@prisma/client";
 import prisma from "../../lib/prisma";
+import { getTimezoneOffsetMinutes } from "../../utils/slotAllocation/slotTimeUtils";
 import { UserWithProfiles } from "./1a-create-users";
 
 const MAX_SLOT_DURATION = 6 * 2; // In 30-min intervals (12)
@@ -77,6 +78,9 @@ export async function createSlotsOfAvailability(
 
     try {
       const slotType = consultant.consultantProfile.scheduleType;
+      const utcOffsetMinutes = consultant.timezone
+        ? getTimezoneOffsetMinutes(consultant.timezone)
+        : 0;
 
       if (slotType === ScheduleType.WEEKLY) {
         // Create weekly slots for each day with business hours focus
@@ -122,6 +126,7 @@ export async function createSlotsOfAvailability(
               endDay: dayOfWeek, // Same day since it's a 1-hour slot
               startTimeUtc: startMinutes,
               endTimeUtc: startMinutes + 60, // 1 hour duration (60 minutes)
+              utcOffsetMinutes,
             });
           }
         }
@@ -148,6 +153,7 @@ export async function createSlotsOfAvailability(
                 endDay: dayOfWeek, // Same day since it's a 1-hour slot
                 startTimeUtc: startMinutes,
                 endTimeUtc: startMinutes + 60, // 1 hour duration (60 minutes)
+                utcOffsetMinutes,
               });
             }
           }

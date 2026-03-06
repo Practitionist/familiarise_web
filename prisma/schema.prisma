@@ -699,7 +699,7 @@ model SlotOfAvailabilityWeekly {
   startTimeUtc              Int       @db.SmallInt // Minutes since midnight UTC (0-1439)
   endDay                    DayOfWeek
   endTimeUtc                Int       @db.SmallInt // Minutes since midnight UTC (0-1439)
-  utcOffsetMinutes  Int?      @db.SmallInt // UTC offset in minutes at slot creation (e.g. 330 for IST, -300 for EST); null = heuristic fallback
+  utcOffsetMinutes  Int       @db.SmallInt @default(0) // UTC offset in minutes at slot creation (e.g. 330 for IST, -300 for EST)
 
   consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultantProfileId String

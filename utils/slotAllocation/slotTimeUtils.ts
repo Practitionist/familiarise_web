@@ -304,9 +304,7 @@ export function getTimezoneOffsetMinutes(timezone: string): number {
  * @param availStartDay - DayOfWeek enum string for availability start
  * @param availStartTimeUtc - Availability start in minutes since midnight UTC
  * @param availEndTimeUtc - Availability end in minutes since midnight UTC
- * @param utcOffsetMinutes - UTC offset for the consultant's timezone (e.g. 330
- *   for IST). When provided, enables exact UTC-day matching instead of the heuristic
- *   720-minute guard. Pass null/undefined to fall back to the heuristic path.
+ * @param utcOffsetMinutes - UTC offset for the consultant's timezone (e.g. 330 for IST, -300 for EST).
  */
 export function isMinuteWithinWeeklySlot(
   candidateDay: number,
@@ -315,7 +313,7 @@ export function isMinuteWithinWeeklySlot(
   availStartDay: string,
   availStartTimeUtc: number,
   availEndTimeUtc: number,
-  utcOffsetMinutes?: number | null,
+  utcOffsetMinutes: number,
 ): boolean {
   const availDay = DAY_OF_WEEK_TO_INDEX[availStartDay];
   if (availDay === undefined) return false;
@@ -323,145 +321,30 @@ export function isMinuteWithinWeeklySlot(
   const candidateEndMinutes = candidateMinutes + slotDurationMinutes;
   const isOvernight = availEndTimeUtc <= availStartTimeUtc;
 
-  // === EXACT PATH: use stored timezone offset for precise UTC-day matching ===
-  // Eliminates the heuristic 720-minute guard false-positives introduced when
-  // a UTC-timezone consultant has afternoon/evening slots (startTimeUtc ≥ 720).
-  if (utcOffsetMinutes != null) {
-    // availDay is the LOCAL day-of-week. The UTC day of the slot's start may
-    // differ when the consultant's midnight isn't aligned with UTC midnight.
-    // Formula: utcStartDay = (availDay - floor((startTimeUtc + offset) / 1440)) mod 7
-    const localStartMinutes = availStartTimeUtc + utcOffsetMinutes;
-    const dayAdjust = Math.floor(localStartMinutes / 1440);
-    const utcStartDay = ((availDay - dayAdjust) % 7 + 7) % 7;
-
-    if (!isOvernight) {
-      return (
-        candidateDay === utcStartDay &&
-        candidateMinutes >= availStartTimeUtc &&
-        candidateEndMinutes <= availEndTimeUtc
-      );
-    }
-
-    // Overnight: spans utcStartDay (from startTimeUtc to midnight) then
-    // utcEndDay (from midnight to endTimeUtc).
-    const utcEndDay = (utcStartDay + 1) % 7;
-    if (candidateDay === utcStartDay && candidateMinutes >= availStartTimeUtc) {
-      if (candidateEndMinutes <= 1440) return true;
-      return candidateEndMinutes - 1440 <= availEndTimeUtc;
-    }
-    if (candidateDay === utcEndDay && candidateEndMinutes <= availEndTimeUtc) {
-      return true;
-    }
-    return false;
-  }
-
-  // === HEURISTIC PATH (legacy): used when utcOffsetMinutes is null ===
-  // Applied to slots created before the timezone offset field was added.
+  // availDay is the LOCAL day-of-week. The UTC day of the slot's start may
+  // differ when the consultant's midnight isn't aligned with UTC midnight.
+  // Formula: utcStartDay = (availDay - floor((startTimeUtc + offset) / 1440)) mod 7
+  const localStartMinutes = availStartTimeUtc + utcOffsetMinutes;
+  const dayAdjust = Math.floor(localStartMinutes / 1440);
+  const utcStartDay = ((availDay - dayAdjust) % 7 + 7) % 7;
 
   if (!isOvernight) {
-    // Same-day availability
-
-    // Direct match: candidate is on the same UTC day as the local day
-    if (candidateDay === availDay) {
-      return (
-        candidateMinutes >= availStartTimeUtc &&
-        candidateEndMinutes <= availEndTimeUtc
-      );
-    }
-
-    // Timezone compensation for non-overnight slots.
-    // startDay is the LOCAL day, but candidateDay is the UTC day.
-    // They can differ by ±1 depending on the consultant's timezone offset.
-
-    // Positive-offset timezones (IST +5:30, AEST +10, JST +9, etc.):
-    // Local midnight maps to late evening UTC on the PREVIOUS day.
-    // e.g., Monday 1:00 AM IST = Sunday 19:30 UTC → candidateDay=SUN, availDay=MON
-    // Guard: availStartTimeUtc >= 720 (noon UTC) ensures this only applies when
-    // UTC times are high enough to result from a positive timezone offset.
-    const nextDayFromCandidate = (candidateDay + 1) % 7;
-    if (nextDayFromCandidate === availDay && availStartTimeUtc >= 720) {
-      if (
-        candidateMinutes >= availStartTimeUtc &&
-        candidateEndMinutes <= availEndTimeUtc
-      ) {
-        return true;
-      }
-    }
-
-    // Negative-offset timezones (EST -5, PST -8, etc.):
-    // Late local evening maps to early morning UTC on the NEXT day.
-    // e.g., Monday 11:00 PM EST = Tuesday 04:00 UTC → candidateDay=TUE, availDay=MON
-    // Guard: availEndTimeUtc <= 720 ensures this only applies when
-    // UTC times are low enough to result from a negative timezone offset.
-    const prevDayFromCandidate = (candidateDay + 6) % 7;
-    if (prevDayFromCandidate === availDay && availEndTimeUtc <= 720) {
-      if (
-        candidateMinutes >= availStartTimeUtc &&
-        candidateEndMinutes <= availEndTimeUtc
-      ) {
-        return true;
-      }
-    }
-
-    return false;
+    return (
+      candidateDay === utcStartDay &&
+      candidateMinutes >= availStartTimeUtc &&
+      candidateEndMinutes <= availEndTimeUtc
+    );
   }
 
-  // Overnight availability (e.g., Mon 22:00 → Tue 02:00):
-  // Case 1: Candidate on the start day, at or after startTimeUtc
-  if (candidateDay === availDay && candidateMinutes >= availStartTimeUtc) {
-    if (candidateEndMinutes <= 1440) {
-      return true;
-    }
-    // Slot crosses midnight — verify overflow fits within next-day end
-    const overflowMinutes = candidateEndMinutes - 1440;
-    return overflowMinutes <= availEndTimeUtc;
+  // Overnight: spans utcStartDay (from startTimeUtc to midnight) then
+  // utcEndDay (from midnight to endTimeUtc).
+  const utcEndDay = (utcStartDay + 1) % 7;
+  if (candidateDay === utcStartDay && candidateMinutes >= availStartTimeUtc) {
+    if (candidateEndMinutes <= 1440) return true;
+    return candidateEndMinutes - 1440 <= availEndTimeUtc;
   }
-
-  // Case 2: Candidate on the next day, full slot must end at or before endTimeUtc
-  const nextDay = (availDay + 1) % 7;
-  if (candidateDay === nextDay && candidateEndMinutes <= availEndTimeUtc) {
+  if (candidateDay === utcEndDay && candidateEndMinutes <= availEndTimeUtc) {
     return true;
   }
-
-  // Case 3: Timezone compensation for overnight slots
-
-  // 3a: Positive-offset timezone — candidate's UTC day is before the local start day.
-  // The overnight in UTC starts on (availDay - 1).
-  // e.g., IST Mon 2AM-9AM → UTC Sun 20:30 - Mon 3:30
-  //   candidateDay=SUN, availDay=MON, startTimeUtc=1230, endTimeUtc=210
-  const nextDayFromCandidateOvn = (candidateDay + 1) % 7;
-  if (nextDayFromCandidateOvn === availDay && availStartTimeUtc >= 720) {
-    // Start-day portion of the timezone-shifted overnight
-    if (candidateMinutes >= availStartTimeUtc) {
-      if (candidateEndMinutes <= 1440) return true;
-      const overflowMinutes = candidateEndMinutes - 1440;
-      if (overflowMinutes <= availEndTimeUtc) return true;
-    }
-  }
-
-  // 3b: Positive-offset timezone carry-over — candidate is on availDay itself
-  // but in the carry-over (early morning UTC) portion.
-  // e.g., IST Mon 2AM-9AM → UTC Sun 20:30 - Mon 3:30
-  //   candidateDay=MON(1), availDay=MON(1), candidateMinutes=180
-  //   Case 1 doesn't match because 180 < startTimeUtc(1230)
-  if (
-    candidateDay === availDay &&
-    candidateMinutes < availStartTimeUtc &&
-    availStartTimeUtc >= 720 &&
-    candidateEndMinutes <= availEndTimeUtc
-  ) {
-    return true;
-  }
-
-  // 3c: Negative-offset timezone — candidate's UTC day is after the local start day.
-  // Only relevant for overnight availability carrying over.
-  const prevDayFromCandidateOvn = (candidateDay + 6) % 7;
-  if (
-    prevDayFromCandidateOvn === availDay &&
-    availEndTimeUtc <= 720
-  ) {
-    if (candidateEndMinutes <= availEndTimeUtc) return true;
-  }
-
   return false;
 }

@@ -163,7 +163,7 @@ export async function PUT(
 
     const utcOffsetMinutes = currentSlot.consultantProfile.user?.timezone
       ? getTimezoneOffsetMinutes(currentSlot.consultantProfile.user.timezone)
-      : null;
+      : 0;
 
     const updatedSlot = await prisma.slotOfAvailabilityWeekly.update({
       where: { id: id },
@@ -314,7 +314,7 @@ export async function PATCH(
 
     const utcOffsetMinutes = currentSlot.consultantProfile.user?.timezone
       ? getTimezoneOffsetMinutes(currentSlot.consultantProfile.user.timezone)
-      : null;
+      : 0;
 
     const updatedSlot = await prisma.slotOfAvailabilityWeekly.update({
       where: { id: id },

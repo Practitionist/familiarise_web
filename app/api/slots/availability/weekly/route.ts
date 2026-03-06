@@ -174,7 +174,7 @@ export async function POST(req: NextRequest) {
 
     const utcOffsetMinutes = consultantProfile.user?.timezone
       ? getTimezoneOffsetMinutes(consultantProfile.user.timezone)
-      : null;
+      : 0;
 
     const newWeeklySlot = await prisma.slotOfAvailabilityWeekly.create({
       data: {
