@@ -1211,7 +1211,7 @@ export async function handleWebinarCheckout(
   tx: Prisma.TransactionClient,
   data: CheckoutInput,
   userId: string,
-  skipPayment: boolean,
+  _skipPayment: boolean,
 ) {
   const webinar = await tx.webinar.findUnique({
     where: { id: data.eventId },
@@ -1328,7 +1328,7 @@ export async function handleClassCheckout(
   tx: Prisma.TransactionClient,
   data: CheckoutInput,
   userId: string,
-  skipPayment: boolean,
+  _skipPayment: boolean,
 ) {
   const classInstance = await tx.class.findUnique({
     where: { id: data.eventId },
@@ -1359,20 +1359,10 @@ export async function handleClassCheckout(
   );
 
   // Check if max participants reached
+  // NOTE: Waitlist creation happens OUTSIDE the transaction in handleCheckout's catch block,
+  // because creating it here (inside the transaction) would be rolled back on throw.
   if (currentParticipants >= plan.maxParticipants) {
-    if (skipPayment) {
-      // Add to waitlist
-      await tx.waitlist.create({
-        data: {
-          userId,
-          classId: classInstance.id,
-        },
-      });
-
-      throw new Error("Class is full. Added to waitlist.");
-    } else {
-      throw new Error("Class is full");
-    }
+    throw new Error("Class is full");
   }
 
   // H5 FIX: Validate class hasn't already ended (all sessions past).
@@ -1864,6 +1854,29 @@ export async function handleCheckout(
         }
       }
 
+      // Waitlist creation for full class — same pattern as webinar above
+      if (
+        dbError instanceof Error &&
+        dbError.message === "Class is full" &&
+        validatedData.appointmentType === "CLASS" &&
+        validatedData.eventId
+      ) {
+        try {
+          await prisma.waitlist.create({
+            data: { userId, classId: validatedData.eventId },
+          });
+          throw new Error("Class is full. Added to waitlist.");
+        } catch (waitlistError) {
+          console.error("[WAITLIST CREATE ERROR]", waitlistError);
+          if (
+            waitlistError instanceof Error &&
+            waitlistError.message.includes("Added to waitlist")
+          ) {
+            throw waitlistError;
+          }
+        }
+      }
+
       // Preserve specific error messages (duplicate registration, full capacity, etc.)
       if (dbError instanceof Error) {
         const preservedMessages = [
@@ -1917,6 +1930,27 @@ export async function handleCheckout(
             throw waitlistError;
           }
           // Waitlist creation failed (e.g., already on waitlist) — rethrow original
+        }
+      }
+
+      // Waitlist creation for full class — same pattern as webinar above
+      if (
+        error.message === "Class is full" &&
+        validatedData.appointmentType === "CLASS" &&
+        validatedData.eventId
+      ) {
+        try {
+          await prisma.waitlist.create({
+            data: { userId, classId: validatedData.eventId },
+          });
+          throw new Error("Class is full. Added to waitlist.");
+        } catch (waitlistError) {
+          if (
+            waitlistError instanceof Error &&
+            waitlistError.message.includes("Added to waitlist")
+          ) {
+            throw waitlistError;
+          }
         }
       }
     }
