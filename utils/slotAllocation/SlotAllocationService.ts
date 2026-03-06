@@ -31,7 +31,7 @@ import {
   lockAutoAllocate,
   unlockAutoAllocate,
 } from "@/utils/appointmentlock";
-import { DAY_OF_WEEK_TO_INDEX } from "./slotTimeUtils";
+import { DAY_OF_WEEK_TO_INDEX, isMinuteWithinWeeklySlot } from "./slotTimeUtils";
 
 type AppointmentWithSlots = Appointment & {
   slotsOfAppointment: SlotOfAppointment[];
@@ -678,45 +678,17 @@ export class SlotAllocationService {
       const candidateDay = candidate.getUTCDay();
       const candidateMinutes =
         candidate.getUTCHours() * 60 + candidate.getUTCMinutes();
-      const candidateEndMinutes = candidateMinutes + 30;
 
-      return consultant.slotsOfAvailabilityWeekly.some((slot) => {
-        const availDay = DAY_OF_WEEK_TO_INDEX[slot.startDay];
-        if (availDay === undefined) return false;
-
-        const isOvernight = slot.endTimeUtc <= slot.startTimeUtc;
-
-        if (!isOvernight) {
-          // Normal same-day availability: candidate must be on the same day
-          // and the full 30-min slot must fit within [startTimeUtc, endTimeUtc)
-          if (candidateDay !== availDay) return false;
-          return (
-            candidateMinutes >= slot.startTimeUtc &&
-            candidateEndMinutes <= slot.endTimeUtc
-          );
-        }
-
-        // Overnight availability (e.g., Mon 22:00 → Tue 02:00):
-        // Candidate on the start day: must start at or after startTimeUtc
-        // AND the full 30-min slot must fit — either entirely before midnight,
-        // or if it overflows past midnight, the overflow must fit within endTimeUtc.
-        if (candidateDay === availDay && candidateMinutes >= slot.startTimeUtc) {
-          if (candidateEndMinutes <= 1440) {
-            // Entire 30-min slot fits before midnight
-            return true;
-          }
-          // Slot crosses midnight — verify overflow fits within next-day availability
-          const overflowMinutes = candidateEndMinutes - 1440;
-          return overflowMinutes <= slot.endTimeUtc;
-        }
-        // Candidate on the next day: full 30-min slot must end at or before endTimeUtc
-        const nextDay = (availDay + 1) % 7;
-        if (candidateDay === nextDay && candidateEndMinutes <= slot.endTimeUtc) {
-          return true;
-        }
-
-        return false;
-      });
+      return consultant.slotsOfAvailabilityWeekly.some((slot) =>
+        isMinuteWithinWeeklySlot(
+          candidateDay,
+          candidateMinutes,
+          30, // all atomic slots are 30 minutes
+          slot.startDay,
+          slot.startTimeUtc,
+          slot.endTimeUtc,
+        ),
+      );
     } else {
       // CUSTOM schedule: candidate must fall within a specific date range
       const thirtyMinMs = 30 * 60 * 1000;
@@ -799,12 +771,24 @@ export class SlotAllocationService {
     const now = new Date();
     const selectedSlots: Date[] = [];
 
-    // Pre-sort availability slots once — reused by both consultation/webinar and subscription/class paths
+    // Sort weekly slots by next calendar occurrence (not raw clock time)
+    // so auto-allocation picks the chronologically earliest slot first.
+    // Without this, Tue 08:00 (480min) would sort before Mon 09:00 (540min).
     const sortedWeekly =
       consultant.scheduleType === ScheduleType.WEEKLY
-        ? [...consultant.slotsOfAvailabilityWeekly].sort(
-            (a, b) => a.startTimeUtc - b.startTimeUtc,
-          )
+        ? [...consultant.slotsOfAvailabilityWeekly]
+            .map((slot) => ({
+              slot,
+              nextOccurrence: this.getNextOccurrenceWeekly(
+                slot.startDay,
+                slot.startTimeUtc,
+              ),
+            }))
+            .sort(
+              (a, b) =>
+                a.nextOccurrence.getTime() - b.nextOccurrence.getTime(),
+            )
+            .map((w) => w.slot)
         : [];
     const sortedCustom =
       consultant.scheduleType === ScheduleType.CUSTOM

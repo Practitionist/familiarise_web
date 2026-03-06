@@ -219,7 +219,71 @@ export function buildWeeklyOverlapWhere(
           NOT: { startDay: endDay },
           endTimeUtc: { gt: 0 },
         },
+        // Existing overnight slots whose carry-over day (endDay) is our startDay
+        // e.g., existing Mon 22:00→Tue 02:00 vs new Tue 01:00→Wed 03:00
+        {
+          endDay: startDay,
+          NOT: { startDay },
+          endTimeUtc: { gt: startTimeUtc },
+        },
       ],
     };
   }
+}
+
+/**
+ * Check if a candidate slot fits entirely within a weekly availability window.
+ * Handles both same-day and overnight (cross-midnight) availability.
+ *
+ * Used by: checkout validation, auto-allocator (isWithinAvailability).
+ *
+ * @param candidateDay - JS getUTCDay() index (0=Sunday..6=Saturday)
+ * @param candidateMinutes - Start time as minutes since midnight UTC (0-1439)
+ * @param slotDurationMinutes - Duration of the candidate slot in minutes
+ * @param availStartDay - DayOfWeek enum string for availability start
+ * @param availStartTimeUtc - Availability start in minutes since midnight UTC
+ * @param availEndTimeUtc - Availability end in minutes since midnight UTC
+ */
+export function isMinuteWithinWeeklySlot(
+  candidateDay: number,
+  candidateMinutes: number,
+  slotDurationMinutes: number,
+  availStartDay: string,
+  availStartTimeUtc: number,
+  availEndTimeUtc: number,
+): boolean {
+  const availDay = DAY_OF_WEEK_TO_INDEX[availStartDay];
+  if (availDay === undefined) return false;
+
+  const candidateEndMinutes = candidateMinutes + slotDurationMinutes;
+  const isOvernight = availEndTimeUtc <= availStartTimeUtc;
+
+  if (!isOvernight) {
+    // Same-day availability: candidate must be on the same day
+    // and the full slot must fit within [startTimeUtc, endTimeUtc)
+    if (candidateDay !== availDay) return false;
+    return (
+      candidateMinutes >= availStartTimeUtc &&
+      candidateEndMinutes <= availEndTimeUtc
+    );
+  }
+
+  // Overnight availability (e.g., Mon 22:00 → Tue 02:00):
+  // Case 1: Candidate on the start day, at or after startTimeUtc
+  if (candidateDay === availDay && candidateMinutes >= availStartTimeUtc) {
+    if (candidateEndMinutes <= 1440) {
+      return true;
+    }
+    // Slot crosses midnight — verify overflow fits within next-day end
+    const overflowMinutes = candidateEndMinutes - 1440;
+    return overflowMinutes <= availEndTimeUtc;
+  }
+
+  // Case 2: Candidate on the next day, full slot must end at or before endTimeUtc
+  const nextDay = (availDay + 1) % 7;
+  if (candidateDay === nextDay && candidateEndMinutes <= availEndTimeUtc) {
+    return true;
+  }
+
+  return false;
 }
