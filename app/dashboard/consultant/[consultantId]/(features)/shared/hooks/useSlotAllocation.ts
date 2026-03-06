@@ -11,6 +11,7 @@ import {
   AllocationOptions,
   AllocationResult,
 } from "../utils/allocationAlgorithms";
+import { AllocationService } from "../utils/allocationService";
 
 /**
  * ENHANCED EVENT SLOT ALLOCATION HOOK
@@ -2004,8 +2005,38 @@ export function useEventSlotAllocation(
           totalSessions: options.maxTotalCalls, // maxTotalCalls is already totalSessions-aware
         };
 
+        // For recurring events (subscription/class), the calendar UI only
+        // provides slots for the currently viewed week, but the algorithm
+        // needs slots spanning the entire scheduling period. Fetch them.
+        let slotsForAllocation = availableSlots;
+        if (
+          (eventType === "subscription" || eventType === "class") &&
+          options.startDate &&
+          options.endDate &&
+          options.consultantId
+        ) {
+          const fullPeriodData =
+            await AllocationService.fetchAvailabilitySlots(
+              options.consultantId,
+              options.startDate,
+              options.endDate,
+            );
+          const allRawSlots = [
+            ...(fullPeriodData.weekly || []),
+            ...(fullPeriodData.custom || []),
+          ];
+          slotsForAllocation = allRawSlots.map((slot: any) => ({
+            startTime: new Date(slot.slotStartTimeInUTC),
+            endTime: new Date(slot.slotEndTimeInUTC),
+            isAvailable:
+              slot.bookingStatus === "available" ||
+              slot.bookingStatus === "partially-booked",
+            isBooked: slot.bookingStatus === "fully-booked",
+          }));
+        }
+
         const result = await AllocationAlgorithms.autoAllocate(
-          availableSlots,
+          slotsForAllocation,
           allocationOptions,
         );
 
