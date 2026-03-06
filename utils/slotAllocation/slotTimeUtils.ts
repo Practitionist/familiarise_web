@@ -324,7 +324,7 @@ export function isMinuteWithinWeeklySlot(
   // availDay is the LOCAL day-of-week. The UTC day of the slot's start may
   // differ when the consultant's midnight isn't aligned with UTC midnight.
   // Formula: utcStartDay = (availDay - floor((startTimeUtc + offset) / 1440)) mod 7
-  const localStartMinutes = availStartTimeUtc + utcOffsetMinutes;
+  const localStartMinutes = availStartTimeUtc + (utcOffsetMinutes ?? 0);
   const dayAdjust = Math.floor(localStartMinutes / 1440);
   const utcStartDay = ((availDay - dayAdjust) % 7 + 7) % 7;
 

@@ -203,13 +203,16 @@ export function makeWeeklyAvailabilitySlot(
   day: DayOfWeek,
   startHourUTC: number,
   endHourUTC: number,
+  utcOffsetMinutes: number = 0,
+  endDay?: DayOfWeek,
 ) {
   return {
     id: `weekly-${day}-${startHourUTC}`,
     startDay: day,
     startTimeUtc: startHourUTC * 60, // minutes since midnight UTC
-    endDay: day,
+    endDay: endDay ?? day,
     endTimeUtc: endHourUTC * 60, // minutes since midnight UTC
+    utcOffsetMinutes,
   };
 }
 
