@@ -49,6 +49,7 @@ beforeEach(() => {
   jest.setSystemTime(new Date("2025-01-01T00:00:00Z"));
   service = new SlotValidationService(mockPrisma);
   mockPrisma.appointment.findFirst.mockResolvedValue(null);
+  mockPrisma.appointment.findMany.mockResolvedValue([]);
 });
 
 afterEach(() => {
@@ -107,17 +108,23 @@ describe("checkSlotAvailability", () => {
   });
 
   it("should detect conflicts from existing appointments", async () => {
-    mockPrisma.appointment.findFirst.mockResolvedValue({
-      id: "existing-apt",
-      consultation: {
-        requestedBy: { user: { name: "Existing User" } },
+    const slots = futureSlots(1);
+    mockPrisma.appointment.findMany.mockResolvedValue([
+      {
+        id: "existing-apt",
+        slotsOfAppointment: [
+          {
+            startsAt: slots[0],
+            endsAt: new Date(slots[0].getTime() + 30 * 60 * 1000),
+          },
+        ],
+        consultation: {
+          requestedBy: { user: { name: "Existing User" } },
+        },
       },
-    });
+    ]);
 
-    const result = await service.checkSlotAvailability(
-      futureSlots(1),
-      "user-1",
-    );
+    const result = await service.checkSlotAvailability(slots, "user-1");
     expect(result.isValid).toBe(false);
     expect(result.errors[0]).toContain("already booked");
   });
@@ -125,26 +132,32 @@ describe("checkSlotAvailability", () => {
   it("should use configurable slot duration", async () => {
     await service.checkSlotAvailability(futureSlots(1), "user-1", 60);
     // Verify the query was called — checking it doesn't throw with different duration
-    expect(mockPrisma.appointment.findFirst).toHaveBeenCalled();
+    expect(mockPrisma.appointment.findMany).toHaveBeenCalled();
   });
 
   it("should skip expired payment conflicts", async () => {
-    mockPrisma.appointment.findFirst.mockResolvedValue({
-      id: "expired-apt",
-      consultation: {
-        requestStatus: "APPROVED_PENDING_PAYMENT",
-      },
-      payment: [
-        {
-          expiresAt: new Date("2024-01-01"), // expired
+    const slots = futureSlots(1);
+    mockPrisma.appointment.findMany.mockResolvedValue([
+      {
+        id: "expired-apt",
+        slotsOfAppointment: [
+          {
+            startsAt: slots[0],
+            endsAt: new Date(slots[0].getTime() + 30 * 60 * 1000),
+          },
+        ],
+        consultation: {
+          requestStatus: "APPROVED_PENDING_PAYMENT",
         },
-      ],
-    });
+        payment: [
+          {
+            expiresAt: new Date("2024-01-01"), // expired
+          },
+        ],
+      },
+    ]);
 
-    const result = await service.checkSlotAvailability(
-      futureSlots(1),
-      "user-1",
-    );
+    const result = await service.checkSlotAvailability(slots, "user-1");
     expect(result.isValid).toBe(true);
   });
 });

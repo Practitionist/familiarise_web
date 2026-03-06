@@ -200,63 +200,92 @@ export class SlotValidationService {
   ): Promise<ValidationResult> {
     const errors: string[] = [];
 
-    for (const slot of slots) {
-      // Calculate the end time of the proposed slot using configurable duration
-      const slotEnd = new Date(
-        slot.getTime() + slotDurationMinutes * 60 * 1000,
-      );
+    if (slots.length === 0) {
+      return { isValid: true, errors: [], warnings: [] };
+    }
 
-      const existingAppointment = await this.prismaClient.appointment.findFirst(
-        {
-          where: {
-            AND: [
-              // FIX Bug #15: Use centralized occupancy policy for consistent conflict detection
-              {
-                OR: buildOccupiedAppointmentFilter(),
-              },
-              // Exclude the event's own appointments from conflict detection.
-              // Required for "use requested slots" flow: the event's tentative
-              // appointments must not be flagged as conflicts with themselves.
-              ...(excludeAppointmentIds && excludeAppointmentIds.length > 0
-                ? [{ NOT: { id: { in: excludeAppointmentIds } } }]
-                : []),
-              {
-                slotsOfAppointment: {
-                  some: {
-                    // FIX: All conditions must be inside a single AND array.
-                    // Mixing AND:[...] with a sibling relation filter (user:{})
-                    // at the same level causes Prisma to silently ignore the
-                    // relation condition when using the non-transaction client.
-                    AND: [
-                      { startsAt: { lt: slotEnd } }, // Existing starts before proposed ends
-                      { endsAt: { gt: slot } }, // Existing ends after proposed starts
-                      { user: { some: { id: consultantUserId } } }, // Must be consultant's slot
-                    ],
-                  },
-                },
-              },
-            ],
-          },
-          include: {
-            consultation: {
-              include: {
-                consultationPlan: true,
-                requestedBy: {
-                  include: { user: true },
+    // FIX Issue #464: Replace N+1 per-slot queries with a single batch query.
+    // Previously each slot triggered its own findFirst, causing transaction
+    // timeouts (>120s) for subscriptions with thousands of slots.
+
+    // Step 1: Compute time envelope across ALL proposed slots.
+    // Slots may not be sorted (checkSlotAvailability doesn't sort),
+    // so compute min/max explicitly.
+    const slotDurationMs = slotDurationMinutes * 60 * 1000;
+    let earliestStart = slots[0].getTime();
+    let latestEnd = slots[0].getTime() + slotDurationMs;
+
+    for (const slot of slots) {
+      const startMs = slot.getTime();
+      const endMs = startMs + slotDurationMs;
+      if (startMs < earliestStart) earliestStart = startMs;
+      if (endMs > latestEnd) latestEnd = endMs;
+    }
+
+    // Step 2: Single query — find ALL occupied appointments overlapping the envelope
+    const conflictingAppointments =
+      await this.prismaClient.appointment.findMany({
+        where: {
+          AND: [
+            // FIX Bug #15: Use centralized occupancy policy for consistent conflict detection
+            { OR: buildOccupiedAppointmentFilter() },
+            // Exclude the event's own appointments from conflict detection.
+            // Required for "use requested slots" flow: the event's tentative
+            // appointments must not be flagged as conflicts with themselves.
+            ...(excludeAppointmentIds && excludeAppointmentIds.length > 0
+              ? [{ NOT: { id: { in: excludeAppointmentIds } } }]
+              : []),
+            {
+              slotsOfAppointment: {
+                some: {
+                  // FIX: All conditions must be inside a single AND array.
+                  // Mixing AND:[...] with a sibling relation filter (user:{})
+                  // at the same level causes Prisma to silently ignore the
+                  // relation condition when using the non-transaction client.
+                  AND: [
+                    { startsAt: { lt: new Date(latestEnd) } },
+                    { endsAt: { gt: new Date(earliestStart) } },
+                    { user: { some: { id: consultantUserId } } },
+                  ],
                 },
               },
             },
-            subscription: {
-              include: {
-                subscriptionPlan: true,
-                requestedBy: {
-                  include: { user: true },
-                },
-              },
-            },
-            payment: true, // Need payment data to check expiry
-          },
+          ],
         },
+        include: {
+          slotsOfAppointment: {
+            select: { startsAt: true, endsAt: true },
+          },
+          consultation: {
+            include: {
+              consultationPlan: true,
+              requestedBy: {
+                include: { user: true },
+              },
+            },
+          },
+          subscription: {
+            include: {
+              subscriptionPlan: true,
+              requestedBy: {
+                include: { user: true },
+              },
+            },
+          },
+          payment: true, // Need payment data to check expiry
+        },
+      });
+
+    // Step 3: Match conflicts back to specific proposed slots in JS
+    for (const slot of slots) {
+      const slotEnd = new Date(slot.getTime() + slotDurationMs);
+
+      const existingAppointment = conflictingAppointments.find((appt) =>
+        appt.slotsOfAppointment.some(
+          (existingSlot) =>
+            new Date(existingSlot.startsAt) < slotEnd &&
+            new Date(existingSlot.endsAt) > slot,
+        ),
       );
 
       if (existingAppointment) {
