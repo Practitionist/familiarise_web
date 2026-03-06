@@ -399,7 +399,7 @@ export async function processOnboardingData(
         const baseUserData: Prisma.UserUpdateInput = {
           name: validatedBody.name,
           email: validatedBody.email,
-          phone: validatedBody.phone,
+          phone: validatedBody.phone || null,
           address: validatedBody.address,
           role: validatedBody.role,
           onboardingCompleted: true,

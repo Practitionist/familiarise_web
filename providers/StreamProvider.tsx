@@ -236,7 +236,7 @@ const StreamProvider = ({
         userId: userDetails.id,
       });
     } catch (error) {
-      streamLogger.error("Chat connection failed", error, {
+      streamLogger.warn("Chat connection failed (will retry)", {
         userId: userDetails.id,
       });
       setChatConnected(false);

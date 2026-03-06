@@ -324,7 +324,7 @@ export default function ConsulteeLayout({
   } = useQuery({
     queryKey: ["user-details", userId],
     queryFn: () => fetchUserDetails(userId!),
-    enabled: !!userId,
+    enabled: !!userId && !isSessionLoading,
     staleTime: 5 * 60 * 1000,
     gcTime: 10 * 60 * 1000,
     retry: 2,

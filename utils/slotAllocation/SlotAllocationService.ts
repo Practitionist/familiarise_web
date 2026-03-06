@@ -274,6 +274,7 @@ export class SlotAllocationService {
 
         // Find available slots
         // Pass appointmentIdsToExclude so their slots are excluded from bookedSlots
+        // Pass existingAppointments so callsPerWeek is scoped to this event only
         const selectedSlots = await this.findAvailableSlots(
           tx,
           consultant,
@@ -282,6 +283,7 @@ export class SlotAllocationService {
           eventType,
           config,
           appointmentIdsToExclude,
+          existingAppointments,
         );
 
         // Validate
@@ -715,6 +717,7 @@ export class SlotAllocationService {
     eventType: EventType,
     config: EventConfig,
     excludeAppointmentIds: string[] = [],
+    eventOwnAppointments: AppointmentWithSlots[] = [],
   ): Promise<Date[]> {
     // Get all existing booked slots for this consultant
     // FIX Bug #15: Use centralized occupancy policy for consistent conflict detection
@@ -893,8 +896,12 @@ export class SlotAllocationService {
     // Build a map of existing confirmed calls per week.
     // During partial reschedule, weeks with confirmed appointments already
     // have calls that must count toward the weekly limit.
+    // IMPORTANT: Only count THIS event's own appointments (not consultations or
+    // other event types), and exclude the tentative ones being replaced.
+    const excludeSet = new Set(excludeAppointmentIds);
     const existingCallsPerWeek = new Map<string, number>();
-    for (const apt of existingAppointments) {
+    for (const apt of eventOwnAppointments) {
+      if (excludeSet.has(apt.id)) continue; // skip tentative (being replaced)
       if (apt.slotsOfAppointment.length === 0) continue;
       const firstSlot = apt.slotsOfAppointment.reduce((earliest, s) =>
         new Date(s.startsAt) < new Date(earliest.startsAt) ? s : earliest,
@@ -1318,16 +1325,23 @@ export class SlotAllocationService {
 
       case "class":
         // Class model HAS schedulingPeriod fields
-        // FIX Bug #19: Use addMonths instead of addWeeks * 4 for accurate month boundaries
+        // FIX: Only set schedulingPeriod if not already configured — same guard as SUBSCRIPTION.
+        // Overwriting an explicitly-set period on re-allocation shifts the window, allowing
+        // slots outside the original range to pass the scheduling-period validation check.
         await tx.class.update({
           where: { id: eventId },
           data: {
             status: "SCHEDULED",
-            schedulingPeriodStartsAt: firstSlot,
-            schedulingPeriodEndsAt: addMonths(
-              firstSlot,
-              config.durationInMonths || 1,
-            ),
+            ...(!config.schedulingPeriodStartsAt ||
+            !config.schedulingPeriodEndsAt
+              ? {
+                  schedulingPeriodStartsAt: firstSlot,
+                  schedulingPeriodEndsAt: addMonths(
+                    firstSlot,
+                    config.durationInMonths || 2,
+                  ),
+                }
+              : {}),
           },
         });
         break;

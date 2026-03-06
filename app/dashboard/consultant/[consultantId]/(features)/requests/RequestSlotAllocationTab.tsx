@@ -118,14 +118,15 @@ async function fetchDataFromApi<T>(
       };
     }
   } catch (err) {
-    console.error(`Error fetching ${url}:`, err);
     let message = "An unknown error occurred while fetching data.";
     // Specifically check for the browser's network error
     if (err instanceof TypeError && err.message === "Failed to fetch") {
+      // Use warn (not error) — this is a transient network hiccup, not a code bug
+      console.warn(`Network error fetching ${url}: server temporarily unreachable`);
       message =
         "Network error: Could not connect to the server. Please check your internet connection.";
     } else if (err instanceof Error) {
-      // Use message from other error types
+      console.error(`Error fetching ${url}:`, err);
       message = err.message;
     }
     return { ok: false, data: null, error: message };
