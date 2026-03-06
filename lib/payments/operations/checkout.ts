@@ -23,6 +23,7 @@ import {
   ApprovalLock,
 } from "@/utils/appointmentlock";
 import { validateSlotTiming } from "@/lib/payments/utils/slot-validation";
+import { isMinuteWithinWeeklySlot } from "@/utils/slotAllocation/slotTimeUtils";
 import {
   countUniqueParticipants,
   isUserEnrolled,
@@ -452,21 +453,32 @@ export async function validateSlotAvailability(
   if (data.slotOfAvailabilityWeeklyId) {
     const avail = await tx.slotOfAvailabilityWeekly.findUnique({
       where: { id: data.slotOfAvailabilityWeeklyId },
+      include: { consultantProfile: { select: { userId: true } } },
     });
     if (!avail) {
       throw new Error("Availability slot not found");
     }
-    // Map JS getUTCDay() (0=Sun,1=Mon,...,6=Sat) to DayOfWeek enum
-    const jsDayToEnum: Record<number, string> = {
-      0: "SUNDAY", 1: "MONDAY", 2: "TUESDAY", 3: "WEDNESDAY",
-      4: "THURSDAY", 5: "FRIDAY", 6: "SATURDAY",
-    };
-    const slotDay = jsDayToEnum[slotStart.getUTCDay()];
-    const slotMinutes = slotStart.getUTCHours() * 60 + slotStart.getUTCMinutes();
+    // Verify the availability slot belongs to the correct consultant
+    if (consultantUserId && avail.consultantProfile.userId !== consultantUserId) {
+      throw new Error(
+        "Availability slot does not belong to the specified consultant",
+      );
+    }
+    // Overnight-aware check: use shared utility instead of same-day-only guard
+    const candidateDay = slotStart.getUTCDay();
+    const candidateMinutes = slotStart.getUTCHours() * 60 + slotStart.getUTCMinutes();
+    const slotDurationMinutes = Math.round(
+      (slotEnd.getTime() - slotStart.getTime()) / (60 * 1000),
+    );
     if (
-      slotDay !== avail.startDay ||
-      slotMinutes < avail.startTimeUtc ||
-      slotMinutes >= avail.endTimeUtc
+      !isMinuteWithinWeeklySlot(
+        candidateDay,
+        candidateMinutes,
+        slotDurationMinutes,
+        avail.startDay,
+        avail.startTimeUtc,
+        avail.endTimeUtc,
+      )
     ) {
       throw new Error(
         "Selected slot does not fall within the specified availability window",
@@ -475,9 +487,16 @@ export async function validateSlotAvailability(
   } else if (data.slotOfAvailabilityCustomId) {
     const avail = await tx.slotOfAvailabilityCustom.findUnique({
       where: { id: data.slotOfAvailabilityCustomId },
+      include: { consultantProfile: { select: { userId: true } } },
     });
     if (!avail) {
       throw new Error("Custom availability slot not found");
+    }
+    // Verify the custom availability slot belongs to the correct consultant
+    if (consultantUserId && avail.consultantProfile.userId !== consultantUserId) {
+      throw new Error(
+        "Availability slot does not belong to the specified consultant",
+      );
     }
     if (slotStart < avail.startsAt || slotEnd > avail.endsAt) {
       throw new Error(
