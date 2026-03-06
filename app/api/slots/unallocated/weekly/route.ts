@@ -115,6 +115,10 @@ export async function GET(req: NextRequest) {
               0,
             ),
           );
+          // For overnight slots, endTime is on the next day
+          if (slot.endTimeUtc <= slot.startTimeUtc) {
+            slotEnd.setUTCDate(slotEnd.getUTCDate() + 1);
+          }
 
           // Check for any overlapping allocated slot (partial or full overlap)
           const hasOverlap = allocatedSlots.some(
