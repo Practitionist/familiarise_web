@@ -327,5 +327,40 @@ export function isMinuteWithinWeeklySlot(
     return true;
   }
 
+  // Case 3: Timezone compensation — startDay is the LOCAL day (from the UI),
+  // but candidateDay is the UTC day. They can differ by ±1 depending on
+  // the consultant's timezone offset.
+
+  // 3a: Candidate in late evening UTC (>= 18:00 / 1080 min) — local day may be
+  // the NEXT calendar day (positive-offset timezones like IST +5:30)
+  // e.g., Sunday 19:30 UTC = Monday 01:00 IST → candidateDay=SUN, availDay=MON
+  const nextDayFromCandidate = (candidateDay + 1) % 7;
+  if (nextDayFromCandidate === availDay && candidateMinutes >= 1080) {
+    if (!isOvernight) {
+      if (
+        candidateMinutes >= availStartTimeUtc &&
+        candidateEndMinutes <= availEndTimeUtc
+      ) {
+        return true;
+      }
+    } else if (candidateMinutes >= availStartTimeUtc) {
+      if (candidateEndMinutes <= 1440) return true;
+      const overflowMinutes = candidateEndMinutes - 1440;
+      if (overflowMinutes <= availEndTimeUtc) return true;
+    }
+  }
+
+  // 3b: Candidate in early morning UTC (< 06:00 / 360 min) — local day may be
+  // the PREVIOUS calendar day (negative-offset timezones like EST -5)
+  // Only relevant for overnight availability carrying over
+  const prevDayFromCandidate = (candidateDay + 6) % 7;
+  if (
+    prevDayFromCandidate === availDay &&
+    candidateMinutes < 360 &&
+    isOvernight
+  ) {
+    if (candidateEndMinutes <= availEndTimeUtc) return true;
+  }
+
   return false;
 }

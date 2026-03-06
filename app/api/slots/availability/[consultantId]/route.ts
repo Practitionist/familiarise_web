@@ -217,7 +217,7 @@ function getDayOfWeek(date: Date): DayOfWeek {
     DayOfWeek.FRIDAY,
     DayOfWeek.SATURDAY,
   ];
-  return days[date.getDay()];
+  return days[date.getUTCDay()];
 }
 
 function getPreviousDayOfWeek(day: DayOfWeek): DayOfWeek {

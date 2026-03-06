@@ -17,7 +17,7 @@ import {
 import { SlotCalculationService } from "./SlotCalculationService";
 import { SubscriptionValidationService } from "../subscriptionValidation";
 import { buildOccupiedAppointmentFilter } from "./occupancyPolicy";
-import { DAY_OF_WEEK_TO_INDEX } from "./slotTimeUtils";
+import { isMinuteWithinWeeklySlot } from "./slotTimeUtils";
 
 /**
  * Service for validating slot allocations
@@ -331,65 +331,20 @@ export class SlotValidationService {
         const slotHours = slot.getUTCHours();
         const slotMinutes = slot.getUTCMinutes();
         const slotTimeMinutes = slotHours * 60 + slotMinutes;
-        const slotEndTimeMinutes = slotTimeMinutes + 30; // 30-minute slot
 
         // Check if this slot matches any availability pattern
+        // Delegates to isMinuteWithinWeeklySlot — single source of truth for
+        // same-day, overnight, and timezone-compensated day matching
         const matchesAvailability = consultant.slotsOfAvailabilityWeekly.some(
-          (availSlot) => {
-            const availDay =
-              DAY_OF_WEEK_TO_INDEX[availSlot.startDay];
-            if (availDay === undefined) return false;
-
-            // Direct Int comparison — no DateTime parsing needed
-            const availStartMinutes = availSlot.startTimeUtc;
-            const availEndMinutes = availSlot.endTimeUtc;
-            const isOvernightAvail = availEndMinutes <= availStartMinutes;
-
-            // Check for same day match
-            if (slotDay === availDay) {
-              if (isOvernightAvail) {
-                // Overnight slot - check if slot is after start on same day
-                if (slotTimeMinutes >= availStartMinutes) return true;
-              } else {
-                // Normal same-day slot
-                if (
-                  slotTimeMinutes >= availStartMinutes &&
-                  slotEndTimeMinutes <= availEndMinutes
-                )
-                  return true;
-              }
-            }
-
-            // Check for overnight carry-over (slot is on day after availability start)
-            const nextDay = (availDay + 1) % 7;
-            if (slotDay === nextDay && isOvernightAvail) {
-              if (slotEndTimeMinutes <= availEndMinutes) return true;
-            }
-
-            // TIMEZONE EDGE CASE - Check NEXT day's availability pattern
-            // When slot is in late evening UTC (>= 18:00), it might appear as the NEXT day
-            // in positive-offset timezones (e.g., 21:00 UTC Saturday = 02:30 IST Sunday)
-            const nextDayFromSlot = (slotDay + 1) % 7;
-            if (nextDayFromSlot === availDay && slotHours >= 18) {
-              if (
-                slotTimeMinutes >= availStartMinutes &&
-                (isOvernightAvail || slotEndTimeMinutes <= availEndMinutes)
-              )
-                return true;
-            }
-
-            // Check PREVIOUS day for early morning slots
-            const prevDayFromSlot = (slotDay + 6) % 7;
-            if (
-              prevDayFromSlot === availDay &&
-              slotHours < 6 &&
-              isOvernightAvail
-            ) {
-              if (slotEndTimeMinutes <= availEndMinutes) return true;
-            }
-
-            return false;
-          },
+          (availSlot) =>
+            isMinuteWithinWeeklySlot(
+              slotDay,
+              slotTimeMinutes,
+              30, // 30-minute slot duration
+              availSlot.startDay,
+              availSlot.startTimeUtc,
+              availSlot.endTimeUtc,
+            ),
         );
 
         if (!matchesAvailability) {

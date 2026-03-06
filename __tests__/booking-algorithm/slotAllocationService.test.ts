@@ -1166,7 +1166,14 @@ describe("updateEventStatus", () => {
   });
 
   it("should set SCHEDULED with scheduling period for class", async () => {
-    mockTx.class.findUnique.mockResolvedValue(makeClassEvent());
+    // Use a class without pre-set scheduling period — updateEventStatus should
+    // derive schedulingPeriodStartsAt/EndsAt from the first allocated slot
+    mockTx.class.findUnique.mockResolvedValue(
+      makeClassEvent({
+        schedulingPeriodStartsAt: null,
+        schedulingPeriodEndsAt: null,
+      }),
+    );
 
     await SlotAllocationService.allocate({
       eventType: "class",
