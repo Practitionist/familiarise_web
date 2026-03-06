@@ -171,34 +171,37 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
   // Runs before any serverless function is invoked — prevents cost amplification
   // under DDoS even when every request would otherwise return 429.
 
-  // Auth brute-force protection — POST only (credential submission); GET/OPTIONS must not consume quota
+  // Auth brute-force protection — POST only; skip for localhost (dev testing)
+  const clientIp = getClientIp(req);
+  const isLocalhost = clientIp === "::1" || clientIp === "127.0.0.1" || clientIp === "unknown_ip";
   if (
+    !isLocalhost &&
     req.method === "POST" &&
     (pathname.startsWith("/api/auth/sign-in") ||
       pathname.startsWith("/api/auth/sign-up") ||
       pathname.startsWith("/api/auth/forget-password"))
   ) {
-    const rl = await applyRateLimit(authLimiter, getClientIp(req));
+    const rl = await applyRateLimit(authLimiter, clientIp);
     if (rl) return rl;
   }
 
   if (pathname.startsWith("/api/user/consultants")) {
-    const rl = await applyRateLimit(searchLimiter, getClientIp(req));
+    const rl = await applyRateLimit(searchLimiter, clientIp);
     if (rl) return rl;
   }
   if (pathname.startsWith("/api/trials/check-eligibility")) {
-    const rl = await applyRateLimit(eligibilityLimiter, getClientIp(req));
+    const rl = await applyRateLimit(eligibilityLimiter, clientIp);
     if (rl) return rl;
   }
   if (
     pathname.startsWith("/api/newsletter/subscribe") &&
     req.method === "POST"
   ) {
-    const rl = await applyRateLimit(newsletterLimiter, getClientIp(req));
+    const rl = await applyRateLimit(newsletterLimiter, clientIp);
     if (rl) return rl;
   }
   if (pathname.startsWith("/api/slots/availability/")) {
-    const rl = await applyRateLimit(availabilityLimiter, getClientIp(req));
+    const rl = await applyRateLimit(availabilityLimiter, clientIp);
     if (rl) return rl;
   }
 

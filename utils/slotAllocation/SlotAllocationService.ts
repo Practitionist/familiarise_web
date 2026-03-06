@@ -117,7 +117,17 @@ export class SlotAllocationService {
     if (
       msg.includes("lock") ||
       msg.includes("Lock") ||
-      msg.includes("in progress")
+      msg.includes("in progress") ||
+      msg.includes("already fully allocated")
+    ) {
+      return { errorCode: "LOCK_CONTENTION", httpStatus: 409 };
+    }
+    // Prisma unique constraint violation (P2002) — concurrent duplicate booking race
+    if (
+      error &&
+      typeof error === "object" &&
+      "code" in error &&
+      (error as { code: string }).code === "P2002"
     ) {
       return { errorCode: "LOCK_CONTENTION", httpStatus: 409 };
     }
@@ -243,6 +253,26 @@ export class SlotAllocationService {
           0,
         );
         const isReschedule = tentativeSlotCount > 0;
+
+        // Guard: for classes, reject re-allocation when already fully scheduled.
+        // Webinars are handled by the DB unique constraint on webinarId (P2002 → 409).
+        // Classes have no such constraint, so we enforce it here to prevent
+        // concurrent auto-allocate calls from creating duplicate session sets.
+        if (
+          eventType === "class" &&
+          !isReschedule &&
+          existingNonTentativeSlotCount > 0
+        ) {
+          const requiredForGuard = SlotCalculationService.calculateRequiredSlots(
+            eventType,
+            config,
+          );
+          if (existingNonTentativeSlotCount >= requiredForGuard) {
+            throw new Error(
+              `Event is already fully allocated with ${existingNonTentativeSlotCount} confirmed slot(s).`,
+            );
+          }
+        }
 
         // Collect appointment IDs to exclude from conflict detection and weekly limits.
         // For reschedule: exclude tentative appointments (they'll be deleted)
