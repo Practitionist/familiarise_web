@@ -5,6 +5,7 @@ import {
   minutesToTimeString,
   validateWeeklySlotTimeOrder,
   buildWeeklyOverlapWhere,
+  getTimezoneOffsetMinutes,
 } from "@/utils/slotAllocation/slotTimeUtils";
 import { getSession } from "@/lib/auth-server";
 
@@ -109,10 +110,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Ownership check
+    // Ownership check (also fetch user timezone for offset computation)
     const consultantProfile = await prisma.consultantProfile.findUnique({
       where: { id: consultantProfileId },
-      select: { userId: true },
+      select: { userId: true, user: { select: { timezone: true } } },
     });
     if (!consultantProfile || consultantProfile.userId !== session.user.id) {
       return NextResponse.json(
@@ -171,6 +172,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const utcOffsetMinutes = consultantProfile.user?.timezone
+      ? getTimezoneOffsetMinutes(consultantProfile.user.timezone)
+      : null;
+
     const newWeeklySlot = await prisma.slotOfAvailabilityWeekly.create({
       data: {
         consultantProfileId,
@@ -178,6 +183,7 @@ export async function POST(req: NextRequest) {
         endDay,
         startTimeUtc,
         endTimeUtc,
+        utcOffsetMinutes,
       },
       include: {
         consultantProfile: {

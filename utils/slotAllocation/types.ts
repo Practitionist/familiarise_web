@@ -127,6 +127,7 @@ export interface ConsultantAllocationData {
     startTimeUtc: number;
     endDay: string;
     endTimeUtc: number;
+    utcOffsetMinutes?: number | null;
   }>;
   slotsOfAvailabilityCustom: Array<{
     id: string;

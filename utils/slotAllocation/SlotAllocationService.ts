@@ -719,6 +719,7 @@ export class SlotAllocationService {
           slot.startDay,
           slot.startTimeUtc,
           slot.endTimeUtc,
+          slot.utcOffsetMinutes,
         ),
       );
     } else {

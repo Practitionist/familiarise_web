@@ -373,6 +373,7 @@ export class SlotValidationService {
               availSlot.startDay,
               availSlot.startTimeUtc,
               availSlot.endTimeUtc,
+              availSlot.utcOffsetMinutes,
             ),
         );
 

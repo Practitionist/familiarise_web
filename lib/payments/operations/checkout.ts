@@ -478,6 +478,7 @@ export async function validateSlotAvailability(
         avail.startDay,
         avail.startTimeUtc,
         avail.endTimeUtc,
+        avail.utcOffsetMinutes,
       )
     ) {
       throw new Error(

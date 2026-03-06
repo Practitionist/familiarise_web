@@ -696,9 +696,10 @@ model Education {
 model SlotOfAvailabilityWeekly {
   id           String    @id @default(uuid())
   startDay     DayOfWeek
-  startTimeUtc Int       @db.SmallInt // Minutes since midnight UTC (0-1439)
-  endDay       DayOfWeek
-  endTimeUtc   Int       @db.SmallInt // Minutes since midnight UTC (0-1439)
+  startTimeUtc              Int       @db.SmallInt // Minutes since midnight UTC (0-1439)
+  endDay                    DayOfWeek
+  endTimeUtc                Int       @db.SmallInt // Minutes since midnight UTC (0-1439)
+  utcOffsetMinutes  Int?      @db.SmallInt // UTC offset in minutes at slot creation (e.g. 330 for IST, -300 for EST); null = heuristic fallback
 
   consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultantProfileId String

@@ -5,6 +5,7 @@ import {
   minutesToTimeString,
   validateWeeklySlotTimeOrder,
   buildWeeklyOverlapWhere,
+  getTimezoneOffsetMinutes,
 } from "@/utils/slotAllocation/slotTimeUtils";
 import { getSession } from "@/lib/auth-server";
 
@@ -57,7 +58,11 @@ export async function PUT(
     // Fetch existing slot for authoritative consultantProfileId and ownership
     const currentSlot = await prisma.slotOfAvailabilityWeekly.findUnique({
       where: { id },
-      include: { consultantProfile: { select: { userId: true } } },
+      include: {
+        consultantProfile: {
+          select: { userId: true, user: { select: { timezone: true } } },
+        },
+      },
     });
 
     if (!currentSlot) {
@@ -156,6 +161,10 @@ export async function PUT(
       );
     }
 
+    const utcOffsetMinutes = currentSlot.consultantProfile.user?.timezone
+      ? getTimezoneOffsetMinutes(currentSlot.consultantProfile.user.timezone)
+      : null;
+
     const updatedSlot = await prisma.slotOfAvailabilityWeekly.update({
       where: { id: id },
       data: {
@@ -163,6 +172,7 @@ export async function PUT(
         endDay: body.endDay,
         startTimeUtc,
         endTimeUtc,
+        utcOffsetMinutes,
       },
       include: {
         consultantProfile: true,
@@ -227,7 +237,11 @@ export async function PATCH(
 
     const currentSlot = await prisma.slotOfAvailabilityWeekly.findUnique({
       where: { id: id },
-      include: { consultantProfile: { select: { userId: true } } },
+      include: {
+        consultantProfile: {
+          select: { userId: true, user: { select: { timezone: true } } },
+        },
+      },
     });
 
     if (!currentSlot) {
@@ -298,6 +312,10 @@ export async function PATCH(
       );
     }
 
+    const utcOffsetMinutes = currentSlot.consultantProfile.user?.timezone
+      ? getTimezoneOffsetMinutes(currentSlot.consultantProfile.user.timezone)
+      : null;
+
     const updatedSlot = await prisma.slotOfAvailabilityWeekly.update({
       where: { id: id },
       data: {
@@ -305,6 +323,7 @@ export async function PATCH(
         endDay: body.endDay,
         startTimeUtc,
         endTimeUtc,
+        utcOffsetMinutes,
       },
       include: {
         consultantProfile: true,

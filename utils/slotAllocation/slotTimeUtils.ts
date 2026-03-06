@@ -274,6 +274,25 @@ export function slotsOverlap(
 }
 
 /**
+ * Compute the UTC offset in minutes for a given IANA timezone string.
+ * Returns the offset such that: localTime = utcTime + offsetMinutes.
+ * e.g. "Asia/Kolkata" → 330, "America/New_York" (EST) → -300.
+ * Returns 0 on invalid or unrecognised timezone strings.
+ */
+export function getTimezoneOffsetMinutes(timezone: string): number {
+  try {
+    const date = new Date();
+    const utcStr = date.toLocaleString("en-US", { timeZone: "UTC" });
+    const tzStr = date.toLocaleString("en-US", { timeZone: timezone });
+    return Math.round(
+      (new Date(tzStr).getTime() - new Date(utcStr).getTime()) / 60000,
+    );
+  } catch {
+    return 0;
+  }
+}
+
+/**
  * Check if a candidate slot fits entirely within a weekly availability window.
  * Handles both same-day and overnight (cross-midnight) availability.
  *
@@ -285,6 +304,9 @@ export function slotsOverlap(
  * @param availStartDay - DayOfWeek enum string for availability start
  * @param availStartTimeUtc - Availability start in minutes since midnight UTC
  * @param availEndTimeUtc - Availability end in minutes since midnight UTC
+ * @param utcOffsetMinutes - UTC offset for the consultant's timezone (e.g. 330
+ *   for IST). When provided, enables exact UTC-day matching instead of the heuristic
+ *   720-minute guard. Pass null/undefined to fall back to the heuristic path.
  */
 export function isMinuteWithinWeeklySlot(
   candidateDay: number,
@@ -293,12 +315,48 @@ export function isMinuteWithinWeeklySlot(
   availStartDay: string,
   availStartTimeUtc: number,
   availEndTimeUtc: number,
+  utcOffsetMinutes?: number | null,
 ): boolean {
   const availDay = DAY_OF_WEEK_TO_INDEX[availStartDay];
   if (availDay === undefined) return false;
 
   const candidateEndMinutes = candidateMinutes + slotDurationMinutes;
   const isOvernight = availEndTimeUtc <= availStartTimeUtc;
+
+  // === EXACT PATH: use stored timezone offset for precise UTC-day matching ===
+  // Eliminates the heuristic 720-minute guard false-positives introduced when
+  // a UTC-timezone consultant has afternoon/evening slots (startTimeUtc ≥ 720).
+  if (utcOffsetMinutes != null) {
+    // availDay is the LOCAL day-of-week. The UTC day of the slot's start may
+    // differ when the consultant's midnight isn't aligned with UTC midnight.
+    // Formula: utcStartDay = (availDay - floor((startTimeUtc + offset) / 1440)) mod 7
+    const localStartMinutes = availStartTimeUtc + utcOffsetMinutes;
+    const dayAdjust = Math.floor(localStartMinutes / 1440);
+    const utcStartDay = ((availDay - dayAdjust) % 7 + 7) % 7;
+
+    if (!isOvernight) {
+      return (
+        candidateDay === utcStartDay &&
+        candidateMinutes >= availStartTimeUtc &&
+        candidateEndMinutes <= availEndTimeUtc
+      );
+    }
+
+    // Overnight: spans utcStartDay (from startTimeUtc to midnight) then
+    // utcEndDay (from midnight to endTimeUtc).
+    const utcEndDay = (utcStartDay + 1) % 7;
+    if (candidateDay === utcStartDay && candidateMinutes >= availStartTimeUtc) {
+      if (candidateEndMinutes <= 1440) return true;
+      return candidateEndMinutes - 1440 <= availEndTimeUtc;
+    }
+    if (candidateDay === utcEndDay && candidateEndMinutes <= availEndTimeUtc) {
+      return true;
+    }
+    return false;
+  }
+
+  // === HEURISTIC PATH (legacy): used when utcOffsetMinutes is null ===
+  // Applied to slots created before the timezone offset field was added.
 
   if (!isOvernight) {
     // Same-day availability

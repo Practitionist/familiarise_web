@@ -10,6 +10,7 @@ import {
   dateToMinuteUtc,
   validateWeeklySlotTimeOrder,
   slotsOverlap,
+  getTimezoneOffsetMinutes,
 } from "@/utils/slotAllocation/slotTimeUtils";
 // Zod schema for UUID validation
 const uuidSchema = z.string().uuid();
@@ -349,6 +350,14 @@ export async function PUT(
     // Update weekly slots if schedule type is WEEKLY
     if (scheduleType === ScheduleType.WEEKLY) {
       if (slotsOfAvailabilityWeekly?.length) {
+        // Resolve timezone offset once for all slots (same user → same timezone)
+        const userTimezone = await prisma.user
+          .findUnique({ where: { id: session.user.id }, select: { timezone: true } })
+          .then((u) => u?.timezone ?? null);
+        const utcOffsetMinutes = userTimezone
+          ? getTimezoneOffsetMinutes(userTimezone)
+          : null;
+
         const weeklySlotData: Prisma.SlotOfAvailabilityWeeklyCreateManyInput[] =
           slotsOfAvailabilityWeekly.map((slot) => ({
             consultantProfileId: id,
@@ -356,6 +365,7 @@ export async function PUT(
             endDay: slot.dayOfWeekforEndTimeInUTC,
             startTimeUtc: dateToMinuteUtc(new Date(slot.slotStartTimeInUTC)),
             endTimeUtc: dateToMinuteUtc(new Date(slot.slotEndTimeInUTC)),
+            utcOffsetMinutes,
           }));
 
         // Validate each weekly slot before saving
