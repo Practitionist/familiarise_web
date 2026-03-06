@@ -26,6 +26,7 @@
 - [ ] Custom slot date ordering: `startsAt < endsAt`
 - [ ] `Date.parse()` validation on ISO string inputs (reject malformed dates with 400)
 - [ ] Duration validation: reject zero, negative, or unreasonably large values
+- [ ] Scheduling period validation checks full slot interval (`slot + 30min <= endDate`), not just start
 
 ## 3. Overnight / Cross-Midnight Handling
 
@@ -44,6 +45,7 @@
 - [ ] Checkout uses `isMinuteWithinWeeklySlot()` (not same-day-only guard)
 - [ ] `SlotAllocationService.isWithinAvailability()` delegates to `isMinuteWithinWeeklySlot()`
 - [ ] `SlotValidationService.validateMatchesSchedule()` handles overnight in both directions
+- [ ] Unallocated weekly routes roll `slotEnd` to next UTC day for overnight slots
 
 ## 4. Overlap & Conflict Detection
 
@@ -146,6 +148,8 @@
 5. **Overnight overlap:** Create Mon 22:00->Tue 02:00, then try Tue 01:00->Wed 03:00 -> overlap rejected
 6. **Auth on writes:** Unauthenticated POST to `/api/slots/availability/weekly` -> 401
 7. **Lock contention:** Two concurrent auto-allocations for same consultant -> one gets 409
+8. **Unallocated overnight:** Mon 22:00->Tue 02:00 with Tue 01:00 booking is excluded from both `/api/slots/unallocated/weekly` and `/api/slots/unallocated/[consultantId]`
+9. **Scheduling period boundary:** A 1-hour session ending after `schedulingPeriodEndsAt` is rejected even if its last slot starts exactly at the end time
 
 ---
 
@@ -190,3 +194,5 @@
 | Date validation | `custom/[id]` PUT/PATCH validates `Date.parse()` before constructing |
 | PATCH integers | Added `typeof` check before `Number.isInteger()` on PATCH |
 | Docs update | Field names updated to match new schema |
+| Unallocated overnight | Unallocated routes roll `slotEnd` to next day for overnight weekly slots |
+| Scheduling boundary | `validateSchedulingPeriod` checks `slot + 30min <= endDate` (server + client) |
