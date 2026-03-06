@@ -197,15 +197,32 @@ export async function POST(
           });
         }
 
-        // Delete slots
-        await tx.slotOfAppointment.deleteMany({
-          where: { appointmentId },
-        });
-
-        // Delete appointment
-        await tx.appointment.delete({
-          where: { id: appointmentId },
-        });
+        // Delete slots and appointments
+        if (appointment.subscription) {
+          // Delete ALL slots for ALL appointments of this subscription
+          await tx.slotOfAppointment.deleteMany({
+            where: { appointment: { subscriptionId: appointment.subscription.id } },
+          });
+          await tx.appointment.deleteMany({
+            where: { subscriptionId: appointment.subscription.id },
+          });
+        } else if (appointment.class) {
+          // Delete ALL slots for ALL appointments of this class
+          await tx.slotOfAppointment.deleteMany({
+            where: { appointment: { classId: appointment.class.id } },
+          });
+          await tx.appointment.deleteMany({
+            where: { classId: appointment.class.id },
+          });
+        } else {
+          // Consultation/webinar/trial — single appointment
+          await tx.slotOfAppointment.deleteMany({
+            where: { appointmentId },
+          });
+          await tx.appointment.delete({
+            where: { id: appointmentId },
+          });
+        }
 
         return {
           success: true,

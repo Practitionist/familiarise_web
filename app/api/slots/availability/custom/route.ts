@@ -50,7 +50,6 @@ export async function GET(req: NextRequest) {
               user: {
                 select: {
                   name: true,
-                  email: true,
                 },
               },
             },

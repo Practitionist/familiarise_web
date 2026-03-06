@@ -123,20 +123,8 @@ async function getCustomSlots(
   const customSlots = await prisma.slotOfAvailabilityCustom.findMany({
     where: {
       consultantProfileId: consultantId,
-      OR: [
-        {
-          startsAt: {
-            gte: utcDayStart,
-            lt: utcDayEnd,
-          },
-        },
-        {
-          endsAt: {
-            gt: utcDayStart,
-            lte: utcDayEnd,
-          },
-        },
-      ],
+      startsAt: { lt: utcDayEnd },
+      endsAt: { gt: utcDayStart },
     },
     orderBy: { startsAt: "asc" },
   });
