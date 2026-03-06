@@ -205,6 +205,7 @@ function makeMockTx() {
       findUnique: jest.fn(),
       findMany: jest.fn().mockResolvedValue([]),
       delete: jest.fn(),
+      deleteMany: jest.fn(),
     },
     consultation: { update: jest.fn() },
     subscription: { update: jest.fn() },
