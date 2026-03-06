@@ -50,9 +50,19 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     let hasAccess = false;
 
     if (session.user.role === "CONSULTANT") {
-      // Consultant must own the plan
+      // Consultant must own the plan, or be an accepted collaborator
       hasAccess =
         webinarPlan.consultantProfileId === session.user.consultantProfileId;
+      if (!hasAccess && session.user.consultantProfileId) {
+        const collab = await prisma.webinarCollaborator.findFirst({
+          where: {
+            webinarPlanId,
+            consultantProfileId: session.user.consultantProfileId,
+            status: "ACCEPTED",
+          },
+        });
+        hasAccess = !!collab;
+      }
     } else if (session.user.role === "CONSULTEE") {
       // Consultee must have purchased a webinar from this plan
       const enrollment = await prisma.payment.findFirst({

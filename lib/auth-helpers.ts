@@ -134,23 +134,43 @@ export async function authorizeEventAccess(
     const event = await prisma.webinar.findUnique({
       where: { id: eventId },
       select: {
-        webinarPlan: { select: { consultantProfileId: true } },
+        webinarPlan: { select: { id: true, consultantProfileId: true } },
       },
     });
     if (event) {
       isAuthorized =
         consultantProfileId === event.webinarPlan.consultantProfileId;
+      if (!isAuthorized && consultantProfileId) {
+        const collab = await prisma.webinarCollaborator.findFirst({
+          where: {
+            webinarPlanId: event.webinarPlan.id,
+            consultantProfileId,
+            status: "ACCEPTED",
+          },
+        });
+        isAuthorized = !!collab;
+      }
     }
   } else if (eventType === "class") {
     const event = await prisma.class.findUnique({
       where: { id: eventId },
       select: {
-        classPlan: { select: { consultantProfileId: true } },
+        classPlan: { select: { id: true, consultantProfileId: true } },
       },
     });
     if (event) {
       isAuthorized =
         consultantProfileId === event.classPlan.consultantProfileId;
+      if (!isAuthorized && consultantProfileId) {
+        const collab = await prisma.classCollaborator.findFirst({
+          where: {
+            classPlanId: event.classPlan.id,
+            consultantProfileId,
+            status: "ACCEPTED",
+          },
+        });
+        isAuthorized = !!collab;
+      }
     }
   }
 

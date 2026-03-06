@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth-server";
+import { isPrivileged } from "@/lib/auth-helpers";
 import prisma from "@/lib/prisma";
 
 /**
@@ -18,6 +19,33 @@ export async function GET(
     }
 
     const { consultantProfileId } = await params;
+
+    // Only the owner, accepted collaborators on a shared plan, or admin/staff may view
+    if (!isPrivileged(session.user.role)) {
+      const isOwner = session.user.consultantProfileId === consultantProfileId;
+      if (!isOwner) {
+        const [webinarCollab, classCollab] = await Promise.all([
+          prisma.webinarCollaborator.findFirst({
+            where: {
+              consultantProfileId: session.user.consultantProfileId ?? "__none__",
+              status: "ACCEPTED",
+              webinarPlan: { consultantProfileId },
+            },
+          }),
+          prisma.classCollaborator.findFirst({
+            where: {
+              consultantProfileId: session.user.consultantProfileId ?? "__none__",
+              status: "ACCEPTED",
+              classPlan: { consultantProfileId },
+            },
+          }),
+        ]);
+        if (!webinarCollab && !classCollab) {
+          return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+        }
+      }
+    }
+
     const date = req.nextUrl.searchParams.get("date");
 
     if (!date) {
@@ -56,11 +84,12 @@ export async function GET(
       },
     });
 
-    // Fetch custom availability slots for the date range
+    // Fetch custom availability slots for the date range (overlap semantics)
     const customSlots = await prisma.slotOfAvailabilityCustom.findMany({
       where: {
         consultantProfileId,
-        startsAt: { gte: dayStart, lte: dayEnd },
+        startsAt: { lt: dayEnd },
+        endsAt: { gt: dayStart },
       },
       select: {
         startsAt: true,
@@ -68,10 +97,11 @@ export async function GET(
       },
     });
 
-    // Fetch booked slots for the date - go through the consultant's various plan types
+    // Fetch booked slots for the date — overlap semantics, includes collaborated events
     const bookedSlots = await prisma.slotOfAppointment.findMany({
       where: {
-        startsAt: { gte: dayStart, lte: dayEnd },
+        startsAt: { lt: dayEnd },
+        endsAt: { gt: dayStart },
         isTentative: false,
         appointment: {
           OR: [
@@ -93,6 +123,25 @@ export async function GET(
             {
               class: {
                 classPlan: { consultantProfileId },
+              },
+            },
+            // Collaborated commitments: events owned by others but accepted by this consultant
+            {
+              webinar: {
+                webinarPlan: {
+                  collaborators: {
+                    some: { consultantProfileId, status: "ACCEPTED" },
+                  },
+                },
+              },
+            },
+            {
+              class: {
+                classPlan: {
+                  collaborators: {
+                    some: { consultantProfileId, status: "ACCEPTED" },
+                  },
+                },
               },
             },
           ],
