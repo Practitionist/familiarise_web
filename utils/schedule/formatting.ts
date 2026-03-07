@@ -51,6 +51,23 @@ const getNextDayOfWeek = (dayOfWeek: string): string => {
 };
 
 /**
+ * Shift a day of the week by an offset (positive or negative).
+ */
+const shiftDayOfWeek = (dayOfWeek: string, offset: number): string => {
+  const days = [
+    "MONDAY",
+    "TUESDAY",
+    "WEDNESDAY",
+    "THURSDAY",
+    "FRIDAY",
+    "SATURDAY",
+    "SUNDAY",
+  ];
+  const idx = days.indexOf(dayOfWeek);
+  return days[((idx + offset) % 7 + 7) % 7];
+};
+
+/**
  * Formats slots for API submission (dashboard save path).
  * Converts local times to UTC and handles overnight slot detection.
  * Overnight slots produce a single record with startDay !== endDay.
@@ -128,9 +145,13 @@ export function formatSlotsForApi(
 /**
  * Formats a single weekly slot for API submission.
  * Overnight slots produce a single record with startDay !== endDay.
+ *
+ * Handles timezone edge cases where a slot that is overnight in local time
+ * may be same-day in UTC (e.g., IST 23:00→02:00 = UTC 17:30→20:30),
+ * and vice versa.
  */
 function formatWeeklySlot(
-  slot: { startTime: string; endTime: string },
+  slot: { startTime: string; endTime: string; isOvernightUTC?: boolean },
   dayKey: string,
   timezone: string,
 ): WeeklySlotApiFormat[] {
@@ -151,49 +172,56 @@ function formatWeeklySlot(
 
   const baseDate = "1970-01-01";
   const nextDate = "1970-01-02";
-  const overnight = isOvernight(slot.startTime, slot.endTime);
+  // Slot is overnight if local times cross midnight OR if it was overnight in
+  // UTC but appears same-day after timezone conversion (isOvernightUTC flag).
+  const overnight = isOvernight(slot.startTime, slot.endTime) || !!slot.isOvernightUTC;
 
   const startUTC = convertTimezoneToUtc(slot.startTime, baseDate, timezone);
   if (!startUTC) return [];
 
-  if (overnight) {
-    const nextDay = getNextDayOfWeek(dayOfWeek);
+  const endUTC = overnight
+    ? slot.endTime === "00:00"
+      ? convertTimezoneToUtc("00:00", nextDate, timezone)
+      : convertTimezoneToUtc(slot.endTime, nextDate, timezone)
+    : convertTimezoneToUtc(slot.endTime, baseDate, timezone);
+  if (!endUTC) return [];
 
-    if (slot.endTime === "00:00") {
-      // "00:00" end = midnight on the next day → single overnight record
-      const midnightUTC = convertTimezoneToUtc("00:00", nextDate, timezone);
-      if (!midnightUTC) return [];
-      return [
-        {
-          dayOfWeekforStartTimeInUTC: dayOfWeek,
-          dayOfWeekforEndTimeInUTC: nextDay,
-          slotStartTimeInUTC: startUTC,
-          slotEndTimeInUTC: midnightUTC,
-        },
-      ];
-    }
+  // Extract UTC minutes — these are always correct regardless of epoch dates
+  const startMin = dateToMinuteUtc(new Date(startUTC));
+  const endMin = dateToMinuteUtc(new Date(endUTC));
 
-    // General overnight: single record with startDay !== endDay
-    const endUTC = convertTimezoneToUtc(slot.endTime, nextDate, timezone);
-    if (!endUTC) return [];
+  // Determine the actual UTC start day.
+  // For isOvernightUTC slots the day key IS the DB's UTC startDay — use it directly.
+  // For other slots, compute day offset from the timezone conversion.
+  let actualStartDay: string;
+  if (slot.isOvernightUTC) {
+    actualStartDay = dayOfWeek;
+  } else {
+    const baseDateMs = new Date(baseDate + "T00:00:00Z").getTime();
+    const startDayOffset = Math.floor(
+      (new Date(startUTC).getTime() - baseDateMs) / 86400000,
+    );
+    actualStartDay = shiftDayOfWeek(dayOfWeek, startDayOffset);
+  }
 
+  // Determine if actually overnight in UTC from the minutes
+  const isOvernightInUtc = startMin >= endMin;
+
+  if (isOvernightInUtc) {
     return [
       {
-        dayOfWeekforStartTimeInUTC: dayOfWeek,
-        dayOfWeekforEndTimeInUTC: nextDay,
+        dayOfWeekforStartTimeInUTC: actualStartDay,
+        dayOfWeekforEndTimeInUTC: getNextDayOfWeek(actualStartDay),
         slotStartTimeInUTC: startUTC,
         slotEndTimeInUTC: endUTC,
       },
     ];
   }
 
-  const endUTC = convertTimezoneToUtc(slot.endTime, baseDate, timezone);
-  if (!endUTC) return [];
-
   return [
     {
-      dayOfWeekforStartTimeInUTC: dayOfWeek,
-      dayOfWeekforEndTimeInUTC: dayOfWeek,
+      dayOfWeekforStartTimeInUTC: actualStartDay,
+      dayOfWeekforEndTimeInUTC: actualStartDay,
       slotStartTimeInUTC: startUTC,
       slotEndTimeInUTC: endUTC,
     },

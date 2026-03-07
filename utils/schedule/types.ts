@@ -4,6 +4,9 @@ export interface SlotType {
   endTime: string; // HH:MM format
   isValid: boolean;
   errorMessage?: string;
+  /** True when the slot was overnight in UTC (startDay !== endDay) but appears
+   *  same-day after local-time conversion. Preserves overnight semantics on save. */
+  isOvernightUTC?: boolean;
 }
 
 /** Map of day/date keys to arrays of time slots (e.g., { "monday": [...], "2024-01-15": [...] }). */

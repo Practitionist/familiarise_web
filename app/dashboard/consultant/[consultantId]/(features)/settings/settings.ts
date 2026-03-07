@@ -124,10 +124,14 @@ export const getInitialWeeklySlots = (
           if (!formattedWeeklySlots[day]) {
             formattedWeeklySlots[day] = [];
           }
+          // Preserve overnight-in-UTC flag when local times don't reflect it
+          const isOvernightUTC =
+            slot.startDay !== slot.endDay && startTime < endTime;
           formattedWeeklySlots[day].push({
             startTime,
             endTime,
             isValid: true,
+            ...(isOvernightUTC ? { isOvernightUTC: true } : {}),
           });
         } else {
           console.warn("Invalid time range for weekly slot:", {
