@@ -85,7 +85,7 @@ export async function PATCH(
               duration,
             },
           },
-          { status: 400 },
+          { status: result.httpStatus ?? 500 },
         );
       }
 

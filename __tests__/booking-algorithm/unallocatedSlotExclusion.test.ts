@@ -289,21 +289,19 @@ describe("Unallocated slot filtering (in-memory logic)", () => {
     const availabilitySlots = [
       {
         id: "avail-1",
-        availabilityStartsAt: new Date("2026-03-03T10:00:00Z"),
-        availabilityEndsAt: new Date("2026-03-03T11:00:00Z"),
+        startsAt: new Date("2026-03-03T10:00:00Z"),
+        endsAt: new Date("2026-03-03T11:00:00Z"),
       },
       {
         id: "avail-2",
-        availabilityStartsAt: new Date("2026-03-04T10:00:00Z"),
-        availabilityEndsAt: new Date("2026-03-04T11:00:00Z"),
+        startsAt: new Date("2026-03-04T10:00:00Z"),
+        endsAt: new Date("2026-03-04T11:00:00Z"),
       },
     ];
 
     const unallocated = availabilitySlots.filter((slot) => {
       const overlap = allocatedSlots.some(
-        (a) =>
-          a.startsAt < slot.availabilityEndsAt &&
-          a.endsAt > slot.availabilityStartsAt,
+        (a) => a.startsAt < slot.endsAt && a.endsAt > slot.startsAt,
       );
       return !overlap;
     });
@@ -318,21 +316,19 @@ describe("Unallocated slot filtering (in-memory logic)", () => {
     const availabilitySlots = [
       {
         id: "avail-1",
-        availabilityStartsAt: new Date("2026-03-03T10:00:00Z"),
-        availabilityEndsAt: new Date("2026-03-03T11:00:00Z"),
+        startsAt: new Date("2026-03-03T10:00:00Z"),
+        endsAt: new Date("2026-03-03T11:00:00Z"),
       },
       {
         id: "avail-2",
-        availabilityStartsAt: new Date("2026-03-04T10:00:00Z"),
-        availabilityEndsAt: new Date("2026-03-04T11:00:00Z"),
+        startsAt: new Date("2026-03-04T10:00:00Z"),
+        endsAt: new Date("2026-03-04T11:00:00Z"),
       },
     ];
 
     const unallocated = availabilitySlots.filter((slot) => {
       const overlap = allocatedSlots.some(
-        (a) =>
-          a.startsAt < slot.availabilityEndsAt &&
-          a.endsAt > slot.availabilityStartsAt,
+        (a) => a.startsAt < slot.endsAt && a.endsAt > slot.startsAt,
       );
       return !overlap;
     });
@@ -355,21 +351,19 @@ describe("Unallocated slot filtering (in-memory logic)", () => {
     const availabilitySlots = [
       {
         id: "avail-1",
-        availabilityStartsAt: new Date("2026-03-03T10:00:00Z"),
-        availabilityEndsAt: new Date("2026-03-03T11:00:00Z"),
+        startsAt: new Date("2026-03-03T10:00:00Z"),
+        endsAt: new Date("2026-03-03T11:00:00Z"),
       },
       {
         id: "avail-2",
-        availabilityStartsAt: new Date("2026-03-04T10:00:00Z"),
-        availabilityEndsAt: new Date("2026-03-04T11:00:00Z"),
+        startsAt: new Date("2026-03-04T10:00:00Z"),
+        endsAt: new Date("2026-03-04T11:00:00Z"),
       },
     ];
 
     const unallocated = availabilitySlots.filter((slot) => {
       const overlap = allocatedSlots.some(
-        (a) =>
-          a.startsAt < slot.availabilityEndsAt &&
-          a.endsAt > slot.availabilityStartsAt,
+        (a) => a.startsAt < slot.endsAt && a.endsAt > slot.startsAt,
       );
       return !overlap;
     });
@@ -389,26 +383,24 @@ describe("Unallocated slot filtering (in-memory logic)", () => {
     const availabilitySlots = [
       {
         id: "avail-1",
-        availabilityStartsAt: new Date("2026-03-03T10:00:00Z"),
-        availabilityEndsAt: new Date("2026-03-03T10:30:00Z"),
+        startsAt: new Date("2026-03-03T10:00:00Z"),
+        endsAt: new Date("2026-03-03T10:30:00Z"),
       },
       {
         id: "avail-2",
-        availabilityStartsAt: new Date("2026-03-03T11:00:00Z"),
-        availabilityEndsAt: new Date("2026-03-03T11:30:00Z"),
+        startsAt: new Date("2026-03-03T11:00:00Z"),
+        endsAt: new Date("2026-03-03T11:30:00Z"),
       },
       {
         id: "avail-3",
-        availabilityStartsAt: new Date("2026-03-03T14:00:00Z"),
-        availabilityEndsAt: new Date("2026-03-03T15:00:00Z"),
+        startsAt: new Date("2026-03-03T14:00:00Z"),
+        endsAt: new Date("2026-03-03T15:00:00Z"),
       },
     ];
 
     const unallocated = availabilitySlots.filter((slot) => {
       const overlap = allocatedSlots.some(
-        (a) =>
-          a.startsAt < slot.availabilityEndsAt &&
-          a.endsAt > slot.availabilityStartsAt,
+        (a) => a.startsAt < slot.endsAt && a.endsAt > slot.startsAt,
       );
       return !overlap;
     });
@@ -439,36 +431,34 @@ describe("Pagination after filtering", () => {
     const allSlots = [
       {
         id: "s1",
-        availabilityStartsAt: new Date("2026-03-03T10:00:00Z"),
-        availabilityEndsAt: new Date("2026-03-03T10:30:00Z"),
+        startsAt: new Date("2026-03-03T10:00:00Z"),
+        endsAt: new Date("2026-03-03T10:30:00Z"),
       },
       {
         id: "s2",
-        availabilityStartsAt: new Date("2026-03-04T10:00:00Z"),
-        availabilityEndsAt: new Date("2026-03-04T10:30:00Z"),
+        startsAt: new Date("2026-03-04T10:00:00Z"),
+        endsAt: new Date("2026-03-04T10:30:00Z"),
       },
       {
         id: "s3",
-        availabilityStartsAt: new Date("2026-03-05T10:00:00Z"),
-        availabilityEndsAt: new Date("2026-03-05T10:30:00Z"),
+        startsAt: new Date("2026-03-05T10:00:00Z"),
+        endsAt: new Date("2026-03-05T10:30:00Z"),
       },
       {
         id: "s4",
-        availabilityStartsAt: new Date("2026-03-06T10:00:00Z"),
-        availabilityEndsAt: new Date("2026-03-06T10:30:00Z"),
+        startsAt: new Date("2026-03-06T10:00:00Z"),
+        endsAt: new Date("2026-03-06T10:30:00Z"),
       },
       {
         id: "s5",
-        availabilityStartsAt: new Date("2026-03-07T10:00:00Z"),
-        availabilityEndsAt: new Date("2026-03-07T10:30:00Z"),
+        startsAt: new Date("2026-03-07T10:00:00Z"),
+        endsAt: new Date("2026-03-07T10:30:00Z"),
       },
     ];
 
     const allUnallocated = allSlots.filter((slot) => {
       const overlap = allocatedSlots.some(
-        (a) =>
-          a.startsAt < slot.availabilityEndsAt &&
-          a.endsAt > slot.availabilityStartsAt,
+        (a) => a.startsAt < slot.endsAt && a.endsAt > slot.startsAt,
       );
       return !overlap;
     });

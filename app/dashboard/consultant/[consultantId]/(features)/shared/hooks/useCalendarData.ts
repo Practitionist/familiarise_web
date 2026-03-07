@@ -1,7 +1,15 @@
 import { useState, useCallback, useMemo, useEffect } from "react";
-import { startOfWeek, endOfWeek, startOfMonth, endOfMonth } from "date-fns";
+import {
+  startOfWeek,
+  endOfWeek,
+  startOfMonth,
+  endOfMonth,
+  addDays,
+  getDaysInMonth,
+} from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 import { AllocationService } from "../utils/allocationService";
+import { INTERVALS } from "@/utils/timeSlotsMeta";
 
 /**
  * CALENDAR DATA SYNCHRONIZATION REFACTOR
@@ -125,6 +133,7 @@ export interface UseCalendarDataReturn extends CalendarData {
     interval: { hour: number; minute: number },
     date: Date,
   ) => SlotStatusResult;
+  slotStatusMap: Map<string, SlotStatusResult>;
 }
 
 /**
@@ -505,115 +514,213 @@ export function useCalendarData(
   };
 
   /**
-   * CRITICAL FUNCTION - SLOT STATUS CALCULATION REFACTOR
-   * ===================================================
-   *
-   * BEFORE: Manual calculation with inconsistent logic across components
-   * - UnifiedCalendar manually calculated booking status
-   * - ConsultantAvailability used server-calculated status
-   * - Different date filtering caused "stray slots" from future dates
-   *
-   * AFTER: Unified approach using server-calculated booking status
-   * - All calendars use the same data source (rawAvailabilitySlots)
-   * - Server handles complex booking calculations
-   * - Proper timezone handling and date filtering
-   * - Clear status flags: isBookedForDisplay (gray), isPartiallyBooked (yellow)
+   * PERFORMANCE: Compute visible dates for the current view so the slotStatusMap
+   * can precompute statuses for every cell in a single pass.
+   */
+  const visibleDates = useMemo((): Date[] => {
+    const dates: Date[] = [];
+    if (view === "week") {
+      const weekStart = startOfWeek(currentDate);
+      for (let i = 0; i < 7; i++) {
+        dates.push(addDays(weekStart, i));
+      }
+    } else {
+      const monthStart = startOfMonth(currentDate);
+      const daysInMonth = getDaysInMonth(currentDate);
+      for (let i = 0; i < daysInMonth; i++) {
+        dates.push(addDays(monthStart, i));
+      }
+    }
+    return dates;
+  }, [currentDate, view]);
+
+  /**
+   * PERFORMANCE: Pre-parse raw slot and appointment times once, then reuse across
+   * all 336+ cell computations instead of re-parsing per cell.
+   */
+  const parsedRawSlots = useMemo(() => {
+    const allRaw = [
+      ...(rawAvailabilitySlots.weekly || []),
+      ...(rawAvailabilitySlots.custom || []),
+    ];
+    return allRaw.map((slot) => ({
+      start: new Date(slot.slotStartTimeInUTC).getTime(),
+      end: new Date(slot.slotEndTimeInUTC).getTime(),
+      bookingStatus: slot.bookingStatus || "available",
+    }));
+  }, [rawAvailabilitySlots]);
+
+  const parsedAppointmentSlots = useMemo(() => {
+    return existingAppointments.flatMap((appointment) =>
+      (appointment.slotsOfAppointment || []).map((slt: any) => ({
+        start: new Date(slt.startsAt || slt.slotStartTimeInUTC).getTime(),
+        end: new Date(slt.endsAt || slt.slotEndTimeInUTC).getTime(),
+        appointmentId: appointment.id,
+        appointmentType: appointment.appointmentType,
+        title: extractAppointmentTitle(appointment),
+        with: extractAppointmentParticipant(appointment),
+      })),
+    );
+  }, [existingAppointments]);
+
+  /**
+   * PERFORMANCE: Precompute slot status for every visible cell.
+   * Converts 336 × O(W+C+A×S) → 1 precomputation + 336 × O(1) Map lookups.
+   * Key format: `${year}-${month}-${day}-${hour}-${minute}`
+   */
+  const slotStatusMap = useMemo((): Map<string, SlotStatusResult> => {
+    const map = new Map<string, SlotStatusResult>();
+    const now = Date.now();
+
+    for (const date of visibleDates) {
+      const y = date.getFullYear();
+      const m = date.getMonth();
+      const d = date.getDate();
+
+      for (const interval of INTERVALS) {
+        const key = `${y}-${m}-${d}-${interval.hour}-${interval.minute}`;
+
+        // Calculate interval boundaries in local time
+        const localStart = new Date(
+          y,
+          m,
+          d,
+          interval.hour,
+          interval.minute,
+          0,
+          0,
+        );
+        const localEnd = new Date(localStart.getTime() + 30 * 60 * 1000);
+        const startMs = localStart.getTime();
+        const endMs = localEnd.getTime();
+
+        // Find overlapping raw availability slots
+        const overlappingSlots = parsedRawSlots.filter(
+          (s) => startMs < s.end && s.start < endMs,
+        );
+
+        // Find overlapping appointments for tooltip
+        const overlappingAppointments = parsedAppointmentSlots
+          .filter((s) => startMs < s.end && s.start < endMs)
+          .map((s) => ({
+            id: s.appointmentId,
+            type: s.appointmentType,
+            title: s.title,
+            with: s.with,
+          }));
+
+        // Determine booking status from server-calculated data
+        let isAvailable = false;
+        let isBookedForDisplay = false;
+        let isPartiallyBooked = false;
+
+        if (overlappingSlots.length > 0) {
+          const bookingStatus = overlappingSlots[0].bookingStatus;
+          isAvailable = bookingStatus === "available";
+          isBookedForDisplay = bookingStatus === "fully-booked";
+          isPartiallyBooked = bookingStatus === "partially-booked";
+        }
+
+        // Ensure appointments without availability slots still show as booked
+        if (!isBookedForDisplay && overlappingAppointments.length > 0) {
+          isBookedForDisplay = true;
+          isAvailable = false;
+        }
+
+        const isInPast = endMs < now;
+        const isDisabled = !isAvailable || isBookedForDisplay || isInPast;
+
+        map.set(key, {
+          isAvailable,
+          isBooked: isBookedForDisplay || isPartiallyBooked,
+          isBookedForDisplay,
+          isPartiallyBooked,
+          isDisabled,
+          isInPast,
+          intervalStartUTCString: localStart.toISOString(),
+          intervalEndUTCString: localEnd.toISOString(),
+          localStartTime: localStart,
+          localEndTime: localEnd,
+          overlappingAppointments,
+        });
+      }
+    }
+
+    return map;
+  }, [visibleDates, parsedRawSlots, parsedAppointmentSlots]);
+
+  /**
+   * SLOT STATUS LOOKUP — O(1) via precomputed Map.
+   * Falls back to inline computation for cells not in the visible range
+   * (e.g. month view overflow days).
    */
   const getSlotStatusForInterval = useCallback(
     (
       interval: { hour: number; minute: number },
       date: Date,
     ): SlotStatusResult => {
-      // STEP 1: Calculate the 30-minute interval boundaries in local time
+      const key = `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}-${interval.hour}-${interval.minute}`;
+      const cached = slotStatusMap.get(key);
+      if (cached) return cached;
+
+      // Fallback for cells outside the precomputed visible range
       const localIntervalStartDate = new Date(date);
       localIntervalStartDate.setHours(interval.hour, interval.minute, 0, 0);
-      const localIntervalEndDate = new Date(localIntervalStartDate);
-      localIntervalEndDate.setMinutes(localIntervalStartDate.getMinutes() + 30);
-
-      // STEP 2: Get UTC times for comparison with server data
-      // The Date objects are already in the correct time - just use them directly
-      // toISOString() will convert them to UTC format correctly
-      const intervalStartUTC = localIntervalStartDate;
-      const intervalEndUTC = localIntervalEndDate;
-
-      // STEP 3: Find overlapping slots from raw availability data
-      // KEY CHANGE: Use server-calculated booking status instead of manual calculation
-      const allRawSlots = [
-        ...(rawAvailabilitySlots.weekly || []),
-        ...(rawAvailabilitySlots.custom || []),
-      ];
-
-      const overlappingSlots = allRawSlots.filter((slot: RawSlotData) => {
-        const slotStart = new Date(slot.slotStartTimeInUTC);
-        const slotEnd = new Date(slot.slotEndTimeInUTC);
-        return intervalStartUTC < slotEnd && slotStart < intervalEndUTC;
-      });
-
-      // STEP 4: Find overlapping appointments for tooltip information
-      const overlappingAppointments = existingAppointments.flatMap(
-        (appointment) =>
-          appointment.slotsOfAppointment
-            ?.filter((slt: any) => {
-              // FIX: Use correct field names from API (startsAt/endsAt, not slotStartTimeInUTC/slotEndTimeInUTC)
-              const slotStart = new Date(
-                slt.startsAt || slt.slotStartTimeInUTC,
-              );
-              const slotEnd = new Date(slt.endsAt || slt.slotEndTimeInUTC);
-              return intervalStartUTC < slotEnd && slotStart < intervalEndUTC;
-            })
-            .map((_slot) => ({
-              id: appointment.id,
-              type: appointment.appointmentType,
-              title: extractAppointmentTitle(appointment),
-              with: extractAppointmentParticipant(appointment),
-            })) || [],
+      const localIntervalEndDate = new Date(
+        localIntervalStartDate.getTime() + 30 * 60 * 1000,
       );
 
-      // STEP 5: Determine booking status using SERVER-CALCULATED data
-      // FIXED: Use server bookingStatus instead of manual calculation
+      const startMs = localIntervalStartDate.getTime();
+      const endMs = localIntervalEndDate.getTime();
+
+      const overlappingSlots = parsedRawSlots.filter(
+        (s) => startMs < s.end && s.start < endMs,
+      );
+
+      const overlappingAppointments = parsedAppointmentSlots
+        .filter((s) => startMs < s.end && s.start < endMs)
+        .map((s) => ({
+          id: s.appointmentId,
+          type: s.appointmentType,
+          title: s.title,
+          with: s.with,
+        }));
+
       let isAvailable = false;
-      let isBookedForDisplay = false; // Gray "Booked" slots
-      let isPartiallyBooked = false; // Yellow "Partially Booked" slots
+      let isBookedForDisplay = false;
+      let isPartiallyBooked = false;
 
       if (overlappingSlots.length > 0) {
-        const primarySlot = overlappingSlots[0];
-        const bookingStatus = primarySlot.bookingStatus || "available";
-
-        // Map server status to display flags - FIXED: Clear status mapping
+        const bookingStatus = overlappingSlots[0].bookingStatus;
         isAvailable = bookingStatus === "available";
         isBookedForDisplay = bookingStatus === "fully-booked";
         isPartiallyBooked = bookingStatus === "partially-booked";
       }
 
-      // CRITICAL FIX: Ensure existing appointments are visible even if no availability slot exists
-      // If any appointment overlaps this interval, mark it as booked for display
       if (!isBookedForDisplay && overlappingAppointments.length > 0) {
         isBookedForDisplay = true;
         isAvailable = false;
       }
 
-      // STEP 6: Check if interval is in the past - FIXED: Proper timezone handling
       const now = new Date();
       const isInPast = localIntervalEndDate < now;
-
-      // STEP 7: Determine disabled state
       const isDisabled = !isAvailable || isBookedForDisplay || isInPast;
 
       return {
         isAvailable,
-        isBooked: isBookedForDisplay || isPartiallyBooked, // For backwards compatibility
-        isBookedForDisplay, // FIXED: Use this for gray "Booked" display
-        isPartiallyBooked, // FIXED: Use this for yellow "Partially Booked" display
+        isBooked: isBookedForDisplay || isPartiallyBooked,
+        isBookedForDisplay,
+        isPartiallyBooked,
         isDisabled,
         isInPast,
-        intervalStartUTCString: intervalStartUTC.toISOString(),
-        intervalEndUTCString: intervalEndUTC.toISOString(),
+        intervalStartUTCString: localIntervalStartDate.toISOString(),
+        intervalEndUTCString: localIntervalEndDate.toISOString(),
         localStartTime: localIntervalStartDate,
         localEndTime: localIntervalEndDate,
         overlappingAppointments,
       };
     },
-    [rawAvailabilitySlots, existingAppointments],
+    [slotStatusMap, parsedRawSlots, parsedAppointmentSlots],
   );
 
   // PERFORMANCE: Fetch all data function with parallel API calls
@@ -649,11 +756,28 @@ export function useCalendarData(
     fetchEventSlots,
   ]);
 
-  // PERFORMANCE: Auto-load data with proper dependency tracking
+  // PERFORMANCE: Split into two effects so date-independent fetches don't re-fire on week navigation.
+
+  // Effect 1 — Date-independent: runs on dialog open only (consultantDetails + eventSlots)
   useEffect(() => {
     if (autoLoad && consultantId) {
-      // FIX: Only show loading spinner on initial load, not on background refetches
-      // This prevents "Loading calendar..." from showing when toast triggers re-render
+      Promise.all([fetchConsultantDetails(), fetchEventSlots()]).catch(
+        (error) => {
+          console.error("Error fetching date-independent data:", error);
+          setError(
+            error instanceof Error
+              ? error.message
+              : "Failed to fetch calendar data",
+          );
+        },
+      );
+    }
+  }, [autoLoad, consultantId, fetchConsultantDetails, fetchEventSlots]);
+
+  // Effect 2 — Date-dependent: runs on dialog open + week/month navigation
+  useEffect(() => {
+    if (autoLoad && consultantId) {
+      // Only show loading spinner on initial load, not on background refetches
       const isInitialLoad =
         !consultantDetails && rawAvailabilitySlots.weekly.length === 0;
       if (isInitialLoad) {
@@ -661,20 +785,14 @@ export function useCalendarData(
       }
       setError(null);
 
-      // OPTIMIZATION: Parallel data fetching on mount and dependency changes
-      Promise.all([
-        fetchConsultantDetails(),
-        fetchAvailabilitySlots(),
-        fetchExistingAppointments(),
-        fetchEventSlots(),
-      ])
+      Promise.all([fetchAvailabilitySlots(), fetchExistingAppointments()])
         .catch((error) => {
-          console.error("Error fetching calendar data:", error);
-          const errorMessage =
+          console.error("Error fetching date-dependent data:", error);
+          setError(
             error instanceof Error
               ? error.message
-              : "Failed to fetch calendar data";
-          setError(errorMessage);
+              : "Failed to fetch calendar data",
+          );
         })
         .finally(() => {
           setLoading(false);
@@ -683,13 +801,8 @@ export function useCalendarData(
   }, [
     autoLoad,
     consultantId,
-    eventType,
-    eventId,
-    currentDate,
-    view,
-    mode,
-    allowedStart,
-    allowedEnd,
+    fetchAvailabilitySlots,
+    fetchExistingAppointments,
   ]);
 
   // ENHANCEMENT: Individual refetch functions for granular control
@@ -746,5 +859,6 @@ export function useCalendarData(
     refetchAppointments,
     refetchEventSlots,
     getSlotStatusForInterval, // KEY: Unified slot status calculation
+    slotStatusMap, // PERFORMANCE: Precomputed status map for O(1) lookups
   };
 }

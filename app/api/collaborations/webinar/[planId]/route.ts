@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth-server";
 import prisma from "@/lib/prisma";
 import {
-  getCollaborators,
+  getCollaboratorsForUser,
   inviteCollaborator,
 } from "@/lib/collaborators/service";
 import { inviteWebinarCollaboratorSchema } from "@/schemas/collaborators";
@@ -18,8 +18,18 @@ export async function GET(
     }
 
     const { planId } = await params;
-    const collaborators = await getCollaborators("webinar", planId);
-    return NextResponse.json({ data: collaborators });
+    const result = await getCollaboratorsForUser(
+      "webinar",
+      planId,
+      session.user.id,
+    );
+
+    if (result.status === "not_found")
+      return NextResponse.json({ error: "Plan not found" }, { status: 404 });
+    if (result.status === "forbidden")
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+
+    return NextResponse.json({ data: result.data });
   } catch (error) {
     console.error("Error fetching webinar collaborators:", error);
     return NextResponse.json(

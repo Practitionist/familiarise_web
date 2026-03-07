@@ -12,7 +12,7 @@ import { fetchReviews } from "@/lib/user";
 import { searchParamsSchema, createCheckoutData } from "@/schemas/checkout";
 import { PaymentGateway } from "@prisma/client";
 import { CreditCard as CreditCardIcon } from "lucide-react";
-import { use, useCallback, useEffect, useMemo, useState } from "react";
+import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import RazorpayCheckout from "../../../components/RazorpayCheckout";
 import StripeCheckout from "../../../components/StripeCheckout";
 import {
@@ -83,6 +83,7 @@ export default function ClassCheckoutPage({
   const [error, setError] = useState<string | null>(null);
   const [_reviews, _setReviews] = useState<ConsultantReview[]>([]);
   const [isCheckoutProcessing, setIsCheckoutProcessing] = useState(false);
+  const isProcessingRef = useRef(false);
   const [processingGateway, setProcessingGateway] = useState<string | null>(
     null,
   );
@@ -184,9 +185,10 @@ export default function ClassCheckoutPage({
         return;
       }
 
-      if (isCheckoutProcessing) {
+      if (isProcessingRef.current || isCheckoutProcessing) {
         return;
       }
+      isProcessingRef.current = true;
 
       try {
         setIsCheckoutProcessing(true);
@@ -272,6 +274,7 @@ export default function ClassCheckoutPage({
       } finally {
         setIsCheckoutProcessing(false);
         setProcessingGateway(null);
+        isProcessingRef.current = false;
       }
     },
     [

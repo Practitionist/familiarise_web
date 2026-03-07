@@ -333,10 +333,7 @@ export async function GET(
         where: {
           consultantProfileId,
         },
-        orderBy: [
-          { dayOfWeekForStartsAt: "asc" },
-          { availabilityStartsAt: "asc" },
-        ],
+        orderBy: [{ startDay: "asc" }, { startTimeUtc: "asc" }],
         include: weeklyAvailabilityInclude,
       }),
       // Fetch custom availability slots
@@ -345,7 +342,7 @@ export async function GET(
           consultantProfileId,
         },
         orderBy: {
-          availabilityStartsAt: "asc",
+          startsAt: "asc",
         },
         include: customAvailabilityInclude,
       }),

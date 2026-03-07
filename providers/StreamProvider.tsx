@@ -80,34 +80,35 @@ const StreamProvider = ({
 
   // Use ref for connection attempts to avoid stale closures in retry logic
   const connectionAttemptsRef = useRef(0);
+  // Guard against concurrent connectUser calls (race: connectVideo resolves first,
+  // triggers re-render + effect re-run before connectChat has set globalChatClient)
+  const isChatConnectingRef = useRef(false);
 
   const { userDetails, isLoading } = useUserData(userId);
 
-  // Token caching with expiry tracking
-  const [tokenCache, setTokenCache] = useState<{
+  // Token caching with expiry tracking — use ref to avoid triggering re-renders
+  // (useState here caused getCachedToken → connectChat → connectServices to
+  //  be recreated on every token fetch, making the connectUser useEffect fire
+  //  repeatedly and producing "Consecutive calls to connectUser" warnings)
+  const tokenCacheRef = useRef<{
     chatToken?: string;
     videoToken?: string;
     expiresAt?: number;
   }>({});
 
-  const isTokenValid = useCallback(
-    (type: "chat" | "video") => {
-      const token =
-        type === "chat" ? tokenCache.chatToken : tokenCache.videoToken;
-      const expiresAt = tokenCache.expiresAt;
-
-      if (!token || !expiresAt) return false;
-
-      // Check if token expires within next 5 minutes
-      return Date.now() < expiresAt - 5 * 60 * 1000;
-    },
-    [tokenCache],
-  );
+  const isTokenValid = useCallback((type: "chat" | "video") => {
+    const cache = tokenCacheRef.current;
+    const token = type === "chat" ? cache.chatToken : cache.videoToken;
+    if (!token || !cache.expiresAt) return false;
+    // Check if token expires within next 5 minutes
+    return Date.now() < cache.expiresAt - 5 * 60 * 1000;
+  }, []);
 
   const getCachedToken = useCallback(
     async (type: "chat" | "video"): Promise<string> => {
       if (isTokenValid(type)) {
-        return type === "chat" ? tokenCache.chatToken! : tokenCache.videoToken!;
+        const cache = tokenCacheRef.current;
+        return type === "chat" ? cache.chatToken! : cache.videoToken!;
       }
 
       // Generate new token
@@ -117,17 +118,15 @@ const StreamProvider = ({
           : await tokenProvider(userId);
 
       // Cache with 50-minute expiry (tokens usually last 1 hour)
-      const expiresAt = Date.now() + 50 * 60 * 1000;
-
-      setTokenCache((prev) => ({
-        ...prev,
+      tokenCacheRef.current = {
+        ...tokenCacheRef.current,
         [`${type}Token`]: newToken,
-        expiresAt,
-      }));
+        expiresAt: Date.now() + 50 * 60 * 1000,
+      };
 
       return newToken;
     },
-    [userId, tokenCache, isTokenValid],
+    [userId, isTokenValid],
   );
 
   // Exponential backoff retry logic
@@ -148,12 +147,35 @@ const StreamProvider = ({
       return;
     }
 
+    // Prevent concurrent connectUser calls (e.g. connectVideo re-render race)
+    if (isChatConnectingRef.current) {
+      streamLogger.debug("Chat connection already in progress, skipping", {
+        userId: userDetails.id,
+      });
+      return;
+    }
+
+    isChatConnectingRef.current = true;
+
     try {
       streamLogger.debug("Connecting to Stream Chat", {
         userId: userDetails.id,
       });
 
       const client = StreamChat.getInstance(apiKey);
+
+      // If the singleton is already connected to this user (e.g. StreamVideoClient
+      // connected it internally), adopt it directly without calling connectUser again.
+      if (client.userID && client.userID === userDetails.id) {
+        streamLogger.debug("Adopting already-connected Stream Chat singleton", {
+          userId: userDetails.id,
+        });
+        globalChatClient = client;
+        currentUserId = userDetails.id;
+        setChatClient(client);
+        setChatConnected(true);
+        return;
+      }
 
       // Ensure user exists in Stream's database (only if not synced before)
       if (!initialSyncCompletedUsers.has(userDetails.id)) {
@@ -214,11 +236,13 @@ const StreamProvider = ({
         userId: userDetails.id,
       });
     } catch (error) {
-      streamLogger.error("Chat connection failed", error, {
+      streamLogger.warn("Chat connection failed (will retry)", {
         userId: userDetails.id,
       });
       setChatConnected(false);
       throw error;
+    } finally {
+      isChatConnectingRef.current = false;
     }
   }, [enableChat, userDetails, apiKey, getCachedToken]);
 
@@ -299,7 +323,7 @@ const StreamProvider = ({
       await Promise.all(promises);
       if (clearGlobal) {
         currentUserId = null;
-        setTokenCache({}); // Clear token cache
+        tokenCacheRef.current = {}; // Clear token cache
         connectionAttemptsRef.current = 0; // Reset attempts
       }
     },

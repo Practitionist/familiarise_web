@@ -276,25 +276,25 @@ export const impossibleCases: ValidationTestCase[] = [
       const consultant = await prisma.consultantProfile.findFirst();
       if (!consultant) throw new Error("No consultant found for test");
 
-      // Create first slot
+      // Create first slot (9:00-12:00 UTC = 540-720 minutes since midnight)
       await prisma.slotOfAvailabilityWeekly.create({
         data: {
           consultantProfileId: consultant.id,
-          dayOfWeekForStartsAt: "MONDAY",
-          availabilityStartsAt: new Date("2025-01-06T09:00:00Z"),
-          dayOfWeekForEndsAt: "MONDAY",
-          availabilityEndsAt: new Date("2025-01-06T12:00:00Z"),
+          startDay: "MONDAY",
+          startTimeUtc: 540, // 9:00 AM UTC
+          endDay: "MONDAY",
+          endTimeUtc: 720, // 12:00 PM UTC
         },
       });
 
-      // Create overlapping slot
+      // Create overlapping slot (10:00-14:00 UTC = 600-840 minutes since midnight)
       await prisma.slotOfAvailabilityWeekly.create({
         data: {
           consultantProfileId: consultant.id,
-          dayOfWeekForStartsAt: "MONDAY",
-          availabilityStartsAt: new Date("2025-01-06T10:00:00Z"), // Overlaps with first slot
-          dayOfWeekForEndsAt: "MONDAY",
-          availabilityEndsAt: new Date("2025-01-06T14:00:00Z"),
+          startDay: "MONDAY",
+          startTimeUtc: 600, // 10:00 AM UTC — overlaps with first slot
+          endDay: "MONDAY",
+          endTimeUtc: 840, // 2:00 PM UTC
         },
       });
     },

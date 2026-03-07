@@ -694,11 +694,12 @@ model Education {
 //////////////////////////////////////////////////// AVAILABILITY SLOTS ////////////////////////////////////////////////////
 
 model SlotOfAvailabilityWeekly {
-  id                   String    @id @default(uuid())
-  dayOfWeekForStartsAt DayOfWeek
-  availabilityStartsAt DateTime  @db.Timestamptz()
-  dayOfWeekForEndsAt   DayOfWeek
-  availabilityEndsAt   DateTime  @db.Timestamptz()
+  id           String    @id @default(uuid())
+  startDay     DayOfWeek
+  startTimeUtc              Int       @db.SmallInt // Minutes since midnight UTC (0-1439)
+  endDay                    DayOfWeek
+  endTimeUtc                Int       @db.SmallInt // Minutes since midnight UTC (0-1439)
+  utcOffsetMinutes  Int       @db.SmallInt @default(0) // UTC offset in minutes at slot creation (e.g. 330 for IST, -300 for EST)
 
   consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultantProfileId String
@@ -711,8 +712,8 @@ model SlotOfAvailabilityWeekly {
 
 model SlotOfAvailabilityCustom {
   id                   String   @id @default(uuid())
-  availabilityStartsAt DateTime @db.Timestamptz()
-  availabilityEndsAt   DateTime @db.Timestamptz()
+  startsAt DateTime @db.Timestamptz()
+  endsAt   DateTime @db.Timestamptz()
 
   consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultantProfileId String
@@ -1860,6 +1861,7 @@ model ReferralCreditUsage {
   paymentId      String
   amount         Int // Current remaining usage (decremented on partial refund restores)
   originalAmount Int // Original amount at creation (never changes, used for ratio calculations)
+  restoredAmount Int      @default(0) // Cumulative amount restored across partial refunds (drift-free tracking)
   createdAt      DateTime @default(now())
 
   credit  ReferralCredit @relation(fields: [creditId], references: [id], onUpdate: Cascade, onDelete: Cascade)

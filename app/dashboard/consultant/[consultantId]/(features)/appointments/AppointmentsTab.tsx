@@ -25,8 +25,15 @@ import {
 import {
   AppointmentsTabProps,
   ScheduledTrial,
+  UnscheduledClass,
+  UnscheduledWebinar,
   getBadgeStyle,
 } from "../../types";
+import {
+  buildSyntheticClassAppointment,
+  buildSyntheticWebinarAppointment,
+} from "./utils/syntheticAppointments";
+import { UnscheduledEventCard } from "./components/UnscheduledEventCard";
 import { TAppointment } from "@/types/appointment";
 import {
   calculateSessionProgress,
@@ -60,7 +67,9 @@ export function AppointmentsTab({
   badgeStyles,
   scheduledTrials = [],
   consultantId,
-}: Readonly<AppointmentsTabProps & { consultantId?: string }>) {
+  unscheduledClasses = [],
+  unscheduledWebinars = [],
+}: Readonly<AppointmentsTabProps>) {
   const router = useRouter();
   const client = useStreamVideoClient();
   const { toast } = useToast();
@@ -442,15 +451,60 @@ export function AppointmentsTab({
                       </div>
                     )}
 
-                  {/* Empty state for type with no appointments */}
+                  {/* Unscheduled events — rendered once per section, before any scheduled groups */}
+                  {isNewTypeSection &&
+                    groupType === "CLASS" &&
+                    unscheduledClasses.length > 0 && (
+                      <div className="mb-4 space-y-3">
+                        {unscheduledClasses.map((classEvent) => (
+                          <UnscheduledEventCard
+                            key={classEvent.id}
+                            title={classEvent.classPlan.title}
+                            subtitle={`${classEvent.classPlan.meetingsPerWeek} meeting${classEvent.classPlan.meetingsPerWeek !== 1 ? "s" : ""}/week · ${classEvent.classPlan.totalSessions} sessions · ${classEvent.classPlan.sessionDurationInHours}h each`}
+                            onSetSchedule={() =>
+                              setSelectedAppointment(
+                                buildSyntheticClassAppointment(classEvent),
+                              )
+                            }
+                          />
+                        ))}
+                      </div>
+                    )}
+                  {isNewTypeSection &&
+                    groupType === "WEBINAR" &&
+                    unscheduledWebinars.length > 0 && (
+                      <div className="mb-4 space-y-3">
+                        {unscheduledWebinars.map((webinarEvent) => (
+                          <UnscheduledEventCard
+                            key={webinarEvent.id}
+                            title={webinarEvent.webinarPlan.title}
+                            subtitle={`Single session · ${webinarEvent.webinarPlan.durationInHours}h`}
+                            onSetSchedule={() =>
+                              setSelectedAppointment(
+                                buildSyntheticWebinarAppointment(webinarEvent),
+                              )
+                            }
+                          />
+                        ))}
+                      </div>
+                    )}
+
+                  {/* Empty state — only shown when section has no scheduled appointments
+                      AND no unscheduled items were already rendered above */}
                   {groupAppointments.length === 0 ? (
-                    <div className="border rounded-lg p-8 bg-gray-50 text-center">
-                      <p className="text-gray-500 text-sm">
-                        No{" "}
-                        {getAppointmentTypeDisplayName(groupType).toLowerCase()}{" "}
-                        scheduled
-                      </p>
-                    </div>
+                    (groupType === "CLASS" && unscheduledClasses.length > 0) ||
+                    (groupType === "WEBINAR" &&
+                      unscheduledWebinars.length > 0) ? null : (
+                      <div className="border rounded-lg p-8 bg-gray-50 text-center">
+                        <p className="text-gray-500 text-sm">
+                          No{" "}
+                          {getAppointmentTypeDisplayName(
+                            groupType,
+                          ).toLowerCase()}{" "}
+                          scheduled
+                        </p>
+                      </div>
+                    )
                   ) : (
                     /* Existing appointment group card */
                     <div

@@ -68,11 +68,11 @@ export async function GET(
     const customSlots = await prisma.slotOfAvailabilityCustom.findMany({
       where: {
         consultantProfileId: consultantId,
-        availabilityStartsAt: { gte: new Date(startDateInUtc) },
-        availabilityEndsAt: { lte: new Date(endDateInUtc) },
+        startsAt: { gte: new Date(startDateInUtc) },
+        endsAt: { lte: new Date(endDateInUtc) },
       },
       orderBy: {
-        availabilityStartsAt: "asc",
+        startsAt: "asc",
       },
     });
 
@@ -81,18 +81,14 @@ export async function GET(
       where: {
         consultantProfileId: consultantId,
       },
-      orderBy: [
-        { dayOfWeekForStartsAt: "asc" },
-        { availabilityStartsAt: "asc" },
-      ],
+      orderBy: [{ startDay: "asc" }, { startTimeUtc: "asc" }],
     });
 
     // FIX Bug #09: Use range overlap check instead of exact key matching
     const unallocatedCustomSlots = customSlots.filter((slot) => {
       const hasOverlap = allocatedSlots.some(
         (allocated) =>
-          allocated.startsAt < slot.availabilityEndsAt &&
-          allocated.endsAt > slot.availabilityStartsAt,
+          allocated.startsAt < slot.endsAt && allocated.endsAt > slot.startsAt,
       );
       return !hasOverlap;
     });
@@ -103,22 +99,25 @@ export async function GET(
     const end = new Date(endDateInUtc);
 
     // FIX Bug #09: Use UTC-consistent date construction and range overlap check
+    // Weekly slots now use Int (minutes since midnight UTC) instead of DateTime
     weeklySlots.forEach((weeklySlot) => {
       const currentDate = new Date(start);
 
+      const startHours = Math.floor(weeklySlot.startTimeUtc / 60);
+      const startMins = weeklySlot.startTimeUtc % 60;
+      const endHours = Math.floor(weeklySlot.endTimeUtc / 60);
+      const endMins = weeklySlot.endTimeUtc % 60;
+
       while (currentDate <= end) {
-        if (
-          currentDate.getUTCDay() ===
-          dayToNumber[weeklySlot.dayOfWeekForStartsAt]
-        ) {
-          // Use UTC-consistent construction to avoid timezone drift
+        if (currentDate.getUTCDay() === dayToNumber[weeklySlot.startDay]) {
+          // Use UTC-consistent construction with Int minutes
           const slotStart = new Date(
             Date.UTC(
               currentDate.getUTCFullYear(),
               currentDate.getUTCMonth(),
               currentDate.getUTCDate(),
-              weeklySlot.availabilityStartsAt.getUTCHours(),
-              weeklySlot.availabilityStartsAt.getUTCMinutes(),
+              startHours,
+              startMins,
               0,
               0,
             ),
@@ -129,12 +128,16 @@ export async function GET(
               currentDate.getUTCFullYear(),
               currentDate.getUTCMonth(),
               currentDate.getUTCDate(),
-              weeklySlot.availabilityEndsAt.getUTCHours(),
-              weeklySlot.availabilityEndsAt.getUTCMinutes(),
+              endHours,
+              endMins,
               0,
               0,
             ),
           );
+          // For overnight slots, endTime is on the next day
+          if (weeklySlot.endTimeUtc <= weeklySlot.startTimeUtc) {
+            slotEnd.setUTCDate(slotEnd.getUTCDate() + 1);
+          }
 
           // Check for any overlapping allocated slot (partial or full overlap)
           const hasOverlap = allocatedSlots.some(
@@ -145,7 +148,7 @@ export async function GET(
             unallocatedWeeklySlots.push({
               slotId: weeklySlot.id,
               dateInISO: currentDate.toISOString(),
-              dayOfWeek: weeklySlot.dayOfWeekForStartsAt,
+              dayOfWeek: weeklySlot.startDay,
               slotStartTimeInUTC: slotStart.toISOString(),
               slotEndTimeInUTC: slotEnd.toISOString(),
               slotOfAvailabilityId: weeklySlot.id,
@@ -166,16 +169,14 @@ export async function GET(
     const formattedCustomSlots: TSlotTiming[] = unallocatedCustomSlots.map(
       (slot) => ({
         slotId: slot.id,
-        dateInISO: slot.availabilityStartsAt.toISOString(),
-        dayOfWeek: dayMap[new Date(slot.availabilityStartsAt).getDay()],
-        slotStartTimeInUTC: slot.availabilityStartsAt.toISOString(),
-        slotEndTimeInUTC: slot.availabilityEndsAt.toISOString(),
+        dateInISO: slot.startsAt.toISOString(),
+        dayOfWeek: dayMap[new Date(slot.startsAt).getDay()],
+        slotStartTimeInUTC: slot.startsAt.toISOString(),
+        slotEndTimeInUTC: slot.endsAt.toISOString(),
         slotOfAvailabilityId: slot.id,
         slotOfAppointmentId: "",
-        localStartTime: new Date(
-          slot.availabilityStartsAt,
-        ).toLocaleTimeString(),
-        localEndTime: new Date(slot.availabilityEndsAt).toLocaleTimeString(),
+        localStartTime: new Date(slot.startsAt).toLocaleTimeString(),
+        localEndTime: new Date(slot.endsAt).toLocaleTimeString(),
         type: "CUSTOM" as const,
       }),
     );

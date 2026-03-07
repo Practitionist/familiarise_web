@@ -164,13 +164,16 @@ const createConsultationAppointment = (
   isPastAppointment: boolean,
   slotStartTimeInUTC: Date,
   slotEndTimeInUTC: Date,
+  consultantUserId?: string,
 ): Prisma.AppointmentCreateInput => {
   return {
     appointmentType: AppointmentsType.CONSULTATION,
     slotsOfAppointment: {
       create: {
         user: {
-          connect: [{ id: consultee.id }],
+          connect: consultantUserId
+            ? [{ id: consultantUserId }, { id: consultee.id }]
+            : [{ id: consultee.id }],
         },
         startsAt: slotStartTimeInUTC,
         endsAt: slotEndTimeInUTC,
@@ -216,6 +219,7 @@ const createSubscriptionAppointment = (
   startDate: Date,
   endDate: Date,
   numSlots: number,
+  consultantUserId?: string,
 ): Prisma.AppointmentCreateInput => {
   // Select a random subscription plan
   const selectedPlan = faker.helpers.arrayElement(subscriptionPlans);
@@ -230,7 +234,7 @@ const createSubscriptionAppointment = (
 
   // Get consultant's available days of week from their weekly slots
   const availableDaysSet = new Set(
-    consultantWeeklySlots.map((s) => s.dayOfWeekForStartsAt),
+    consultantWeeklySlots.map((s) => s.startDay),
   );
   const availableDays = Array.from(availableDaysSet);
 
@@ -267,7 +271,7 @@ const createSubscriptionAppointment = (
     if (availableDays.includes(currentDayOfWeek)) {
       // Find available time slots for this day
       const daySlotsForConsultant = consultantWeeklySlots.filter(
-        (s) => s.dayOfWeekForStartsAt === currentDayOfWeek,
+        (s) => s.startDay === currentDayOfWeek,
       );
 
       if (daySlotsForConsultant.length > 0) {
@@ -277,8 +281,8 @@ const createSubscriptionAppointment = (
         // Create appointment slot at this time
         const slotStart = new Date(currentDate);
         slotStart.setUTCHours(
-          randomSlot.availabilityStartsAt.getUTCHours(),
-          randomSlot.availabilityStartsAt.getUTCMinutes(),
+          Math.floor(randomSlot.startTimeUtc / 60),
+          randomSlot.startTimeUtc % 60,
           0,
           0,
         );
@@ -318,8 +322,8 @@ const createSubscriptionAppointment = (
     const randomSlot = faker.helpers.arrayElement(consultantWeeklySlots);
     const slotStart = new Date(startDate);
     slotStart.setUTCHours(
-      randomSlot.availabilityStartsAt.getUTCHours(),
-      randomSlot.availabilityStartsAt.getUTCMinutes(),
+      Math.floor(randomSlot.startTimeUtc / 60),
+      randomSlot.startTimeUtc % 60,
       0,
       0,
     );
@@ -330,7 +334,9 @@ const createSubscriptionAppointment = (
 
     slots.push({
       user: {
-        connect: [{ id: consultee.id }],
+        connect: consultantUserId
+          ? [{ id: consultantUserId }, { id: consultee.id }]
+          : [{ id: consultee.id }],
       },
       startsAt: slotStart,
       endsAt: slotEnd,
@@ -383,6 +389,7 @@ const createWebinarAppointment = async (
   isPastAppointment: boolean,
   slotStartTimeInUTC: Date,
   slotEndTimeInUTC: Date,
+  consultantUserId?: string,
 ): Promise<Prisma.AppointmentCreateInput> => {
   // Limit waitlist size to prevent transaction timeout
   const waitlistSize = Math.min(faker.number.int({ min: 0, max: 3 }), 3);
@@ -403,6 +410,7 @@ const createWebinarAppointment = async (
       create: {
         user: {
           connect: [
+            ...(consultantUserId ? [{ id: consultantUserId }] : []),
             { id: consultee.id },
             ...additionalParticipants.map((c) => ({ id: c.id })),
           ],
@@ -453,6 +461,7 @@ const createClassAppointment = async (
   startDate: Date,
   endDate: Date,
   numSlots: number,
+  consultantUserId?: string,
 ): Promise<Prisma.AppointmentCreateInput> => {
   // Limit slots and waitlist to prevent transaction timeout
   const limitedSlots = Math.min(numSlots, 4);
@@ -486,6 +495,7 @@ const createClassAppointment = async (
         return {
           user: {
             connect: [
+              ...(consultantUserId ? [{ id: consultantUserId }] : []),
               { id: consultee.id },
               ...additionalParticipants.map((c) => ({ id: c.id })),
             ],
@@ -548,6 +558,7 @@ async function createAppointmentBatch(
   weeklySlots: SlotOfAvailabilityWeekly[],
   startIndex: number,
   batchSize: number,
+  consultantUserMap: Record<string, string>,
 ): Promise<number> {
   let successCount = 0;
 
@@ -629,11 +640,21 @@ async function createAppointmentBatch(
       }
 
       // Extract just the time pattern (hours and minutes) from the slot
-      const slotTime = slotData.slot;
-      const startHours = slotTime.availabilityStartsAt.getUTCHours();
-      const startMinutes = slotTime.availabilityStartsAt.getUTCMinutes();
-      const endHours = slotTime.availabilityEndsAt.getUTCHours();
-      const endMinutes = slotTime.availabilityEndsAt.getUTCMinutes();
+      let startHours: number,
+        startMinutes: number,
+        endHours: number,
+        endMinutes: number;
+      if (slotData.type === "weekly") {
+        startHours = Math.floor(slotData.slot.startTimeUtc / 60);
+        startMinutes = slotData.slot.startTimeUtc % 60;
+        endHours = Math.floor(slotData.slot.endTimeUtc / 60);
+        endMinutes = slotData.slot.endTimeUtc % 60;
+      } else {
+        startHours = slotData.slot.startsAt.getUTCHours();
+        startMinutes = slotData.slot.startsAt.getUTCMinutes();
+        endHours = slotData.slot.endsAt.getUTCHours();
+        endMinutes = slotData.slot.endsAt.getUTCMinutes();
+      }
 
       // Create new dates using the appointment's actual date
       const actualStartTime = new Date(startDate);
@@ -653,6 +674,8 @@ async function createAppointmentBatch(
       // Prepare appointment data outside transaction
       let appointmentData: Prisma.AppointmentCreateInput;
 
+      const consultantUserId = consultantUserMap[slotConsultantId];
+
       switch (appointmentType) {
         case AppointmentsType.CONSULTATION:
           appointmentData = createConsultationAppointment(
@@ -662,6 +685,7 @@ async function createAppointmentBatch(
             isPastAppointment,
             actualStartTime,
             actualEndTime,
+            consultantUserId,
           );
           break;
 
@@ -675,6 +699,7 @@ async function createAppointmentBatch(
             startDate,
             endDate,
             numSlots,
+            consultantUserId,
           );
           break;
 
@@ -686,6 +711,7 @@ async function createAppointmentBatch(
             isPastAppointment,
             actualStartTime,
             actualEndTime,
+            consultantUserId,
           );
           break;
 
@@ -698,6 +724,7 @@ async function createAppointmentBatch(
             startDate,
             endDate,
             numSlots,
+            consultantUserId,
           );
           break;
       }
@@ -743,6 +770,17 @@ export async function createAppointments(consultees: UserWithProfiles[]) {
   const webinarPlans = await prisma.webinarPlan.findMany();
   const classPlans = await prisma.classPlan.findMany();
 
+  // Build a map of consultantProfileId -> consultantUserId so we can connect
+  // the consultant user to every SlotOfAppointment. Without this, the
+  // validateNoConflicts query (which filters by user.some.id = consultantUserId)
+  // cannot detect conflicts against seed-generated appointments.
+  const consultantProfiles = await prisma.consultantProfile.findMany({
+    select: { id: true, userId: true },
+  });
+  const consultantUserMap: Record<string, string> = Object.fromEntries(
+    consultantProfiles.map((p) => [p.id, p.userId]),
+  );
+
   const allSlots: SlotData[] = [
     ...weeklySlots.map((slot) => ({ type: "weekly" as const, slot })),
     ...customSlots.map((slot) => ({ type: "custom" as const, slot })),
@@ -769,6 +807,7 @@ export async function createAppointments(consultees: UserWithProfiles[]) {
       weeklySlots,
       batchStart,
       BATCH_SIZE,
+      consultantUserMap,
     );
 
     totalCreated += batchCount;

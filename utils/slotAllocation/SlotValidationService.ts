@@ -17,6 +17,7 @@ import {
 import { SlotCalculationService } from "./SlotCalculationService";
 import { SubscriptionValidationService } from "../subscriptionValidation";
 import { buildOccupiedAppointmentFilter } from "./occupancyPolicy";
+import { isMinuteWithinWeeklySlot } from "./slotTimeUtils";
 
 /**
  * Service for validating slot allocations
@@ -144,6 +145,8 @@ export class SlotValidationService {
    */
   private validateSlotsInFuture(slots: Date[]): ValidationResult {
     const now = new Date();
+    // Fixed cutoff computed once — safe even for large slot arrays because
+    // the cutoff does not advance as the loop runs.
     const BUFFER_MS = 5000; // 5-second processing time buffer
     const cutoff = new Date(now.getTime() + BUFFER_MS);
     const errors: string[] = [];
@@ -199,77 +202,105 @@ export class SlotValidationService {
   ): Promise<ValidationResult> {
     const errors: string[] = [];
 
-    for (const slot of slots) {
-      // Calculate the end time of the proposed slot using configurable duration
-      const slotEnd = new Date(
-        slot.getTime() + slotDurationMinutes * 60 * 1000,
-      );
+    if (slots.length === 0) {
+      return { isValid: true, errors: [], warnings: [] };
+    }
 
-      const existingAppointment = await this.prismaClient.appointment.findFirst(
-        {
-          where: {
-            AND: [
-              // FIX Bug #15: Use centralized occupancy policy for consistent conflict detection
-              {
-                OR: buildOccupiedAppointmentFilter(),
-              },
-              // Exclude the event's own appointments from conflict detection.
-              // Required for "use requested slots" flow: the event's tentative
-              // appointments must not be flagged as conflicts with themselves.
-              ...(excludeAppointmentIds && excludeAppointmentIds.length > 0
-                ? [{ NOT: { id: { in: excludeAppointmentIds } } }]
-                : []),
-              {
-                slotsOfAppointment: {
-                  some: {
-                    // FIX: All conditions must be inside a single AND array.
-                    // Mixing AND:[...] with a sibling relation filter (user:{})
-                    // at the same level causes Prisma to silently ignore the
-                    // relation condition when using the non-transaction client.
-                    AND: [
-                      { startsAt: { lt: slotEnd } }, // Existing starts before proposed ends
-                      { endsAt: { gt: slot } }, // Existing ends after proposed starts
-                      { user: { some: { id: consultantUserId } } }, // Must be consultant's slot
-                    ],
-                  },
-                },
-              },
-            ],
-          },
-          include: {
-            consultation: {
-              include: {
-                consultationPlan: true,
-                requestedBy: {
-                  include: { user: true },
+    // FIX Issue #464: Replace N+1 per-slot queries with a single batch query.
+    // Previously each slot triggered its own findFirst, causing transaction
+    // timeouts (>120s) for subscriptions with thousands of slots.
+
+    // Step 1: Compute time envelope across ALL proposed slots.
+    // Slots may not be sorted (checkSlotAvailability doesn't sort),
+    // so compute min/max explicitly.
+    const slotDurationMs = slotDurationMinutes * 60 * 1000;
+    let earliestStart = slots[0].getTime();
+    let latestEnd = slots[0].getTime() + slotDurationMs;
+
+    for (const slot of slots) {
+      const startMs = slot.getTime();
+      const endMs = startMs + slotDurationMs;
+      if (startMs < earliestStart) earliestStart = startMs;
+      if (endMs > latestEnd) latestEnd = endMs;
+    }
+
+    // Step 2: Single query — find ALL occupied appointments overlapping the envelope
+    const conflictingAppointments =
+      await this.prismaClient.appointment.findMany({
+        where: {
+          AND: [
+            // FIX Bug #15: Use centralized occupancy policy for consistent conflict detection
+            { OR: buildOccupiedAppointmentFilter() },
+            // Exclude the event's own appointments from conflict detection.
+            // Required for "use requested slots" flow: the event's tentative
+            // appointments must not be flagged as conflicts with themselves.
+            ...(excludeAppointmentIds && excludeAppointmentIds.length > 0
+              ? [{ NOT: { id: { in: excludeAppointmentIds } } }]
+              : []),
+            {
+              slotsOfAppointment: {
+                some: {
+                  // FIX: All conditions must be inside a single AND array.
+                  // Mixing AND:[...] with a sibling relation filter (user:{})
+                  // at the same level causes Prisma to silently ignore the
+                  // relation condition when using the non-transaction client.
+                  AND: [
+                    { startsAt: { lt: new Date(latestEnd) } },
+                    { endsAt: { gt: new Date(earliestStart) } },
+                    { user: { some: { id: consultantUserId } } },
+                  ],
                 },
               },
             },
-            subscription: {
-              include: {
-                subscriptionPlan: true,
-                requestedBy: {
-                  include: { user: true },
-                },
-              },
-            },
-            payment: true, // Need payment data to check expiry
-          },
+          ],
         },
+        include: {
+          slotsOfAppointment: {
+            select: { startsAt: true, endsAt: true },
+          },
+          consultation: {
+            include: {
+              consultationPlan: true,
+              requestedBy: {
+                include: { user: true },
+              },
+            },
+          },
+          subscription: {
+            include: {
+              subscriptionPlan: true,
+              requestedBy: {
+                include: { user: true },
+              },
+            },
+          },
+          payment: true, // Need payment data to check expiry
+        },
+      });
+
+    // Step 3: Match conflicts back to specific proposed slots in JS
+    for (const slot of slots) {
+      const slotEnd = new Date(slot.getTime() + slotDurationMs);
+
+      const existingAppointment = conflictingAppointments.find((appt) =>
+        appt.slotsOfAppointment.some(
+          (existingSlot) =>
+            new Date(existingSlot.startsAt) < slotEnd &&
+            new Date(existingSlot.endsAt) > slot,
+        ),
       );
 
       if (existingAppointment) {
-        // FIX: Check if consultation is APPROVED_PENDING_PAYMENT with expired payment
+        // FIX: Check if event is APPROVED_PENDING_PAYMENT with expired payment
         // If payment expired, slot is actually free (orphaned payment bug fix)
-        if (
-          existingAppointment.consultation?.requestStatus ===
-          RequestStatus.APPROVED_PENDING_PAYMENT
-        ) {
+        const pendingStatus =
+          existingAppointment.consultation?.requestStatus ??
+          existingAppointment.subscription?.requestStatus;
+        if (pendingStatus === RequestStatus.APPROVED_PENDING_PAYMENT) {
           const payment = existingAppointment.payment?.[0];
           if (payment?.expiresAt) {
             const now = new Date();
-            const paymentExpired = new Date(payment.expiresAt) < now;
-            if (paymentExpired) {
+            if (new Date(payment.expiresAt) < now) {
               // Payment expired - slot is actually available, skip this conflict
               continue;
             }
@@ -298,9 +329,12 @@ export class SlotValidationService {
   /**
    * UNIVERSAL VALIDATOR: Ensure slots match consultant's schedule
    *
-   * FIX: For WEEKLY schedules, directly compare each slot's UTC day-of-week and time
-   * against the availability patterns. Also checks adjacent day's availability for
-   * timezone edge cases (e.g., 21:00 UTC Saturday = 02:30 IST Sunday).
+   * FIX Issue #6: Now uses Int (startTimeUtc/endTimeUtc) directly instead of
+   * extracting hours/minutes from DateTime objects. This eliminates the
+   * complex DateTime-to-minutes conversion that was the source of timezone bugs.
+   *
+   * Also checks adjacent day's availability for timezone edge cases
+   * (e.g., 21:00 UTC Saturday = 02:30 IST Sunday).
    */
   private validateMatchesSchedule(
     slots: Date[],
@@ -320,17 +354,6 @@ export class SlotValidationService {
         "Saturday",
       ];
 
-      // Map DayOfWeek enum to JS getDay() index (Sunday=0 ... Saturday=6)
-      const dayOfWeekToIndex: Record<string, number> = {
-        SUNDAY: 0,
-        MONDAY: 1,
-        TUESDAY: 2,
-        WEDNESDAY: 3,
-        THURSDAY: 4,
-        FRIDAY: 5,
-        SATURDAY: 6,
-      };
-
       // For each slot, check if it falls within ANY weekly availability
       // Also check adjacent day's availability for timezone edge cases
       for (const slot of slots) {
@@ -338,69 +361,21 @@ export class SlotValidationService {
         const slotHours = slot.getUTCHours();
         const slotMinutes = slot.getUTCMinutes();
         const slotTimeMinutes = slotHours * 60 + slotMinutes;
-        const slotEndTimeMinutes = slotTimeMinutes + 30; // 30-minute slot
 
         // Check if this slot matches any availability pattern
+        // Delegates to isMinuteWithinWeeklySlot — single source of truth for
+        // same-day, overnight, and timezone-compensated day matching
         const matchesAvailability = consultant.slotsOfAvailabilityWeekly.some(
-          (availSlot) => {
-            if (!(availSlot.dayOfWeekForStartsAt in dayOfWeekToIndex)) {
-              return false;
-            }
-
-            const availDay = dayOfWeekToIndex[availSlot.dayOfWeekForStartsAt];
-            const availStart = new Date(availSlot.availabilityStartsAt);
-            const availEnd = new Date(availSlot.availabilityEndsAt);
-            const availStartMinutes =
-              availStart.getUTCHours() * 60 + availStart.getUTCMinutes();
-            const availEndMinutes =
-              availEnd.getUTCHours() * 60 + availEnd.getUTCMinutes();
-            const isOvernightAvail = availEndMinutes <= availStartMinutes;
-
-            // Check for same day match
-            if (slotDay === availDay) {
-              if (isOvernightAvail) {
-                // Overnight slot - check if slot is after start on same day
-                if (slotTimeMinutes >= availStartMinutes) return true;
-              } else {
-                // Normal same-day slot
-                if (
-                  slotTimeMinutes >= availStartMinutes &&
-                  slotEndTimeMinutes <= availEndMinutes
-                )
-                  return true;
-              }
-            }
-
-            // Check for overnight carry-over (slot is on day after availability start)
-            const nextDay = (availDay + 1) % 7;
-            if (slotDay === nextDay && isOvernightAvail) {
-              if (slotEndTimeMinutes <= availEndMinutes) return true;
-            }
-
-            // TIMEZONE EDGE CASE - Check NEXT day's availability pattern
-            // When slot is in late evening UTC (>= 18:00), it might appear as the NEXT day
-            // in positive-offset timezones (e.g., 21:00 UTC Saturday = 02:30 IST Sunday)
-            const nextDayFromSlot = (slotDay + 1) % 7;
-            if (nextDayFromSlot === availDay && slotHours >= 18) {
-              if (
-                slotTimeMinutes >= availStartMinutes &&
-                (isOvernightAvail || slotEndTimeMinutes <= availEndMinutes)
-              )
-                return true;
-            }
-
-            // Check PREVIOUS day for early morning slots
-            const prevDayFromSlot = (slotDay + 6) % 7;
-            if (
-              prevDayFromSlot === availDay &&
-              slotHours < 6 &&
-              isOvernightAvail
-            ) {
-              if (slotEndTimeMinutes <= availEndMinutes) return true;
-            }
-
-            return false;
-          },
+          (availSlot) =>
+            isMinuteWithinWeeklySlot(
+              slotDay,
+              slotTimeMinutes,
+              30, // 30-minute slot duration
+              availSlot.startDay,
+              availSlot.startTimeUtc,
+              availSlot.endTimeUtc,
+              availSlot.utcOffsetMinutes,
+            ),
         );
 
         if (!matchesAvailability) {
@@ -433,8 +408,8 @@ export class SlotValidationService {
         // Uses same overlap logic as calendar: intervalStart < slotEnd && slotStart < intervalEnd
         const hasOverlap = consultant.slotsOfAvailabilityCustom.some(
           (availableSlot) => {
-            const availableStart = new Date(availableSlot.availabilityStartsAt);
-            const availableEnd = new Date(availableSlot.availabilityEndsAt);
+            const availableStart = new Date(availableSlot.startsAt);
+            const availableEnd = new Date(availableSlot.endsAt);
             return slot < availableEnd && availableStart < slotEnd;
           },
         );
@@ -457,8 +432,8 @@ export class SlotValidationService {
         const validSlotCount = slots.filter((slot) => {
           const slotEnd = new Date(slot.getTime() + 30 * 60 * 1000);
           return consultant.slotsOfAvailabilityCustom.some((availableSlot) => {
-            const availableStart = new Date(availableSlot.availabilityStartsAt);
-            const availableEnd = new Date(availableSlot.availabilityEndsAt);
+            const availableStart = new Date(availableSlot.startsAt);
+            const availableEnd = new Date(availableSlot.endsAt);
             return slot < availableEnd && availableStart < slotEnd;
           });
         }).length;
@@ -510,7 +485,8 @@ export class SlotValidationService {
     const errors: string[] = [];
 
     for (const slot of slots) {
-      if (slot < startDate || slot > endDate) {
+      const slotEnd = new Date(slot.getTime() + 30 * 60 * 1000);
+      if (slot < startDate || slotEnd > endDate) {
         errors.push(
           `[OUTSIDE_AVAILABILITY] Slot ${slot.toLocaleString()} is outside the scheduling period ` +
             `(${startDate.toLocaleDateString()} - ${endDate.toLocaleDateString()}). ` +
@@ -689,6 +665,15 @@ export class SlotValidationService {
       if (errors.length > 0) {
         return { isValid: false, errors, warnings };
       }
+    }
+
+    // Reject incomplete sessions (matches validateClass behavior)
+    if (slotsPerSession > 1 && slots.length % slotsPerSession !== 0) {
+      errors.push(
+        `[VALIDATION] Subscription requires slot count to be a multiple of ${slotsPerSession} ` +
+          `(${sessionDuration}-hour sessions), but ${slots.length} slots were provided`,
+      );
+      return { isValid: false, errors, warnings };
     }
 
     const validationService = new SubscriptionValidationService(

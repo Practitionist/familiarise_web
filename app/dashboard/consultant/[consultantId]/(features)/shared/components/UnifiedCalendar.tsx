@@ -439,6 +439,14 @@ export function UnifiedCalendar({
     onSuccess: handleAllocationSuccess,
   });
 
+  // PERFORMANCE: Pre-compute a Set of event slot timestamps (rounded to seconds)
+  // for O(1) lookups. Replaces O(n) .some() scan that ran 336× per render.
+  const eventSlotsSet = useMemo(
+    () =>
+      new Set(eventSlots.map((s) => Math.round(s.startTime.getTime() / 1000))),
+    [eventSlots],
+  );
+
   // Initialize pre-selected slots
   // Compare by content to prevent infinite loops from parent re-renders creating new array references
   useEffect(() => {
@@ -597,16 +605,10 @@ export function UnifiedCalendar({
         isBooked: status.isBooked,
       };
 
-      // Check if this slot belongs to the current event (for rescheduling)
-      const isCurrentEventSlot = eventSlots.some((eventSlot) => {
-        const slotTime = slot.startTime.getTime();
-        const eventTime = eventSlot.startTime.getTime();
-        const timeDiff = Math.abs(slotTime - eventTime);
-        const timeMatch = timeDiff < 1000;
-        const stringMatch =
-          slot.startTime.toISOString() === eventSlot.startTime.toISOString();
-        return timeMatch || stringMatch;
-      });
+      // Check if this slot belongs to the current event — O(1) via Set lookup
+      const isCurrentEventSlot = eventSlotsSet.has(
+        Math.round(slot.startTime.getTime() / 1000),
+      );
 
       // First-line guard: allow click but block selection with feedback if outside allowed range
       if (allowedStart || allowedEnd) {
@@ -738,7 +740,7 @@ export function UnifiedCalendar({
       allowedEnd,
       selectedSlots,
       existingAppointments,
-      eventSlots,
+      eventSlotsSet,
       toast,
     ],
   );
@@ -757,22 +759,10 @@ export function UnifiedCalendar({
 
       const isCurrentlySelected = isSlotSelected(slot);
 
-      // Check if this slot belongs to the current event (already booked for THIS event)
-      // Use robust timestamp matching with tolerance for floating point precision
-      const isCurrentEventSlot = eventSlots.some((eventSlot) => {
-        const slotTime = slot.startTime.getTime();
-        const eventTime = eventSlot.startTime.getTime();
-        const timeDiff = Math.abs(slotTime - eventTime);
-
-        // Match with 1-second tolerance for precision issues
-        const timeMatch = timeDiff < 1000;
-
-        // Fallback: compare ISO strings for exact match
-        const stringMatch =
-          slot.startTime.toISOString() === eventSlot.startTime.toISOString();
-
-        return timeMatch || stringMatch;
-      });
+      // Check if this slot belongs to the current event — O(1) via Set lookup
+      const isCurrentEventSlot = eventSlotsSet.has(
+        Math.round(slot.startTime.getTime() / 1000),
+      );
 
       // Check if slot is outside allowed period for subscriptions/classes
       const intervalStart = new Date(status.intervalStartUTCString);
@@ -791,7 +781,7 @@ export function UnifiedCalendar({
       }
 
       let cellClassName =
-        "h-8 w-full relative transition-colors duration-150 ease-in-out border border-transparent rounded-sm text-[10px] leading-tight px-1 py-0.5 disabled:pointer-events-none disabled:opacity-50";
+        "h-8 w-full relative transition-colors duration-75 ease-in-out border border-transparent rounded-sm text-[10px] leading-tight px-1 py-0.5 disabled:pointer-events-none disabled:opacity-50";
       let buttonText = "";
       const showTooltip =
         ((status.isBookedForDisplay || status.isPartiallyBooked) &&
@@ -929,7 +919,7 @@ export function UnifiedCalendar({
       allowedStart,
       allowedEnd,
       eventType,
-      eventSlots,
+      eventSlotsSet,
     ],
   );
 

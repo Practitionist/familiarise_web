@@ -142,7 +142,11 @@ export async function GET(request: NextRequest) {
           },
           waitlist: {
             where: {
-              userId: consulteeProfileId,
+              user: {
+                consulteeProfile: {
+                  id: consulteeProfileId,
+                },
+              },
             },
             select: {
               userId: true,

@@ -99,9 +99,10 @@ export function RequestedSlotsDialog({
       if (schedulingPeriod?.startDate && schedulingPeriod?.endDate) {
         requestedSlots.forEach((slot) => {
           const slotDate = new Date(slot);
+          const slotEndDate = new Date(slotDate.getTime() + 30 * 60 * 1000);
           if (
             slotDate < schedulingPeriod.startDate! ||
-            slotDate > schedulingPeriod.endDate!
+            slotEndDate > schedulingPeriod.endDate!
           ) {
             outsidePeriodSlots.push({ slot });
           }

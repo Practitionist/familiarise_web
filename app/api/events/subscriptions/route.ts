@@ -189,9 +189,11 @@ export async function PATCH(request: NextRequest) {
 
     // Check authorization: must be a participant or privileged
     const isConsultant =
-      existingSubscription.subscriptionPlan?.consultantProfile?.id ===
-      session.user.consultantProfileId;
+      !!existingSubscription.subscriptionPlan?.consultantProfile?.id &&
+      existingSubscription.subscriptionPlan.consultantProfile.id ===
+        session.user.consultantProfileId;
     const isConsultee =
+      !!existingSubscription.requestedById &&
       existingSubscription.requestedById === session.user.consulteeProfileId;
     if (!isPrivileged(session.user.role) && !isConsultant && !isConsultee) {
       return forbiddenResponse(

@@ -367,8 +367,11 @@ export async function applyCreditsToPayment(
  * Uses the ReferralCreditUsage ledger for accurate per-payment reversal.
  * Called during refund processing to restore credits to the user.
  *
- * For partial refunds: restores a proportional fraction of each usage record
- * (refundAmount / originalPaymentAmount) and reduces the usage amount accordingly.
+ * For partial refunds: uses cumulative proportional restoration to avoid
+ * rounding drift across multiple partial refunds. Queries the total SUCCEEDED
+ * refunds for the payment (including the current one) to compute the cumulative
+ * ratio, then restores (cumulativeTarget - alreadyRestored) per usage record.
+ * On the final refund (cumulative = original), this guarantees exact restoration.
  * For full refunds: restores all usage and deletes the usage records.
  */
 export async function reverseCreditsForPayment(
@@ -391,18 +394,40 @@ export async function reverseCreditsForPayment(
     originalPaymentAmount > 0 &&
     refundAmount < originalPaymentAmount;
 
-  const refundRatio = isPartialRefund
-    ? refundAmount / originalPaymentAmount
-    : 1;
+  // For partial refunds, query the cumulative SUCCEEDED refund total for this
+  // payment (the current refund is already recorded before this function runs).
+  // Using cumulative totals instead of per-refund ratios eliminates rounding drift.
+  let cumulativeRefunded: number | null = null;
+  if (isPartialRefund) {
+    const aggregate = await tx.refund.aggregate({
+      where: { paymentId, status: "SUCCEEDED" },
+      _sum: { amount: true },
+    });
+    cumulativeRefunded = aggregate._sum.amount ?? refundAmount;
+  }
 
   let totalRestored = 0;
 
   for (const usage of usageRecords) {
     if (usage.amount <= 0) continue;
 
-    const restoreAmount = isPartialRefund
-      ? Math.min(Math.round(usage.originalAmount * refundRatio), usage.amount)
-      : usage.amount;
+    let restoreAmount: number;
+
+    if (isPartialRefund && cumulativeRefunded !== null) {
+      // Cumulative proportional approach: compute how much should have been
+      // restored in total by now, then subtract what was already restored.
+      const cumulativeTarget = Math.round(
+        (usage.originalAmount * cumulativeRefunded) / originalPaymentAmount!,
+      );
+      const alreadyRestored = usage.restoredAmount;
+      restoreAmount = Math.min(
+        cumulativeTarget - alreadyRestored,
+        usage.amount,
+      );
+    } else {
+      // Full refund — restore everything remaining
+      restoreAmount = usage.amount;
+    }
 
     if (restoreAmount <= 0) continue;
 
@@ -422,10 +447,13 @@ export async function reverseCreditsForPayment(
         where: { id: usage.id },
       });
     } else {
-      // Partial restore — reduce the usage record amount
+      // Partial restore — reduce usage amount and track cumulative restored
       await tx.referralCreditUsage.update({
         where: { id: usage.id },
-        data: { amount: { decrement: restoreAmount } },
+        data: {
+          amount: { decrement: restoreAmount },
+          restoredAmount: { increment: restoreAmount },
+        },
       });
     }
 

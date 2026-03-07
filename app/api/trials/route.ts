@@ -276,6 +276,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (subscriptionPlan.consultantProfileId !== consultantProfileId) {
+      return NextResponse.json(
+        { error: "Subscription plan does not belong to this consultant" },
+        { status: 400 },
+      );
+    }
+
     if (!subscriptionPlan.freeTrialEnabled) {
       return NextResponse.json(
         { error: "Free trial is not available for this plan" },

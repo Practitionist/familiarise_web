@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth-server";
+import { isPrivileged } from "@/lib/auth-helpers";
 import { calculateRevenueSplit } from "@/lib/collaborators/service";
+import prisma from "@/lib/prisma";
 
 export async function GET(
   req: NextRequest,
@@ -13,6 +15,32 @@ export async function GET(
     }
 
     const { planId } = await params;
+
+    // Only the plan owner, accepted collaborators, or admin/staff may view revenue splits
+    if (!isPrivileged(session.user.role)) {
+      const plan = await prisma.webinarPlan.findUnique({
+        where: { id: planId },
+        select: { consultantProfileId: true },
+      });
+      if (!plan) {
+        return NextResponse.json({ error: "Plan not found" }, { status: 404 });
+      }
+      const isOwner =
+        session.user.consultantProfileId === plan.consultantProfileId;
+      if (!isOwner) {
+        const collab = await prisma.webinarCollaborator.findFirst({
+          where: {
+            webinarPlanId: planId,
+            consultantProfileId: session.user.consultantProfileId ?? "__none__",
+            status: "ACCEPTED",
+          },
+        });
+        if (!collab) {
+          return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+        }
+      }
+    }
+
     const amount = Number(req.nextUrl.searchParams.get("amount") || "10000");
 
     const splits = await calculateRevenueSplit("webinar", planId, amount);

@@ -203,38 +203,23 @@ export function makeWeeklyAvailabilitySlot(
   day: DayOfWeek,
   startHourUTC: number,
   endHourUTC: number,
+  utcOffsetMinutes: number = 0,
+  endDay?: DayOfWeek,
 ) {
-  // Use correct base date per day so getUTCDay() returns the right weekday.
-  // Jan 5 2025 = Sunday, Jan 6 = Monday, ..., Jan 11 = Saturday.
-  const dayOffsets: Record<string, number> = {
-    SUNDAY: -1,
-    MONDAY: 0,
-    TUESDAY: 1,
-    WEDNESDAY: 2,
-    THURSDAY: 3,
-    FRIDAY: 4,
-    SATURDAY: 5,
-  };
-  const base = new Date("2025-01-06T00:00:00.000Z"); // Monday
-  base.setUTCDate(base.getUTCDate() + (dayOffsets[day] || 0));
-
-  const start = new Date(base);
-  start.setUTCHours(startHourUTC, 0, 0, 0);
-  const end = new Date(base);
-  end.setUTCHours(endHourUTC, 0, 0, 0);
-
   return {
     id: `weekly-${day}-${startHourUTC}`,
-    dayOfWeekForStartsAt: day,
-    availabilityStartsAt: start,
-    availabilityEndsAt: end,
+    startDay: day,
+    startTimeUtc: startHourUTC * 60, // minutes since midnight UTC
+    endDay: endDay ?? day,
+    endTimeUtc: endHourUTC * 60, // minutes since midnight UTC
+    utcOffsetMinutes,
   };
 }
 
 export function makeCustomAvailabilitySlot(startISO: string, endISO: string) {
   return {
     id: `custom-${startISO}`,
-    availabilityStartsAt: new Date(startISO),
-    availabilityEndsAt: new Date(endISO),
+    startsAt: new Date(startISO),
+    endsAt: new Date(endISO),
   };
 }
