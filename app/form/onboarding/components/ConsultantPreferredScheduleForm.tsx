@@ -516,6 +516,11 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
         </h3>
         <p className="text-sm text-muted-foreground">
           Choose how you'd like to schedule your appointments.
+          {!timezoneLoading && timezone && (
+            <span className="ml-1 font-medium text-foreground">
+              Times are in {timezone}.
+            </span>
+          )}
         </p>
       </div>
 

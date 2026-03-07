@@ -719,7 +719,7 @@ export async function unlockTrialSlot(lock: ApprovalLock): Promise<void> {
  */
 export async function lockAutoAllocate(
   consultantProfileId: string,
-  ttl: number = 130000, // 130s — 10s buffer over 120s transaction timeout (after 1% drift: ~128.7s)
+  ttl: number = 150000, // 150s — 30s buffer over 120s transaction timeout (after 1% drift: ~148.5s)
 ): Promise<ApprovalLock> {
   const key = `auto-allocate:${consultantProfileId}`;
   try {

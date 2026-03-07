@@ -1207,13 +1207,20 @@ describe("cleanupTentativeSlots", () => {
       expect.objectContaining({
         where: expect.objectContaining({
           isTentative: true,
-          appointment: {
+          appointment: expect.objectContaining({
             payment: {
               none: {
                 paymentStatus: "SUCCEEDED",
               },
             },
-          },
+            AND: expect.arrayContaining([
+              expect.objectContaining({
+                OR: expect.arrayContaining([
+                  { consultation: null },
+                ]),
+              }),
+            ]),
+          }),
         }),
       }),
     );

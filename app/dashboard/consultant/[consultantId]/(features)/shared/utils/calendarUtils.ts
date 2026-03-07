@@ -550,6 +550,8 @@ export function getAppointmentTitle(appointment: Appointment): string {
       return appointment.webinar?.webinarPlan?.title || "Webinar";
     case AppointmentsType.CLASS:
       return appointment.class?.classPlan?.title || "Class";
+    case AppointmentsType.TRIAL:
+      return "Trial Session";
     default:
       return "Unknown Appointment";
   }

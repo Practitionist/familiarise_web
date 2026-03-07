@@ -110,10 +110,11 @@ export class SlotCalculationService {
       );
     }
 
-    // Additional sanity check: duration should be reasonable (0.5 to 24 hours)
+    // Hard limit: sessions longer than 24 hours are not supported and would
+    // cause the auto-allocator to time out searching for impossible slot blocks.
     if (duration > 24) {
-      console.warn(
-        `${fieldName} is unusually large (${duration} hours). Maximum expected is 24 hours.`,
+      throw new Error(
+        `${fieldName} cannot exceed 24 hours, but received: ${duration}`,
       );
     }
 
@@ -371,7 +372,9 @@ export class SlotCalculationService {
     const slotsByDay = new Map<string, TimeSlot[]>();
 
     for (const slot of slots) {
-      const dayKey = slot.startTime.toDateString();
+      // Use ISO date string for UTC-consistent grouping across server and client.
+      // toDateString() uses local timezone, causing different grouping on different machines.
+      const dayKey = slot.startTime.toISOString().split("T")[0];
       if (!slotsByDay.has(dayKey)) {
         slotsByDay.set(dayKey, []);
       }

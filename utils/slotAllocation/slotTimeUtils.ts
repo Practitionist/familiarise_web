@@ -284,9 +284,15 @@ export function getTimezoneOffsetMinutes(timezone: string): number {
     const date = new Date();
     const utcStr = date.toLocaleString("en-US", { timeZone: "UTC" });
     const tzStr = date.toLocaleString("en-US", { timeZone: timezone });
-    return Math.round(
+    const offset = Math.round(
       (new Date(tzStr).getTime() - new Date(utcStr).getTime()) / 60000,
     );
+    // Clamp to valid UTC offset range (UTC-14 to UTC+14 = -840 to +840 minutes)
+    if (offset < -840 || offset > 840) {
+      console.warn(`Computed UTC offset ${offset} for "${timezone}" is out of valid range, defaulting to 0`);
+      return 0;
+    }
+    return offset;
   } catch {
     return 0;
   }

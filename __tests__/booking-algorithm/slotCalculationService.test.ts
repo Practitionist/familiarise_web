@@ -187,15 +187,10 @@ describe("SlotCalculationService.validateDuration", () => {
     ).toThrow("must be at least 0.5 hours");
   });
 
-  it("should warn but not throw for duration > 24 hours", () => {
-    const consoleSpy = jest.spyOn(console, "warn").mockImplementation();
+  it("should throw for duration > 24 hours", () => {
     expect(() =>
       SlotCalculationService.validateDuration(25, "myField"),
-    ).not.toThrow();
-    expect(consoleSpy).toHaveBeenCalledWith(
-      expect.stringContaining("unusually large"),
-    );
-    consoleSpy.mockRestore();
+    ).toThrow("cannot exceed 24 hours");
   });
 
   it("should throw for non-number type", () => {

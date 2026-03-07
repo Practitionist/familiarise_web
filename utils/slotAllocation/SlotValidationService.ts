@@ -145,6 +145,8 @@ export class SlotValidationService {
    */
   private validateSlotsInFuture(slots: Date[]): ValidationResult {
     const now = new Date();
+    // Fixed cutoff computed once — safe even for large slot arrays because
+    // the cutoff does not advance as the loop runs.
     const BUFFER_MS = 5000; // 5-second processing time buffer
     const cutoff = new Date(now.getTime() + BUFFER_MS);
     const errors: string[] = [];
