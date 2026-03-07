@@ -411,7 +411,7 @@ export function UnifiedCalendar({
   // Count past confirmed event slots for in-progress recurring events
   const pastEventSlotCount = useMemo(() => {
     const now = new Date();
-    return eventSlots.filter((s) => s.startTime < now).length;
+    return eventSlots.filter((s) => s.endTime <= now).length;
   }, [eventSlots]);
 
   // Slot allocation hook

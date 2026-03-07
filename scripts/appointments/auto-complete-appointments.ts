@@ -479,6 +479,10 @@ async function completeIndividualSlots(): Promise<{
 
   try {
     // Slots past buffer WITH MeetingSession.endedAt → COMPLETED
+    // Note: completedAt = cron run time (not session endedAt). Real-time
+    // completion via webhooks (session-handlers.ts) uses the actual endedAt.
+    // This cron is a fallback for missed webhooks, so the cron timestamp
+    // represents "when the system acknowledged completion."
     const completedResult = await prisma.slotOfAppointment.updateMany({
       where: {
         completionStatus: "SCHEDULED",
@@ -498,15 +502,30 @@ async function completeIndividualSlots(): Promise<{
       data: { completionStatus: "UNVERIFIED" },
     });
 
-    if (completedResult.count > 0 || unverifiedResult.count > 0) {
+    // Slots with MeetingSession but no endedAt (orphaned sessions — call
+    // started but webhook never fired) → UNVERIFIED
+    const orphanedResult = await prisma.slotOfAppointment.updateMany({
+      where: {
+        completionStatus: "SCHEDULED",
+        endsAt: { lt: bufferTime },
+        meetingSession: { endedAt: null },
+      },
+      data: { completionStatus: "UNVERIFIED" },
+    });
+
+    if (
+      completedResult.count > 0 ||
+      unverifiedResult.count > 0 ||
+      orphanedResult.count > 0
+    ) {
       console.log(
-        `   Slot-level: ${completedResult.count} completed, ${unverifiedResult.count} unverified`,
+        `   Slot-level: ${completedResult.count} completed, ${unverifiedResult.count + orphanedResult.count} unverified (${orphanedResult.count} orphaned)`,
       );
     }
 
     return {
       completed: completedResult.count,
-      unverified: unverifiedResult.count,
+      unverified: unverifiedResult.count + orphanedResult.count,
       errors,
     };
   } catch (error) {

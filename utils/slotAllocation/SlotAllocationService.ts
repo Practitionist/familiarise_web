@@ -374,7 +374,7 @@ export class SlotAllocationService {
           // For reschedules: only delete appointments with tentative slots (preserve confirmed ones)
           // For in-progress: only delete future slots (preserve past confirmed ones)
           // For initial allocation: delete all (shouldn't be any, but safety measure)
-          await this.deleteExistingAppointments(
+          const { enrolledUserIds } = await this.deleteExistingAppointments(
             tx,
             eventType,
             eventId,
@@ -392,6 +392,16 @@ export class SlotAllocationService {
             consulteeUserId,
             config,
           );
+
+          // Reconnect enrolled users to new slots (for group events like classes)
+          if (enrolledUserIds.length > 0) {
+            await this.reconnectEnrolledUsers(
+              tx,
+              appointments,
+              enrolledUserIds,
+              consultant.userId,
+            );
+          }
 
           // Update event status
           await this.updateEventStatus(
@@ -630,7 +640,7 @@ export class SlotAllocationService {
           // For reschedules: only delete tentative slots (preserve confirmed ones)
           // For in-progress: only delete future slots (preserve past confirmed ones)
           // For initial allocation: delete all
-          await this.deleteExistingAppointments(
+          const { enrolledUserIds } = await this.deleteExistingAppointments(
             tx,
             eventType,
             eventId,
@@ -648,6 +658,16 @@ export class SlotAllocationService {
             consulteeUserId,
             config,
           );
+
+          // Reconnect enrolled users to new slots (for group events like classes)
+          if (enrolledUserIds.length > 0) {
+            await this.reconnectEnrolledUsers(
+              tx,
+              appointments,
+              enrolledUserIds,
+              consultant.userId,
+            );
+          }
 
           // Update event status
           await this.updateEventStatus(
@@ -1373,6 +1393,35 @@ export class SlotAllocationService {
   }
 
   /**
+   * Reconnect enrolled users to newly created slots.
+   * Used during in-progress reallocation of group events (classes):
+   * when future slots are deleted and recreated, the enrolled users'
+   * M2M links are lost. This restores them on the new slots.
+   */
+  private static async reconnectEnrolledUsers(
+    tx: PrismaTransaction,
+    appointments: AppointmentWithSlots[],
+    enrolledUserIds: string[],
+    consultantUserId: string,
+  ): Promise<void> {
+    // Filter out the consultant (already connected via createAppointments)
+    const userIdsToConnect = enrolledUserIds.filter(
+      (id) => id !== consultantUserId,
+    );
+    if (userIdsToConnect.length === 0) return;
+
+    const connectData = userIdsToConnect.map((id) => ({ id }));
+    for (const appointment of appointments) {
+      for (const slot of appointment.slotsOfAppointment) {
+        await tx.slotOfAppointment.update({
+          where: { id: slot.id },
+          data: { user: { connect: connectData } },
+        });
+      }
+    }
+  }
+
+  /**
    * Delete existing appointments for an event
    *
    * @param onlyTentative - If true, only delete tentative SlotOfAppointment records,
@@ -1383,6 +1432,7 @@ export class SlotAllocationService {
    *                            preserving past confirmed slots and their MeetingSession records.
    *                            Used for in-progress reallocation of classes/subscriptions.
    * @returns preservedSlotCount - Number of past slots that were preserved.
+   * @returns enrolledUserIds - User IDs connected to deleted future slots (for reconnection).
    */
   private static async deleteExistingAppointments(
     tx: PrismaTransaction,
@@ -1390,7 +1440,7 @@ export class SlotAllocationService {
     eventId: string,
     onlyTentative: boolean = false,
     preservePastSlots: boolean = false,
-  ): Promise<{ preservedSlotCount: number }> {
+  ): Promise<{ preservedSlotCount: number; enrolledUserIds: string[] }> {
     const relationField = this.getEventRelationField(eventType);
     const whereClause = {
       [`${relationField}Id`]: eventId,
@@ -1428,16 +1478,21 @@ export class SlotAllocationService {
           }
         }
       }
-      return { preservedSlotCount: 0 };
+      return { preservedSlotCount: 0, enrolledUserIds: [] };
     } else if (preservePastSlots) {
       // In-progress reallocation: only delete future slots, preserve past ones
       const now = new Date();
       const appointments = await tx.appointment.findMany({
         where: whereClause,
-        include: { slotsOfAppointment: true },
+        include: {
+          slotsOfAppointment: {
+            include: { user: { select: { id: true } } },
+          },
+        },
       });
 
       let preservedSlotCount = 0;
+      const enrolledUserIdSet = new Set<string>();
 
       for (const appointment of appointments) {
         const pastSlots = appointment.slotsOfAppointment.filter(
@@ -1448,6 +1503,13 @@ export class SlotAllocationService {
         );
 
         preservedSlotCount += pastSlots.length;
+
+        // Capture enrolled user IDs from future slots before deletion
+        for (const slot of futureSlots) {
+          for (const user of (slot as any).user || []) {
+            enrolledUserIdSet.add(user.id);
+          }
+        }
 
         if (futureSlots.length > 0) {
           // Delete only future slots
@@ -1465,7 +1527,10 @@ export class SlotAllocationService {
         }
       }
 
-      return { preservedSlotCount };
+      return {
+        preservedSlotCount,
+        enrolledUserIds: Array.from(enrolledUserIdSet),
+      };
     } else {
       // Full delete: remove all appointments for this event
       const existingAppointments = await tx.appointment.findMany({
@@ -1477,7 +1542,7 @@ export class SlotAllocationService {
           tx.appointment.delete({ where: { id: appointment.id } }),
         ),
       );
-      return { preservedSlotCount: 0 };
+      return { preservedSlotCount: 0, enrolledUserIds: [] };
     }
   }
 
