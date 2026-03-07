@@ -5,7 +5,6 @@
  * Handles week counting, slot requirements, progress tracking, and grouping logic.
  */
 
-import { startOfWeek } from "date-fns";
 import { EventType, EventConfig, TimeSlot, ProgressInfo } from "./types";
 
 /**
@@ -391,7 +390,7 @@ export class SlotCalculationService {
     const slotsByWeek = new Map<string, TimeSlot[]>();
 
     for (const slot of slots) {
-      const weekStart = startOfWeek(slot.startTime);
+      const weekStart = SlotCalculationService.startOfWeekSunday(slot.startTime);
       const weekKey = weekStart.toISOString();
 
       if (!slotsByWeek.has(weekKey)) {

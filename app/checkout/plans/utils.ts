@@ -154,24 +154,32 @@ export async function handleUnifiedCheckout(
 
       // Small delay to let user see the toast before redirect
       setTimeout(async () => {
-        // Handle gateway-specific responses
-        switch (gateway) {
-          case "STRIPE":
-            const stripeInstance = await loadStripe(
-              process.env.NEXT_PUBLIC_STRIPE_KEY!,
-            );
-            if (!stripeInstance) {
-              throw new Error("Failed to load Stripe");
-            }
-            await stripeInstance.confirmPayment({
-              clientSecret: data.clientSecret!,
-              confirmParams: {
-                return_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout/checkout-success`,
-              },
-            });
-            break;
+        try {
+          // Handle gateway-specific responses
+          switch (gateway) {
+            case "STRIPE":
+              const stripeInstance = await loadStripe(
+                process.env.NEXT_PUBLIC_STRIPE_KEY!,
+              );
+              if (!stripeInstance) {
+                throw new Error("Failed to load Stripe");
+              }
+              await stripeInstance.confirmPayment({
+                clientSecret: data.clientSecret!,
+                confirmParams: {
+                  return_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout/checkout-success`,
+                },
+              });
+              break;
 
-          // TODO(#312/#334): Add Lemon Squeezy and XFlow cases when webhook handlers are implemented
+            // TODO(#312/#334): Add Lemon Squeezy and XFlow cases when webhook handlers are implemented
+          }
+        } catch (err) {
+          console.error("Payment confirmation error:", err);
+          handleApiError({
+            error: err instanceof Error ? err.message : "Payment confirmation failed",
+            errorType: "PAYMENT_ERROR",
+          });
         }
       }, 1000);
     }

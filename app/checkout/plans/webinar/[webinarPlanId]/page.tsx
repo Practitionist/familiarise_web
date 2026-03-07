@@ -15,7 +15,7 @@ import {
 } from "@/schemas/checkout";
 import { PaymentGateway } from "@prisma/client";
 import { CreditCard as CreditCardIcon } from "lucide-react";
-import { use, useCallback, useEffect, useMemo, useState } from "react";
+import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import RazorpayCheckout from "../../../components/RazorpayCheckout";
 import StripeCheckout from "../../../components/StripeCheckout";
 import {
@@ -88,6 +88,7 @@ export default function WebinarCheckoutPage({
   const [error, setError] = useState<string | null>(null);
   const [_reviews, _setReviews] = useState<ConsultantReview[]>([]);
   const [isCheckoutProcessing, setIsCheckoutProcessing] = useState(false);
+  const isProcessingRef = useRef(false);
   const [processingGateway, setProcessingGateway] = useState<string | null>(
     null,
   );
@@ -190,10 +191,11 @@ export default function WebinarCheckoutPage({
         return;
       }
 
-      // Prevent double-clicks and multiple simultaneous requests
-      if (isCheckoutProcessing) {
+      // Prevent double-clicks: ref provides synchronous guard (React state is async)
+      if (isProcessingRef.current || isCheckoutProcessing) {
         return;
       }
+      isProcessingRef.current = true;
 
       try {
         // Set loading state
@@ -267,6 +269,7 @@ export default function WebinarCheckoutPage({
           });
         }
       } finally {
+        isProcessingRef.current = false;
         setIsCheckoutProcessing(false);
         setProcessingGateway(null);
       }

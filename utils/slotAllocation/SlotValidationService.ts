@@ -291,17 +291,16 @@ export class SlotValidationService {
       );
 
       if (existingAppointment) {
-        // FIX: Check if consultation is APPROVED_PENDING_PAYMENT with expired payment
+        // FIX: Check if event is APPROVED_PENDING_PAYMENT with expired payment
         // If payment expired, slot is actually free (orphaned payment bug fix)
-        if (
-          existingAppointment.consultation?.requestStatus ===
-          RequestStatus.APPROVED_PENDING_PAYMENT
-        ) {
+        const pendingStatus =
+          existingAppointment.consultation?.requestStatus ??
+          existingAppointment.subscription?.requestStatus;
+        if (pendingStatus === RequestStatus.APPROVED_PENDING_PAYMENT) {
           const payment = existingAppointment.payment?.[0];
           if (payment?.expiresAt) {
             const now = new Date();
-            const paymentExpired = new Date(payment.expiresAt) < now;
-            if (paymentExpired) {
+            if (new Date(payment.expiresAt) < now) {
               // Payment expired - slot is actually available, skip this conflict
               continue;
             }
@@ -666,6 +665,15 @@ export class SlotValidationService {
       if (errors.length > 0) {
         return { isValid: false, errors, warnings };
       }
+    }
+
+    // Reject incomplete sessions (matches validateClass behavior)
+    if (slotsPerSession > 1 && slots.length % slotsPerSession !== 0) {
+      errors.push(
+        `[VALIDATION] Subscription requires slot count to be a multiple of ${slotsPerSession} ` +
+        `(${sessionDuration}-hour sessions), but ${slots.length} slots were provided`,
+      );
+      return { isValid: false, errors, warnings };
     }
 
     const validationService = new SubscriptionValidationService(

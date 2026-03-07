@@ -39,7 +39,7 @@ type SubscriptionResponse = {
 };
 import { loadStripe } from "@stripe/stripe-js";
 import { CreditCard as CreditCardIcon } from "lucide-react";
-import { use, useCallback, useEffect, useMemo, useState } from "react";
+import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import RazorpayCheckout from "../../../components/RazorpayCheckout";
 import StripeCheckout from "../../../components/StripeCheckout";
 import {
@@ -69,6 +69,7 @@ export default function SubscriptionCheckoutPage({
   const [error, setError] = useState<string | null>(null);
   const [reviews, setReviews] = useState<ConsultantReview[]>([]);
   const [isCheckoutProcessing, setIsCheckoutProcessing] = useState(false);
+  const isProcessingRef = useRef(false);
   const [processingGateway, setProcessingGateway] = useState<string | null>(
     null,
   );
@@ -184,10 +185,11 @@ export default function SubscriptionCheckoutPage({
         return;
       }
 
-      // Prevent double-clicks and multiple simultaneous requests
-      if (isCheckoutProcessing) {
+      // Prevent double-clicks: ref provides synchronous guard (React state is async)
+      if (isProcessingRef.current || isCheckoutProcessing) {
         return;
       }
+      isProcessingRef.current = true;
 
       try {
         // Set loading state
@@ -275,21 +277,30 @@ export default function SubscriptionCheckoutPage({
 
             // Small delay to let user see the toast before redirect
             setTimeout(async () => {
-              // Handle gateway-specific responses
-              switch (gateway) {
-                case "STRIPE":
-                  const stripe = await loadStripe(
-                    process.env.NEXT_PUBLIC_STRIPE_KEY!,
-                  );
-                  await stripe?.confirmPayment({
-                    clientSecret: data.clientSecret!,
-                    confirmParams: {
-                      return_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout/checkout-success`,
-                    },
-                  });
-                  break;
+              try {
+                // Handle gateway-specific responses
+                switch (gateway) {
+                  case "STRIPE":
+                    const stripe = await loadStripe(
+                      process.env.NEXT_PUBLIC_STRIPE_KEY!,
+                    );
+                    await stripe?.confirmPayment({
+                      clientSecret: data.clientSecret!,
+                      confirmParams: {
+                        return_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout/checkout-success`,
+                      },
+                    });
+                    break;
 
-                // TODO: Add Lemon Squeezy and XFlow cases when webhook handlers are implemented
+                  // TODO: Add Lemon Squeezy and XFlow cases when webhook handlers are implemented
+                }
+              } catch (paymentError) {
+                console.error("Payment confirmation error:", paymentError);
+                toast({
+                  title: "Payment Error",
+                  description: paymentError instanceof Error ? paymentError.message : "Payment confirmation failed. Please try again.",
+                  variant: "destructive",
+                });
               }
             }, 1000);
           }
@@ -306,6 +317,7 @@ export default function SubscriptionCheckoutPage({
           });
         }
       } finally {
+        isProcessingRef.current = false;
         setIsCheckoutProcessing(false);
         setProcessingGateway(null);
       }
