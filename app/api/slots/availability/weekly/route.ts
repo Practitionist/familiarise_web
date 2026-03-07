@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { DayOfWeek } from "@prisma/client";
+import {
+  minutesToTimeString,
+  validateWeeklySlotTimeOrder,
+  buildWeeklyOverlapWhere,
+  getTimezoneOffsetMinutes,
+} from "@/utils/slotAllocation/slotTimeUtils";
+import { getSession } from "@/lib/auth-server";
 
 export async function GET(req: NextRequest) {
   try {
@@ -24,8 +31,8 @@ export async function GET(req: NextRequest) {
           consultantProfileId: consultantProfileId,
         },
         orderBy: [
-          { dayOfWeekForStartsAt: "asc" },
-          { availabilityStartsAt: "asc" },
+          { startDay: "asc" },
+          { startTimeUtc: "asc" },
         ],
         include: {
           consultantProfile: {
@@ -34,7 +41,6 @@ export async function GET(req: NextRequest) {
               user: {
                 select: {
                   name: true,
-                  email: true,
                 },
               },
             },
@@ -71,21 +77,32 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
+    // Auth check
+    const session = await getSession();
+    if (!session?.user?.id) {
+      return NextResponse.json(
+        { error: "Authentication required" },
+        { status: 401 },
+      );
+    }
+
     const body = await req.json();
     const {
       consultantProfileId,
-      dayOfWeekForStartsAt,
-      dayOfWeekForEndsAt,
-      availabilityStartsAt,
-      availabilityEndsAt,
+      startDay,
+      endDay,
+      startTimeUtc,
+      endTimeUtc,
     } = body;
 
     if (
       !consultantProfileId ||
-      !dayOfWeekForStartsAt ||
-      !dayOfWeekForEndsAt ||
-      !availabilityStartsAt ||
-      !availabilityEndsAt
+      !startDay ||
+      !endDay ||
+      startTimeUtc === undefined ||
+      startTimeUtc === null ||
+      endTimeUtc === undefined ||
+      endTimeUtc === null
     ) {
       return NextResponse.json(
         { error: "Missing required fields" },
@@ -93,9 +110,21 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Ownership check (also fetch user timezone for offset computation)
+    const consultantProfile = await prisma.consultantProfile.findUnique({
+      where: { id: consultantProfileId },
+      select: { userId: true, user: { select: { timezone: true } } },
+    });
+    if (!consultantProfile || consultantProfile.userId !== session.user.id) {
+      return NextResponse.json(
+        { error: "Forbidden: you do not own this consultant profile" },
+        { status: 403 },
+      );
+    }
+
     if (
-      !Object.values(DayOfWeek).includes(dayOfWeekForStartsAt) ||
-      !Object.values(DayOfWeek).includes(dayOfWeekForEndsAt)
+      !Object.values(DayOfWeek).includes(startDay) ||
+      !Object.values(DayOfWeek).includes(endDay)
     ) {
       return NextResponse.json(
         { error: "Invalid day of week" },
@@ -104,61 +133,57 @@ export async function POST(req: NextRequest) {
     }
 
     if (
-      isNaN(Date.parse(availabilityStartsAt)) ||
-      isNaN(Date.parse(availabilityEndsAt))
+      typeof startTimeUtc !== "number" ||
+      typeof endTimeUtc !== "number" ||
+      !Number.isInteger(startTimeUtc) ||
+      !Number.isInteger(endTimeUtc) ||
+      startTimeUtc < 0 ||
+      startTimeUtc > 1439 ||
+      endTimeUtc < 0 ||
+      endTimeUtc > 1439
     ) {
       return NextResponse.json(
-        { error: "Invalid time format" },
+        { error: "Invalid time format: must be integer 0-1439 (minutes since midnight UTC)" },
         { status: 400 },
       );
     }
 
-    const startTime = new Date(availabilityStartsAt);
-    const endTime = new Date(availabilityEndsAt);
-
-    if (startTime >= endTime) {
-      return NextResponse.json(
-        { error: "Start time must be before end time" },
-        { status: 400 },
-      );
+    // Day-aware time order validation (supports overnight slots)
+    const timeError = validateWeeklySlotTimeOrder(startDay, endDay, startTimeUtc, endTimeUtc);
+    if (timeError) {
+      return NextResponse.json({ error: timeError }, { status: 400 });
     }
 
-    // Check for overlapping slots
+    // Cross-midnight-aware overlap check
     const overlappingSlot = await prisma.slotOfAvailabilityWeekly.findFirst({
-      where: {
+      where: buildWeeklyOverlapWhere(
         consultantProfileId,
-        dayOfWeekForStartsAt,
-        OR: [
-          {
-            availabilityStartsAt: { lte: startTime },
-            availabilityEndsAt: { gt: startTime },
-          },
-          {
-            availabilityStartsAt: { lt: endTime },
-            availabilityEndsAt: { gte: endTime },
-          },
-          {
-            availabilityStartsAt: { gte: startTime },
-            availabilityEndsAt: { lte: endTime },
-          },
-        ],
-      },
+        startDay,
+        endDay,
+        startTimeUtc,
+        endTimeUtc,
+      ),
     });
 
     if (overlappingSlot) {
       return NextResponse.json(
-        { error: "This slot overlaps with an existing slot" },
+        { error: `This slot (${minutesToTimeString(startTimeUtc)}-${minutesToTimeString(endTimeUtc)}) overlaps with an existing slot` },
         { status: 409 },
       );
     }
 
+    const utcOffsetMinutes = consultantProfile.user?.timezone
+      ? getTimezoneOffsetMinutes(consultantProfile.user.timezone)
+      : 0;
+
     const newWeeklySlot = await prisma.slotOfAvailabilityWeekly.create({
       data: {
         consultantProfileId,
-        dayOfWeekForStartsAt,
-        dayOfWeekForEndsAt,
-        availabilityStartsAt: startTime,
-        availabilityEndsAt: endTime,
+        startDay,
+        endDay,
+        startTimeUtc,
+        endTimeUtc,
+        utcOffsetMinutes,
       },
       include: {
         consultantProfile: {

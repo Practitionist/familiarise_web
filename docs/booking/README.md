@@ -35,7 +35,7 @@ graph TD
 - **3 validation layers** -- Zod schemas (input format) -> SlotValidationService (business rules) -> Prisma (DB constraints)
 - **Sunday-to-Saturday weeks** -- `SlotCalculationService.countWeeks()` is the single source of truth
 - **`isTentative` flag** -- marks slots pending payment or reschedule; cleaned up by cron after 7 days
-- **`dayOfWeekForStartsAt` enum** -- source of truth for weekly availability day-of-week (not `getUTCDay()`)
+- **`startDay`/`endDay` DayOfWeek enum + `startTimeUtc`/`endTimeUtc` Int** -- source of truth for weekly availability (minutes since midnight UTC, 0-1439; supports overnight/cross-midnight slots)
 
 ## Source Code Map
 

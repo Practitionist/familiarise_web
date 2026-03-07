@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { getSession } from "@/lib/auth-server";
 
 export async function GET(req: NextRequest) {
   try {
@@ -28,10 +29,10 @@ export async function GET(req: NextRequest) {
           { status: 400 },
         );
       }
-      whereClause.availabilityStartsAt = {
+      whereClause.startsAt = {
         gte: new Date(startDate),
       };
-      whereClause.availabilityEndsAt = {
+      whereClause.endsAt = {
         lte: new Date(endDate),
       };
     }
@@ -40,7 +41,7 @@ export async function GET(req: NextRequest) {
       prisma.slotOfAvailabilityCustom.findMany({
         where: whereClause,
         orderBy: {
-          availabilityStartsAt: "asc",
+          startsAt: "asc",
         },
         include: {
           consultantProfile: {
@@ -49,7 +50,6 @@ export async function GET(req: NextRequest) {
               user: {
                 select: {
                   name: true,
-                  email: true,
                 },
               },
             },
@@ -84,20 +84,41 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
+    // Auth check
+    const session = await getSession();
+    if (!session?.user?.id) {
+      return NextResponse.json(
+        { error: "Authentication required" },
+        { status: 401 },
+      );
+    }
+
     const body = await req.json();
-    const { consultantProfileId, availabilityStartsAt, availabilityEndsAt } =
+    const { consultantProfileId, startsAt, endsAt } =
       body;
 
-    if (!consultantProfileId || !availabilityStartsAt || !availabilityEndsAt) {
+    if (!consultantProfileId || !startsAt || !endsAt) {
       return NextResponse.json(
         { error: "Missing required fields" },
         { status: 400 },
       );
     }
 
+    // Ownership check
+    const consultantProfile = await prisma.consultantProfile.findUnique({
+      where: { id: consultantProfileId },
+      select: { userId: true },
+    });
+    if (!consultantProfile || consultantProfile.userId !== session.user.id) {
+      return NextResponse.json(
+        { error: "Forbidden: you do not own this consultant profile" },
+        { status: 403 },
+      );
+    }
+
     if (
-      isNaN(Date.parse(availabilityStartsAt)) ||
-      isNaN(Date.parse(availabilityEndsAt))
+      isNaN(Date.parse(startsAt)) ||
+      isNaN(Date.parse(endsAt))
     ) {
       return NextResponse.json(
         { error: "Invalid date format" },
@@ -105,8 +126,8 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const startTime = new Date(availabilityStartsAt);
-    const endTime = new Date(availabilityEndsAt);
+    const startTime = new Date(startsAt);
+    const endTime = new Date(endsAt);
 
     if (startTime >= endTime) {
       return NextResponse.json(
@@ -121,16 +142,16 @@ export async function POST(req: NextRequest) {
         consultantProfileId,
         OR: [
           {
-            availabilityStartsAt: { lte: startTime },
-            availabilityEndsAt: { gt: startTime },
+            startsAt: { lte: startTime },
+            endsAt: { gt: startTime },
           },
           {
-            availabilityStartsAt: { lt: endTime },
-            availabilityEndsAt: { gte: endTime },
+            startsAt: { lt: endTime },
+            endsAt: { gte: endTime },
           },
           {
-            availabilityStartsAt: { gte: startTime },
-            availabilityEndsAt: { lte: endTime },
+            startsAt: { gte: startTime },
+            endsAt: { lte: endTime },
           },
         ],
       },
@@ -146,8 +167,8 @@ export async function POST(req: NextRequest) {
     const newCustomSlot = await prisma.slotOfAvailabilityCustom.create({
       data: {
         consultantProfileId,
-        availabilityStartsAt: startTime,
-        availabilityEndsAt: endTime,
+        startsAt: startTime,
+        endsAt: endTime,
       },
       include: {
         consultantProfile: {

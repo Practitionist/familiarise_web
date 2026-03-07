@@ -10,8 +10,10 @@ import {
   getMembershipCached,
   markMembership,
   initialSyncCompletedUsers,
+  clearSyncCacheForUser,
 } from "@/lib/stream-cache";
 import { upsertUserToStream, upsertUsersToStream } from "./user.action";
+import { getDmChannelId } from "@/lib/stream-utils";
 
 // Validation schemas
 const eventTypeSchema = z.enum([
@@ -350,12 +352,32 @@ export async function getUserEventChannels(userId: string) {
 }
 
 /**
- * Sync user to all their event channels
- * OPTIMIZED: Uses batch queries and parallel processing
- * Only runs once per user per session
+ * Sync user to all their event channels.
+ * OPTIMIZED: Uses batch queries and parallel processing.
+ * Runs once per user per server session, unless force=true.
+ *
+ * @param force - When true, bypass the session-level dedup guard and also
+ *                remove the user from any Stream channels that are no longer
+ *                backed by an active DB record (reconciliation cleanup).
  */
-export async function syncUserEventChannels(userId: string) {
+export async function syncUserEventChannels(
+  userId: string,
+  force = false,
+): Promise<{
+  success: boolean;
+  skipped?: boolean;
+  error?: string;
+  channelsSynced?: number;
+  failed?: number;
+  staleChannelsRemoved?: number;
+  durationMs?: number;
+}> {
   userIdSchema.parse(userId);
+
+  // Allow forced re-sync by clearing the session guard first
+  if (force) {
+    clearSyncCacheForUser(userId);
+  }
 
   // Check if sync already completed for this user in this session
   if (initialSyncCompletedUsers.has(userId)) {
@@ -365,12 +387,15 @@ export async function syncUserEventChannels(userId: string) {
     return { success: true, skipped: true };
   }
 
-  streamLogger.info("Starting channel sync for user", { userId });
+  streamLogger.info("Starting channel sync for user", { userId, force });
   const startTime = Date.now();
 
   try {
-    // First, upsert the user to Stream
+    // Upsert the user to Stream first
     await upsertUserToStream(userId);
+
+    // Grab the Stream server client (needed for reconciliation query)
+    const client = getStreamChatClient();
 
     // Get user's profile IDs
     const user = await prisma.user.findUnique({
@@ -386,55 +411,127 @@ export async function syncUserEventChannels(userId: string) {
       return { success: false, error: "User not found" };
     }
 
-    // Collect all event IDs the user should have access to
+    // Collect all event IDs the user should have access to (webinars + classes only)
     const eventIds: { type: EventType; id: string }[] = [];
 
     // Batch query all events in parallel
-    const [webinars, classes, consultations, subscriptions] = await Promise.all(
-      [
-        getWebinarIdsForUser(userId, user),
-        getClassIdsForUser(userId, user),
-        getConsultationIdsForUser(user),
-        getSubscriptionIdsForUser(user),
-      ],
-    );
+    const [webinars, classes, dmPairs] = await Promise.all([
+      getWebinarIdsForUser(userId, user),
+      getClassIdsForUser(userId, user),
+      getDmPairsForUser(userId, user),
+    ]);
 
     webinars.forEach((id) => eventIds.push({ type: "webinar", id }));
     classes.forEach((id) => eventIds.push({ type: "class", id }));
-    consultations.forEach((id) => eventIds.push({ type: "consultation", id }));
-    subscriptions.forEach((id) => eventIds.push({ type: "subscription", id }));
 
     streamLogger.debug("Events found for user", {
       userId,
       webinars: webinars.length,
       classes: classes.length,
-      consultations: consultations.length,
-      subscriptions: subscriptions.length,
+      dmPairs: dmPairs.length,
       total: eventIds.length,
     });
 
-    if (eventIds.length === 0) {
-      initialSyncCompletedUsers.add(userId);
-      return { success: true, channelsSynced: 0 };
-    }
+    // Build the set of channel IDs this user is expected to be in
+    const expectedChannelIds = new Set([
+      ...eventIds.map(({ type, id }) => getChannelId(type, id)),
+      ...dmPairs.map(({ consultantUserId, consulteeUserId }) =>
+        getDmChannelId(consultantUserId, consulteeUserId),
+      ),
+    ]);
 
-    // Process in parallel batches with rate limiting
+    // --- Add pass: join any channels the user is missing ---
     const BATCH_SIZE = 5;
     let successCount = 0;
     let failCount = 0;
 
-    for (let i = 0; i < eventIds.length; i += BATCH_SIZE) {
-      const batch = eventIds.slice(i, i + BATCH_SIZE);
+    if (eventIds.length > 0) {
+      for (let i = 0; i < eventIds.length; i += BATCH_SIZE) {
+        const batch = eventIds.slice(i, i + BATCH_SIZE);
 
+        const results = await Promise.allSettled(
+          batch.map((event) =>
+            addUserToEventChannel(event.type, event.id, userId),
+          ),
+        );
+
+        results.forEach((result) => {
+          if (result.status === "fulfilled") successCount++;
+          else failCount++;
+        });
+      }
+    }
+
+    // --- DM pair add-pass: join/create one channel per consultant-consultee pair ---
+    for (let i = 0; i < dmPairs.length; i += BATCH_SIZE) {
+      const batch = dmPairs.slice(i, i + BATCH_SIZE);
       const results = await Promise.allSettled(
-        batch.map((event) =>
-          addUserToEventChannel(event.type, event.id, userId),
+        batch.map((pair) =>
+          addUserToDmChannel(pair.consultantUserId, pair.consulteeUserId, userId),
         ),
       );
-
-      results.forEach((result) => {
-        if (result.status === "fulfilled") successCount++;
+      results.forEach((r) => {
+        if (r.status === "fulfilled") successCount++;
         else failCount++;
+      });
+    }
+
+    // --- Reconciliation pass: remove user from stale channels ---
+    // Query Stream for every channel this user currently belongs to.
+    // Paginate to handle users with 100+ channel memberships.
+    const PAGE_SIZE = 100;
+    let allStreamChannels: Awaited<ReturnType<typeof client.queryChannels>> = [];
+    let offset = 0;
+    let page;
+    do {
+      page = await client.queryChannels(
+        { members: { $in: [userId] } },
+        {},
+        { limit: PAGE_SIZE, offset },
+      );
+      allStreamChannels = allStreamChannels.concat(page);
+      offset += PAGE_SIZE;
+    } while (page.length === PAGE_SIZE);
+    const streamChannels = allStreamChannels;
+
+    // Only clean up channels with managed prefixes — preserve collab, support,
+    // and manually-created channels that aren't part of the event/dm lifecycle.
+    const MANAGED_PREFIXES = ["consultation-", "subscription-", "webinar-", "class-", "trial-", "dm-"];
+    const staleChannels = streamChannels.filter(
+      (ch) =>
+        ch.id &&
+        !expectedChannelIds.has(ch.id) &&
+        MANAGED_PREFIXES.some((prefix) => ch.id!.startsWith(prefix)),
+    );
+
+    let staleRemovedCount = 0;
+    let staleFailCount = 0;
+
+    if (staleChannels.length > 0) {
+      streamLogger.info("Found stale channel memberships, cleaning up", {
+        userId,
+        staleCount: staleChannels.length,
+        staleIds: staleChannels.map((ch) => ch.id),
+      });
+
+      for (let i = 0; i < staleChannels.length; i += BATCH_SIZE) {
+        const batch = staleChannels.slice(i, i + BATCH_SIZE);
+
+        const results = await Promise.allSettled(
+          // Only remove this user's own membership — the channel is preserved for others
+          batch.map((ch) => ch.removeMembers([userId])),
+        );
+
+        results.forEach((result) => {
+          if (result.status === "fulfilled") staleRemovedCount++;
+          else staleFailCount++;
+        });
+      }
+
+      streamLogger.info("Stale channel cleanup completed", {
+        userId,
+        staleChannelsRemoved: staleRemovedCount,
+        staleFailed: staleFailCount,
       });
     }
 
@@ -443,22 +540,143 @@ export async function syncUserEventChannels(userId: string) {
       userId,
       successCount,
       failCount,
+      staleChannelsRemoved: staleRemovedCount,
       durationMs: duration,
     });
 
-    // Mark sync as completed for this user
+    // Mark sync as completed for this user (suppress future automatic re-runs)
     initialSyncCompletedUsers.add(userId);
 
     return {
       success: true,
       channelsSynced: successCount,
       failed: failCount,
+      staleChannelsRemoved: staleRemovedCount,
       durationMs: duration,
     };
   } catch (error) {
     streamLogger.error("Channel sync failed", error, { userId });
     throw error;
   }
+}
+
+/**
+ * Get unique consultant-consultee DM pairs for a user, across consultations and subscriptions.
+ */
+async function getDmPairsForUser(
+  userId: string,
+  user: { consultantProfileId: string | null; consulteeProfileId: string | null },
+): Promise<{ consultantUserId: string; consulteeUserId: string }[]> {
+  const pairMap = new Map<string, { consultantUserId: string; consulteeUserId: string }>();
+
+  if (user.consultantProfileId) {
+    const [consultations, subscriptions] = await Promise.all([
+      prisma.consultation.findMany({
+        where: {
+          consultationPlan: { consultantProfileId: user.consultantProfileId },
+          requestStatus: { in: ["APPROVED", "SCHEDULED"] },
+        },
+        include: { requestedBy: { include: { user: { select: { id: true } } } } },
+      }),
+      prisma.subscription.findMany({
+        where: {
+          subscriptionPlan: { consultantProfileId: user.consultantProfileId },
+          requestStatus: { in: ["APPROVED", "SCHEDULED"] },
+        },
+        include: { requestedBy: { include: { user: { select: { id: true } } } } },
+      }),
+    ]);
+    for (const c of [...consultations, ...subscriptions]) {
+      const consulteeUserId = c.requestedBy?.user?.id;
+      if (!consulteeUserId) continue;
+      const channelId = getDmChannelId(userId, consulteeUserId);
+      pairMap.set(channelId, { consultantUserId: userId, consulteeUserId });
+    }
+  }
+
+  if (user.consulteeProfileId) {
+    const [consultations, subscriptions] = await Promise.all([
+      prisma.consultation.findMany({
+        where: {
+          requestedById: user.consulteeProfileId,
+          requestStatus: { in: ["APPROVED", "SCHEDULED"] },
+        },
+        include: {
+          consultationPlan: {
+            include: { consultantProfile: { include: { user: { select: { id: true } } } } },
+          },
+        },
+      }),
+      prisma.subscription.findMany({
+        where: {
+          requestedById: user.consulteeProfileId,
+          requestStatus: { in: ["APPROVED", "SCHEDULED"] },
+        },
+        include: {
+          subscriptionPlan: {
+            include: { consultantProfile: { include: { user: { select: { id: true } } } } },
+          },
+        },
+      }),
+    ]);
+    for (const c of consultations) {
+      const consultantUserId = c.consultationPlan?.consultantProfile?.user?.id;
+      if (!consultantUserId) continue;
+      const channelId = getDmChannelId(consultantUserId, userId);
+      pairMap.set(channelId, { consultantUserId, consulteeUserId: userId });
+    }
+    for (const s of subscriptions) {
+      const consultantUserId = s.subscriptionPlan?.consultantProfile?.user?.id;
+      if (!consultantUserId) continue;
+      const channelId = getDmChannelId(consultantUserId, userId);
+      pairMap.set(channelId, { consultantUserId, consulteeUserId: userId });
+    }
+  }
+
+  return Array.from(pairMap.values());
+}
+
+/**
+ * Create or join a DM channel for a consultant-consultee pair.
+ */
+async function addUserToDmChannel(
+  consultantUserId: string,
+  consulteeUserId: string,
+  currentUserId: string,
+): Promise<{ success: boolean; channelId: string; created?: boolean }> {
+  const channelId = getDmChannelId(consultantUserId, consulteeUserId);
+  const channelType = "messaging";
+
+  if (getMembershipCached(channelId, currentUserId) === true) {
+    return { success: true, channelId };
+  }
+
+  const client = getStreamChatClient();
+  const channel = client.channel(channelType, channelId);
+
+  // Try adding to existing channel first
+  try {
+    await channel.addMembers([currentUserId]);
+    markMembership(channelId, currentUserId, true);
+    return { success: true, channelId };
+  } catch {
+    // Channel may not exist — fall through to creation
+  }
+
+  // Create the DM channel
+  await upsertUsersToStream([consultantUserId, consulteeUserId]);
+  const channelWithData = client.channel(channelType, channelId, {
+    members: [consultantUserId, consulteeUserId],
+    created_by_id: consultantUserId,
+    dm_consultant_user_id: consultantUserId,
+    dm_consultee_user_id: consulteeUserId,
+  } as Record<string, unknown>);
+  await channelWithData.create();
+
+  markChannelExists(channelType, channelId);
+  markMembership(channelId, currentUserId, true);
+  streamLogger.info("Created DM channel", { channelId, consultantUserId, consulteeUserId });
+  return { success: true, channelId, created: true };
 }
 
 /**
@@ -553,68 +771,3 @@ async function getClassIdsForUser(
   );
 }
 
-/**
- * Get consultation IDs for a user
- */
-async function getConsultationIdsForUser(user: {
-  consultantProfileId: string | null;
-  consulteeProfileId: string | null;
-}): Promise<string[]> {
-  if (!user.consultantProfileId && !user.consulteeProfileId) {
-    return [];
-  }
-
-  const consultations = await prisma.consultation.findMany({
-    where: {
-      requestStatus: { in: ["APPROVED", "SCHEDULED"] },
-      OR: [
-        user.consultantProfileId
-          ? {
-              consultationPlan: {
-                consultantProfileId: user.consultantProfileId,
-              },
-            }
-          : {},
-        user.consulteeProfileId
-          ? { requestedById: user.consulteeProfileId }
-          : {},
-      ].filter((o) => Object.keys(o).length > 0),
-    },
-    select: { id: true },
-  });
-
-  return consultations.map((c) => c.id);
-}
-
-/**
- * Get subscription IDs for a user
- */
-async function getSubscriptionIdsForUser(user: {
-  consultantProfileId: string | null;
-  consulteeProfileId: string | null;
-}): Promise<string[]> {
-  if (!user.consultantProfileId && !user.consulteeProfileId) {
-    return [];
-  }
-
-  const subscriptions = await prisma.subscription.findMany({
-    where: {
-      requestStatus: { in: ["APPROVED", "SCHEDULED"] },
-      OR: [
-        user.consultantProfileId
-          ? {
-              subscriptionPlan: {
-                consultantProfileId: user.consultantProfileId,
-              },
-            }
-          : {},
-        user.consulteeProfileId
-          ? { requestedById: user.consulteeProfileId }
-          : {},
-      ].filter((o) => Object.keys(o).length > 0),
-    },
-    select: { id: true },
-  });
-
-  return subscriptions.map((s) => s.id);
-}

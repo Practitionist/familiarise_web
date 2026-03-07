@@ -259,14 +259,13 @@ describe("Schedule Validation", () => {
       expect(result.isValid).toBe(true);
     });
 
-    it("should reject true overnight slots (end before start, not midnight)", () => {
+    it("should accept overnight slots (end before start, not midnight)", () => {
       const result = validateTimeSlot(
         { startTime: "22:00", endTime: "06:00", isValid: false },
         [],
       );
 
-      expect(result.isValid).toBe(false);
-      expect(result.errorMessage).toContain("Overnight slots are not allowed");
+      expect(result.isValid).toBe(true);
     });
 
     it("should reject same start and end time", () => {

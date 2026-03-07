@@ -47,7 +47,9 @@ export async function cleanupTentativeSlots(): Promise<TentativeSlotCleanupResul
   console.log(`   Expiration threshold: ${TENTATIVE_EXPIRATION_DAYS} days`);
 
   try {
-    // Find tentative slots with no successful payment
+    // Find tentative slots with no successful payment AND whose parent event
+    // is not actively pending review (PENDING / APPROVED_PENDING_PAYMENT).
+    // Without this check, we could release slots a consultant is reviewing.
     const staleTentativeSlots = await prisma.slotOfAppointment.findMany({
       where: {
         isTentative: true,
@@ -58,6 +60,33 @@ export async function cleanupTentativeSlots(): Promise<TentativeSlotCleanupResul
               paymentStatus: PaymentStatus.SUCCEEDED,
             },
           },
+          // Skip tentative slots whose parent event is still being actively reviewed
+          AND: [
+            {
+              OR: [
+                { consultation: null },
+                {
+                  consultation: {
+                    requestStatus: {
+                      notIn: ["PENDING", "APPROVED_PENDING_PAYMENT"],
+                    },
+                  },
+                },
+              ],
+            },
+            {
+              OR: [
+                { subscription: null },
+                {
+                  subscription: {
+                    requestStatus: {
+                      notIn: ["PENDING", "APPROVED_PENDING_PAYMENT"],
+                    },
+                  },
+                },
+              ],
+            },
+          ],
         },
       },
       include: {
@@ -119,19 +148,12 @@ export async function cleanupTentativeSlots(): Promise<TentativeSlotCleanupResul
       appointmentsAffected.add(slot.appointmentId);
     }
 
-    // Delete the stale tentative slots to release consultant availability
+    // Delete the stale tentative slots to release consultant availability.
+    // Only delete slots whose IDs we already confirmed are safe to release.
     if (staleTentativeSlots.length > 0) {
       const result = await prisma.slotOfAppointment.deleteMany({
         where: {
-          isTentative: true,
-          createdAt: { lt: expirationDate },
-          appointment: {
-            payment: {
-              none: {
-                paymentStatus: PaymentStatus.SUCCEEDED,
-              },
-            },
-          },
+          id: { in: staleTentativeSlots.map((s) => s.id) },
         },
       });
 

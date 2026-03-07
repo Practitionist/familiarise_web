@@ -1,5 +1,6 @@
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
+import { requireApiAuth, isPrivileged } from "@/lib/auth-helpers";
 
 /**
  * GET /api/trials/check-eligibility
@@ -11,6 +12,10 @@ import { NextRequest, NextResponse } from "next/server";
  * - subscriptionPlanId: Optional - check if specific plan has trial enabled
  */
 export async function GET(request: NextRequest) {
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const { session } = authResult;
+
   const { searchParams } = new URL(request.url);
   const consulteeProfileId = searchParams.get("consulteeProfileId");
   const consultantProfileId = searchParams.get("consultantProfileId");
@@ -21,6 +26,16 @@ export async function GET(request: NextRequest) {
       { error: "consulteeProfileId and consultantProfileId are required" },
       { status: 400 },
     );
+  }
+
+  // IDOR protection: non-privileged users can only check their own eligibility
+  if (!isPrivileged(session.user.role)) {
+    if (
+      consulteeProfileId !== session.user.consulteeProfileId &&
+      consultantProfileId !== session.user.consultantProfileId
+    ) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
   }
 
   try {

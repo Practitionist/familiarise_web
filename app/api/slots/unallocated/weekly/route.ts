@@ -55,8 +55,8 @@ export async function GET(req: NextRequest) {
         consultantProfileId,
       },
       orderBy: [
-        { dayOfWeekForStartsAt: "asc" },
-        { availabilityStartsAt: "asc" },
+        { startDay: "asc" },
+        { startTimeUtc: "asc" },
       ],
       include: {
         consultantProfile: {
@@ -76,23 +76,29 @@ export async function GET(req: NextRequest) {
     // For weekly slots, check if any instance in the date range overlaps an allocated slot.
     // FIX Bug #09: Use range overlap check instead of exact key matching,
     // and use UTC-consistent date construction instead of local setHours/setMinutes.
+    // Weekly slots now use Int (minutes since midnight UTC) instead of DateTime.
     const allUnallocatedSlots = allWeeklySlots.filter((slot) => {
       const startDate = new Date(startDateInUtc);
       const endDate = new Date(endDateInUtc);
       const currentDate = new Date(startDate);
 
+      const startHours = Math.floor(slot.startTimeUtc / 60);
+      const startMins = slot.startTimeUtc % 60;
+      const endHours = Math.floor(slot.endTimeUtc / 60);
+      const endMins = slot.endTimeUtc % 60;
+
       while (currentDate <= endDate) {
         if (
-          currentDate.getUTCDay() === dayToNumber[slot.dayOfWeekForStartsAt]
+          currentDate.getUTCDay() === dayToNumber[slot.startDay]
         ) {
-          // Use UTC-consistent construction to avoid timezone drift
+          // Use UTC-consistent construction with Int minutes
           const slotStart = new Date(
             Date.UTC(
               currentDate.getUTCFullYear(),
               currentDate.getUTCMonth(),
               currentDate.getUTCDate(),
-              slot.availabilityStartsAt.getUTCHours(),
-              slot.availabilityStartsAt.getUTCMinutes(),
+              startHours,
+              startMins,
               0,
               0,
             ),
@@ -103,12 +109,16 @@ export async function GET(req: NextRequest) {
               currentDate.getUTCFullYear(),
               currentDate.getUTCMonth(),
               currentDate.getUTCDate(),
-              slot.availabilityEndsAt.getUTCHours(),
-              slot.availabilityEndsAt.getUTCMinutes(),
+              endHours,
+              endMins,
               0,
               0,
             ),
           );
+          // For overnight slots, endTime is on the next day
+          if (slot.endTimeUtc <= slot.startTimeUtc) {
+            slotEnd.setUTCDate(slotEnd.getUTCDate() + 1);
+          }
 
           // Check for any overlapping allocated slot (partial or full overlap)
           const hasOverlap = allocatedSlots.some(

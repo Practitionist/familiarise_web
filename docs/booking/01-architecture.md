@@ -189,9 +189,10 @@ erDiagram
 
     SlotOfAvailabilityWeekly {
         string id PK
-        DayOfWeek dayOfWeekForStartsAt
-        DateTime availabilityStartsAt
-        DateTime availabilityEndsAt
+        DayOfWeek startDay
+        Int startTimeUtc
+        DayOfWeek endDay
+        Int endTimeUtc
     }
 
     Appointment {
@@ -219,7 +220,7 @@ erDiagram
 - One-time events (consultation, webinar) have **1 appointment** with N slots
 - Recurring events (subscription, class) have **M appointments** (one per call/session), each with N slots
 - `slotsPerSession = Math.ceil(sessionDurationInHours / 0.5)`
-- Weekly availability uses `dayOfWeekForStartsAt` enum (SUNDAY..SATURDAY) as the source of truth for which day-of-week a slot represents
+- Weekly availability uses `startDay` / `endDay` DayOfWeek enums and `startTimeUtc` / `endTimeUtc` Int fields (minutes since midnight UTC, 0-1439)
 
 ---
 

@@ -118,8 +118,10 @@ export const eventIdSchema = z
       // UUID format: 8-4-4-4-12 hexadecimal characters
       const uuidRegex =
         /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-      // CUID format: starts with 'c' followed by 24 alphanumeric characters
-      const cuidRegex = /^c[a-z0-9]{24}$/i;
+      // CUID format: lowercase letter + 23-24 lowercase alphanumeric chars
+      // CUIDv1 (Prisma <5): 'c' + 24 chars = 25 total
+      // CUIDv2 (Prisma 5+): letter + 23 chars = 24 total
+      const cuidRegex = /^[a-z][a-z0-9]{23,24}$/;
 
       return uuidRegex.test(id) || cuidRegex.test(id);
     },

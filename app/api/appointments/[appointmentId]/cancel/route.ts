@@ -1,7 +1,6 @@
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 import { CancellationReason } from "@prisma/client";
-import { handleSlotOpening } from "@/lib/waitlist/slot-handler";
 import { notifyAppointmentCancelled } from "@/lib/novu";
 import { CancelAppointmentSchema } from "@/schemas/appointments";
 
@@ -197,15 +196,32 @@ export async function POST(
           });
         }
 
-        // Delete slots
-        await tx.slotOfAppointment.deleteMany({
-          where: { appointmentId },
-        });
-
-        // Delete appointment
-        await tx.appointment.delete({
-          where: { id: appointmentId },
-        });
+        // Delete slots and appointments
+        if (appointment.subscription) {
+          // Delete ALL slots for ALL appointments of this subscription
+          await tx.slotOfAppointment.deleteMany({
+            where: { appointment: { subscriptionId: appointment.subscription.id } },
+          });
+          await tx.appointment.deleteMany({
+            where: { subscriptionId: appointment.subscription.id },
+          });
+        } else if (appointment.class) {
+          // Delete ALL slots for ALL appointments of this class
+          await tx.slotOfAppointment.deleteMany({
+            where: { appointment: { classId: appointment.class.id } },
+          });
+          await tx.appointment.deleteMany({
+            where: { classId: appointment.class.id },
+          });
+        } else {
+          // Consultation/webinar/trial — single appointment
+          await tx.slotOfAppointment.deleteMany({
+            where: { appointmentId },
+          });
+          await tx.appointment.delete({
+            where: { id: appointmentId },
+          });
+        }
 
         return {
           success: true,
@@ -254,32 +270,10 @@ export async function POST(
       });
     }
 
-    // Notify waitlist if a webinar or class appointment was cancelled
-    if (result.webinarId || result.classId) {
-      try {
-        await handleSlotOpening({
-          webinarId: result.webinarId ?? undefined,
-          classId: result.classId ?? undefined,
-          slotsAvailable: 1,
-          reason: "cancellation",
-        });
-
-        console.log(
-          JSON.stringify({
-            event: "waitlist_notified_after_cancellation",
-            webinarId: result.webinarId,
-            classId: result.classId,
-            timestamp: new Date().toISOString(),
-          }),
-        );
-      } catch (waitlistError) {
-        // Log but don't fail the cancellation - waitlist notification is best-effort
-        console.error(
-          "Failed to notify waitlist after cancellation:",
-          waitlistError,
-        );
-      }
-    }
+    // Note: This route cancels the entire event (sets parent to CANCELLED),
+    // so we do NOT notify waitlisted users — there is no "spot" to offer.
+    // Waitlist notifications should only fire when a participant leaves an
+    // otherwise-active event (handled in participant removal flow).
 
     return NextResponse.json(result);
   } catch (error) {

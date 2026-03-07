@@ -24,7 +24,7 @@ import {
 } from "@prisma/client";
 import { loadStripe } from "@stripe/stripe-js";
 import { CreditCard as CreditCardIcon } from "lucide-react";
-import { use, useCallback, useEffect, useMemo, useState } from "react";
+import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import RazorpayCheckout from "../../../components/RazorpayCheckout";
 import StripeCheckout from "../../../components/StripeCheckout";
 import { calculatePricing, formatPercentage } from "../../math";
@@ -65,6 +65,7 @@ export default function ConsultationCheckoutPage({
   const [error, setError] = useState<string | null>(null);
   const [reviews, setReviews] = useState<ConsultantReview[]>([]);
   const [isCheckoutProcessing, setIsCheckoutProcessing] = useState(false);
+  const isProcessingRef = useRef(false);
   const [processingGateway, setProcessingGateway] = useState<string | null>(
     null,
   );
@@ -174,6 +175,11 @@ export default function ConsultationCheckoutPage({
         }
       } catch (error) {
         console.error("Error fetching slot data:", error);
+        toast({
+          title: "Warning",
+          description: "Could not load slot details. You may still proceed with checkout.",
+          variant: "default",
+        });
       }
     }
 
@@ -256,10 +262,11 @@ export default function ConsultationCheckoutPage({
         return;
       }
 
-      // Prevent double-clicks and multiple simultaneous requests
-      if (isCheckoutProcessing) {
+      // Prevent double-clicks: ref provides synchronous guard (React state is async)
+      if (isProcessingRef.current || isCheckoutProcessing) {
         return;
       }
+      isProcessingRef.current = true;
 
       try {
         // Set loading state
@@ -305,7 +312,7 @@ export default function ConsultationCheckoutPage({
         if (!response.ok) {
           const errorData = await response.json();
           handleApiError(errorData);
-          throw new Error(errorData.error || "Checkout failed");
+          return; // Toast already shown — don't throw to avoid double toast + console overlay
         }
 
         const data = await response.json();
@@ -342,43 +349,50 @@ export default function ConsultationCheckoutPage({
 
           // Small delay to let user see the toast before redirect
           setTimeout(async () => {
-            // Handle gateway-specific responses
-            switch (gateway) {
-              case "STRIPE":
-                const stripe = await loadStripe(
-                  process.env.NEXT_PUBLIC_STRIPE_KEY!,
-                );
-                await stripe?.confirmPayment({
-                  clientSecret: data.paymentIntent.client_secret,
-                  confirmParams: {
-                    return_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout/checkout-success`,
-                  },
-                });
-                break;
+            try {
+              // Handle gateway-specific responses
+              switch (gateway) {
+                case "STRIPE":
+                  const stripe = await loadStripe(
+                    process.env.NEXT_PUBLIC_STRIPE_KEY!,
+                  );
+                  await stripe?.confirmPayment({
+                    clientSecret: data.paymentIntent.client_secret,
+                    confirmParams: {
+                      return_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout/checkout-success`,
+                    },
+                  });
+                  break;
 
-              case "RAZORPAY":
-                // Razorpay is handled by the RazorpayCheckout component
-                // This case shouldn't be reached since Razorpay has its own component
-                break;
+                case "RAZORPAY":
+                  // Razorpay is handled by the RazorpayCheckout component
+                  // This case shouldn't be reached since Razorpay has its own component
+                  break;
 
-              // TODO: Add Lemon Squeezy and XFlow cases when webhook handlers are implemented
+                // TODO: Add Lemon Squeezy and XFlow cases when webhook handlers are implemented
+              }
+            } catch (paymentError) {
+              console.error("Payment confirmation error:", paymentError);
+              toast({
+                title: "Payment Error",
+                description: paymentError instanceof Error ? paymentError.message : "Payment confirmation failed. Please try again.",
+                variant: "destructive",
+              });
             }
           }, 1000);
         }
       } catch (error) {
-        console.error("Checkout error:", error);
-
-        // Only show generic error if it wasn't already handled
-        if (!(error instanceof Error && error.message.includes("failed"))) {
-          toast({
-            title: "Checkout Failed",
-            description:
-              error instanceof Error ? error.message : "Please try again",
-            variant: "destructive",
-          });
-        }
+        // Only fires for unexpected errors (network failure, JSON parse error, etc.)
+        // API errors are handled above with handleApiError() + return
+        toast({
+          title: "Checkout Failed",
+          description:
+            error instanceof Error ? error.message : "Please try again",
+          variant: "destructive",
+        });
       } finally {
         // Always reset loading state
+        isProcessingRef.current = false;
         setIsCheckoutProcessing(false);
         setProcessingGateway(null);
       }

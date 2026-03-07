@@ -1,5 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { formatDate, formatTime } from "@/utils/dateTimeUtils";
+import { minutesToTimeString } from "@/utils/slotAllocation/slotTimeUtils";
 import { OnboardingFormData } from "@/utils/onboarding";
 import React, { useState } from "react";
 import {
@@ -34,12 +35,19 @@ const ConsultantReviewForm: React.FC<Props> = ({
     });
   };
 
-  const isValidSlot = (slot: {
-    availabilityStartsAt: string;
-    availabilityEndsAt: string;
+  const isValidWeeklySlot = (slot: {
+    startTimeUtc: number;
+    endTimeUtc: number;
   }): boolean => {
-    const startTime = formatTime(slot.availabilityStartsAt, "12h");
-    const endTime = formatTime(slot.availabilityEndsAt, "12h");
+    return slot.startTimeUtc !== slot.endTimeUtc;
+  };
+
+  const isValidCustomSlot = (slot: {
+    startsAt: string;
+    endsAt: string;
+  }): boolean => {
+    const startTime = formatTime(slot.startsAt, "12h");
+    const endTime = formatTime(slot.endsAt, "12h");
     return startTime !== endTime;
   };
 
@@ -61,14 +69,11 @@ const ConsultantReviewForm: React.FC<Props> = ({
             <div className="space-y-2">
               <p className="text-sm font-medium">Weekly Slots</p>
               <div className="space-y-1">
-                {formData.weeklySlots.filter(isValidSlot).map((slot, index) => {
-                  const startTime = formatTime(
-                    slot.availabilityStartsAt,
-                    "12h",
-                  );
-                  const endTime = formatTime(slot.availabilityEndsAt, "12h");
+                {formData.weeklySlots.filter(isValidWeeklySlot).map((slot, index) => {
+                  const startTime = minutesToTimeString(slot.startTimeUtc);
+                  const endTime = minutesToTimeString(slot.endTimeUtc);
                   const isSameDay =
-                    slot.dayOfWeekForStartsAt === slot.dayOfWeekForEndsAt;
+                    slot.startDay === slot.endDay;
 
                   return (
                     <div
@@ -76,13 +81,13 @@ const ConsultantReviewForm: React.FC<Props> = ({
                       className="px-3 py-2 bg-background border rounded-lg text-sm"
                     >
                       <span className="font-medium">
-                        {slot.dayOfWeekForStartsAt}
+                        {slot.startDay}
                       </span>{" "}
                       <span className="text-muted-foreground">{startTime}</span>
                       {" to "}
                       {!isSameDay && (
                         <span className="font-medium">
-                          {slot.dayOfWeekForEndsAt}{" "}
+                          {slot.endDay}{" "}
                         </span>
                       )}
                       <span className="text-muted-foreground">{endTime}</span>
@@ -97,14 +102,14 @@ const ConsultantReviewForm: React.FC<Props> = ({
             <div className="space-y-2">
               <p className="text-sm font-medium">Custom Slots</p>
               <div className="space-y-1">
-                {formData.customSlots.filter(isValidSlot).map((slot, index) => {
-                  const startDate = formatDate(slot.availabilityStartsAt);
-                  const endDate = formatDate(slot.availabilityEndsAt);
+                {formData.customSlots.filter(isValidCustomSlot).map((slot, index) => {
+                  const startDate = formatDate(slot.startsAt);
+                  const endDate = formatDate(slot.endsAt);
                   const startTime = formatTime(
-                    slot.availabilityStartsAt,
+                    slot.startsAt,
                     "12h",
                   );
-                  const endTime = formatTime(slot.availabilityEndsAt, "12h");
+                  const endTime = formatTime(slot.endsAt, "12h");
                   const isSameDay = startDate === endDate;
 
                   return (

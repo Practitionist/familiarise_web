@@ -11,6 +11,7 @@ import {
   AllocationOptions,
   AllocationResult,
 } from "../utils/allocationAlgorithms";
+import { AllocationService } from "../utils/allocationService";
 
 /**
  * ENHANCED EVENT SLOT ALLOCATION HOOK
@@ -278,6 +279,9 @@ export interface UseEventSlotAllocationReturn {
   /** Check if a slot is currently selected */
   isSlotSelected: (slot: TimeSlot) => boolean;
 
+  /** Pre-computed Set of selected slot timestamps for O(1) lookups */
+  selectedSlotsSet: Set<number>;
+
   /** Add multiple slots with validation */
   addSlots: (slots: TimeSlot[]) => void;
 
@@ -416,11 +420,18 @@ function getSlotLimits(
       const sessionSlots = Math.ceil(
         (options.sessionDurationInHours || 1) / 0.5,
       );
+      // Use maxTotalCalls (from classPlan.totalSessions) as authoritative when provided,
+      // otherwise fall back to period-based calculation (same pattern as subscription).
+      const effectiveTotalSessions =
+        options.maxTotalCalls && options.maxTotalCalls > 0
+          ? options.maxTotalCalls
+          : Math.ceil(requiredSlots / sessionSlots);
+      const effectiveMaxSlots = effectiveTotalSessions * sessionSlots;
       return {
-        minSlots: requiredSlots,
-        maxSlots: requiredSlots,
+        minSlots: effectiveMaxSlots,
+        maxSlots: effectiveMaxSlots,
         slotsPerSession: sessionSlots,
-        totalSessions: Math.ceil(requiredSlots / sessionSlots),
+        totalSessions: effectiveTotalSessions,
       };
     }
 
@@ -1234,9 +1245,12 @@ export function useEventSlotAllocation(
 
   // Required slots calculation
   const requiredSlots = useMemo(() => {
-    // For subscriptions, maxTotalCalls is set to the plan's totalSessions (authoritative).
+    // For subscriptions and classes, maxTotalCalls is set to the plan's totalSessions (authoritative).
     // Derive requiredSlots from it to stay consistent with backend validation.
-    if (eventType === "subscription" && options.maxTotalCalls) {
+    if (
+      (eventType === "subscription" || eventType === "class") &&
+      options.maxTotalCalls
+    ) {
       const slotsPerSession = Math.ceil(
         (options.sessionDurationInHours || 1) / 0.5,
       );
@@ -1822,15 +1836,22 @@ export function useEventSlotAllocation(
   }, []);
 
   /**
-   * Check if a slot is currently selected
+   * PERFORMANCE: Pre-compute a Set of selected slot timestamps for O(1) lookups.
+   * Replaces O(n) .some() scan that ran 336× per render.
+   */
+  const selectedSlotsSet = useMemo(
+    () => new Set(selectedSlots.map((s) => s.startTime.getTime())),
+    [selectedSlots],
+  );
+
+  /**
+   * Check if a slot is currently selected — O(1) via Set lookup
    */
   const isSlotSelected = useCallback(
     (slot: TimeSlot) => {
-      return selectedSlots.some(
-        (s) => s.startTime.getTime() === slot.startTime.getTime(),
-      );
+      return selectedSlotsSet.has(slot.startTime.getTime());
     },
-    [selectedSlots],
+    [selectedSlotsSet],
   );
 
   /**
@@ -1984,8 +2005,38 @@ export function useEventSlotAllocation(
           totalSessions: options.maxTotalCalls, // maxTotalCalls is already totalSessions-aware
         };
 
+        // For recurring events (subscription/class), the calendar UI only
+        // provides slots for the currently viewed week, but the algorithm
+        // needs slots spanning the entire scheduling period. Fetch them.
+        let slotsForAllocation = availableSlots;
+        if (
+          (eventType === "subscription" || eventType === "class") &&
+          options.startDate &&
+          options.endDate &&
+          options.consultantId
+        ) {
+          const fullPeriodData =
+            await AllocationService.fetchAvailabilitySlots(
+              options.consultantId,
+              options.startDate,
+              options.endDate,
+            );
+          const allRawSlots = [
+            ...(fullPeriodData.weekly || []),
+            ...(fullPeriodData.custom || []),
+          ];
+          slotsForAllocation = allRawSlots.map((slot: any) => ({
+            startTime: new Date(slot.slotStartTimeInUTC),
+            endTime: new Date(slot.slotEndTimeInUTC),
+            isAvailable:
+              slot.bookingStatus === "available" ||
+              slot.bookingStatus === "partially-booked",
+            isBooked: slot.bookingStatus === "fully-booked",
+          }));
+        }
+
         const result = await AllocationAlgorithms.autoAllocate(
-          availableSlots,
+          slotsForAllocation,
           allocationOptions,
         );
 
@@ -2198,6 +2249,7 @@ export function useEventSlotAllocation(
     toggleSlot,
     clearSlots,
     isSlotSelected,
+    selectedSlotsSet,
     addSlots,
     removeSlots,
 

@@ -394,7 +394,7 @@ export default function ConsultantLayout({
       const result = await response.json();
       return result.data;
     },
-    enabled: !!userId,
+    enabled: !!userId && !isSessionLoading,
     staleTime: 5 * 60 * 1000,
     gcTime: 10 * 60 * 1000,
     retry: 2,
@@ -408,7 +408,7 @@ export default function ConsultantLayout({
   } = useQuery({
     queryKey: ["consultant-data", consultantId],
     queryFn: () => consultantFetchers.details(consultantId),
-    enabled: !!userId,
+    enabled: !!userId && !isSessionLoading,
     staleTime: 5 * 60 * 1000,
     gcTime: 10 * 60 * 1000,
     retry: 2,

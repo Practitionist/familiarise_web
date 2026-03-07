@@ -292,7 +292,7 @@ export async function lockConsultationApproval(
     return await acquireLockWithRetry(key, ttl);
   } catch (error) {
     throw new Error(
-      "Another approval is in progress for this consultation. Please try again.",
+      "Lock contention: Another approval is in progress for this consultation. Please try again.",
     );
   }
 }
@@ -312,7 +312,7 @@ export async function lockSubscriptionApproval(
     return await acquireLockWithRetry(key, ttl);
   } catch (error) {
     throw new Error(
-      "Another approval is in progress for this subscription. Please try again.",
+      "Lock contention: Another approval is in progress for this subscription. Please try again.",
     );
   }
 }
@@ -694,5 +694,47 @@ export async function lockTrialSlot(
  * @param lock - The lock instance to release
  */
 export async function unlockTrialSlot(lock: ApprovalLock): Promise<void> {
+  await releaseLock(lock);
+}
+
+// ============================================================================
+// Public API - Auto-Allocation Locks
+// FIX Issue #1 from Architecture Review (#446):
+// autoAllocate() had NO distributed lock — double-booking via race condition
+// ============================================================================
+
+/**
+ * Lock auto-allocation for a specific consultant to prevent concurrent
+ * auto-allocations from double-booking the same slots.
+ *
+ * WHY CONSULTANT-LEVEL (not per-slot):
+ * autoAllocate() discovers slots dynamically inside the transaction,
+ * so per-slot locks can't be acquired upfront. Since auto-allocate
+ * searches a consultant's ENTIRE availability pool, two concurrent
+ * auto-allocations for the same consultant MUST be serialized.
+ *
+ * @param consultantProfileId - The consultant's profile ID
+ * @param ttl - Time to live in milliseconds (default 120s to match transaction timeout)
+ * @returns Lock instance (must be released with unlockAutoAllocate)
+ */
+export async function lockAutoAllocate(
+  consultantProfileId: string,
+  ttl: number = 150000, // 150s — 30s buffer over 120s transaction timeout (after 1% drift: ~148.5s)
+): Promise<ApprovalLock> {
+  const key = `auto-allocate:${consultantProfileId}`;
+  try {
+    return await acquireLockWithRetry(key, ttl);
+  } catch (error) {
+    throw new Error(
+      "Lock contention: Another auto-allocation is in progress for this consultant. Please try again.",
+    );
+  }
+}
+
+/**
+ * Release an auto-allocation lock
+ * @param lock - The lock instance to release
+ */
+export async function unlockAutoAllocate(lock: ApprovalLock): Promise<void> {
   await releaseLock(lock);
 }

@@ -43,17 +43,37 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     let hasAccess = false;
 
     if (session.user.role === "CONSULTANT") {
-      // Consultant can access their own recordings
+      // Consultant can access their own recordings, or recordings of plans they collaborate on
       const consultantProfileId = session.user.consultantProfileId;
 
       if (appointment?.webinar?.webinarPlan) {
         hasAccess =
           appointment.webinar.webinarPlan.consultantProfileId ===
           consultantProfileId;
+        if (!hasAccess && consultantProfileId) {
+          const collab = await prisma.webinarCollaborator.findFirst({
+            where: {
+              webinarPlanId: appointment.webinar.webinarPlan.id,
+              consultantProfileId,
+              status: "ACCEPTED",
+            },
+          });
+          hasAccess = !!collab;
+        }
       } else if (appointment?.class?.classPlan) {
         hasAccess =
           appointment.class.classPlan.consultantProfileId ===
           consultantProfileId;
+        if (!hasAccess && consultantProfileId) {
+          const collab = await prisma.classCollaborator.findFirst({
+            where: {
+              classPlanId: appointment.class.classPlan.id,
+              consultantProfileId,
+              status: "ACCEPTED",
+            },
+          });
+          hasAccess = !!collab;
+        }
       }
     } else if (session.user.role === "CONSULTEE") {
       // Consultee can access recordings for sessions they participated in

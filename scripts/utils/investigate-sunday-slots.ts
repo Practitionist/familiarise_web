@@ -7,6 +7,7 @@
  */
 
 import { PrismaClient, DayOfWeek } from "@prisma/client";
+import { minutesToTimeString } from "@/utils/slotAllocation/slotTimeUtils";
 
 const prisma = new PrismaClient();
 
@@ -21,7 +22,7 @@ async function investigateSundaySlots() {
     const sundaySlots = await prisma.slotOfAvailabilityWeekly.findMany({
       where: {
         consultantProfileId: CONSULTANT_ID,
-        dayOfWeekForStartsAt: DayOfWeek.SUNDAY,
+        startDay: DayOfWeek.SUNDAY,
       },
     });
 
@@ -31,8 +32,8 @@ async function investigateSundaySlots() {
       console.log("❌ ERROR: Consultant should NOT have Sunday slots!");
       sundaySlots.forEach((slot, idx) => {
         console.log(`\nSlot ${idx + 1}:`);
-        console.log(`  Start: ${slot.availabilityStartsAt.toISOString()}`);
-        console.log(`  End: ${slot.availabilityEndsAt.toISOString()}`);
+        console.log(`  Start: ${slot.startDay} @ ${minutesToTimeString(slot.startTimeUtc)}`);
+        console.log(`  End: ${slot.endDay} @ ${minutesToTimeString(slot.endTimeUtc)}`);
       });
     } else {
       console.log("✅ Correct: No Sunday slots in database");

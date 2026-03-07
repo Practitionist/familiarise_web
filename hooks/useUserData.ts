@@ -66,8 +66,10 @@ export const useUserData = (userId: string) => {
             break;
         }
       } catch (err: any) {
-        console.error("Error fetching user details:", err);
         setError(err);
+        // 401 is expected after sign-out (session cleared before component unmounts)
+        if (err?.status === 401) return;
+        console.error("Error fetching user details:", err);
         toast({
           title: "Error fetching user details",
           description: err.message,

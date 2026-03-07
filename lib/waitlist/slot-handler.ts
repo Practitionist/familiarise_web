@@ -11,6 +11,7 @@ import {
   calculatePosition,
 } from "./queue-manager";
 import { sendWaitlistSpotAvailableEmail } from "./notifications";
+import { countWebinarParticipants } from "@/lib/payments/utils/participants";
 
 // Notification window in hours (48 hours to respond)
 const NOTIFICATION_WINDOW_HOURS = 48;
@@ -338,7 +339,9 @@ export async function checkEventAvailability(params: {
         webinarPlan: true,
         appointment: {
           include: {
-            slotsOfAppointment: true,
+            slotsOfAppointment: {
+              include: { user: true },
+            },
           },
         },
         waitlist: {
@@ -353,8 +356,9 @@ export async function checkEventAvailability(params: {
       throw new Error("Webinar not found");
     }
 
-    const currentParticipants =
-      webinar.appointment?.slotsOfAppointment?.length || 0;
+    const currentParticipants = countWebinarParticipants(
+      webinar.appointment,
+    );
     const maxParticipants = webinar.webinarPlan.maxParticipants;
 
     return {
