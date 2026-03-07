@@ -169,6 +169,9 @@ export interface UseEventSlotAllocationOptions {
   /** Latest allowed slot date */
   endDate?: Date;
 
+  /** Number of confirmed past event slots (for in-progress recurring events) */
+  pastConfirmedSlotCount?: number;
+
   /** Preferred time slots (if any) */
   preferredTimeSlots?: TimeSlot[];
 
@@ -1245,6 +1248,8 @@ export function useEventSlotAllocation(
 
   // Required slots calculation
   const requiredSlots = useMemo(() => {
+    let rawRequired: number;
+
     // For subscriptions and classes, maxTotalCalls is set to the plan's totalSessions (authoritative).
     // Derive requiredSlots from it to stay consistent with backend validation.
     if (
@@ -1254,22 +1259,35 @@ export function useEventSlotAllocation(
       const slotsPerSession = Math.ceil(
         (options.sessionDurationInHours || 1) / 0.5,
       );
-      return options.maxTotalCalls * slotsPerSession;
-    }
-    // Use the appropriate duration field based on event type
-    const duration =
-      eventType === "consultation" || eventType === "webinar"
-        ? options.durationInHours
-        : options.sessionDurationInHours;
+      rawRequired = options.maxTotalCalls * slotsPerSession;
+    } else {
+      // Use the appropriate duration field based on event type
+      const duration =
+        eventType === "consultation" || eventType === "webinar"
+          ? options.durationInHours
+          : options.sessionDurationInHours;
 
-    return calculateRequiredSlots(
-      eventType,
-      options.durationInMonths,
-      options.callsPerWeek,
-      duration,
-      options.startDate,
-      options.endDate,
-    );
+      rawRequired = calculateRequiredSlots(
+        eventType,
+        options.durationInMonths,
+        options.callsPerWeek,
+        duration,
+        options.startDate,
+        options.endDate,
+      );
+    }
+
+    // For in-progress recurring events, subtract past confirmed slots.
+    // The consultant only needs to select FUTURE slots.
+    const pastCount = options.pastConfirmedSlotCount || 0;
+    if (
+      (eventType === "class" || eventType === "subscription") &&
+      pastCount > 0
+    ) {
+      return Math.max(0, rawRequired - pastCount);
+    }
+
+    return rawRequired;
   }, [
     eventType,
     options.maxTotalCalls,
@@ -1277,6 +1295,9 @@ export function useEventSlotAllocation(
     options.callsPerWeek,
     options.durationInHours,
     options.sessionDurationInHours,
+    options.startDate,
+    options.endDate,
+    options.pastConfirmedSlotCount,
   ]);
 
   // Current validation result
@@ -1539,8 +1560,11 @@ export function useEventSlotAllocation(
               }, 0);
               return currentSlots;
             }
-          } else if (newSelection.length > slotLimits.maxSlots) {
-            // Validate against slot limits for other event types
+          } else if (
+            newSelection.length >
+            slotLimits.maxSlots - (options.pastConfirmedSlotCount || 0)
+          ) {
+            // Validate against slot limits for other event types (adjusted for past slots)
             setTimeout(() => {
               setPendingToast({
                 variant: "destructive",
@@ -1931,6 +1955,7 @@ export function useEventSlotAllocation(
         startDate: options.startDate,
         endDate: options.endDate,
         totalSessions: options.maxTotalCalls, // maxTotalCalls is already totalSessions-aware
+        pastConfirmedSlotCount: options.pastConfirmedSlotCount,
       };
 
       const result = await AllocationAlgorithms.manualAllocate(

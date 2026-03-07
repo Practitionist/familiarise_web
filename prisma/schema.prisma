@@ -1339,6 +1339,9 @@ model SlotOfAppointment {
   endsAt      DateTime @db.Timestamptz()
   isTentative Boolean  @default(false)
 
+  completionStatus SlotCompletionStatus @default(SCHEDULED)
+  completedAt      DateTime?            @db.Timestamptz()
+
   appointment   Appointment @relation(fields: [appointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   appointmentId String
 
@@ -1353,6 +1356,15 @@ model SlotOfAppointment {
   @@index([startsAt, endsAt])
   @@index([isTentative, startsAt, endsAt])
   @@index([createdAt])
+  @@index([completionStatus, endsAt])
+}
+
+enum SlotCompletionStatus {
+  SCHEDULED // Default — future, not yet happened
+  COMPLETED // Session held (MeetingSession.endedAt OR manual mark)
+  UNVERIFIED // Past + no MeetingSession record (may be offline session)
+  CANCELLED // Explicitly cancelled before it occurred
+  RESCHEDULED // Replaced by a later slot (via in-progress reallocation)
 }
 
 ////////////////////////////////////////////// MEETINGS FOR STREAM ////////////////////////////////////////////////////

@@ -177,6 +177,62 @@ describe("AllocationAlgorithms.manualAllocate", () => {
     expect(result.success).toBe(false);
     expect(result.error).toBe("Network error");
   });
+
+  // ─── In-progress reallocation (pastConfirmedSlotCount) ───────────────────
+
+  it("should adjust required slots for in-progress class with past slots", async () => {
+    // Class: 4 total sessions × 2 slots/session = 8 total required
+    // Past: 4 slots (2 sessions completed)
+    // Expected: 4 future slots needed
+    const futureSlots = makeFutureConsecutiveSlots("2025-06-02T09:00:00Z", 4);
+    const result = await AllocationAlgorithms.manualAllocate(
+      futureSlots as any,
+      {
+        eventType: "class",
+        eventId: "class-1",
+        sessionDurationInHours: 1,
+        callsPerWeek: 2,
+        durationInMonths: 1,
+        startDate: new Date("2025-05-01"),
+        endDate: new Date("2025-06-30"),
+        totalSessions: 4,
+        pastConfirmedSlotCount: 4,
+      },
+    );
+    expect(result.success).toBe(true);
+  });
+
+  it("should reject wrong slot count for in-progress class", async () => {
+    // Class: 4 total sessions × 2 slots = 8 total required
+    // Past: 4 slots → need 4 future, but providing 8
+    const futureSlots = makeFutureConsecutiveSlots("2025-06-02T09:00:00Z", 8);
+    const result = await AllocationAlgorithms.manualAllocate(
+      futureSlots as any,
+      {
+        eventType: "class",
+        eventId: "class-1",
+        sessionDurationInHours: 1,
+        callsPerWeek: 2,
+        durationInMonths: 1,
+        startDate: new Date("2025-05-01"),
+        endDate: new Date("2025-06-30"),
+        totalSessions: 4,
+        pastConfirmedSlotCount: 4,
+      },
+    );
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("Expected 4 slots but received 8");
+  });
+
+  it("should not adjust required slots for non-recurring events", async () => {
+    // Consultation: pastConfirmedSlotCount should be ignored
+    const slots = makeFutureConsecutiveSlots("2025-06-01T09:00:00Z", 2);
+    const result = await AllocationAlgorithms.manualAllocate(slots as any, {
+      ...baseOptions,
+      pastConfirmedSlotCount: 4, // should be ignored for consultations
+    });
+    expect(result.success).toBe(true);
+  });
 });
 
 // ─── autoAllocate ───────────────────────────────────────────────────────────
