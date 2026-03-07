@@ -288,7 +288,7 @@ async () => {
     }),
   });
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** 401
@@ -297,19 +297,22 @@ async () => {
 
 ```javascript
 async () => {
-  const response = await fetch("/api/slots/availability/weekly/test-w004a-mon", {
-    method: "PUT",
-    credentials: "omit",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      startDay: "MONDAY",
-      startTimeUtc: 300,
-      endDay: "MONDAY",
-      endTimeUtc: 480,
-    }),
-  });
+  const response = await fetch(
+    "/api/slots/availability/weekly/test-w004a-mon",
+    {
+      method: "PUT",
+      credentials: "omit",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        startDay: "MONDAY",
+        startTimeUtc: 300,
+        endDay: "MONDAY",
+        endTimeUtc: 480,
+      }),
+    },
+  );
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** 401
@@ -318,14 +321,17 @@ async () => {
 
 ```javascript
 async () => {
-  const response = await fetch("/api/slots/availability/weekly/test-w004a-mon", {
-    method: "PATCH",
-    credentials: "omit",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ startTimeUtc: 300 }),
-  });
+  const response = await fetch(
+    "/api/slots/availability/weekly/test-w004a-mon",
+    {
+      method: "PATCH",
+      credentials: "omit",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ startTimeUtc: 300 }),
+    },
+  );
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** 401
@@ -334,12 +340,15 @@ async () => {
 
 ```javascript
 async () => {
-  const response = await fetch("/api/slots/availability/weekly/test-w004a-mon", {
-    method: "DELETE",
-    credentials: "omit",
-  });
+  const response = await fetch(
+    "/api/slots/availability/weekly/test-w004a-mon",
+    {
+      method: "DELETE",
+      credentials: "omit",
+    },
+  );
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** 401
@@ -350,18 +359,21 @@ Login as CONSULTANT B. Then:
 
 ```javascript
 async () => {
-  const response = await fetch("/api/slots/availability/weekly/test-w004a-mon", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      startDay: "MONDAY",
-      startTimeUtc: 300,
-      endDay: "MONDAY",
-      endTimeUtc: 480,
-    }),
-  });
+  const response = await fetch(
+    "/api/slots/availability/weekly/test-w004a-mon",
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        startDay: "MONDAY",
+        startTimeUtc: 300,
+        endDay: "MONDAY",
+        endTimeUtc: 480,
+      }),
+    },
+  );
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** 403 — "Forbidden: you do not own this slot"
@@ -370,13 +382,16 @@ async () => {
 
 ```javascript
 async () => {
-  const response = await fetch("/api/slots/availability/weekly/test-w004a-mon", {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ startTimeUtc: 300 }),
-  });
+  const response = await fetch(
+    "/api/slots/availability/weekly/test-w004a-mon",
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ startTimeUtc: 300 }),
+    },
+  );
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** 403
@@ -385,11 +400,14 @@ async () => {
 
 ```javascript
 async () => {
-  const response = await fetch("/api/slots/availability/weekly/test-w004a-mon", {
-    method: "DELETE",
-  });
+  const response = await fetch(
+    "/api/slots/availability/weekly/test-w004a-mon",
+    {
+      method: "DELETE",
+    },
+  );
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** 403
@@ -400,18 +418,21 @@ Login as CONSULTANT A. Then:
 
 ```javascript
 async () => {
-  const response = await fetch("/api/slots/availability/weekly/test-w004a-fri", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      startDay: "FRIDAY",
-      startTimeUtc: 300,
-      endDay: "FRIDAY",
-      endTimeUtc: 480,
-    }),
-  });
+  const response = await fetch(
+    "/api/slots/availability/weekly/test-w004a-fri",
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        startDay: "FRIDAY",
+        startTimeUtc: 300,
+        endDay: "FRIDAY",
+        endTimeUtc: 480,
+      }),
+    },
+  );
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** 200
@@ -428,18 +449,21 @@ Restore original values:
 
 ```javascript
 async () => {
-  const response = await fetch("/api/slots/availability/weekly/test-w004a-fri", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      startDay: "FRIDAY",
-      startTimeUtc: 240,
-      endDay: "FRIDAY",
-      endTimeUtc: 420,
-    }),
-  });
+  const response = await fetch(
+    "/api/slots/availability/weekly/test-w004a-fri",
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        startDay: "FRIDAY",
+        startTimeUtc: 240,
+        endDay: "FRIDAY",
+        endTimeUtc: 420,
+      }),
+    },
+  );
   return { status: response.status };
-}
+};
 ```
 
 ---
@@ -463,7 +487,7 @@ async () => {
     }),
   });
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** 401
@@ -474,16 +498,19 @@ Login as CONSULTANT B. Then:
 
 ```javascript
 async () => {
-  const response = await fetch("/api/slots/availability/custom/test-c004a-sat", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      startsAt: new Date(Date.now() + 7 * 86400000).toISOString(),
-      endsAt: new Date(Date.now() + 7 * 86400000 + 7200000).toISOString(),
-    }),
-  });
+  const response = await fetch(
+    "/api/slots/availability/custom/test-c004a-sat",
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        startsAt: new Date(Date.now() + 7 * 86400000).toISOString(),
+        endsAt: new Date(Date.now() + 7 * 86400000 + 7200000).toISOString(),
+      }),
+    },
+  );
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** 403
@@ -492,11 +519,14 @@ async () => {
 
 ```javascript
 async () => {
-  const response = await fetch("/api/slots/availability/custom/test-c004a-sat", {
-    method: "DELETE",
-  });
+  const response = await fetch(
+    "/api/slots/availability/custom/test-c004a-sat",
+    {
+      method: "DELETE",
+    },
+  );
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** 403
@@ -507,16 +537,19 @@ Login as CONSULTANT A. Then:
 
 ```javascript
 async () => {
-  const response = await fetch("/api/slots/availability/custom/test-c004a-sat", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      startsAt: "not-a-date",
-      endsAt: "also-not-a-date",
-    }),
-  });
+  const response = await fetch(
+    "/api/slots/availability/custom/test-c004a-sat",
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        startsAt: "not-a-date",
+        endsAt: "also-not-a-date",
+      }),
+    },
+  );
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** 400 — "Invalid date format"
@@ -525,15 +558,18 @@ async () => {
 
 ```javascript
 async () => {
-  const response = await fetch("/api/slots/availability/custom/test-c004a-sat", {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      startsAt: "2026-13-45T99:99:99Z",
-    }),
-  });
+  const response = await fetch(
+    "/api/slots/availability/custom/test-c004a-sat",
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        startsAt: "2026-13-45T99:99:99Z",
+      }),
+    },
+  );
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** 400 — "Invalid date format"
@@ -548,28 +584,31 @@ Login as CONSULTANT B. Then:
 
 ```javascript
 async () => {
-  const response = await fetch("/api/user/consultants/test-consultant-profile-004a", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      description: "Hijacked by consultant B",
-      experience: 5,
-      scheduleType: "WEEKLY",
-      domainId: "test-domain-004",
-      subDomainIds: ["test-subdomain-004"],
-      tagIds: [],
-      slotsOfAvailabilityWeekly: [
-        {
-          dayOfWeekforStartTimeInUTC: "MONDAY",
-          dayOfWeekforEndTimeInUTC: "MONDAY",
-          slotStartTimeInUTC: "2026-01-05T04:00:00.000Z",
-          slotEndTimeInUTC: "2026-01-05T07:00:00.000Z",
-        },
-      ],
-    }),
-  });
+  const response = await fetch(
+    "/api/user/consultants/test-consultant-profile-004a",
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        description: "Hijacked by consultant B",
+        experience: 5,
+        scheduleType: "WEEKLY",
+        domainId: "test-domain-004",
+        subDomainIds: ["test-subdomain-004"],
+        tagIds: [],
+        slotsOfAvailabilityWeekly: [
+          {
+            dayOfWeekforStartTimeInUTC: "MONDAY",
+            dayOfWeekforEndTimeInUTC: "MONDAY",
+            slotStartTimeInUTC: "2026-01-05T04:00:00.000Z",
+            slotEndTimeInUTC: "2026-01-05T07:00:00.000Z",
+          },
+        ],
+      }),
+    },
+  );
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** 403
@@ -578,11 +617,14 @@ async () => {
 
 ```javascript
 async () => {
-  const response = await fetch("/api/user/consultants/test-consultant-profile-004a", {
-    method: "DELETE",
-  });
+  const response = await fetch(
+    "/api/user/consultants/test-consultant-profile-004a",
+    {
+      method: "DELETE",
+    },
+  );
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** 403
@@ -593,28 +635,31 @@ Login as CONSULTEE. Then:
 
 ```javascript
 async () => {
-  const response = await fetch("/api/user/consultants/test-consultant-profile-004a", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      description: "Hijacked by consultee",
-      experience: 5,
-      scheduleType: "WEEKLY",
-      domainId: "test-domain-004",
-      subDomainIds: ["test-subdomain-004"],
-      tagIds: [],
-      slotsOfAvailabilityWeekly: [
-        {
-          dayOfWeekforStartTimeInUTC: "MONDAY",
-          dayOfWeekforEndTimeInUTC: "MONDAY",
-          slotStartTimeInUTC: "2026-01-05T04:00:00.000Z",
-          slotEndTimeInUTC: "2026-01-05T07:00:00.000Z",
-        },
-      ],
-    }),
-  });
+  const response = await fetch(
+    "/api/user/consultants/test-consultant-profile-004a",
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        description: "Hijacked by consultee",
+        experience: 5,
+        scheduleType: "WEEKLY",
+        domainId: "test-domain-004",
+        subDomainIds: ["test-subdomain-004"],
+        tagIds: [],
+        slotsOfAvailabilityWeekly: [
+          {
+            dayOfWeekforStartTimeInUTC: "MONDAY",
+            dayOfWeekforEndTimeInUTC: "MONDAY",
+            slotStartTimeInUTC: "2026-01-05T04:00:00.000Z",
+            slotEndTimeInUTC: "2026-01-05T07:00:00.000Z",
+          },
+        ],
+      }),
+    },
+  );
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** 403
@@ -625,34 +670,37 @@ Login as CONSULTANT A. Then:
 
 ```javascript
 async () => {
-  const response = await fetch("/api/user/consultants/test-consultant-profile-004a", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      description: "Updated by rightful owner",
-      experience: 5,
-      scheduleType: "WEEKLY",
-      domainId: "test-domain-004",
-      subDomainIds: ["test-subdomain-004"],
-      tagIds: [],
-      slotsOfAvailabilityWeekly: [
-        {
-          dayOfWeekforStartTimeInUTC: "MONDAY",
-          dayOfWeekforEndTimeInUTC: "MONDAY",
-          slotStartTimeInUTC: "2026-01-05T04:00:00.000Z",
-          slotEndTimeInUTC: "2026-01-05T07:00:00.000Z",
-        },
-        {
-          dayOfWeekforStartTimeInUTC: "WEDNESDAY",
-          dayOfWeekforEndTimeInUTC: "WEDNESDAY",
-          slotStartTimeInUTC: "2026-01-07T04:00:00.000Z",
-          slotEndTimeInUTC: "2026-01-07T07:00:00.000Z",
-        },
-      ],
-    }),
-  });
+  const response = await fetch(
+    "/api/user/consultants/test-consultant-profile-004a",
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        description: "Updated by rightful owner",
+        experience: 5,
+        scheduleType: "WEEKLY",
+        domainId: "test-domain-004",
+        subDomainIds: ["test-subdomain-004"],
+        tagIds: [],
+        slotsOfAvailabilityWeekly: [
+          {
+            dayOfWeekforStartTimeInUTC: "MONDAY",
+            dayOfWeekforEndTimeInUTC: "MONDAY",
+            slotStartTimeInUTC: "2026-01-05T04:00:00.000Z",
+            slotEndTimeInUTC: "2026-01-05T07:00:00.000Z",
+          },
+          {
+            dayOfWeekforStartTimeInUTC: "WEDNESDAY",
+            dayOfWeekforEndTimeInUTC: "WEDNESDAY",
+            slotStartTimeInUTC: "2026-01-07T04:00:00.000Z",
+            slotEndTimeInUTC: "2026-01-07T07:00:00.000Z",
+          },
+        ],
+      }),
+    },
+  );
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** 200
@@ -700,7 +748,9 @@ async () => {
   // Tuesday 08:30 UTC — only in consultant B's window (510-690 = 08:30-11:30)
   // NOT in consultant A's window (240-420 = 04:00-07:00)
   const nextTue = new Date();
-  nextTue.setDate(nextTue.getDate() + ((2 + 7 - nextTue.getDay()) % 7 || 7) + 7);
+  nextTue.setDate(
+    nextTue.getDate() + ((2 + 7 - nextTue.getDay()) % 7 || 7) + 7,
+  );
   nextTue.setUTCHours(8, 30, 0, 0);
 
   const slotEnd = new Date(nextTue);
@@ -719,7 +769,7 @@ async () => {
     }),
   });
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** Rejection (400 or similar) — the chosen slot is outside consultant A's availability window.
@@ -730,7 +780,9 @@ async () => {
 async () => {
   // Tuesday 04:30 UTC — inside consultant A's window (240-420 = 04:00-07:00)
   const nextTue = new Date();
-  nextTue.setDate(nextTue.getDate() + ((2 + 7 - nextTue.getDay()) % 7 || 7) + 7);
+  nextTue.setDate(
+    nextTue.getDate() + ((2 + 7 - nextTue.getDay()) % 7 || 7) + 7,
+  );
   nextTue.setUTCHours(4, 30, 0, 0);
 
   const slotEnd = new Date(nextTue);
@@ -749,7 +801,7 @@ async () => {
     }),
   });
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** 200 — successful checkout
@@ -776,34 +828,37 @@ Login as CONSULTANT A. Then:
 
 ```javascript
 async () => {
-  const response = await fetch("/api/user/consultants/test-consultant-profile-004a", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      description: "Auth hardening test consultant A.",
-      experience: 5,
-      scheduleType: "WEEKLY",
-      domainId: "test-domain-004",
-      subDomainIds: ["test-subdomain-004"],
-      tagIds: [],
-      slotsOfAvailabilityWeekly: [
-        {
-          dayOfWeekforStartTimeInUTC: "MONDAY",
-          dayOfWeekforEndTimeInUTC: "MONDAY",
-          slotStartTimeInUTC: "2026-01-05T04:00:00.000Z",
-          slotEndTimeInUTC: "2026-01-05T07:00:00.000Z",
-        },
-        {
-          dayOfWeekforStartTimeInUTC: "MONDAY",
-          dayOfWeekforEndTimeInUTC: "MONDAY",
-          slotStartTimeInUTC: "2026-01-05T05:00:00.000Z",
-          slotEndTimeInUTC: "2026-01-05T08:00:00.000Z",
-        },
-      ],
-    }),
-  });
+  const response = await fetch(
+    "/api/user/consultants/test-consultant-profile-004a",
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        description: "Auth hardening test consultant A.",
+        experience: 5,
+        scheduleType: "WEEKLY",
+        domainId: "test-domain-004",
+        subDomainIds: ["test-subdomain-004"],
+        tagIds: [],
+        slotsOfAvailabilityWeekly: [
+          {
+            dayOfWeekforStartTimeInUTC: "MONDAY",
+            dayOfWeekforEndTimeInUTC: "MONDAY",
+            slotStartTimeInUTC: "2026-01-05T04:00:00.000Z",
+            slotEndTimeInUTC: "2026-01-05T07:00:00.000Z",
+          },
+          {
+            dayOfWeekforStartTimeInUTC: "MONDAY",
+            dayOfWeekforEndTimeInUTC: "MONDAY",
+            slotStartTimeInUTC: "2026-01-05T05:00:00.000Z",
+            slotEndTimeInUTC: "2026-01-05T08:00:00.000Z",
+          },
+        ],
+      }),
+    },
+  );
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** 400 — "Submitted weekly slots contain overlapping time ranges"
@@ -812,28 +867,31 @@ async () => {
 
 ```javascript
 async () => {
-  const response = await fetch("/api/user/consultants/test-consultant-profile-004a", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      description: "Auth hardening test consultant A.",
-      experience: 5,
-      scheduleType: "WEEKLY",
-      domainId: "test-domain-004",
-      subDomainIds: ["test-subdomain-004"],
-      tagIds: [],
-      slotsOfAvailabilityWeekly: [
-        {
-          dayOfWeekforStartTimeInUTC: "MONDAY",
-          dayOfWeekforEndTimeInUTC: "MONDAY",
-          slotStartTimeInUTC: "2026-01-05T10:00:00.000Z",
-          slotEndTimeInUTC: "2026-01-05T08:00:00.000Z",
-        },
-      ],
-    }),
-  });
+  const response = await fetch(
+    "/api/user/consultants/test-consultant-profile-004a",
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        description: "Auth hardening test consultant A.",
+        experience: 5,
+        scheduleType: "WEEKLY",
+        domainId: "test-domain-004",
+        subDomainIds: ["test-subdomain-004"],
+        tagIds: [],
+        slotsOfAvailabilityWeekly: [
+          {
+            dayOfWeekforStartTimeInUTC: "MONDAY",
+            dayOfWeekforEndTimeInUTC: "MONDAY",
+            slotStartTimeInUTC: "2026-01-05T10:00:00.000Z",
+            slotEndTimeInUTC: "2026-01-05T08:00:00.000Z",
+          },
+        ],
+      }),
+    },
+  );
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** 400 — "Start time must be before end time for same-day slots"
@@ -846,30 +904,39 @@ async () => {
   baseDate.setDate(baseDate.getDate() + 14);
   baseDate.setUTCHours(10, 0, 0, 0);
 
-  const response = await fetch("/api/user/consultants/test-consultant-profile-004a", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      description: "Auth hardening test consultant A.",
-      experience: 5,
-      scheduleType: "CUSTOM",
-      domainId: "test-domain-004",
-      subDomainIds: ["test-subdomain-004"],
-      tagIds: [],
-      slotsOfAvailabilityCustom: [
-        {
-          slotStartTimeInUTC: baseDate.toISOString(),
-          slotEndTimeInUTC: new Date(baseDate.getTime() + 3 * 3600000).toISOString(),
-        },
-        {
-          slotStartTimeInUTC: new Date(baseDate.getTime() + 2 * 3600000).toISOString(),
-          slotEndTimeInUTC: new Date(baseDate.getTime() + 5 * 3600000).toISOString(),
-        },
-      ],
-    }),
-  });
+  const response = await fetch(
+    "/api/user/consultants/test-consultant-profile-004a",
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        description: "Auth hardening test consultant A.",
+        experience: 5,
+        scheduleType: "CUSTOM",
+        domainId: "test-domain-004",
+        subDomainIds: ["test-subdomain-004"],
+        tagIds: [],
+        slotsOfAvailabilityCustom: [
+          {
+            slotStartTimeInUTC: baseDate.toISOString(),
+            slotEndTimeInUTC: new Date(
+              baseDate.getTime() + 3 * 3600000,
+            ).toISOString(),
+          },
+          {
+            slotStartTimeInUTC: new Date(
+              baseDate.getTime() + 2 * 3600000,
+            ).toISOString(),
+            slotEndTimeInUTC: new Date(
+              baseDate.getTime() + 5 * 3600000,
+            ).toISOString(),
+          },
+        ],
+      }),
+    },
+  );
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** 400 — "Submitted custom slots contain overlapping time ranges"
@@ -884,34 +951,37 @@ This tests the same-set overlap check in the bulk route:
 
 ```javascript
 async () => {
-  const response = await fetch("/api/user/consultants/test-consultant-profile-004a", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      description: "Auth hardening test consultant A.",
-      experience: 5,
-      scheduleType: "WEEKLY",
-      domainId: "test-domain-004",
-      subDomainIds: ["test-subdomain-004"],
-      tagIds: [],
-      slotsOfAvailabilityWeekly: [
-        {
-          dayOfWeekforStartTimeInUTC: "TUESDAY",
-          dayOfWeekforEndTimeInUTC: "TUESDAY",
-          slotStartTimeInUTC: "2026-01-06T04:00:00.000Z",
-          slotEndTimeInUTC: "2026-01-06T07:00:00.000Z",
-        },
-        {
-          dayOfWeekforStartTimeInUTC: "TUESDAY",
-          dayOfWeekforEndTimeInUTC: "TUESDAY",
-          slotStartTimeInUTC: "2026-01-06T06:00:00.000Z",
-          slotEndTimeInUTC: "2026-01-06T09:00:00.000Z",
-        },
-      ],
-    }),
-  });
+  const response = await fetch(
+    "/api/user/consultants/test-consultant-profile-004a",
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        description: "Auth hardening test consultant A.",
+        experience: 5,
+        scheduleType: "WEEKLY",
+        domainId: "test-domain-004",
+        subDomainIds: ["test-subdomain-004"],
+        tagIds: [],
+        slotsOfAvailabilityWeekly: [
+          {
+            dayOfWeekforStartTimeInUTC: "TUESDAY",
+            dayOfWeekforEndTimeInUTC: "TUESDAY",
+            slotStartTimeInUTC: "2026-01-06T04:00:00.000Z",
+            slotEndTimeInUTC: "2026-01-06T07:00:00.000Z",
+          },
+          {
+            dayOfWeekforStartTimeInUTC: "TUESDAY",
+            dayOfWeekforEndTimeInUTC: "TUESDAY",
+            slotStartTimeInUTC: "2026-01-06T06:00:00.000Z",
+            slotEndTimeInUTC: "2026-01-06T09:00:00.000Z",
+          },
+        ],
+      }),
+    },
+  );
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** 400
@@ -920,28 +990,31 @@ async () => {
 
 ```javascript
 async () => {
-  const response = await fetch("/api/user/consultants/test-consultant-profile-004a", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      description: "Auth hardening test consultant A.",
-      experience: 5,
-      scheduleType: "WEEKLY",
-      domainId: "test-domain-004",
-      subDomainIds: ["test-subdomain-004"],
-      tagIds: [],
-      slotsOfAvailabilityWeekly: [
-        {
-          dayOfWeekforStartTimeInUTC: "WEDNESDAY",
-          dayOfWeekforEndTimeInUTC: "WEDNESDAY",
-          slotStartTimeInUTC: "2026-01-07T10:00:00.000Z",
-          slotEndTimeInUTC: "2026-01-07T08:00:00.000Z",
-        },
-      ],
-    }),
-  });
+  const response = await fetch(
+    "/api/user/consultants/test-consultant-profile-004a",
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        description: "Auth hardening test consultant A.",
+        experience: 5,
+        scheduleType: "WEEKLY",
+        domainId: "test-domain-004",
+        subDomainIds: ["test-subdomain-004"],
+        tagIds: [],
+        slotsOfAvailabilityWeekly: [
+          {
+            dayOfWeekforStartTimeInUTC: "WEDNESDAY",
+            dayOfWeekforEndTimeInUTC: "WEDNESDAY",
+            slotStartTimeInUTC: "2026-01-07T10:00:00.000Z",
+            slotEndTimeInUTC: "2026-01-07T08:00:00.000Z",
+          },
+        ],
+      }),
+    },
+  );
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** 400
@@ -950,40 +1023,43 @@ async () => {
 
 ```javascript
 async () => {
-  const response = await fetch("/api/user/consultants/test-consultant-profile-004a", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      description: "Auth hardening test consultant A.",
-      experience: 5,
-      scheduleType: "WEEKLY",
-      domainId: "test-domain-004",
-      subDomainIds: ["test-subdomain-004"],
-      tagIds: [],
-      slotsOfAvailabilityWeekly: [
-        {
-          dayOfWeekforStartTimeInUTC: "MONDAY",
-          dayOfWeekforEndTimeInUTC: "MONDAY",
-          slotStartTimeInUTC: "2026-01-05T04:00:00.000Z",
-          slotEndTimeInUTC: "2026-01-05T07:00:00.000Z",
-        },
-        {
-          dayOfWeekforStartTimeInUTC: "WEDNESDAY",
-          dayOfWeekforEndTimeInUTC: "WEDNESDAY",
-          slotStartTimeInUTC: "2026-01-07T04:00:00.000Z",
-          slotEndTimeInUTC: "2026-01-07T07:00:00.000Z",
-        },
-        {
-          dayOfWeekforStartTimeInUTC: "FRIDAY",
-          dayOfWeekforEndTimeInUTC: "FRIDAY",
-          slotStartTimeInUTC: "2026-01-09T08:00:00.000Z",
-          slotEndTimeInUTC: "2026-01-09T11:00:00.000Z",
-        },
-      ],
-    }),
-  });
+  const response = await fetch(
+    "/api/user/consultants/test-consultant-profile-004a",
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        description: "Auth hardening test consultant A.",
+        experience: 5,
+        scheduleType: "WEEKLY",
+        domainId: "test-domain-004",
+        subDomainIds: ["test-subdomain-004"],
+        tagIds: [],
+        slotsOfAvailabilityWeekly: [
+          {
+            dayOfWeekforStartTimeInUTC: "MONDAY",
+            dayOfWeekforEndTimeInUTC: "MONDAY",
+            slotStartTimeInUTC: "2026-01-05T04:00:00.000Z",
+            slotEndTimeInUTC: "2026-01-05T07:00:00.000Z",
+          },
+          {
+            dayOfWeekforStartTimeInUTC: "WEDNESDAY",
+            dayOfWeekforEndTimeInUTC: "WEDNESDAY",
+            slotStartTimeInUTC: "2026-01-07T04:00:00.000Z",
+            slotEndTimeInUTC: "2026-01-07T07:00:00.000Z",
+          },
+          {
+            dayOfWeekforStartTimeInUTC: "FRIDAY",
+            dayOfWeekforEndTimeInUTC: "FRIDAY",
+            slotStartTimeInUTC: "2026-01-09T08:00:00.000Z",
+            slotEndTimeInUTC: "2026-01-09T11:00:00.000Z",
+          },
+        ],
+      }),
+    },
+  );
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** 200
@@ -1101,24 +1177,24 @@ SELECT
 
 ## Verification Checklist (End-to-End)
 
-| # | Check | Expected |
-|---|-------|----------|
-| 1 | Unauthenticated POST/PUT/PATCH/DELETE to weekly -> 401 | 401 for all 4 |
-| 2 | Cross-consultant PUT/PATCH/DELETE on weekly -> 403 | 403 for all 3 |
-| 3 | Owner modifies own weekly slot -> 200 | 200 |
-| 4 | Unauthenticated POST to custom -> 401 | 401 |
-| 5 | Cross-consultant PUT/DELETE on custom -> 403 | 403 for both |
-| 6 | Malformed date in PUT/PATCH custom -> 400 | 400 for both |
-| 7 | Cross-consultant PUT/DELETE on bulk settings -> 403 | 403 for both |
-| 8 | Consultee PUT on bulk settings -> 403 | 403 |
-| 9 | Owner bulk PUT settings -> 200 | 200 |
-| 10 | Checkout outside owner's availability -> rejection | non-200 |
-| 11 | Checkout inside owner's availability -> success | 200 |
-| 12 | Overlapping weekly slots in bulk PUT -> 400 | 400 |
-| 13 | Invalid time ordering in bulk PUT -> 400 | 400 |
-| 14 | Overlapping custom slots in bulk PUT -> 400 | 400 |
-| 15 | Valid non-overlapping bulk PUT -> 200 | 200 |
-| 16 | Cleanup complete | All counts = 0 |
+| #   | Check                                                  | Expected       |
+| --- | ------------------------------------------------------ | -------------- |
+| 1   | Unauthenticated POST/PUT/PATCH/DELETE to weekly -> 401 | 401 for all 4  |
+| 2   | Cross-consultant PUT/PATCH/DELETE on weekly -> 403     | 403 for all 3  |
+| 3   | Owner modifies own weekly slot -> 200                  | 200            |
+| 4   | Unauthenticated POST to custom -> 401                  | 401            |
+| 5   | Cross-consultant PUT/DELETE on custom -> 403           | 403 for both   |
+| 6   | Malformed date in PUT/PATCH custom -> 400              | 400 for both   |
+| 7   | Cross-consultant PUT/DELETE on bulk settings -> 403    | 403 for both   |
+| 8   | Consultee PUT on bulk settings -> 403                  | 403            |
+| 9   | Owner bulk PUT settings -> 200                         | 200            |
+| 10  | Checkout outside owner's availability -> rejection     | non-200        |
+| 11  | Checkout inside owner's availability -> success        | 200            |
+| 12  | Overlapping weekly slots in bulk PUT -> 400            | 400            |
+| 13  | Invalid time ordering in bulk PUT -> 400               | 400            |
+| 14  | Overlapping custom slots in bulk PUT -> 400            | 400            |
+| 15  | Valid non-overlapping bulk PUT -> 200                  | 200            |
+| 16  | Cleanup complete                                       | All counts = 0 |
 
 ---
 

@@ -671,7 +671,7 @@ export class SlotValidationService {
     if (slotsPerSession > 1 && slots.length % slotsPerSession !== 0) {
       errors.push(
         `[VALIDATION] Subscription requires slot count to be a multiple of ${slotsPerSession} ` +
-        `(${sessionDuration}-hour sessions), but ${slots.length} slots were provided`,
+          `(${sessionDuration}-hour sessions), but ${slots.length} slots were provided`,
       );
       return { isValid: false, errors, warnings };
     }

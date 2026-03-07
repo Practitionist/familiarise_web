@@ -27,11 +27,11 @@ import {
 import { SlotCalculationService } from "./SlotCalculationService";
 import { SlotValidationService } from "./SlotValidationService";
 import { buildOccupiedAppointmentFilter } from "./occupancyPolicy";
+import { lockAutoAllocate, unlockAutoAllocate } from "@/utils/appointmentlock";
 import {
-  lockAutoAllocate,
-  unlockAutoAllocate,
-} from "@/utils/appointmentlock";
-import { DAY_OF_WEEK_TO_INDEX, isMinuteWithinWeeklySlot } from "./slotTimeUtils";
+  DAY_OF_WEEK_TO_INDEX,
+  isMinuteWithinWeeklySlot,
+} from "./slotTimeUtils";
 import {
   AllocationValidationError,
   AllocationNotFoundError,
@@ -222,162 +222,162 @@ export class SlotAllocationService {
     // Acquire consultant-level distributed lock before the transaction
     const lock = await lockAutoAllocate(consultantProfileId);
     try {
-    return await prisma.$transaction(
-      async (tx) => {
-        // Fetch event details and consultant info
-        const eventData = await this.fetchEventData(tx, eventType, eventId);
-        if (!eventData) {
-          throw new AllocationNotFoundError(`${eventType} not found`);
-        }
+      return await prisma.$transaction(
+        async (tx) => {
+          // Fetch event details and consultant info
+          const eventData = await this.fetchEventData(tx, eventType, eventId);
+          if (!eventData) {
+            throw new AllocationNotFoundError(`${eventType} not found`);
+          }
 
-        const { consultant, config, consulteeUserId } = eventData;
+          const { consultant, config, consulteeUserId } = eventData;
 
-        // CRITICAL FIX: Check for existing appointments to detect reschedule scenario
-        // If tentative slots exist, this is a reschedule and we should preserve the original slot count
-        const relationField = this.getEventRelationField(eventType);
-        const existingAppointments: AppointmentWithSlots[] =
-          await tx.appointment.findMany({
-            where: {
-              [`${relationField}Id`]: eventId,
-            } as Prisma.AppointmentWhereInput,
-            include: { slotsOfAppointment: true },
-          });
+          // CRITICAL FIX: Check for existing appointments to detect reschedule scenario
+          // If tentative slots exist, this is a reschedule and we should preserve the original slot count
+          const relationField = this.getEventRelationField(eventType);
+          const existingAppointments: AppointmentWithSlots[] =
+            await tx.appointment.findMany({
+              where: {
+                [`${relationField}Id`]: eventId,
+              } as Prisma.AppointmentWhereInput,
+              include: { slotsOfAppointment: true },
+            });
 
-        // Count existing slots by tentative status
-        const existingNonTentativeSlotCount = existingAppointments.reduce(
-          (count, appointment) =>
-            count +
-            appointment.slotsOfAppointment.filter((slot) => !slot.isTentative)
-              .length,
-          0,
-        );
-        const tentativeSlotCount = existingAppointments.reduce(
-          (count, appointment) =>
-            count +
-            appointment.slotsOfAppointment.filter((slot) => slot.isTentative)
-              .length,
-          0,
-        );
-        const isReschedule = tentativeSlotCount > 0;
-
-        // Guard: for classes, reject re-allocation when already fully scheduled.
-        // Webinars are handled by the DB unique constraint on webinarId (P2002 → 409).
-        // Classes have no such constraint, so we enforce it here to prevent
-        // concurrent auto-allocate calls from creating duplicate session sets.
-        if (
-          eventType === "class" &&
-          !isReschedule &&
-          existingNonTentativeSlotCount > 0
-        ) {
-          const requiredForGuard = SlotCalculationService.calculateRequiredSlots(
-            eventType,
-            config,
+          // Count existing slots by tentative status
+          const existingNonTentativeSlotCount = existingAppointments.reduce(
+            (count, appointment) =>
+              count +
+              appointment.slotsOfAppointment.filter((slot) => !slot.isTentative)
+                .length,
+            0,
           );
-          if (existingNonTentativeSlotCount >= requiredForGuard) {
-            throw new AllocationConflictError(
-              `Event is already fully allocated with ${existingNonTentativeSlotCount} confirmed slot(s).`,
+          const tentativeSlotCount = existingAppointments.reduce(
+            (count, appointment) =>
+              count +
+              appointment.slotsOfAppointment.filter((slot) => slot.isTentative)
+                .length,
+            0,
+          );
+          const isReschedule = tentativeSlotCount > 0;
+
+          // Guard: for classes, reject re-allocation when already fully scheduled.
+          // Webinars are handled by the DB unique constraint on webinarId (P2002 → 409).
+          // Classes have no such constraint, so we enforce it here to prevent
+          // concurrent auto-allocate calls from creating duplicate session sets.
+          if (
+            eventType === "class" &&
+            !isReschedule &&
+            existingNonTentativeSlotCount > 0
+          ) {
+            const requiredForGuard =
+              SlotCalculationService.calculateRequiredSlots(eventType, config);
+            if (existingNonTentativeSlotCount >= requiredForGuard) {
+              throw new AllocationConflictError(
+                `Event is already fully allocated with ${existingNonTentativeSlotCount} confirmed slot(s).`,
+              );
+            }
+          }
+
+          // Collect appointment IDs to exclude from conflict detection and weekly limits.
+          // For reschedule: exclude tentative appointments (they'll be deleted)
+          // For initial allocation: exclude ALL existing appointments (they'll all be deleted)
+          const appointmentIdsToExclude = isReschedule
+            ? existingAppointments
+                .filter((a) => a.slotsOfAppointment.some((s) => s.isTentative))
+                .map((a) => a.id)
+            : existingAppointments.map((a) => a.id);
+
+          // Calculate required slots - for reschedule, only replace tentative slots
+          let requiredSlots: number;
+          if (isReschedule) {
+            // RESCHEDULE: Only find replacement slots for the tentative ones.
+            // For full reschedule (all tentative): requiredSlots = all slots
+            // For partial reschedule (some tentative): requiredSlots = tentative count only
+            requiredSlots = tentativeSlotCount;
+          } else {
+            // INITIAL ALLOCATION: Calculate from config
+            requiredSlots = SlotCalculationService.calculateRequiredSlots(
+              eventType,
+              config,
             );
           }
-        }
 
-        // Collect appointment IDs to exclude from conflict detection and weekly limits.
-        // For reschedule: exclude tentative appointments (they'll be deleted)
-        // For initial allocation: exclude ALL existing appointments (they'll all be deleted)
-        const appointmentIdsToExclude = isReschedule
-          ? existingAppointments
-              .filter((a) => a.slotsOfAppointment.some((s) => s.isTentative))
-              .map((a) => a.id)
-          : existingAppointments.map((a) => a.id);
+          const slotsPerCall = SlotCalculationService.getSlotsPerCall(
+            config.sessionDurationInHours || config.durationInHours || 1,
+          );
 
-        // Calculate required slots - for reschedule, only replace tentative slots
-        let requiredSlots: number;
-        if (isReschedule) {
-          // RESCHEDULE: Only find replacement slots for the tentative ones.
-          // For full reschedule (all tentative): requiredSlots = all slots
-          // For partial reschedule (some tentative): requiredSlots = tentative count only
-          requiredSlots = tentativeSlotCount;
-        } else {
-          // INITIAL ALLOCATION: Calculate from config
-          requiredSlots = SlotCalculationService.calculateRequiredSlots(
+          // Find available slots
+          // Pass appointmentIdsToExclude so their slots are excluded from bookedSlots
+          // Pass existingAppointments so callsPerWeek is scoped to this event only
+          const selectedSlots = await this.findAvailableSlots(
+            tx,
+            consultant,
+            requiredSlots,
+            slotsPerCall,
             eventType,
             config,
+            appointmentIdsToExclude,
+            existingAppointments,
           );
-        }
 
-        const slotsPerCall = SlotCalculationService.getSlotsPerCall(
-          config.sessionDurationInHours || config.durationInHours || 1,
-        );
+          // Validate
+          // Pass appointmentIdsToExclude so their slots don't trigger false conflicts
+          const validator = new SlotValidationService(tx);
+          const validation = await validator.validate(
+            eventType,
+            eventId,
+            selectedSlots,
+            consultant,
+            config,
+            appointmentIdsToExclude,
+          );
 
-        // Find available slots
-        // Pass appointmentIdsToExclude so their slots are excluded from bookedSlots
-        // Pass existingAppointments so callsPerWeek is scoped to this event only
-        const selectedSlots = await this.findAvailableSlots(
-          tx,
-          consultant,
-          requiredSlots,
-          slotsPerCall,
-          eventType,
-          config,
-          appointmentIdsToExclude,
-          existingAppointments,
-        );
+          if (!validation.isValid) {
+            throw new AllocationValidationError(
+              `Validation failed: ${validation.errors.join("; ")}`,
+            );
+          }
 
-        // Validate
-        // Pass appointmentIdsToExclude so their slots don't trigger false conflicts
-        const validator = new SlotValidationService(tx);
-        const validation = await validator.validate(
-          eventType,
-          eventId,
-          selectedSlots,
-          consultant,
-          config,
-          appointmentIdsToExclude,
-        );
+          // CRITICAL FIX: Delete existing appointments before creating new ones
+          // For reschedules: only delete appointments with tentative slots (preserve confirmed ones)
+          // For initial allocation: delete all (shouldn't be any, but safety measure)
+          await this.deleteExistingAppointments(
+            tx,
+            eventType,
+            eventId,
+            isReschedule,
+          );
 
-        if (!validation.isValid) {
-          throw new AllocationValidationError(`Validation failed: ${validation.errors.join("; ")}`);
-        }
+          // Create appointments
+          const appointments = await this.createAppointments(
+            tx,
+            eventType,
+            eventId,
+            selectedSlots,
+            consultant.userId,
+            consulteeUserId,
+            config,
+          );
 
-        // CRITICAL FIX: Delete existing appointments before creating new ones
-        // For reschedules: only delete appointments with tentative slots (preserve confirmed ones)
-        // For initial allocation: delete all (shouldn't be any, but safety measure)
-        await this.deleteExistingAppointments(
-          tx,
-          eventType,
-          eventId,
-          isReschedule,
-        );
+          // Update event status
+          await this.updateEventStatus(
+            tx,
+            eventType,
+            eventId,
+            selectedSlots[0],
+            config,
+          );
 
-        // Create appointments
-        const appointments = await this.createAppointments(
-          tx,
-          eventType,
-          eventId,
-          selectedSlots,
-          consultant.userId,
-          consulteeUserId,
-          config,
-        );
-
-        // Update event status
-        await this.updateEventStatus(
-          tx,
-          eventType,
-          eventId,
-          selectedSlots[0],
-          config,
-        );
-
-        return {
-          success: true,
-          appointments,
-          warnings: validation.warnings,
-        };
-      },
-      {
-        timeout: 120000, // 120 seconds (2 min) - handles large allocations (200+ slots)
-      },
-    );
+          return {
+            success: true,
+            appointments,
+            warnings: validation.warnings,
+          };
+        },
+        {
+          timeout: 120000, // 120 seconds (2 min) - handles large allocations (200+ slots)
+        },
+      );
     } finally {
       await unlockAutoAllocate(lock);
     }
@@ -429,169 +429,178 @@ export class SlotAllocationService {
     // can both pass validateNoConflicts() and create duplicate appointments.
     const lock = await lockAutoAllocate(consultantProfileId);
     try {
-    return await prisma.$transaction(
-      async (tx) => {
-        // Fetch event details
-        const eventData = await this.fetchEventData(tx, eventType, eventId);
-        if (!eventData) {
-          throw new AllocationNotFoundError(`${eventType} not found`);
-        }
-
-        const { consultant, config, consulteeUserId } = eventData;
-
-        // Convert to Date objects with validation
-        const slots = slotStrings.map((s, i) => {
-          const date = new Date(s);
-          if (isNaN(date.getTime())) {
-            throw new AllocationValidationError(
-              `Invalid date string at position ${i + 1}: "${s}". ` +
-                `Expected ISO 8601 format (e.g., "2026-03-01T09:00:00.000Z").`,
-            );
+      return await prisma.$transaction(
+        async (tx) => {
+          // Fetch event details
+          const eventData = await this.fetchEventData(tx, eventType, eventId);
+          if (!eventData) {
+            throw new AllocationNotFoundError(`${eventType} not found`);
           }
-          return date;
-        });
 
-        // FIX: Detect and reject duplicate slots
-        // Duplicates can cause validation errors, inflated counts, and DB anomalies
-        const uniqueSlots = Array.from(
-          new Map(slots.map((s) => [s.toISOString(), s])).values(),
-        );
+          const { consultant, config, consulteeUserId } = eventData;
 
-        if (uniqueSlots.length !== slots.length) {
-          throw new AllocationValidationError(
-            `Duplicate slots detected: ${slots.length} slots provided but only ` +
-              `${uniqueSlots.length} are unique. Each slot can only be selected once.`,
-          );
-        }
-
-        // Sort slots chronologically to ensure correct grouping into appointments
-        // and correct schedulingPeriodStartsAt derivation from slots[0]
-        slots.sort((a, b) => a.getTime() - b.getTime());
-
-        // CRITICAL FIX: Validate slot count matches session duration requirements
-        // This prevents incomplete appointments from being created
-        const slotsPerCall = SlotCalculationService.getSlotsPerCall(
-          config.sessionDurationInHours || config.durationInHours || 1,
-        );
-
-        if (slots.length % slotsPerCall !== 0) {
-          const sessionDuration =
-            config.sessionDurationInHours || config.durationInHours || 1;
-          throw new AllocationValidationError(
-            `Invalid slot count: ${slots.length} slots provided, but ${sessionDuration}-hour ` +
-              `sessions require multiples of ${slotsPerCall} slots (30 minutes each). ` +
-              `Valid counts: ${slotsPerCall}, ${slotsPerCall * 2}, ${slotsPerCall * 3}, etc.`,
-          );
-        }
-
-        // Detect reschedule scenario: check for existing tentative slots
-        const relationField = this.getEventRelationField(eventType);
-        const existingAppointments: AppointmentWithSlots[] =
-          await tx.appointment.findMany({
-            where: {
-              [`${relationField}Id`]: eventId,
-            } as Prisma.AppointmentWhereInput,
-            include: { slotsOfAppointment: true },
+          // Convert to Date objects with validation
+          const slots = slotStrings.map((s, i) => {
+            const date = new Date(s);
+            if (isNaN(date.getTime())) {
+              throw new AllocationValidationError(
+                `Invalid date string at position ${i + 1}: "${s}". ` +
+                  `Expected ISO 8601 format (e.g., "2026-03-01T09:00:00.000Z").`,
+              );
+            }
+            return date;
           });
 
-        const tentativeSlotCount = existingAppointments.reduce(
-          (count, appointment) =>
-            count +
-            appointment.slotsOfAppointment.filter((slot) => slot.isTentative)
-              .length,
-          0,
-        );
-        const isReschedule = tentativeSlotCount > 0;
+          // FIX: Detect and reject duplicate slots
+          // Duplicates can cause validation errors, inflated counts, and DB anomalies
+          const uniqueSlots = Array.from(
+            new Map(slots.map((s) => [s.toISOString(), s])).values(),
+          );
 
-        // Collect appointment IDs to exclude from conflict detection and weekly limits.
-        // For reschedule: exclude tentative appointments (they'll be deleted)
-        // For initial allocation: exclude ALL existing appointments (they'll all be deleted)
-        const appointmentIdsToExclude = isReschedule
-          ? existingAppointments
-              .filter((a) => a.slotsOfAppointment.some((s) => s.isTentative))
-              .map((a) => a.id)
-          : existingAppointments.map((a) => a.id);
-
-        // Validate total slot count for recurring event types
-        // For reschedule: only require replacement slots for tentative count
-        // For initial allocation: require full plan slot count
-        if (eventType === "subscription" || eventType === "class") {
-          if (isReschedule) {
-            if (slots.length !== tentativeSlotCount) {
-              throw new AllocationValidationError(
-                `This reschedule requires exactly ${tentativeSlotCount} slots ` +
-                  `(replacing ${tentativeSlotCount} tentative slots), ` +
-                  `but ${slots.length} were provided.`,
-              );
-            }
-          } else if (
-            config.schedulingPeriodStartsAt &&
-            config.schedulingPeriodEndsAt
-          ) {
-            const requiredSlots = SlotCalculationService.calculateRequiredSlots(
-              eventType,
-              config,
+          if (uniqueSlots.length !== slots.length) {
+            throw new AllocationValidationError(
+              `Duplicate slots detected: ${slots.length} slots provided but only ` +
+                `${uniqueSlots.length} are unique. Each slot can only be selected once.`,
             );
-            if (slots.length !== requiredSlots) {
-              throw new AllocationValidationError(
-                `This ${eventType} requires exactly ${requiredSlots} slots ` +
-                  `(based on the scheduling period and session configuration), ` +
-                  `but ${slots.length} were provided.`,
-              );
+          }
+
+          // Sort slots chronologically to ensure correct grouping into appointments
+          // and correct schedulingPeriodStartsAt derivation from slots[0]
+          slots.sort((a, b) => a.getTime() - b.getTime());
+
+          // CRITICAL FIX: Validate slot count matches session duration requirements
+          // This prevents incomplete appointments from being created
+          const slotsPerCall = SlotCalculationService.getSlotsPerCall(
+            config.sessionDurationInHours || config.durationInHours || 1,
+          );
+
+          if (slots.length % slotsPerCall !== 0) {
+            const sessionDuration =
+              config.sessionDurationInHours || config.durationInHours || 1;
+            throw new AllocationValidationError(
+              `Invalid slot count: ${slots.length} slots provided, but ${sessionDuration}-hour ` +
+                `sessions require multiples of ${slotsPerCall} slots (30 minutes each). ` +
+                `Valid counts: ${slotsPerCall}, ${slotsPerCall * 2}, ${slotsPerCall * 3}, etc.`,
+            );
+          }
+
+          // Detect reschedule scenario: check for existing tentative slots
+          const relationField = this.getEventRelationField(eventType);
+          const existingAppointments: AppointmentWithSlots[] =
+            await tx.appointment.findMany({
+              where: {
+                [`${relationField}Id`]: eventId,
+              } as Prisma.AppointmentWhereInput,
+              include: { slotsOfAppointment: true },
+            });
+
+          const tentativeSlotCount = existingAppointments.reduce(
+            (count, appointment) =>
+              count +
+              appointment.slotsOfAppointment.filter((slot) => slot.isTentative)
+                .length,
+            0,
+          );
+          const isReschedule = tentativeSlotCount > 0;
+
+          // Collect appointment IDs to exclude from conflict detection and weekly limits.
+          // For reschedule: exclude tentative appointments (they'll be deleted)
+          // For initial allocation: exclude ALL existing appointments (they'll all be deleted)
+          const appointmentIdsToExclude = isReschedule
+            ? existingAppointments
+                .filter((a) => a.slotsOfAppointment.some((s) => s.isTentative))
+                .map((a) => a.id)
+            : existingAppointments.map((a) => a.id);
+
+          // Validate total slot count for recurring event types
+          // For reschedule: only require replacement slots for tentative count
+          // For initial allocation: require full plan slot count
+          if (eventType === "subscription" || eventType === "class") {
+            if (isReschedule) {
+              if (slots.length !== tentativeSlotCount) {
+                throw new AllocationValidationError(
+                  `This reschedule requires exactly ${tentativeSlotCount} slots ` +
+                    `(replacing ${tentativeSlotCount} tentative slots), ` +
+                    `but ${slots.length} were provided.`,
+                );
+              }
+            } else if (
+              config.schedulingPeriodStartsAt &&
+              config.schedulingPeriodEndsAt
+            ) {
+              const requiredSlots =
+                SlotCalculationService.calculateRequiredSlots(
+                  eventType,
+                  config,
+                );
+              if (slots.length !== requiredSlots) {
+                throw new AllocationValidationError(
+                  `This ${eventType} requires exactly ${requiredSlots} slots ` +
+                    `(based on the scheduling period and session configuration), ` +
+                    `but ${slots.length} were provided.`,
+                );
+              }
             }
           }
-        }
 
-        // Validate
-        // Pass appointmentIdsToExclude so their slots don't trigger false conflicts
-        const validator = new SlotValidationService(tx);
-        const validation = await validator.validate(
-          eventType,
-          eventId,
-          slots,
-          consultant,
-          config,
-          appointmentIdsToExclude,
-        );
+          // Validate
+          // Pass appointmentIdsToExclude so their slots don't trigger false conflicts
+          const validator = new SlotValidationService(tx);
+          const validation = await validator.validate(
+            eventType,
+            eventId,
+            slots,
+            consultant,
+            config,
+            appointmentIdsToExclude,
+          );
 
-        if (!validation.isValid) {
-          throw new AllocationValidationError(`Validation failed: ${validation.errors.join("; ")}`);
-        }
+          if (!validation.isValid) {
+            throw new AllocationValidationError(
+              `Validation failed: ${validation.errors.join("; ")}`,
+            );
+          }
 
-        // Delete existing appointments
-        // For reschedules: only delete tentative slots (preserve confirmed ones)
-        // For initial allocation: delete all
-        await this.deleteExistingAppointments(
-          tx,
-          eventType,
-          eventId,
-          isReschedule,
-        );
+          // Delete existing appointments
+          // For reschedules: only delete tentative slots (preserve confirmed ones)
+          // For initial allocation: delete all
+          await this.deleteExistingAppointments(
+            tx,
+            eventType,
+            eventId,
+            isReschedule,
+          );
 
-        // Create appointments
-        const appointments = await this.createAppointments(
-          tx,
-          eventType,
-          eventId,
-          slots,
-          consultant.userId,
-          consulteeUserId,
-          config,
-        );
+          // Create appointments
+          const appointments = await this.createAppointments(
+            tx,
+            eventType,
+            eventId,
+            slots,
+            consultant.userId,
+            consulteeUserId,
+            config,
+          );
 
-        // Update event status
-        await this.updateEventStatus(tx, eventType, eventId, slots[0], config);
+          // Update event status
+          await this.updateEventStatus(
+            tx,
+            eventType,
+            eventId,
+            slots[0],
+            config,
+          );
 
-        return {
-          success: true,
-          appointments,
-          warnings: validation.warnings,
-        };
-      },
-      {
-        timeout: 120000, // 120 seconds (2 min) - handles large allocations (200+ slots)
-      },
-    );
+          return {
+            success: true,
+            appointments,
+            warnings: validation.warnings,
+          };
+        },
+        {
+          timeout: 120000, // 120 seconds (2 min) - handles large allocations (200+ slots)
+        },
+      );
     } finally {
       await unlockAutoAllocate(lock);
     }
@@ -683,7 +692,9 @@ export class SlotAllocationService {
         );
 
         if (!validation.isValid) {
-          throw new AllocationValidationError(`Validation failed: ${validation.errors.join("; ")}`);
+          throw new AllocationValidationError(
+            `Validation failed: ${validation.errors.join("; ")}`,
+          );
         }
 
         // Update event status to approved (appointments already exist and verified)
@@ -827,7 +838,9 @@ export class SlotAllocationService {
       (consultant.scheduleType === ScheduleType.WEEKLY && !hasWeeklySlots) ||
       (consultant.scheduleType === ScheduleType.CUSTOM && !hasCustomSlots)
     ) {
-      throw new AllocationValidationError("No availability slots configured for consultant");
+      throw new AllocationValidationError(
+        "No availability slots configured for consultant",
+      );
     }
 
     const now = new Date();
@@ -848,8 +861,7 @@ export class SlotAllocationService {
               ),
             }))
             .sort(
-              (a, b) =>
-                a.nextOccurrence.getTime() - b.nextOccurrence.getTime(),
+              (a, b) => a.nextOccurrence.getTime() - b.nextOccurrence.getTime(),
             )
             .map((w) => w.slot)
         : [];
@@ -857,8 +869,7 @@ export class SlotAllocationService {
       consultant.scheduleType === ScheduleType.CUSTOM
         ? [...consultant.slotsOfAvailabilityCustom].sort(
             (a, b) =>
-              new Date(a.startsAt).getTime() -
-              new Date(b.startsAt).getTime(),
+              new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
           )
         : [];
 
@@ -1114,7 +1125,7 @@ export class SlotAllocationService {
     // Formula: utcDay = (localDay - floor((startTimeUtc + offset) / 1440)) mod 7
     const localStartMinutes = startTimeUtc + utcOffsetMinutes;
     const dayAdjust = Math.floor(localStartMinutes / 1440);
-    const targetDay = ((localDay - dayAdjust) % 7 + 7) % 7;
+    const targetDay = (((localDay - dayAdjust) % 7) + 7) % 7;
 
     const targetHours = Math.floor(startTimeUtc / 60);
     const targetMinutes = startTimeUtc % 60;
@@ -1162,7 +1173,7 @@ export class SlotAllocationService {
     // Compute actual UTC day-of-week (same formula as isMinuteWithinWeeklySlot)
     const localStartMinutes = startTimeUtc + utcOffsetMinutes;
     const dayAdjust = Math.floor(localStartMinutes / 1440);
-    const slotDayOfWeek = ((localDay - dayAdjust) % 7 + 7) % 7;
+    const slotDayOfWeek = (((localDay - dayAdjust) % 7) + 7) % 7;
 
     const targetDayOfWeek = targetDay.getUTCDay();
 

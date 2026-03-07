@@ -467,7 +467,11 @@ export async function syncUserEventChannels(
       const batch = dmPairs.slice(i, i + BATCH_SIZE);
       const results = await Promise.allSettled(
         batch.map((pair) =>
-          addUserToDmChannel(pair.consultantUserId, pair.consulteeUserId, userId),
+          addUserToDmChannel(
+            pair.consultantUserId,
+            pair.consulteeUserId,
+            userId,
+          ),
         ),
       );
       results.forEach((r) => {
@@ -480,7 +484,8 @@ export async function syncUserEventChannels(
     // Query Stream for every channel this user currently belongs to.
     // Paginate to handle users with 100+ channel memberships.
     const PAGE_SIZE = 100;
-    let allStreamChannels: Awaited<ReturnType<typeof client.queryChannels>> = [];
+    let allStreamChannels: Awaited<ReturnType<typeof client.queryChannels>> =
+      [];
     let offset = 0;
     let page;
     do {
@@ -496,7 +501,14 @@ export async function syncUserEventChannels(
 
     // Only clean up channels with managed prefixes — preserve collab, support,
     // and manually-created channels that aren't part of the event/dm lifecycle.
-    const MANAGED_PREFIXES = ["consultation-", "subscription-", "webinar-", "class-", "trial-", "dm-"];
+    const MANAGED_PREFIXES = [
+      "consultation-",
+      "subscription-",
+      "webinar-",
+      "class-",
+      "trial-",
+      "dm-",
+    ];
     const staleChannels = streamChannels.filter(
       (ch) =>
         ch.id &&
@@ -565,9 +577,15 @@ export async function syncUserEventChannels(
  */
 async function getDmPairsForUser(
   userId: string,
-  user: { consultantProfileId: string | null; consulteeProfileId: string | null },
+  user: {
+    consultantProfileId: string | null;
+    consulteeProfileId: string | null;
+  },
 ): Promise<{ consultantUserId: string; consulteeUserId: string }[]> {
-  const pairMap = new Map<string, { consultantUserId: string; consulteeUserId: string }>();
+  const pairMap = new Map<
+    string,
+    { consultantUserId: string; consulteeUserId: string }
+  >();
 
   if (user.consultantProfileId) {
     const [consultations, subscriptions] = await Promise.all([
@@ -576,14 +594,18 @@ async function getDmPairsForUser(
           consultationPlan: { consultantProfileId: user.consultantProfileId },
           requestStatus: { in: ["APPROVED", "SCHEDULED"] },
         },
-        include: { requestedBy: { include: { user: { select: { id: true } } } } },
+        include: {
+          requestedBy: { include: { user: { select: { id: true } } } },
+        },
       }),
       prisma.subscription.findMany({
         where: {
           subscriptionPlan: { consultantProfileId: user.consultantProfileId },
           requestStatus: { in: ["APPROVED", "SCHEDULED"] },
         },
-        include: { requestedBy: { include: { user: { select: { id: true } } } } },
+        include: {
+          requestedBy: { include: { user: { select: { id: true } } } },
+        },
       }),
     ]);
     for (const c of [...consultations, ...subscriptions]) {
@@ -603,7 +625,11 @@ async function getDmPairsForUser(
         },
         include: {
           consultationPlan: {
-            include: { consultantProfile: { include: { user: { select: { id: true } } } } },
+            include: {
+              consultantProfile: {
+                include: { user: { select: { id: true } } },
+              },
+            },
           },
         },
       }),
@@ -614,7 +640,11 @@ async function getDmPairsForUser(
         },
         include: {
           subscriptionPlan: {
-            include: { consultantProfile: { include: { user: { select: { id: true } } } } },
+            include: {
+              consultantProfile: {
+                include: { user: { select: { id: true } } },
+              },
+            },
           },
         },
       }),
@@ -675,7 +705,11 @@ async function addUserToDmChannel(
 
   markChannelExists(channelType, channelId);
   markMembership(channelId, currentUserId, true);
-  streamLogger.info("Created DM channel", { channelId, consultantUserId, consulteeUserId });
+  streamLogger.info("Created DM channel", {
+    channelId,
+    consultantUserId,
+    consulteeUserId,
+  });
   return { success: true, channelId, created: true };
 }
 
@@ -770,4 +804,3 @@ async function getClassIdsForUser(
     ]),
   );
 }
-

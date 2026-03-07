@@ -25,7 +25,7 @@ export interface WeeklySlot {
 /** Custom (date-specific) slot as ISO strings — consumed by the onboarding server action. */
 export interface CustomSlot {
   startsAt: string; // ISO 8601
-  endsAt: string;   // ISO 8601
+  endsAt: string; // ISO 8601
 }
 
 /** Aggregated validation and statistics feedback for a set of slots. */

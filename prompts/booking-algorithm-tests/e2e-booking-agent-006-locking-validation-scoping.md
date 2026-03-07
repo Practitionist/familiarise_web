@@ -29,17 +29,20 @@ All test data uses the `-006` suffix to avoid collisions with existing seed data
 ## Background: Key Infrastructure
 
 **Distributed locking** (`utils/appointmentlock.ts`):
+
 - `lockAutoAllocate(consultantProfileId)` — consultant-level lock for auto-allocation
 - `lockSlotBooking(consultantProfileId, slotStartTime)` — per-slot lock for checkout
 - `lockEventCheckout(appointmentType, eventOrPlanId)` — event-level lock for webinar/class checkout
 - Lock contention throws errors that should be caught and returned as 409
 
 **Error classification:**
+
 - Lock contention -> 409
 - Validation errors (bad data) -> 400
 - Not-found errors -> 400 (not 500)
 
 **Critical source files:**
+
 - `utils/appointmentlock.ts` — all lock functions
 - `utils/errors/SlotLockError.ts` — custom error class
 - `app/api/events/webinars/[webinarId]/allocate/route.ts`
@@ -342,13 +345,16 @@ Login as CONSULTANT A. Allocate the webinar:
 
 ```javascript
 async () => {
-  const response = await fetch("/api/events/webinars/test-webinar-006a/allocate", {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ isAuto: true }),
-  });
+  const response = await fetch(
+    "/api/events/webinars/test-webinar-006a/allocate",
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ isAuto: true }),
+    },
+  );
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** 200, webinar allocated with 3 slots (1.5h = 3 x 30min)
@@ -368,7 +374,7 @@ async () => {
 
   const [r1, r2] = await Promise.all([makeRequest(), makeRequest()]);
   return { request1: r1, request2: r2 };
-}
+};
 ```
 
 **Expected:** One returns 200, the other returns 409 (lock contention).
@@ -395,7 +401,7 @@ async () => {
     body: JSON.stringify({ isAuto: true }),
   });
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 Then fire two concurrent requests:
@@ -411,7 +417,7 @@ async () => {
 
   const [r1, r2] = await Promise.all([makeRequest(), makeRequest()]);
   return { request1: r1, request2: r2 };
-}
+};
 ```
 
 **Expected:** One 200, one 409
@@ -431,13 +437,16 @@ After lock is released from Test 2.1, a sequential call should succeed:
 
 ```javascript
 async () => {
-  const response = await fetch("/api/events/webinars/test-webinar-006a/allocate", {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ isAuto: true }),
-  });
+  const response = await fetch(
+    "/api/events/webinars/test-webinar-006a/allocate",
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ isAuto: true }),
+    },
+  );
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** 200 — lock was released, sequential allocation works
@@ -452,15 +461,18 @@ As CONSULTANT A, send invalid data to allocate:
 
 ```javascript
 async () => {
-  const response = await fetch("/api/events/webinars/test-webinar-006a/allocate", {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      slots: "not-an-array",
-    }),
-  });
+  const response = await fetch(
+    "/api/events/webinars/test-webinar-006a/allocate",
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        slots: "not-an-array",
+      }),
+    },
+  );
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** 400 (not 500) — validation error, not internal server error
@@ -469,13 +481,16 @@ async () => {
 
 ```javascript
 async () => {
-  const response = await fetch("/api/events/webinars/nonexistent-webinar-xyz/allocate", {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ isAuto: true }),
-  });
+  const response = await fetch(
+    "/api/events/webinars/nonexistent-webinar-xyz/allocate",
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ isAuto: true }),
+    },
+  );
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** 400 or 404 (not 500)
@@ -502,7 +517,7 @@ async () => {
     }),
   });
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** 400 — "Invalid time format: must be integer 0-1439"
@@ -523,7 +538,7 @@ async () => {
     }),
   });
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** 400
@@ -544,7 +559,7 @@ async () => {
     }),
   });
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** 400 — non-integer rejected
@@ -553,15 +568,18 @@ async () => {
 
 ```javascript
 async () => {
-  const response = await fetch("/api/slots/availability/weekly/test-w006a-mon", {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      startTimeUtc: "abc",
-    }),
-  });
+  const response = await fetch(
+    "/api/slots/availability/weekly/test-w006a-mon",
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        startTimeUtc: "abc",
+      }),
+    },
+  );
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** 400 — typeof check catches string
@@ -592,7 +610,7 @@ async () => {
   }
 
   return { status: response.status, body };
-}
+};
 ```
 
 **Expected:** 201 — boundary values 0 and 1439 are valid
@@ -639,8 +657,12 @@ async () => {
   // Clean up
   await fetch(`/api/slots/availability/custom/${slotId}`, { method: "DELETE" });
 
-  return { createStatus: createResp.status, putStatus: putResp.status, putBody: await putResp.json() };
-}
+  return {
+    createStatus: createResp.status,
+    putStatus: putResp.status,
+    putBody: await putResp.json(),
+  };
+};
 ```
 
 **Expected:** putStatus=400 — "Invalid date format"
@@ -678,7 +700,7 @@ async () => {
   await fetch(`/api/slots/availability/custom/${slotId}`, { method: "DELETE" });
 
   return { patchStatus: patchResp.status, patchBody: await patchResp.json() };
-}
+};
 ```
 
 **Expected:** patchStatus=400
@@ -717,7 +739,7 @@ async () => {
   await fetch(`/api/slots/availability/custom/${slotId}`, { method: "DELETE" });
 
   return { putStatus: putResp.status };
-}
+};
 ```
 
 **Expected:** putStatus=200
@@ -733,7 +755,9 @@ Login as CONSULTEE. Book a consultation with consultant A on Monday 10:00 UTC:
 ```javascript
 async () => {
   const nextMon = new Date();
-  nextMon.setDate(nextMon.getDate() + ((1 + 7 - nextMon.getDay()) % 7 || 7) + 7);
+  nextMon.setDate(
+    nextMon.getDate() + ((1 + 7 - nextMon.getDay()) % 7 || 7) + 7,
+  );
   nextMon.setUTCHours(4, 30, 0, 0); // 10:00 IST = 04:30 UTC
 
   const slotEnd = new Date(nextMon);
@@ -752,7 +776,7 @@ async () => {
     }),
   });
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** 200
@@ -764,18 +788,20 @@ Verify consultant B's availability at the same Monday slot is not affected:
 ```javascript
 async () => {
   const nextMon = new Date();
-  nextMon.setDate(nextMon.getDate() + ((1 + 7 - nextMon.getDay()) % 7 || 7) + 7);
+  nextMon.setDate(
+    nextMon.getDate() + ((1 + 7 - nextMon.getDay()) % 7 || 7) + 7,
+  );
   const nextSat = new Date(nextMon);
   nextSat.setDate(nextSat.getDate() + 5);
 
   const response = await fetch(
-    `/api/slots/availability-with-allocation/test-consultant-profile-006b?startDate=${nextMon.toISOString().split('T')[0]}&endDate=${nextSat.toISOString().split('T')[0]}`
+    `/api/slots/availability-with-allocation/test-consultant-profile-006b?startDate=${nextMon.toISOString().split("T")[0]}&endDate=${nextSat.toISOString().split("T")[0]}`,
   );
   const body = await response.json();
 
   // Monday slot should still show as available for consultant B
   return { status: response.status, body };
-}
+};
 ```
 
 **Expected:** 200 — consultant B's Monday slots are all available (not affected by A's booking)
@@ -785,18 +811,20 @@ async () => {
 ```javascript
 async () => {
   const nextMon = new Date();
-  nextMon.setDate(nextMon.getDate() + ((1 + 7 - nextMon.getDay()) % 7 || 7) + 7);
+  nextMon.setDate(
+    nextMon.getDate() + ((1 + 7 - nextMon.getDay()) % 7 || 7) + 7,
+  );
   const nextSat = new Date(nextMon);
   nextSat.setDate(nextSat.getDate() + 5);
 
   const response = await fetch(
-    `/api/slots/availability-with-allocation/test-consultant-profile-006a?startDate=${nextMon.toISOString().split('T')[0]}&endDate=${nextSat.toISOString().split('T')[0]}`
+    `/api/slots/availability-with-allocation/test-consultant-profile-006a?startDate=${nextMon.toISOString().split("T")[0]}&endDate=${nextSat.toISOString().split("T")[0]}`,
   );
   const body = await response.json();
 
   // The booked Monday 04:30-05:30 slot should NOT appear as available
   return { status: response.status, body };
-}
+};
 ```
 
 **Expected:** 200 — the booked slot (Mon 04:30-05:30 UTC) is excluded from consultant A's availability
@@ -813,6 +841,7 @@ Navigate to `/dashboard/consultant/test-consultant-profile-006a/appointments`
 `take_screenshot`
 
 Verify:
+
 - Classes section shows "Lock Test Class"
 - If class was auto-allocated in Phase 2, it should show as scheduled (not in unscheduled section)
 - If not yet allocated, it should show in the unscheduled section with "Timings" button
@@ -820,6 +849,7 @@ Verify:
 ### Test 7.2 — Appointments Page: Unscheduled Webinars
 
 On the same page, verify:
+
 - Webinars section shows "Lock Test Webinar"
 - If webinar was allocated in Phase 2, it should show as scheduled
 - If not yet allocated, it should show in unscheduled section
@@ -827,6 +857,7 @@ On the same page, verify:
 ### Test 7.3 — Class Session Counter
 
 Verify the class session counter shows the correct count:
+
 - "Lock Test Class" should show "0 of 2 sessions" or "2 of 2 sessions" depending on allocation
 - The count should use `totalSessions` from the class plan (2), not raw slot count
 
@@ -840,13 +871,16 @@ Login as CONSULTANT A. Allocate the 1-participant webinar:
 
 ```javascript
 async () => {
-  const response = await fetch("/api/events/webinars/test-webinar-006a-wl/allocate", {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ isAuto: true }),
-  });
+  const response = await fetch(
+    "/api/events/webinars/test-webinar-006a-wl/allocate",
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ isAuto: true }),
+    },
+  );
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** 200
@@ -869,7 +903,7 @@ async () => {
     }),
   });
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** 200 — first participant fills the single seat
@@ -895,7 +929,7 @@ async () => {
     }),
   });
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** Waitlisted (200 with waitlist indicator, or specific status code) — NOT a 500 transaction error
@@ -1021,29 +1055,29 @@ SELECT
 
 ## Verification Checklist (End-to-End)
 
-| # | Check | Expected |
-|---|-------|----------|
-| 1 | Concurrent webinar auto-allocate -> one 200, one 409 | Exactly one succeeds |
-| 2 | Concurrent class auto-allocate -> one 200, one 409 | Exactly one succeeds |
-| 3 | Sequential auto-allocate after lock release -> 200 | 200 |
-| 4 | No double-booking in DB after concurrent requests | Verified via COUNT |
-| 5 | Validation error -> 400 (not 500) | 400 |
-| 6 | Not-found event -> 400 or 404 (not 500) | non-500 |
-| 7 | startTimeUtc > 1439 -> 400 | 400 |
-| 8 | startTimeUtc = -1 -> 400 | 400 |
-| 9 | startTimeUtc = 10.5 -> 400 | 400 |
-| 10 | startTimeUtc = "abc" via PATCH -> 400 | 400 |
-| 11 | Boundary values (0, 1439) -> 201 | 201 |
-| 12 | Custom slot "not-a-date" -> 400 | 400 |
-| 13 | Custom slot invalid ISO -> 400 | 400 |
-| 14 | Custom slot valid ISO -> 200 | 200 |
-| 15 | Consultant A booking does NOT affect B's availability | B's slots all free |
-| 16 | Consultant A's booked slot excluded from own availability | Slot not in response |
-| 17 | Unscheduled classes NOT in scheduled section | UI verified |
-| 18 | Session counter uses totalSessions | Correct count |
-| 19 | Webinar fills to capacity -> first checkout succeeds | 200 |
-| 20 | Next checkout -> waitlisted (not 500) | Waitlisted |
-| 21 | Cleanup complete | All counts = 0 |
+| #   | Check                                                     | Expected             |
+| --- | --------------------------------------------------------- | -------------------- |
+| 1   | Concurrent webinar auto-allocate -> one 200, one 409      | Exactly one succeeds |
+| 2   | Concurrent class auto-allocate -> one 200, one 409        | Exactly one succeeds |
+| 3   | Sequential auto-allocate after lock release -> 200        | 200                  |
+| 4   | No double-booking in DB after concurrent requests         | Verified via COUNT   |
+| 5   | Validation error -> 400 (not 500)                         | 400                  |
+| 6   | Not-found event -> 400 or 404 (not 500)                   | non-500              |
+| 7   | startTimeUtc > 1439 -> 400                                | 400                  |
+| 8   | startTimeUtc = -1 -> 400                                  | 400                  |
+| 9   | startTimeUtc = 10.5 -> 400                                | 400                  |
+| 10  | startTimeUtc = "abc" via PATCH -> 400                     | 400                  |
+| 11  | Boundary values (0, 1439) -> 201                          | 201                  |
+| 12  | Custom slot "not-a-date" -> 400                           | 400                  |
+| 13  | Custom slot invalid ISO -> 400                            | 400                  |
+| 14  | Custom slot valid ISO -> 200                              | 200                  |
+| 15  | Consultant A booking does NOT affect B's availability     | B's slots all free   |
+| 16  | Consultant A's booked slot excluded from own availability | Slot not in response |
+| 17  | Unscheduled classes NOT in scheduled section              | UI verified          |
+| 18  | Session counter uses totalSessions                        | Correct count        |
+| 19  | Webinar fills to capacity -> first checkout succeeds      | 200                  |
+| 20  | Next checkout -> waitlisted (not 500)                     | Waitlisted           |
+| 21  | Cleanup complete                                          | All counts = 0       |
 
 ---
 

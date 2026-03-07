@@ -2015,12 +2015,11 @@ export function useEventSlotAllocation(
           options.endDate &&
           options.consultantId
         ) {
-          const fullPeriodData =
-            await AllocationService.fetchAvailabilitySlots(
-              options.consultantId,
-              options.startDate,
-              options.endDate,
-            );
+          const fullPeriodData = await AllocationService.fetchAvailabilitySlots(
+            options.consultantId,
+            options.startDate,
+            options.endDate,
+          );
           const allRawSlots = [
             ...(fullPeriodData.weekly || []),
             ...(fullPeriodData.custom || []),

@@ -459,14 +459,18 @@ export async function validateSlotAvailability(
       throw new Error("Availability slot not found");
     }
     // Verify the availability slot belongs to the correct consultant
-    if (consultantUserId && avail.consultantProfile.userId !== consultantUserId) {
+    if (
+      consultantUserId &&
+      avail.consultantProfile.userId !== consultantUserId
+    ) {
       throw new Error(
         "Availability slot does not belong to the specified consultant",
       );
     }
     // Overnight-aware check: use shared utility instead of same-day-only guard
     const candidateDay = slotStart.getUTCDay();
-    const candidateMinutes = slotStart.getUTCHours() * 60 + slotStart.getUTCMinutes();
+    const candidateMinutes =
+      slotStart.getUTCHours() * 60 + slotStart.getUTCMinutes();
     const slotDurationMinutes = Math.round(
       (slotEnd.getTime() - slotStart.getTime()) / (60 * 1000),
     );
@@ -494,7 +498,10 @@ export async function validateSlotAvailability(
       throw new Error("Custom availability slot not found");
     }
     // Verify the custom availability slot belongs to the correct consultant
-    if (consultantUserId && avail.consultantProfile.userId !== consultantUserId) {
+    if (
+      consultantUserId &&
+      avail.consultantProfile.userId !== consultantUserId
+    ) {
       throw new Error(
         "Availability slot does not belong to the specified consultant",
       );

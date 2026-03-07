@@ -94,11 +94,7 @@ export const getInitialWeeklySlots = (
   try {
     consultant.slotsOfAvailabilityWeekly.forEach((slot) => {
       try {
-        if (
-          !slot ||
-          slot.startTimeUtc == null ||
-          slot.endTimeUtc == null
-        ) {
+        if (!slot || slot.startTimeUtc == null || slot.endTimeUtc == null) {
           console.warn("Invalid weekly slot data:", slot);
           return;
         }
@@ -197,10 +193,7 @@ export const getInitialCustomSlots = (
           slot.startsAt.toString(),
           timezone,
         );
-        const endTime = convertUtcToTimezone(
-          slot.endsAt.toString(),
-          timezone,
-        );
+        const endTime = convertUtcToTimezone(slot.endsAt.toString(), timezone);
 
         // Only add valid slots with proper error handling
         if (isValidTimeRange(startTime, endTime)) {

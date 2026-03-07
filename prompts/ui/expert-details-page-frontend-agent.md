@@ -5,6 +5,7 @@
 You are building the **Expert Details page** for **Familiarise**, an expert services marketplace ("Shopify for Knowledge Businesses"). This is the most critical conversion page on the platform — a consultee lands here after discovering an expert, and must be able to understand the expert's value proposition and initiate a booking within seconds.
 
 **Tech stack:**
+
 - Next.js 15 (App Router, RSC-first)
 - React 18 + TailwindCSS + Radix UI primitives
 - TypeScript (strict)
@@ -378,9 +379,14 @@ type TConsultantDetailData = {
   slotsOfAvailabilityCustom: SlotOfAvailabilityCustom[];
 
   consultationPlans: ConsultationPlan[];
-  subscriptionPlans: (SubscriptionPlan & { subscriptionContents: SubscriptionContent[] })[];
+  subscriptionPlans: (SubscriptionPlan & {
+    subscriptionContents: SubscriptionContent[];
+  })[];
   webinarPlans: (WebinarPlan & { webinars: Webinar[] })[];
-  classPlans: (ClassPlan & { classes: Class[]; classContents: ClassContent[] })[];
+  classPlans: (ClassPlan & {
+    classes: Class[];
+    classContents: ClassContent[];
+  })[];
 };
 
 type TConsultantReview = {
@@ -442,17 +448,20 @@ A section for the consultant's full profile in prose and structured form:
 A credibility section. Organise into three sub-sections rendered as visual timelines or card stacks:
 
 **Work Experience**
+
 - Company name, job title, date range (formatted as "Jan 2020 – Present" or "Jan 2020 – Dec 2022")
 - Location if present
 - Description (collapsible if long)
 - Show the most recent 3 by default with a "Show more" toggle
 
 **Education**
+
 - Institution, degree, field of study, years
 - Grade if present
 - Brief description if present
 
 **Certifications**
+
 - Certification name, issuing org, issue date
 - Expiry date if present ("Expires: …" or "No expiry")
 - Credential URL as an external link if present
@@ -467,6 +476,7 @@ The conversion centrepiece. Render all four service types. Use a tabbed or categ
 
 **Consultations (1-on-1 sessions)**
 Each `ConsultationPlan` is one card. Show per card:
+
 - Title
 - Duration (e.g., "60 min session")
 - Price (formatted with currency symbol)
@@ -480,6 +490,7 @@ Each `ConsultationPlan` is one card. Show per card:
 
 **Subscription / Mentorship Plans**
 Each `SubscriptionPlan` card shows:
+
 - Title
 - Duration (e.g., "1-month plan")
 - Price
@@ -492,6 +503,7 @@ Each `SubscriptionPlan` card shows:
 
 **Webinars (Live group sessions)**
 Each `WebinarPlan` card shows:
+
 - Title + cover image (`imageUrl` if set)
 - Price (or "Free" if price is 0)
 - Duration, language, level
@@ -504,6 +516,7 @@ Each `WebinarPlan` card shows:
 
 **Classes (Cohort programs)**
 Each `ClassPlan` card shows:
+
 - Title + cover image
 - Price
 - Program structure: "X months · Y sessions/week · Z total hours"
@@ -606,4 +619,4 @@ The agent should produce:
 
 ---
 
-*This prompt represents the full specification for the Expert Details page rebuild. The agent has full latitude over visual design, component naming, and UX micro-decisions not explicitly constrained above.*
+_This prompt represents the full specification for the Expert Details page rebuild. The agent has full latitude over visual design, component naming, and UX micro-decisions not explicitly constrained above._

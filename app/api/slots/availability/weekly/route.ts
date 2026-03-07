@@ -30,10 +30,7 @@ export async function GET(req: NextRequest) {
         where: {
           consultantProfileId: consultantProfileId,
         },
-        orderBy: [
-          { startDay: "asc" },
-          { startTimeUtc: "asc" },
-        ],
+        orderBy: [{ startDay: "asc" }, { startTimeUtc: "asc" }],
         include: {
           consultantProfile: {
             select: {
@@ -87,13 +84,8 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const {
-      consultantProfileId,
-      startDay,
-      endDay,
-      startTimeUtc,
-      endTimeUtc,
-    } = body;
+    const { consultantProfileId, startDay, endDay, startTimeUtc, endTimeUtc } =
+      body;
 
     if (
       !consultantProfileId ||
@@ -143,13 +135,21 @@ export async function POST(req: NextRequest) {
       endTimeUtc > 1439
     ) {
       return NextResponse.json(
-        { error: "Invalid time format: must be integer 0-1439 (minutes since midnight UTC)" },
+        {
+          error:
+            "Invalid time format: must be integer 0-1439 (minutes since midnight UTC)",
+        },
         { status: 400 },
       );
     }
 
     // Day-aware time order validation (supports overnight slots)
-    const timeError = validateWeeklySlotTimeOrder(startDay, endDay, startTimeUtc, endTimeUtc);
+    const timeError = validateWeeklySlotTimeOrder(
+      startDay,
+      endDay,
+      startTimeUtc,
+      endTimeUtc,
+    );
     if (timeError) {
       return NextResponse.json({ error: timeError }, { status: 400 });
     }
@@ -167,7 +167,9 @@ export async function POST(req: NextRequest) {
 
     if (overlappingSlot) {
       return NextResponse.json(
-        { error: `This slot (${minutesToTimeString(startTimeUtc)}-${minutesToTimeString(endTimeUtc)}) overlaps with an existing slot` },
+        {
+          error: `This slot (${minutesToTimeString(startTimeUtc)}-${minutesToTimeString(endTimeUtc)}) overlaps with an existing slot`,
+        },
         { status: 409 },
       );
     }

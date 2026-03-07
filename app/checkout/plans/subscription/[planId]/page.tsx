@@ -298,7 +298,10 @@ export default function SubscriptionCheckoutPage({
                 console.error("Payment confirmation error:", paymentError);
                 toast({
                   title: "Payment Error",
-                  description: paymentError instanceof Error ? paymentError.message : "Payment confirmation failed. Please try again.",
+                  description:
+                    paymentError instanceof Error
+                      ? paymentError.message
+                      : "Payment confirmation failed. Please try again.",
                   variant: "destructive",
                 });
               }

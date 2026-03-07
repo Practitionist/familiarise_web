@@ -356,9 +356,7 @@ export async function checkEventAvailability(params: {
       throw new Error("Webinar not found");
     }
 
-    const currentParticipants = countWebinarParticipants(
-      webinar.appointment,
-    );
+    const currentParticipants = countWebinarParticipants(webinar.appointment);
     const maxParticipants = webinar.webinarPlan.maxParticipants;
 
     return {

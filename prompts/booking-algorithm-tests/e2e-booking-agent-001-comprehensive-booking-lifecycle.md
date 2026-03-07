@@ -1348,9 +1348,9 @@ async () => {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       startDay: "SATURDAY",
-      startTimeUtc: 360,   // 06:00 UTC = 11:30 IST
+      startTimeUtc: 360, // 06:00 UTC = 11:30 IST
       endDay: "SATURDAY",
-      endTimeUtc: 540,     // 09:00 UTC = 14:30 IST
+      endTimeUtc: 540, // 09:00 UTC = 14:30 IST
       consultantProfileId: "test-consultant-profile-001",
     }),
   });
@@ -1378,7 +1378,7 @@ async () => {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       startDay: "SUNDAY",
-      startTimeUtc: 1500,  // > 1439 — invalid
+      startTimeUtc: 1500, // > 1439 — invalid
       endDay: "SUNDAY",
       endTimeUtc: 1600,
       consultantProfileId: "test-consultant-profile-001",
@@ -1400,7 +1400,7 @@ async () => {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       startDay: "MONDAY",
-      startTimeUtc: 300,   // 05:00 UTC — inside 270-450 range
+      startTimeUtc: 300, // 05:00 UTC — inside 270-450 range
       endDay: "MONDAY",
       endTimeUtc: 480,
       consultantProfileId: "test-consultant-profile-001",
@@ -1425,9 +1425,9 @@ async () => {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       startDay: "SATURDAY",
-      startTimeUtc: 420,   // 07:00 UTC
+      startTimeUtc: 420, // 07:00 UTC
       endDay: "SATURDAY",
-      endTimeUtc: 600,     // 10:00 UTC
+      endTimeUtc: 600, // 10:00 UTC
     }),
   });
 

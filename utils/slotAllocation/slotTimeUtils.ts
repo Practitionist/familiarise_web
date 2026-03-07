@@ -91,7 +91,10 @@ const DAY_ORDER: DayOfWeek[] = [
 /**
  * Check if endDay is the next day of the week after startDay.
  */
-export function isNextDayOfWeek(startDay: DayOfWeek, endDay: DayOfWeek): boolean {
+export function isNextDayOfWeek(
+  startDay: DayOfWeek,
+  endDay: DayOfWeek,
+): boolean {
   const startIdx = DAY_ORDER.indexOf(startDay);
   const endIdx = DAY_ORDER.indexOf(endDay);
   if (startIdx === -1 || endIdx === -1) return false;
@@ -168,9 +171,18 @@ export function buildWeeklyOverlapWhere(
           startDay,
           endDay: startDay,
           OR: [
-            { startTimeUtc: { lte: startTimeUtc }, endTimeUtc: { gt: startTimeUtc } },
-            { startTimeUtc: { lt: endTimeUtc }, endTimeUtc: { gte: endTimeUtc } },
-            { startTimeUtc: { gte: startTimeUtc }, endTimeUtc: { lte: endTimeUtc } },
+            {
+              startTimeUtc: { lte: startTimeUtc },
+              endTimeUtc: { gt: startTimeUtc },
+            },
+            {
+              startTimeUtc: { lt: endTimeUtc },
+              endTimeUtc: { gte: endTimeUtc },
+            },
+            {
+              startTimeUtc: { gte: startTimeUtc },
+              endTimeUtc: { lte: endTimeUtc },
+            },
           ],
         },
         // Overnight slots from previous day carrying into our day
@@ -242,8 +254,18 @@ export function buildWeeklyOverlapWhere(
  * then check for pairwise overlap.
  */
 export function slotsOverlap(
-  a: { startDay: DayOfWeek; endDay: DayOfWeek; startTimeUtc: number; endTimeUtc: number },
-  b: { startDay: DayOfWeek; endDay: DayOfWeek; startTimeUtc: number; endTimeUtc: number },
+  a: {
+    startDay: DayOfWeek;
+    endDay: DayOfWeek;
+    startTimeUtc: number;
+    endTimeUtc: number;
+  },
+  b: {
+    startDay: DayOfWeek;
+    endDay: DayOfWeek;
+    startTimeUtc: number;
+    endTimeUtc: number;
+  },
 ): boolean {
   // Convert a slot to an array of (dayIndex, startMinute, endMinute) ranges.
   // Same-day slots produce 1 range; overnight slots produce 2 ranges.
@@ -289,7 +311,9 @@ export function getTimezoneOffsetMinutes(timezone: string): number {
     );
     // Clamp to valid UTC offset range (UTC-14 to UTC+14 = -840 to +840 minutes)
     if (offset < -840 || offset > 840) {
-      console.warn(`Computed UTC offset ${offset} for "${timezone}" is out of valid range, defaulting to 0`);
+      console.warn(
+        `Computed UTC offset ${offset} for "${timezone}" is out of valid range, defaulting to 0`,
+      );
       return 0;
     }
     return offset;
@@ -332,7 +356,7 @@ export function isMinuteWithinWeeklySlot(
   // Formula: utcStartDay = (availDay - floor((startTimeUtc + offset) / 1440)) mod 7
   const localStartMinutes = availStartTimeUtc + (utcOffsetMinutes ?? 0);
   const dayAdjust = Math.floor(localStartMinutes / 1440);
-  const utcStartDay = ((availDay - dayAdjust) % 7 + 7) % 7;
+  const utcStartDay = (((availDay - dayAdjust) % 7) + 7) % 7;
 
   if (!isOvernight) {
     return (

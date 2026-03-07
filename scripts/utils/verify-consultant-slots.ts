@@ -79,10 +79,7 @@ async function verifyConsultantSlots() {
     if (consultant.scheduleType === "WEEKLY") {
       const weeklySlots = await prisma.slotOfAvailabilityWeekly.findMany({
         where: { consultantProfileId: CONSULTANT_ID },
-        orderBy: [
-          { startDay: "asc" },
-          { startTimeUtc: "asc" },
-        ],
+        orderBy: [{ startDay: "asc" }, { startTimeUtc: "asc" }],
       });
 
       console.log(
@@ -94,8 +91,12 @@ async function verifyConsultantSlots() {
         console.log(
           `  Time: ${minutesToTimeString(slot.startTimeUtc)} - ${minutesToTimeString(slot.endTimeUtc)} UTC`,
         );
-        console.log(`  Start: ${slot.startDay} @ ${minutesToTimeString(slot.startTimeUtc)}`);
-        console.log(`  End: ${slot.endDay} @ ${minutesToTimeString(slot.endTimeUtc)}`);
+        console.log(
+          `  Start: ${slot.startDay} @ ${minutesToTimeString(slot.startTimeUtc)}`,
+        );
+        console.log(
+          `  End: ${slot.endDay} @ ${minutesToTimeString(slot.endTimeUtc)}`,
+        );
       });
     } else {
       const customSlots = await prisma.slotOfAvailabilityCustom.findMany({

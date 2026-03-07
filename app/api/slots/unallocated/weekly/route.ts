@@ -54,10 +54,7 @@ export async function GET(req: NextRequest) {
       where: {
         consultantProfileId,
       },
-      orderBy: [
-        { startDay: "asc" },
-        { startTimeUtc: "asc" },
-      ],
+      orderBy: [{ startDay: "asc" }, { startTimeUtc: "asc" }],
       include: {
         consultantProfile: {
           select: {
@@ -88,9 +85,7 @@ export async function GET(req: NextRequest) {
       const endMins = slot.endTimeUtc % 60;
 
       while (currentDate <= endDate) {
-        if (
-          currentDate.getUTCDay() === dayToNumber[slot.startDay]
-        ) {
+        if (currentDate.getUTCDay() === dayToNumber[slot.startDay]) {
           // Use UTC-consistent construction with Int minutes
           const slotStart = new Date(
             Date.UTC(

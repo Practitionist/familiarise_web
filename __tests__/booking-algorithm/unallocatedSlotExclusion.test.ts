@@ -301,9 +301,7 @@ describe("Unallocated slot filtering (in-memory logic)", () => {
 
     const unallocated = availabilitySlots.filter((slot) => {
       const overlap = allocatedSlots.some(
-        (a) =>
-          a.startsAt < slot.endsAt &&
-          a.endsAt > slot.startsAt,
+        (a) => a.startsAt < slot.endsAt && a.endsAt > slot.startsAt,
       );
       return !overlap;
     });
@@ -330,9 +328,7 @@ describe("Unallocated slot filtering (in-memory logic)", () => {
 
     const unallocated = availabilitySlots.filter((slot) => {
       const overlap = allocatedSlots.some(
-        (a) =>
-          a.startsAt < slot.endsAt &&
-          a.endsAt > slot.startsAt,
+        (a) => a.startsAt < slot.endsAt && a.endsAt > slot.startsAt,
       );
       return !overlap;
     });
@@ -367,9 +363,7 @@ describe("Unallocated slot filtering (in-memory logic)", () => {
 
     const unallocated = availabilitySlots.filter((slot) => {
       const overlap = allocatedSlots.some(
-        (a) =>
-          a.startsAt < slot.endsAt &&
-          a.endsAt > slot.startsAt,
+        (a) => a.startsAt < slot.endsAt && a.endsAt > slot.startsAt,
       );
       return !overlap;
     });
@@ -406,9 +400,7 @@ describe("Unallocated slot filtering (in-memory logic)", () => {
 
     const unallocated = availabilitySlots.filter((slot) => {
       const overlap = allocatedSlots.some(
-        (a) =>
-          a.startsAt < slot.endsAt &&
-          a.endsAt > slot.startsAt,
+        (a) => a.startsAt < slot.endsAt && a.endsAt > slot.startsAt,
       );
       return !overlap;
     });
@@ -466,9 +458,7 @@ describe("Pagination after filtering", () => {
 
     const allUnallocated = allSlots.filter((slot) => {
       const overlap = allocatedSlots.some(
-        (a) =>
-          a.startsAt < slot.endsAt &&
-          a.endsAt > slot.startsAt,
+        (a) => a.startsAt < slot.endsAt && a.endsAt > slot.startsAt,
       );
       return !overlap;
     });

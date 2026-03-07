@@ -648,9 +648,7 @@ describe("validate: subscription slot count modulo", () => {
     );
     // Modulo check passes; downstream may fail on other rules but not modulo
     if (!result.isValid) {
-      expect(result.errors.every((e) => !e.includes("multiple of"))).toBe(
-        true,
-      );
+      expect(result.errors.every((e) => !e.includes("multiple of"))).toBe(true);
     }
   });
 
@@ -676,9 +674,7 @@ describe("validate: subscription slot count modulo", () => {
     );
     // Should not fail with modulo error
     if (!result.isValid) {
-      expect(result.errors.every((e) => !e.includes("multiple of"))).toBe(
-        true,
-      );
+      expect(result.errors.every((e) => !e.includes("multiple of"))).toBe(true);
     }
   });
 });

@@ -27,14 +27,16 @@ export async function GET(
         const [webinarCollab, classCollab] = await Promise.all([
           prisma.webinarCollaborator.findFirst({
             where: {
-              consultantProfileId: session.user.consultantProfileId ?? "__none__",
+              consultantProfileId:
+                session.user.consultantProfileId ?? "__none__",
               status: "ACCEPTED",
               webinarPlan: { consultantProfileId },
             },
           }),
           prisma.classCollaborator.findFirst({
             where: {
-              consultantProfileId: session.user.consultantProfileId ?? "__none__",
+              consultantProfileId:
+                session.user.consultantProfileId ?? "__none__",
               status: "ACCEPTED",
               classPlan: { consultantProfileId },
             },

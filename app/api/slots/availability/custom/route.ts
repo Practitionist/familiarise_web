@@ -94,8 +94,7 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { consultantProfileId, startsAt, endsAt } =
-      body;
+    const { consultantProfileId, startsAt, endsAt } = body;
 
     if (!consultantProfileId || !startsAt || !endsAt) {
       return NextResponse.json(
@@ -116,10 +115,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    if (
-      isNaN(Date.parse(startsAt)) ||
-      isNaN(Date.parse(endsAt))
-    ) {
+    if (isNaN(Date.parse(startsAt)) || isNaN(Date.parse(endsAt))) {
       return NextResponse.json(
         { error: "Invalid date format" },
         { status: 400 },

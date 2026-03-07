@@ -255,7 +255,10 @@ export async function GET(
         }
 
         // For same-day slots, start must be before end
-        if (slot.startDay === slot.endDay && slot.startTimeUtc >= slot.endTimeUtc) {
+        if (
+          slot.startDay === slot.endDay &&
+          slot.startTimeUtc >= slot.endTimeUtc
+        ) {
           console.warn(
             `❌ Filtering out invalid weekly slot ${slot.id}: startTimeUtc (${slot.startTimeUtc}) >= endTimeUtc (${slot.endTimeUtc}) on same day`,
           );
@@ -263,9 +266,10 @@ export async function GET(
         }
 
         // Defensive: Check duration is reasonable (<= 24 hours = 1440 minutes)
-        const durationMinutes = slot.startDay === slot.endDay
-          ? slot.endTimeUtc - slot.startTimeUtc
-          : (1440 - slot.startTimeUtc) + slot.endTimeUtc;
+        const durationMinutes =
+          slot.startDay === slot.endDay
+            ? slot.endTimeUtc - slot.startTimeUtc
+            : 1440 - slot.startTimeUtc + slot.endTimeUtc;
         if (durationMinutes > 1440) {
           console.warn(
             `⚠️ Filtering out weekly slot ${slot.id}: duration > 24 hours (${(durationMinutes / 60).toFixed(1)}h)`,
@@ -304,12 +308,7 @@ export async function GET(
         }
 
         // Filter out invalid slots, but allow legitimate overnight slots
-        if (
-          !isValidOvernightSlot(
-            slot.startsAt,
-            slot.endsAt,
-          )
-        ) {
+        if (!isValidOvernightSlot(slot.startsAt, slot.endsAt)) {
           console.warn(
             `❌ Filtering out invalid custom slot ${slot.id}: end time ${slot.endsAt.toISOString()} <= start time ${slot.startsAt.toISOString()}`,
           );

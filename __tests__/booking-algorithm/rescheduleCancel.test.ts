@@ -1215,9 +1215,7 @@ describe("cleanupTentativeSlots", () => {
             },
             AND: expect.arrayContaining([
               expect.objectContaining({
-                OR: expect.arrayContaining([
-                  { consultation: null },
-                ]),
+                OR: expect.arrayContaining([{ consultation: null }]),
               }),
             ]),
           }),

@@ -420,7 +420,10 @@ export async function reverseCreditsForPayment(
         (usage.originalAmount * cumulativeRefunded) / originalPaymentAmount!,
       );
       const alreadyRestored = usage.restoredAmount;
-      restoreAmount = Math.min(cumulativeTarget - alreadyRestored, usage.amount);
+      restoreAmount = Math.min(
+        cumulativeTarget - alreadyRestored,
+        usage.amount,
+      );
     } else {
       // Full refund — restore everything remaining
       restoreAmount = usage.amount;

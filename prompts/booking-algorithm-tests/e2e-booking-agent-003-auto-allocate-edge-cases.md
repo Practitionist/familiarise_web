@@ -31,17 +31,18 @@ All test data uses the `-003` suffix to avoid collisions with existing `-001` / 
 `SlotAllocationService.autoAllocate()` picks slots on behalf of the consultant without
 them manually choosing times.
 
-| Behaviour | Webinar | Class |
-|-----------|---------|-------|
-| **Search window** | 4 weeks from now | Full `schedulingPeriodStartsAt → EndsAt` |
-| **Slot grouping** | One appointment containing all consecutive slots (entire duration) | One appointment per session, distributed across the period |
-| **Weekly limits** | None | `meetingsPerWeek` on `ClassPlan` |
-| **Re-allocate** | Deletes + recreates in a transaction | Deletes + recreates in a transaction |
-| **Request body** | `{ "isAuto": true }` | `{ "isAuto": true }` |
-| **API endpoint** | `PATCH /api/events/webinars/[id]/allocate` | `PATCH /api/events/classes/[id]/allocate` |
-| **isAuto + slots both sent** | `isAuto` wins, `slots` ignored | `isAuto` wins, `slots` ignored |
+| Behaviour                    | Webinar                                                            | Class                                                      |
+| ---------------------------- | ------------------------------------------------------------------ | ---------------------------------------------------------- |
+| **Search window**            | 4 weeks from now                                                   | Full `schedulingPeriodStartsAt → EndsAt`                   |
+| **Slot grouping**            | One appointment containing all consecutive slots (entire duration) | One appointment per session, distributed across the period |
+| **Weekly limits**            | None                                                               | `meetingsPerWeek` on `ClassPlan`                           |
+| **Re-allocate**              | Deletes + recreates in a transaction                               | Deletes + recreates in a transaction                       |
+| **Request body**             | `{ "isAuto": true }`                                               | `{ "isAuto": true }`                                       |
+| **API endpoint**             | `PATCH /api/events/webinars/[id]/allocate`                         | `PATCH /api/events/classes/[id]/allocate`                  |
+| **isAuto + slots both sent** | `isAuto` wins, `slots` ignored                                     | `isAuto` wins, `slots` ignored                             |
 
 **Critical source files:**
+
 - `utils/slotAllocation/SlotAllocationService.ts` — `autoAllocate()` webinar logic L742-835, class logic L837-975
 - `app/api/events/webinars/[webinarId]/allocate/route.ts`
 - `app/api/events/classes/[classId]/allocate/route.ts`
@@ -184,6 +185,7 @@ ORDER BY "startDay";
 ### Step 0.5 — Webinar Plans
 
 Two webinars:
+
 - **Webinar A** (`test-webinar-003`): 2h duration (4 × 30-min slots) — fits within 7.5h daily window → **should succeed**
 - **Webinar B** (`test-webinar-003b`): 10h duration (20 × 30-min slots) — exceeds 7.5h daily window (15 slots max) → **should fail**
 
@@ -226,6 +228,7 @@ ON CONFLICT (id) DO NOTHING;
 ### Step 0.7 — Class Plans
 
 Two classes:
+
 - **Class A** (`test-class-003`): 4 sessions, 2/week, 4-week period → all 4 sessions can be distributed → **should succeed**
 - **Class B** (`test-class-003b`): 4 sessions, 2/week, 5-day period → only ~2 sessions can fit → **should fail**
 
@@ -328,13 +331,16 @@ As CONSULTANT, use `evaluate_script` to PATCH:
 
 ```javascript
 async () => {
-  const response = await fetch("/api/events/webinars/test-webinar-003/allocate", {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ isAuto: true }),
-  });
+  const response = await fetch(
+    "/api/events/webinars/test-webinar-003/allocate",
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ isAuto: true }),
+    },
+  );
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** HTTP 200, response body has `data` array with exactly 1 appointment,
@@ -375,13 +381,16 @@ Call the exact same PATCH again:
 
 ```javascript
 async () => {
-  const response = await fetch("/api/events/webinars/test-webinar-003/allocate", {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ isAuto: true }),
-  });
+  const response = await fetch(
+    "/api/events/webinars/test-webinar-003/allocate",
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ isAuto: true }),
+    },
+  );
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** HTTP 200, old appointment deleted and replaced with a new one.
@@ -419,7 +428,7 @@ async () => {
     }),
   });
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** HTTP 200, `payment.status === "SUCCEEDED"`, `isMockPayment: true`
@@ -463,7 +472,7 @@ async () => {
     body: JSON.stringify({ isAuto: true }),
   });
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** HTTP 200, `data.length === 4`, each appointment has 2 slots (1h = 2 × 30-min),
@@ -508,6 +517,7 @@ Navigate to `/dashboard/consultant/test-consultant-profile-003/appointments`.
 `take_screenshot`
 
 Verify the UI shows:
+
 - [ ] Classes section contains a card for "Auto-Allocate Class (4 sessions, 2/week)"
 - [ ] A "Timings" button is present
 - [ ] Session counter shows "0 of 4 sessions" (the consultant's own sessions are not yet joined)
@@ -530,7 +540,7 @@ async () => {
     }),
   });
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** HTTP 200, payment SUCCEEDED
@@ -561,13 +571,16 @@ As CONSULTANT:
 
 ```javascript
 async () => {
-  const response = await fetch("/api/events/webinars/test-webinar-003b/allocate", {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ isAuto: true }),
-  });
+  const response = await fetch(
+    "/api/events/webinars/test-webinar-003b/allocate",
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ isAuto: true }),
+    },
+  );
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** HTTP 400 or 500, error body containing one of: `"no"`, `"consecutive"`,
@@ -592,7 +605,7 @@ async () => {
     body: JSON.stringify({ isAuto: true }),
   });
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** HTTP 400 or 500 — scheduling period too short to fit all required sessions.
@@ -609,16 +622,19 @@ As CONSULTANT:
 
 ```javascript
 async () => {
-  const response = await fetch("/api/events/webinars/test-webinar-003/allocate", {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      isAuto: true,
-      slots: ["2020-01-01T04:00:00.000Z"],  // intentionally in the past / wrong
-    }),
-  });
+  const response = await fetch(
+    "/api/events/webinars/test-webinar-003/allocate",
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        isAuto: true,
+        slots: ["2020-01-01T04:00:00.000Z"], // intentionally in the past / wrong
+      }),
+    },
+  );
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** HTTP 200 — `isAuto` takes priority. The stale `slots` array is silently
@@ -760,21 +776,21 @@ SELECT
 
 ## Verification Checklist (End-to-End)
 
-| # | Check | Assertion | Expected |
-|---|-------|-----------|----------|
-| 1 | Webinar auto-alloc creates exactly 1 appointment | `COUNT(*) FROM Appointment WHERE webinarId='test-webinar-003'` | 1 |
-| 2 | Webinar slots are consecutive | `slot[i].endsAt === slot[i+1].startsAt` for all i in response | True for all i |
-| 3 | Webinar slot count matches 2h ÷ 30min | `COUNT(*) of slotsOfAppointment` in response | 4 |
-| 4 | Re-auto-allocate doesn't double appointments | Count after 2nd call | Still 1 |
-| 5 | Class auto-alloc creates correct appointment count | `COUNT(*) FROM Appointment WHERE classId='test-class-003'` | 4 |
-| 6 | Each class appointment has 2 slots (1h) | Per-appointment slot count in DB | 2 for each |
-| 7 | Weekly session limit enforced | `GROUP BY date_trunc('week', ...)` — max sessions per week | ≤ 2 |
-| 8 | Consultee checkout on webinar succeeds | HTTP status + payment status | 200, SUCCEEDED |
-| 9 | Consultee checkout on class succeeds | HTTP status + payment status | 200, SUCCEEDED |
-| 10 | Impossible webinar (10h) errors out | HTTP status | 400 or 500 |
-| 11 | Tight-period class (5 days) errors out | HTTP status | 400 or 500 |
-| 12 | `isAuto` overrides `slots` field | HTTP status + response slot dates | 200, dates > 2026 |
-| 13 | Cleanup is complete | All-zeros verify query | 0, 0, 0, 0 |
+| #   | Check                                              | Assertion                                                      | Expected          |
+| --- | -------------------------------------------------- | -------------------------------------------------------------- | ----------------- |
+| 1   | Webinar auto-alloc creates exactly 1 appointment   | `COUNT(*) FROM Appointment WHERE webinarId='test-webinar-003'` | 1                 |
+| 2   | Webinar slots are consecutive                      | `slot[i].endsAt === slot[i+1].startsAt` for all i in response  | True for all i    |
+| 3   | Webinar slot count matches 2h ÷ 30min              | `COUNT(*) of slotsOfAppointment` in response                   | 4                 |
+| 4   | Re-auto-allocate doesn't double appointments       | Count after 2nd call                                           | Still 1           |
+| 5   | Class auto-alloc creates correct appointment count | `COUNT(*) FROM Appointment WHERE classId='test-class-003'`     | 4                 |
+| 6   | Each class appointment has 2 slots (1h)            | Per-appointment slot count in DB                               | 2 for each        |
+| 7   | Weekly session limit enforced                      | `GROUP BY date_trunc('week', ...)` — max sessions per week     | ≤ 2               |
+| 8   | Consultee checkout on webinar succeeds             | HTTP status + payment status                                   | 200, SUCCEEDED    |
+| 9   | Consultee checkout on class succeeds               | HTTP status + payment status                                   | 200, SUCCEEDED    |
+| 10  | Impossible webinar (10h) errors out                | HTTP status                                                    | 400 or 500        |
+| 11  | Tight-period class (5 days) errors out             | HTTP status                                                    | 400 or 500        |
+| 12  | `isAuto` overrides `slots` field                   | HTTP status + response slot dates                              | 200, dates > 2026 |
+| 13  | Cleanup is complete                                | All-zeros verify query                                         | 0, 0, 0, 0        |
 
 ---
 

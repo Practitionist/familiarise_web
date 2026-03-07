@@ -177,7 +177,8 @@ export default function ConsultationCheckoutPage({
         console.error("Error fetching slot data:", error);
         toast({
           title: "Warning",
-          description: "Could not load slot details. You may still proceed with checkout.",
+          description:
+            "Could not load slot details. You may still proceed with checkout.",
           variant: "default",
         });
       }
@@ -375,7 +376,10 @@ export default function ConsultationCheckoutPage({
               console.error("Payment confirmation error:", paymentError);
               toast({
                 title: "Payment Error",
-                description: paymentError instanceof Error ? paymentError.message : "Payment confirmation failed. Please try again.",
+                description:
+                  paymentError instanceof Error
+                    ? paymentError.message
+                    : "Payment confirmation failed. Please try again.",
                 variant: "destructive",
               });
             }

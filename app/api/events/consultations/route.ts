@@ -161,9 +161,10 @@ export async function PATCH(request: NextRequest) {
     const isConsultant =
       !!existingConsultation.consultationPlan?.consultantProfile?.id &&
       existingConsultation.consultationPlan.consultantProfile.id ===
-      session.user.consultantProfileId;
+        session.user.consultantProfileId;
     const isConsultee =
-      !!existingConsultation.requestedById && existingConsultation.requestedById === session.user.consulteeProfileId;
+      !!existingConsultation.requestedById &&
+      existingConsultation.requestedById === session.user.consulteeProfileId;
     const isParticipant = isConsultant || isConsultee;
 
     if (!isPrivileged(session.user.role) && !isParticipant) {

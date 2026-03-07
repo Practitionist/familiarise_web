@@ -443,9 +443,7 @@ export function UnifiedCalendar({
   // for O(1) lookups. Replaces O(n) .some() scan that ran 336× per render.
   const eventSlotsSet = useMemo(
     () =>
-      new Set(
-        eventSlots.map((s) => Math.round(s.startTime.getTime() / 1000)),
-      ),
+      new Set(eventSlots.map((s) => Math.round(s.startTime.getTime() / 1000))),
     [eventSlots],
   );
 

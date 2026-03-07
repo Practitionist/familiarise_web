@@ -31,8 +31,7 @@ export async function GET(
         const collab = await prisma.webinarCollaborator.findFirst({
           where: {
             webinarPlanId: planId,
-            consultantProfileId:
-              session.user.consultantProfileId ?? "__none__",
+            consultantProfileId: session.user.consultantProfileId ?? "__none__",
             status: "ACCEPTED",
           },
         });

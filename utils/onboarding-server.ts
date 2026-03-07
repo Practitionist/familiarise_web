@@ -104,10 +104,7 @@ async function updateConsultantProfileAndRelations(
           .toString()
           .padStart(2, "0");
         const endMM = (slot.endTimeUtc % 60).toString().padStart(2, "0");
-        return isValidTimeRange(
-          `${startHH}:${startMM}`,
-          `${endHH}:${endMM}`,
-        );
+        return isValidTimeRange(`${startHH}:${startMM}`, `${endHH}:${endMM}`);
       });
       // Validate time ordering and check for pairwise overlaps
       for (const slot of validWeeklySlots) {
@@ -176,8 +173,7 @@ async function updateConsultantProfileAndRelations(
       // Validate ordering and pairwise overlaps
       for (const slot of validCustomSlots) {
         if (
-          new Date(slot.startsAt).getTime() >=
-          new Date(slot.endsAt).getTime()
+          new Date(slot.startsAt).getTime() >= new Date(slot.endsAt).getTime()
         ) {
           throw new Error("Custom slot start time must be before end time");
         }
@@ -187,10 +183,8 @@ async function updateConsultantProfileAndRelations(
           const a = validCustomSlots[i];
           const b = validCustomSlots[j];
           if (
-            new Date(a.startsAt).getTime() <
-              new Date(b.endsAt).getTime() &&
-            new Date(b.startsAt).getTime() <
-              new Date(a.endsAt).getTime()
+            new Date(a.startsAt).getTime() < new Date(b.endsAt).getTime() &&
+            new Date(b.startsAt).getTime() < new Date(a.endsAt).getTime()
           ) {
             throw new Error(
               "Custom availability slots contain overlapping time ranges",

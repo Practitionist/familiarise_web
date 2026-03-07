@@ -200,7 +200,9 @@ export async function POST(
         if (appointment.subscription) {
           // Delete ALL slots for ALL appointments of this subscription
           await tx.slotOfAppointment.deleteMany({
-            where: { appointment: { subscriptionId: appointment.subscription.id } },
+            where: {
+              appointment: { subscriptionId: appointment.subscription.id },
+            },
           });
           await tx.appointment.deleteMany({
             where: { subscriptionId: appointment.subscription.id },

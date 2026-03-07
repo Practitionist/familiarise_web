@@ -124,9 +124,10 @@ export async function GET(
     const isConsultant =
       !!subscriptionData.subscriptionPlan?.consultantProfile?.id &&
       subscriptionData.subscriptionPlan.consultantProfile.id ===
-      session.user.consultantProfileId;
+        session.user.consultantProfileId;
     const isConsultee =
-      !!subscriptionData.requestedById && subscriptionData.requestedById === session.user.consulteeProfileId;
+      !!subscriptionData.requestedById &&
+      subscriptionData.requestedById === session.user.consulteeProfileId;
     if (!isPrivileged(session.user.role) && !isConsultant && !isConsultee) {
       return forbiddenResponse(
         "You can only view subscriptions you are a participant in",
@@ -196,9 +197,10 @@ export async function PUT(
     const isConsultant =
       !!existingSubscription.subscriptionPlan?.consultantProfile?.id &&
       existingSubscription.subscriptionPlan.consultantProfile.id ===
-      session.user.consultantProfileId;
+        session.user.consultantProfileId;
     const isConsultee =
-      !!existingSubscription.requestedById && existingSubscription.requestedById === session.user.consulteeProfileId;
+      !!existingSubscription.requestedById &&
+      existingSubscription.requestedById === session.user.consulteeProfileId;
     if (!isPrivileged(session.user.role) && !isConsultant && !isConsultee) {
       return forbiddenResponse(
         "You can only modify subscriptions you are a participant in",
@@ -409,9 +411,10 @@ export async function PATCH(
     const isConsultant =
       !!existingSubscription.subscriptionPlan?.consultantProfile?.id &&
       existingSubscription.subscriptionPlan.consultantProfile.id ===
-      session.user.consultantProfileId;
+        session.user.consultantProfileId;
     const isConsultee =
-      !!existingSubscription.requestedById && existingSubscription.requestedById === session.user.consulteeProfileId;
+      !!existingSubscription.requestedById &&
+      existingSubscription.requestedById === session.user.consulteeProfileId;
     if (!isPrivileged(session.user.role) && !isConsultant && !isConsultee) {
       return forbiddenResponse(
         "You can only modify subscriptions you are a participant in",

@@ -640,7 +640,10 @@ async function createAppointmentBatch(
       }
 
       // Extract just the time pattern (hours and minutes) from the slot
-      let startHours: number, startMinutes: number, endHours: number, endMinutes: number;
+      let startHours: number,
+        startMinutes: number,
+        endHours: number,
+        endMinutes: number;
       if (slotData.type === "weekly") {
         startHours = Math.floor(slotData.slot.startTimeUtc / 60);
         startMinutes = slotData.slot.startTimeUtc % 60;

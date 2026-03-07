@@ -42,7 +42,6 @@ interface Props {
   initialData: Partial<OnboardingFormData>;
 }
 
-
 const ConsultantPreferredScheduleForm: React.FC<Props> = ({
   onNext,
   onBack,
@@ -116,14 +115,8 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
             formattedCustomSlots[dateString] = [];
           }
           formattedCustomSlots[dateString].push({
-            startTime: convertUtcToTimezone(
-              slot.startsAt.toString(),
-              timezone,
-            ),
-            endTime: convertUtcToTimezone(
-              slot.endsAt.toString(),
-              timezone,
-            ),
+            startTime: convertUtcToTimezone(slot.startsAt.toString(), timezone),
+            endTime: convertUtcToTimezone(slot.endsAt.toString(), timezone),
             isValid: true,
           });
         } catch (error) {

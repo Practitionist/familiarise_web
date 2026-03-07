@@ -97,7 +97,10 @@ export async function PUT(
     }
 
     // Reject consultant reassignment
-    if (body.consultantProfileId && body.consultantProfileId !== currentSlot.consultantProfileId) {
+    if (
+      body.consultantProfileId &&
+      body.consultantProfileId !== currentSlot.consultantProfileId
+    ) {
       return NextResponse.json(
         { error: "Cannot reassign slot to a different consultant" },
         { status: 400 },
@@ -201,7 +204,10 @@ export async function PATCH(
     }
 
     // Reject consultant reassignment
-    if (body.consultantProfileId && body.consultantProfileId !== currentSlot.consultantProfileId) {
+    if (
+      body.consultantProfileId &&
+      body.consultantProfileId !== currentSlot.consultantProfileId
+    ) {
       return NextResponse.json(
         { error: "Cannot reassign slot to a different consultant" },
         { status: 400 },
@@ -221,9 +227,7 @@ export async function PATCH(
     const startTime = body.startsAt
       ? new Date(body.startsAt)
       : currentSlot.startsAt;
-    const endTime = body.endsAt
-      ? new Date(body.endsAt)
-      : currentSlot.endsAt;
+    const endTime = body.endsAt ? new Date(body.endsAt) : currentSlot.endsAt;
 
     if (startTime >= endTime) {
       return NextResponse.json(

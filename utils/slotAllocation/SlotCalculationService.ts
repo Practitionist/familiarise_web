@@ -390,7 +390,9 @@ export class SlotCalculationService {
     const slotsByWeek = new Map<string, TimeSlot[]>();
 
     for (const slot of slots) {
-      const weekStart = SlotCalculationService.startOfWeekSunday(slot.startTime);
+      const weekStart = SlotCalculationService.startOfWeekSunday(
+        slot.startTime,
+      );
       const weekKey = weekStart.toISOString();
 
       if (!slotsByWeek.has(weekKey)) {

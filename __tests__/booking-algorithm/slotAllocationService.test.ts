@@ -31,7 +31,9 @@ jest.mock("../../lib/prisma", () => ({
 
 // Mock appointmentlock to avoid @upstash/redis ESM import issues in Jest
 jest.mock("../../utils/appointmentlock", () => ({
-  lockAutoAllocate: jest.fn().mockResolvedValue({ key: "mock-key", value: "mock-value" }),
+  lockAutoAllocate: jest
+    .fn()
+    .mockResolvedValue({ key: "mock-key", value: "mock-value" }),
   unlockAutoAllocate: jest.fn().mockResolvedValue(undefined),
 }));
 
@@ -1498,7 +1500,10 @@ describe("Edge cases", () => {
 
 describe("Manual allocation - distributed lock", () => {
   it("should acquire and release consultant-level lock for manual allocation", async () => {
-    const { lockAutoAllocate, unlockAutoAllocate } = require("../../utils/appointmentlock");
+    const {
+      lockAutoAllocate,
+      unlockAutoAllocate,
+    } = require("../../utils/appointmentlock");
 
     mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
 
@@ -1516,7 +1521,10 @@ describe("Manual allocation - distributed lock", () => {
   });
 
   it("should release lock even when transaction fails", async () => {
-    const { lockAutoAllocate, unlockAutoAllocate } = require("../../utils/appointmentlock");
+    const {
+      lockAutoAllocate,
+      unlockAutoAllocate,
+    } = require("../../utils/appointmentlock");
 
     // Make the transaction throw
     (prisma.$transaction as jest.Mock).mockRejectedValueOnce(

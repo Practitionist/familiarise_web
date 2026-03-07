@@ -553,9 +553,7 @@ export function useCalendarData(
   const parsedAppointmentSlots = useMemo(() => {
     return existingAppointments.flatMap((appointment) =>
       (appointment.slotsOfAppointment || []).map((slt: any) => ({
-        start: new Date(
-          slt.startsAt || slt.slotStartTimeInUTC,
-        ).getTime(),
+        start: new Date(slt.startsAt || slt.slotStartTimeInUTC).getTime(),
         end: new Date(slt.endsAt || slt.slotEndTimeInUTC).getTime(),
         appointmentId: appointment.id,
         appointmentType: appointment.appointmentType,
@@ -583,7 +581,15 @@ export function useCalendarData(
         const key = `${y}-${m}-${d}-${interval.hour}-${interval.minute}`;
 
         // Calculate interval boundaries in local time
-        const localStart = new Date(y, m, d, interval.hour, interval.minute, 0, 0);
+        const localStart = new Date(
+          y,
+          m,
+          d,
+          interval.hour,
+          interval.minute,
+          0,
+          0,
+        );
         const localEnd = new Date(localStart.getTime() + 30 * 60 * 1000);
         const startMs = localStart.getTime();
         const endMs = localEnd.getTime();

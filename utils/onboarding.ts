@@ -641,12 +641,8 @@ export function transformOnboardingFormToServerData(
             slotsOfAvailabilityCustom: formData.customSlots?.length
               ? {
                   create: formData.customSlots.map((slot) => ({
-                    startsAt: new Date(
-                      slot.startsAt,
-                    ).toISOString(),
-                    endsAt: new Date(
-                      slot.endsAt,
-                    ).toISOString(),
+                    startsAt: new Date(slot.startsAt).toISOString(),
+                    endsAt: new Date(slot.endsAt).toISOString(),
                   })),
                 }
               : undefined,

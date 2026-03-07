@@ -162,49 +162,49 @@
 
 ## Key File Paths
 
-| Area | Files |
-|------|-------|
-| Availability CRUD | `app/api/slots/availability/weekly/route.ts`, `weekly/[id]/route.ts`, `custom/route.ts`, `custom/[id]/route.ts` |
-| Public availability | `app/api/slots/availability/[consultantId]/route.ts`, `availability-with-allocation/[consultantId]/route.ts` |
-| Checkout | `lib/payments/operations/checkout.ts`, `schemas/checkout.ts` |
-| Slot utils | `utils/slotAllocation/slotTimeUtils.ts` (overlap, overnight matching, time conversion) |
-| Allocation engine | `utils/slotAllocation/SlotAllocationService.ts` |
-| Validation engine | `utils/slotAllocation/SlotValidationService.ts` |
-| Calculation | `utils/slotAllocation/SlotCalculationService.ts` |
-| Occupancy policy | `utils/slotAllocation/occupancyPolicy.ts` |
-| Locking | `utils/appointmentlock.ts` |
-| Cancel/Reschedule | `app/api/appointments/[appointmentId]/cancel/route.ts`, `reschedule/route.ts` |
-| Request flow | `app/api/slots/request-for-approval/route.ts` |
-| Frontend hook | `app/dashboard/consultant/[consultantId]/(features)/shared/hooks/useSlotAllocation.ts` |
-| Stream cleanup | `actions/stream/chat/event-channel.action.ts` |
-| Appointments page | `app/dashboard/consultant/[consultantId]/(features)/appointments/page.tsx` |
-| Onboarding | `app/form/onboarding/components/ConsultantPreferredScheduleForm.tsx` |
+| Area                | Files                                                                                                           |
+| ------------------- | --------------------------------------------------------------------------------------------------------------- |
+| Availability CRUD   | `app/api/slots/availability/weekly/route.ts`, `weekly/[id]/route.ts`, `custom/route.ts`, `custom/[id]/route.ts` |
+| Public availability | `app/api/slots/availability/[consultantId]/route.ts`, `availability-with-allocation/[consultantId]/route.ts`    |
+| Checkout            | `lib/payments/operations/checkout.ts`, `schemas/checkout.ts`                                                    |
+| Slot utils          | `utils/slotAllocation/slotTimeUtils.ts` (overlap, overnight matching, time conversion)                          |
+| Allocation engine   | `utils/slotAllocation/SlotAllocationService.ts`                                                                 |
+| Validation engine   | `utils/slotAllocation/SlotValidationService.ts`                                                                 |
+| Calculation         | `utils/slotAllocation/SlotCalculationService.ts`                                                                |
+| Occupancy policy    | `utils/slotAllocation/occupancyPolicy.ts`                                                                       |
+| Locking             | `utils/appointmentlock.ts`                                                                                      |
+| Cancel/Reschedule   | `app/api/appointments/[appointmentId]/cancel/route.ts`, `reschedule/route.ts`                                   |
+| Request flow        | `app/api/slots/request-for-approval/route.ts`                                                                   |
+| Frontend hook       | `app/dashboard/consultant/[consultantId]/(features)/shared/hooks/useSlotAllocation.ts`                          |
+| Stream cleanup      | `actions/stream/chat/event-channel.action.ts`                                                                   |
+| Appointments page   | `app/dashboard/consultant/[consultantId]/(features)/appointments/page.tsx`                                      |
+| Onboarding          | `app/form/onboarding/components/ConsultantPreferredScheduleForm.tsx`                                            |
 
 ## Bugs Fixed in PR #462 (Reference)
 
-| Fix | Description |
-|-----|-------------|
-| Auth on CRUD | Added `getSession()` + ownership to all availability write endpoints |
-| Overnight validation | `validateWeeklySlotTimeOrder()` allows cross-midnight with next-day check |
-| Overlap detection | `buildWeeklyOverlapWhere()` with 3 same-day + 5 overnight clauses |
-| Allocator overnight | `isWithinAvailability()` refactored to shared `isMinuteWithinWeeklySlot()` |
-| removeBookedSlots | Scoped to consultant via M2M `user.some.id` filter |
-| Lock classification | Prefixed errors with "Lock contention:", classifier matches "in progress" |
-| DELETE wrong table | Removed broken `slotOfAppointment` check, replaced with ownership verify |
-| PUT authoritative ID | Uses `currentSlot.consultantProfileId` not body param |
-| Stream pagination | Added pagination loop + `MANAGED_PREFIXES` filter |
-| Checkout ownership | Verifies avail slot's `consultantProfile.userId === consultantUserId` |
-| Checkout overnight | Uses `isMinuteWithinWeeklySlot()` instead of same-day-only guard |
-| Sort by calendar | Auto-allocate sorts by `getNextOccurrenceWeekly()` not clock time |
-| Class filter | Appointments page filters classes same as webinars (`!c.appointment`) |
-| Midnight overflow | `isMinuteWithinWeeklySlot` checks overflow past 1440 |
-| Date validation | `custom/[id]` PUT/PATCH validates `Date.parse()` before constructing |
-| PATCH integers | Added `typeof` check before `Number.isInteger()` on PATCH |
-| Docs update | Field names updated to match new schema |
-| Unallocated overnight | Unallocated routes roll `slotEnd` to next day for overnight weekly slots |
-| Scheduling boundary | `validateSchedulingPeriod` checks `slot + 30min <= endDate` (server + client) |
-| Bulk route auth | `/api/user/consultants/[id]` PUT/DELETE enforce ownership (`userId === session.user.id`) |
-| Bulk route validation | Bulk save runs `validateWeeklySlotTimeOrder()` + `slotsOverlap()` + custom `startsAt < endsAt` |
-| Frontend overnight | `isValidTimeRange` / `validateTimeSlot` accept overnight slots; formatting produces single overnight records |
-| Bulk custom overlap | Bulk settings route rejects overlapping custom slot submissions (pairwise check) |
+| Fix                   | Description                                                                                                       |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Auth on CRUD          | Added `getSession()` + ownership to all availability write endpoints                                              |
+| Overnight validation  | `validateWeeklySlotTimeOrder()` allows cross-midnight with next-day check                                         |
+| Overlap detection     | `buildWeeklyOverlapWhere()` with 3 same-day + 5 overnight clauses                                                 |
+| Allocator overnight   | `isWithinAvailability()` refactored to shared `isMinuteWithinWeeklySlot()`                                        |
+| removeBookedSlots     | Scoped to consultant via M2M `user.some.id` filter                                                                |
+| Lock classification   | Prefixed errors with "Lock contention:", classifier matches "in progress"                                         |
+| DELETE wrong table    | Removed broken `slotOfAppointment` check, replaced with ownership verify                                          |
+| PUT authoritative ID  | Uses `currentSlot.consultantProfileId` not body param                                                             |
+| Stream pagination     | Added pagination loop + `MANAGED_PREFIXES` filter                                                                 |
+| Checkout ownership    | Verifies avail slot's `consultantProfile.userId === consultantUserId`                                             |
+| Checkout overnight    | Uses `isMinuteWithinWeeklySlot()` instead of same-day-only guard                                                  |
+| Sort by calendar      | Auto-allocate sorts by `getNextOccurrenceWeekly()` not clock time                                                 |
+| Class filter          | Appointments page filters classes same as webinars (`!c.appointment`)                                             |
+| Midnight overflow     | `isMinuteWithinWeeklySlot` checks overflow past 1440                                                              |
+| Date validation       | `custom/[id]` PUT/PATCH validates `Date.parse()` before constructing                                              |
+| PATCH integers        | Added `typeof` check before `Number.isInteger()` on PATCH                                                         |
+| Docs update           | Field names updated to match new schema                                                                           |
+| Unallocated overnight | Unallocated routes roll `slotEnd` to next day for overnight weekly slots                                          |
+| Scheduling boundary   | `validateSchedulingPeriod` checks `slot + 30min <= endDate` (server + client)                                     |
+| Bulk route auth       | `/api/user/consultants/[id]` PUT/DELETE enforce ownership (`userId === session.user.id`)                          |
+| Bulk route validation | Bulk save runs `validateWeeklySlotTimeOrder()` + `slotsOverlap()` + custom `startsAt < endsAt`                    |
+| Frontend overnight    | `isValidTimeRange` / `validateTimeSlot` accept overnight slots; formatting produces single overnight records      |
+| Bulk custom overlap   | Bulk settings route rejects overlapping custom slot submissions (pairwise check)                                  |
 | Onboarding validation | `onboarding-server.ts` runs `validateWeeklySlotTimeOrder()`, `slotsOverlap()`, and custom overlap/ordering checks |

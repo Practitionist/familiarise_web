@@ -76,13 +76,15 @@ async function main(): Promise<void> {
         console.log(`     Appointments: ${db.appointments.join(", ")}`);
       });
       // Structured JSON for monitoring integration (PagerDuty, Datadog, etc.)
-      console.log(JSON.stringify({
-        event: "double_bookings_detected",
-        count: result.doubleBookingsDetected,
-        bookings: result.doubleBookings,
-        timestamp: new Date().toISOString(),
-        severity: "critical",
-      }));
+      console.log(
+        JSON.stringify({
+          event: "double_bookings_detected",
+          count: result.doubleBookingsDetected,
+          bookings: result.doubleBookings,
+          timestamp: new Date().toISOString(),
+          severity: "critical",
+        }),
+      );
     }
 
     if (result.errors.length > 0) {

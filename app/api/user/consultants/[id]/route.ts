@@ -352,7 +352,10 @@ export async function PUT(
       if (slotsOfAvailabilityWeekly?.length) {
         // Resolve timezone offset once for all slots (same user → same timezone)
         const userTimezone = await prisma.user
-          .findUnique({ where: { id: session.user.id }, select: { timezone: true } })
+          .findUnique({
+            where: { id: session.user.id },
+            select: { timezone: true },
+          })
           .then((u) => u?.timezone ?? null);
         const utcOffsetMinutes = userTimezone
           ? getTimezoneOffsetMinutes(userTimezone)
@@ -377,10 +380,7 @@ export async function PUT(
             slot.endTimeUtc,
           );
           if (timeError) {
-            return NextResponse.json(
-              { error: timeError },
-              { status: 400 },
-            );
+            return NextResponse.json({ error: timeError }, { status: 400 });
           }
         }
 
@@ -404,7 +404,10 @@ export async function PUT(
               )
             ) {
               return NextResponse.json(
-                { error: "Submitted weekly slots contain overlapping time ranges" },
+                {
+                  error:
+                    "Submitted weekly slots contain overlapping time ranges",
+                },
                 { status: 400 },
               );
             }
@@ -438,7 +441,9 @@ export async function PUT(
 
         // Validate custom slot ordering and check for pairwise overlaps
         for (const slot of customSlotData) {
-          if (new Date(slot.startsAt).getTime() >= new Date(slot.endsAt).getTime()) {
+          if (
+            new Date(slot.startsAt).getTime() >= new Date(slot.endsAt).getTime()
+          ) {
             return NextResponse.json(
               { error: "Custom slot start time must be before end time" },
               { status: 400 },
@@ -454,7 +459,10 @@ export async function PUT(
               new Date(b.startsAt).getTime() < new Date(a.endsAt).getTime()
             ) {
               return NextResponse.json(
-                { error: "Submitted custom slots contain overlapping time ranges" },
+                {
+                  error:
+                    "Submitted custom slots contain overlapping time ranges",
+                },
                 { status: 400 },
               );
             }

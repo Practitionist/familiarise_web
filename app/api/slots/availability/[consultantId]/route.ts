@@ -144,7 +144,10 @@ function filterSlots(
   });
 }
 
-async function removeBookedSlots(slots: TSlotTiming[], consultantUserId: string): Promise<TSlotTiming[]> {
+async function removeBookedSlots(
+  slots: TSlotTiming[],
+  consultantUserId: string,
+): Promise<TSlotTiming[]> {
   const appointments = await prisma.appointment.findMany({
     where: {
       slotsOfAppointment: {

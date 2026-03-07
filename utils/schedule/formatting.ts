@@ -64,7 +64,7 @@ const shiftDayOfWeek = (dayOfWeek: string, offset: number): string => {
     "SUNDAY",
   ];
   const idx = days.indexOf(dayOfWeek);
-  return days[((idx + offset) % 7 + 7) % 7];
+  return days[(((idx + offset) % 7) + 7) % 7];
 };
 
 /**
@@ -125,11 +125,10 @@ export function formatSlotsForApi(
               try {
                 return formatCustomSlot(slot, key, timezone);
               } catch (error) {
-                console.error(
-                  "Error formatting custom slot for API:",
-                  error,
-                  { key, slot },
-                );
+                console.error("Error formatting custom slot for API:", error, {
+                  key,
+                  slot,
+                });
                 return null;
               }
             })
@@ -174,7 +173,8 @@ function formatWeeklySlot(
   const nextDate = "1970-01-02";
   // Slot is overnight if local times cross midnight OR if it was overnight in
   // UTC but appears same-day after timezone conversion (isOvernightUTC flag).
-  const overnight = isOvernight(slot.startTime, slot.endTime) || !!slot.isOvernightUTC;
+  const overnight =
+    isOvernight(slot.startTime, slot.endTime) || !!slot.isOvernightUTC;
 
   const startUTC = convertTimezoneToUtc(slot.startTime, baseDate, timezone);
   if (!startUTC) return [];
@@ -286,7 +286,11 @@ export function buildWeeklySlotsForSave(
       .filter((s) => s.startTime && s.endTime && s.isValid)
       .flatMap((slot): WeeklySlot[] => {
         const overnight = isOvernight(slot.startTime, slot.endTime);
-        const startUTC = convertTimezoneToUtc(slot.startTime, baseDate, timezone);
+        const startUTC = convertTimezoneToUtc(
+          slot.startTime,
+          baseDate,
+          timezone,
+        );
         const endUTC = convertTimezoneToUtc(
           slot.endTime,
           overnight ? nextDate : baseDate,
@@ -342,7 +346,11 @@ export function buildCustomSlotsForSave(
       .filter((s) => s.startTime && s.endTime && s.isValid)
       .flatMap((slot): CustomSlot[] => {
         const overnight = isOvernight(slot.startTime, slot.endTime);
-        const startUTC = convertTimezoneToUtc(slot.startTime, dateString, timezone);
+        const startUTC = convertTimezoneToUtc(
+          slot.startTime,
+          dateString,
+          timezone,
+        );
         const endUTC = convertTimezoneToUtc(
           slot.endTime,
           overnight ? nextDateStr : dateString,

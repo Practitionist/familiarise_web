@@ -177,7 +177,10 @@ export async function handleUnifiedCheckout(
         } catch (err) {
           console.error("Payment confirmation error:", err);
           handleApiError({
-            error: err instanceof Error ? err.message : "Payment confirmation failed",
+            error:
+              err instanceof Error
+                ? err.message
+                : "Payment confirmation failed",
             errorType: "PAYMENT_ERROR",
           });
         }

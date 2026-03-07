@@ -81,18 +81,14 @@ export async function GET(
       where: {
         consultantProfileId: consultantId,
       },
-      orderBy: [
-        { startDay: "asc" },
-        { startTimeUtc: "asc" },
-      ],
+      orderBy: [{ startDay: "asc" }, { startTimeUtc: "asc" }],
     });
 
     // FIX Bug #09: Use range overlap check instead of exact key matching
     const unallocatedCustomSlots = customSlots.filter((slot) => {
       const hasOverlap = allocatedSlots.some(
         (allocated) =>
-          allocated.startsAt < slot.endsAt &&
-          allocated.endsAt > slot.startsAt,
+          allocated.startsAt < slot.endsAt && allocated.endsAt > slot.startsAt,
       );
       return !hasOverlap;
     });
@@ -113,10 +109,7 @@ export async function GET(
       const endMins = weeklySlot.endTimeUtc % 60;
 
       while (currentDate <= end) {
-        if (
-          currentDate.getUTCDay() ===
-          dayToNumber[weeklySlot.startDay]
-        ) {
+        if (currentDate.getUTCDay() === dayToNumber[weeklySlot.startDay]) {
           // Use UTC-consistent construction with Int minutes
           const slotStart = new Date(
             Date.UTC(
@@ -182,9 +175,7 @@ export async function GET(
         slotEndTimeInUTC: slot.endsAt.toISOString(),
         slotOfAvailabilityId: slot.id,
         slotOfAppointmentId: "",
-        localStartTime: new Date(
-          slot.startsAt,
-        ).toLocaleTimeString(),
+        localStartTime: new Date(slot.startsAt).toLocaleTimeString(),
         localEndTime: new Date(slot.endsAt).toLocaleTimeString(),
         type: "CUSTOM" as const,
       }),

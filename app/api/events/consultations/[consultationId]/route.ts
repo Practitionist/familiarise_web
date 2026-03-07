@@ -119,8 +119,11 @@ export async function GET(
       consultationData.consultationPlan?.consultantProfile?.id;
     const consulteeProfileId = consultationData.requestedBy?.id;
     const isConsultant =
-      !!consultantProfileId && consultantProfileId === session.user.consultantProfileId;
-    const isConsultee = !!consulteeProfileId && consulteeProfileId === session.user.consulteeProfileId;
+      !!consultantProfileId &&
+      consultantProfileId === session.user.consultantProfileId;
+    const isConsultee =
+      !!consulteeProfileId &&
+      consulteeProfileId === session.user.consulteeProfileId;
     const isParticipant = isConsultant || isConsultee;
 
     if (!isPrivileged(session.user.role) && !isParticipant) {
@@ -183,9 +186,10 @@ export async function PUT(
     const isConsultant =
       !!existingConsultation.consultationPlan?.consultantProfile?.id &&
       existingConsultation.consultationPlan.consultantProfile.id ===
-      session.user.consultantProfileId;
+        session.user.consultantProfileId;
     const isConsultee =
-      !!existingConsultation.requestedById && existingConsultation.requestedById === session.user.consulteeProfileId;
+      !!existingConsultation.requestedById &&
+      existingConsultation.requestedById === session.user.consulteeProfileId;
     const isParticipant = isConsultant || isConsultee;
 
     if (!isPrivileged(session.user.role) && !isParticipant) {
@@ -197,20 +201,27 @@ export async function PUT(
     const body = await request.json();
 
     // Validate body to prevent arbitrary field injection
-    const consultationPutSchema = z.object({
-      requestStatus: z.nativeEnum(RequestStatus).optional(),
-      requestNotes: z.string().nullish(),
-      bookingSource: z.enum(["DIRECT_CHECKOUT", "REQUEST_SUBMITTED"]).optional(),
-      feedbackFromConsultee: z.string().nullish(),
-      feedbackFromConsultant: z.string().nullish(),
-      rating: z.number().min(1).max(5).nullish(),
-      planId: z.string().optional(),
-    }).strict();
+    const consultationPutSchema = z
+      .object({
+        requestStatus: z.nativeEnum(RequestStatus).optional(),
+        requestNotes: z.string().nullish(),
+        bookingSource: z
+          .enum(["DIRECT_CHECKOUT", "REQUEST_SUBMITTED"])
+          .optional(),
+        feedbackFromConsultee: z.string().nullish(),
+        feedbackFromConsultant: z.string().nullish(),
+        rating: z.number().min(1).max(5).nullish(),
+        planId: z.string().optional(),
+      })
+      .strict();
 
     const parseResult = consultationPutSchema.safeParse(body);
     if (!parseResult.success) {
       return NextResponse.json(
-        { error: "Invalid request body", details: parseResult.error.flatten().fieldErrors },
+        {
+          error: "Invalid request body",
+          details: parseResult.error.flatten().fieldErrors,
+        },
         { status: 400 },
       );
     }
@@ -324,9 +335,10 @@ export async function DELETE(
     const isConsultant =
       !!existingConsultation.consultationPlan?.consultantProfile?.id &&
       existingConsultation.consultationPlan.consultantProfile.id ===
-      session.user.consultantProfileId;
+        session.user.consultantProfileId;
     const isConsultee =
-      !!existingConsultation.requestedById && existingConsultation.requestedById === session.user.consulteeProfileId;
+      !!existingConsultation.requestedById &&
+      existingConsultation.requestedById === session.user.consulteeProfileId;
     const isParticipant = isConsultant || isConsultee;
 
     if (!isPrivileged(session.user.role) && !isParticipant) {
@@ -468,9 +480,10 @@ export async function PATCH(
     const isConsultant =
       !!existingConsultation.consultationPlan?.consultantProfile?.id &&
       existingConsultation.consultationPlan.consultantProfile.id ===
-      session.user.consultantProfileId;
+        session.user.consultantProfileId;
     const isConsultee =
-      !!existingConsultation.requestedById && existingConsultation.requestedById === session.user.consulteeProfileId;
+      !!existingConsultation.requestedById &&
+      existingConsultation.requestedById === session.user.consulteeProfileId;
     const isParticipant = isConsultant || isConsultee;
 
     if (!isPrivileged(session.user.role) && !isParticipant) {

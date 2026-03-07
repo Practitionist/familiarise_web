@@ -29,11 +29,13 @@ All test data uses the `-005` suffix to avoid collisions with existing seed data
 ## Background: Overnight Slot Model
 
 `SlotOfAvailabilityWeekly` supports cross-midnight slots:
+
 - `startDay` !== `endDay` (e.g., FRIDAY -> SATURDAY)
 - `startTimeUtc` > `endTimeUtc` (e.g., 1380 -> 120 = 23:00 -> 02:00)
 - `endDay` must be exactly the next day of the week after `startDay`
 
 **Critical source files:**
+
 - `utils/slotAllocation/slotTimeUtils.ts` — `validateWeeklySlotTimeOrder()`, `buildWeeklyOverlapWhere()`, `slotsOverlap()`, `isMinuteWithinWeeklySlot()`
 - `app/api/slots/availability/weekly/route.ts` — POST with overlap check
 - `app/api/slots/availability/weekly/[id]/route.ts` — PUT/PATCH/DELETE with overlap check
@@ -270,13 +272,13 @@ async () => {
     body: JSON.stringify({
       startDay: "FRIDAY",
       endDay: "SATURDAY",
-      startTimeUtc: 1380,  // 23:00
-      endTimeUtc: 120,     // 02:00
+      startTimeUtc: 1380, // 23:00
+      endTimeUtc: 120, // 02:00
       consultantProfileId: "test-consultant-profile-005",
     }),
   });
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** 201
@@ -302,14 +304,14 @@ async () => {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       startDay: "MONDAY",
-      endDay: "WEDNESDAY",  // Not next day!
+      endDay: "WEDNESDAY", // Not next day!
       startTimeUtc: 1380,
       endTimeUtc: 120,
       consultantProfileId: "test-consultant-profile-005",
     }),
   });
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** 400 — "For overnight slots, endDay must be the day after startDay"
@@ -324,13 +326,13 @@ async () => {
     body: JSON.stringify({
       startDay: "THURSDAY",
       endDay: "FRIDAY",
-      startTimeUtc: 120,   // 02:00
-      endTimeUtc: 1320,    // 22:00 — NOT crossing midnight
+      startTimeUtc: 120, // 02:00
+      endTimeUtc: 1320, // 22:00 — NOT crossing midnight
       consultantProfileId: "test-consultant-profile-005",
     }),
   });
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** 400 — "Overnight slots must cross midnight"
@@ -348,12 +350,12 @@ async () => {
     body: JSON.stringify({
       startDay: "FRIDAY",
       endDay: "SATURDAY",
-      startTimeUtc: 1320,  // 22:00 (shifted earlier)
-      endTimeUtc: 90,      // 01:30
+      startTimeUtc: 1320, // 22:00 (shifted earlier)
+      endTimeUtc: 90, // 01:30
     }),
   });
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** 200
@@ -405,7 +407,7 @@ async () => {
     }),
   });
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** 409 — overlap detected
@@ -423,13 +425,13 @@ async () => {
     body: JSON.stringify({
       startDay: "TUESDAY",
       endDay: "TUESDAY",
-      startTimeUtc: 30,    // 00:30
-      endTimeUtc: 120,     // 02:00
+      startTimeUtc: 30, // 00:30
+      endTimeUtc: 120, // 02:00
       consultantProfileId: "test-consultant-profile-005",
     }),
   });
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** 409 — carry-over overlap detected (Mon night spills into Tue 01:00, new starts at 00:30)
@@ -447,13 +449,13 @@ async () => {
     body: JSON.stringify({
       startDay: "MONDAY",
       endDay: "MONDAY",
-      startTimeUtc: 1350,  // 22:30
-      endTimeUtc: 1410,    // 23:30
+      startTimeUtc: 1350, // 22:30
+      endTimeUtc: 1410, // 23:30
       consultantProfileId: "test-consultant-profile-005",
     }),
   });
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** 409 — starting-day overlap detected
@@ -471,13 +473,13 @@ async () => {
     body: JSON.stringify({
       startDay: "MONDAY",
       endDay: "TUESDAY",
-      startTimeUtc: 1320,  // 22:00
-      endTimeUtc: 180,     // 03:00
+      startTimeUtc: 1320, // 22:00
+      endTimeUtc: 180, // 03:00
       consultantProfileId: "test-consultant-profile-005",
     }),
   });
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** 409 — two overnights on same start day
@@ -495,13 +497,13 @@ async () => {
     body: JSON.stringify({
       startDay: "WEDNESDAY",
       endDay: "THURSDAY",
-      startTimeUtc: 1380,  // 23:00
-      endTimeUtc: 60,      // 01:00
+      startTimeUtc: 1380, // 23:00
+      endTimeUtc: 60, // 01:00
       consultantProfileId: "test-consultant-profile-005",
     }),
   });
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** 201 — no overlap, created successfully
@@ -531,7 +533,7 @@ async () => {
     }),
   });
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** This should either succeed (endTimeUtc=0 is valid boundary) or fail with a specific validation error. Document the actual behavior.
@@ -554,34 +556,37 @@ Login as CONSULTANT:
 
 ```javascript
 async () => {
-  const response = await fetch("/api/user/consultants/test-consultant-profile-005", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      description: "Night Owl Expert.",
-      experience: 6,
-      scheduleType: "WEEKLY",
-      domainId: "test-domain-005",
-      subDomainIds: ["test-subdomain-005"],
-      tagIds: [],
-      slotsOfAvailabilityWeekly: [
-        {
-          dayOfWeekforStartTimeInUTC: "MONDAY",
-          dayOfWeekforEndTimeInUTC: "TUESDAY",
-          slotStartTimeInUTC: "2026-01-05T23:00:00.000Z",
-          slotEndTimeInUTC: "2026-01-06T01:00:00.000Z",
-        },
-        {
-          dayOfWeekforStartTimeInUTC: "MONDAY",
-          dayOfWeekforEndTimeInUTC: "TUESDAY",
-          slotStartTimeInUTC: "2026-01-05T22:00:00.000Z",
-          slotEndTimeInUTC: "2026-01-06T03:00:00.000Z",
-        },
-      ],
-    }),
-  });
+  const response = await fetch(
+    "/api/user/consultants/test-consultant-profile-005",
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        description: "Night Owl Expert.",
+        experience: 6,
+        scheduleType: "WEEKLY",
+        domainId: "test-domain-005",
+        subDomainIds: ["test-subdomain-005"],
+        tagIds: [],
+        slotsOfAvailabilityWeekly: [
+          {
+            dayOfWeekforStartTimeInUTC: "MONDAY",
+            dayOfWeekforEndTimeInUTC: "TUESDAY",
+            slotStartTimeInUTC: "2026-01-05T23:00:00.000Z",
+            slotEndTimeInUTC: "2026-01-06T01:00:00.000Z",
+          },
+          {
+            dayOfWeekforStartTimeInUTC: "MONDAY",
+            dayOfWeekforEndTimeInUTC: "TUESDAY",
+            slotStartTimeInUTC: "2026-01-05T22:00:00.000Z",
+            slotEndTimeInUTC: "2026-01-06T03:00:00.000Z",
+          },
+        ],
+      }),
+    },
+  );
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** 400 — "Submitted weekly slots contain overlapping time ranges"
@@ -590,34 +595,37 @@ async () => {
 
 ```javascript
 async () => {
-  const response = await fetch("/api/user/consultants/test-consultant-profile-005", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      description: "Night Owl Expert.",
-      experience: 6,
-      scheduleType: "WEEKLY",
-      domainId: "test-domain-005",
-      subDomainIds: ["test-subdomain-005"],
-      tagIds: [],
-      slotsOfAvailabilityWeekly: [
-        {
-          dayOfWeekforStartTimeInUTC: "MONDAY",
-          dayOfWeekforEndTimeInUTC: "TUESDAY",
-          slotStartTimeInUTC: "2026-01-05T23:00:00.000Z",
-          slotEndTimeInUTC: "2026-01-06T01:00:00.000Z",
-        },
-        {
-          dayOfWeekforStartTimeInUTC: "TUESDAY",
-          dayOfWeekforEndTimeInUTC: "TUESDAY",
-          slotStartTimeInUTC: "2026-01-06T00:30:00.000Z",
-          slotEndTimeInUTC: "2026-01-06T02:00:00.000Z",
-        },
-      ],
-    }),
-  });
+  const response = await fetch(
+    "/api/user/consultants/test-consultant-profile-005",
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        description: "Night Owl Expert.",
+        experience: 6,
+        scheduleType: "WEEKLY",
+        domainId: "test-domain-005",
+        subDomainIds: ["test-subdomain-005"],
+        tagIds: [],
+        slotsOfAvailabilityWeekly: [
+          {
+            dayOfWeekforStartTimeInUTC: "MONDAY",
+            dayOfWeekforEndTimeInUTC: "TUESDAY",
+            slotStartTimeInUTC: "2026-01-05T23:00:00.000Z",
+            slotEndTimeInUTC: "2026-01-06T01:00:00.000Z",
+          },
+          {
+            dayOfWeekforStartTimeInUTC: "TUESDAY",
+            dayOfWeekforEndTimeInUTC: "TUESDAY",
+            slotStartTimeInUTC: "2026-01-06T00:30:00.000Z",
+            slotEndTimeInUTC: "2026-01-06T02:00:00.000Z",
+          },
+        ],
+      }),
+    },
+  );
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** 400 — carry-over overlap (Mon night 23:00->Tue 01:00 overlaps Tue 00:30-02:00)
@@ -626,34 +634,37 @@ async () => {
 
 ```javascript
 async () => {
-  const response = await fetch("/api/user/consultants/test-consultant-profile-005", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      description: "Night Owl Expert.",
-      experience: 6,
-      scheduleType: "WEEKLY",
-      domainId: "test-domain-005",
-      subDomainIds: ["test-subdomain-005"],
-      tagIds: [],
-      slotsOfAvailabilityWeekly: [
-        {
-          dayOfWeekforStartTimeInUTC: "MONDAY",
-          dayOfWeekforEndTimeInUTC: "TUESDAY",
-          slotStartTimeInUTC: "2026-01-05T23:00:00.000Z",
-          slotEndTimeInUTC: "2026-01-06T01:00:00.000Z",
-        },
-        {
-          dayOfWeekforStartTimeInUTC: "WEDNESDAY",
-          dayOfWeekforEndTimeInUTC: "WEDNESDAY",
-          slotStartTimeInUTC: "2026-01-07T09:00:00.000Z",
-          slotEndTimeInUTC: "2026-01-07T17:00:00.000Z",
-        },
-      ],
-    }),
-  });
+  const response = await fetch(
+    "/api/user/consultants/test-consultant-profile-005",
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        description: "Night Owl Expert.",
+        experience: 6,
+        scheduleType: "WEEKLY",
+        domainId: "test-domain-005",
+        subDomainIds: ["test-subdomain-005"],
+        tagIds: [],
+        slotsOfAvailabilityWeekly: [
+          {
+            dayOfWeekforStartTimeInUTC: "MONDAY",
+            dayOfWeekforEndTimeInUTC: "TUESDAY",
+            slotStartTimeInUTC: "2026-01-05T23:00:00.000Z",
+            slotEndTimeInUTC: "2026-01-06T01:00:00.000Z",
+          },
+          {
+            dayOfWeekforStartTimeInUTC: "WEDNESDAY",
+            dayOfWeekforEndTimeInUTC: "WEDNESDAY",
+            slotStartTimeInUTC: "2026-01-07T09:00:00.000Z",
+            slotEndTimeInUTC: "2026-01-07T17:00:00.000Z",
+          },
+        ],
+      }),
+    },
+  );
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** 200
@@ -694,7 +705,9 @@ Login as CONSULTEE:
 async () => {
   // Monday 23:30 UTC — inside Mon 23:00 -> Tue 01:00
   const nextMon = new Date();
-  nextMon.setDate(nextMon.getDate() + ((1 + 7 - nextMon.getDay()) % 7 || 7) + 7);
+  nextMon.setDate(
+    nextMon.getDate() + ((1 + 7 - nextMon.getDay()) % 7 || 7) + 7,
+  );
   nextMon.setUTCHours(23, 30, 0, 0);
 
   const slotEnd = new Date(nextMon);
@@ -713,7 +726,7 @@ async () => {
     }),
   });
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** 200 — success (Mon 23:30 is inside the Mon 23:00 -> Tue 01:00 window)
@@ -724,7 +737,9 @@ async () => {
 async () => {
   // Tuesday 00:30 UTC — inside carry-over portion of Mon 23:00 -> Tue 01:00
   const nextMon = new Date();
-  nextMon.setDate(nextMon.getDate() + ((1 + 7 - nextMon.getDay()) % 7 || 7) + 7);
+  nextMon.setDate(
+    nextMon.getDate() + ((1 + 7 - nextMon.getDay()) % 7 || 7) + 7,
+  );
   const nextTue = new Date(nextMon);
   nextTue.setDate(nextTue.getDate() + 1);
   nextTue.setUTCHours(0, 30, 0, 0);
@@ -745,7 +760,7 @@ async () => {
     }),
   });
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** 200 — success (Tue 00:30 is within the carry-over of Mon night)
@@ -756,7 +771,9 @@ async () => {
 async () => {
   // Monday 22:00 UTC — BEFORE Mon 23:00 -> Tue 01:00 window
   const nextMon = new Date();
-  nextMon.setDate(nextMon.getDate() + ((1 + 7 - nextMon.getDay()) % 7 || 7) + 7);
+  nextMon.setDate(
+    nextMon.getDate() + ((1 + 7 - nextMon.getDay()) % 7 || 7) + 7,
+  );
   nextMon.setUTCHours(22, 0, 0, 0);
 
   const slotEnd = new Date(nextMon);
@@ -775,7 +792,7 @@ async () => {
     }),
   });
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** Rejection (400 or similar) — Mon 22:00 is outside any availability window
@@ -791,10 +808,10 @@ After the successful bookings in Phase 5:
 ```javascript
 async () => {
   const response = await fetch(
-    "/api/slots/unallocated/weekly?consultantProfileId=test-consultant-profile-005"
+    "/api/slots/unallocated/weekly?consultantProfileId=test-consultant-profile-005",
   );
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** 200 — overnight availability properly reduces count
@@ -804,10 +821,10 @@ async () => {
 ```javascript
 async () => {
   const response = await fetch(
-    "/api/slots/unallocated/test-consultant-profile-005"
+    "/api/slots/unallocated/test-consultant-profile-005",
   );
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** 200 — overnight slots handled correctly (not negative counts, no errors)
@@ -826,30 +843,39 @@ async () => {
   baseDate.setDate(baseDate.getDate() + 21);
   baseDate.setUTCHours(10, 0, 0, 0);
 
-  const response = await fetch("/api/user/consultants/test-consultant-profile-005", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      description: "Night Owl Expert.",
-      experience: 6,
-      scheduleType: "CUSTOM",
-      domainId: "test-domain-005",
-      subDomainIds: ["test-subdomain-005"],
-      tagIds: [],
-      slotsOfAvailabilityCustom: [
-        {
-          slotStartTimeInUTC: baseDate.toISOString(),
-          slotEndTimeInUTC: new Date(baseDate.getTime() + 4 * 3600000).toISOString(),
-        },
-        {
-          slotStartTimeInUTC: new Date(baseDate.getTime() + 3 * 3600000).toISOString(),
-          slotEndTimeInUTC: new Date(baseDate.getTime() + 6 * 3600000).toISOString(),
-        },
-      ],
-    }),
-  });
+  const response = await fetch(
+    "/api/user/consultants/test-consultant-profile-005",
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        description: "Night Owl Expert.",
+        experience: 6,
+        scheduleType: "CUSTOM",
+        domainId: "test-domain-005",
+        subDomainIds: ["test-subdomain-005"],
+        tagIds: [],
+        slotsOfAvailabilityCustom: [
+          {
+            slotStartTimeInUTC: baseDate.toISOString(),
+            slotEndTimeInUTC: new Date(
+              baseDate.getTime() + 4 * 3600000,
+            ).toISOString(),
+          },
+          {
+            slotStartTimeInUTC: new Date(
+              baseDate.getTime() + 3 * 3600000,
+            ).toISOString(),
+            slotEndTimeInUTC: new Date(
+              baseDate.getTime() + 6 * 3600000,
+            ).toISOString(),
+          },
+        ],
+      }),
+    },
+  );
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** 400 — "Submitted custom slots contain overlapping time ranges"
@@ -862,30 +888,39 @@ async () => {
   baseDate.setDate(baseDate.getDate() + 21);
   baseDate.setUTCHours(10, 0, 0, 0);
 
-  const response = await fetch("/api/user/consultants/test-consultant-profile-005", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      description: "Night Owl Expert.",
-      experience: 6,
-      scheduleType: "CUSTOM",
-      domainId: "test-domain-005",
-      subDomainIds: ["test-subdomain-005"],
-      tagIds: [],
-      slotsOfAvailabilityCustom: [
-        {
-          slotStartTimeInUTC: baseDate.toISOString(),
-          slotEndTimeInUTC: new Date(baseDate.getTime() + 3 * 3600000).toISOString(),
-        },
-        {
-          slotStartTimeInUTC: new Date(baseDate.getTime() + 4 * 3600000).toISOString(),
-          slotEndTimeInUTC: new Date(baseDate.getTime() + 7 * 3600000).toISOString(),
-        },
-      ],
-    }),
-  });
+  const response = await fetch(
+    "/api/user/consultants/test-consultant-profile-005",
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        description: "Night Owl Expert.",
+        experience: 6,
+        scheduleType: "CUSTOM",
+        domainId: "test-domain-005",
+        subDomainIds: ["test-subdomain-005"],
+        tagIds: [],
+        slotsOfAvailabilityCustom: [
+          {
+            slotStartTimeInUTC: baseDate.toISOString(),
+            slotEndTimeInUTC: new Date(
+              baseDate.getTime() + 3 * 3600000,
+            ).toISOString(),
+          },
+          {
+            slotStartTimeInUTC: new Date(
+              baseDate.getTime() + 4 * 3600000,
+            ).toISOString(),
+            slotEndTimeInUTC: new Date(
+              baseDate.getTime() + 7 * 3600000,
+            ).toISOString(),
+          },
+        ],
+      }),
+    },
+  );
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** 200
@@ -894,34 +929,37 @@ Restore to WEEKLY schedule after custom tests:
 
 ```javascript
 async () => {
-  const response = await fetch("/api/user/consultants/test-consultant-profile-005", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      description: "Night Owl Expert.",
-      experience: 6,
-      scheduleType: "WEEKLY",
-      domainId: "test-domain-005",
-      subDomainIds: ["test-subdomain-005"],
-      tagIds: [],
-      slotsOfAvailabilityWeekly: [
-        {
-          dayOfWeekforStartTimeInUTC: "MONDAY",
-          dayOfWeekforEndTimeInUTC: "TUESDAY",
-          slotStartTimeInUTC: "2026-01-05T23:00:00.000Z",
-          slotEndTimeInUTC: "2026-01-06T01:00:00.000Z",
-        },
-        {
-          dayOfWeekforStartTimeInUTC: "WEDNESDAY",
-          dayOfWeekforEndTimeInUTC: "WEDNESDAY",
-          slotStartTimeInUTC: "2026-01-07T09:00:00.000Z",
-          slotEndTimeInUTC: "2026-01-07T17:00:00.000Z",
-        },
-      ],
-    }),
-  });
+  const response = await fetch(
+    "/api/user/consultants/test-consultant-profile-005",
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        description: "Night Owl Expert.",
+        experience: 6,
+        scheduleType: "WEEKLY",
+        domainId: "test-domain-005",
+        subDomainIds: ["test-subdomain-005"],
+        tagIds: [],
+        slotsOfAvailabilityWeekly: [
+          {
+            dayOfWeekforStartTimeInUTC: "MONDAY",
+            dayOfWeekforEndTimeInUTC: "TUESDAY",
+            slotStartTimeInUTC: "2026-01-05T23:00:00.000Z",
+            slotEndTimeInUTC: "2026-01-06T01:00:00.000Z",
+          },
+          {
+            dayOfWeekforStartTimeInUTC: "WEDNESDAY",
+            dayOfWeekforEndTimeInUTC: "WEDNESDAY",
+            slotStartTimeInUTC: "2026-01-07T09:00:00.000Z",
+            slotEndTimeInUTC: "2026-01-07T17:00:00.000Z",
+          },
+        ],
+      }),
+    },
+  );
   return { status: response.status };
-}
+};
 ```
 
 ### Test 7.3 — Update Custom Slot to Overlap Existing
@@ -977,7 +1015,7 @@ async () => {
     updateToOverlap: r3.status,
     updateBody: await r3.json(),
   };
-}
+};
 ```
 
 **Expected:** create1=201, create2=201, updateToOverlap=409
@@ -1003,7 +1041,9 @@ async () => {
   // Get the class scheduling period
   const classResp = await fetch("/api/events/classes/test-class-005");
   const classData = await classResp.json();
-  const periodEnd = new Date(classData.data?.schedulingPeriodEndsAt || classData.schedulingPeriodEndsAt);
+  const periodEnd = new Date(
+    classData.data?.schedulingPeriodEndsAt || classData.schedulingPeriodEndsAt,
+  );
 
   // Create a slot that starts 30 min before period end and ends 30 min after
   const slotStart = new Date(periodEnd.getTime() - 30 * 60000);
@@ -1022,7 +1062,7 @@ async () => {
     }),
   });
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** Rejection — last slot ends after `schedulingPeriodEndsAt`
@@ -1055,7 +1095,7 @@ async () => {
     }),
   });
   return { status: response.status, body: await response.json() };
-}
+};
 ```
 
 **Expected:** 200 — slot fits entirely within scheduling period and availability
@@ -1157,29 +1197,29 @@ SELECT
 
 ## Verification Checklist (End-to-End)
 
-| # | Check | Expected |
-|---|-------|----------|
-| 1 | Create overnight slot (Fri->Sat) -> 201 | 201 |
-| 2 | Invalid overnight (non-adjacent days) -> 400 | 400 |
-| 3 | Overnight with startTimeUtc <= endTimeUtc -> 400 | 400 |
-| 4 | Update overnight slot times -> 200 | 200 |
-| 5 | Same-day basic overlap -> 409 | 409 |
-| 6 | Carry-over overlap (overnight into same-day) -> 409 | 409 |
-| 7 | Starting-day overlap (same-day into overnight start) -> 409 | 409 |
-| 8 | Two overnights on same start day -> 409 | 409 |
-| 9 | Non-overlapping different days -> 201 | 201 |
-| 10 | Bulk two overlapping overnights -> 400 | 400 |
-| 11 | Bulk overnight + overlapping same-day -> 400 | 400 |
-| 12 | Bulk valid overnight + same-day -> 200 | 200 |
-| 13 | Book inside overnight start portion -> 200 | 200 |
-| 14 | Book inside overnight carry-over -> 200 | 200 |
-| 15 | Book outside overnight window -> rejection | non-200 |
-| 16 | Custom overlapping bulk -> 400 | 400 |
-| 17 | Custom non-overlapping bulk -> 200 | 200 |
-| 18 | Update custom to overlap -> 409 | 409 |
-| 19 | Class session ending after period -> rejection | non-200 |
-| 20 | Class session within period -> 200 | 200 |
-| 21 | Cleanup complete | All counts = 0 |
+| #   | Check                                                       | Expected       |
+| --- | ----------------------------------------------------------- | -------------- |
+| 1   | Create overnight slot (Fri->Sat) -> 201                     | 201            |
+| 2   | Invalid overnight (non-adjacent days) -> 400                | 400            |
+| 3   | Overnight with startTimeUtc <= endTimeUtc -> 400            | 400            |
+| 4   | Update overnight slot times -> 200                          | 200            |
+| 5   | Same-day basic overlap -> 409                               | 409            |
+| 6   | Carry-over overlap (overnight into same-day) -> 409         | 409            |
+| 7   | Starting-day overlap (same-day into overnight start) -> 409 | 409            |
+| 8   | Two overnights on same start day -> 409                     | 409            |
+| 9   | Non-overlapping different days -> 201                       | 201            |
+| 10  | Bulk two overlapping overnights -> 400                      | 400            |
+| 11  | Bulk overnight + overlapping same-day -> 400                | 400            |
+| 12  | Bulk valid overnight + same-day -> 200                      | 200            |
+| 13  | Book inside overnight start portion -> 200                  | 200            |
+| 14  | Book inside overnight carry-over -> 200                     | 200            |
+| 15  | Book outside overnight window -> rejection                  | non-200        |
+| 16  | Custom overlapping bulk -> 400                              | 400            |
+| 17  | Custom non-overlapping bulk -> 200                          | 200            |
+| 18  | Update custom to overlap -> 409                             | 409            |
+| 19  | Class session ending after period -> rejection              | non-200        |
+| 20  | Class session within period -> 200                          | 200            |
+| 21  | Cleanup complete                                            | All counts = 0 |
 
 ---
 

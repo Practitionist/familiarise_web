@@ -452,7 +452,8 @@ export function AppointmentsTab({
                     )}
 
                   {/* Unscheduled events — rendered once per section, before any scheduled groups */}
-                  {isNewTypeSection && groupType === "CLASS" &&
+                  {isNewTypeSection &&
+                    groupType === "CLASS" &&
                     unscheduledClasses.length > 0 && (
                       <div className="mb-4 space-y-3">
                         {unscheduledClasses.map((classEvent) => (
@@ -469,7 +470,8 @@ export function AppointmentsTab({
                         ))}
                       </div>
                     )}
-                  {isNewTypeSection && groupType === "WEBINAR" &&
+                  {isNewTypeSection &&
+                    groupType === "WEBINAR" &&
                     unscheduledWebinars.length > 0 && (
                       <div className="mb-4 space-y-3">
                         {unscheduledWebinars.map((webinarEvent) => (

@@ -191,9 +191,10 @@ export async function PATCH(request: NextRequest) {
     const isConsultant =
       !!existingSubscription.subscriptionPlan?.consultantProfile?.id &&
       existingSubscription.subscriptionPlan.consultantProfile.id ===
-      session.user.consultantProfileId;
+        session.user.consultantProfileId;
     const isConsultee =
-      !!existingSubscription.requestedById && existingSubscription.requestedById === session.user.consulteeProfileId;
+      !!existingSubscription.requestedById &&
+      existingSubscription.requestedById === session.user.consulteeProfileId;
     if (!isPrivileged(session.user.role) && !isConsultant && !isConsultee) {
       return forbiddenResponse(
         "You can only modify subscriptions you are a participant in",

@@ -120,13 +120,21 @@ export async function PUT(
       endTimeUtc > 1439
     ) {
       return NextResponse.json(
-        { error: "Invalid time format: must be integer 0-1439 (minutes since midnight UTC)" },
+        {
+          error:
+            "Invalid time format: must be integer 0-1439 (minutes since midnight UTC)",
+        },
         { status: 400 },
       );
     }
 
     // Day-aware time order validation (supports overnight slots)
-    const timeError = validateWeeklySlotTimeOrder(body.startDay, body.endDay, startTimeUtc, endTimeUtc);
+    const timeError = validateWeeklySlotTimeOrder(
+      body.startDay,
+      body.endDay,
+      startTimeUtc,
+      endTimeUtc,
+    );
     if (timeError) {
       return NextResponse.json({ error: timeError }, { status: 400 });
     }
@@ -135,7 +143,10 @@ export async function PUT(
     const effectiveConsultantProfileId = currentSlot.consultantProfileId;
 
     // Reject consultant reassignment
-    if (body.consultantProfileId && body.consultantProfileId !== effectiveConsultantProfileId) {
+    if (
+      body.consultantProfileId &&
+      body.consultantProfileId !== effectiveConsultantProfileId
+    ) {
       return NextResponse.json(
         { error: "Cannot reassign slot to a different consultant" },
         { status: 400 },
@@ -156,7 +167,9 @@ export async function PUT(
 
     if (overlappingSlot) {
       return NextResponse.json(
-        { error: `This slot (${minutesToTimeString(startTimeUtc)}-${minutesToTimeString(endTimeUtc)}) overlaps with an existing slot` },
+        {
+          error: `This slot (${minutesToTimeString(startTimeUtc)}-${minutesToTimeString(endTimeUtc)}) overlaps with an existing slot`,
+        },
         { status: 409 },
       );
     }
@@ -215,20 +228,14 @@ export async function PATCH(
 
     const body = await req.json();
 
-    if (
-      body.startDay &&
-      !Object.values(DayOfWeek).includes(body.startDay)
-    ) {
+    if (body.startDay && !Object.values(DayOfWeek).includes(body.startDay)) {
       return NextResponse.json(
         { error: "Invalid day of week for start time" },
         { status: 400 },
       );
     }
 
-    if (
-      body.endDay &&
-      !Object.values(DayOfWeek).includes(body.endDay)
-    ) {
+    if (body.endDay && !Object.values(DayOfWeek).includes(body.endDay)) {
       return NextResponse.json(
         { error: "Invalid day of week for end time" },
         { status: 400 },
@@ -260,7 +267,10 @@ export async function PATCH(
     }
 
     // Reject consultant reassignment
-    if (body.consultantProfileId && body.consultantProfileId !== currentSlot.consultantProfileId) {
+    if (
+      body.consultantProfileId &&
+      body.consultantProfileId !== currentSlot.consultantProfileId
+    ) {
       return NextResponse.json(
         { error: "Cannot reassign slot to a different consultant" },
         { status: 400 },
@@ -271,15 +281,22 @@ export async function PATCH(
     const endTimeUtc: number = body.endTimeUtc ?? currentSlot.endTimeUtc;
 
     if (
-      (body.startTimeUtc !== undefined && (typeof body.startTimeUtc !== "number" || !Number.isInteger(body.startTimeUtc))) ||
-      (body.endTimeUtc !== undefined && (typeof body.endTimeUtc !== "number" || !Number.isInteger(body.endTimeUtc))) ||
+      (body.startTimeUtc !== undefined &&
+        (typeof body.startTimeUtc !== "number" ||
+          !Number.isInteger(body.startTimeUtc))) ||
+      (body.endTimeUtc !== undefined &&
+        (typeof body.endTimeUtc !== "number" ||
+          !Number.isInteger(body.endTimeUtc))) ||
       startTimeUtc < 0 ||
       startTimeUtc > 1439 ||
       endTimeUtc < 0 ||
       endTimeUtc > 1439
     ) {
       return NextResponse.json(
-        { error: "Invalid time format: must be integer 0-1439 (minutes since midnight UTC)" },
+        {
+          error:
+            "Invalid time format: must be integer 0-1439 (minutes since midnight UTC)",
+        },
         { status: 400 },
       );
     }
@@ -288,7 +305,12 @@ export async function PATCH(
     const effectiveEndDay = body.endDay || currentSlot.endDay;
 
     // Day-aware time order validation (supports overnight slots)
-    const timeError = validateWeeklySlotTimeOrder(effectiveStartDay, effectiveEndDay, startTimeUtc, endTimeUtc);
+    const timeError = validateWeeklySlotTimeOrder(
+      effectiveStartDay,
+      effectiveEndDay,
+      startTimeUtc,
+      endTimeUtc,
+    );
     if (timeError) {
       return NextResponse.json({ error: timeError }, { status: 400 });
     }
@@ -307,7 +329,9 @@ export async function PATCH(
 
     if (overlappingSlot) {
       return NextResponse.json(
-        { error: `This slot (${minutesToTimeString(startTimeUtc)}-${minutesToTimeString(endTimeUtc)}) overlaps with an existing slot` },
+        {
+          error: `This slot (${minutesToTimeString(startTimeUtc)}-${minutesToTimeString(endTimeUtc)}) overlaps with an existing slot`,
+        },
         { status: 409 },
       );
     }

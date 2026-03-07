@@ -88,8 +88,7 @@ export async function GET(req: NextRequest) {
     const allUnallocatedSlots = allCustomSlots.filter((slot) => {
       const hasOverlap = allocatedSlots.some(
         (allocated) =>
-          allocated.startsAt < slot.endsAt &&
-          allocated.endsAt > slot.startsAt,
+          allocated.startsAt < slot.endsAt && allocated.endsAt > slot.startsAt,
       );
       return !hasOverlap;
     });

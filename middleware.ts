@@ -173,7 +173,8 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
 
   // Auth brute-force protection — POST only; skip for localhost (dev testing)
   const clientIp = getClientIp(req);
-  const isLocalhost = clientIp === "::1" || clientIp === "127.0.0.1" || clientIp === "unknown_ip";
+  const isLocalhost =
+    clientIp === "::1" || clientIp === "127.0.0.1" || clientIp === "unknown_ip";
   if (
     !isLocalhost &&
     req.method === "POST" &&

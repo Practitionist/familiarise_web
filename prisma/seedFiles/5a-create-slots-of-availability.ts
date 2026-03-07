@@ -203,9 +203,7 @@ export async function createSlotsOfAvailability(
               customSlots.push({
                 consultantProfileId: consultant.consultantProfile.id,
                 startsAt: slotDate,
-                endsAt: new Date(
-                  slotDate.getTime() + 60 * 60 * 1000,
-                ),
+                endsAt: new Date(slotDate.getTime() + 60 * 60 * 1000),
               });
             }
           }

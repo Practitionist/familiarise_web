@@ -69,31 +69,30 @@ const ConsultantReviewForm: React.FC<Props> = ({
             <div className="space-y-2">
               <p className="text-sm font-medium">Weekly Slots</p>
               <div className="space-y-1">
-                {formData.weeklySlots.filter(isValidWeeklySlot).map((slot, index) => {
-                  const startTime = minutesToTimeString(slot.startTimeUtc);
-                  const endTime = minutesToTimeString(slot.endTimeUtc);
-                  const isSameDay =
-                    slot.startDay === slot.endDay;
+                {formData.weeklySlots
+                  .filter(isValidWeeklySlot)
+                  .map((slot, index) => {
+                    const startTime = minutesToTimeString(slot.startTimeUtc);
+                    const endTime = minutesToTimeString(slot.endTimeUtc);
+                    const isSameDay = slot.startDay === slot.endDay;
 
-                  return (
-                    <div
-                      key={index}
-                      className="px-3 py-2 bg-background border rounded-lg text-sm"
-                    >
-                      <span className="font-medium">
-                        {slot.startDay}
-                      </span>{" "}
-                      <span className="text-muted-foreground">{startTime}</span>
-                      {" to "}
-                      {!isSameDay && (
-                        <span className="font-medium">
-                          {slot.endDay}{" "}
+                    return (
+                      <div
+                        key={index}
+                        className="px-3 py-2 bg-background border rounded-lg text-sm"
+                      >
+                        <span className="font-medium">{slot.startDay}</span>{" "}
+                        <span className="text-muted-foreground">
+                          {startTime}
                         </span>
-                      )}
-                      <span className="text-muted-foreground">{endTime}</span>
-                    </div>
-                  );
-                })}
+                        {" to "}
+                        {!isSameDay && (
+                          <span className="font-medium">{slot.endDay} </span>
+                        )}
+                        <span className="text-muted-foreground">{endTime}</span>
+                      </div>
+                    );
+                  })}
               </div>
             </div>
           )}
@@ -102,31 +101,32 @@ const ConsultantReviewForm: React.FC<Props> = ({
             <div className="space-y-2">
               <p className="text-sm font-medium">Custom Slots</p>
               <div className="space-y-1">
-                {formData.customSlots.filter(isValidCustomSlot).map((slot, index) => {
-                  const startDate = formatDate(slot.startsAt);
-                  const endDate = formatDate(slot.endsAt);
-                  const startTime = formatTime(
-                    slot.startsAt,
-                    "12h",
-                  );
-                  const endTime = formatTime(slot.endsAt, "12h");
-                  const isSameDay = startDate === endDate;
+                {formData.customSlots
+                  .filter(isValidCustomSlot)
+                  .map((slot, index) => {
+                    const startDate = formatDate(slot.startsAt);
+                    const endDate = formatDate(slot.endsAt);
+                    const startTime = formatTime(slot.startsAt, "12h");
+                    const endTime = formatTime(slot.endsAt, "12h");
+                    const isSameDay = startDate === endDate;
 
-                  return (
-                    <div
-                      key={index}
-                      className="px-3 py-2 bg-background border rounded-lg text-sm"
-                    >
-                      <span className="font-medium">{startDate}</span>{" "}
-                      <span className="text-muted-foreground">{startTime}</span>
-                      {" to "}
-                      {!isSameDay && (
-                        <span className="font-medium">{endDate} </span>
-                      )}
-                      <span className="text-muted-foreground">{endTime}</span>
-                    </div>
-                  );
-                })}
+                    return (
+                      <div
+                        key={index}
+                        className="px-3 py-2 bg-background border rounded-lg text-sm"
+                      >
+                        <span className="font-medium">{startDate}</span>{" "}
+                        <span className="text-muted-foreground">
+                          {startTime}
+                        </span>
+                        {" to "}
+                        {!isSameDay && (
+                          <span className="font-medium">{endDate} </span>
+                        )}
+                        <span className="text-muted-foreground">{endTime}</span>
+                      </div>
+                    );
+                  })}
               </div>
             </div>
           )}
