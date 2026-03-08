@@ -25,6 +25,7 @@ import {
   type WaitlistPayload,
   type DisputePayload,
   type RecordingPayload,
+  type RecordingFailedPayload,
   type ConsultantApplicationPayload,
   type ReferralBonusPayload,
   type RefereeWelcomeBonusPayload,
@@ -475,6 +476,17 @@ export async function notifyRecordingAvailable(
   return triggerForMultiple(
     NOVU_WORKFLOWS.RECORDING_AVAILABLE,
     userIds,
+    payload,
+  );
+}
+
+export async function notifyRecordingFailed(
+  consultantUserId: string,
+  payload: RecordingFailedPayload,
+) {
+  return triggerWorkflow(
+    NOVU_WORKFLOWS.RECORDING_FAILED,
+    consultantUserId,
     payload,
   );
 }
