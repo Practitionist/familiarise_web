@@ -339,7 +339,7 @@ export function EventCard({
 
   const showAllSessionsAccordion =
     (type === "Class" || type === "Subscription") &&
-    allGroupedSessions.length > 1;
+    allGroupedSessions.length >= 1;
 
   // Check if this is a subscription with multiple sessions (for reschedule options)
   const isMultiSessionSubscription =
