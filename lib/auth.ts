@@ -63,6 +63,10 @@ export const auth = betterAuth({
   account: {
     accountLinking: {
       enabled: true,
+      // "credential" is intentionally not listed. trustedProviders only applies
+      // to OAuth providers during the implicit auto-link flow in BetterAuth's
+      // callback handler. Credential accounts are created explicitly during
+      // sign-up, not via OAuth auto-link.
       trustedProviders: ["google", "github", "facebook"],
     },
   },
