@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { authClient } from "@/lib/auth-client";
+import { GlobeIcon } from "@/components/auth/auth-icons";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -63,11 +64,15 @@ export default function ChangePasswordPage() {
         setConfirmPassword("");
         router.push("/dashboard");
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Change password error:", error);
+      const message =
+        error instanceof Error
+          ? error.message
+          : "An unexpected error occurred.";
       toast({
         title: "Password Change Failed",
-        description: error?.message || "An unexpected error occurred.",
+        description: message,
         variant: "destructive",
       });
     } finally {
@@ -79,22 +84,7 @@ export default function ChangePasswordPage() {
     <div className="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-gray-950">
       <div className="w-full max-w-md p-8 space-y-6 bg-white rounded-lg shadow-md dark:bg-gray-900">
         <div className="text-center">
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="24"
-            height="24"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className="mx-auto h-12 w-auto text-gray-900 dark:text-gray-100"
-          >
-            <circle cx="12" cy="12" r="10" />
-            <line x1="2" x2="22" y1="12" y2="12" />
-            <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
-          </svg>
+          <GlobeIcon className="mx-auto h-12 w-auto text-gray-900 dark:text-gray-100" />
           <h2 className="mt-6 text-3xl font-extrabold text-gray-900 dark:text-white">
             Change Password
           </h2>
