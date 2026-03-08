@@ -73,6 +73,11 @@ export async function GET(
               include: {
                 slotsOfAppointment: {
                   orderBy: { startsAt: "asc" },
+                  include: {
+                    meetingSession: {
+                      select: { id: true, endedAt: true },
+                    },
+                  },
                 },
                 payment: true,
               },
@@ -103,6 +108,11 @@ export async function GET(
               include: {
                 slotsOfAppointment: {
                   orderBy: { startsAt: "asc" },
+                  include: {
+                    meetingSession: {
+                      select: { id: true, endedAt: true },
+                    },
+                  },
                 },
                 payment: true,
               },
@@ -156,6 +166,11 @@ export async function GET(
               include: {
                 slotsOfAppointment: {
                   orderBy: { startsAt: "asc" },
+                  include: {
+                    meetingSession: {
+                      select: { id: true, endedAt: true },
+                    },
+                  },
                 },
                 payment: true,
               },
@@ -214,6 +229,11 @@ export async function GET(
               include: {
                 slotsOfAppointment: {
                   orderBy: { startsAt: "asc" },
+                  include: {
+                    meetingSession: {
+                      select: { id: true, endedAt: true },
+                    },
+                  },
                 },
                 payment: true,
               },
@@ -256,6 +276,9 @@ export async function GET(
                         email: true,
                         image: true,
                       },
+                    },
+                    meetingSession: {
+                      select: { id: true, endedAt: true },
                     },
                   },
                 },

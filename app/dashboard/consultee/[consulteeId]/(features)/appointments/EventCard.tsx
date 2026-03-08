@@ -1,3 +1,7 @@
+/**
+ * @deprecated Use `OneOffEventCard` or `MultiSessionEventCard` from `./components/` instead.
+ * Kept for backward compatibility with Calendar and Past tabs.
+ */
 "use client";
 
 import {
