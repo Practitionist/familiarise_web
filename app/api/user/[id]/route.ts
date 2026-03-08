@@ -242,8 +242,15 @@ export async function DELETE(
     const { id } = await params;
 
     const session = await getSession();
-    if (!session || session.user.role !== "ADMIN") {
+    if (!session) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // Allow admins to delete any user, or users to delete their own account
+    const isSelfDeletion = session.user.id === id;
+    const isAdmin = session.user.role === "ADMIN";
+    if (!isSelfDeletion && !isAdmin) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
     const user = await prisma.user.findUnique({ where: { id: id } });
@@ -251,6 +258,8 @@ export async function DELETE(
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
 
+    // Revoke all sessions for the user before deletion
+    await prisma.session.deleteMany({ where: { userId: id } });
     await prisma.user.delete({ where: { id: id } });
 
     return NextResponse.json(
