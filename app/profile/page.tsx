@@ -274,8 +274,7 @@ export default function Profile() {
       if (error) {
         toast({
           title: "Failed to Disconnect",
-          description:
-            error.message || "Could not disconnect this account.",
+          description: error.message || "Could not disconnect this account.",
           variant: "destructive",
         });
       } else {
@@ -301,8 +300,7 @@ export default function Profile() {
       await authClient.revokeOtherSessions();
       toast({
         title: "Sessions Revoked",
-        description:
-          "All other sessions have been revoked. Signing you out...",
+        description: "All other sessions have been revoked. Signing you out...",
       });
       // Small delay to show the toast before signing out
       setTimeout(() => {
@@ -823,18 +821,14 @@ export default function Profile() {
                       >
                         <div className="flex items-center gap-3">
                           <div className="h-10 w-10 rounded-lg bg-zinc-100 flex items-center justify-center">
-                            {Icon && (
-                              <Icon className="h-5 w-5 text-zinc-600" />
-                            )}
+                            {Icon && <Icon className="h-5 w-5 text-zinc-600" />}
                           </div>
                           <div>
                             <p className="font-medium text-zinc-900">
                               {provider.label}
                             </p>
                             <p className="text-sm text-zinc-500">
-                              {linked
-                                ? "Account linked"
-                                : "Not connected"}
+                              {linked ? "Account linked" : "Not connected"}
                             </p>
                           </div>
                         </div>
@@ -849,9 +843,7 @@ export default function Profile() {
                                 variant="ghost"
                                 size="sm"
                                 className="text-zinc-500 hover:text-red-600 hover:bg-red-50"
-                                onClick={() =>
-                                  handleUnlinkAccount(provider.id)
-                                }
+                                onClick={() => handleUnlinkAccount(provider.id)}
                               >
                                 <X className="h-4 w-4" />
                               </Button>

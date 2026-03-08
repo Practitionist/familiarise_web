@@ -1279,7 +1279,12 @@ const PROFILE_IMAGE_MAX_SIZE = 2 * 1024 * 1024; // 2MB
 const uploadProfileImage = async (options: {
   userId: string;
   file: File;
-}): Promise<{ success: boolean; fileUrl?: string; storagePath?: string; error?: string }> => {
+}): Promise<{
+  success: boolean;
+  fileUrl?: string;
+  storagePath?: string;
+  error?: string;
+}> => {
   try {
     const { userId, file } = options;
 
