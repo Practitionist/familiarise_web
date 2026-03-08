@@ -276,7 +276,7 @@ export class SlotAllocationService {
           const isInProgressReallocation =
             !isReschedule &&
             pastConfirmedSlotCount > 0 &&
-            (eventType === "class" || eventType === "subscription");
+            eventType === "class";
 
           // Guard: for classes, reject re-allocation when already fully scheduled.
           // Webinars are handled by the DB unique constraint on webinarId (P2002 → 409).
@@ -563,7 +563,7 @@ export class SlotAllocationService {
           const isInProgressReallocation =
             !isReschedule &&
             pastConfirmedSlotCount > 0 &&
-            (eventType === "class" || eventType === "subscription");
+            eventType === "class";
 
           // Collect appointment IDs to exclude from conflict detection and weekly limits.
           // For reschedule: exclude tentative appointments (they'll be deleted)
