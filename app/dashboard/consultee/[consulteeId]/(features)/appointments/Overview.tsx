@@ -10,6 +10,7 @@ import {
 } from "@/hooks/useEvents";
 import { EventWithType } from "../../utils/getMetadata";
 import {
+  getAllSlots,
   getActualNextSlotTime,
   getActualSlots,
 } from "../../utils/scheduleHelpers";
@@ -62,6 +63,7 @@ interface DashboardCardProps {
     appointmentId?: string;
     appointment?: TAppointment;
     rawSlots?: SlotOfAppointment[];
+    allRawSlots?: SlotOfAppointment[];
     pendingPaymentUrl?: string | null;
     // Booking status for webinars/classes
     bookingStatus?: BookingStatus;
@@ -215,6 +217,10 @@ export function Overview({
                 ...subscription,
                 type: "Subscription",
               });
+              const allRawSlots = getAllSlots({
+                ...subscription,
+                type: "Subscription",
+              });
               return {
                 id: subscription.id,
                 title: subscription.subscriptionPlan.title,
@@ -238,6 +244,7 @@ export function Overview({
                   | TAppointment
                   | undefined,
                 rawSlots,
+                allRawSlots,
                 pendingPaymentUrl: subscription.pendingPaymentUrl,
               };
             }),
@@ -359,6 +366,10 @@ export function Overview({
                 ...classItem,
                 type: "Class",
               });
+              const allRawSlots = getAllSlots({
+                ...classItem,
+                type: "Class",
+              });
 
               // Determine booking status from appointments and waitlist
               const hasConfirmedSlot =
@@ -408,6 +419,7 @@ export function Overview({
                   | TAppointment
                   | undefined,
                 rawSlots,
+                allRawSlots,
                 bookingStatus,
                 waitlistPosition,
                 collaborators,
@@ -616,6 +628,7 @@ function DashboardCard({
                   appointmentId={item.appointmentId}
                   appointment={item.appointment}
                   rawSlots={item.rawSlots}
+                  allRawSlots={item.allRawSlots}
                   pendingPaymentUrl={item.pendingPaymentUrl}
                   bookingStatus={item.bookingStatus}
                   waitlistPosition={item.waitlistPosition}
@@ -644,6 +657,7 @@ function DashboardCard({
                   appointmentId={item.appointmentId}
                   appointment={item.appointment}
                   rawSlots={item.rawSlots}
+                  allRawSlots={item.allRawSlots}
                   pendingPaymentUrl={item.pendingPaymentUrl}
                   bookingStatus={item.bookingStatus}
                   waitlistPosition={item.waitlistPosition}

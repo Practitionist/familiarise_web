@@ -35,6 +35,35 @@ export function getActualSlots(event: EventWithType): SlotOfAppointment[] {
     );
 }
 
+/**
+ * Returns ALL non-tentative slots (past + future) sorted by startsAt asc.
+ * Used for displaying the full session schedule in Class/Subscription cards.
+ */
+export function getAllSlots(event: EventWithType): SlotOfAppointment[] {
+  let appointmentSlots: SlotOfAppointment[] = [];
+
+  switch (event.type) {
+    case "Subscription":
+    case "Class":
+      appointmentSlots = (event.appointments || []).flatMap(
+        (apt) => apt?.slotsOfAppointment || [],
+      );
+      break;
+    case "Consultation":
+    case "Webinar":
+      appointmentSlots = event.appointment?.slotsOfAppointment ?? [];
+      break;
+    default:
+      break;
+  }
+
+  return appointmentSlots
+    .filter((slot) => !slot.isTentative)
+    .sort(
+      (a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
+    );
+}
+
 // Revert getActualNextSlotTime to use the simpler getActualSlots
 export function getActualNextSlotTime(
   event: EventWithType,
