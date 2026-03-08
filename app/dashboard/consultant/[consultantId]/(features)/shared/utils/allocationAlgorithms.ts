@@ -97,9 +97,7 @@ export class AllocationAlgorithms {
       // For in-progress recurring events, subtract past confirmed slots
       const pastCount = options.pastConfirmedSlotCount || 0;
       const requiredSlots =
-        (options.eventType === "class" ||
-          options.eventType === "subscription") &&
-        pastCount > 0
+        options.eventType === "class" && pastCount > 0
           ? Math.max(0, rawRequired - pastCount)
           : rawRequired;
 
